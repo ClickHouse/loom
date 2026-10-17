@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry } from "../api";
@@ -50,8 +50,9 @@ describe("Header", () => {
     useStore.setState({ whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"] } });
     render(<Header />);
     // The live button is replaced by the disabled one once list_mine resolves.
-    await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toBeDisabled());
-    expect(screen.getByLabelText(/New: You have read-only access here/)).toBeInTheDocument();
+    // aria-disabled, not disabled: the trigger stays focusable so its tooltip can say why.
+    await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toHaveAttribute("aria-disabled", "true"));
+    expect(screen.getByRole("button", { name: "New" })).toHaveAccessibleDescription(/You have read-only access here/);
   });
 
   it("keeps New live for a writer token on the same namespace", async () => {
@@ -68,7 +69,7 @@ describe("Header", () => {
       myNamespaces: jwtOnly,
     });
     render(<Header />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toHaveAttribute("aria-disabled", "true"));
     // PendingApprovalsBell reads list_mine on its own; the role hook must not add a call.
     expect(listMine.mock.calls.length).toBeLessThanOrEqual(1);
   });
@@ -104,4 +105,37 @@ it("mounts no dialog while closed, and one when New → Document is chosen", asy
   await userEvent.click(screen.getByRole("button", { name: "New" }));
   await userEvent.click(await screen.findByRole("menuitem", { name: /Document/ }));
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
+});
+
+// The New menu is a real menu: arrow keys move between items, Escape closes it and puts
+// focus back on the trigger.
+it("moves through New's items with the arrow keys and returns focus on Escape", async () => {
+  listMine.mockResolvedValue(jwtOnly);
+  useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+  const user = userEvent.setup();
+  render(<Header />);
+  const trigger = screen.getByRole("button", { name: "New" });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  const memory = await screen.findByRole("menuitem", { name: "Memory" });
+  await waitFor(() => expect(memory).toHaveFocus());
+  await user.keyboard("{ArrowDown}");
+  expect(screen.getByRole("menuitem", { name: "Document" })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(trigger).toHaveFocus();
+});
+
+// The account menu says who is signed in through its name: the block at its top holds no
+// menu item, so in menu mode a screen reader never reads it.
+it("names the account menu after the signed-in subject and org", async () => {
+  listMine.mockResolvedValue(jwtOnly);
+  useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+  render(<Header />);
+  await userEvent.click(screen.getByRole("button", { name: "Account: w@example.com" }));
+  const menu = await screen.findByRole("menu", { name: "Signed in as w@example.com, org dev" });
+  expect(screen.getByText("Signed in as").closest("[aria-hidden='true']")).not.toBeNull();
+  expect(menu).toContainElement(screen.getByRole("menuitem", { name: "Settings" }));
 });

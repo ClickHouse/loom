@@ -32,13 +32,13 @@ def _thread(
     }
 
 
-def _msg(*, msg_id: str, role: str, content: str, ts: datetime):
+def _msg(*, msg_id: str, role: str, content: str, ts: datetime, agent: str = "reviewer"):
     from server.knowledge.store.conversations import MessageRow
 
     return MessageRow(
         org="clickhouse",
         namespace="finance",
-        agent="reviewer",
+        agent=agent,
         thread_id="t-1",
         msg_id=msg_id,
         role=role,
@@ -240,8 +240,9 @@ async def test_thread_found_with_messages_paginated(
     )
     assert out.found is True
     assert out.msg_count == 5
-    # Handler asks for offset + limit = 3 rows, then drops the first.
-    assert captured["limit"] == 3
+    # Handler asks for offset + limit = 3 rows and one more (does a page follow?),
+    # then drops the first.
+    assert captured["limit"] == 4
     assert captured["order"] == "asc"
     assert [m.msg_id for m in out.messages] == ["m-1", "m-2"]
 
@@ -409,3 +410,298 @@ async def test_operation_registered_with_viewer_role() -> None:
     assert op.required_role == Role.VIEWER
     assert op.idempotent is True
     assert op.audit is False
+
+
+@pytest.mark.asyncio
+async def test_any_agent_reads_the_whole_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """agent="*" (a caller that knows the thread id but not who wrote it: a search
+    hit, a memory's source link) reads every agent's turns, and the thread row's
+    owner and title."""
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    read_as: list[str | None] = []
+
+    async def fake_fetch_thread(org, namespace, agent, thread_id, **kw):
+        read_as.append(agent)
+        return _thread(agent="planner")
+
+    async def fake_count(org, namespace, agent, thread_id, **kw):
+        read_as.append(agent)
+        return 2
+
+    async def fake_list_thread(org, namespace, agent, thread_id, **kw):
+        read_as.append(agent)
+        return [_msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0))]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse", namespace="finance", agent="*", thread_id="t-1", include_messages=True
+        )
+    )
+    assert out.found is True
+    assert out.agent == "planner"
+    assert out.title == "Q1 incident response"
+    assert read_as == [None, None, None]
+
+
+@pytest.mark.asyncio
+async def test_any_agent_names_an_append_only_threads_latest_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_fetch_thread(*a, **kw):
+        return None
+
+    async def fake_count(*a, **kw):
+        return 2
+
+    async def fake_list_thread(*a, **kw):
+        # Newest first, as order="desc" returns them: the latest writer is not the first row read.
+        return [
+            _msg(
+                msg_id="m1",
+                role="user",
+                content="hi",
+                ts=datetime(2026, 6, 1, 9, 0),
+                agent="planner",
+            ),
+            _msg(
+                msg_id="m3",
+                role="assistant",
+                content="done",
+                ts=datetime(2026, 6, 1, 9, 2),
+                agent="deployer",
+            ),
+            _msg(msg_id="m2", role="assistant", content="hello", ts=datetime(2026, 6, 1, 9, 1)),
+        ]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse", namespace="finance", agent="*", thread_id="t-1", include_messages=True
+        )
+    )
+    assert out.found is True
+    assert out.agent == "deployer"
+    # Each turn names its own writer.
+    assert [(m.msg_id, m.agent) for m in out.messages] == [
+        ("m1", "planner"),
+        ("m3", "deployer"),
+        ("m2", "reviewer"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dash_reads_every_agent_as_star_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    read_as: list[str | None] = []
+
+    async def fake_fetch_thread(org, namespace, agent, thread_id, **kw):
+        read_as.append(agent)
+        return None
+
+    async def fake_count(org, namespace, agent, thread_id, **kw):
+        read_as.append(agent)
+        return 0
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+
+    await handle_conversation_get(
+        ConversationGetInput(org="clickhouse", namespace="finance", agent="-", thread_id="t-1")
+    )
+    # One meaning for the sentinels on every conversation op, search included.
+    assert read_as == [None, None]
+
+
+@pytest.mark.asyncio
+async def test_list_with_any_agent_pages_the_whole_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationListInput
+    from server.knowledge.app.conversations import handle_conversation_list
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_list_thread(org, namespace, agent, thread_id, **kw):
+        assert agent is None
+        return [
+            _msg(
+                msg_id="m1",
+                role="user",
+                content="hi",
+                ts=datetime(2026, 6, 1, 9, 0),
+                agent="planner",
+            )
+        ]
+
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_list(
+        ConversationListInput(org="clickhouse", namespace="finance", agent="*", thread_id="t-1")
+    )
+    assert [(r.msg_id, r.agent) for r in out.rows] == [("m1", "planner")]
+
+
+@pytest.mark.asyncio
+async def test_a_longer_thread_answers_the_cursor_conversation_list_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first page carries the next page's cursor, issued the way
+    conversation.list issues it, so the caller pages on with that op."""
+    from server.core.cursors import decode_cursor
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    turns = [
+        _msg(msg_id=f"m{i}", role="user", content="hi", ts=datetime(2026, 6, 1, 9, i))
+        for i in range(3)
+    ]
+
+    async def fake_fetch_thread(*a, **kw):
+        return _thread()
+
+    async def fake_count(*a, **kw):
+        return 3
+
+    async def fake_list_thread(*a, limit, **kw):
+        return turns[:limit]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    def get(**kw):
+        return handle_conversation_get(
+            ConversationGetInput(
+                org="clickhouse",
+                namespace="finance",
+                agent="*",
+                thread_id="t-1",
+                include_messages=True,
+                **kw,
+            )
+        )
+
+    out = await get(limit=2)
+    assert [m.msg_id for m in out.messages] == ["m0", "m1"]
+    assert out.next_cursor is not None
+    assert decode_cursor(out.next_cursor) == (turns[1].ts, "m1")
+
+    assert (await get(limit=3)).next_cursor is None
+    # A tail page counts back from the newest turn; conversation.list's cursor walks forward.
+    assert (await get(limit=2, order="desc")).next_cursor is None
+
+
+def test_an_entry_from_a_previous_release_has_no_agent() -> None:
+    from server.knowledge.api.models_conversations import _ConversationEntry
+
+    entry = _ConversationEntry.model_validate(
+        {
+            "msg_id": "m1",
+            "role": "user",
+            "content": "hi",
+            "reasoning": "",
+            "user_id": "-",
+            "run_id": "-",
+            "metadata": {},
+            "tokens": 0,
+            "ts": "2026-06-01T09:00:00",
+        }
+    )
+    assert entry.agent == ""
+
+
+@pytest.mark.asyncio
+async def test_the_latest_writer_is_read_from_the_page_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_fetch_thread(*a, **kw):
+        return None
+
+    async def fake_count(*a, **kw):
+        return 2
+
+    async def fake_list_thread(*a, **kw):
+        # The second row is the peek past a one-turn page, by another agent.
+        return [
+            _msg(
+                msg_id="m1",
+                role="user",
+                content="hi",
+                ts=datetime(2026, 6, 1, 9, 0),
+                agent="planner",
+            ),
+            _msg(
+                msg_id="m2",
+                role="user",
+                content="yo",
+                ts=datetime(2026, 6, 1, 9, 1),
+                agent="deployer",
+            ),
+        ]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="*",
+            thread_id="t-1",
+            include_messages=True,
+            limit=1,
+        )
+    )
+    assert out.agent == "planner"
+
+
+@pytest.mark.asyncio
+async def test_threads_reads_dash_as_every_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+    from server.knowledge.app.conversations import handle_conversation_threads
+    from server.knowledge.store import conversations as conversation_repo
+
+    seen: list[str | None] = []
+
+    async def fake_recent(org, namespace, *, agent=None, **kw):
+        seen.append(agent)
+        return []
+
+    async def fake_titles(*a, **kw):
+        return {}
+
+    monkeypatch.setattr(conversation_repo, "recent_threads", fake_recent)
+    monkeypatch.setattr(conversation_repo, "thread_titles", fake_titles)
+    for sentinel in ("*", "-"):
+        await handle_conversation_threads(
+            ConversationThreadsInput(org="clickhouse", namespace="finance", agent=sentinel)
+        )
+    assert seen == [None, None]

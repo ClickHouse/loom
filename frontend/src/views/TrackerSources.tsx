@@ -222,6 +222,7 @@ export function RecordSourceDetails({
 }) {
   const status = trackerStatus(s);
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a labelled block of read-only facts, not form fields
     <div role="group" aria-label={`Tracker ${s.name}`}>
       <MetaList>
         <MetaRow label="tracker" mono>
@@ -252,7 +253,7 @@ export function RecordSourceDetails({
       {manageable && (
         <a
           href={`#${trackerAnchor(s.name)}`}
-          className="mt-1 inline-flex min-h-8 items-center text-xs text-text-muted hover:text-text underline-offset-2 hover:underline pointer-coarse:min-h-11"
+          className="mt-1 inline-flex min-h-8 items-center text-xs pointer-coarse:min-h-11"
         >
           Check, rotate or retire in Trackers ↓
         </a>

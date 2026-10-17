@@ -1,7 +1,7 @@
 /** The daily cost-cap field saves once, on blur or Enter; partial or invalid text never
  *  reaches the server, and Escape restores the stored cap without closing the dialog. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "../test/rtl";
 import { NamespaceSettingsDialog } from "./NamespaceSettingsDialog";
 import { useStore } from "../lib/state";
 import * as api from "../api";

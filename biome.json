@@ -44,5 +44,28 @@
     "parser": {
       "tailwindDirectives": true
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["frontend/src/**/*.tsx", "!frontend/src/**/*.test.tsx"],
+      "linter": {
+        "enabled": true,
+        "rules": {
+          "complexity": "off",
+          "correctness": "off",
+          "nursery": "off",
+          "performance": "off",
+          "security": "off",
+          "style": "off",
+          "suspicious": "off",
+          "a11y": {
+            "recommended": true,
+            "useButtonType": "error",
+            "noNoninteractiveElementInteractions": "error",
+            "noAutofocus": "off"
+          }
+        }
+      }
+    }
+  ]
 }

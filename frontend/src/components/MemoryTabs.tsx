@@ -1,4 +1,6 @@
-import { Clock, FlaskConical } from "lucide-react";
+import type { MouseEvent } from "react";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { useStore, viewHref, type View } from "../lib/state";
 
 /**
@@ -8,38 +10,47 @@ import { useStore, viewHref, type View } from "../lib/state";
  * their title; the routes (`/memories`, `/recall`) are unchanged, so deep links and
  * the route budget still hold.
  */
-const MEMORY_TABS: Array<{ id: View; label: string; icon: typeof Clock }> = [
-  { id: "memories", label: "Memories", icon: Clock },
-  { id: "recall", label: "Recall", icon: FlaskConical },
+const MEMORY_TABS: Array<{ id: View; label: string; icon: IconName }> = [
+  { id: "memories", label: "Memories", icon: "clock" },
+  { id: "recall", label: "Recall", icon: "flask" },
 ];
+
+const modified = (e: MouseEvent) => e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0;
 
 export function MemoryTabs({ active }: { active: View }) {
   const setView = useStore((s) => s.setView);
+  // Each tab is a link to its route, so a modified click still opens it in a new tab. The
+  // panels are the routes themselves, so the triggers control no panel here.
   return (
-    <nav aria-label="Memory section" className="mb-5 flex items-center gap-1 border-b border-[var(--color-border)]">
-      {MEMORY_TABS.map((t) => {
-        const Icon = t.icon;
-        const on = t.id === active;
-        return (
-          <a
-            key={t.id}
-            href={viewHref(t.id)}
-            aria-current={on ? "page" : undefined}
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-              e.preventDefault();
-              if (!on) setView(t.id);
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 -mb-px text-sm border-b-2 no-underline transition-colors ${
-              on
-                ? "border-[var(--color-accent)] text-[var(--color-text)] font-medium"
-                : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            <Icon size={13} aria-hidden="true" /> {t.label}
-          </a>
-        );
-      })}
-    </nav>
+    <Tabs
+      value={active}
+      onValueChange={(v) => {
+        if (v !== active) setView(v as View);
+      }}
+      activationMode="manual"
+      className="mb-5"
+    >
+      <Tabs.TriggersList aria-label="Memory section">
+        {MEMORY_TABS.map((t) => (
+          <Tabs.Trigger key={t.id} value={t.id} asChild>
+            <a
+              href={viewHref(t.id)}
+              aria-controls={undefined}
+              aria-current={t.id === active ? "page" : undefined}
+              onMouseDown={(e) => {
+                if (modified(e)) e.preventDefault();
+              }}
+              onClick={(e) => {
+                if (!modified(e)) e.preventDefault();
+              }}
+              className="inline-flex items-center gap-1.5 no-underline"
+            >
+              <Icon name={t.icon} size="xs" aria-hidden="true" />
+              {t.label}
+            </a>
+          </Tabs.Trigger>
+        ))}
+      </Tabs.TriggersList>
+    </Tabs>
   );
 }

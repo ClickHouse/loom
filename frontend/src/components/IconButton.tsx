@@ -1,36 +1,40 @@
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, type ReactNode } from "react";
+import {
+  IconButton as ClickIconButton,
+  type IconButtonProps as ClickIconButtonProps,
+} from "@clickhouse/click-ui/IconButton";
 import { Tip } from "./ui/Tooltip";
 
 /**
- * Icon-only action button with a real hit target and a spoken name.
- *
- * A `p-1.5` wrapper around a 14 px glyph is a 26 px target — under the
- * 24 px WCAG floor once the border is counted, and well under what a
- * thumb needs. This renders at least 36 × 36 on a fine pointer and
- * 44 × 44 under `pointer: coarse`, keeps the glyph size the caller
- * passes, and names the control twice: `aria-label` for assistive
- * technology and the shared `Tip` tooltip for sighted users.
+ * Icon-only action: Click UI's IconButton with a spoken name and a tooltip. `label` is the
+ * `aria-label` and, unless `tooltip` is given, the tooltip text, so a sighted user and a
+ * screen reader get the same name.
  */
-const ICON_BTN =
-  "inline-flex items-center justify-center min-w-9 min-h-9 pointer-coarse:min-w-11 pointer-coarse:min-h-11 rounded-md transition-colors";
-
-interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "title" | "aria-label"> {
-  /** Accessible name; also the tooltip text unless `tooltip` is given. */
+interface IconButtonProps extends Omit<ClickIconButtonProps, "aria-label" | "title"> {
   label: string;
   /** Longer tooltip copy when the spoken name should stay short. */
   tooltip?: ReactNode;
-  children: ReactNode;
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { label, tooltip, children, className = "", type = "button", ...rest },
+  { label, tooltip, type, htmlType = "button", ...rest },
   ref,
 ) {
+  // A Radix trigger (`asChild`) hands its child `type="button"`, which on Click UI's
+  // IconButton would land on the variant prop.
+  const variant = type === undefined || (type as string) === "button" ? "ghost" : type;
   return (
     <Tip content={tooltip ?? label}>
-      <button ref={ref} type={type} aria-label={label} className={`${ICON_BTN} ${className}`} {...rest}>
-        {children}
-      </button>
+      <ClickIconButton
+        ref={ref}
+        type={variant}
+        htmlType={htmlType}
+        aria-label={label}
+        {...rest}
+        // A tooltip that only repeats the name would be read again as its description;
+        // a longer one keeps the description Radix ties to it.
+        {...(tooltip ? {} : { "aria-describedby": undefined })}
+      />
     </Tip>
   );
 });

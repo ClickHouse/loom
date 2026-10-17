@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AllowlistRow, AutoResolvedRow, ConflictRow, LearningEntry, MyNamespaceEntry, WhoAmI } from "../../api";
@@ -26,6 +26,7 @@ vi.mock("../../api", async (importOriginal) => {
     listAutoResolved: vi.fn(),
     listUnsuperseded: vi.fn(),
     restoreMemory: vi.fn(),
+    getMemoryById: vi.fn(),
   };
 });
 // The page's yes/no probe is shared with the sidebar and lives in api/audit.
@@ -35,6 +36,7 @@ vi.mock("../../api/audit", async (importOriginal) => ({
 }));
 import { hasAutoResolved } from "../../api/audit";
 import {
+  getMemoryById,
   listAllowlist,
   listAutoResolved,
   listConflicts,
@@ -142,6 +144,17 @@ describe("ReviewQueue", () => {
     resetNamespaceRoleCache();
     invalidateShared();
     vi.mocked(listUnsuperseded).mockResolvedValue(new Map());
+    vi.mocked(getMemoryById).mockReset();
+    vi.mocked(getMemoryById).mockResolvedValue({
+      found: false,
+      memory_id: "",
+      namespace: "",
+      memory_key: "",
+      value: null,
+      version: null,
+      pinned: false,
+      created_at: null,
+    });
     // Like the real one: the newest record of the same read.
     vi.mocked(hasAutoResolved).mockImplementation(
       async (id) => (await listAutoResolved(id, { limit: 1 })).rows.length > 0,
@@ -197,6 +210,71 @@ describe("ReviewQueue", () => {
     seed("ns-b");
     await screen.findByText("No conflicts", {}, WAIT);
     expect(screen.queryByRole("tab")).toBeNull();
+    // A lone Conflicts panel is the page, not a tab panel with no tabs.
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+  });
+
+  it("shows conflicts before the probes answer, and reads them once when a late probe reveals the Learnings tab", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("a/key")], next_before_version: null });
+    let reveal: (v: { rows: ReturnType<typeof learning>[] }) => void = () => {};
+    vi.mocked(listLearnings).mockReturnValue(new Promise((r) => (reveal = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/key", {}, WAIT);
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    await act(async () => reveal({ rows: [learning("a/learned")] }));
+    await screen.findByRole("tab", { name: /Learnings/ }, WAIT);
+    expect(screen.getByRole("tabpanel", { name: /Conflicts/ })).toHaveTextContent("value of a/key");
+    expect(vi.mocked(listConflicts)).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the peer's own key and value, not the conflict's", async () => {
+    const a = { ...conflict("lesson_a"), conflict_with: ["id-lesson_b"] };
+    // The peer is conflicted too, so the queue already holds it: no read by id.
+    const b = { ...conflict("lesson_b"), conflict_with: ["id-lesson_a"] };
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [a, b], next_before_version: null });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    const peer = (await screen.findByText("B · conflicting peer", {}, WAIT)).parentElement as HTMLElement;
+    const self = screen.getByText("A · this memory").parentElement as HTMLElement;
+    expect(self.textContent).toContain("lesson_a");
+    expect(self.textContent).toContain("value of lesson_a");
+    expect(peer.textContent).toContain("lesson_b");
+    expect(peer.textContent).toContain("value of lesson_b");
+    expect(peer.textContent).not.toContain("lesson_a");
+    expect(getMemoryById).not.toHaveBeenCalled();
+  });
+
+  it("reads a peer the queue does not hold by its id", async () => {
+    const a = { ...conflict("lesson_a"), conflict_with: ["id-elsewhere"] };
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [a], next_before_version: null });
+    vi.mocked(getMemoryById).mockResolvedValue({
+      found: true,
+      memory_id: "id-elsewhere",
+      namespace: "ns-a",
+      memory_key: "lesson_other",
+      value: "the other value",
+      version: 3,
+      pinned: false,
+      created_at: "2026-09-21T00:00:00Z",
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    const peer = (await screen.findByText("B · conflicting peer", {}, WAIT)).parentElement as HTMLElement;
+    await waitFor(() => expect(peer.textContent).toContain("the other value"), WAIT);
+    expect(peer.textContent).toContain("lesson_other");
+    expect(peer.textContent).not.toContain("lesson_a");
+    expect(getMemoryById).toHaveBeenCalledWith(ORG, "id-elsewhere", expect.anything());
+  });
+
+  it("names a peer that reads nothing by its id only", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("lesson_a")], next_before_version: null });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    const peer = (await screen.findByText("B · conflicting peer", {}, WAIT)).parentElement as HTMLElement;
+    await waitFor(() => expect(getMemoryById).toHaveBeenCalled(), WAIT);
+    expect(peer.textContent).toContain("peer-0000000");
+    expect(peer.textContent).not.toContain("lesson_a");
   });
 
   it("names the icon-only remove button on an exception", async () => {
@@ -636,5 +714,51 @@ describe("ReviewQueue", () => {
     await screen.findByText("Restored", {}, WAIT);
     expect(screen.getAllByText("Restored")).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Undo retirement of user_city" })).toHaveLength(1);
+  });
+
+  it("is operable from the keyboard: tabs, status filter and the decision buttons", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [conflict("k/one"), conflict("k/two")],
+      next_before_version: null,
+    });
+    vi.mocked(listLearnings).mockImplementation(async (_id, status) => ({
+      rows: status === "pending" ? [learning("k/pending")] : [learning("k/promoted")],
+    }));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+
+    // The conflict's reason field and buttons are reached with Tab and pressed with Enter.
+    const reason = screen.getByRole("textbox", { name: "Reason for the decision" });
+    reason.focus();
+    await user.keyboard("dup");
+    // The footer reads secondary first, primary last: Skip, Allow both, Drop A, Keep A.
+    for (const name of [/Skip/, /Allow both/, /Drop A/, /Keep A/]) {
+      await user.tab();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name }));
+    }
+    await user.keyboard("{Enter}");
+    await waitFor(
+      () => expect(resolveConflict).toHaveBeenCalledWith(expect.anything(), "id-k/one", "revise", { reason: "dup" }),
+      WAIT,
+    );
+    await screen.findByText("value of k/two", {}, WAIT);
+
+    // Arrow keys move between the sub-tabs.
+    const conflictsTab = screen.getByRole("tab", { name: /Conflicts/ });
+    conflictsTab.focus();
+    await user.keyboard("{ArrowRight}");
+    const learningsTab = screen.getByRole("tab", { name: /Learnings/ });
+    expect(document.activeElement).toBe(learningsTab);
+    await waitFor(() => expect(learningsTab.getAttribute("aria-selected")).toBe("true"), WAIT);
+    await screen.findByText("k/pending", {}, WAIT);
+
+    // The status filter is a group of toggle buttons pressed with Space.
+    const promoted = screen.getByRole("button", { name: "Promoted" });
+    promoted.focus();
+    await user.keyboard(" ");
+    await screen.findByText("k/promoted", {}, WAIT);
+    expect(promoted.getAttribute("aria-pressed")).toBe("true");
   });
 });

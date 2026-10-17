@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import * as Tabs from "@radix-ui/react-tabs";
-import { CheckCircle2, Circle, ExternalLink, PenLine, Plug, Search, UserPlus } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
+import { Select } from "@clickhouse/click-ui/Select";
+import { Tabs } from "@clickhouse/click-ui/Tabs";
 import type { Identity, MyNamespaceEntry, ServiceAccountEntry } from "../api";
 import { useStore } from "../lib/state";
 import { CLIENTS, formatMcpConfig, type ClientId } from "../lib/clients";
@@ -15,7 +18,7 @@ import {
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { MembersDialog } from "../flows/MembersDialog";
 import { DOCS_MCP_URL, DOCS_QUICKSTART_URL, DOCS_TOKENS_URL } from "../flows/TokenGate";
-import { Kbd, Panel } from "./ui";
+import { ExternalLink, Kbd, Panel, TabTrigger } from "./ui";
 import { CopyButton } from "./CopyButton";
 
 /**
@@ -75,26 +78,26 @@ export interface GettingStartedProps {
 
 const SAMPLE_QUERY = "deploy window";
 
-const STEP_META: Record<OnboardingStep, { title: string; why: string; icon: typeof Plug }> = {
+const STEP_META: Record<OnboardingStep, { title: string; why: string; icon: IconName }> = {
   connect: {
     title: "Connect a client",
     why: "Your AI tool talks to Loom through a token — mint one, paste one line into the tool, restart it.",
-    icon: Plug,
+    icon: "plug",
   },
   write: {
     title: "Write your first memory",
     why: "A memory is one fact Loom keeps for you — a preference, a decision, a deadline your tools should not forget.",
-    icon: PenLine,
+    icon: "pencil",
   },
   find: {
     title: "Find it again",
     why: "Search is how your tools get memories back; try it yourself so you know what they see.",
-    icon: Search,
+    icon: "search",
   },
   invite: {
     title: "Invite a teammate",
     why: "Your space is private until you add someone — a viewer reads it, a writer adds to it.",
-    icon: UserPlus,
+    icon: "users",
   },
 };
 
@@ -176,46 +179,37 @@ export function GettingStarted({
     >
       <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <h2 id="getting-started-title" className="text-md font-semibold tracking-tight">
-            Getting started
-          </h2>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5 leading-relaxed max-w-xl">
+          <h2 id="getting-started-title">Getting started</h2>
+          <p className="text-xs text-text-muted mt-0.5 max-w-xl">
             Loom remembers for your AI tools. Everything you save lands in your space (a <em>namespace</em>, in the
             docs)
             {spaceName ? (
               <>
                 {" "}
-                — <code className="font-mono text-2xs bg-[var(--color-surface-2)] px-1 rounded">{spaceName}</code>
+                — <code className="font-mono text-xs bg-surface-2 px-1 rounded-sm">{spaceName}</code>
               </>
             ) : null}
             . Four steps show the whole loop; about five minutes.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={dismiss}
-          className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-2 shrink-0"
-        >
+        <Button type="empty" htmlType="button" onClick={dismiss} className="shrink-0">
           Skip the tour
-        </button>
+        </Button>
       </div>
 
       <div className="flex items-center gap-3 mb-4">
-        <div
+        <ProgressBar
+          type="small"
+          progress={(n / total) * 100}
           role="progressbar"
           aria-label="Getting started progress"
           aria-valuemin={0}
           aria-valuemax={total}
           aria-valuenow={n}
           aria-valuetext={`${n} of ${total} steps done`}
-          className="flex-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"
-        >
-          <div
-            className="h-full bg-[var(--color-accent)] transition-[width]"
-            style={{ width: `${(n / total) * 100}%` }}
-          />
-        </div>
-        <span className="text-xs tabular text-[var(--color-text-muted)]">
+          className="flex-1"
+        />
+        <span className="text-xs tabular text-text-muted">
           {n} of {total} done
         </span>
       </div>
@@ -225,55 +219,41 @@ export function GettingStarted({
           const meta = STEP_META[step];
           const act = actions[step];
           const isDone = !!done[step];
-          const Icon = meta.icon;
           return (
             <li
               key={step}
-              className={`rounded-lg border p-3 ${isDone ? "border-[var(--color-border)] bg-[var(--color-surface-2)]/60" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"}`}
+              className={`rounded-sm border p-3 ${isDone ? "border-border bg-surface" : "border-border-strong bg-surface-2"}`}
             >
               <div className="flex items-start gap-3">
                 <span className="mt-0.5 shrink-0" aria-hidden="true">
                   {isDone ? (
-                    <CheckCircle2 size={18} className="text-success" />
+                    <Icon name="check-in-circle" size="md" color="var(--color-success)" />
                   ) : (
-                    <Circle size={18} className="text-[var(--color-text-subtle)]" />
+                    <Icon name="circle" size="md" color="var(--color-text-muted)" />
                   )}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-semibold flex items-center gap-2">
-                    <span className="text-[var(--color-text-muted)] tabular">{i + 1}.</span>
-                    <Icon size={13} className="text-[var(--color-text-muted)]" aria-hidden="true" />
+                  <h3 className="flex items-center gap-2">
+                    <span className="text-text-muted tabular">{i + 1}.</span>
+                    <Icon name={meta.icon} size="xs" aria-hidden="true" />
                     <span>{meta.title}</span>
                     {isDone && <span className="sr-only">(done)</span>}
                   </h3>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5 leading-relaxed">{meta.why}</p>
+                  <p className="text-xs text-text-muted mt-0.5">{meta.why}</p>
                   {step === "find" && !isDone && (
-                    <p className="text-2xs text-[var(--color-text-subtle)] mt-1">
+                    <p className="text-xs text-text-muted mt-1">
                       Or press <Kbd>⌘K</Kbd> anywhere and type a few words.
                     </p>
                   )}
                   {step === "connect" && lastMint && <ConnectLine mint={lastMint} />}
                   <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={act.run}
-                      className={
-                        isDone
-                          ? "inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
-                          : "inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)]"
-                      }
-                    >
+                    <Button type={isDone ? "secondary" : "primary"} htmlType="button" onClick={act.run}>
                       {act.label}
-                    </button>
+                    </Button>
                     {act.docs && (
-                      <a
-                        href={act.docs.href}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-2"
-                      >
-                        {act.docs.label} <ExternalLink size={10} aria-hidden="true" />
-                      </a>
+                      <ExternalLink href={act.docs.href} size="sm">
+                        {act.docs.label}
+                      </ExternalLink>
                     )}
                   </div>
                 </div>
@@ -286,16 +266,12 @@ export function GettingStarted({
       {allDone && (
         <div
           role="status"
-          className="mt-3 pt-3 border-t border-[var(--color-border)] flex flex-wrap items-center justify-between gap-2 text-xs"
+          className="mt-3 pt-3 border-t border-border flex flex-wrap items-center justify-between gap-2 text-xs"
         >
           <span className="text-success font-medium">All four done — Loom is remembering for you.</span>
-          <button
-            type="button"
-            onClick={dismiss}
-            className="px-2.5 py-1 text-xs font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-          >
+          <Button type="secondary" htmlType="button" onClick={dismiss}>
             Hide this checklist
-          </button>
+          </Button>
         </div>
       )}
 
@@ -333,73 +309,55 @@ function ConnectLine({ mint }: { mint: { token: string; mcpUrl: string } }) {
   const otherCfg = formatMcpConfig({ client: other, token: mint.token, mcpUrl: mint.mcpUrl });
   const others = CLIENTS.filter((c) => c.id !== "claude-code" && c.id !== "cursor");
   return (
-    <Tabs.Root defaultValue="claude-code" className="mt-2">
-      <Tabs.List
-        aria-label="Client"
-        className="inline-flex p-0.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md gap-0.5"
-      >
-        {[
-          ["claude-code", "Claude Code"],
-          ["cursor", "Cursor"],
-          ["other", "Other clients"],
-        ].map(([v, label]) => (
-          <Tabs.Trigger
-            key={v}
-            value={v}
-            className="px-2.5 py-1 text-xs font-medium rounded-[5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] data-[state=active]:bg-[var(--color-surface-2)] data-[state=active]:text-[var(--color-text)]"
-          >
-            {label}
-          </Tabs.Trigger>
-        ))}
-      </Tabs.List>
-      <Tabs.Content value="claude-code" className="mt-2">
-        <p className="text-2xs text-[var(--color-text-muted)] mb-1">
-          Run this once in a terminal, then start a new Claude Code session — Loom&apos;s profile and context arrive
-          when the client connects. For capture and hooks, install the plugin from Settings instead:
-        </p>
-        <CopyBlock text={claude.command ?? ""} label="Copy command" />
-      </Tabs.Content>
-      <Tabs.Content value="cursor" className="mt-2">
-        <p className="text-2xs text-[var(--color-text-muted)] mb-1">
-          Paste into Cursor's MCP settings (<code className="font-mono">.cursor/mcp.json</code>), then restart Cursor:
-        </p>
-        <CopyBlock text={JSON.stringify(cursor.block, null, 2)} label="Copy config" />
-      </Tabs.Content>
-      <Tabs.Content value="other" className="mt-2">
-        <label className="block text-2xs text-[var(--color-text-muted)] mb-1">
-          Client
-          <select
+    <div className="mt-2">
+      <Tabs defaultValue="claude-code">
+        <Tabs.TriggersList aria-label="Client">
+          <TabTrigger value="claude-code">Claude Code</TabTrigger>
+          <TabTrigger value="cursor">Cursor</TabTrigger>
+          <TabTrigger value="other">Other clients</TabTrigger>
+        </Tabs.TriggersList>
+        <Tabs.Content value="claude-code" className="mt-2">
+          <p className="text-xs text-text-muted mb-1">
+            Run this once in a terminal, then start a new Claude Code session — Loom&apos;s profile and context arrive
+            when the client connects. For capture and hooks, install the plugin from Settings instead:
+          </p>
+          <CopyBlock text={claude.command ?? ""} label="Copy command" />
+        </Tabs.Content>
+        <Tabs.Content value="cursor" className="mt-2">
+          <p className="text-xs text-text-muted mb-1">
+            Paste into Cursor's MCP settings (<code className="font-mono">.cursor/mcp.json</code>), then restart Cursor:
+          </p>
+          <CopyBlock text={JSON.stringify(cursor.block, null, 2)} label="Copy config" />
+        </Tabs.Content>
+        <Tabs.Content value="other" className="mt-2 space-y-2">
+          <Select
+            label="Client"
             value={other}
-            onChange={(e) => {
-              const picked = others.find((c) => c.id === e.target.value)?.id;
+            onSelect={(v) => {
+              const picked = others.find((c) => c.id === v)?.id;
               if (picked) setOther(picked);
             }}
-            className="ml-2 px-2 py-1 text-xs rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]"
           >
             {others.map((c) => (
-              <option key={c.id} value={c.id}>
+              <Select.Item key={c.id} value={c.id}>
                 {c.label}
-              </option>
+              </Select.Item>
             ))}
-          </select>
-        </label>
-        <CopyBlock text={JSON.stringify(otherCfg.block, null, 2)} label="Copy config" />
-      </Tabs.Content>
-    </Tabs.Root>
+          </Select>
+          <CopyBlock text={JSON.stringify(otherCfg.block, null, 2)} label="Copy config" />
+        </Tabs.Content>
+      </Tabs>
+    </div>
   );
 }
 
 function CopyBlock({ text, label }: { text: string; label: string }) {
   return (
     <div className="relative">
-      <pre className="text-2xs font-mono bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-2.5 pr-24 max-h-40 overflow-auto whitespace-pre-wrap break-all">
+      <pre className="text-xs font-mono bg-bg border border-border rounded-sm p-2.5 pr-32 max-h-40 overflow-auto whitespace-pre-wrap break-all">
         {text}
       </pre>
-      <CopyButton
-        text={text}
-        label={label}
-        className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-3)]"
-      />
+      <CopyButton text={text} label={label} className="absolute top-1.5 right-1.5" />
     </div>
   );
 }

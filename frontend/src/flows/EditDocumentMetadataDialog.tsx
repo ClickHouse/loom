@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { Pencil, X } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import { updateKnowledgeMetadata, type Identity, type KnowledgeEntry } from "../api";
 import { toast } from "../components/Toast";
+import { Modal, ModalFooter } from "../components/ui/Modal";
 import { humanizeError } from "../lib/format";
 
 interface Props {
@@ -70,130 +73,70 @@ export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry
     }
   };
 
+  const close = (v: boolean) => {
+    if (!busy) onOpenChange(v);
+  };
+
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(v) => {
-        if (!busy) onOpenChange(v);
-      }}
-    >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(540px,92vw)] max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-            <Dialog.Title className="text-lg font-semibold tracking-tight flex items-center gap-2">
-              <Pencil size={14} /> Edit details
-            </Dialog.Title>
-            <Dialog.Close
-              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30"
-              aria-label="Close"
-              disabled={busy}
-            >
-              <X size={16} />
-            </Dialog.Close>
+    <Modal open={open} onOpenChange={close} title="Edit details" className="w-full max-w-[540px]">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void onSave();
+        }}
+      >
+        <div className="space-y-4">
+          <TextField
+            id="edit-doc-source-uri"
+            label="Source URI (read-only — stable identifier the agent cites)"
+            value={entry.source_uri}
+            onChange={() => undefined}
+            readOnly
+          />
+          <TextField
+            id="edit-doc-title"
+            label="Title"
+            value={title}
+            onChange={setTitle}
+            placeholder={entry.original_filename || "Onboarding guide"}
+          />
+          <TextAreaField
+            id="edit-doc-description"
+            label="Description"
+            value={description}
+            onChange={setDescription}
+            placeholder="What's in this document, in one or two sentences."
+            rows={3}
+          />
+          <TextField
+            id="edit-doc-tags"
+            label="Tags (comma-separated)"
+            value={tagsInput}
+            onChange={setTagsInput}
+            placeholder="reference, work"
+          />
+          <div>
+            <Checkbox
+              label="Re-embed chunks with the new metadata"
+              aria-describedby="edit-doc-reindex-hint"
+              checked={reindex}
+              onCheckedChange={(x) => setReindex(x === true)}
+            />
+            <p id="edit-doc-reindex-hint" className="mt-1 text-xs text-text-muted">
+              Picks up the retrieval-quality boost from the new title + description without re-uploading. Costs one
+              OpenAI batch call per save.
+            </p>
           </div>
-
-          <div className="p-6 space-y-4">
-            {/* URI — read-only, with a note */}
-            <div>
-              <label
-                htmlFor="edit-doc-source-uri"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Source URI{" "}
-                <span className="text-[var(--color-text-subtle)]">(read-only — stable identifier the agent cites)</span>
-              </label>
-              <input
-                id="edit-doc-source-uri"
-                value={entry.source_uri}
-                readOnly
-                className="w-full font-mono text-xs px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] cursor-not-allowed"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="edit-doc-title"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Title
-              </label>
-              <input
-                id="edit-doc-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder={entry.original_filename || "Onboarding guide"}
-                className="w-full text-base px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="edit-doc-description"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Description
-              </label>
-              <textarea
-                id="edit-doc-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="What's in this document, in one or two sentences."
-                rows={3}
-                className="w-full text-sm px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none resize-y leading-relaxed"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="edit-doc-tags"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Tags <span className="text-[var(--color-text-subtle)]">(comma-separated)</span>
-              </label>
-              <input
-                id="edit-doc-tags"
-                value={tagsInput}
-                onChange={(e) => setTagsInput(e.target.value)}
-                placeholder="reference, work"
-                className="w-full text-sm px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none"
-              />
-            </div>
-
-            <label className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 cursor-pointer hover:border-[var(--color-border-strong)]">
-              <input
-                type="checkbox"
-                checked={reindex}
-                onChange={(e) => setReindex(e.target.checked)}
-                className="mt-0.5 accent-[var(--color-accent)]"
-              />
-              <span className="text-xs leading-snug">
-                <span className="font-medium text-[var(--color-text)]">Re-embed chunks with the new metadata</span>
-                <span className="block text-2xs text-[var(--color-text-muted)] mt-0.5">
-                  Picks up the retrieval-quality boost from the new title + description without re-uploading. Costs one
-                  OpenAI batch call per save.
-                </span>
-              </span>
-            </label>
-          </div>
-
-          <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
-            <Dialog.Close
-              disabled={busy}
-              className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md disabled:opacity-30"
-            >
-              Cancel
-            </Dialog.Close>
-            <button
-              onClick={onSave}
-              disabled={busy}
-              className="px-4 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-40"
-            >
-              {busy ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </div>
+        <ModalFooter>
+          <Button type="secondary" htmlType="button" disabled={busy} onClick={() => close(false)}>
+            Cancel
+          </Button>
+          <Button type="primary" htmlType="submit" loading={busy} disabled={busy}>
+            Save
+          </Button>
+        </ModalFooter>
+      </form>
+    </Modal>
   );
 }

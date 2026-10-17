@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../lib/state";
 import { Health, OpMixPanel, WorkersPanel, colourOf, parseOpMix } from "./Health";
@@ -30,7 +30,7 @@ describe("WorkersPanel", () => {
     useStore.setState({ whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"] } });
     respond({ workers: {} });
     render(<WorkersPanel />);
-    await waitFor(() => expect(screen.getAllByText("No workers reporting").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText("No workers reporting")).toBeInTheDocument());
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -147,26 +147,26 @@ describe("WorkersPanel", () => {
   it("shows the empty state only when there is nothing from either source", async () => {
     respond({ workers: {}, store: { rows: 0, reporters: [] } });
     render(<WorkersPanel />);
-    await waitFor(() => expect(screen.getAllByText("No workers reporting").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText("No workers reporting")).toBeInTheDocument());
     expect(screen.getByText(/Neither this process nor loom\.worker_status/)).toBeInTheDocument();
   });
 
   it("renders a malformed body as no rows instead of throwing", async () => {
     respond({ workers: { x: 5, y: null, z: "up" }, store: "loom.worker_status" });
     render(<WorkersPanel />);
-    await waitFor(() => expect(screen.getAllByText("No workers reporting").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText("No workers reporting")).toBeInTheDocument());
     expect(screen.getByText(/Neither this process nor loom\.worker_status/)).toBeInTheDocument();
     cleanup();
 
     // A list whose entries are not named objects, then a body that is not an object at all.
     respond({ workers: [5, { name: 7 }] });
     render(<WorkersPanel />);
-    await waitFor(() => expect(screen.getAllByText("No workers reporting").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText("No workers reporting")).toBeInTheDocument());
     cleanup();
 
     respond(null);
     render(<WorkersPanel />);
-    await waitFor(() => expect(screen.getAllByText("No workers reporting").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText("No workers reporting")).toBeInTheDocument());
   });
 
   it("reads a field of the wrong type as absent", async () => {

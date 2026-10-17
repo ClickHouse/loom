@@ -301,7 +301,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "plugin_hook",
     ),
-    "memory.get_by_id": ("sdk_method",),
+    "memory.get_by_id": (
+        "sdk_method",
+        "plugin_hook",
+    ),
     "memory.history": (
         "sdk_method",
         "plugin_hook",

@@ -1,17 +1,7 @@
 import { useMemo, useRef, useState } from "react";
-import {
-  AlertTriangle,
-  BookOpen,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  Footprints,
-  Pin,
-  PinOff,
-  Plus,
-  Route,
-  X,
-} from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { listFacts, searchMemory, type FactRow, type Identity, type SearchHit, type TaxonomyResponse } from "../../api";
 import { IconButton } from "../../components/IconButton";
 import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
@@ -144,20 +134,23 @@ function FactList({
   onOpenMemory: (k: string) => void;
   emptyText: string;
 }) {
-  if (facts === null) return <div className="text-xs text-text-subtle">Reading…</div>;
-  if (facts.length === 0) return <div className="text-xs text-text-subtle">{emptyText}</div>;
+  if (facts === null) return <div className="text-xs text-text-muted">Reading…</div>;
+  if (facts.length === 0) return <div className="text-xs text-text-muted">{emptyText}</div>;
   return (
     <ul className="space-y-1">
       {facts.map((f) => {
         const rel = relationLabel(f.relation);
         const link = (e: string) => (
-          <button
+          <Link
+            component="button"
             type="button"
-            className="font-mono underline decoration-dotted hover:text-text break-words text-left"
+            size="sm"
+            weight="mono"
+            className="break-words text-left"
             onClick={() => onWalk(e)}
           >
             {e}
-          </button>
+          </Link>
         );
         return (
           <li
@@ -182,12 +175,13 @@ function FactList({
               </span>
               <span className="tabular-nums text-text-muted shrink-0">{f.co_occur}×</span>
             </div>
-            <div className="mt-0.5 flex items-center gap-1.5 text-2xs text-text-subtle min-w-0 flex-wrap">
-              {f.provenance && <span className="px-1 rounded border border-border">{f.provenance}</span>}
+            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted min-w-0 flex-wrap">
+              {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
               <span className="tabular-nums">{f.last_seen ? f.last_seen.slice(0, 10) : ""}</span>
               {f.stale ? (
                 <span className="inline-flex items-center gap-1 text-warn">
-                  <AlertTriangle size={10} aria-hidden="true" /> stale — {f.sources.length} source row
+                  <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> stale —{" "}
+                  {f.sources.length} source row
                   {f.sources.length === 1 ? "" : "s"}, none active
                 </span>
               ) : f.sources.length > 0 ? (
@@ -343,8 +337,6 @@ export function Inspector({
       .catch(() => undefined);
   };
 
-  const actionCls = "text-text-muted hover:text-text hover:bg-surface";
-
   if (model && edge) {
     const c = edge.child;
     const held =
@@ -361,14 +353,12 @@ export function Inspector({
         header={
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
-              <SectionHeading label="Edge" />
+              <SectionHeading level={2} label="Edge" />
               <div className="text-sm font-semibold font-mono break-words">
                 {edge.parent} — {c.entity}
               </div>
             </div>
-            <IconButton label="Clear selection" onClick={() => onSelect(null)} className={actionCls}>
-              <X size={14} />
-            </IconButton>
+            <IconButton label="Clear selection" onClick={() => onSelect(null)} icon="cross" size="sm" />
           </div>
         }
       >
@@ -378,7 +368,7 @@ export function Inspector({
             {c.via_relation ? (
               relationLabel(c.via_relation)
             ) : (
-              <span className="text-text-subtle font-sans">co-mention (no typed relation)</span>
+              <span className="text-text-muted font-sans">co-mention (no typed relation)</span>
             )}
           </MetaRow>
           {c.via_relation && (
@@ -391,12 +381,13 @@ export function Inspector({
             {held}
           </MetaRow>
           <MetaRow label="provenance">
-            {c.via_provenance || <span className="text-text-subtle">{typed ? "unknown" : "co-occurrence edge"}</span>}
+            {c.via_provenance || <span className="text-text-muted">{typed ? "unknown" : "co-occurrence edge"}</span>}
           </MetaRow>
           {stale && (
             <MetaRow label="stale" tone="warn">
               <span className="inline-flex items-center gap-1">
-                <AlertTriangle size={11} aria-hidden="true" /> a row behind this edge has no active source
+                <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> a row behind this edge
+                has no active source
               </span>
             </MetaRow>
           )}
@@ -405,25 +396,22 @@ export function Inspector({
           <IconButton
             label={`Select ${shorten(c.entity, 24)}`}
             onClick={() => onSelect({ kind: "node", entity: c.entity })}
-            className={actionCls}
-          >
-            <ChevronRight size={14} />
-          </IconButton>
+            icon="chevron-right"
+            size="sm"
+          />
           <IconButton
             label={`Walk from ${shorten(c.entity, 24)}`}
             onClick={() => onWalk(c.entity)}
-            className={actionCls}
-          >
-            <Footprints size={14} />
-          </IconButton>
+            icon="arrow-right"
+            size="sm"
+          />
           <IconButton
             label="Copy the pair"
             onClick={() => copy(`${edge.parent} ${c.via_relation ? relationLabel(c.via_relation) : "—"} ${c.entity}`)}
-            className={actionCls}
-          >
-            <Copy size={14} />
-          </IconButton>
-          {copied && <span className="text-2xs text-text-muted">copied</span>}
+            icon="copy"
+            size="sm"
+          />
+          {copied && <span className="text-xs text-text-muted">copied</span>}
         </div>
         <div className="mt-3">
           <SectionHeading label="Rows behind this edge" count={facts ? facts.length : undefined} />
@@ -452,7 +440,7 @@ export function Inspector({
         tone="surface-2"
         scroll
         className="text-xs text-text-muted"
-        header={<SectionHeading label="Reading the graph" />}
+        header={<SectionHeading level={2} label="Reading the graph" />}
       >
         <NoticeLine notice={notice} about={null} />
         <ul className="space-y-1.5">
@@ -502,12 +490,10 @@ export function Inspector({
       header={
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <SectionHeading label={isSeed ? "Seed" : "Selected"} />
-            <div className="text-base font-semibold font-mono break-words">{n.entity}</div>
+            <SectionHeading level={2} label={isSeed ? "Seed" : "Selected"} />
+            <div className="text-sm font-semibold font-mono break-words">{n.entity}</div>
           </div>
-          <IconButton label="Clear selection" onClick={() => onSelect(null)} className={actionCls}>
-            <X size={14} />
-          </IconButton>
+          <IconButton label="Clear selection" onClick={() => onSelect(null)} icon="cross" size="sm" />
         </div>
       }
     >
@@ -531,13 +517,15 @@ export function Inspector({
         )}
         {!isSeed && parent !== null && (
           <MetaRow label="reached by">
-            <button
+            <Link
+              component="button"
               type="button"
+              size="sm"
               onClick={() => onSelect({ kind: "edge", parent, child: n.entity })}
-              className="text-left break-words underline decoration-dotted hover:text-text"
+              className="text-left break-words"
             >
               {reachedBy}
-            </button>
+            </Link>
           </MetaRow>
         )}
         {(n.valid_from || n.valid_to) && (
@@ -548,41 +536,37 @@ export function Inspector({
       </MetaList>
 
       <div className="mt-3 flex items-center gap-0.5 -mx-1 flex-wrap">
-        {!isSeed && (
-          <IconButton label="Walk from here" onClick={() => onWalk(n.entity)} className={actionCls}>
-            <Footprints size={14} />
-          </IconButton>
-        )}
+        {!isSeed && <IconButton label="Walk from here" onClick={() => onWalk(n.entity)} icon="arrow-right" size="sm" />}
         {!isSeed && (
           <IconButton
             label={`Path from ${shorten(model.seed, 20)} to here`}
             onClick={() => onPath(n.entity)}
-            className={actionCls}
-          >
-            <Route size={14} />
-          </IconButton>
+            icon="arrow-directions"
+            size="sm"
+          />
         )}
         <IconButton
           label={isCollapsed ? "Show hidden children" : "Expand in place (one hop of neighbours)"}
           disabled={expanding === n.entity}
           onClick={() => (isCollapsed ? onCollapse(n.entity, false) : onExpand(n.entity))}
-          className={actionCls}
-        >
-          <Plus size={14} />
-        </IconButton>
+          icon="plus"
+          size="sm"
+        />
         {hasChildren(n.entity) && !isCollapsed && (
-          <IconButton label="Collapse children" onClick={() => onCollapse(n.entity, true)} className={actionCls}>
-            <ChevronDown size={14} />
-          </IconButton>
+          <IconButton
+            label="Collapse children"
+            onClick={() => onCollapse(n.entity, true)}
+            icon="chevron-down"
+            size="sm"
+          />
         )}
         {!isSeed && (
           <IconButton
             label={isPinned ? "Unpin" : "Pin (survives facet changes)"}
             onClick={() => onPin(n.entity)}
-            className={actionCls}
-          >
-            {isPinned ? <PinOff size={14} /> : <Pin size={14} />}
-          </IconButton>
+            icon={isPinned ? "unpin" : "pin"}
+            size="sm"
+          />
         )}
         <IconButton
           label={
@@ -590,15 +574,12 @@ export function Inspector({
           }
           disabled={!firstHit}
           onClick={() => firstHit && onOpenMemory(firstHit.memory_key)}
-          className={actionCls}
-        >
-          <BookOpen size={14} />
-        </IconButton>
-        <IconButton label="Copy entity" onClick={() => copy(n.entity)} className={actionCls}>
-          <Copy size={14} />
-        </IconButton>
-        {copied && <span className="text-2xs text-text-muted">copied</span>}
-        {expanding === n.entity && <span className="text-2xs text-text-muted">expanding…</span>}
+          icon="book"
+          size="sm"
+        />
+        <IconButton label="Copy entity" onClick={() => copy(n.entity)} icon="copy" size="sm" />
+        {copied && <span className="text-xs text-text-muted">copied</span>}
+        {expanding === n.entity && <span className="text-xs text-text-muted">expanding…</span>}
       </div>
 
       {!isSeed && (
@@ -609,8 +590,7 @@ export function Inspector({
             aria-expanded={showWhy}
             className="flex items-center gap-1 section-label text-text-muted mb-1 hover:text-text"
           >
-            {showWhy ? <ChevronDown size={11} aria-hidden="true" /> : <ChevronRight size={11} aria-hidden="true" />} Why
-            it is here
+            <Icon name={showWhy ? "chevron-down" : "chevron-right"} size="xs" aria-hidden="true" /> Why it is here
           </button>
           {showWhy && (
             <ol className="text-xs font-mono space-y-0.5">
@@ -626,15 +606,23 @@ export function Inspector({
                       }}
                       aria-hidden="true"
                     />
-                    <button
-                      type="button"
-                      onClick={() => onSelect({ kind: "node", entity: e })}
-                      className={`min-w-0 break-words text-left hover:underline ${i === arr.length - 1 ? "text-text" : "text-text-muted"}`}
-                    >
-                      {e}
-                    </button>
+                    {/* The last hop is the node shown here, so it is text, not a link. */}
+                    {i === arr.length - 1 ? (
+                      <span className="min-w-0 break-words">{e}</span>
+                    ) : (
+                      <Link
+                        component="button"
+                        type="button"
+                        size="sm"
+                        weight="mono"
+                        onClick={() => onSelect({ kind: "node", entity: e })}
+                        className="min-w-0 break-words text-left"
+                      >
+                        {e}
+                      </Link>
+                    )}
                     {step && (
-                      <span className="text-2xs text-text-subtle shrink-0 font-sans">
+                      <span className="text-xs text-text-muted shrink-0 font-sans">
                         {typed && step.via_relation ? relationLabel(step.via_relation) : `${step.via_co_occur}×`}
                       </span>
                     )}
@@ -677,9 +665,9 @@ export function Inspector({
               : "Memories naming the seed or this entity (memory.search with an entity boost — an OR, so a row may name only one of them); click one to open it."
           }
         />
-        {hits === null && <div className="text-xs text-text-subtle">Searching…</div>}
+        {hits === null && <div className="text-xs text-text-muted">Searching…</div>}
         {hits && hits.length === 0 && (
-          <div className="text-xs text-text-subtle">
+          <div className="text-xs text-text-muted">
             {memoryTypes.size || tags.size
               ? "No memory row of the chosen type or tags names either entity."
               : "No memory row names either entity; the edge may come from a chunk or a document."}
@@ -702,12 +690,10 @@ export function Inspector({
                     className="w-full text-left text-xs rounded-md border border-border bg-surface px-2 py-1.5 hover:border-border-strong"
                   >
                     <TextClamp text={excerpt} lines={1} max={200} reach="parent" className="leading-snug" />
-                    <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-2xs text-text-subtle">
-                      <span className="px-1 rounded border border-border shrink-0">{h.memory_type}</span>
+                    <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-xs text-text-muted">
+                      <Badge text={h.memory_type} state="neutral" size="sm" className="shrink-0" />
                       {h.created_at && <span className="tabular-nums shrink-0">{h.created_at.slice(0, 10)}</span>}
-                      <span className="font-mono truncate flex-1" aria-label={h.memory_key}>
-                        {h.memory_key}
-                      </span>
+                      <span className="font-mono truncate flex-1">{h.memory_key}</span>
                       {h.namespace && h.namespace !== identity.namespace && (
                         <Chip label={h.namespace} mono className="shrink-0 min-h-5" />
                       )}

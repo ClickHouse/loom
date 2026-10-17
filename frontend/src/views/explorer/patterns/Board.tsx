@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { LayoutGrid, Lock } from "lucide-react";
 import { EmptyState } from "../../../components/EmptyState";
 import { Skeleton } from "../../../components/Skeleton";
 import { Tip } from "../../../components/ui";
@@ -69,6 +68,7 @@ function RowHeader({ row }: { row: BoardRow }) {
       : `${row.label}: ${row.open} open · ${row.untested} without a linked test. No risk snapshot names this component.`;
   return (
     <Tip content={tip}>
+      {/* biome-ignore lint/a11y/useSemanticElements: the row header of the div data grid in Board */}
       <div
         role="rowheader"
         tabIndex={0}
@@ -79,13 +79,13 @@ function RowHeader({ row }: { row: BoardRow }) {
         <span className="tabular-nums text-text-muted shrink-0">{row.open}</span>
         {g && t ? (
           <span
-            className={`tabular-nums shrink-0 inline-flex items-center gap-0.5 ${t.word === "worse" ? "text-danger" : t.word === "better" ? "text-success" : "text-text-subtle"}`}
+            className={`tabular-nums shrink-0 inline-flex items-center gap-0.5 ${t.word === "worse" ? "text-danger" : t.word === "better" ? "text-success" : "text-text-muted"}`}
             aria-hidden="true"
           >
             {pct(g.gap_ratio)} <span>{t.glyph}</span>
           </span>
         ) : (
-          <span className="text-text-subtle shrink-0" aria-hidden="true">
+          <span className="text-text-muted shrink-0" aria-hidden="true">
             —
           </span>
         )}
@@ -242,7 +242,7 @@ export function Board({
     return (
       <div className={`${frame} grid place-items-center`}>
         <EmptyState
-          icon={LayoutGrid}
+          icon="services"
           title="The tracker is not answering"
           description={`The source behind ${trackerNamespace} could not be read (breaker open, budget exceeded, or the credential unset). Nothing on the board is a claim; try again shortly.`}
         />
@@ -253,7 +253,7 @@ export function Board({
     return (
       <div className={`${frame} grid place-items-center`}>
         <EmptyState
-          icon={Lock}
+          icon="lock"
           title="Restricted — not available with this token"
           description="The bug board on this namespace needs a restricted tracker namespace your token does not carry."
         />
@@ -264,7 +264,7 @@ export function Board({
     return (
       <div className={`${frame} grid place-items-center`}>
         <EmptyState
-          icon={LayoutGrid}
+          icon="services"
           title="No board was planned"
           description={`${trackerNamespace} answered, but its catalogue routed the board question to nothing; the server may predate the bug board.`}
         />
@@ -275,7 +275,7 @@ export function Board({
     return (
       <div className={`${frame} grid place-items-center`}>
         <EmptyState
-          icon={LayoutGrid}
+          icon="services"
           title={
             totalRows
               ? "Every cell is filtered out"
@@ -295,6 +295,8 @@ export function Board({
   return (
     <div className={frame}>
       <div className="overflow-auto overscroll-contain flex-1 min-h-0">
+        {/* biome-ignore-start lint/a11y/useSemanticElements: APG data grid with a roving tabindex over the count cells; a <table> cannot hold the sticky CSS-grid layout */}
+        {/* biome-ignore-start lint/a11y/useFocusableInteractive: APG data grid — only the count cells take the roving focus; headers and empty cells are read, not visited */}
         <div
           ref={gridRef}
           role="grid"
@@ -334,7 +336,7 @@ export function Board({
                       key={s}
                       role="gridcell"
                       aria-label={`${r.label} ${s}: none`}
-                      className="border-b border-border/60 px-2 py-1 text-text-subtle text-center"
+                      className="border-b border-border/60 px-2 py-1 text-text-muted text-center"
                       aria-disabled="true"
                     >
                       ·
@@ -352,10 +354,10 @@ export function Board({
                     aria-selected={isSel}
                     aria-label={`${r.label} ${s}: ${c.open} open, ${c.untested} untested${c.flaky ? `, ${c.flaky} flaky` : ""}${c.bisected ? `, ${c.bisected} bisected` : ""}`}
                     style={HEAT_STYLE(share)}
-                    className={`board-cell border-b border-border/60 px-2 py-1 text-center cursor-pointer select-none outline-none ${isSel ? "ring-2 ring-inset ring-text" : ""}`}
+                    className={`board-cell border-b border-border/60 px-2 py-1 text-center cursor-pointer select-none ${isSel ? "ring-2 ring-inset ring-text" : ""}`}
                   >
                     <span className="tabular-nums font-medium">{c.open}</span>
-                    <span className="tabular-nums text-text-muted ml-1 text-2xs" aria-hidden="true">
+                    <span className="tabular-nums text-text-muted ml-1 text-xs" aria-hidden="true">
                       {c.open ? Math.round((c.untested / c.open) * 100) : 0}%
                     </span>
                   </div>
@@ -364,8 +366,10 @@ export function Board({
             </div>
           ))}
         </div>
+        {/* biome-ignore-end lint/a11y/useFocusableInteractive: the grid ends */}
+        {/* biome-ignore-end lint/a11y/useSemanticElements: the grid ends */}
       </div>
-      <div className="px-3 py-1.5 border-t border-border text-2xs text-text-muted flex items-center gap-3 flex-wrap">
+      <div className="px-3 py-1.5 border-t border-border text-xs text-text-muted flex items-center gap-3 flex-wrap">
         <span>
           <span className="tabular-nums text-text">{board.rows.length}</span>
           {totalRows && totalRows !== board.rows.length ? ` of ${totalRows}` : ""} components ·{" "}

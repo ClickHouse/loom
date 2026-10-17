@@ -399,6 +399,24 @@ export async function getMemory(
   return post<MemoryDetail>("/v1/memory.get", body, opts.signal);
 }
 
+/** One memory by its org-wide id (`memory.get_by_id`), the shape a conflict's
+ *  `conflict_with` names its peer by. `found` is false when no live row carries the id
+ *  or the caller cannot read its namespace. */
+export interface MemoryById {
+  found: boolean;
+  memory_id: string;
+  namespace: string;
+  memory_key: string;
+  value: unknown;
+  version: number | null;
+  pinned: boolean;
+  created_at: string | null;
+}
+
+export async function getMemoryById(org: string, memoryId: string, opts: RequestOpts = {}): Promise<MemoryById> {
+  return post<MemoryById>("/v1/memory.get_by_id", { org, memory_id: memoryId }, opts.signal);
+}
+
 /** POST /v1/memory.bulk_get — N keys in one CH round-trip. `agent: "*"` is the
  *  namespace-wide lookup the Memories list needs: the page mixes writers, and under the
  *  wildcard the server opens the unset user/session axes the same way memory.get does.

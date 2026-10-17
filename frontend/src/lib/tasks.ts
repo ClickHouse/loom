@@ -55,7 +55,7 @@ export const GROUPS: readonly Group[] = ["triage", "todo", "in_progress", "waiti
 
 export const GROUP_META: Record<Group, { label: string; color: string; hint: string }> = {
   triage: { label: "Triage", color: "var(--color-accent)", hint: "decide: accept or won't do" },
-  todo: { label: "To do", color: "var(--color-text-subtle)", hint: "waiting for an agent to pull" },
+  todo: { label: "To do", color: "var(--color-text-muted)", hint: "waiting for an agent to pull" },
   in_progress: { label: "In progress", color: "var(--color-info)", hint: "under a lease" },
   waiting: { label: "Waiting", color: "var(--color-warn)", hint: "blocked or deferred, with a reason" },
   closed: { label: "Closed", color: "var(--color-surface-3)", hint: "done · won't do · failed · cancelled" },
@@ -285,14 +285,14 @@ export function latestProgressNote(events: readonly TaskEvent[]): string {
 /** The pill: a label a reader can tell apart without its colour, and its dot. */
 export const STATUS_META: Record<TaskStatus, { label: string; dot: string }> = {
   triage: { label: "triage", dot: "var(--color-accent)" },
-  todo: { label: "to do", dot: "var(--color-text-subtle)" },
+  todo: { label: "to do", dot: "var(--color-text-muted)" },
   in_progress: { label: "in progress", dot: "var(--color-info)" },
   blocked: { label: "blocked", dot: "var(--color-warn)" },
   deferred: { label: "deferred", dot: "var(--color-cat-5)" },
   done: { label: "done", dot: "var(--color-success)" },
-  wont_do: { label: "won't do", dot: "var(--color-text-subtle)" },
+  wont_do: { label: "won't do", dot: "var(--color-text-muted)" },
   failed: { label: "failed", dot: "var(--color-danger)" },
-  cancelled: { label: "cancelled", dot: "var(--color-text-subtle)" },
+  cancelled: { label: "cancelled", dot: "var(--color-text-muted)" },
 };
 
 export const PRIORITY_LABEL: Record<number, string> = { 1: "P1 urgent", 2: "P2 high", 3: "P3 normal", 4: "P4 low" };

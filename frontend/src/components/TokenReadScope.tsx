@@ -1,5 +1,10 @@
-import { Lock } from "lucide-react";
+import type { ReactNode } from "react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import type { ScopeRepo, TokenReadScope } from "../lib/tokenScope";
+import { ExternalLink } from "./ui/ExternalLink";
+import { TipTarget } from "./ui/TipTarget";
 
 /** "What this token will read and write", shown under the namespace pick
  * before the token is minted. The pick is one namespace; the token reads many, and a page
@@ -20,26 +25,24 @@ export function TokenReadScopePanel({
   const addable = !!onToggleRepo;
   const includedRepos = scope.excludedRestricted.filter((r) => included?.has(r.repo));
   const stillExcluded = scope.excludedRestricted.filter((r) => !included?.has(r.repo));
-  const chip =
-    "inline-flex items-center px-1.5 py-0.5 rounded font-mono text-[11px] bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] max-w-[16rem] truncate";
   const repoCount = scope.repositories.length;
   const nsCount = scope.namespaces.length;
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a read-only summary, not form controls, so a named group and not a fieldset
     <div
-      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-xs space-y-2"
+      className="rounded-sm border border-border bg-surface-2 px-3 py-2.5 text-xs space-y-2"
       data-testid="token-read-scope"
+      role="group"
       aria-label="What this token can read and write"
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-medium text-[var(--color-text)] shrink-0">Writes to</span>
-        <span className={chip} title={scope.home}>
-          {scope.home || "—"}
-        </span>
-        <span className="text-[var(--color-text-muted)]">memories, captured sessions and working notes land here.</span>
+        <span className="font-medium text-text shrink-0">Writes to</span>
+        <Name>{scope.home || "—"}</Name>
+        <span className="text-text-muted">memories, captured sessions and working notes land here.</span>
       </div>
 
       <div className="space-y-1">
-        <div className="text-[var(--color-text)] font-medium">
+        <div className="text-text font-medium">
           Reads {nsCount} namespace{nsCount === 1 ? "" : "s"}
           {repoCount > 0 ? (
             <>
@@ -47,98 +50,87 @@ export function TokenReadScopePanel({
               and {repoCount} repositor{repoCount === 1 ? "y" : "ies"}
             </>
           ) : null}
-          <span className="font-normal text-[var(--color-text-muted)]">
+          <span className="font-normal text-text-muted">
             {" "}
             — everything you belong to, including what you join later.
           </span>
         </div>
         <div className="flex flex-wrap gap-1">
           {scope.namespaces.map((ns) => (
-            <span key={ns} className={chip} title={ns}>
-              {ns}
-            </span>
+            <Name key={ns}>{ns}</Name>
           ))}
           {scope.repositories.map((r) => (
-            <span key={r.repo} className={chip} title={r.branches.map((b) => b.namespace).join(", ")}>
+            <Name key={r.repo} detail={branchNamespaces(r)}>
               {r.repo}
-              {r.branches.length > 1 ? (
-                <span className="ml-1 text-[var(--color-text-muted)]">· {r.branches.length} branches</span>
-              ) : null}
-            </span>
+              {r.branches.length > 1 ? <span className="font-sans"> · {r.branches.length} branches</span> : null}
+            </Name>
           ))}
           {includedRepos.map((r) => (
-            <span
+            <Name
               key={r.repo}
-              className={chip}
-              title={`${r.branches.map((b) => b.namespace).join(", ")} — restricted; the token gets its own read grant`}
+              detail={`${branchNamespaces(r)} — restricted; the token gets its own read grant`}
               data-testid="token-read-scope-included"
+              locked
             >
-              <Lock size={10} className="mr-1 shrink-0" aria-hidden="true" />
               {r.repo}
-              {r.branches.length > 1 ? (
-                <span className="ml-1 text-[var(--color-text-muted)]">· {r.branches.length} branches</span>
-              ) : null}
-            </span>
+              {r.branches.length > 1 ? <span className="font-sans"> · {r.branches.length} branches</span> : null}
+            </Name>
           ))}
         </div>
       </div>
 
       {scope.pending.length > 0 && (
-        <div className="text-[var(--color-text-muted)]">
+        <div className="text-text-muted">
           Awaiting approval: {scope.pending.join(", ")}. Readable the moment an admin approves — no new token.
         </div>
       )}
 
       {scope.excludedRestricted.length > 0 && (
-        <div
-          className="flex items-start gap-1.5 text-[var(--color-text-muted)]"
-          data-testid="token-read-scope-restricted"
-        >
-          <Lock size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
+        <div className="flex items-start gap-1.5 text-text-muted" data-testid="token-read-scope-restricted">
+          <Icon name="lock" size="xs" aria-hidden="true" className="mt-0.5" />
           <div className="space-y-1">
             {addable ? (
               <>
                 <div>
-                  <span className="text-[var(--color-text)] font-medium">Restricted repositories</span> are not read
-                  through membership. Tick one to add it: the token names it and gets a read grant of its own, revoked
-                  with the token, and with your access to the repository. A restricted tracker record bound to the
-                  repository comes with it when you hold a grant there.
+                  <span className="text-text font-medium">Restricted repositories</span> are not read through
+                  membership. Tick one to add it: the token names it and gets a read grant of its own, revoked with the
+                  token, and with your access to the repository. A restricted tracker record bound to the repository
+                  comes with it when you hold a grant there.
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-1">
                   {scope.excludedRestricted.map((r) => (
-                    <label key={r.repo} className="inline-flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={!!included?.has(r.repo)}
-                        onChange={() => onToggleRepo?.(r)}
-                        className="accent-[var(--color-accent)]"
-                        aria-label={`Add ${r.repo} to this token`}
-                      />
-                      <span className={chip} title={r.branches.map((b) => b.namespace).join(", ")}>
-                        {r.repo}
-                      </span>
-                      {r.branches.length > 1 ? (
-                        <span className="text-[var(--color-text-muted)]">{r.branches.length} branches</span>
-                      ) : null}
-                    </label>
+                    <Checkbox
+                      key={r.repo}
+                      checked={!!included?.has(r.repo)}
+                      onCheckedChange={() => onToggleRepo?.(r)}
+                      aria-label={`Add ${r.repo} to this token`}
+                      label={
+                        <span className="inline-flex items-center gap-1.5">
+                          <Name detail={branchNamespaces(r)}>{r.repo}</Name>
+                          {r.branches.length > 1 ? (
+                            <span className="text-text-muted">{r.branches.length} branches</span>
+                          ) : null}
+                        </span>
+                      }
+                    />
                   ))}
                 </div>
                 {docsHref ? (
                   <div>
-                    <a className="underline" href={docsHref} target="_blank" rel="noreferrer">
+                    <ExternalLink href={docsHref} size="sm">
                       How restricted access works
-                    </a>
+                    </ExternalLink>
                     .
                   </div>
                 ) : null}
               </>
             ) : (
               <div>
-                <span className="text-[var(--color-text)] font-medium">Not included: </span>
+                <span className="text-text font-medium">Not included: </span>
                 {stillExcluded.map((r) => (
-                  <span key={r.repo} className={`${chip} mr-1`} title={r.branches.map((b) => b.namespace).join(", ")}>
+                  <Name key={r.repo} detail={branchNamespaces(r)} className="mr-1">
                     {r.repo}
-                  </span>
+                  </Name>
                 ))}
                 <span>
                   {stillExcluded.length === 1 ? "is a restricted repository" : "are restricted repositories"}. A
@@ -147,9 +139,9 @@ export function TokenReadScopePanel({
                   {docsHref ? (
                     <>
                       {" "}
-                      <a className="underline" href={docsHref} target="_blank" rel="noreferrer">
+                      <ExternalLink href={docsHref} size="sm">
                         How to get one
-                      </a>
+                      </ExternalLink>
                       .
                     </>
                   ) : null}
@@ -161,4 +153,34 @@ export function TokenReadScopePanel({
       )}
     </div>
   );
+}
+
+const branchNamespaces = (r: ScopeRepo) => r.branches.map((b) => b.namespace).join(", ");
+
+/** A namespace or repository name: Click UI's badge, the name in mono. */
+function Name({
+  children,
+  locked = false,
+  detail,
+  ...rest
+}: {
+  children: ReactNode;
+  locked?: boolean;
+  /** More about the name, e.g. the namespaces a repository spans: its tooltip. */
+  detail?: string;
+  className?: string;
+  "data-testid"?: string;
+}) {
+  const badge = (
+    <Badge
+      {...rest}
+      text={
+        <span className="inline-flex items-center gap-1 font-mono">
+          {locked && <Icon name="lock" size="xs" aria-hidden="true" />}
+          <span>{children}</span>
+        </span>
+      }
+    />
+  );
+  return detail ? <TipTarget tip={detail}>{badge}</TipTarget> : badge;
 }

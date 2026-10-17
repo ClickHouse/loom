@@ -355,20 +355,28 @@ async def handle_conversation_get(
         return await _conversation_get_reads(input)
 
 
+def _thread_reader(agent: str) -> str | None:
+    """The agent filter for one thread's reads: "*" or "-" reads every agent's turns
+    (a caller that has only the thread id: a search hit, a memory's source), as
+    conversation.search reads them."""
+    return None if agent in ("*", "-") else agent
+
+
 async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGetOutput:
     from server.knowledge.store import conversations as conversation_repo
 
+    agent = _thread_reader(input.agent)
     thread = await conversation_repo.fetch_thread(
         input.org,
         input.namespace,
-        input.agent,
+        agent,
         input.thread_id,
     )
 
     msg_count = await conversation_repo.count_thread_msgs(
         input.org,
         input.namespace,
-        input.agent,
+        agent,
         input.thread_id,
     )
 
@@ -382,22 +390,31 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
     thread_row: Mapping[str, Any] = thread if thread is not None else {}
 
     messages: list[_ConversationEntry] = []
+    next_cursor: str | None = None
+    writer = agent or ""
     if input.include_messages:
         # list_thread has no offset arg, so pull (offset + limit) and slice.
         # `order="desc"` counts the page from the newest turn, so offset 0
         # is the thread's tail and the messages come back newest first.
+        # Oldest first, one row past the page says whether another follows.
+        peek = 1 if input.order == "asc" else 0
         rows = await conversation_repo.list_thread(
             input.org,
             input.namespace,
-            input.agent,
+            agent,
             input.thread_id,
-            limit=input.offset + input.limit,
+            limit=input.offset + input.limit + peek,
             order=input.order,
         )
         page = rows[input.offset : input.offset + input.limit]
+        if input.order == "asc" and page and len(rows) > input.offset + input.limit:
+            next_cursor = _encode_cursor(page[-1].ts, page[-1].msg_id)
+        if page and not writer:
+            writer = max(page, key=lambda r: r.ts).agent
         messages = [
             _ConversationEntry(
                 msg_id=r.msg_id,
+                agent=r.agent,
                 role=r.role,
                 content=r.content,
                 reasoning=r.reasoning,
@@ -417,11 +434,13 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
         metadata=_safe_load_json(thread_row.get("metadata", "") or ""),
         run_id=thread_row.get("run_id", "-") or "-",
         user_id=thread_row.get("user_id", "-") or "-",
-        agent=thread_row.get("agent", "") or input.agent,
+        # The owner (the thread row's agent), else the latest writer read.
+        agent=thread_row.get("agent", "") or writer,
         created_at=thread_row.get("created_at"),
         updated_at=thread_row.get("updated_at"),
         msg_count=msg_count,
         messages=messages,
+        next_cursor=next_cursor,
     )
 
 
@@ -435,7 +454,7 @@ async def handle_conversation_list(
     rows = await conversation_repo.list_thread(
         input.org,
         input.namespace,
-        input.agent,
+        _thread_reader(input.agent),
         input.thread_id,
         run_id=input.run_id,
         after=after,
@@ -447,6 +466,7 @@ async def handle_conversation_list(
     entries = [
         _ConversationEntry(
             msg_id=r.msg_id,
+            agent=r.agent,
             role=r.role,
             content=r.content,
             reasoning=r.reasoning,
@@ -593,7 +613,8 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
         input.namespace,
         window_days=int(input.window_days),
         limit=int(input.limit),
-        agent=input.agent if input.agent and input.agent != "*" else None,
+        agent=_thread_reader(input.agent) if input.agent else None,
+        count_turns=not input.fields or "msg_count" in input.fields,
     )
     # Titles live on the conversation_threads metadata table (set by
     # conversation.create).

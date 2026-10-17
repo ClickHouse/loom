@@ -1,5 +1,8 @@
-import * as Dialog from "@radix-ui/react-dialog";
-import { Keyboard, X } from "lucide-react";
+import { Kbd } from "./ui";
+import { Modal } from "./ui/Modal";
+import { useId, useState } from "react";
+import { Switch } from "@clickhouse/click-ui/Switch";
+import { setSingleKeyShortcuts, singleKeyShortcutsOn } from "../lib/shortcuts";
 
 interface Shortcut {
   key: string;
@@ -19,7 +22,7 @@ const GOTO: Shortcut[] = [
   { key: "g d", label: "Go to Spaces (browse and join)" },
   { key: "g r", label: "Go to Review queue" },
   { key: "g a", label: "Go to Activity" },
-  { key: "g s", label: "Go to Setup" },
+  { key: "g s", label: "Go to Settings" },
 ];
 
 const LIST: Shortcut[] = [
@@ -45,46 +48,53 @@ const SEARCH: Shortcut[] = [
 ];
 
 export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [singleKeys, setSingleKeys] = useState(singleKeyShortcutsOn);
+  const describedBy = useId();
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(520px,90vw)] max-h-[80vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)]">
-            <Dialog.Title className="text-md font-semibold tracking-tight flex items-center gap-2">
-              <Keyboard size={14} /> Keyboard shortcuts
-            </Dialog.Title>
-            <Dialog.Close
-              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              aria-label="Close"
-            >
-              <X size={14} />
-            </Dialog.Close>
-          </div>
-          <div className="p-5 space-y-5">
-            <Section title="Global" rows={GLOBAL} />
-            <Section title="Universal search" rows={SEARCH} />
-            <Section title="Navigation" rows={GOTO} />
-            <Section title="Lists" rows={LIST} />
-            <Section title="Inspector" rows={INSPECTOR} />
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts" className="max-w-[520px] w-full">
+      <div className="mb-4 space-y-1">
+        <Switch
+          checked={singleKeys}
+          onCheckedChange={(on) => {
+            setSingleKeyShortcuts(on);
+            setSingleKeys(on);
+          }}
+          label="Single-key shortcuts"
+          orientation="horizontal"
+          dir="start"
+          aria-describedby={describedBy}
+        />
+        <p id={describedBy} className="text-xs text-text-muted">
+          Every one-key shortcut: ?, /, g then a letter, j and k; the Tasks keys (a, s, c, x, d); the memory drawer's e,
+          d and p; and the graph outline's letters. Turn them off if speech input or a stray key sets them off; ⌘K,
+          Escape and the arrows stay on.
+        </p>
+      </div>
+      <section
+        className="max-h-[60vh] overflow-y-auto space-y-5"
+        aria-label="Keyboard shortcuts"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region must take focus so a keyboard user can scroll it (WCAG 2.1.1)
+        tabIndex={0}
+      >
+        <Section title="Global" rows={GLOBAL} />
+        <Section title="Universal search" rows={SEARCH} />
+        <Section title="Navigation" rows={GOTO} />
+        <Section title="Lists" rows={LIST} />
+        <Section title="Inspector" rows={INSPECTOR} />
+      </section>
+    </Modal>
   );
 }
 
 function Section({ title, rows }: { title: string; rows: Shortcut[] }) {
   return (
     <div>
-      <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2">{title}</h4>
+      <h3 className="section-label mb-2">{title}</h3>
       <div className="space-y-1">
         {rows.map((r) => (
           <div key={r.key} className="flex items-center justify-between text-sm">
-            <span className="text-[var(--color-text)]">{r.label}</span>
-            <kbd className="font-mono text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
-              {r.key}
-            </kbd>
+            <span className="text-text">{r.label}</span>
+            <Kbd>{r.key}</Kbd>
           </div>
         ))}
       </div>

@@ -1,10 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
 import type { Inbox, InboxCount, TaskListRow, TaskRow } from "../api/tasks";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { axeViolations } from "../test/axe";
 import { Tasks } from "./Tasks";
 
 // The Tasks page. Mocked at the wrapper level, like Recent.polls.test.tsx: the page reads
@@ -164,10 +165,13 @@ function seed(whoami: WhoAmI, mine: MyNamespaceEntry[]) {
   });
 }
 
-const groupRows = (name: RegExp) =>
-  within(screen.getByRole("region", { name }))
+// Task rows only: each group's first row is its header.
+const taskRows = (el: HTMLElement = document.body) =>
+  within(el)
     .queryAllByRole("row")
+    .filter((r) => r.hasAttribute("data-task-id"))
     .map((r) => r.getAttribute("aria-label"));
+const groupRows = (name: RegExp) => taskRows(screen.getByRole("rowgroup", { name }));
 
 describe("Tasks page", () => {
   beforeEach(() => {
@@ -203,6 +207,17 @@ describe("Tasks page", () => {
     expect(listTasks).toHaveBeenCalledTimes(1);
   });
 
+  it("the list is a valid grid: rowgroups of rows of gridcells, axe-clean with every group open", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.click(screen.getByRole("checkbox", { name: "Show closed" }));
+    await user.click(within(screen.getByRole("rowgroup", { name: /^Closed/ })).getByRole("button", { name: /Closed/ }));
+    const grid = screen.getByRole("grid", { name: "Tasks by what happens next" });
+    expect(await axeViolations(grid)).toEqual([]);
+  });
+
   it("groups rows by what happens next, in queue order, with Closed hidden until asked for", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
@@ -212,14 +227,14 @@ describe("Tasks page", () => {
     expect(groupRows(/^To do/)).toEqual(["Task low-late"]);
     expect(groupRows(/^In progress/)).toEqual(["Task running"]);
     expect(groupRows(/^Waiting/)).toEqual(["Task blocked"]);
-    expect(screen.queryByRole("region", { name: /^Closed/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("rowgroup", { name: /^Closed/ })).not.toBeInTheDocument();
     expect(screen.getByText("decide: accept or won't do")).toBeInTheDocument();
     // The row's one line: the reason for a wait, the poster and age in triage, the lease in progress.
     expect(screen.getByText("blocked on human: needs a repro")).toBeInTheDocument();
     expect(screen.getByText("from reporter-public · 42 min ago")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /lease: 6 min left/ })).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Show closed" }));
-    const closed = screen.getByRole("region", { name: /^Closed/ });
+    const closed = screen.getByRole("rowgroup", { name: /^Closed/ });
     // collapsed by default: the header shows, the rows do not
     expect(within(closed).getByRole("button", { name: /Closed/ })).toHaveAttribute("aria-expanded", "false");
     await user.click(within(closed).getByRole("button", { name: /Closed/ }));
@@ -240,10 +255,10 @@ describe("Tasks page", () => {
     expect(within(tiles).getByRole("button", { name: "Lease ending ≤10 min: 1" })).toBeInTheDocument();
     await user.click(within(tiles).getByRole("button", { name: "Failed · reopen or close: 1" }));
     // a closed row the tile asks for shows even with Show closed off
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual(["Task failed"]);
+    expect(taskRows()).toEqual(["Task failed"]);
     await user.click(within(tiles).getByRole("button", { name: "Failed · reopen or close: 1" })); // off again
     await user.click(within(tiles).getByRole("button", { name: "Lease ending ≤10 min: 1" }));
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual(["Task running"]);
+    expect(taskRows()).toEqual(["Task running"]);
   });
 
   it("filters by kind and by who posted (the inbox's own agent vs others)", async () => {
@@ -252,20 +267,24 @@ describe("Tasks page", () => {
     render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
     await user.click(screen.getByRole("button", { name: "coverage_gap" }));
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual(["Task low-late"]);
+    expect(taskRows()).toEqual(["Task low-late"]);
     await user.click(screen.getByRole("button", { name: "coverage_gap" }));
     await user.click(screen.getByRole("button", { name: "this agent" }));
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual(["Task low-late"]);
+    expect(taskRows()).toEqual(["Task low-late"]);
     await user.click(screen.getByRole("button", { name: "other agents" }));
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual([
-      "Task urgent",
-      "Task running",
-      "Task blocked",
-    ]);
+    expect(taskRows()).toEqual(["Task urgent", "Task running", "Task blocked"]);
   });
 
   it("lists every inbox with its to-do and running counts, and All inboxes reads one task.list per inbox", async () => {
     vi.mocked(listInboxes).mockResolvedValueOnce([INBOX, INBOX2]);
+    // Each inbox answers with its own tasks; task ids are unique across inboxes.
+    vi.mocked(listTasks).mockImplementation(async (_scope, opts) => ({
+      tasks:
+        opts?.inbox === INBOX2.inbox
+          ? ROWS.map((r) => ({ ...r, task_id: `${r.task_id}-b`, inbox: INBOX2.inbox }))
+          : ROWS,
+      truncated: false,
+    }));
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
     render(<Tasks />);
@@ -304,7 +323,7 @@ describe("Tasks page", () => {
     await waitFor(() => expect(acceptTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent"));
     await waitFor(() => expect(groupRows(/^To do/)).toEqual(["Task urgent", "Task low-late"]));
     expect(
-      within(screen.getByRole("region", { name: /^Triage/ })).getByText("Nothing waiting for a decision."),
+      within(screen.getByRole("rowgroup", { name: /^Triage/ })).getByText("Nothing waiting for a decision."),
     ).toBeInTheDocument();
     expect(taskCounts).toHaveBeenCalledTimes(2); // the rail's numbers follow the action
   });
@@ -330,7 +349,7 @@ describe("Tasks page", () => {
       expect(wontDoTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent", "duplicate of private#3990"),
     );
     await user.click(screen.getByRole("checkbox", { name: "Show closed" }));
-    await user.click(within(screen.getByRole("region", { name: /^Closed/ })).getByRole("button", { name: /Closed/ }));
+    await user.click(within(screen.getByRole("rowgroup", { name: /^Closed/ })).getByRole("button", { name: /Closed/ }));
     await waitFor(() => expect(groupRows(/^Closed/)).toContain("Task urgent"));
     expect(screen.getByText("duplicate of private#3990")).toBeInTheDocument();
   });
@@ -369,10 +388,9 @@ describe("Tasks page", () => {
     expect(within(panel).getByRole("heading", { name: "Task urgent" })).toBeInTheDocument();
     await within(panel).findByText("Fix it");
     expect(within(panel).getByRole("heading", { name: "Acceptance criteria" })).toBeInTheDocument();
-    expect(within(panel).getByRole("link", { name: "ClickHouse/ClickHouse#93412" })).toHaveAttribute(
-      "href",
-      "https://github.com/ClickHouse/ClickHouse/issues/93412",
-    );
+    expect(
+      within(panel).getByRole("link", { name: "ClickHouse/ClickHouse#93412 (opens in a new tab)" }),
+    ).toHaveAttribute("href", "https://github.com/ClickHouse/ClickHouse/issues/93412");
     expect(within(panel).getByText("Confidential.")).toBeInTheDocument();
     expect(within(panel).getByText(/from reporter-public/)).toBeInTheDocument();
     await within(panel).findByLabelText(/4 tasks from this poster: 2 done, 1 won't do, 0 failed, 1 open/);
@@ -440,6 +458,42 @@ describe("Tasks page", () => {
     expect(screen.queryByRole("complementary", { name: "Task detail" })).not.toBeInTheDocument();
     await user.keyboard("a");
     await waitFor(() => expect(acceptTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent"));
+  });
+
+  it("the grid is one tab stop: arrows move between headers and rows, Home / End jump, Left / Right walk a row", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    const grid = screen.getByRole("grid", { name: "Tasks by what happens next" });
+    const stops = () => [...grid.querySelectorAll('[tabindex="0"]')];
+    expect(stops()).toHaveLength(1);
+    const triageHead = within(screen.getByRole("rowgroup", { name: /^Triage/ })).getByRole("button", {
+      name: /Triage/,
+    });
+    expect(stops()[0]).toBe(triageHead);
+    triageHead.focus();
+    await user.keyboard("{ArrowDown}");
+    const urgent = screen.getByRole("row", { name: "Task urgent" });
+    expect(urgent).toHaveFocus();
+    expect(urgent).toHaveAttribute("aria-selected", "true");
+    expect(stops()).toEqual([urgent]);
+    await user.keyboard("{ArrowRight}");
+    expect(within(urgent).getByRole("button", { name: "Accept Task urgent" })).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(urgent).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(
+      within(screen.getByRole("rowgroup", { name: /^To do/ })).getByRole("button", { name: /To do/ }),
+    ).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{ArrowUp}{ArrowUp}");
+    expect(urgent).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(screen.getByRole("row", { name: "Task blocked" })).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(triageHead).toHaveFocus();
   });
 
   it("the board shows the same five groups as columns and shares the selection", async () => {

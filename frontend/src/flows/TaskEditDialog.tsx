@@ -1,19 +1,13 @@
 import { useMemo, useState } from "react";
-import { Pencil, Plus } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Select } from "@clickhouse/click-ui/Select";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import { createTask, updateTask, type Caller, type Disclosure, type Inbox, type TaskRow } from "../api/tasks";
 import { PRIORITY_LABEL, conflictOf, isoFromLocal, localFromIso, type UpdateConflict } from "../lib/tasks";
 import { humanizeError } from "../lib/format";
 import { toast } from "../components/Toast";
-import {
-  CancelButton,
-  DialogFrame,
-  ErrorNote,
-  Field,
-  INPUT_CLS,
-  PRIMARY_BTN,
-  SECONDARY_BTN,
-  TEXTAREA_CLS,
-} from "./TaskDialogFrame";
+import { CancelButton, DateTimeField, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 import { oneOf } from "../lib/oneOf";
 
 /**
@@ -146,7 +140,6 @@ export function TaskEditDialog({ open, onOpenChange, identity, mode, onSaved }: 
       open={open}
       onOpenChange={onOpenChange}
       title={editing ? "Edit task" : "New task"}
-      icon={editing ? <Pencil size={16} /> : <Plus size={16} />}
       description={
         editing
           ? "Changes the brief; the task keeps its status and history."
@@ -157,153 +150,122 @@ export function TaskEditDialog({ open, onOpenChange, identity, mode, onSaved }: 
         <>
           <CancelButton />
           {conflict && (
-            <button type="button" onClick={retryOverCurrent} className={SECONDARY_BTN}>
+            <Button type="secondary" htmlType="button" onClick={retryOverCurrent}>
               Retry over version {conflict.currentVersion}
-            </button>
+            </Button>
           )}
-          <button type="button" onClick={submit} disabled={!canSubmit || !!conflict} className={PRIMARY_BTN}>
-            {busy ? "Saving…" : editing ? "Save changes" : "Post task"}
-          </button>
+          <Button type="primary" htmlType="button" onClick={submit} disabled={!canSubmit || !!conflict} loading={busy}>
+            {editing ? "Save changes" : "Post task"}
+          </Button>
         </>
       }
     >
       {!editing && inboxes.length > 1 && (
-        <Field id="task-inbox" label="Inbox">
-          <select id="task-inbox" value={inbox} onChange={(e) => setInbox(e.target.value)} className={INPUT_CLS}>
-            {inboxes.map((i) => (
-              <option key={i.inbox} value={i.inbox}>
-                {i.inbox} — {i.owner_agent}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <Select label="Inbox" value={inbox} onSelect={setInbox}>
+          {inboxes.map((i) => (
+            <Select.Item key={i.inbox} value={i.inbox}>
+              {i.inbox} — {i.owner_agent}
+            </Select.Item>
+          ))}
+        </Select>
       )}
       {!editing && (
-        <Field id="task-kind" label="Kind" hint="what sort of work; the trust table is per kind">
-          <input
-            id="task-kind"
-            value={kind}
-            onChange={(e) => setKind(e.target.value)}
-            placeholder="bug_report"
-            className={`${INPUT_CLS} font-mono`}
-            autoFocus
-          />
-        </Field>
+        <TextField
+          id="task-kind"
+          label="Kind (what sort of work; the trust table is per kind)"
+          value={kind}
+          onChange={setKind}
+          placeholder="bug_report"
+          className="font-mono"
+          autoFocus
+        />
       )}
-      <Field id="task-title" label="Title">
-        <input
-          id="task-title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="One line the receiver reads first"
-          className={INPUT_CLS}
-          autoFocus={!!editing}
-        />
-      </Field>
-      <Field id="task-objective" label="Objective" hint="brief.objective">
-        <textarea
-          id="task-objective"
-          value={objective}
-          onChange={(e) => setObjective(e.target.value)}
-          rows={3}
-          className={TEXTAREA_CLS}
-          placeholder="What done looks like, in the receiver's terms."
-        />
-      </Field>
-      <Field id="task-criteria" label="Acceptance criteria" hint="one per line">
-        <textarea
-          id="task-criteria"
-          value={criteria}
-          onChange={(e) => setCriteria(e.target.value)}
-          rows={3}
-          className={TEXTAREA_CLS}
-          placeholder={"A test covers the regression\nThe fix is on the release branch"}
-        />
-      </Field>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field id="task-priority" label="Priority">
-          <select
-            id="task-priority"
-            value={priority}
-            onChange={(e) => setPriority(Number(e.target.value))}
-            className={INPUT_CLS}
-          >
-            {[1, 2, 3, 4].map((p) => (
-              <option key={p} value={p}>
-                {PRIORITY_LABEL[p]}
-              </option>
-            ))}
-          </select>
-        </Field>
+      <TextField
+        id="task-title"
+        label="Title"
+        value={title}
+        onChange={setTitle}
+        placeholder="One line the receiver reads first"
+        autoFocus={!!editing}
+      />
+      <TextAreaField
+        id="task-objective"
+        label="Objective (brief.objective)"
+        value={objective}
+        onChange={setObjective}
+        rows={3}
+        placeholder="What done looks like, in the receiver's terms."
+      />
+      <TextAreaField
+        id="task-criteria"
+        label="Acceptance criteria (one per line)"
+        value={criteria}
+        onChange={setCriteria}
+        rows={3}
+        placeholder={"A test covers the regression\nThe fix is on the release branch"}
+      />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Select label="Priority" value={String(priority)} onSelect={(v) => setPriority(Number(v))}>
+          {[1, 2, 3, 4].map((p) => (
+            <Select.Item key={p} value={String(p)}>
+              {PRIORITY_LABEL[p]}
+            </Select.Item>
+          ))}
+        </Select>
         {!editing && (
-          <Field id="task-disclosure" label="Disclosure" hint="the inbox must accept it">
-            <select
-              id="task-disclosure"
-              value={disclosure}
-              onChange={(e) => {
-                const d = oneOf(DISCLOSURES, e.target.value);
-                if (d !== null) setDisclosure(d);
-              }}
-              className={INPUT_CLS}
-            >
-              {DISCLOSURES.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <Select
+            label="Disclosure (the inbox must accept it)"
+            value={disclosure}
+            onSelect={(value) => {
+              const d = oneOf(DISCLOSURES, value);
+              if (d !== null) setDisclosure(d);
+            }}
+          >
+            {DISCLOSURES.map((d) => (
+              <Select.Item key={d} value={d}>
+                {d}
+              </Select.Item>
+            ))}
+          </Select>
         )}
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field id="task-not-before" label="Not before" hint="hidden from pull until then">
-          <input
-            id="task-not-before"
-            type="datetime-local"
-            value={notBefore}
-            onChange={(e) => setNotBefore(e.target.value)}
-            className={INPUT_CLS}
-          />
-        </Field>
-        <Field id="task-deadline" label="Deadline">
-          <input
-            id="task-deadline"
-            type="datetime-local"
-            value={deadline}
-            onChange={(e) => setDeadline(e.target.value)}
-            className={INPUT_CLS}
-          />
-        </Field>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <DateTimeField
+          id="task-not-before"
+          label="Not before (hidden from pull until then)"
+          value={notBefore}
+          onChange={setNotBefore}
+        />
+        <DateTimeField id="task-deadline" label="Deadline" value={deadline} onChange={setDeadline} />
       </div>
       {editing && (
-        <Field id="task-note" label="Note" hint="optional, goes in the activity feed">
-          <input
-            id="task-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className={INPUT_CLS}
-            placeholder="Why this changed"
-          />
-        </Field>
+        <TextField
+          id="task-note"
+          label="Note (optional, goes in the activity feed)"
+          value={note}
+          onChange={setNote}
+          placeholder="Why this changed"
+        />
       )}
       {error && <ErrorNote>{error}</ErrorNote>}
       {conflict && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs" aria-label="Conflict comparison">
-          <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-1.5">
+        // biome-ignore lint/a11y/useSemanticElements: a read-only side-by-side comparison, not form controls
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs" role="group" aria-label="Conflict comparison">
+          <div className="rounded-lg border border-border p-3 space-y-1.5">
             <div className="section-label">Your edit</div>
             <div className="font-medium break-words">{title}</div>
-            <pre className="whitespace-pre-wrap break-words font-mono text-2xs text-[var(--color-text-muted)]">
+            <pre className="whitespace-pre-wrap break-words font-mono text-xs text-text-muted">
               {JSON.stringify(brief, null, 1)}
             </pre>
           </div>
-          <div className="rounded-lg border border-[var(--color-warn)]/40 p-3 space-y-1.5">
+          <div className="rounded-lg border border-warn/40 p-3 space-y-1.5">
             <div className="section-label">Current (version {conflict.currentVersion})</div>
             <div className="font-medium break-words">{conflict.current?.title ?? "—"}</div>
-            <pre className="whitespace-pre-wrap break-words font-mono text-2xs text-[var(--color-text-muted)]">
+            <pre className="whitespace-pre-wrap break-words font-mono text-xs text-text-muted">
               {JSON.stringify(conflict.current?.brief ?? {}, null, 1)}
             </pre>
             {conflict.current && (
-              <div className="text-[var(--color-text-subtle)]">
+              <div className="text-text-muted">
                 status {conflict.current.status} · last actor {conflict.current.last_actor || "—"}
               </div>
             )}

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "../../test/rtl";
 import { describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
 import { Inspector } from "./Inspector";
@@ -112,5 +112,16 @@ describe("Inspector notice region", () => {
     const region = screen.getByRole("status");
     expect(region).toHaveTextContent("Expand failed: offline");
     expect(region.className).toContain("text-danger");
+  });
+});
+
+describe("Inspector links", () => {
+  it("draws its in-text actions as Click UI links at the pane's 12 px", async () => {
+    const onSelect = vi.fn();
+    mount({ selection: { kind: "node", entity: "mergetree" }, onSelect });
+    const reached = screen.getAllByRole("button", { name: "co-mentioned 12× with logical" });
+    for (const b of reached) expect(b.className).toMatch(/\blink_size_sm/);
+    reached[0].click();
+    expect(onSelect).toHaveBeenCalled();
   });
 });
