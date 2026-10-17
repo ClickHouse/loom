@@ -277,6 +277,14 @@ describe("Tasks page", () => {
 
   it("lists every inbox with its to-do and running counts, and All inboxes reads one task.list per inbox", async () => {
     vi.mocked(listInboxes).mockResolvedValueOnce([INBOX, INBOX2]);
+    // Each inbox answers with its own tasks; task ids are unique across inboxes.
+    vi.mocked(listTasks).mockImplementation(async (_scope, opts) => ({
+      tasks:
+        opts?.inbox === INBOX2.inbox
+          ? ROWS.map((r) => ({ ...r, task_id: `${r.task_id}-b`, inbox: INBOX2.inbox }))
+          : ROWS,
+      truncated: false,
+    }));
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
     render(<Tasks />);

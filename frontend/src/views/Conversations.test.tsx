@@ -376,6 +376,34 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     Element.prototype.scrollIntoView = scrollIntoView;
   });
 
+  it("rings only the turn a hit names when two agents' turns share its id", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    const now = new Date().toISOString();
+    searchConversations.mockResolvedValueOnce({
+      hits: [{ thread_id: "thread-s", msg_id: "1", role: "user", content_excerpt: "ship the fix", ts: now }],
+    });
+    getConversationThread.mockResolvedValue({
+      ...detail("thread-s", "Title S"),
+      msg_count: 2,
+      messages: [
+        { msg_id: "1", agent: "planner", role: "user", content: "plan the fix", ts: now },
+        { msg_id: "1", agent: "deployer", role: "user", content: "ship the fix", ts: now },
+      ],
+    });
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    const box = screen.getByLabelText("Search conversation transcripts");
+    fireEvent.change(box, { target: { value: "ship" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByText("ship the fix"));
+    await screen.findAllByText("plan the fix");
+    const ringed = [...document.querySelectorAll("[data-highlighted]")].map((el) => el.textContent);
+    expect(ringed).toHaveLength(1);
+    expect(ringed[0]).toContain("ship the fix");
+  });
+
   it("ignores '/' pressed inside the thread dialog", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });

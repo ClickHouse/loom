@@ -1239,16 +1239,6 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-tl .ic[data-kind="sweeper"] {
     color: var(--color-text-muted);
   }
-  .tq-track {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
-  }
-  .tq-track div {
-    background: var(--color-surface-2);
-    border-radius: var(--radius-md);
-    padding: 6px 8px;
-  }
   .tq-empty {
     border: 1px dashed var(--color-border-strong);
     border-radius: var(--radius-xl);

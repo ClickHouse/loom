@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Tooltip } from "@clickhouse/click-ui/Tooltip";
 
 /**
@@ -21,8 +21,14 @@ export interface TipProps {
 }
 
 export function Tip({ content, children, side = "top", disabled = false }: TipProps) {
+  // Controlled for its whole life: Click UI's `disabled` alone would switch Radix between
+  // controlled and uncontrolled, and Radix would keep an open state from before the switch.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
   return (
-    <Tooltip disabled={disabled}>
+    <Tooltip open={open && !disabled} onOpenChange={setOpen}>
       <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
       <Tooltip.Content side={side} collisionPadding={8} maxWidth="320px" showArrow>
         {content}

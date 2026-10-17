@@ -212,7 +212,11 @@ describe("TaskPanel", () => {
     });
     mount("triage");
     const panel = await screen.findByRole("complementary", { name: "Task detail" });
-    await within(panel).findByLabelText("4 tasks from this poster: 2 done, 1 won't do, 0 failed, 1 open");
+    const record = await within(panel).findByLabelText(
+      "4 tasks from this poster: 2 done, 1 won't do, 0 failed, 1 open",
+    );
+    // Each count is the dashboard's one stat tile (ui/Stat, Click UI's BigStat).
+    expect(record.querySelectorAll("[class*='big-stat__title']")).toHaveLength(4);
     await within(panel).findByText(/Rule:/);
     expect(within(panel).getByText("review")).toBeInTheDocument();
     expect(within(panel).getByText("inputs.pr")).toBeInTheDocument();

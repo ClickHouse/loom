@@ -176,7 +176,9 @@ export function Conversations() {
   // Durable memories this thread produced (via source_trace=conversation:<id>).
   const [threadMemories, setThreadMemories] = useState<MemoryListEntry[]>([]);
   // When a thread is opened from a search hit, scroll to + highlight that message.
-  const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
+  // The turn a search hit names: its id and the start of its text, since two agents' turns
+  // in one thread can share an id.
+  const [highlight, setHighlight] = useState<{ msgId: string; excerpt: string } | null>(null);
   // Cursor for the next page of messages (conversation.list). Null
   // means "no more" — either we've walked to the end or the initial
   // fetch fit under the limit. The "Load more" button only renders
@@ -252,18 +254,22 @@ export function Conversations() {
     [identity.org, identity.namespace, threadsRetry],
   );
 
-  // Scroll to the message a search hit pointed at, once the thread loads.
+  const highlightedTurn = useMemo(() => {
+    if (!highlight || !threadDetail) return null;
+    const start = highlight.excerpt.replace(/…$/, "");
+    const m = threadDetail.messages.find((t) => t.msg_id === highlight.msgId && t.content.startsWith(start));
+    return m ? turnId(m) : null;
+  }, [highlight, threadDetail]);
+
+  // Scroll to the turn a search hit pointed at, once the thread loads.
   useEffect(() => {
-    if (!highlightMsgId || !threadDetail) return;
+    if (!highlightedTurn) return;
     const t = setTimeout(
-      () =>
-        document
-          .querySelector(`[data-msg-id="${CSS.escape(highlightMsgId)}"]`)
-          ?.scrollIntoView({ block: "center", behavior: "smooth" }),
+      () => document.getElementById(highlightedTurn)?.scrollIntoView({ block: "center", behavior: "smooth" }),
       60,
     );
     return () => clearTimeout(t);
-  }, [highlightMsgId, threadDetail]);
+  }, [highlightedTurn]);
 
   const run = async () => {
     if (!q.trim()) return;
@@ -323,20 +329,20 @@ export function Conversations() {
   );
 
   const openThreadDialog = useCallback(
-    async (thread_id: string, opts: { namespace?: string; msgId?: string; knownAgent?: string } = {}) => {
+    async (thread_id: string, opts: { namespace?: string; hit?: ConversationHit; knownAgent?: string } = {}) => {
       threadReads.current?.abort();
       const ctl = new AbortController();
       threadReads.current = ctl;
       const { signal } = ctl;
       const namespace = opts.namespace || identity.namespace;
-      const targetMsgId = opts.msgId;
+      const target = opts.hit;
       // Every read asks for "*", every agent's turns, however the thread was opened.
       setOpenThread({ thread_id, namespace, knownAgent: opts.knownAgent });
       setThreadDetail(null);
       setMoreCursor(null);
       setLoadingMore(false);
       setThreadMemories([]);
-      setHighlightMsgId(targetMsgId ?? null);
+      setHighlight(target ? { msgId: target.msg_id, excerpt: target.content_excerpt } : null);
       setThreadLoading(true);
       // What durable memories did this conversation produce? (provenance link)
       listMemories({ ...identity, namespace }, 20, {
@@ -645,7 +651,7 @@ export function Conversations() {
                     type="button"
                     key={`${h.msg_id}-${i}`}
                     onClick={() =>
-                      openThreadDialog(g.thread_id, { namespace: g.namespace, msgId: h.msg_id, knownAgent: g.agent })
+                      openThreadDialog(g.thread_id, { namespace: g.namespace, hit: h, knownAgent: g.agent })
                     }
                     className="w-full text-left px-3.5 py-2.5 hover:bg-surface-2"
                   >
@@ -743,12 +749,13 @@ export function Conversations() {
                 const meta = ROLE_META[m.role] || ROLE_META.assistant;
                 const label =
                   m.role === "assistant" ? displayAgent(m.agent || threadDetail.agent || "assistant") : meta.label;
-                const highlighted = m.msg_id === highlightMsgId;
+                const highlighted = turnId(m) === highlightedTurn;
                 return (
                   <div
                     key={turnId(m)}
                     id={turnId(m)}
                     data-msg-id={m.msg_id}
+                    data-highlighted={highlighted || undefined}
                     className={`rounded-lg px-3 py-2 ${meta.rail} ${meta.card} ${highlighted ? "ring-2 ring-accent" : ""}`}
                   >
                     <div className="flex items-center gap-2 mb-1">

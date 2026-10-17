@@ -39,7 +39,7 @@ import {
 import { humanizeError } from "../../lib/format";
 import { toast } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
-import { Alert, ExternalLink, Tip, TipTarget } from "../../components/ui";
+import { Alert, ExternalLink, Stat, Tip, TipTarget } from "../../components/ui";
 import { KindTag, PriorityBadge, StatusPill } from "./TaskBits";
 import { MenuTrigger } from "../../components/ui/Menu";
 
@@ -161,7 +161,7 @@ function Track({
       {record && (
         // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of counts, not form fields
         <div
-          className="tq-track"
+          className="grid grid-cols-2 gap-2 sm:grid-cols-4"
           role="group"
           aria-label={`${record.total}${record.truncated ? "+" : ""} tasks from this poster: ${record.done} done, ${record.wont_do} won't do, ${record.failed} failed, ${record.open} open`}
         >
@@ -173,10 +173,7 @@ function Track({
               ["open", record.open],
             ] as Array<[string, number]>
           ).map(([l, n]) => (
-            <div key={l}>
-              <div className="text-lg font-semibold leading-5 tabular">{n}</div>
-              <div className="text-xs text-text-muted">{l}</div>
-            </div>
+            <Stat key={l} label={l} value={n} />
           ))}
         </div>
       )}
