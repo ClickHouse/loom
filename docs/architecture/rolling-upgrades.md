@@ -123,7 +123,7 @@ schema. These rules keep that safe. The operator procedure is in
     call as if the field were not sent, naming it in `ignored_args`. So `memory.restore`'s
     preconditions `if_superseded_by` and `only_if_superseded` (the dashboard's Undo sends
     them) do not hold on an N-1 replica, which restores a deleted row or one retired
-    behind another memory, and the `relations` of `memory.set` and
+    behind another memory, and the `relations` of `memory.set`, `memory.update` and
     `memory.update_by_id` are dropped there, so that write graphs none of the facts it
     names.
 
