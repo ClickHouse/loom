@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readEnv } from "./client.js";
-import { AuthError, BackendUnavailable } from "./errors.js";
+import { AuthError, BackendUnavailable, TimeoutError } from "./errors.js";
 import {
   type KeySource,
   MachineLogin,
@@ -477,6 +477,22 @@ describe("Transport with a token provider", () => {
     const patient = t.post("memory.get", { org: "o" });
     ctrl.abort();
     await expect(cancelled).rejects.toThrow("aborted");
+    release("shared");
+    expect(await patient).toEqual({ ok: true });
+    expect(v1(srv).map(auth)).toEqual(["Bearer shared"]);
+  });
+
+  it("times a caller out on a stalled token, and another caller still gets it", async () => {
+    let release: (t: string) => void = () => {};
+    const pending = new Promise<string>((r) => {
+      release = r;
+    });
+    const provider: TokenProvider = { token: () => pending, origin: BASE };
+    const srv = server();
+    const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: srv.fetch });
+    const hurried = t.post("memory.get", { org: "o" }, { timeoutMs: 10 });
+    const patient = t.post("memory.get", { org: "o" });
+    await expect(hurried).rejects.toBeInstanceOf(TimeoutError);
     release("shared");
     expect(await patient).toEqual({ ok: true });
     expect(v1(srv).map(auth)).toEqual(["Bearer shared"]);
