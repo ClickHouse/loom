@@ -214,6 +214,13 @@ def get_llm_client_for_model(model: str | None) -> LLMClient:
     return _remember(_wrapped_cache, wkey, _with_fallback(_override_client(model), model))
 
 
+def get_llm_client_without_fallback(model: str) -> LLMClient:
+    """The client for `model` alone, never wrapped in LOOM_LLM_FALLBACK_MODEL: for a
+    stage whose thresholds were measured on this model, where another model's answer
+    would be acted on as if it were this one's."""
+    return _override_client(model)
+
+
 # Wrapped (fallback-aware) override clients, keyed by (model, fallback_model).
 _wrapped_cache: dict[tuple[str, str], LLMClient] = {}
 

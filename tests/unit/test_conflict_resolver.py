@@ -267,7 +267,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def judge(new: Any, notes: list[Any]) -> dict[str, Any]:
         e.llm_calls += 1
         e.notes = notes
-        return cr.parse_verdicts(e.answer, notes)
+        return cr.parse_verdicts(e.answer, notes), "gpt-6.1-sol-2026-09-01"
 
     async def stamp(q: Any, **kw: Any) -> int:
         e.stamped.append(q["memory_key"])
@@ -280,8 +280,9 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.acted.append((action, row.memory_id, peer.memory_id))
         return True
 
-    async def audit(org: str, namespace: str, row: Any, acted: list[Any]) -> None:
+    async def audit(org: str, namespace: str, row: Any, acted: list[Any], model: str) -> None:
         e.audits.append(acted)
+        e.audit_model = model
 
     monkeypatch.setattr(resolver, "_current", current)
     monkeypatch.setattr(queue, "cluster_peers", cluster)
@@ -305,6 +306,7 @@ async def test_a_confident_update_under_newest_wins_retires_and_stamps(row_env: 
     assert counts.judged == 1 and row_env.stamped == ["office_city"]
     assert row_env.audits[0][0]["action"] == cr.RETIRE
     assert row_env.notes[0].value == "Office is in Paris", "the prompt shows text, not JSON"
+    assert row_env.audit_model == "gpt-6.1-sol-2026-09-01"
 
 
 @pytest.mark.parametrize("peer_at", [datetime(2026, 1, 2), datetime(2026, 1, 3)])
@@ -657,7 +659,7 @@ async def test_the_judge_maps_a_404_to_model_unavailable(monkeypatch) -> None:
                 "404 model_not_found", request=req, response=httpx.Response(404, request=req)
             )
 
-    monkeypatch.setattr(llm_client, "get_llm_client_for_model", lambda m: Missing())
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m: Missing())
     with pytest.raises(resolver.ModelUnavailable):
         await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
 
@@ -670,14 +672,32 @@ async def test_the_judge_sends_the_schema_and_the_model(monkeypatch) -> None:
     class LLM:
         async def complete(self, system: str, user: str, **kw: Any) -> Any:
             seen.update(system=system, user=user, **kw)
-            return NS(text=_answer(_entry("p2", "related", 0.9)))
+            return NS(text=_answer(_entry("p2", "related", 0.9)), model="gpt-6.1-sol-2026-09-01")
 
     models: list[str] = []
-    monkeypatch.setattr(llm_client, "get_llm_client_for_model", lambda m: models.append(m) or LLM())
-    got = await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
+    monkeypatch.setattr(
+        llm_client, "get_llm_client_without_fallback", lambda m: models.append(m) or LLM()
+    )
+    got, answered = await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
     assert models == [settings.conflict_resolver_model] == ["gpt-6.1-sol"]
     assert seen["system"] == cr.SYSTEM_PROMPT and seen["response_format"] == cr.RESPONSE_FORMAT
     assert seen["max_tokens"] == 120 + 90 * 2 and list(got) == [_PEERS[1].memory_id]
+    assert answered == "gpt-6.1-sol-2026-09-01", "the audit names the model that answered"
+
+
+def test_the_resolver_client_never_falls_back_to_another_model(monkeypatch) -> None:
+    import server.llm.client as llm_client
+    from server.llm.fallback import FallbackLLMClient
+
+    monkeypatch.setattr(settings, "llm_fallback_model", "gpt-6-luna")
+    monkeypatch.setattr(settings, "llm_provider", "fake")
+    llm_client.reset()
+    try:
+        assert isinstance(llm_client.get_llm_client_for_model("gpt-6.1-sol"), FallbackLLMClient)
+        plain = llm_client.get_llm_client_without_fallback("gpt-6.1-sol")
+        assert not isinstance(plain, FallbackLLMClient)
+    finally:
+        llm_client.reset()
 
 
 # --- the switch and the write-time mark --------------------------------------------------------

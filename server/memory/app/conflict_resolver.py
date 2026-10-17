@@ -82,16 +82,17 @@ def _row_dict(row: Any) -> dict[str, Any]:
     return {f: getattr(row, f, None) for f in ("memory_id", "valid_at", "created_at", "updated_at")}
 
 
-async def judge(new: cr.Note, peers: list[cr.Note]) -> dict[str, cr.PeerVerdict]:
-    """One call over the cluster; {peer memory_id: verdict}. Malformed output is {}.
-    Raises `ModelUnavailable` when the provider does not know the model, and any
-    other provider failure as it came."""
+async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVerdict], str]:
+    """One call over the cluster: ({peer memory_id: verdict}, the model that answered).
+    Malformed output is {}. Never answered by the fallback model: the thresholds are
+    this model's. Raises `ModelUnavailable` when the provider does not know the model,
+    and any other provider failure as it came."""
     import httpx
 
-    from server.llm.client import get_llm_client_for_model
+    from server.llm.client import get_llm_client_without_fallback
     from server.observability.genai import llm_stage
 
-    llm = get_llm_client_for_model(settings.conflict_resolver_model)
+    llm = get_llm_client_without_fallback(settings.conflict_resolver_model)
     try:
         with llm_stage("conflict_resolver"):
             res = await llm.complete(
@@ -104,7 +105,8 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> dict[str, cr.PeerVerdict]
         if e.response.status_code == 404:
             raise ModelUnavailable(str(e).splitlines()[0]) from e
         raise
-    return cr.parse_verdicts(str(getattr(res, "text", "") or ""), peers)
+    answered = str(getattr(res, "model", "") or settings.conflict_resolver_model)
+    return cr.parse_verdicts(str(getattr(res, "text", "") or ""), peers), answered
 
 
 async def _head(org: str, memory_id: str) -> Any:
@@ -312,7 +314,9 @@ async def _settle_pair(
     return action
 
 
-async def _audit(org: str, namespace: str, row: Any, acted: list[dict[str, Any]]) -> None:
+async def _audit(
+    org: str, namespace: str, row: Any, acted: list[dict[str, Any]], model: str
+) -> None:
     """One hash-only audit row per judged row that changed memory: ids, hashes and
     the verdicts, never the text."""
     from server.observability import audit
@@ -325,7 +329,7 @@ async def _audit(org: str, namespace: str, row: Any, acted: list[dict[str, Any]]
         subject={
             "memory_id": str(row.memory_id),
             "content_sha256": str(row.content_sha256 or ""),
-            "model": settings.conflict_resolver_model,
+            "model": model,
             "pairs": acted,
         },
     )
@@ -436,7 +440,7 @@ async def _judge_and_act(
         cr.Note(str(p["memory_id"]), str(p["memory_key"]), _plain(str(p["value"])), p["similarity"])
         for p in peers
     ]
-    verdicts = await judge(new, notes)
+    verdicts, model = await judge(new, notes)
     counts.judged += 1
     if not verdicts:
         counts.errored += 1  # an answer with nothing usable in it: nothing changes
@@ -462,4 +466,4 @@ async def _judge_and_act(
                     }
                 )
         if acted:
-            await _audit(org, namespace, row, acted)
+            await _audit(org, namespace, row, acted, model)
