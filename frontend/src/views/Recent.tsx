@@ -41,7 +41,13 @@ import { MentorPanel } from "../components/MentorPanel";
 import { Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
+import {
+  KEYWORD_PAGE,
+  keywordThenRanked,
+  parseSearchQuery,
+  removeQueryToken,
+  toggleQueryToken,
+} from "../lib/memoriesSearch";
 import { shortcutOff } from "../lib/shortcuts";
 
 // Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
@@ -130,6 +136,8 @@ export function Recent() {
   const [loadError, setLoadError] = useState<{ text: string; requestId: string } | null>(null);
   // True namespace-scope total (ignores the page `limit`), from memory.list.
   const [total, setTotal] = useState(0);
+  // A filtered read that hit its 1,000-row cap: the list says it shows the newest matches.
+  const [truncated, setTruncated] = useState(false);
   // Of `total`, how many were created today (server-computed, not the page).
   const [todayCount, setTodayCount] = useState(0);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
@@ -214,6 +222,19 @@ export function Recent() {
     const parsed = parseSearchQuery(query);
     return { rawQuery: parsed.text, queryTags: parsed.tags, queryAgent: parsed.agent };
   }, [query]);
+  const activeTags = useMemo(() => new Set(queryTags.map((t) => t.toLowerCase())), [queryTags]);
+  // A card's tag adds `tag:<tag>` to the search, or takes it out again, so tags stack the
+  // way typed ones do. A tag picked elsewhere in the app (searchByTag) joins the same way.
+  const toggleTag = useCallback((tag: string) => setQuery((q) => toggleQueryToken(q, `tag:${tag}`)), []);
+  useEffect(() => {
+    if (!memoryTagFilter) return;
+    setQuery((q) =>
+      parseSearchQuery(q).tags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())
+        ? q
+        : `${q} tag:${memoryTagFilter}`.trim(),
+    );
+    setMemoryTagFilter(null);
+  }, [memoryTagFilter, setMemoryTagFilter]);
 
   useEffect(() => {
     // Only the natural-language portion goes to the server; structured
@@ -383,20 +404,16 @@ export function Recent() {
       all = all.filter((e) => !e.tombstoned_at);
     }
     if (pinnedOnly) all = all.filter((e) => e.pinned);
-    // Tag-chip filter; case-insensitive since tags come from humans and agents.
-    if (memoryTagFilter) {
-      const target = memoryTagFilter.toLowerCase();
-      all = all.filter((e) => (e.tags || []).some((x: string) => x.toLowerCase() === target));
-    }
-    // Combine store-driven filter state with the `agent:` / `tag:` query syntax.
-    const effectiveAgent = queryAgent || agentFilter;
-    const effectiveTags = new Set<string>(queryTags);
-    if (effectiveAgent != null) all = all.filter((e) => (e.agent || "") === effectiveAgent);
-    if (effectiveTags.size > 0) {
+    // The agent chip and the `agent:` / `tag:` query syntax. The parser lowercases what
+    // was typed, so the rows' tags and agents compare lowercased too (humans and agents
+    // both write tags).
+    if (queryAgent) all = all.filter((e) => (e.agent || "").toLowerCase() === queryAgent.toLowerCase());
+    else if (agentFilter != null) all = all.filter((e) => (e.agent || "") === agentFilter);
+    if (activeTags.size > 0) {
       // AND-intersection: row must carry EVERY required tag.
       all = all.filter((e) => {
-        const t = new Set(e.tags || []);
-        for (const required of effectiveTags) {
+        const t = new Set((e.tags || []).map((x) => x.toLowerCase()));
+        for (const required of activeTags) {
           if (!t.has(required)) return false;
         }
         return true;
@@ -410,7 +427,7 @@ export function Recent() {
         .sort((a, b) => (rank.get(a.memory_key) ?? Infinity) - (rank.get(b.memory_key) ?? Infinity));
     }
     return all;
-  }, [entries, searchHits, searchExtra, pinnedOnly, showDeleted, agentFilter, queryAgent, queryTags, memoryTagFilter]);
+  }, [entries, searchHits, searchExtra, pinnedOnly, showDeleted, agentFilter, queryAgent, activeTags]);
 
   // Agents present in the unfiltered list (powers the chip row).
   const agentsInList = useMemo(() => {
@@ -561,9 +578,32 @@ export function Recent() {
   const [bulkValues, setBulkValues] = useState<Map<string, unknown>>(new Map());
   const fetchOnceRef = useRef<(isFirst: boolean) => Promise<void>>(async () => {});
 
+  // A tag or agent filter is asked of the server, over the whole namespace: filtering
+  // only the page on screen showed empty pages while matches sat on others. The server
+  // narrows to rows with any of the tags (and the agent); the list then requires every
+  // tag, in any case. Debounced, so typing `tag:…` sends one read, not one per key.
+  const filterKey = JSON.stringify({ tags: queryTags, agent: queryAgent ?? agentFilter ?? "" });
+  const [serverFilter, setServerFilter] = useState(filterKey);
+  useEffect(() => {
+    const t = setTimeout(() => setServerFilter(filterKey), 250);
+    return () => clearTimeout(t);
+  }, [filterKey]);
+  const listFilter = useMemo(() => JSON.parse(serverFilter) as { tags: string[]; agent: string }, [serverFilter]);
+  const listFiltered = listFilter.tags.length > 0 || listFilter.agent !== "";
+  // The list blanks only for a new namespace or view; a new page or filter keeps the
+  // rows on screen (marked busy) until the next ones land, and the search keeps focus.
+  const shownScope = useRef("");
+  const [refreshing, setRefreshing] = useState(false);
+
   useAbortableEffect(
     (signal, live) => {
-      setEntries(null);
+      const scope = `${identity.org}/${identity.namespace}/${identity.agent}/${showDeleted}`;
+      if (shownScope.current !== scope) {
+        shownScope.current = scope;
+        setEntries(null);
+      } else {
+        setRefreshing(true);
+      }
       setBulkValues(new Map());
       knownKeysRef.current = new Set();
       setNewKeys(new Set());
@@ -592,19 +632,25 @@ export function Recent() {
         try {
           // Recently-deleted is a bounded 14-day grace set; fetch it in one shot
           // (no live-total pagination, which would be wrong for the deleted view).
-          const lim = showDeleted ? 500 : PAGE_SIZE;
-          const off = showDeleted ? 0 : page * PAGE_SIZE;
+          // A filtered list is one read of its newest 1,000 matches, with no pages.
+          const lim = showDeleted ? 500 : listFiltered ? 1000 : PAGE_SIZE;
+          const off = showDeleted || listFiltered ? 0 : page * PAGE_SIZE;
+          const tags = [...new Set(listFilter.tags.flatMap((t) => [t, t.toLowerCase()]))];
           const r = await listMemories(identity, lim, {
             include_tombstoned: showDeleted,
             offset: off,
+            tags,
+            agent: listFilter.agent || undefined,
             signal,
             known_version: isFirst ? undefined : knownVersion || undefined,
             fields: MEMORIES_LIST_FIELDS,
             previewChars: MEMORIES_PREVIEW_CHARS,
           });
           if (!live()) return;
+          if (isFirst) setRefreshing(false);
           if (r.unchanged) return;
           knownVersion = r.namespace_version ?? "";
+          setTruncated(listFiltered && r.truncated);
           setTotal(r.total);
           setTodayCount(r.today);
           // Fill before painting so a list without values never sends 100 cards to
@@ -639,6 +685,7 @@ export function Recent() {
         } catch (e) {
           if (!live()) return;
           if (isFirst) {
+            setRefreshing(false);
             // Say so inline — an empty list that is really a failed read looked like "no
             // memories yet".
             setLoadError({ text: humanizeError(e), requestId: errorRequestId(e) });
@@ -650,7 +697,7 @@ export function Recent() {
       fetchOnceRef.current = fetchOnce;
       return fetchOnce(true);
     },
-    [identity, page, memoriesVersion, showDeleted],
+    [identity, page, memoriesVersion, showDeleted, listFilter],
   );
   // The 8 s refresh sleeps while the tab is hidden and catches up once on
   // return; it always runs the current effect's fetchOnce, so a response
@@ -663,7 +710,7 @@ export function Recent() {
   // index that no longer exists under the new filter.
   useEffect(() => {
     setPage(0);
-  }, [showDeleted, identity.org, identity.namespace]);
+  }, [showDeleted, identity.org, identity.namespace, serverFilter]);
 
   if (entries === null) {
     return (
@@ -737,6 +784,12 @@ export function Recent() {
   // Group entries by day label, but not while searching — day buckets
   // would hide the relevance ranking. Ranked results go under one heading.
   const searchActive = searchHits != null;
+  const filtering = queryTags.length > 0 || !!queryAgent || agentFilter != null || pinnedOnly;
+  const clearFilters = () => {
+    setQuery(rawQuery);
+    setPinnedOnly(false);
+    setAgentFilter(null);
+  };
   const mountedList = firstScreenOnly ? flatList.slice(0, FIRST_SCREEN_CARDS) : flatList;
   const byDay = new Map<string, MemoryListEntry[]>();
   if (!searchActive) {
@@ -754,7 +807,7 @@ export function Recent() {
   // Pagination math off the authoritative total.
   // No pagination in the deleted view — it's fetched in one shot, and the
   // namespace's live `total` (6k+) has nothing to do with the deleted count.
-  const pageCount = showDeleted ? 1 : Math.max(1, Math.ceil((total || entries.length) / PAGE_SIZE));
+  const pageCount = showDeleted || listFiltered ? 1 : Math.max(1, Math.ceil((total || entries.length) / PAGE_SIZE));
   const rangeStart = entries.length === 0 ? 0 : page * PAGE_SIZE + 1;
   const rangeEnd = page * PAGE_SIZE + entries.length;
 
@@ -769,7 +822,9 @@ export function Recent() {
                 ? `${flatList.length} shown`
                 : showDeleted
                   ? `${flatList.length.toLocaleString()} recently deleted`
-                  : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
+                  : listFiltered
+                    ? `${flatList.length.toLocaleString()} matching`
+                    : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
             </span>
             <span id={SHOWN_GROUP} className="whitespace-nowrap">
               <ButtonGroup
@@ -821,8 +876,10 @@ export function Recent() {
         onAdded={() => bumpMemoriesVersion()}
       />
 
-      {/* Inline semantic search — filters the list in place. Press / to focus. */}
-      <div className="mb-4">
+      {/* Search and the filters in force, in one bar that stays at the top as the list
+          scrolls: a filter picked from a card further down is seen to apply. Press / to
+          focus the search. */}
+      <div role="search" aria-label="Search and filters" className="sticky top-0 z-[2] -mx-2 mb-3 bg-bg px-2 py-2">
         <SearchField
           ref={searchInputRef}
           value={query}
@@ -830,69 +887,68 @@ export function Recent() {
           placeholder="Search memories. Try a keyword, or filter with tag:work, agent:claude-desktop…"
           aria-label="Search memories"
         />
-      </div>
-      {/* Mounted before the first search, so a screen reader hears each summary. */}
-      <div role="status" className={searchHits != null ? "-mt-2 mb-3 text-xs text-text-muted tabular" : ""}>
-        {searchHits != null &&
-          (searching
-            ? "Searching…"
-            : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`)}
-      </div>
-      {!searching && searchAbstain && (
-        <Alert
-          role="status"
-          state="warning"
-          size="small"
-          className="-mt-1 mb-3"
-          text={
-            <>
-              <strong>Low confidence.</strong> No strong match for "{rawQuery}" — these are best-effort results; treat
-              them as weak.
-            </>
-          }
-        />
-      )}
-      {/* Active query-bar filters as dismissable badges; click removes the token. */}
-      {(queryTags.length > 0 || queryAgent) && (
-        <div className="-mt-2 mb-3 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-text-muted">Filtering:</span>
-          {queryAgent && (
-            <Chip
-              label={`agent:${queryAgent}`}
-              mono
-              onRemove={() =>
-                setQuery((q) =>
-                  q
-                    .replace(new RegExp(`\\bagent:${queryAgent}\\b`, "g"), "")
-                    .replace(/\s+/g, " ")
-                    .trim(),
-                )
-              }
-            />
-          )}
-          {queryTags.map((t) => (
-            <Chip
-              key={t}
-              label={`tag:${t}`}
-              mono
-              onRemove={() =>
-                setQuery((q) =>
-                  q
-                    .replace(new RegExp(`\\btag:${t}\\b`, "g"), "")
-                    .replace(/\s+/g, " ")
-                    .trim(),
-                )
-              }
-            />
-          ))}
+        {/* Mounted before the first search, so a screen reader hears each summary. */}
+        <div role="status" className={searchHits != null ? "mt-2 text-xs text-text-muted tabular" : ""}>
+          {searchHits != null &&
+            (searching
+              ? "Searching…"
+              : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`)}
         </div>
-      )}
+        {!searching && searchAbstain && (
+          <Alert
+            role="status"
+            state="warning"
+            size="small"
+            className="mt-2"
+            text={
+              <>
+                <strong>Low confidence.</strong> No strong match for "{rawQuery}" — these are best-effort results; treat
+                them as weak.
+              </>
+            }
+          />
+        )}
+        {filtering && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-text-muted">Filtering:</span>
+            {queryAgent && (
+              <Chip
+                label={`agent:${queryAgent}`}
+                mono
+                onRemove={() => setQuery((q) => removeQueryToken(q, `agent:${queryAgent}`))}
+              />
+            )}
+            {!queryAgent && agentFilter != null && (
+              <Chip label={displayAgent(agentFilter)} onRemove={() => setAgentFilter(null)} />
+            )}
+            {queryTags.map((t) => (
+              <Chip key={t} label={`tag:${t}`} mono onRemove={() => setQuery((q) => removeQueryToken(q, `tag:${t}`))} />
+            ))}
+            {pinnedOnly && <Chip label="Pinned" onRemove={() => setPinnedOnly(false)} />}
+            <Button type="empty" htmlType="button" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          </div>
+        )}
+        {selected.size > 0 && (
+          <div className="mt-2 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
+            <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
+            <div className="flex-1" />
+            <Button type="secondary" htmlType="button" iconLeft="cross" onClick={() => setSelected(new Set())}>
+              Clear
+            </Button>
+            <Button type="secondary" htmlType="button" iconLeft="pin" disabled={busy} onClick={bulkPin}>
+              Pin all
+            </Button>
+            <Button type="danger" htmlType="button" iconLeft="trash" disabled={busy} onClick={bulkDelete}>
+              Delete all
+            </Button>
+          </div>
+        )}
+      </div>
 
-      {(entries.some((e) => e.pinned) || agentsInList.length > 1 || showDeleted || memoryTagFilter) && (
+      {(entries.some((e) => e.pinned) || agentsInList.length > 1 || showDeleted) && (
         <div className="mb-5 flex flex-wrap items-center gap-1">
-          {memoryTagFilter && (
-            <Chip label={`tag:${memoryTagFilter}`} mono selected onRemove={() => setMemoryTagFilter(null)} />
-          )}
           {entries.some((e) => e.pinned) && !showDeleted && (
             <Chip
               label="Pinned"
@@ -921,22 +977,6 @@ export function Recent() {
                 />
               );
             })}
-        </div>
-      )}
-
-      {selected.size > 0 && (
-        <div className="sticky top-0 z-[2] mb-3 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
-          <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
-          <div className="flex-1" />
-          <Button type="secondary" htmlType="button" iconLeft="cross" onClick={() => setSelected(new Set())}>
-            Clear
-          </Button>
-          <Button type="secondary" htmlType="button" iconLeft="pin" disabled={busy} onClick={bulkPin}>
-            Pin all
-          </Button>
-          <Button type="danger" htmlType="button" iconLeft="trash" disabled={busy} onClick={bulkDelete}>
-            Delete all
-          </Button>
         </div>
       )}
 
@@ -973,9 +1013,7 @@ export function Recent() {
               className="mt-4"
               onClick={() => {
                 setQuery("");
-                setPinnedOnly(false);
-                setAgentFilter(null);
-                setMemoryTagFilter(null);
+                clearFilters();
               }}
             >
               Clear filters
@@ -983,7 +1021,12 @@ export function Recent() {
           </div>
         ))}
 
-      <div className="space-y-6">
+      {truncated && (
+        <p className="mb-3 text-xs text-text-muted">
+          Showing the newest 1,000 matches. Add a tag or a search word to narrow them.
+        </p>
+      )}
+      <div className="space-y-6" aria-busy={refreshing || undefined}>
         {Array.from(byDay.entries()).map(([day, items]) => (
           <section key={day}>
             <SectionHeading
@@ -1036,7 +1079,8 @@ export function Recent() {
                         active={isActive}
                         onSelect={openCard}
                         onToggle={toggleSelect}
-                        onTagClick={setMemoryTagFilter}
+                        onTagClick={toggleTag}
+                        activeTags={activeTags}
                         timeMode="absolute"
                       />
                       {searchActive && keywordKeys.has(e.memory_key) ? (

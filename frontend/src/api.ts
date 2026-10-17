@@ -265,6 +265,10 @@ export async function listMemories(
     previewChars?: number;
     // Only rows whose value or key holds this text, any case.
     contains?: string;
+    // Only rows carrying any of these tags (the server matches case exactly).
+    tags?: string[];
+    // Only rows this agent wrote; every agent's rows when unset.
+    agent?: string;
   } & RequestOpts = {},
 ): Promise<MemoryListResponse> {
   // The Memories view shows everything in the namespace regardless of
@@ -274,7 +278,7 @@ export async function listMemories(
     "/v1/memory.list",
     {
       ...id,
-      agent: "*",
+      agent: opts.agent || "*",
       limit,
       ...(opts.offset ? { offset: opts.offset } : {}),
       include_tombstoned: opts.include_tombstoned ?? false,
@@ -286,6 +290,7 @@ export async function listMemories(
       ...(opts.fields ? { fields: opts.fields } : {}),
       ...(opts.previewChars ? { preview_chars: opts.previewChars } : {}),
       ...(opts.contains ? { contains: opts.contains } : {}),
+      ...(opts.tags?.length ? { tags: opts.tags } : {}),
     },
     opts.signal,
   );

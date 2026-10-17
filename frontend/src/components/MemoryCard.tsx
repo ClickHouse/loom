@@ -32,6 +32,8 @@ interface MemoryCardProps {
   /** Clicking a tag chip on the card calls this with the tag.
    *  Parent decides whether to filter, search, or navigate. */
   onTagClick?: (tag: string) => void;
+  /** Tags the list is filtered by, lowercased: their chips read as pressed. */
+  activeTags?: ReadonlySet<string>;
   /** When set, the card omits its own border + background + padding so
    *  a parent wrapper can host the visual card (e.g. the Recent view's
    *  bulk-select row, where the checkbox lives inside the same card
@@ -55,6 +57,7 @@ export const MemoryCard = memo(function MemoryCard({
   timeMode = "relative",
   hasConflict = false,
   onTagClick,
+  activeTags,
   embedded = false,
   value: preloaded,
 }: MemoryCardProps) {
@@ -172,6 +175,7 @@ export const MemoryCard = memo(function MemoryCard({
             label={t}
             icon="#"
             onClick={onTagClick ? () => onTagClick(t) : undefined}
+            selected={onTagClick ? (activeTags?.has(t.toLowerCase()) ?? false) : undefined}
             ariaLabel={onTagClick ? `Filter by tag: ${t}` : undefined}
             className="pointer-events-auto relative z-[1]"
           />
