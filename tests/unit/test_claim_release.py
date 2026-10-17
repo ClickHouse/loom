@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from server.auth import revocation
 from server.auth.jwt import mint_token
+from server.identity.app import account_admin
 from server.identity.app import claim_release as cr
 from server.identity.app import namespace_classification as nc
 from server.settings import settings
@@ -66,7 +67,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(settings, "identity_provider", "gateway")
     monkeypatch.setattr(revocation, "_loaded", True)
-    state = {"restricted": False, "allows": False}
+    state: dict[str, Any] = {"restricted": False, "allows": False}
 
     async def is_restricted(org: str, ns: str) -> bool:
         return bool(state["restricted"])
@@ -76,6 +77,13 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(nc, "is_restricted", is_restricted)
     monkeypatch.setattr("server.auth.authz.restricted_allows", allows)
+    waited: list[datetime] = []
+
+    async def wait(cutoff: datetime) -> None:
+        waited.append(cutoff)
+
+    monkeypatch.setattr(account_admin, "_wait_until", wait)
+    state["waited"] = waited
 
     def run(token: str, row: dict[str, Any] | None = _ROW, org: str = "acme") -> tuple[Any, _CH]:
         ch = _CH(row)
@@ -149,7 +157,6 @@ def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -
 
 def test_a_release_ends_the_tokens_of_the_bots_and_agent_it_reached(monkeypatch) -> None:
     from server.auth import machines
-    from server.identity.app import account_admin
 
     ended: list[str] = []
 
@@ -174,7 +181,6 @@ def test_a_release_whose_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeyp
     # The row names the agent and the bots name the namespace: rewritten before
     # the cutoffs landed, a retry could no longer find whose tokens to end.
     from server.auth import machines
-    from server.identity.app import account_admin
 
     run, _ = env
     forgotten: list[str] = []
@@ -206,3 +212,43 @@ def test_a_release_whose_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeyp
     # Once before the row and bots change, once after, so no bot exchange in
     # between outlives the release.
     assert ended == ["sa:triage", "sa:triage"]
+
+
+def test_a_failed_second_cutoff_is_logged_and_the_release_stands(
+    env: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Once the bots are forgotten a retry finds nothing to end, so the release
+    # reports done, names the bots for a hand revoke and waits out the first cutoff.
+    from server.auth import machines
+
+    run, state = env
+    first = datetime(2026, 1, 3)
+    forgotten: list[str] = []
+    invalidated: list[tuple[str, Any]] = []
+
+    async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
+        return ["triage"]
+
+    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+        forgotten.append(ns)
+        return ["triage"]
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
+        if forgotten:
+            raise RuntimeError("ClickHouse away")
+        return first
+
+    monkeypatch.setattr(machines, "naming", naming)
+    monkeypatch.setattr(machines, "forget_namespace", forget)
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+
+    def invalidate(org: str, subjects: Any = None) -> None:
+        invalidated.append((org, subjects))
+
+    monkeypatch.setattr(cr.grant_cache, "invalidate", invalidate)
+    with caplog.at_level("WARNING", logger=cr.__name__):
+        out, _ = run(_tok(["org_admin"]))
+    assert out.released
+    assert "sa:triage" in caplog.text
+    assert invalidated[-1] == ("acme", None)  # the whole org, not only the grantees
+    assert state["waited"] == [first]

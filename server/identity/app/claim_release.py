@@ -155,7 +155,7 @@ async def _release(
     # credential dies with the claim.
     # Their tokens end first: the row and the bots below are what names them,
     # so a release stopped after rewriting them could not find them again.
-    await _end_tokens(org, namespace, existing, actor_subject, ch)
+    cutoff = await _end_tokens(org, namespace, existing, actor_subject, ch)
     row = dict(existing)
     row["released_aliases"] = kept_aliases(existing)
     row["owner_email"] = ""
@@ -167,11 +167,26 @@ async def _release(
     await ch.insert("loom.namespaces", [row])
     await sso_links.forget_account(org, namespace, actor_subject, ch=ch)
     bots = await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
-    # Again, now the row and bots no longer name it: a bot token minted during
-    # the first cutoffs is older than these.
-    await _end_tokens(org, namespace, existing, actor_subject, ch, bots=bots)
     # The claim cap reads which accounts tie a person's spellings from this table.
     grant_cache.invalidate(org)
+    # Again, now the row and bots no longer name it: a bot token minted during
+    # the first cutoffs is older than these.
+    try:
+        cutoff = await _end_tokens(org, namespace, existing, actor_subject, ch, bots=bots) or cutoff
+    except Exception as e:  # noqa: BLE001 — a retry finds nothing to redo; the first cutoff stands
+        log.warning(
+            "claim_release: %s released, but the second token cutoff failed (%s); "
+            "revoke by hand with `loom access revoke --subject` for: %s",
+            namespace,
+            e,
+            ", ".join(machines.subject(name) for name in bots) or "-",
+        )
+    if cutoff is not None:
+        # Wait it out like a bot replace or disable, so an exchange right after
+        # is not refused as revoked.
+        from server.identity.app import account_admin
+
+        await account_admin._wait_until(cutoff)
 
     log.info(
         "claim_release: %s released by %s (was owned by %r, %d grants revoked)",
@@ -196,9 +211,10 @@ async def _end_tokens(
     by: str,
     ch: CHClient,
     bots: list[str] | None = None,
-) -> None:
+) -> datetime | None:
     """The tokens of the bots naming the namespace (or of `bots`) end now; so
-    do an agent's, when it is the agent's own namespace (its owner is the agent)."""
+    do an agent's, when it is the agent's own namespace (its owner is the agent).
+    Returns the latest cutoff, None when no token was ended."""
     from server.identity.app import account_admin
 
     if bots is None:
@@ -209,8 +225,10 @@ async def _end_tokens(
         trust = str(t).removeprefix(agents.TAG_PREFIX)
         if trust != str(t) and owner.startswith(agents.subject(trust, "")):
             ended.append(owner)  # the agent's own namespace: its owner is the agent
-    for subject in filter(None, ended):
-        await account_admin.end_tokens(subject, by=by, reason="namespace released")
+    cutoff = None
+    for subject in filter(None, ended):  # one after another, so the last is the latest
+        cutoff = await account_admin.end_tokens(subject, by=by, reason="namespace released")
+    return cutoff
 
 
 async def _may_release(info: AuthInfo, org: str, namespace: str) -> bool:
