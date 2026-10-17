@@ -578,9 +578,9 @@ async def _restatement_reinforces(monkeypatch, state: Any, verdict: Any) -> list
     says s2 again. Returns the ids the write reinforced."""
     from types import SimpleNamespace as NS
 
+    from server.memory.api.models_bulk import _BulkSetResult
     from server.memory.app import bulk_set
     from server.memory.app.bulk_rows import _bulk_skip_gate, _keep_row, _row_id
-    from server.memory.app.bulk_verdicts import apply_bulk_verdicts
     from server.memory.store import usage
 
     reinforced: list[str] = []
@@ -591,11 +591,11 @@ async def _restatement_reinforces(monkeypatch, state: Any, verdict: Any) -> list
     monkeypatch.setattr(usage, "record_usage_event", record)
     row = {"memory_key": "k", "content_sha256": "s2", "pinned": False}
     row["memory_id"] = _row_id(state, "k")
+    state.row_results.append(0)
+    state.results.append(_BulkSetResult(memory_key="k", version=1, memory_id=row["memory_id"]))
     _keep_row(state, row)
     assert _bulk_skip_gate(NS(memory_key="k"), "s2", state, {})
-    results = [NS(memory_key="k", version=1, memory_id=row["memory_id"])]
-    plan = apply_bulk_verdicts(state.memory_rows, [], [], results, {0: verdict})
-    state.memory_rows = plan.memory_rows
+    plan = bulk_set._apply_verdicts(state, [], {0: verdict})
     await bulk_set._bulk_settle_verdicts(None, _Input(), state, plan)
     return reinforced
 

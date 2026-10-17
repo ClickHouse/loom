@@ -86,7 +86,9 @@ ranking hint:
 - A changed value for a pinned key is refused the same way unless the write itself pins.
 - A byte-identical restatement passes and keeps the pin.
 - In `memory.bulk_set`, an entry for a pinned key is skipped (`skipped_pinned`); one
-  close to a pinned peer is listed in `rejected_pinned`.
+  close to a pinned peer is listed in `rejected_pinned`. Entries for one key settle in
+  order, as separate `memory.set` calls would: an entry that is refused or merged leaves
+  no value or pin for the next one, and repeating it gets the same verdict.
 
 To change a pinned value, call `memory.update` (keeps the pin) or `memory.pin` (re-pins).
 

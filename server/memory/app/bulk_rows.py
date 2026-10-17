@@ -81,12 +81,15 @@ class _BulkWriteState:
     new_ids: dict[str, str] = field(default_factory=dict)
     # Live key -> denormalized content_sha256: lets the
     # per-entry loop skip rewrite+re-embed+re-project of a byte-identical
-    # re-ingest.
+    # re-ingest. The store's view only: the batch's own rows are in `batch_rows`.
     existing_sha: dict[str, str] = field(default_factory=dict)
     # Pin + creation-time of each live key, read in the SAME batched lookup.
     # `pinned` gates the per-entry skip; `created_at` is carried forward so an
     # overwrite (RMT FINAL winner) doesn't reset creation to insert time.
     existing_pinned: dict[str, bool] = field(default_factory=dict)
+    # Key -> the batch's latest row for it. Only a candidate until the verdicts say
+    # whether it lands (`settle_batch_rows`).
+    batch_rows: dict[str, dict[str, Any]] = field(default_factory=dict)
     existing_created: dict[str, Any] = field(default_factory=dict)
     # The live row's `_BULK_CARRIED_COLS`, read in the same lookup: its lock gates the
     # per-entry skip, and every written version row carries them forward.
@@ -107,11 +110,11 @@ class _BulkWriteState:
     # Ids of the rows this batch has written a new version of: their stored bytes may be gone.
     rewritten_ids: set[str] = field(default_factory=set)
     # A byte-identical restatement of the SAME key is the frequency signal: it reinforces the
-    # live row instead of vanishing. `restated_ids` are stored rows whose stored value was
-    # restated; `restated_rows` are rows of this batch whose value was, settled after the
-    # verdicts (which may drop the row).
+    # live row instead of vanishing. `restated_ids` are the rows to reinforce;
+    # `restatements` are (result index, batch row) for an entry repeating a value an
+    # earlier entry wrote, settled after the verdicts (which may drop that row).
     restated_ids: list[str] = field(default_factory=list)
-    restated_rows: list[dict[str, Any]] = field(default_factory=list)
+    restatements: list[tuple[int, dict[str, Any]]] = field(default_factory=list)
     # (retired id, the row it retired behind) per same-key retirement the judge decided
     # (`key_supersession.judge_same_key_rows`), for the triple plane's follow step.
     judged_follow_pairs: list[tuple[str, str]] = field(default_factory=list)
@@ -213,16 +216,10 @@ class _LockView:
         self.lock_until = cols.get("lock_until")
 
 
-def _note_restatement(state: _BulkWriteState, memory_key: str) -> None:
-    """Remember what a byte-identical restatement reinforces: the stored row, or the
-    batch row whose value it repeats when an earlier entry wrote the key."""
-    rid = state.existing_ids.get(memory_key) or state.new_ids.get(memory_key)
-    if rid in state.rewritten_ids:
-        row = next(r for r in reversed(state.memory_rows) if r["memory_id"] == rid)
-        if not any(r is row for r in state.restated_rows):
-            state.restated_rows.append(row)
-    elif rid and rid not in state.restated_ids:
-        state.restated_ids.append(rid)
+def _note_restatement(state: _BulkWriteState, memory_id: str) -> None:
+    """Reinforce `memory_id` once for a byte-identical restatement of its value."""
+    if memory_id and memory_id not in state.restated_ids:
+        state.restated_ids.append(memory_id)
 
 
 def _bulk_skip_gate(
@@ -237,13 +234,17 @@ def _bulk_skip_gate(
     # Re-ingest skip-gate: a byte-identical live value skips the
     # rewrite+re-embed+re-project. Caller still gets a result row
     # (version 0) so the response shape is unchanged.
-    # A value the batch wrote counts here before the verdicts can drop its row (merge,
-    # pinned rejection): an entry returning to the stored value after it is then written
-    # again, equal to the stored one. Nothing is lost; deciding after the verdicts would
-    # need them before this loop, and they need the embeddings it prepares.
-    if state.existing_sha.get(entry.memory_key) == entry_sha:
+    # Repeating a value an earlier entry wrote is unchanged only if that entry lands:
+    # `settle_batch_rows` gives it the earlier entry's outcome after the verdicts.
+    batch_row = state.batch_rows.get(entry.memory_key)
+    if batch_row is not None and batch_row["content_sha256"] == entry_sha:
         state.skipped_unchanged += 1
-        _note_restatement(state, entry.memory_key)
+        state.restatements.append((len(state.results), batch_row))
+        state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
+        return True
+    if batch_row is None and state.existing_sha.get(entry.memory_key) == entry_sha:
+        state.skipped_unchanged += 1
+        _note_restatement(state, state.existing_ids.get(entry.memory_key, ""))
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
         return True
     # The same bytes already live under this identity, in another session or under another
@@ -255,6 +256,7 @@ def _bulk_skip_gate(
     if (
         _dup is not None
         and entry.memory_key not in state.existing_sha
+        and entry.memory_key not in state.batch_rows
         and _dup[1] not in state.rewritten_ids
     ):
         state.identity_duplicates[entry.memory_key] = _dup[0]
@@ -269,6 +271,8 @@ def _bulk_skip_gate(
     # since entries default pinned=False).
     # A lock is the same kind of invariant: memory.set 423s a value change to a read_only
     # key; a batch skips just that entry, surfaced in `skipped_locked`.
+    # Only the stored pin skips here. A pin an earlier entry asked for counts once the
+    # verdicts say that entry landed (`settle_batch_rows`).
     if _bulk_value_locked(state, entry.memory_key):
         state.skipped_locked.append(entry.memory_key)
         state.results.append(
@@ -315,14 +319,120 @@ def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: s
 
 
 def _keep_row(state: _BulkWriteState, row: dict[str, Any]) -> None:
-    """Add a built row; its value and pin are now the key's, so a later entry of the
-    batch restating it is unchanged, one returning to the stored value is not, and a
-    pin refuses a later value as a stored pin would. (A batch never sets a lock: the
-    row carries the stored one.)"""
+    """Add a built row as its key's latest candidate. It is not the key's value yet: the
+    verdicts may still drop it. (A batch never sets a lock: the row carries the stored
+    one.)"""
     state.memory_rows.append(row)
-    state.existing_sha[str(row["memory_key"])] = str(row["content_sha256"])
-    state.existing_pinned[str(row["memory_key"])] = bool(row["pinned"])
+    state.batch_rows[str(row["memory_key"])] = row
     state.rewritten_ids.add(str(row["memory_id"]))
+
+
+def settle_batch_rows(
+    state: _BulkWriteState, dropped: set[int]
+) -> tuple[set[int], list[tuple[int, int, dict[str, Any]]]]:
+    """Replay the batch in entry order as serial memory.set calls would see it, once the
+    verdicts are known. `dropped` are the rows a merge or pinned rejection keeps out.
+
+    Starting from the stored values and pins, each row that lands becomes its key's value
+    and pin. A later row is then refused if that landed pin is set, or is unchanged if it
+    repeats the value its key now holds; both rows are returned to drop. An entry that
+    repeated an earlier row's value takes that row's outcome: unchanged if it landed,
+    pinned if it was refused, and the row's own merge or rejection, returned as
+    (entry's result index, row's result index, row) to copy once the verdicts are folded.
+    """
+    sha = dict(state.existing_sha)
+    pinned = dict(state.existing_pinned)
+    outcome: dict[int, str] = {}  # id(row) -> landed | unchanged | pinned | verdict
+    result_of: dict[int, int] = {}  # id(row) -> its result index
+    steps: list[tuple[int, int, dict[str, Any]]] = [
+        (state.row_results[i], i, row) for i, row in enumerate(state.memory_rows)
+    ]
+    steps += [(res_i, -1, row) for res_i, row in state.restatements]
+    drop: set[int] = set()
+    copies: list[tuple[int, int, dict[str, Any]]] = []
+    for res_i, idx, row in sorted(steps, key=lambda s: s[0]):
+        key = str(row["memory_key"])
+        res = state.results[res_i]
+        if idx < 0:
+            # A restatement of an earlier row of the batch.
+            done = outcome[id(row)]
+            if done == "verdict":
+                copies.append((res_i, result_of[id(row)], row))
+                state.skipped_unchanged -= 1
+            elif done == PINNED:
+                res.conflict_verdict = PINNED
+                state.skipped_pinned.append(key)
+                state.skipped_unchanged -= 1
+            else:
+                _note_restatement(state, str(row["memory_id"]))
+            continue
+        result_of[id(row)] = res_i
+        # The skip gate's order: unchanged, then pinned, then the verdict.
+        unchanged = sha.get(key) == row["content_sha256"]
+        if unchanged or pinned.get(key):
+            outcome[id(row)] = "unchanged" if unchanged else PINNED
+            _drop_built_row(state, res, row, outcome[id(row)])
+            drop.add(idx)
+        elif idx in dropped:
+            outcome[id(row)] = "verdict"
+        else:
+            outcome[id(row)] = "landed"
+            sha[key] = str(row["content_sha256"])
+            pinned[key] = bool(row["pinned"])
+    return drop, copies
+
+
+def _drop_built_row(
+    state: _BulkWriteState, res: _BulkSetResult, row: dict[str, Any], why: str
+) -> None:
+    """A built row `settle_batch_rows` keeps out: its result and counters say what
+    the skip gate would have said had the earlier rows' fate been known."""
+    res.version, res.memory_id = 0, ""
+    if why == PINNED:
+        res.conflict_verdict = PINNED
+        state.skipped_pinned.append(str(row["memory_key"]))
+    else:
+        state.skipped_unchanged += 1
+        _note_restatement(state, str(row["memory_id"]))
+    # It was counted as a write of a key the batch had already seen.
+    if state.existing_lookup_ok:
+        state.n_updated -= 1
+    else:
+        state.n_unknown -= 1
+
+
+def drop_built_rows(
+    state: _BulkWriteState, emb_idx_of: list[int], verdicts: dict[int, Any], drop: set[int]
+) -> tuple[list[int], dict[int, Any]]:
+    """Remove the rows `drop` names (memory-row indexes) and their embedding rows, and
+    renumber what points at rows. Returns the new `emb_idx_of` and verdicts."""
+    if not drop:
+        return emb_idx_of, verdicts
+    new_idx: dict[int, int] = {}
+    for i in range(len(state.memory_rows)):
+        if i not in drop:
+            new_idx[i] = len(new_idx)
+    kept = [pos for pos, i in enumerate(emb_idx_of) if i not in drop]
+    state.memory_rows = [r for i, r in enumerate(state.memory_rows) if i in new_idx]
+    state.row_results = [r for i, r in enumerate(state.row_results) if i in new_idx]
+    state.entry_metas = [m for i, m in enumerate(state.entry_metas) if i in new_idx]
+    state.embedding_rows = [state.embedding_rows[pos] for pos in kept]
+    state.pending = [(new_idx[i], t, x, k) for i, t, x, k in state.pending if i in new_idx]
+    emb_idx_of = [new_idx[emb_idx_of[pos]] for pos in kept]
+    verdicts = {new_idx[i]: v for i, v in verdicts.items() if i in new_idx}
+    return emb_idx_of, verdicts
+
+
+def copy_restated_verdicts(
+    state: _BulkWriteState, merged_into: dict[int, str], copies: list[tuple[int, int, Any]]
+) -> None:
+    """Each restatement of a merged or rejected row answers that row's verdict, as the
+    same memory.set again would; a merge's restatement reinforces the merge target."""
+    for res_i, src_i, row in copies:
+        src, res = state.results[src_i], state.results[res_i]
+        res.conflict_verdict, res.peers, res.next = src.conflict_verdict, list(src.peers), src.next
+        if src.conflict_verdict == "merge":
+            _note_restatement(state, merged_into.get(id(row), ""))
 
 
 def _row_id(state: _BulkWriteState, memory_key: str) -> str:

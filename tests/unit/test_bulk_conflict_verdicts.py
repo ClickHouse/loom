@@ -179,3 +179,42 @@ def test_a_refine_or_conflict_with_a_row_another_entry_rewrites_lands() -> None:
             assert [p.memory_id for p in plan.refines[0][2]] == ["p"]
         else:
             assert plan.conflict_marks == [("id1", ["p"])]
+
+
+def _batch(stored_sha: str, *entries: tuple[str, bool]):
+    """A bulk of key k's values `entries` ((sha, pinned) each) through the skip gate,
+    over a stored row of value `stored_sha` (unpinned, id e1)."""
+    from server.memory.api.models_bulk import _BulkSetResult
+    from server.memory.app.bulk_rows import _bulk_skip_gate, _BulkWriteState, _keep_row
+
+    state = _BulkWriteState(existing_lookup_ok=True)
+    state.existing_ids, state.existing_sha = {"k": "e1"}, {"k": stored_sha}
+    for sha, pinned in entries:
+        if _bulk_skip_gate(NS(memory_key="k"), sha, state, {}):
+            continue
+        state.row_results.append(len(state.results))
+        state.results.append(_BulkSetResult(memory_key="k", version=1, memory_id="e1"))
+        state.entry_metas.append(None)  # type: ignore[arg-type]
+        state.n_updated += 1
+        row = {"memory_key": "k", "memory_id": "e1", "content_sha256": sha, "pinned": pinned}
+        _keep_row(state, row)
+    return state
+
+
+def test_a_pin_from_a_landed_bulk_row_refuses_a_later_value() -> None:
+    from server.memory.app.bulk_rows import settle_batch_rows
+
+    state = _batch("s0", ("s1", True), ("s2", False))
+    drop, _copies = settle_batch_rows(state, set())
+    assert drop == {1} and state.skipped_pinned == ["k"]
+    assert [r.conflict_verdict for r in state.results] == ["", "pinned"]
+
+
+def test_returning_to_the_stored_value_after_a_rejected_row_is_unchanged() -> None:
+    # Serially the rejected value never lands, so "s0" again restates the stored row.
+    from server.memory.app.bulk_rows import settle_batch_rows
+
+    state = _batch("s0", ("s1", False), ("s0", False))
+    drop, _copies = settle_batch_rows(state, {0})
+    assert drop == {1} and state.results[1].version == 0
+    assert state.skipped_unchanged == 1 and state.restated_ids == ["e1"]

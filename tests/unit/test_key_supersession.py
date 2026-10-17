@@ -1577,7 +1577,9 @@ async def test_a_verdict_lands_on_its_rows_result_after_a_skipped_entry(monkeypa
         _BulkSetResult(memory_key="user_pinned", version=0),
         _BulkSetResult(memory_key="user_city", version=1),
     ]
-    state.memory_rows = [{**_row("n1", _d(30)), "memory_key": "user_city"}]
+    state.memory_rows = [
+        {**_row("n1", _d(30)), "memory_key": "user_city", "content_sha256": "s1", "pinned": 0}
+    ]
     state.row_results = [1]
     await bulk_set._bulk_verdicts(None, state, [], [], StageClock({}))
     assert [r.conflict_verdict for r in state.results] == ["", "clear"]

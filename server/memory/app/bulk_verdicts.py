@@ -186,6 +186,21 @@ def _first_landing_rows(
     return first
 
 
+def verdict_dropped_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) -> set[int]:
+    """The rows `apply_bulk_verdicts` keeps out: a merge or a pinned rejection, unless an
+    earlier row of the batch rewrote the stored row it matched (then the verdict is stale
+    and the row lands)."""
+    first_row: dict[str, int] = {}
+    for i, r in enumerate(memory_rows):
+        first_row.setdefault(str(r.get("memory_id") or ""), i)
+    return {
+        i
+        for i, v in verdicts.items()
+        if getattr(v, "verdict", "") in ("merge", "rejected")
+        and not _target_rewritten_before(v, i, first_row)
+    }
+
+
 def _settling_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) -> set[int]:
     """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
     versions of one row, so only the kept version's verdict may mark or retire

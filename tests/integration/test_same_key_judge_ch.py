@@ -6137,3 +6137,63 @@ async def test_a_bulk_checking_its_revised_rows_edges_reads_once(ch, org, n) -> 
     revised = {r.memory_id for r in results}
     await _close_overtaken_edges(write, results, revised, entity_map={}, ch=counted)
     assert counted.sent == 1
+
+
+async def _bulk_beside_a_pin(org: str, entries: list[dict[str, Any]]) -> Any:
+    """A pinned row says the deploy window, then one bulk writes `entries` in a fresh
+    session. Returns the bulk's per-entry results."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, bulk_set
+    from server.memory.app.write import handle_memory_set
+
+    ids = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER}
+    await handle_memory_set(
+        MemorySetInput(**ids, session_id="s0", memory_key="window", value=_PINNED, pinned=True)
+    )
+    out = await bulk_set.handle_memory_bulk_set(
+        MemoryBulkSetInput(**ids, session_id="s1", entries=entries)
+    )
+    await after_write.drain()
+    return out.written
+
+
+_PINNED = "The deploy window is Tuesday and Thursday only, never Friday."
+# Close to the pinned row, not its bytes (those would be an identity duplicate).
+_CLOSE = "The deploy window is Tuesday and Thursday only, never on a Friday."
+
+
+async def _stored_under(ch: Any, org: str, key: str) -> list[dict[str, Any]]:
+    return await ch.query_all(
+        "SELECT value, pinned FROM loom.memory FINAL WHERE org = {org:String}"
+        " AND memory_key = {key:String} AND tombstoned_at IS NULL"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "key": key},
+    )
+
+
+async def test_a_restatement_of_a_rejected_bulk_entry_is_rejected_too(ch, org) -> None:
+    # Both entries are close to the pinned row: memory.set would refuse each one, so the
+    # second must not answer an unchanged no-op the SDK reports as a clear write.
+    same = {"memory_key": "plan", "value": _CLOSE}
+    written = await _bulk_beside_a_pin(org, [same, same])
+    assert [(r.version, r.conflict_verdict) for r in written] == [(0, "rejected")] * 2
+    assert await _stored_under(ch, org, "plan") == []
+
+
+async def test_a_pin_on_a_rejected_bulk_entry_does_not_gate_the_next_value(ch, org) -> None:
+    # The first entry asks for a pin and is refused, so the key still does not exist:
+    # the second, unrelated value lands as its own unpinned write.
+    written = await _bulk_beside_a_pin(
+        org,
+        [
+            {"memory_key": "plan", "value": _CLOSE, "pinned": True},
+            {"memory_key": "plan", "value": "Ship the release notes on Monday."},
+        ],
+    )
+    assert (written[0].version, written[0].conflict_verdict) == (0, "rejected")
+    assert written[1].version > 0 and written[1].conflict_verdict != "pinned"
+    stored = await _stored_under(ch, org, "plan")
+    assert [(json.loads(r["value"]), r["pinned"]) for r in stored] == [
+        ("Ship the release notes on Monday.", 0)
+    ]

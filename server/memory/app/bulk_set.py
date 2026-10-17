@@ -29,8 +29,15 @@ from server.memory.app.bulk_rows import (
     _bulk_build_rows,
     _bulk_embed_rows,
     _BulkWriteState,
+    copy_restated_verdicts,
+    drop_built_rows,
+    settle_batch_rows,
 )
-from server.memory.app.bulk_verdicts import BulkVerdictPlan, apply_bulk_verdicts
+from server.memory.app.bulk_verdicts import (
+    BulkVerdictPlan,
+    apply_bulk_verdicts,
+    verdict_dropped_rows,
+)
 from server.memory.app.entity_projections import (
     _write_derived_facts,
     end_overtaken_edges,
@@ -245,16 +252,29 @@ async def _bulk_verdicts(
         input, state.memory_rows, state.entry_metas, state.pending, value_vectors
     )
     clock.mark("verdicts")
+    plan = _apply_verdicts(state, emb_idx_of, verdicts)
+    state.key_of = {
+        str(r.get("memory_id") or ""): str(r.get("memory_key") or "") for r in state.memory_rows
+    }
+    return plan
+
+
+def _apply_verdicts(
+    state: _BulkWriteState, emb_idx_of: list[int], verdicts: dict[int, Any]
+) -> BulkVerdictPlan:
+    """Settle which batch rows land now that the verdicts are known (a row an earlier
+    entry's landed pin refuses, or one its key already holds, is dropped), then fold the
+    verdicts into the rows that are left."""
+    drop, copies = settle_batch_rows(state, verdict_dropped_rows(state.memory_rows, verdicts))
+    emb_idx_of, verdicts = drop_built_rows(state, emb_idx_of, verdicts, drop)
     # Verdicts are keyed by row; skipped entries have results but no row.
     row_results = [state.results[i] for i in state.row_results]
     plan = apply_bulk_verdicts(
         state.memory_rows, state.embedding_rows, emb_idx_of, row_results, verdicts
     )
+    copy_restated_verdicts(state, plan.merged_into, copies)
     state.memory_rows = plan.memory_rows
     state.embedding_rows = plan.embedding_rows
-    state.key_of = {
-        str(r.get("memory_id") or ""): str(r.get("memory_key") or "") for r in state.memory_rows
-    }
     return plan
 
 
@@ -627,21 +647,6 @@ async def _record_intra_batch_retirements(
     )
 
 
-def _landed_restated_ids(state: _BulkWriteState, plan: BulkVerdictPlan) -> list[str]:
-    """The rows the batch's restatements reinforce. A restated stored value reinforces
-    the stored row. A restated value an earlier entry wrote reinforces that entry's row if
-    it landed, the row it merged into if it merged, and nothing if a pinned rejection
-    dropped it."""
-    out = list(state.restated_ids)
-    landed = {id(r) for r in state.memory_rows}
-    for row in state.restated_rows:
-        if id(row) in landed:
-            out.append(str(row["memory_id"]))
-        elif id(row) in plan.merged_into:
-            out.append(plan.merged_into[id(row)])
-    return out
-
-
 async def _bulk_settle_verdicts(
     ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
 ) -> None:
@@ -698,7 +703,7 @@ async def _bulk_settle_verdicts(
     # row itself is not rewritten or re-embedded.
     await _record_evidence(input, plan.reinforce_ids, "auto_reinforce bump")
     await _record_evidence(input, state.identity_dup_ids, "identity-dedup reinforcement")
-    await _record_evidence(input, _landed_restated_ids(state, plan), "restatement reinforcement")
+    await _record_evidence(input, state.restated_ids, "restatement reinforcement")
 
 
 async def _record_evidence(input: MemoryBulkSetInput, memory_ids: list[str], what: str) -> None:
