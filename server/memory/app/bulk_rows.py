@@ -299,10 +299,13 @@ def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: s
 
 
 def _keep_row(state: _BulkWriteState, row: dict[str, Any]) -> None:
-    """Add a built row; its value is now the key's, so a later entry of the batch
-    restating it is unchanged and one returning to the stored value is not."""
+    """Add a built row; its value and pin are now the key's, so a later entry of the
+    batch restating it is unchanged, one returning to the stored value is not, and a
+    pin refuses a later value as a stored pin would. (A batch never sets a lock: the
+    row carries the stored one.)"""
     state.memory_rows.append(row)
     state.existing_sha[str(row["memory_key"])] = str(row["content_sha256"])
+    state.existing_pinned[str(row["memory_key"])] = bool(row["pinned"])
     state.rewritten_ids.add(str(row["memory_id"]))
 
 

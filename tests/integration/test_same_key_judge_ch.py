@@ -3887,6 +3887,17 @@ async def test_a_key_said_twice_in_its_first_bulk_reinforces_the_row(
     assert events == [first.memory_id]
 
 
+async def test_a_key_pinned_earlier_in_the_bulk_refuses_a_later_value(ch, org) -> None:
+    out = await _bulk_in(
+        org,
+        "s1",
+        {"memory_key": "k", "value": "User lives in Berlin.", "pinned": True},
+        {"memory_key": "k", "value": "User owns a red bicycle."},
+    )
+    assert out.skipped_pinned == ["k"]
+    assert (await _live_values(ch, org))[("s1", "k")] == ("User lives in Berlin.", 1)
+
+
 async def test_a_value_its_own_bulk_replaced_retires_no_other_row(ch, org, newest_wins) -> None:
     # k2's Russellville would retire k1's Moscow, but the same bulk then writes k2 again:
     # k2 no longer says anything about the capital, so Moscow stays live and searchable.
