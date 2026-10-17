@@ -155,13 +155,12 @@ def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -
     assert ch.inserts["loom.namespaces"][0]["description"].startswith("Released by local")
 
 
-def test_a_release_ends_the_tokens_of_the_bots_and_agent_it_reached() -> None:
+def test_a_release_names_the_bots_and_the_agent_it_reached() -> None:
     row = {"tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
     assert cr._token_subjects(row, ["triage"]) == ["sa:triage", "sa:fleet:a1"]
     forged = {"tags": ["machine:fleet"], "owner_email": "lee"}  # a person's, marked by hand
-    assert cr._token_subjects(forged, ["triage"]) == [
-        "sa:triage"
-    ]  # never the person's own sessions
+    # Never the person's own sessions.
+    assert cr._token_subjects(forged, ["triage"]) == ["sa:triage"]
 
 
 def test_the_cutoff_is_waited_out_after_the_claim_is_let_go(env: Any, monkeypatch) -> None:
@@ -227,8 +226,9 @@ def test_a_release_whose_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeyp
     assert forgotten == []  # the bots still name it
     ended: list[str] = []
 
-    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+    async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
         ended.append(subject)
+        return datetime(2026, 1, 3)
 
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
     out, _ = run(_tok(["org_admin"]))
@@ -278,3 +278,32 @@ def test_a_failed_second_cutoff_is_logged_and_the_release_stands(
     assert "loom revoke-token --subject` for: sa:triage, sa:fleet:a1" in caplog.text
     assert invalidated[-1] == ("acme", None)  # the whole org, not only the grantees
     assert state["waited"] == [first]
+
+
+def test_a_second_cutoff_failing_part_way_waits_out_the_ones_it_wrote(
+    env: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from server.auth import machines
+
+    run, state = env
+    later = datetime(2026, 1, 4)
+    ended: list[str] = []
+
+    async def bots(org: str, ns: str, *args: Any, ch: Any) -> list[str]:
+        return ["triage"]
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
+        if len(ended) == 3:
+            raise RuntimeError("ClickHouse away")
+        ended.append(subject)
+        return later if len(ended) == 3 else datetime(2026, 1, 3)
+
+    monkeypatch.setattr(machines, "naming", bots)
+    monkeypatch.setattr(machines, "forget_namespace", bots)
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    agent_row = {**_ROW, "tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
+    with caplog.at_level("WARNING", logger=cr.__name__):
+        out, _ = run(_tok(["org_admin"]), row=agent_row)
+    assert out.released
+    assert "for: sa:fleet:a1" in caplog.text
+    assert state["waited"] == [later]
