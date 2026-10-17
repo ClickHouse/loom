@@ -114,3 +114,14 @@ describe("Inspector notice region", () => {
     expect(region.className).toContain("text-danger");
   });
 });
+
+describe("Inspector links", () => {
+  it("draws its in-text actions as Click UI links at the pane's 12 px", async () => {
+    const onSelect = vi.fn();
+    mount({ selection: { kind: "node", entity: "mergetree" }, onSelect });
+    const reached = screen.getAllByRole("button", { name: "co-mentioned 12× with logical" });
+    for (const b of reached) expect(b.className).toMatch(/\blink_size_sm/);
+    reached[0].click();
+    expect(onSelect).toHaveBeenCalled();
+  });
+});

@@ -14,3 +14,6 @@ export { Unavailable } from "./Unavailable";
 export { TabTrigger } from "./TabTrigger";
 export { TipTarget } from "./TipTarget";
 export { PageHeader, type PageHeaderProps } from "./PageHeader";
+export { fieldError } from "./fieldError";
+export { Alert, type AlertProps } from "./Alert";
+export { Stat, type StatProps } from "./Stat";

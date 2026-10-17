@@ -193,6 +193,8 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     const box = screen.getByLabelText("Search conversation transcripts");
     fireEvent.change(box, { target: { value: "said" } });
     fireEvent.keyDown(box, { key: "Enter" });
+    // The result count is announced: a status region that stays mounted, its text changing.
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent("1 match in 1 thread");
     fireEvent.click(await screen.findByText("said in Z"));
     expect(await screen.findByText("body of thread-z")).toBeInTheDocument();
     const [scope, agent, threadId] = getConversationThread.mock.calls[0];
@@ -308,25 +310,20 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 3, next_cursor: "c-1" });
     listMemories.mockResolvedValue(noMemories);
     const now = new Date().toISOString();
-    listConversationMessages
-      .mockResolvedValueOnce({ rows: [], next_cursor: null })
-      .mockResolvedValueOnce({
-        rows: [{ msg_id: "y-2", role: "user", content: "second turn", ts: now }],
-        next_cursor: "c-2",
-      })
-      .mockResolvedValueOnce({
-        rows: [{ msg_id: "y-3", role: "user", content: "third turn", ts: now }],
-        next_cursor: null,
-      });
+    listConversationMessages.mockResolvedValueOnce({ rows: [], next_cursor: null }).mockResolvedValueOnce({
+      rows: [{ msg_id: "y-2", role: "user", content: "second turn", ts: now }],
+      next_cursor: "c-2",
+    });
 
     render(<Conversations />);
     fireEvent.click(await screen.findByText("Title Y"));
     fireEvent.click(await screen.findByRole("button", { name: /Load more/ }));
     expect(await screen.findByText("second turn")).toBeInTheDocument();
-    // The next page, which a current replica may serve, asks for every agent again.
-    fireEvent.click(screen.getByRole("button", { name: /Load more/ }));
-    expect(await screen.findByText("third turn")).toBeInTheDocument();
-    expect(listConversationMessages.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code", "*"]);
+    // That page was the listed agent's alone; its cursor would skip other agents' turns, so
+    // the dialog stops and says how much it shows.
+    expect(screen.queryByRole("button", { name: /Load more/ })).toBeNull();
+    expect(screen.getByText("Showing 2 of 3 messages.")).toBeInTheDocument();
+    expect(listConversationMessages.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
   });
 
   it("keeps two agents' turns that share an id apart", async () => {

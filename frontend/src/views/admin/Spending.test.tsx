@@ -157,3 +157,13 @@ describe("Spending cap editor on a restricted namespace", () => {
     expect(await screen.findByRole("button", { name: /Edit cap/ })).toBeInTheDocument();
   });
 });
+
+describe("Spending daily budget meter", () => {
+  it("is named once, clamps its value at the cap and speaks the real figure", async () => {
+    vi.mocked(api.getBudgetStatus).mockResolvedValue({ ...budget("team-a", 1.3, 1, "namespace"), over_cap: true });
+    render(<Spending />);
+    const meter = await screen.findByRole("progressbar", { name: "Daily LLM budget used" });
+    expect(meter).toHaveAttribute("aria-valuenow", "100");
+    expect(meter).toHaveAttribute("aria-valuetext", "130% — $1.3000 of the $1.00 cap");
+  });
+});

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { sharedHealth } from "../lib/sharedReads";
-import { Alert } from "@clickhouse/click-ui/Alert";
+import { Alert } from "./ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { IconButton } from "./IconButton";
 

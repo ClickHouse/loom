@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -18,7 +17,7 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { PageHeader } from "../../components/ui";
+import { Alert, PageHeader } from "../../components/ui";
 
 type Filter = "all" | "pending" | "active7d";
 

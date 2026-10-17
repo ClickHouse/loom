@@ -232,7 +232,9 @@ class ConversationListInput(BaseModel):
 class ConversationListOutput(BaseModel):
     # The page of messages in chronological order.
     rows: list[_ConversationEntry]
-    # Pass as `cursor` for the next page; None when this is the last page.
+    # Pass as `cursor` for the next page; None when this is the last page. Read with "*",
+    # two agents' different turns that share a millisecond and an id across a page
+    # boundary lose the second to the cursor; the next release's cursor carries the text.
     next_cursor: str | None = None
 
 

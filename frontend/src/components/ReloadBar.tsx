@@ -1,4 +1,4 @@
-import { Alert } from "@clickhouse/click-ui/Alert";
+import { Alert } from "./ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { useBuildWatch } from "../lib/buildWatch";
 

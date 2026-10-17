@@ -62,23 +62,14 @@ export function ConfirmViewport() {
   // close() clears it before resolving, so every entry resolves exactly once.
   const pendingRef = useRef<_PendingConfirm | null>(null);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-  // Whatever had focus when the confirm was requested — restored on close.
-  // A Radix modal Dialog otherwise hands focus to its Trigger, and this
-  // dialog has none, so focus would fall to <body>.
-  const openerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     _listener = (p) => {
       const superseded = pendingRef.current;
-      if (superseded) {
-        // A newer request replaces an open confirm: the older one answers "cancelled", so
-        // its destructive action never runs and its caller's busy state clears. Focus goes
-        // back to whatever opened the first dialog, not to a control inside it.
-        superseded.resolve(false);
-      } else {
-        const active = document.activeElement;
-        openerRef.current = active instanceof HTMLElement ? active : null;
-      }
+      // A newer request replaces an open confirm: the older one answers "cancelled", so
+      // its destructive action never runs and its caller's busy state clears. The dialog
+      // stays open, so Modal still returns focus to what opened the first one.
+      superseded?.resolve(false);
       pendingRef.current = p;
       setPending(p);
     };
@@ -114,10 +105,6 @@ export function ConfirmViewport() {
       onOpenAutoFocus={(e) => {
         e.preventDefault();
         cancelRef.current?.focus();
-      }}
-      onCloseAutoFocus={(e) => {
-        e.preventDefault();
-        openerRef.current?.focus();
       }}
     >
       <ModalFooter>

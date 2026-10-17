@@ -7,16 +7,17 @@ import { useStore, viewHref, type View } from "../lib/state";
 import { countConflicts, countNewAgents } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
 import { sharedBudgetStatus } from "../lib/sharedReads";
+import { hasOrgAdminClaim, isNamespaceAdmin } from "../lib/role";
+import { roleOnNamespace } from "../lib/namespaceRole";
+import { canCall } from "../lib/canCall";
+import { isMemoryNamespace } from "../lib/namespace";
 
 // How long a remembered badge answer is shown before the idle refresh replaces it — one
 // poll interval.
 const BADGE_SESSION_TTL_MS = 60_000;
 // The agents badge reads every fifth minute tick
 const AGENTS_EVERY_N_TICKS = 5;
-import { hasOrgAdminClaim, isNamespaceAdmin } from "../lib/role";
-import { roleOnNamespace } from "../lib/namespaceRole";
-import { canCall } from "../lib/canCall";
-import { isMemoryNamespace } from "../lib/namespace";
+
 // Loom mark inlined so currentColor inherits from the sidebar's text color.
 function LoomMark({ size = 32 }: { size?: number }) {
   return (
@@ -351,8 +352,9 @@ export function Sidebar() {
     <aside
       className={`hidden md:flex shrink-0 border-r border-border bg-surface flex-col ${collapsed ? "w-[60px]" : "w-[244px]"}`}
     >
-      {/* Brand + collapse — brand is an anchor: cmd-click opens Memories in a new tab */}
-      <div className={`pt-5 pb-4 flex items-center justify-between ${collapsed ? "px-3" : "px-5"}`}>
+      {/* Brand + collapse — brand is an anchor: cmd-click opens Memories in a new tab. The
+          toggle is one button in both states, so it keeps the focus when pressed. */}
+      <div className={`pt-5 flex items-center justify-between ${collapsed ? "px-3 pb-2 flex-col gap-4" : "px-5 pb-4"}`}>
         <a
           href={viewHref("memories")}
           onClick={(e) => {
@@ -366,19 +368,14 @@ export function Sidebar() {
           <LoomMark size={32} />
           {!collapsed && <span className="text-xl font-semibold text-text leading-none">Loom</span>}
         </a>
-        {!collapsed && <IconButton icon="slide-in" size="sm" label="Collapse sidebar" onClick={toggleSidebar} />}
+        <IconButton
+          icon={collapsed ? "slide-out" : "slide-in"}
+          size="sm"
+          label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          onClick={toggleSidebar}
+        />
       </div>
-      {collapsed && (
-        <div className="flex justify-center mb-2">
-          <IconButton
-            icon="slide-out"
-            size="sm"
-            label="Expand sidebar"
-            tooltip="Expand sidebar"
-            onClick={toggleSidebar}
-          />
-        </div>
-      )}
 
       {/* Main nav — anchors so cmd-click opens in a new tab. Padded, not margined, so the
           scroll box leaves room for the first and last items' focus ring. */}
@@ -531,7 +528,7 @@ function NavBtn({
         onActivate();
       }}
       className={`${NAV_ITEM} ${collapsed ? "justify-center px-2!" : "justify-between"}`}
-      aria-label={collapsed ? item.label : undefined}
+      aria-label={collapsed ? collapsedName(item) : undefined}
       aria-current={active ? "page" : undefined}
       aria-describedby={hint ? hintId : undefined}
     >
@@ -557,6 +554,13 @@ function NavBtn({
       {anchor}
     </Tip>
   );
+}
+
+/** A collapsed item's name: its label, and its badge's count, which the name would
+ *  otherwise hide. */
+function collapsedName(item: NavItem): string {
+  if (!item.badge) return item.label;
+  return item.badge >= 999 ? `${item.label}, attention required` : `${item.label}, ${item.badge}`;
 }
 
 /** A nav entry's count (Click UI's small solid badge), or a dot at 999+ for "attention". */

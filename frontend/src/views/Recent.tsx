@@ -1,5 +1,4 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -26,7 +25,7 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { Chip, PageHeader, SectionHeading } from "../components/ui";
+import { Alert, Chip, PageHeader, SectionHeading } from "../components/ui";
 import { SkeletonCard } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -463,7 +462,8 @@ export function Recent() {
       // elsewhere they scroll.
       ArrowDown: () => onList() && moveFocus(1),
       ArrowUp: () => onList() && moveFocus(-1),
-      Escape: () => setSelected(new Set()),
+      // Escape clears a selection; with none it is left to whatever else listens for it.
+      ...(selecting ? { Escape: () => setSelected(new Set()) } : {}),
     },
     !inspectedKey && flatList.length > 0,
   );
@@ -831,26 +831,26 @@ export function Recent() {
           aria-label="Search memories"
         />
       </div>
-      {searchHits != null && (
-        <div className="-mt-2 mb-3 text-xs text-text-muted tabular">
-          {searching
+      {/* Mounted before the first search, so a screen reader hears each summary. */}
+      <div role="status" className={searchHits != null ? "-mt-2 mb-3 text-xs text-text-muted tabular" : ""}>
+        {searchHits != null &&
+          (searching
             ? "Searching…"
-            : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`}
-        </div>
-      )}
+            : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`)}
+      </div>
       {!searching && searchAbstain && (
-        <div role="status" className="-mt-1 mb-3">
-          <Alert
-            state="warning"
-            size="small"
-            text={
-              <>
-                <strong>Low confidence.</strong> No strong match for "{rawQuery}" — these are best-effort results; treat
-                them as weak.
-              </>
-            }
-          />
-        </div>
+        <Alert
+          role="status"
+          state="warning"
+          size="small"
+          className="-mt-1 mb-3"
+          text={
+            <>
+              <strong>Low confidence.</strong> No strong match for "{rawQuery}" — these are best-effort results; treat
+              them as weak.
+            </>
+          }
+        />
       )}
       {/* Active query-bar filters as dismissable badges; click removes the token. */}
       {(queryTags.length > 0 || queryAgent) && (

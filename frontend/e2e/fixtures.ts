@@ -989,6 +989,8 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
       case "/v1/run.list":
         if (!options.runRows) break;
         return json({ runs: projectRows(runRowsFixture(options.runRows, ns), body, "run_id") });
+      case "/v1/run.get":
+        return json(runGetFixture(runRowsFixture(options.runRows ?? 0, ns), String(body.run_id ?? "")));
       case "/v1/tracker.source.list":
         calls.trackerSources++;
         if (trackerSources === null) {
@@ -1156,6 +1158,41 @@ function runRowsFixture(n: number, namespace: string): Record<string, unknown>[]
     namespace,
     org: "acme",
   }));
+}
+
+/** `run.get` for one of `runs` (RunGetOutput in server/tasks/api/models_run.py): the
+ *  row and what the server derives live — the keys recalled and written, the session's
+ *  turns and cost, the budgets passed. An unknown id answers `found: false`. */
+function runGetFixture(runs: Record<string, unknown>[], runId: string): Record<string, unknown> {
+  const run = runs.find((r) => r.run_id === runId);
+  if (!run) {
+    return {
+      found: false,
+      run: null,
+      recalled: -1,
+      recalled_keys: [],
+      memories_written: [],
+      observations: 0,
+      turns: 0,
+      unpriced_turns: 0,
+      cost_usd: 0,
+      elapsed_seconds: 0,
+      over_budget: [],
+    };
+  }
+  return {
+    found: true,
+    run,
+    recalled: 2,
+    recalled_keys: [...(run.memories_used as string[]), "runbooks/ingest-lag"],
+    memories_written: run.memories_written,
+    observations: 1,
+    turns: 4,
+    unpriced_turns: 1,
+    cost_usd: 0.042,
+    elapsed_seconds: Math.round(Number(run.duration_ms) / 1000),
+    over_budget: [],
+  };
 }
 
 /** `n` memory rows the way `memory.list` returns them — a bounded string preview per row

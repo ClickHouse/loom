@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 /**
- * Kbd — a keyboard hint: one key or a short chord in a mono cap at the 11 px floor, on
+ * Kbd — a keyboard hint: one key or a short chord in a mono cap at the 12 px floor, on
  * the page background with the border token, so it reads as a key and never as body text.
  */
 export function Kbd({ children, className = "" }: { children: ReactNode; className?: string }) {

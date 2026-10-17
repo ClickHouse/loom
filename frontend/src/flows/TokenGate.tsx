@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
@@ -11,6 +10,7 @@ import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
 import { errorRequestId, humanizeError } from "../lib/format";
 import type { GateReason } from "../lib/state";
+import { Alert } from "../components/ui";
 
 interface TokenGateProps {
   onLogin: () => void;
@@ -124,11 +124,7 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
         </header>
 
         <Panel className="space-y-4">
-          {reason === "expired" && (
-            <div role="status">
-              <Alert state="neutral" text="Your session expired — sign in again." />
-            </div>
-          )}
+          {reason === "expired" && <Alert role="status" state="neutral" text="Your session expired — sign in again." />}
           <Tabs
             value={mode}
             onValueChange={(v) => {
@@ -244,17 +240,16 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
           </Tabs>
 
           {err && (
-            <div role="alert">
-              <Alert
-                state="danger"
-                text={
-                  <>
-                    {err}
-                    {errRequestId && <div className="mt-1 font-mono">request id {errRequestId}</div>}
-                  </>
-                }
-              />
-            </div>
+            <Alert
+              role="alert"
+              state="danger"
+              text={
+                <>
+                  {err}
+                  {errRequestId && <div className="mt-1 font-mono">request id {errRequestId}</div>}
+                </>
+              }
+            />
           )}
         </Panel>
 

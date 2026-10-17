@@ -18,7 +18,7 @@
  *   Then a done state that says what happened and what happens next.
  */
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
+import { Alert } from "../components/ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -502,20 +502,19 @@ function MapStep({
   const db = form.database.trim();
   if (inspected.proposal.mode === "views") {
     return (
-      <div role="status">
-        <Alert
-          state="success"
-          text={
-            <>
-              <strong className="font-medium">
-                <span className="font-mono">{db}</span> already exposes Loom's tables — nothing to map.
-              </strong>{" "}
-              Loom reads <span className="font-mono">github_issues</span>, <span className="font-mono">github_prs</span>{" "}
-              and <span className="font-mono">edges</span> there as they are. Go to Check.
-            </>
-          }
-        />
-      </div>
+      <Alert
+        role="status"
+        state="success"
+        text={
+          <>
+            <strong className="font-medium">
+              <span className="font-mono">{db}</span> already exposes Loom's tables — nothing to map.
+            </strong>{" "}
+            Loom reads <span className="font-mono">github_issues</span>, <span className="font-mono">github_prs</span>{" "}
+            and <span className="font-mono">edges</span> there as they are. Go to Check.
+          </>
+        }
+      />
     );
   }
   return (
@@ -1122,12 +1121,11 @@ function CheckStep({
   return (
     <div className="space-y-4" aria-live="polite">
       {stale && (
-        <div role="status">
-          <Alert
-            state="warning"
-            text="The connection or the mapping changed since this check. Check again before adding."
-          />
-        </div>
+        <Alert
+          role="status"
+          state="warning"
+          text="The connection or the mapping changed since this check. Check again before adding."
+        />
       )}
       <ul className="space-y-3" aria-label="Checks">
         <CheckRow

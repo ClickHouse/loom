@@ -151,7 +151,9 @@ export function TaskInboxBell() {
                   .join(" · ")}
               </div>
             </div>
-            <span className="text-xs text-text-muted mt-1 shrink-0">Open →</span>
+            <span className="text-xs text-text-muted mt-1 shrink-0">
+              Open <span aria-hidden="true">→</span>
+            </span>
           </button>
         ))}
       </Popover.Content>

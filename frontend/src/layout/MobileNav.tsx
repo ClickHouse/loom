@@ -4,7 +4,7 @@ import { Modal } from "../components/ui/Modal";
 import { useStore, viewHref, type View } from "../lib/state";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
 import { hasOrgAdminClaim, isNamespaceAdmin } from "../lib/role";
-import { ADMIN_BASE, ADMIN_OPERATOR_ONLY, RAIL_GROUPS, SETTINGS_ITEM, type NavItem } from "./Sidebar";
+import { ADMIN_BASE, ADMIN_OPERATOR_ONLY, MAIN, RAIL_GROUPS, SETTINGS_ITEM, type NavItem } from "./Sidebar";
 
 /**
  * Phone navigation (below `md`): two primary tabs and a "More" dialog (Click UI's dialog
@@ -15,11 +15,10 @@ import { ADMIN_BASE, ADMIN_OPERATOR_ONLY, RAIL_GROUPS, SETTINGS_ITEM, type NavIt
  * same label and the same route.
  */
 const PRIMARY_IDS: View[] = ["memories", "knowledge"];
+const PRIMARY: NavItem[] = MAIN.filter((m) => PRIMARY_IDS.includes(m.id));
 
-const PRIMARY: NavItem[] = [
-  { id: "memories", label: "Memories", icon: "clock" },
-  { id: "knowledge", label: "Library", icon: "document" },
-];
+// The current tab and sheet entry use the rail's selected fill.
+const ACTIVE = "bg-(--click-sidebar-main-navigation-item-color-background-active)";
 
 /**
  * Everything the sidebar routes to, grouped the way the sheet shows it. The
@@ -82,7 +81,7 @@ export function MobileNav() {
                 setView(p.id);
               }}
               className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors no-underline hover:no-underline ${
-                active ? "bg-surface-3 text-text" : "text-text-muted"
+                active ? `${ACTIVE} text-text` : "text-text-muted"
               }`}
               aria-current={active ? "page" : undefined}
             >
@@ -99,7 +98,7 @@ export function MobileNav() {
           aria-haspopup="dialog"
           aria-expanded={open}
           className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 h-full ${
-            moreActive ? "bg-surface-3 text-text" : "text-text-muted"
+            moreActive ? `${ACTIVE} text-text` : "text-text-muted"
           }`}
         >
           {moreActive && <span aria-hidden="true" className="absolute inset-x-3 top-0 h-0.5 rounded-b bg-text" />}
@@ -127,7 +126,7 @@ export function MobileNav() {
                     }}
                     aria-current={active ? "page" : undefined}
                     className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-sm transition-colors no-underline hover:no-underline text-text ${
-                      active ? "bg-surface-3 font-medium" : "bg-surface-2 hover:bg-surface-3"
+                      active ? `${ACTIVE} font-medium` : "bg-surface-2 hover:bg-surface-3"
                     }`}
                   >
                     <Icon name={m.icon} size="md" aria-hidden="true" />

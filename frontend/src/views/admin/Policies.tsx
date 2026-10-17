@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -36,7 +35,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
-import { PageHeader, TipTarget } from "../../components/ui";
+import { Alert, PageHeader, TipTarget } from "../../components/ui";
 
 /**
  * Policies — history rules over what an agent may do next.
@@ -467,13 +466,12 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
             </div>
           </div>
           {err && (
-            <div role="alert">
-              <Alert
-                state="danger"
-                size="small"
-                text={<span className="whitespace-pre-wrap break-words">{err}</span>}
-              />
-            </div>
+            <Alert
+              role="alert"
+              state="danger"
+              size="small"
+              text={<span className="whitespace-pre-wrap break-words">{err}</span>}
+            />
           )}
         </div>
         <ModalFooter>

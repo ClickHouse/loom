@@ -127,3 +127,15 @@ it("moves through New's items with the arrow keys and returns focus on Escape", 
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   expect(trigger).toHaveFocus();
 });
+
+// The account menu says who is signed in through its name: the block at its top holds no
+// menu item, so in menu mode a screen reader never reads it.
+it("names the account menu after the signed-in subject and org", async () => {
+  listMine.mockResolvedValue(jwtOnly);
+  useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+  render(<Header />);
+  await userEvent.click(screen.getByRole("button", { name: "Account: w@example.com" }));
+  const menu = await screen.findByRole("menu", { name: "Signed in as w@example.com, org dev" });
+  expect(screen.getByText("Signed in as").closest("[aria-hidden='true']")).not.toBeNull();
+  expect(menu).toContainElement(screen.getByRole("menuitem", { name: "Settings" }));
+});

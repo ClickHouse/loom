@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { listFacts, searchMemory, type FactRow, type Identity, type SearchHit, type TaxonomyResponse } from "../../api";
 import { IconButton } from "../../components/IconButton";
 import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
@@ -140,13 +141,16 @@ function FactList({
       {facts.map((f) => {
         const rel = relationLabel(f.relation);
         const link = (e: string) => (
-          <button
+          <Link
+            component="button"
             type="button"
-            className="font-mono underline decoration-dotted hover:text-text break-words text-left"
+            size="sm"
+            weight="mono"
+            className="break-words text-left"
             onClick={() => onWalk(e)}
           >
             {e}
-          </button>
+          </Link>
         );
         return (
           <li
@@ -513,13 +517,15 @@ export function Inspector({
         )}
         {!isSeed && parent !== null && (
           <MetaRow label="reached by">
-            <button
+            <Link
+              component="button"
               type="button"
+              size="sm"
               onClick={() => onSelect({ kind: "edge", parent, child: n.entity })}
-              className="text-left break-words underline decoration-dotted hover:text-text"
+              className="text-left break-words"
             >
               {reachedBy}
-            </button>
+            </Link>
           </MetaRow>
         )}
         {(n.valid_from || n.valid_to) && (
@@ -600,13 +606,21 @@ export function Inspector({
                       }}
                       aria-hidden="true"
                     />
-                    <button
-                      type="button"
-                      onClick={() => onSelect({ kind: "node", entity: e })}
-                      className={`min-w-0 break-words text-left hover:underline ${i === arr.length - 1 ? "text-text" : "text-text-muted"}`}
-                    >
-                      {e}
-                    </button>
+                    {/* The last hop is the node shown here, so it is text, not a link. */}
+                    {i === arr.length - 1 ? (
+                      <span className="min-w-0 break-words">{e}</span>
+                    ) : (
+                      <Link
+                        component="button"
+                        type="button"
+                        size="sm"
+                        weight="mono"
+                        onClick={() => onSelect({ kind: "node", entity: e })}
+                        className="min-w-0 break-words text-left"
+                      >
+                        {e}
+                      </Link>
+                    )}
                     {step && (
                       <span className="text-xs text-text-muted shrink-0 font-sans">
                         {typed && step.via_relation ? relationLabel(step.via_relation) : `${step.via_co_occur}×`}

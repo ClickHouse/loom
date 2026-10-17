@@ -69,8 +69,10 @@ export function Documents() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // A row's four icon actions (each a tooltip'd button with an SVG) are rendered only for
   // the row under the pointer, focused, or selected — 50 rows carried ~30 nodes each for
-  // controls nobody could use at once.
+  // controls nobody could use at once. Their slot keeps its width meanwhile, so the row
+  // does not reflow on hover. A touch screen has no hover: there every row shows them.
   const [hotRow, setHotRow] = useState<string | null>(null);
+  const [touch] = useState(() => typeof window.matchMedia === "function" && matchMedia("(pointer: coarse)").matches);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
@@ -324,7 +326,7 @@ export function Documents() {
         title="Library"
         actions={
           <>
-            <span className="text-sm text-text-muted tabular">
+            <span role="status" className="text-sm text-text-muted tabular">
               {rows
                 ? visibleRows && visibleRows.length !== rows.length
                   ? `${visibleRows.length} of ${rows.length} shown`
@@ -470,7 +472,8 @@ export function Documents() {
               onMouseEnter={() => setHotRow(r.source_uri)}
               onMouseLeave={() => setHotRow((cur) => (cur === r.source_uri ? null : cur))}
               onFocus={() => setHotRow(r.source_uri)}
-              className={`p-3.5 rounded-xl border bg-surface flex items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_96px] ${
+              data-doc-row
+              className={`p-3.5 rounded-xl border bg-surface flex flex-wrap items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_96px] ${
                 selected.has(r.source_uri)
                   ? "border-accent ring-1 ring-accent/40"
                   : "border-border hover:border-border-strong"
@@ -503,7 +506,7 @@ export function Documents() {
                     <div className="text-xs text-text mt-1 line-clamp-2 leading-snug">{r.description}</div>
                   )}
                 </button>
-                <div className="mt-1.5 flex items-center gap-2 text-xs text-text-muted tabular">
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-text-muted tabular">
                   <span>{r.chunk_count} chunks</span>
                   <span>·</span>
                   <span>{relativeTime(r.ingested_at)}</span>
@@ -513,7 +516,7 @@ export function Documents() {
                     </TipTarget>
                   )}
                   {r.tags && r.tags.length > 0 && (
-                    <span className="flex items-center gap-1 ml-2">
+                    <span className="flex flex-wrap items-center gap-1 sm:ml-2">
                       {r.tags.slice(0, 3).map((t) => (
                         <Chip
                           key={t}
@@ -529,65 +532,67 @@ export function Documents() {
                   )}
                 </div>
               </div>
-              {(hotRow === r.source_uri || selected.has(r.source_uri)) && (
-                <>
-                  {/* Icon actions: ≥36 px targets, named by aria-label + tooltip.
+              <div className="doc-acts">
+                {(touch || hotRow === r.source_uri || selected.has(r.source_uri)) && (
+                  <>
+                    {/* Icon actions: ≥36 px targets, named by aria-label + tooltip.
                     "Edit content" also covers the no-blob case — uploading a file
                     into a text-only document is the same replace flow. Download is
                     offered for every document: the original file
                     when one was preserved, else the stored text as Markdown. */}
-                  <IconButton
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDownload(r);
-                    }}
-                    label={hasOriginalFile(r) ? "Download original file" : "Download text (.md)"}
-                    tooltip={
-                      hasOriginalFile(r)
-                        ? r.original_filename
-                          ? `Download ${r.original_filename}${r.blob_size ? ` (${formatBytesShort(r.blob_size)})` : ""}`
-                          : "Download original file"
-                        : `Download text (.md) — ${textDownloadName(r.source_uri)}`
-                    }
-                    icon="download"
-                    size="sm"
-                  />
-                  <IconButton
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditEntry(r);
-                    }}
-                    label="Edit details"
-                    tooltip="Edit details (title, description, tags — no re-upload)"
-                    icon="pencil"
-                    size="sm"
-                  />
-                  <IconButton
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setReplaceEntry(r);
-                    }}
-                    label="Edit content"
-                    tooltip={
-                      r.has_blob
-                        ? `Edit content — upload a new file version of ${r.title || r.original_filename || r.source_uri}`
-                        : "Edit content — upload the source file to enable download and preserve the original"
-                    }
-                    icon="refresh"
-                    size="sm"
-                  />
-                  <IconButton
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(r.source_uri);
-                    }}
-                    label="Delete document"
-                    icon="trash"
-                    type="danger"
-                    size="sm"
-                  />
-                </>
-              )}
+                    <IconButton
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDownload(r);
+                      }}
+                      label={hasOriginalFile(r) ? "Download original file" : "Download text (.md)"}
+                      tooltip={
+                        hasOriginalFile(r)
+                          ? r.original_filename
+                            ? `Download ${r.original_filename}${r.blob_size ? ` (${formatBytesShort(r.blob_size)})` : ""}`
+                            : "Download original file"
+                          : `Download text (.md) — ${textDownloadName(r.source_uri)}`
+                      }
+                      icon="download"
+                      size="sm"
+                    />
+                    <IconButton
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditEntry(r);
+                      }}
+                      label="Edit details"
+                      tooltip="Edit details (title, description, tags — no re-upload)"
+                      icon="pencil"
+                      size="sm"
+                    />
+                    <IconButton
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setReplaceEntry(r);
+                      }}
+                      label="Edit content"
+                      tooltip={
+                        r.has_blob
+                          ? `Edit content — upload a new file version of ${r.title || r.original_filename || r.source_uri}`
+                          : "Edit content — upload the source file to enable download and preserve the original"
+                      }
+                      icon="refresh"
+                      size="sm"
+                    />
+                    <IconButton
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(r.source_uri);
+                      }}
+                      label="Delete document"
+                      icon="trash"
+                      type="danger"
+                      size="sm"
+                    />
+                  </>
+                )}
+              </div>
             </div>
           ))}
         </div>

@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import * as RadixDialog from "@radix-ui/react-dialog";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Label } from "@clickhouse/click-ui/Label";
 import { Modal, ModalFooter } from "../components/ui/Modal";
+import { Alert } from "../components/ui";
 
 /**
  * The frame the task inbox dialogs share, on `Modal`. Mounted only while open, behind
@@ -55,11 +55,7 @@ const WIDTH = {
 } as const;
 
 export function ErrorNote({ children }: { children: ReactNode }) {
-  return (
-    <div role="alert">
-      <Alert state="danger" text={children} />
-    </div>
-  );
+  return <Alert role="alert" state="danger" text={children} />;
 }
 
 export function CancelButton({ label = "Cancel" }: { label?: string }) {

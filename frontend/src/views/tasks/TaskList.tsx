@@ -285,7 +285,7 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
                       style={{ background: meta.color }}
                       aria-hidden="true"
                     />
-                    <span id={`tq-group-${g}`} className="text-sm font-semibold">
+                    <span id={`tq-group-${g}`} className="text-sm font-semibold whitespace-nowrap">
                       {meta.label}
                     </span>
                     <span className="text-xs text-text-muted tabular">{rows.length}</span>

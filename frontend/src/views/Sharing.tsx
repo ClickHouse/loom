@@ -15,7 +15,7 @@ import { EmptyState } from "../components/EmptyState";
 import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../lib/format";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { PageHeader, TipTarget } from "../components/ui";
+import { PageHeader, Stat, TipTarget } from "../components/ui";
 
 export function Sharing() {
   // The summary itself spans every namespace the caller holds a grant on
@@ -145,10 +145,10 @@ export function Sharing() {
           Last {window_days} days
         </Title>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard label="Writes" value={totals.writes} />
-          <StatCard label="Recalls" value={totals.recalls} />
-          <StatCard label="Cross-namespace recalls" value={totals.cross_namespace_recalls} accent />
-          <StatCard label="Active namespaces" value={totals.namespaces} />
+          <Stat label="Writes" value={totals.writes.toLocaleString()} />
+          <Stat label="Recalls" value={totals.recalls.toLocaleString()} />
+          <Stat label="Cross-namespace recalls" value={totals.cross_namespace_recalls.toLocaleString()} />
+          <Stat label="Active namespaces" value={totals.namespaces.toLocaleString()} />
         </div>
         <p className="mt-2 text-xs text-text-muted leading-relaxed">
           Totals span the {totals.namespaces} namespace{totals.namespaces === 1 ? "" : "s"} you hold a grant on. A write
@@ -383,17 +383,6 @@ function agentPattern(a: { writes: number; recalls: number }): string {
   if (ratio >= 3) return "consumer (reads >> writes)";
   if (ratio <= 0.33) return "producer (writes >> reads)";
   return "mixed";
-}
-
-function StatCard({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
-  return (
-    <div className={`p-4 rounded-xl border ${accent ? "border-accent bg-accent-soft" : "border-border bg-surface"}`}>
-      <div className="text-xs text-text-muted">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold tabular ${accent ? "text-accent" : "text-text"}`}>
-        {value.toLocaleString()}
-      </div>
-    </div>
-  );
 }
 
 const ROLE_STATE: Record<string, BadgeState> = { admin: "info", writer: "success" };

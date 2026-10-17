@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -7,6 +6,7 @@ import { copyMemoryTo, listMine, type Identity, type MyNamespaceEntry } from "..
 import { humanizeError } from "../lib/format";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
+import { Alert, fieldError } from "../components/ui";
 
 interface Props {
   open: boolean;
@@ -133,7 +133,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey, o
             value={newKey}
             onChange={setNewKey}
             placeholder={memoryKey}
-            error={keyError ?? undefined}
+            {...fieldError("copy-new-key-error", keyError)}
           />
           <TextField
             id="copy-reason"
@@ -142,11 +142,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey, o
             onChange={setRationale}
             placeholder="promoting a validated finding to the shared space"
           />
-          {error && (
-            <div role="alert">
-              <Alert state="danger" text={error} />
-            </div>
-          )}
+          {error && <Alert role="alert" state="danger" text={error} />}
         </div>
         <ModalFooter>
           <Button type="secondary" htmlType="button" onClick={() => close(false)}>

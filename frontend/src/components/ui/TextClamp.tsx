@@ -1,14 +1,14 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
-import { Tip } from "./Tooltip";
+import { TipTarget } from "./TipTarget";
 
 /**
  * TextClamp — n lines of text with the full text always reachable. A silent ellipsis on
  * load-bearing text is a defect; this component makes the caller say how the rest is
  * reached:
  *
- * - `reach="tooltip"`: when the text is clamped, the span is focusable and
- *   the full text opens as a tooltip on hover and on focus.
+ * - `reach="tooltip"`: when the text is clamped, it is a `TipTarget`: focusable,
+ *   and the full text opens as a tooltip on hover and on focus.
  * - `reach="expand"`: when clamped, a "Show more" button follows; it
  *   toggles the clamp and says so (`aria-expanded`).
  * - `reach="parent"`: the caller's ancestor reaches the text (a row
@@ -81,16 +81,16 @@ export function TextClamp({ text, lines = 1, max, reach, mono = false, className
       </>
     );
   }
-  const span = (
-    <span
-      ref={ref}
-      className={`${cls} ${clamped && reach === "tooltip" ? "rounded-sm" : ""}`}
-      style={clampStyle(lines)}
-      tabIndex={clamped && reach === "tooltip" ? 0 : undefined}
-    >
+  if (reach === "tooltip" && clamped) {
+    return (
+      <TipTarget ref={ref} tip={text} className={`${cls} rounded-sm`} style={clampStyle(lines)}>
+        {shown}
+      </TipTarget>
+    );
+  }
+  return (
+    <span ref={ref} className={cls} style={clampStyle(lines)}>
       {shown}
     </span>
   );
-  if (reach === "tooltip" && clamped) return <Tip content={text}>{span}</Tip>;
-  return span;
 }

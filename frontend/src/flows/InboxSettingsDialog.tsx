@@ -26,6 +26,7 @@ import { ApiError } from "../lib/errors";
 import { toast } from "../components/Toast";
 import { ModePill } from "../components/TaskPills";
 import { IconButton } from "../components/IconButton";
+import { fieldError } from "../components/ui";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 import { oneOf } from "../lib/oneOf";
 
@@ -167,7 +168,7 @@ export function InboxSettingsDialog({ open, onOpenChange, identity, inbox, onSav
           placeholder="triage-bot"
           className="font-mono"
           autoFocus={!editing}
-          error={nameError ?? undefined}
+          {...fieldError("inbox-name-error", nameError)}
         />
         <TextField
           id="inbox-owner"

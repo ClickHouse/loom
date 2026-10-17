@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { Popover } from "@clickhouse/click-ui/Popover";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
@@ -140,7 +141,18 @@ export function Profile() {
   // the top function on boot).
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
-  const editSection = useCallback((label: string) => setEditing(label), []);
+  // The control that opened an editor ("Edit <label>", "New section") takes the focus back
+  // when the editor closes.
+  const opener = useRef<string | null>(null);
+  const editSection = useCallback((label: string) => {
+    opener.current = `edit:${label}`;
+    setEditing(label);
+  }, []);
+  useEffect(() => {
+    if (editing || newOpen || !opener.current) return;
+    document.querySelector<HTMLElement>(`[data-opener="${CSS.escape(opener.current)}"]`)?.focus();
+    opener.current = null;
+  }, [editing, newOpen]);
   // Clicking a section opens it, or toggles it while a selection is being made.
   const selecting = selected.size > 0;
   const openOrSelect = useCallback(
@@ -169,6 +181,7 @@ export function Profile() {
   }, [pendingEdit, entries, requestEditProfile]);
 
   function openNew(seed: { label: string; value: string } | null) {
+    opener.current = "new";
     setNewSeed(seed);
     setNewOpen(true);
   }
@@ -306,7 +319,7 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
       <PageHeader
         title="Your AI profile"
         actions={
-          <Button type="primary" htmlType="button" iconLeft="plus" onClick={onNew}>
+          <Button type="primary" htmlType="button" iconLeft="plus" onClick={onNew} data-opener="new">
             New section
           </Button>
         }
@@ -637,16 +650,19 @@ const SectionRow = memo(function SectionRow({
       <div className="flex items-start justify-between mb-2 gap-3">
         <div className="flex items-baseline gap-2 min-w-0 flex-1">
           {onOpen ? (
-            <button
+            <Link
+              component="button"
               type="button"
-              onClick={(e) => {
+              size="sm"
+              weight="mono"
+              onClick={(e: MouseEvent) => {
                 e.stopPropagation();
                 onOpen(section.label);
               }}
-              className="font-mono text-sm font-semibold truncate text-left hover:underline"
+              className="min-w-0 max-w-full"
             >
-              {section.label}
-            </button>
+              <span className="truncate">{section.label}</span>
+            </Link>
           ) : (
             <div className="font-mono text-sm font-semibold truncate">{section.label}</div>
           )}
@@ -662,6 +678,7 @@ const SectionRow = memo(function SectionRow({
             }}
             label={`Edit ${section.label}`}
             tooltip="Edit"
+            data-opener={`edit:${section.label}`}
             icon="pencil"
             size="sm"
           />
@@ -732,6 +749,12 @@ function SectionEditor({
   const [label, setLabel] = useState(initialLabel);
   const [value, setValue] = useState(initialValue);
   const [saving, setSaving] = useState(false);
+  // A new section starts at its name; an existing one, whose name is fixed, at its text.
+  const labelRef = useRef<HTMLInputElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    (isNew ? labelRef : textRef).current?.focus();
+  }, [isNew]);
 
   const measuredLen = JSON.stringify(value).length;
   const over = measuredLen > DEFAULT_CHAR_LIMIT;
@@ -759,10 +782,20 @@ function SectionEditor({
   }
 
   return (
-    <div className="rounded-lg border border-accent bg-surface p-4 space-y-3">
+    // biome-ignore lint/a11y/noStaticElementInteractions: Escape anywhere in the editor cancels it; the fields and buttons inside are the controls
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above
+    <div
+      className="rounded-lg border border-accent bg-surface p-4 space-y-3"
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || saving) return;
+        e.stopPropagation();
+        onCancel();
+      }}
+    >
       <div className="flex items-center justify-between">
         <div className="flex-1 min-w-0">
           <TextField
+            ref={labelRef}
             aria-label="Section label"
             value={label}
             onChange={(value) => setLabel(value)}
@@ -776,6 +809,7 @@ function SectionEditor({
         </div>
       </div>
       <TextAreaField
+        ref={textRef}
         aria-label="Section text"
         value={value}
         onChange={(value) => setValue(value)}

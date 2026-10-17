@@ -18,7 +18,7 @@ import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { Tip } from "../components/ui";
+import { fieldError, Tip } from "../components/ui";
 import { relativeTime, humanizeError } from "../lib/format";
 import { oneOf } from "../lib/oneOf";
 
@@ -379,7 +379,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                 placeholder="user@example.com (or subject identifier)"
                 autoFocus
                 onKeyDown={(e) => e.key === "Enter" && onAdd()}
-                error={err ?? undefined}
+                {...fieldError("add-member-error", err)}
               />
             </div>
             <div className="w-36 shrink-0">

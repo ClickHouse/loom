@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -8,6 +7,7 @@ import { useStore } from "../lib/state";
 import { toast } from "../components/Toast";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
+import { Alert, fieldError } from "../components/ui";
 import { humanizeError } from "../lib/format";
 
 interface Props {
@@ -105,11 +105,10 @@ export function CreateNamespaceDialog({ open, onOpenChange, onCreated }: Props) 
           onChange={setName}
           placeholder="my-team"
           autoFocus
-          error={
-            trimmed && !nameValid
-              ? "Use lowercase letters, digits, and dashes only. Start with a letter or digit."
-              : undefined
-          }
+          {...fieldError(
+            "create-ns-name-error",
+            trimmed && !nameValid && "Use lowercase letters, digits, and dashes only. Start with a letter or digit.",
+          )}
         />
         <TextField
           id="create-ns-description"
@@ -140,11 +139,7 @@ export function CreateNamespaceDialog({ open, onOpenChange, onCreated }: Props) 
             </p>
           </div>
         )}
-        {error && (
-          <div role="alert">
-            <Alert state="danger" text={error} />
-          </div>
-        )}
+        {error && <Alert role="alert" state="danger" text={error} />}
         <ModalFooter>
           <Button type="secondary" htmlType="button" onClick={() => close(false)}>
             Cancel

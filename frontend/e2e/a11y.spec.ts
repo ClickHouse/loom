@@ -528,8 +528,9 @@ test("the focus ring is the focus colour from the first frame", async ({ page })
 // The profile section dialog is read-only: it opens on itself, with no tooltip up, and one
 // Escape closes it.
 test("the profile section dialog opens on itself and closes on one Escape", async ({ page }) => {
-  await open(page, "/profile");
-  const section = page.locator("main button.font-mono").first();
+  await installApi(page, { profileRows: 3 });
+  await page.goto("/profile");
+  const section = page.getByRole("button", { name: "role", exact: true });
   await section.click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();

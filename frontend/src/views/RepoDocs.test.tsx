@@ -116,7 +116,10 @@ describe("RepoDocsList", () => {
       content: "Page the owner first.",
     });
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "On-call runbook" }));
+    const title = await screen.findByRole("button", { name: "On-call runbook" });
+    // A Click UI link at the list's 14 px.
+    expect(title.className).toMatch(/\blink_size_md/);
+    fireEvent.click(title);
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("Page the owner first.")).toBeInTheDocument();
     expect(dialog).toHaveTextContent("opened by agents 5 times in 7 days");

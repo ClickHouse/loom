@@ -168,8 +168,13 @@ const ACTIVITY_FIELDS = ["ts", "event_type", "actor", "subject"];
 
 const FIRST_SCREEN_ROWS = 12;
 
+type ActivityTab = "events" | "erasures";
+// One name per tab, for its trigger and the document title.
+const ACTIVITY_TABS: Record<ActivityTab, string> = { events: "Events", erasures: "Erasures" };
+
 export function Audit() {
   const identity = useIdentity();
+  const [tab, setTab] = useState<ActivityTab>("events");
   const whoami = useStore((s) => s.whoami);
   const [rows, setRows] = useState<AuditEntry[] | null>(null);
   const [showSystem, setShowSystem] = useState(false);
@@ -232,7 +237,7 @@ export function Audit() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <PageHeader title="Activity">
+        <PageHeader title="Activity" tab={ACTIVITY_TABS[tab]}>
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </PageHeader>
         <p className="text-sm text-text-muted max-w-2xl leading-relaxed">
@@ -243,13 +248,13 @@ export function Audit() {
         </p>
       </div>
 
-      <Tabs defaultValue="events">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as ActivityTab)}>
         <Tabs.TriggersList className="mb-5" aria-label="Activity">
           <TabTrigger value="events" icon="history">
-            Events
+            {ACTIVITY_TABS.events}
           </TabTrigger>
           <TabTrigger value="erasures" icon="trash">
-            Erasures
+            {ACTIVITY_TABS.erasures}
           </TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="events">
@@ -263,7 +268,10 @@ export function Audit() {
                   aria-label="Filter audit events"
                 />
               </div>
-              <div className="mb-3 flex items-center justify-end gap-4">
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-4">
+                <span role="status" className="mr-auto text-xs text-text-muted tabular">
+                  {visibleRows.length} {visibleRows.length === 1 ? "event" : "events"}
+                </span>
                 {me && (
                   <Checkbox label="Only my actions" checked={onlyMe} onCheckedChange={(c) => setOnlyMe(c === true)} />
                 )}

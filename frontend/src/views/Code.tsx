@@ -9,11 +9,11 @@
  * per-PR context), Access (who can read it, how tokens get the claim).
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
@@ -88,7 +88,18 @@ import { branchState, branchOrder, buildCards, type CodeFacet } from "../lib/rep
 import { RepositoryCard, BranchChip, FRESH_STATE, type CodeActions, type RecordActionProps } from "./RepositoryCard";
 import { useTrackerSources, useRecordActions, TRACKER_SOURCES_ABSENT } from "./TrackerSources";
 import { TrackersPanel } from "./TrackersPanel";
-import { Chip, ExternalLink, PageHeader, TabTrigger, TextClamp, Tip, TipTarget } from "../components/ui";
+import {
+  Alert,
+  Chip,
+  ExternalLink,
+  fieldError,
+  PageHeader,
+  Stat,
+  TabTrigger,
+  TextClamp,
+  Tip,
+  TipTarget,
+} from "../components/ui";
 import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
 
@@ -105,16 +116,6 @@ const short = (sha: string) => (sha || "").slice(0, 12);
 
 function Mono({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <span className={`font-mono text-xs ${className}`}>{children}</span>;
-}
-
-function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
-  return (
-    <div className="p-3.5 rounded-xl border border-border bg-surface">
-      <div className="section-label">{label}</div>
-      <div className="text-2xl font-semibold tabular mt-1">{value}</div>
-      {hint && <div className="text-xs text-text-muted mt-0.5">{hint}</div>}
-    </div>
-  );
 }
 
 function readRepoParam(): string | null {
@@ -1436,11 +1437,7 @@ export function AddRepositoryDialog({
             </div>
           )}
 
-          {error && (
-            <div role="alert">
-              <Alert state="danger" text={error} />
-            </div>
-          )}
+          {error && <Alert role="alert" state="danger" text={error} />}
         </div>
 
         <ModalFooter>
@@ -1520,7 +1517,7 @@ function AddBranchDialog({
             onChange={(v) => setBranch(v)}
             placeholder="26.9"
             autoFocus
-            error={error ?? undefined}
+            {...fieldError("add-branch-name-error", error)}
           />
           <div className="text-xs text-text-muted mt-1">
             Already indexed: {group.branches.map((b) => b.branch).join(", ")}
@@ -2248,13 +2245,16 @@ function UnitCard({ u, onOpen }: { u: CodeUnit; onOpen: (symbol: string) => void
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             {u.symbol ? (
-              <button
+              <Link
+                component="button"
                 type="button"
+                size="md"
+                weight="mono"
                 onClick={() => onOpen(u.symbol)}
-                className="font-mono text-sm text-link hover:underline text-left break-all"
+                className="text-left break-all"
               >
                 {u.symbol}
-              </button>
+              </Link>
             ) : (
               <span className="font-mono text-sm">{u.path.split("/").pop()}</span>
             )}

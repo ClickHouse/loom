@@ -39,9 +39,10 @@ export function labelSelectSearch(root: HTMLElement = document.body): () => void
 const PRESSABLE = "button, a[href], [role='button'], [role='menuitem'], [role='tab']";
 let pressed: HTMLElement | null = null;
 
+// A press on anything but a control forgets the last one, so a stale button enabled
+// later never takes the focus.
 function notePress(e: Event): void {
-  const target = e.target instanceof Element ? e.target.closest<HTMLElement>(PRESSABLE) : null;
-  if (target) pressed = target;
+  pressed = e.target instanceof Element ? e.target.closest<HTMLElement>(PRESSABLE) : null;
 }
 
 function noteKeyPress(e: KeyboardEvent): void {
@@ -65,6 +66,7 @@ export function keepFocusThroughLoading(root: HTMLElement = document.body): () =
         if (dialog && (active === target || active === null || active === document.body)) dialog.focus();
       } else if (active === null || active === document.body || active === dialog) {
         target.focus();
+        pressed = null;
       }
     }
   });

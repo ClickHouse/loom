@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import {
@@ -19,7 +19,7 @@ import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { PageHeader, Panel, Tip } from "../components/ui";
+import { Alert, PageHeader, Panel, Tip } from "../components/ui";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
@@ -172,9 +172,9 @@ export function Browse() {
       {repoCount > 0 && (
         <div className="mb-6 -mt-3 text-xs text-text-muted">
           Looking for a code index or a tracker source? Both are joined from{" "}
-          <button type="button" onClick={() => setView("code")} className="text-link hover:underline">
+          <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
             Repositories
-          </button>{" "}
+          </Link>{" "}
           — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record
           covers it, read-only.
         </div>
@@ -236,7 +236,7 @@ export function Browse() {
           <span className="font-mono">{identity.org}</span>
         </h2>
         <div className="flex flex-wrap items-center gap-3 text-xs">
-          <span className="text-text-muted tabular">
+          <span role="status" className="text-text-muted tabular">
             {rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : ""}
           </span>
           <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreateOpen(true)}>

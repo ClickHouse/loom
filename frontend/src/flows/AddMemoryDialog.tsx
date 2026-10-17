@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
@@ -9,6 +8,7 @@ import { sharedTagVocabulary } from "../lib/sharedReads";
 import { humanizeError } from "../lib/format";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
+import { Alert, fieldError } from "../components/ui";
 
 interface Props {
   open: boolean;
@@ -108,7 +108,7 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
             value={memoryKey}
             onChange={setMemoryKey}
             placeholder="user_coffee_preference"
-            error={keyError ?? undefined}
+            {...fieldError("add-memory-key-error", keyError)}
             autoFocus
           />
           <TextAreaField
@@ -146,11 +146,7 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
               </Select.Item>
             ))}
           </Select>
-          {error && (
-            <div role="alert">
-              <Alert state="danger" text={error} />
-            </div>
-          )}
+          {error && <Alert role="alert" state="danger" text={error} />}
         </div>
         <ModalFooter>
           <Button type="secondary" htmlType="button" onClick={() => close(false)}>

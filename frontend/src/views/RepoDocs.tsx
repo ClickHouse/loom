@@ -14,6 +14,7 @@
 import { lazy, Suspense, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { deleteKnowledge, knowledgeReads, listKnowledge, type KnowledgeEntry } from "../api";
 import { ApiError } from "../lib/errors";
 import { humanizeError, relativeTime } from "../lib/format";
@@ -148,13 +149,15 @@ export function RepoDocsList({
               <li key={d.source_uri} className="flex items-start gap-2 text-sm min-w-0">
                 <Icon name="document" size="xs" aria-hidden="true" className="shrink-0 mt-1" />
                 <div className="min-w-0 flex-1">
-                  <button
+                  <Link
+                    component="button"
                     type="button"
+                    size="md"
                     onClick={() => setViewing(d)}
-                    className="text-left text-text hover:underline underline-offset-2 rounded min-h-6 max-w-full truncate block"
+                    className="text-left min-h-6 max-w-full truncate block"
                   >
                     {d.title || d.source_uri}
-                  </button>
+                  </Link>
                   <div className="text-xs text-text-muted truncate">
                     {d.description ? <>{d.description} · </> : null}
                     {d.ingested_at ? `added ${relativeTime(d.ingested_at)}` : ""}

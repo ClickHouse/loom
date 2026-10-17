@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
+import { Alert } from "../components/ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -289,11 +289,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
             onChange={setTagsInput}
             placeholder="reference, work"
           />
-          {error && (
-            <div role="alert">
-              <Alert state="danger" text={error} />
-            </div>
-          )}
+          {error && <Alert role="alert" state="danger" text={error} />}
           {busy && (
             <Alert
               state="info"

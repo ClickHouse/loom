@@ -7,6 +7,7 @@ import { Kbd } from "./Kbd";
 import { MetaList, MetaRow } from "./Meta";
 import { Panel } from "./Panel";
 import { SectionHeading } from "./SectionHeading";
+import { Stat } from "./Stat";
 import { TextClamp } from "./TextClamp";
 import { Tip } from "./Tooltip";
 import { must } from "../../test/must";
@@ -88,6 +89,21 @@ describe("Chip", () => {
   });
 });
 
+describe("Chip with a tip", () => {
+  it("a static chip is a TipTarget: a focusable note in the chip's own shape", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Chip label="restricted" tip="Only members read it" />);
+    const chip = screen.getByRole("note");
+    expect(chip).toHaveTextContent("restricted");
+    expect(chip.className).toContain("rounded-full");
+    expect(chip.className).not.toMatch(/(^|\s)rounded(\s|$)/);
+    await user.tab();
+    expect(chip).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Only members read it");
+    expect(await axeViolations(container)).toEqual([]);
+  });
+});
+
 describe("MetaList", () => {
   it("is a definition list whose values wrap rather than truncate", async () => {
     const { container } = render(
@@ -120,6 +136,8 @@ describe("TextClamp", () => {
     const { container } = render(<TextClamp text={long} lines={1} max={80} reach="tooltip" />);
     const span = screen.getByText((t) => t.endsWith("…"));
     expect(span).toHaveAttribute("tabindex", "0");
+    // A tab stop with a role, as TipTarget gives one: a note, not an action.
+    expect(span).toHaveAttribute("role", "note");
     expect(must(span.textContent, "clamped text").length).toBeLessThanOrEqual(81);
     await user.tab();
     expect(span).toHaveFocus();
@@ -160,6 +178,22 @@ describe("Kbd and Tip", () => {
     await user.tab();
     expect(screen.getByRole("button", { name: "Walk" })).toHaveFocus();
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Walk from this entity");
+    expect(await axeViolations(container)).toEqual([]);
+  });
+});
+
+describe("Stat", () => {
+  it("is Click UI's small BigStat: the label, then the value and its hint", async () => {
+    const { container } = render(
+      <div>
+        <Stat label="Files" value="1,204" hint="src/ docs/" />
+        <Stat label="Approve ratio" value="12%" error />
+      </div>,
+    );
+    const [files, ratio] = [...container.querySelectorAll("[class*='big-stat_size_sm']")];
+    expect(files).toHaveTextContent("Files1,204src/ docs/");
+    expect(within(files as HTMLElement).getByText("src/ docs/").className).toContain("text-xs");
+    expect(ratio.className).toMatch(/big-stat_error/);
     expect(await axeViolations(container)).toEqual([]);
   });
 });

@@ -71,7 +71,9 @@ function turnId(m: ConversationMessage): string {
   return `msg-${m.agent ?? ""}-${m.msg_id}`;
 }
 
-function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+// A fenced block in a transcript turn: the text as recorded, with a Copy button. Not Click
+// UI's CodeBlock, which highlights by language and would guess at agents' mixed output.
+function TranscriptCode({ code, lang }: { code: string; lang?: string }) {
   return (
     <div className="my-2 rounded-lg border border-border bg-surface-2">
       <div className="flex items-center justify-between gap-2 px-3 pt-2">
@@ -96,7 +98,7 @@ function MessageBody({ content, muted = false }: { content: string; muted?: bool
           const firstLine = nl >= 0 ? seg.slice(0, nl).trim() : "";
           const lang = /^[a-zA-Z0-9_+-]{1,20}$/.test(firstLine) ? firstLine : "";
           const code = (lang ? seg.slice(nl + 1) : seg).replace(/\n$/, "");
-          return <CodeBlock key={i} code={code} lang={lang || undefined} />;
+          return <TranscriptCode key={i} code={code} lang={lang || undefined} />;
         }
         return (
           <span key={i} className="whitespace-pre-wrap break-words">
@@ -304,6 +306,14 @@ export function Conversations() {
     });
   }, [hits, threads, identity.namespace]);
 
+  const searchStatus = busy
+    ? "Searching…"
+    : groupedHits === null
+      ? ""
+      : groupedHits.length === 0
+        ? "No matches"
+        : `${hits?.length} match${hits?.length === 1 ? "" : "es"} in ${groupedHits.length} thread${groupedHits.length === 1 ? "" : "s"}`;
+
   // Distinct agents for the filter; the displayed thread list is the
   // namespace-wide set narrowed to the selected agent.
   const agentOptions = useMemo(() => Array.from(new Set((threads || []).map((t) => t.agent))).sort(), [threads]);
@@ -405,10 +415,8 @@ export function Conversations() {
       let r = await page("*");
       // A replica of the previous release answers "*" with no rows; the opener's agent
       // still pages there. Drop with the next release.
-      if (r.rows.length === 0 && knownAgent && !signal.aborted) {
-        // For this page only: the next may reach a current replica, which reads "*" whole.
-        r = await page(knownAgent);
-      }
+      const fellBack = r.rows.length === 0 && !!knownAgent && !signal.aborted;
+      if (fellBack && knownAgent) r = await page(knownAgent);
       if (signal.aborted) return;
       // Merge into the detail as it is now, and only if it is still this thread's. New
       // rows append (server returns chronological order; we render in-place).
@@ -416,10 +424,13 @@ export function Conversations() {
         if (!prev || prev.thread_id !== thread_id) return prev;
         return { ...prev, messages: [...prev.messages, ...r.rows] };
       });
-      setMoreCursor(r.next_cursor);
+      // A fallback page is one agent's: its cursor would resume every agent's walk past the
+      // others' turns, so paging stops there and the dialog says how much it shows.
+      const next = fellBack ? null : r.next_cursor;
+      setMoreCursor(next);
       // The last page removes Load more; its focus moves to the transcript, at the first
       // turn the page brought.
-      if (!r.next_cursor && r.rows.length > 0) focusTurn.current = turnId(r.rows[0]);
+      if (!next && r.rows.length > 0) focusTurn.current = turnId(r.rows[0]);
     } catch (e) {
       if (signal.aborted) return;
       toast(`Load more failed: ${humanizeError(e)}`, "error");
@@ -541,6 +552,10 @@ export function Conversations() {
         </div>
       )}
 
+      {/* Always mounted, so a screen reader announces each change of its text. */}
+      <p role="status" className="sr-only">
+        {searchStatus}
+      </p>
       {busy && <Skeleton className="h-20 w-full" />}
 
       {hits === null && <SessionBriefsSection org={identity.org} namespace={identity.namespace} />}
@@ -597,9 +612,8 @@ export function Conversations() {
 
       {!busy && groupedHits !== null && groupedHits.length > 0 && (
         <div className="space-y-3">
-          <div className="text-xs text-text-muted tabular">
-            {hits?.length} match{hits?.length === 1 ? "" : "es"} in {groupedHits.length} thread
-            {groupedHits.length === 1 ? "" : "s"}
+          <div className="text-xs text-text-muted tabular" aria-hidden="true">
+            {searchStatus}
           </div>
           {groupedHits.map((g) => (
             <div key={g.key} className="rounded-xl border border-border bg-surface overflow-hidden">
@@ -700,7 +714,14 @@ export function Conversations() {
               </div>
             </div>
           )}
-          {threadLoading && <div className="text-center text-sm text-text-muted py-12">Loading…</div>}
+          <p role="status" className="sr-only">
+            {threadLoading ? "Loading…" : ""}
+          </p>
+          {threadLoading && (
+            <div className="text-center text-sm text-text-muted py-12" aria-hidden="true">
+              Loading…
+            </div>
+          )}
           {!threadLoading && threadDetail && !threadDetail.found && (
             <div className="text-center text-sm text-text-muted py-12">
               {/* "or upgraded" goes with the previous-release fallback above. */}

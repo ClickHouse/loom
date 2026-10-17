@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
+import { Alert } from "./ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { cancelNamespaceRequest, type MyNamespaceEntry } from "../api";
 import { sharedMine } from "../lib/sharedReads";

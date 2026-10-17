@@ -152,7 +152,7 @@ export function Header() {
 
         {whoami && (
           <Menu
-            label={`Account: ${whoami.subject}`}
+            label={`Signed in as ${whoami.subject}, org ${whoami.org}`}
             trigger={
               <button
                 type="button"
@@ -166,7 +166,8 @@ export function Header() {
               </button>
             }
           >
-            <Dropdown.Group>
+            {/* No menu item, so a screen reader in the menu never reads it: the menu's name says it. */}
+            <Dropdown.Group aria-hidden="true">
               <div className="px-4 py-2">
                 <div className="text-xs text-text-muted">Signed in as</div>
                 <div className="text-sm font-medium text-text truncate">{whoami.subject}</div>
@@ -193,7 +194,9 @@ function Menu({ label, trigger, children }: { label: string; trigger: ReactEleme
   return (
     <Dropdown modal={false}>
       <MenuTrigger>{trigger}</MenuTrigger>
-      <Dropdown.Content align="end" aria-label={label}>
+      {/* Radix names the menu after its trigger with aria-labelledby, which outranks
+          aria-label; dropping it lets the label name the menu. */}
+      <Dropdown.Content align="end" aria-label={label} aria-labelledby={undefined}>
         {children}
       </Dropdown.Content>
     </Dropdown>

@@ -75,4 +75,13 @@ describe("Modal", () => {
     fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });
     await waitFor(() => expect(add).toHaveFocus());
   });
+
+  // styles.css pads the title clear of the close button by Click UI's test id; a Click UI
+  // release that drops the id would let a long title run under the button.
+  it("draws its title on the element styles.css pads", () => {
+    render(<Modal open onOpenChange={() => {}} title="A long title that would reach the close button" />);
+    expect(
+      screen.getByText("A long title that would reach the close button").closest("[data-testid='click-dialog-title']"),
+    ).not.toBeNull();
+  });
 });

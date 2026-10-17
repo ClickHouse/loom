@@ -6,7 +6,7 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import type { Identity, TaxonomyEntry } from "../../api";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { matchEntities, parsePathQuery, shorten } from "./model";
-import { PageHeader } from "../../components/ui";
+import { PageHeader, Unavailable } from "../../components/ui";
 
 /**
  * Bar — the top strip: scope, the omnibox, Walk, Path, and the trail.
@@ -119,18 +119,19 @@ export function Bar({
 
   return (
     <div className="flex flex-col gap-2">
-      <PageHeader title="Graph">
+      <PageHeader title="Graph" tab={patterns ? "Patterns" : undefined}>
         <ScopeBadge kind="namespace" value={identity.namespace} />
         {/* biome-ignore lint/a11y/useSemanticElements: the box submits, so it stays a <form>; role="search" makes it the search landmark */}
         <form
-          className="flex items-center gap-2 flex-1 min-w-[280px]"
+          className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]"
           role="search"
           onSubmit={(e) => {
             e.preventDefault();
             submit(open && suggestions.length ? suggestions[hi] : undefined);
           }}
         >
-          <div className="relative flex-1 max-w-[520px]">
+          {/* Below sm the field takes the whole row, so its placeholder is not cut. */}
+          <div className="relative basis-full sm:basis-auto sm:flex-1 sm:max-w-[520px]">
             {/* An entity box, not a search box: a node glyph and an
                 entity placeholder, so it does not read as the header's ⌘K search. */}
             <TextField
@@ -210,22 +211,30 @@ export function Bar({
             {pathQuery ? "Path" : "Walk"}
           </Button>
           {!pathQuery && (
-            <Button
-              type="secondary"
-              htmlType="button"
-              iconLeft="arrow-directions"
-              disabled={!pathTarget || busy}
-              onClick={() => {
-                if (pathTarget && currentSeed) {
-                  onDraft(`${currentSeed} → ${pathTarget}`);
-                  onPath(currentSeed, pathTarget);
-                }
-              }}
-              aria-label={pathTarget && currentSeed ? `Path from ${currentSeed} to ${pathTarget}` : "Path"}
-              aria-describedby={pathTarget && currentSeed ? undefined : "explorer-path-hint"}
+            <Unavailable
+              reason={
+                busy
+                  ? "A walk is loading."
+                  : pathTarget && currentSeed
+                    ? null
+                    : "Type a second entity while a walk is open, or a → b, to ask for a path."
+              }
             >
-              Path
-            </Button>
+              <Button
+                type="secondary"
+                htmlType="button"
+                iconLeft="arrow-directions"
+                onClick={() => {
+                  if (pathTarget && currentSeed) {
+                    onDraft(`${currentSeed} → ${pathTarget}`);
+                    onPath(currentSeed, pathTarget);
+                  }
+                }}
+                aria-label={pathTarget && currentSeed ? `Path from ${currentSeed} to ${pathTarget}` : "Path"}
+              >
+                Path
+              </Button>
+            </Unavailable>
           )}
         </form>
         {patternsAvailable && (
@@ -250,9 +259,6 @@ export function Bar({
         <span id="explorer-patterns-hint" className="sr-only">
           Open issues by component and severity from the tracker, and the issue and PR graph behind a cell. Press again
           to return to the entity graph.
-        </span>
-        <span id="explorer-path-hint" className="sr-only">
-          Type a second entity while a walk is open, or a → b, to ask for a path.
         </span>
       </PageHeader>
       {trail.length > 0 && (

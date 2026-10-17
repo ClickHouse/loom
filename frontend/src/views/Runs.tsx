@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
+import { Alert } from "../components/ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -290,8 +290,10 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
   };
 }
 
-function RunTable({ rows, onOpen, head = true }: { rows: RunRow[]; onOpen: (r: RunRow) => void; head?: boolean }) {
-  return <Table headers={RUN_HEADERS} rows={rows.map((r) => runRow(r, onOpen))} size="sm" showHeader={head} />;
+// Grouped by session, every session's table keeps its header: a table without one leaves
+// its cells unlabelled for a screen reader.
+function RunTable({ rows, onOpen }: { rows: RunRow[]; onOpen: (r: RunRow) => void }) {
+  return <Table headers={RUN_HEADERS} rows={rows.map((r) => runRow(r, onOpen))} size="sm" />;
 }
 
 export function Runs() {
@@ -481,7 +483,7 @@ export function Runs() {
                   {g.used} relied on · {g.written} written · {relativeTime(g.latest)}
                 </div>
               </div>
-              <RunTable rows={g.runs} onOpen={openRun} head={false} />
+              <RunTable rows={g.runs} onOpen={openRun} />
             </section>
           ))}
         </div>

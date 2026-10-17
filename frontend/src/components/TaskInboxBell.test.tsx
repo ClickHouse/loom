@@ -105,6 +105,8 @@ describe("TaskInboxBell", () => {
     expect(
       screen.getByText("1 blocked on a person · 5 blocked on a sender or external event", { exact: false }),
     ).toBeInTheDocument();
+    // The arrow is drawn, not spoken.
+    expect(screen.getByRole("button", { name: /^private-bot.* Open$/ })).toBeInTheDocument();
     await user.click(screen.getByText("pool"));
     expect(useStore.getState().view).toBe("tasks");
     expect(new URLSearchParams(window.location.search).get("inbox")).toBe("pool");

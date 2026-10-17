@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { Select } from "@clickhouse/click-ui/Select";
+import { render, screen, waitFor } from "../test/rtl";
 import { fireEvent } from "@testing-library/react";
 import { keepFocusThroughLoading, labelSelectSearch, lastPressed } from "./clickUiFixes";
 
@@ -27,6 +30,26 @@ describe("labelSelectSearch", () => {
     document.querySelector('[role="dialog"]')?.append(clear);
     await new Promise((r) => setTimeout(r, 0));
     expect(clear).toHaveAttribute("aria-label", "Clear filter");
+  });
+});
+
+// The shim finds Click UI's Select parts by their test ids; a release that renames them
+// would leave the filter field unnamed again.
+describe("labelSelectSearch on a real Click UI Select", () => {
+  let stop = () => {};
+  afterEach(() => stop());
+
+  it("names the filter field of an open Select", async () => {
+    stop = labelSelectSearch();
+    render(
+      createElement(
+        Select,
+        { label: "Kind", onSelect: () => {}, showSearch: true },
+        createElement(Select.Item, { value: "a", label: "Alpha" }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Kind/ }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Filter options" })).toBeInTheDocument());
   });
 });
 
@@ -76,6 +99,38 @@ describe("keepFocusThroughLoading", () => {
     more.disabled = false;
     await new Promise((r) => setTimeout(r, 0));
     expect(more).toHaveFocus();
+  });
+
+  it("forgets a press once the user presses somewhere that is not a control", async () => {
+    stop = keepFocusThroughLoading();
+    document.body.innerHTML = `<button type="button">Run audit</button><p>text</p>`;
+    const run = document.querySelector("button") as HTMLButtonElement;
+    fireEvent.pointerDown(run);
+    fireEvent.pointerDown(document.querySelector("p") as HTMLElement);
+    expect(lastPressed()).toBeNull();
+    // A later enable of the stale button does not take the focus or scroll the page to it.
+    run.disabled = true;
+    await new Promise((r) => setTimeout(r, 0));
+    run.disabled = false;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(run).not.toHaveFocus();
+  });
+
+  it("forgets a press once it has given the focus back", async () => {
+    stop = keepFocusThroughLoading();
+    document.body.innerHTML = `<button type="button">Run audit</button>`;
+    const run = document.querySelector("button") as HTMLButtonElement;
+    run.focus();
+    fireEvent.keyDown(run, { key: "Enter" });
+    // Click UI disables the loading button; the browser drops its focus to the body.
+    run.blur();
+    run.disabled = true;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.activeElement).toBe(document.body);
+    run.disabled = false;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(run).toHaveFocus();
+    expect(lastPressed()).toBeNull();
   });
 
   it("leaves focus alone when the user has moved on", async () => {

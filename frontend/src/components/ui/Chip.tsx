@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { TipTarget } from "./TipTarget";
 import { Tip } from "./Tooltip";
 
 /**
@@ -108,11 +109,12 @@ export function Chip({
   const softDisabled = disabled && tip !== undefined;
 
   if (!onClick && !onRemove) {
-    return wrap(
-      // Focusable only to open its tip; `note` gives the stop a role.
-      <span className={`${BASE} ${tone} ${className}`} tabIndex={tip ? 0 : undefined} role={tip ? "note" : undefined}>
+    return tip ? (
+      <TipTarget tip={tip} className={`${BASE} ${tone} ${className}`}>
         {spoken}
-      </span>,
+      </TipTarget>
+    ) : (
+      <span className={`${BASE} ${tone} ${className}`}>{spoken}</span>
     );
   }
   const main = onClick ? (

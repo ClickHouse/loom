@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import {
   getModelStatus,
@@ -10,6 +9,7 @@ import {
   type ModelStatus,
 } from "../api/models";
 import { ModelsForm } from "./ModelsForm";
+import { Alert } from "../components/ui";
 
 const PHASES: Record<string, string> = {
   drain: "Pausing agent requests",
@@ -103,11 +103,7 @@ export function ModelsSettings() {
         {status.source === "dashboard" ? "saved dashboard settings" : "server environment"}. Saved dashboard settings
         take precedence over environment defaults.
       </p>
-      {error && (
-        <div role="alert">
-          <Alert state="danger" size="small" text={error} />
-        </div>
-      )}
+      {error && <Alert role="alert" state="danger" size="small" text={error} />}
       {status.source === "dashboard" && !status.pending && (
         <div className="rounded-lg border border-border p-4">
           {confirmReset ? (
@@ -150,49 +146,46 @@ export function ModelsSettings() {
         </div>
       )}
       {status.pending ? (
-        <div role="status">
-          <Alert
-            state={status.pending.state === "failed" ? "danger" : "info"}
-            size="medium"
-            text={
-              <>
-                <strong>Embedding configuration: {status.pending.state}</strong>
-                <p>
-                  The new embedding model is not active until its rebuild completes. Existing source data is retained.
-                </p>
-                <RebuildProgress pending={status.pending} />
-                {status.pending.state === "failed" && (
-                  <Button
-                    type="primary"
-                    htmlType="button"
-                    loading={retrying}
-                    className="mt-3"
-                    onClick={async () => {
-                      if (!status.pending || retrying) return;
-                      setRetrying(true);
-                      try {
-                        await retryModelConfiguration(status.pending.config_id);
-                        setReload((value) => value + 1);
-                      } catch {
-                        setError("Could not retry the rebuild. Refresh and try again.");
-                      } finally {
-                        setRetrying(false);
-                      }
-                    }}
-                  >
-                    Retry rebuild
-                  </Button>
-                )}
-              </>
-            }
-          />
-        </div>
+        <Alert
+          role="status"
+          state={status.pending.state === "failed" ? "danger" : "info"}
+          size="medium"
+          text={
+            <>
+              <strong>Embedding configuration: {status.pending.state}</strong>
+              <p>
+                The new embedding model is not active until its rebuild completes. Existing source data is retained.
+              </p>
+              <RebuildProgress pending={status.pending} />
+              {status.pending.state === "failed" && (
+                <Button
+                  type="primary"
+                  htmlType="button"
+                  loading={retrying}
+                  className="mt-3"
+                  onClick={async () => {
+                    if (!status.pending || retrying) return;
+                    setRetrying(true);
+                    try {
+                      await retryModelConfiguration(status.pending.config_id);
+                      setReload((value) => value + 1);
+                    } catch {
+                      setError("Could not retry the rebuild. Refresh and try again.");
+                    } finally {
+                      setRetrying(false);
+                    }
+                  }}
+                >
+                  Retry rebuild
+                </Button>
+              )}
+            </>
+          }
+        />
       ) : (
         <>
           {saved && (
-            <div role="status">
-              <Alert state="success" size="small" text="Saved. Loom is using the new configuration." />
-            </div>
+            <Alert role="status" state="success" size="small" text="Saved. Loom is using the new configuration." />
           )}
           <ModelsForm
             key={status.version}

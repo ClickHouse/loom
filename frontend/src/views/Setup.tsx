@@ -1,5 +1,4 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -33,7 +32,7 @@ import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall, canCallCodeRepos } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { PageHeader, TabTrigger, Tip, Unavailable } from "../components/ui";
+import { Alert, PageHeader, TabTrigger, Tip, Unavailable } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
 import { READ_ONLY_TIP, canWrite, roleOnNamespace, useNamespaceRole } from "../lib/namespaceRole";
@@ -58,6 +57,7 @@ import { ModelsSettings } from "./ModelsSettings";
  *  (`?tab=memory`). */
 const SETTINGS_TABS = ["tokens", "memory", "models"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
+const TAB_LABELS: Record<SettingsTab, string> = { tokens: "Tokens", memory: "Memory", models: "Models & keys" };
 
 function isSettingsTab(v: string | null): v is SettingsTab {
   return SETTINGS_TABS.some((t) => t === v);
@@ -214,7 +214,7 @@ export function Setup() {
 
   return (
     <PageContainer>
-      <PageHeader title="Settings">
+      <PageHeader title="Settings" tab={TAB_LABELS[tab]}>
         {tab === "models" ? (
           <span className="text-sm text-text-muted">Deployment-wide</span>
         ) : (
@@ -228,28 +228,28 @@ export function Setup() {
         // or a grant. `code.repos` and `tracker.source.list` are org-level reads at
         // viewer role: a known principal may make them, so the button shows once whoami
         // is known.
-        <div role="status" className="mb-6 max-w-2xl">
-          <Alert
-            state="warning"
-            size="medium"
-            text={
-              <>
-                <strong>No namespace selected.</strong> Your token can reach no namespace yet. Join a repository or
-                tracker source from Repositories, or ask for a grant.
-                <span className="mt-2 flex flex-wrap items-center gap-3">
-                  <Button type="empty" htmlType="button" onClick={() => openNamespacePicker(true)}>
-                    Namespace menu
+        <Alert
+          role="status"
+          className="mb-6 max-w-2xl"
+          state="warning"
+          size="medium"
+          text={
+            <>
+              <strong>No namespace selected.</strong> Your token can reach no namespace yet. Join a repository or
+              tracker source from Repositories, or ask for a grant.
+              <span className="mt-2 flex flex-wrap items-center gap-3">
+                <Button type="empty" htmlType="button" onClick={() => openNamespacePicker(true)}>
+                  Namespace menu
+                </Button>
+                {whoami && (
+                  <Button type="primary" htmlType="button" iconLeft="code" onClick={() => setView("code")}>
+                    Open repositories
                   </Button>
-                  {whoami && (
-                    <Button type="primary" htmlType="button" iconLeft="code" onClick={() => setView("code")}>
-                      Open repositories
-                    </Button>
-                  )}
-                </span>
-              </>
-            }
-          />
-        </div>
+                )}
+              </span>
+            </>
+          }
+        />
       )}
       {canManageModels && showChecklist && tab !== "models" && (
         <Alert
@@ -289,14 +289,14 @@ export function Setup() {
       >
         <Tabs.TriggersList aria-label="Settings sections" className="mb-5">
           <TabTrigger value="tokens" icon="key">
-            Tokens
+            {TAB_LABELS.tokens}
           </TabTrigger>
           <TabTrigger value="memory" icon="light-bulb">
-            Memory
+            {TAB_LABELS.memory}
           </TabTrigger>
           {canManageModels && (
             <TabTrigger value="models" icon="gear">
-              Models &amp; keys
+              {TAB_LABELS.models}
             </TabTrigger>
           )}
         </Tabs.TriggersList>

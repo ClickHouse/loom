@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { NumberField } from "@clickhouse/click-ui/NumberField";
@@ -29,7 +28,7 @@ import { Tip } from "../../components/ui/Tooltip";
 import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
-import { PageHeader } from "../../components/ui";
+import { Alert, PageHeader, Stat } from "../../components/ui";
 
 /**
  * Usage — LLM operations / cost rollup view.
@@ -174,6 +173,9 @@ export function Spending() {
   const days = Array.from(byDay.entries()).sort();
   const maxCost = Math.max(0.0001, ...days.map(([, c]) => c));
 
+  // The share of the daily cap spent, in percent; past 100 once over the cap.
+  const pct = Math.round((budget?.pct_of_cap ?? 0) * 100);
+
   return (
     <PageContainer>
       <PageHeader title="Usage">
@@ -211,14 +213,17 @@ export function Spending() {
               ${budget.spent_24h_usd.toFixed(4)} / ${budget.cap_usd.toFixed(2)} ({budget.cap_source})
             </div>
           </div>
+          {/* Click UI's ProgressBar sets no role or value, so the meter's ARIA is passed in.
+              Past the cap the bar stays full and the value text says by how much. */}
           <ProgressBar
             type="small"
-            progress={Math.min(100, Math.round((budget.pct_of_cap ?? 0) * 100))}
+            progress={Math.min(100, pct)}
             role="progressbar"
-            aria-label={`${Math.round((budget.pct_of_cap ?? 0) * 100)}% of daily LLM budget used`}
-            aria-valuenow={Math.round((budget.pct_of_cap ?? 0) * 100)}
+            aria-label="Daily LLM budget used"
+            aria-valuenow={Math.min(100, pct)}
             aria-valuemin={0}
             aria-valuemax={100}
+            aria-valuetext={`${pct}% — $${budget.spent_24h_usd.toFixed(4)} of the $${budget.cap_usd.toFixed(2)} cap`}
           />
           <div className="mt-2 flex items-baseline justify-between gap-3">
             <div className="text-xs text-text-muted leading-relaxed">
@@ -400,16 +405,6 @@ function agentCell(r: CostRow): ReactNode {
     <span className="italic text-text-muted">{displayAgent(r.agent)}</span>
   ) : (
     displayAgent(r.agent)
-  );
-}
-
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="p-4 rounded-xl border border-border bg-surface">
-      <div className="text-xs text-text-muted mb-1">{label}</div>
-      <div className="text-xl font-semibold tabular tracking-tight">{value}</div>
-      {hint && <div className="text-xs text-text-muted mt-1">{hint}</div>}
-    </div>
   );
 }
 

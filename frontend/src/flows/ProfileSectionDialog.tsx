@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
+import { Alert } from "../components/ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { listProfile, type ProfileEntry } from "../api";
 import { useStore } from "../lib/state";
@@ -93,11 +93,7 @@ export function ProfileSectionDialog() {
             <Skeleton className="h-4 w-2/3" />
           </div>
         )}
-        {error && (
-          <div role="alert">
-            <Alert state="danger" text={error} />
-          </div>
-        )}
+        {error && <Alert role="alert" state="danger" text={error} />}
         {!loading && !error && section && (
           <pre className="whitespace-pre-wrap break-words font-sans text-sm text-text leading-relaxed">
             {section.value}

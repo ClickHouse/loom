@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -26,7 +25,7 @@ import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
-import { PageHeader, TabTrigger } from "../../components/ui";
+import { Alert, PageHeader, Stat, TabTrigger } from "../../components/ui";
 
 // Friendly label + blurb per worker; unknown workers fall through to
 // a default rendering (raw name + "background worker").
@@ -136,6 +135,15 @@ function parseWorkersStatus(d: unknown): { rows: WorkerRow[]; store: WorkersStor
   return { rows: parsed.filter((r): r is WorkerRow => r !== null), store };
 }
 
+type HealthTab = "workers" | "extraction" | "opmix" | "consolidations";
+// One name per tab, for its trigger and the document title.
+const HEALTH_TABS: Record<HealthTab, string> = {
+  workers: "Workers",
+  extraction: "Extraction quality",
+  opmix: "Operation mix",
+  consolidations: "Consolidations",
+};
+
 export function Health() {
   const identity = useIdentity();
   const [hasConsolidations, setHasConsolidations] = useState(false);
@@ -144,6 +152,7 @@ export function Health() {
   const whoami = useStore((s) => s.whoami);
   const seesWorkers = hasAdminClaim(whoami);
   const seesOpMix = hasOrgAdminClaim(whoami);
+  const [tab, setTab] = useState<HealthTab>(seesWorkers ? "workers" : "extraction");
 
   // Drop the consolidations sub-tab entirely until a run has landed.
   useAbortableEffect(
@@ -162,7 +171,7 @@ export function Health() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <PageHeader title="Health" />
+        <PageHeader title="Health" tab={HEALTH_TABS[tab]} />
         <p className="text-sm text-text-muted max-w-2xl">
           {seesOpMix
             ? "Operator view: worker schedules, operation mix + extraction quality across the org."
@@ -171,24 +180,24 @@ export function Health() {
               : "Extraction quality for the namespaces you can access. Worker telemetry is hidden — that's the Loom operator's concern."}
         </p>
       </div>
-      <Tabs defaultValue={seesWorkers ? "workers" : "extraction"}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as HealthTab)}>
         <Tabs.TriggersList className="mb-5" aria-label="Health">
           {seesWorkers && (
             <TabTrigger value="workers" icon="settings">
-              Workers
+              {HEALTH_TABS.workers}
             </TabTrigger>
           )}
           <TabTrigger value="extraction" icon="sparkle">
-            Extraction quality
+            {HEALTH_TABS.extraction}
           </TabTrigger>
           {seesOpMix && (
             <TabTrigger value="opmix" icon="pie-chart">
-              Operation mix
+              {HEALTH_TABS.opmix}
             </TabTrigger>
           )}
           {hasConsolidations && (
             <TabTrigger value="consolidations" icon="cards">
-              Consolidations
+              {HEALTH_TABS.consolidations}
             </TabTrigger>
           )}
         </Tabs.TriggersList>
@@ -367,19 +376,19 @@ export function WorkersPanel() {
         />
       )}
       {rows !== null && rows.length > 0 && reporting.length === 0 && effective.length > 0 && (
-        <div role="status" className="mb-3">
-          <Alert
-            state="neutral"
-            size="small"
-            text={
-              <>
-                <strong>No worker has reported a pass yet.</strong> This process runs no workers
-                (LOOM_BACKGROUND_WORKERS=off under blue/green); the workers colour writes each finished pass to
-                loom.worker_status and nothing has landed there in the last 7 days.
-              </>
-            }
-          />
-        </div>
+        <Alert
+          role="status"
+          className="mb-3"
+          state="neutral"
+          size="small"
+          text={
+            <>
+              <strong>No worker has reported a pass yet.</strong> This process runs no workers
+              (LOOM_BACKGROUND_WORKERS=off under blue/green); the workers colour writes each finished pass to
+              loom.worker_status and nothing has landed there in the last 7 days.
+            </>
+          }
+        />
       )}
       {rows !== null && visible.length > 0 && (
         <div className="space-y-1.5">
@@ -824,7 +833,7 @@ function ExtractionQualityPanel() {
           label="Approve ratio"
           value={totalDecided > 0 ? (orgRatio * 100).toFixed(0) + "%" : "—"}
           hint={totalDecided < 10 ? `${totalDecided}/10 decisions for signal` : orgRatio < 0.3 ? "low" : "healthy"}
-          tone={totalDecided >= 10 && orgRatio < 0.3 ? "warn" : "default"}
+          error={totalDecided >= 10 && orgRatio < 0.3}
         />
       </div>
       <div className="flex items-center justify-between">
@@ -863,26 +872,6 @@ function ExtractionQualityPanel() {
           };
         })}
       />
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  hint,
-  tone = "default",
-}: {
-  label: string;
-  value: number | string;
-  hint?: string;
-  tone?: "default" | "warn";
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-surface px-3 py-3">
-      <div className="text-xs text-text-muted">{label}</div>
-      <div className={`text-xl font-semibold tabular mt-0.5 ${tone === "warn" ? "text-warn" : ""}`}>{value}</div>
-      {hint && <div className="text-xs text-text-muted mt-0.5">{hint}</div>}
     </div>
   );
 }
