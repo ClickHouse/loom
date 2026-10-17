@@ -420,6 +420,22 @@ async def test_a_reactivation_retried_after_a_timeout_waits_out_the_rest(
     assert world.waits[-1] == 0
 
 
+async def test_a_retried_re_create_waits_out_the_cutoff_then_answers_409(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    with pytest.raises(scim.Exists):  # live, nothing lifted: refused at once
+        await _create("lee@example.com")
+    assert world.waits == []
+
+    await scim.set_active(uid, False)
+    await scim.delete(uid)
+    await _create("lee@example.com")  # created again: reactivated, and waits
+    with pytest.raises(scim.Exists):  # the provider timed out and sends it again
+        await _create("lee@example.com")
+    first, retry = world.waits
+    assert 0 < retry <= first
+
+
 async def test_a_reactivation_waits_once_its_leases_are_let_go(world, monkeypatch) -> None:
     # Held through the wait, a deactivation sent meanwhile would wait on the
     # lease past `_LEASE_WAIT_S` and answer busy.
@@ -1210,3 +1226,23 @@ def test_a_store_failure_is_not_deactivated_twice(client: TestClient, world, mon
     monkeypatch.setattr(scim, "update", slow)
     r = _patch(client, uid, {"op": "replace", "path": "active", "value": False})
     assert r.status_code == 503 and len(calls) == 1
+
+
+def test_a_driver_error_is_not_deactivated_twice(client: TestClient, world, monkeypatch) -> None:
+    from clickhouse_connect.driver.exceptions import DatabaseError
+
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    calls: list[Any] = []
+
+    async def failing(*a: Any, **k: Any) -> None:
+        calls.append(k)
+        raise DatabaseError("Code: 241. Memory limit exceeded")
+
+    monkeypatch.setattr(scim, "update", failing)
+    r = _patch(client, uid, {"op": "replace", "path": "active", "value": False})
+    assert r.status_code == 503 and len(calls) == 1
+
+
+def test_a_deeply_nested_body_is_a_400(client: TestClient) -> None:
+    r = client.post("/scim/v2/Users", content=b"[" * 100_000 + b"]" * 100_000)
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidSyntax"

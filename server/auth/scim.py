@@ -134,29 +134,37 @@ async def deactivated(email: str) -> bool:
 async def create(
     user_name: str, email: str, *, active: bool, email_entry: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Record the SCIM user for `email`. Raises Exists when one is live. A
-    deleted one comes back, still deactivated unless `active`. `email_entry`
-    is the type and primary flag of the entry the email came from."""
+    """Record the SCIM user for `email`. Raises Exists when one is live,
+    once a retried re-create has waited out its cutoff. A deleted one comes
+    back, still deactivated unless `active`. `email_entry` is the type and
+    primary flag of the entry the email came from."""
     uid = user_id(email)
     async with _held(_user_lease(uid)), _held(_name_lease(user_name)):
         row = await _row(uid)
         if row is not None and not row["deleted"]:
-            raise Exists
-        await _refuse_taken(user_name, uid)
-        if row is None:
-            row = {
-                "id": uid,
-                "email": normalized(email),
-                "email_type": "",
-                "email_primary": 0,
-                "active": 1,
-                "deleted": 0,
-                "subjects": [],
-                "created_at": datetime.now(UTC),
-            }
-        changes = {"user_name": normalized(user_name), "deleted": 0, **_entry(email_entry)}
-        new, cutoff = await _set_active(row, active, **changes)
+            # A provider retrying a re-create that timed out waits out what is
+            # left of the first try's cutoff, then gets its 409.
+            retried = active and row["active"] and row["subjects"]
+            cutoff = await _lifted_before(row["subjects"]) if retried else None
+            new = None
+        else:
+            await _refuse_taken(user_name, uid)
+            if row is None:
+                row = {
+                    "id": uid,
+                    "email": normalized(email),
+                    "email_type": "",
+                    "email_primary": 0,
+                    "active": 1,
+                    "deleted": 0,
+                    "subjects": [],
+                    "created_at": datetime.now(UTC),
+                }
+            changes = {"user_name": normalized(user_name), "deleted": 0, **_entry(email_entry)}
+            new, cutoff = await _set_active(row, active, **changes)
     await _wait_out(cutoff)
+    if new is None:
+        raise Exists
     return new
 
 

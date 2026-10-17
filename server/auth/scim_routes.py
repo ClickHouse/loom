@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from typing import Any
 
+from clickhouse_connect.driver.exceptions import ClickHouseError
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -286,7 +287,7 @@ def _int_param(request: Request, name: str, default: int) -> int:
 async def _body(request: Request) -> dict[str, Any]:
     try:
         body = json.loads(await request.body())
-    except ValueError:
+    except (ValueError, RecursionError):  # not JSON, or nested too deep to parse
         raise ScimError(400, "the body is not JSON", "invalidSyntax") from None
     if not isinstance(body, dict):
         raise ScimError(400, "the body must be a JSON object", "invalidSyntax")
@@ -463,8 +464,8 @@ async def _deactivating_anyway(uid: str, active: bool | None) -> AsyncIterator[N
     a 400, so dropping its `active: false` would leave them active."""
     try:
         yield
-    except (scim.Busy, LoomServerError):
-        raise  # busy, or the store failing: what a retry here would wait on again
+    except (scim.Busy, LoomServerError, ClickHouseError):
+        raise  # busy, or the store failing (wrapped or raw): a retry here would fail again
     except Exception:  # re-raised: a refused or failed request must still deactivate
         if active is False:
             await scim.set_active(uid, False)

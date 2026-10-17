@@ -361,7 +361,8 @@ What Loom does with each request:
   the rest.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
-  reactivates them.
+  reactivates them, answering after the same wait; a retry of that create
+  waits out the rest, then answers 409.
 
 Loom keeps each SCIM user's row in `loom.scim_users` (the userName, the email,
 the subjects it revoked and whether it is active) for as long as the
