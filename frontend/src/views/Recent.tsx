@@ -2,6 +2,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Pagination } from "@clickhouse/click-ui/Pagination";
@@ -25,7 +26,7 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { Chip, SectionHeading, Tip } from "../components/ui";
+import { Chip, SectionHeading } from "../components/ui";
 import { SkeletonCard } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -97,7 +98,7 @@ function detailToEntry(key: string, d: MemoryDetail): MemoryListEntry {
   };
 }
 
-const DELETED_TOGGLE = "memories-deleted-toggle";
+const SHOWN_GROUP = "memories-shown";
 
 export function Recent() {
   const identity = useIdentity();
@@ -138,13 +139,13 @@ export function Recent() {
   const [pinnedOnly, setPinnedOnly] = useState(false);
   // Surfaces tombstoned rows + a Restore action in the 14-day grace window.
   const [showDeleted, setShowDeleted] = useState(false);
-  // The list reloads behind the loading skeleton, which unmounts the toolbar; the toggle
-  // takes focus back once the rows are in.
-  const refocusToggle = useRef(false);
+  // The list reloads behind the loading skeleton, which unmounts the toolbar; the chosen
+  // option takes focus back once the rows are in.
+  const refocusShown = useRef(false);
   useEffect(() => {
-    if (entries === null || !refocusToggle.current) return;
-    refocusToggle.current = false;
-    document.getElementById(DELETED_TOGGLE)?.focus();
+    if (entries === null || !refocusShown.current) return;
+    refocusShown.current = false;
+    document.querySelector<HTMLElement>(`#${SHOWN_GROUP} [aria-pressed="true"]`)?.focus();
   }, [entries]);
   // Tag filter from the global store — set by clicking a tag chip in the
   // Inspector, shown as a dismissable chip at the top of the list.
@@ -771,26 +772,21 @@ export function Recent() {
                 ? `${flatList.length.toLocaleString()} recently deleted`
                 : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
           </span>
-          <Tip
-            content={
-              showDeleted
-                ? "Back to the live memories"
-                : "Show memories deleted in the last 14 days; restore from this view"
-            }
-          >
-            <Button
-              id={DELETED_TOGGLE}
-              type="secondary"
-              htmlType="button"
-              aria-pressed={showDeleted}
-              onClick={() => {
-                refocusToggle.current = true;
-                setShowDeleted((v) => !v);
+          <span id={SHOWN_GROUP} className="whitespace-nowrap">
+            <ButtonGroup
+              aria-label="Memories shown"
+              selected={showDeleted ? "deleted" : "live"}
+              onClick={(value) => {
+                if ((value === "deleted") === showDeleted) return;
+                refocusShown.current = true;
+                setShowDeleted(value === "deleted");
               }}
-            >
-              Recently deleted
-            </Button>
-          </Tip>
+              options={[
+                { value: "live", label: "Live" },
+                { value: "deleted", label: "Recently deleted" },
+              ]}
+            />
+          </span>
           <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
             <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
               Add memory

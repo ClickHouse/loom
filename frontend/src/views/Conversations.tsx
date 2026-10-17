@@ -14,7 +14,6 @@ import {
   setConversationLogging,
   listMemories,
   type ConversationHit,
-  type ConversationMessage,
   type ConversationThreadSummary,
   type ConversationThreadDetail,
   type MemoryListEntry,
@@ -63,19 +62,6 @@ function linkify(text: string) {
       <span key={i}>{p}</span>
     ),
   );
-}
-
-// One turn per msg_id: a page boundary can repeat a row, and two agents logging the same
-// turn store it under the same content-hashed id.
-function uniqueTurns(messages: ConversationMessage[]): ConversationMessage[] {
-  const seen = new Set<string>();
-  const out: ConversationMessage[] = [];
-  for (const m of messages) {
-    if (seen.has(m.msg_id)) continue;
-    seen.add(m.msg_id);
-    out.push(m);
-  }
-  return out;
 }
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -354,10 +340,11 @@ export function Conversations() {
         if (!d.found && opts.knownAgent && !signal.aborted) {
           const agent = opts.knownAgent;
           d = await read(agent);
+          if (signal.aborted) return;
           if (d.found) setOpenThread((t) => t && { ...t, agent });
         }
         if (signal.aborted) return;
-        setThreadDetail({ ...d, messages: uniqueTurns(d.messages) });
+        setThreadDetail(d);
         // More turns follow: conversation.list pages on from the cursor get issued.
         setMoreCursor(d.next_cursor ?? null);
       } catch (e) {
@@ -403,6 +390,7 @@ export function Conversations() {
       // still pages there. Drop with the next release.
       if (r.rows.length === 0 && agent === "*" && knownAgent && !signal.aborted) {
         r = await page(knownAgent);
+        if (signal.aborted) return;
         setOpenThread((t) => t && { ...t, agent: knownAgent });
       }
       if (signal.aborted) return;
@@ -410,7 +398,7 @@ export function Conversations() {
       // rows append (server returns chronological order; we render in-place).
       setThreadDetail((prev) => {
         if (!prev || prev.thread_id !== thread_id) return prev;
-        return { ...prev, messages: uniqueTurns([...prev.messages, ...r.rows]) };
+        return { ...prev, messages: [...prev.messages, ...r.rows] };
       });
       setMoreCursor(r.next_cursor);
     } catch (e) {

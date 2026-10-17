@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "../test/rtl";
+import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry } from "../api";
@@ -52,14 +52,17 @@ describe("Recently deleted toggle", () => {
     useStore.setState({ whoami: null, identity: null });
   });
 
-  it("keeps focus and its name, and says whether it is on", async () => {
+  it("is a choice between live and recently deleted that keeps focus through the reload", async () => {
     render(<Recent />);
-    const toggle = await screen.findByRole("button", { name: "Recently deleted" });
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
-    toggle.focus();
+    const shown = await screen.findByRole("group", { name: "Memories shown" });
+    expect(within(shown).getByRole("button", { name: "Live" })).toHaveAttribute("aria-pressed", "true");
+    within(shown).getByRole("button", { name: "Recently deleted" }).focus();
     await userEvent.keyboard("{Enter}");
     await screen.findByText("gone/key");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Recently deleted" })).toHaveFocus());
-    expect(screen.getByRole("button", { name: "Recently deleted" })).toHaveAttribute("aria-pressed", "true");
+    const deleted = within(screen.getByRole("group", { name: "Memories shown" })).getByRole("button", {
+      name: "Recently deleted",
+    });
+    await waitFor(() => expect(deleted).toHaveFocus());
+    expect(deleted).toHaveAttribute("aria-pressed", "true");
   });
 });

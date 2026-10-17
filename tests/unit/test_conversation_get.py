@@ -628,3 +628,53 @@ def test_an_entry_from_a_previous_release_has_no_agent() -> None:
         }
     )
     assert entry.agent == ""
+
+
+@pytest.mark.asyncio
+async def test_the_latest_writer_is_read_from_the_page_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_fetch_thread(*a, **kw):
+        return None
+
+    async def fake_count(*a, **kw):
+        return 2
+
+    async def fake_list_thread(*a, **kw):
+        # The second row is the peek past a one-turn page, by another agent.
+        return [
+            _msg(
+                msg_id="m1",
+                role="user",
+                content="hi",
+                ts=datetime(2026, 6, 1, 9, 0),
+                agent="planner",
+            ),
+            _msg(
+                msg_id="m2",
+                role="user",
+                content="yo",
+                ts=datetime(2026, 6, 1, 9, 1),
+                agent="deployer",
+            ),
+        ]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="*",
+            thread_id="t-1",
+            include_messages=True,
+            limit=1,
+        )
+    )
+    assert out.agent == "planner"

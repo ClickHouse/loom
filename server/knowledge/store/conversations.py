@@ -438,6 +438,10 @@ async def search_substring(
     return [_hydrate(r) for r in rows]
 
 
+# One turn of a thread, however many agents logged it: its id and its content.
+TURN = "msg_id, cityHash64(content)"
+
+
 async def list_thread(
     org: str,
     namespace: str,
@@ -502,11 +506,12 @@ async def list_thread(
     if agent is None:
         # Two agents logging the same turn store it under one content-hashed msg_id. A
         # read across agents keeps each turn's first copy before it pages, so a later
-        # copy never slips past the cursor onto the next page.
+        # copy never slips past the cursor onto the next page. A turn is its id AND its
+        # content (`TURN`): ids are unique per agent only, and a client may number its own.
         source = f"""(
             SELECT {columns} FROM {source}
             ORDER BY ts ASC, msg_id ASC
-            LIMIT 1 BY msg_id
+            LIMIT 1 BY {TURN}
         )"""
     rows = await ch.query_all(
         f"""
@@ -530,8 +535,8 @@ async def count_thread_msgs(
     ch: _CHClient | None = None,
 ) -> int:
     """Turns in one (org, ns, agent, thread_id); `agent=None` counts every
-    agent's. Distinct msg_ids: two agents logging the same turn store it under
-    one content-hashed id, which a reader shows once.
+    agent's. Distinct turns (`TURN`): two agents logging the same turn store it
+    under one content-hashed id, which a reader shows once.
 
     Used by `conversation.get` to populate `msg_count` whether or not
     the caller asked for the messages payload.
@@ -544,7 +549,7 @@ async def count_thread_msgs(
         params["agent"] = agent
     row = await ch.query_one(
         f"""
-        SELECT uniqExact(msg_id) AS n
+        SELECT uniqExact({TURN}) AS n
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -582,7 +587,7 @@ async def recent_threads(
         SELECT
             thread_id,
             argMax(agent, ts)                                AS last_agent,
-            count()                                          AS msg_count,
+            uniqExact({TURN})                                AS msg_count,
             min(ts)                                          AS first_seen,
             max(ts)                                          AS last_seen,
             argMax(toString(role), ts)                       AS last_role,

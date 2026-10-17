@@ -408,8 +408,8 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
         page = rows[input.offset : input.offset + input.limit]
         if input.order == "asc" and page and len(rows) > input.offset + input.limit:
             next_cursor = _encode_cursor(page[-1].ts, page[-1].msg_id)
-        if rows and not writer:
-            writer = max(rows, key=lambda r: r.ts).agent
+        if page and not writer:
+            writer = max(page, key=lambda r: r.ts).agent
         messages = [
             _ConversationEntry(
                 msg_id=r.msg_id,

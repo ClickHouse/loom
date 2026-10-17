@@ -67,7 +67,9 @@ async def test_a_thread_counts_each_turn_once() -> None:
     ch = StubCH()
     await conversation_repo.count_thread_msgs("o", "ns", None, "t-1", ch=ch)
     sql, _ = ch.calls[-1]
-    assert "uniqExact(msg_id)" in sql
+    # A turn is its id and its content: msg_id is unique per agent only, and a client may
+    # number its own turns, so two agents' different turns can share one.
+    assert "uniqExact(msg_id, cityHash64(content))" in sql
 
 
 @pytest.mark.asyncio
@@ -75,7 +77,7 @@ async def test_a_thread_read_across_agents_returns_a_shared_turn_once() -> None:
     ch = StubCH()
     await conversation_repo.list_thread("o", "ns", None, "t-1", ch=ch)
     sql, _ = ch.calls[-1]
-    assert "LIMIT 1 BY msg_id" in sql
+    assert "LIMIT 1 BY msg_id, cityHash64(content)" in sql
 
     # One agent never logs a msg_id twice (conversation.append checks), so its read needs no collapse.
     await conversation_repo.list_thread("o", "ns", "bot", "t-1", ch=ch)
@@ -94,6 +96,14 @@ async def test_a_paged_read_across_agents_collapses_before_the_cursor() -> None:
         "o", "ns", None, "t-1", after=(datetime(2026, 6, 1, 9, 0), "m1"), ch=ch
     )
     sql, _ = ch.calls[-1]
-    inner, _, outer = sql.partition("LIMIT 1 BY msg_id")
+    inner, _, outer = sql.partition("LIMIT 1 BY msg_id, cityHash64(content)")
     assert "(ts, msg_id) >" not in inner
     assert "(ts, msg_id) >" in outer
+
+
+@pytest.mark.asyncio
+async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
+    ch = StubCH()
+    await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, ch=ch)
+    sql, _ = ch.calls[-1]
+    assert "uniqExact(msg_id, cityHash64(content))" in sql

@@ -58,14 +58,24 @@ function focusBodyOrDialog(e: Event) {
   (first ?? content).focus();
 }
 
-// The element focus was last on, outside the body. Click UI's Button disables itself
-// while `loading`, which drops its focus to the body; a dialog its click opens returns
-// focus there instead.
-let lastFocused: HTMLElement | null = null;
+// The control the user last pressed, by pointer or by Enter/Space. A dialog opened while
+// focus is on the body returns focus there: Click UI's Button disables itself while
+// `loading`, which drops its focus, and Safari's click never focuses a button at all.
+const PRESSABLE = "button, a[href], [role='button'], [role='menuitem'], [role='tab']";
+let lastPressed: HTMLElement | null = null;
+function notePress(e: Event) {
+  const target = e.target instanceof Element ? e.target.closest<HTMLElement>(PRESSABLE) : null;
+  if (target) lastPressed = target;
+}
 if (typeof document !== "undefined") {
-  document.addEventListener("focusin", (e) => {
-    if (e.target instanceof HTMLElement && e.target !== document.body) lastFocused = e.target;
-  });
+  document.addEventListener("pointerdown", notePress, true);
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Enter" || e.key === " ") notePress(e);
+    },
+    true,
+  );
 }
 
 export function Modal({
@@ -85,7 +95,7 @@ export function Modal({
   useLayoutEffect(() => {
     if (!open) return;
     const active = document.activeElement;
-    opener.current = active instanceof HTMLElement && active !== document.body ? active : lastFocused;
+    opener.current = active instanceof HTMLElement && active !== document.body ? active : lastPressed;
   }, [open]);
   const returnFocus = (e: Event) => {
     onCloseAutoFocus?.(e);

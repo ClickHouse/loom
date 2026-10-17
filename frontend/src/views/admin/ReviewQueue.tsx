@@ -70,12 +70,16 @@ export function ReviewQueue() {
         .then((r) => {
           if (live()) setProbedLearnings(r.rows || []);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (live()) setProbedLearnings([]);
+        });
       listAllowlist({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
           if (live()) setProbedExceptions(r.rows || []);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (live()) setProbedExceptions([]);
+        });
     },
     [identity.org, identity.namespace],
   );
@@ -92,8 +96,11 @@ export function ReviewQueue() {
         Memory disputes needing a human decision — your agent flip-flopped on a fact, or the extractor wants to promote
         one. Most users never see anything here; that's a feature.
       </p>
-      {/* Tabs only when there is something to switch to: one panel is the page itself. */}
-      {hasLearnings || hasExceptions ? (
+      {/* Tabs only when there is something to switch to: one panel is the page itself. The
+          layout waits for both probes, so Conflicts mounts (and reads) once, where it stays. */}
+      {probedLearnings === null || probedExceptions === null ? (
+        <Skeleton className="h-40 w-full" />
+      ) : hasLearnings || hasExceptions ? (
         <Tabs value={tab} onValueChange={setTab}>
           <Tabs.TriggersList className="mb-5" aria-label="Review queue">
             <TabTrigger value="conflicts" icon="warning">

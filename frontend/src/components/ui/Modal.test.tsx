@@ -35,11 +35,36 @@ describe("Modal", () => {
     render(<Generate />);
     const opener = screen.getByRole("button", { name: "Generate token" });
     opener.focus();
+    fireEvent.keyDown(opener, { key: "Enter" });
     // Click UI disables a loading button, which drops focus to the body before the dialog opens.
     opener.blur();
     expect(document.activeElement).toBe(document.body);
     act(() => opener.click());
     fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });
     await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it("returns focus to the button a click pressed, not to an earlier focus", async () => {
+    function Page() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <input aria-label="Search Loom" />
+          <button type="button" onClick={() => setOpen(true)}>
+            Add memory
+          </button>
+          <Modal open={open} onOpenChange={setOpen} title="Add memory" />
+        </>
+      );
+    }
+    render(<Page />);
+    screen.getByRole("textbox", { name: "Search Loom" }).focus();
+    screen.getByRole("textbox", { name: "Search Loom" }).blur();
+    // Safari: a click presses a button without focusing it.
+    const add = screen.getByRole("button", { name: "Add memory" });
+    fireEvent.pointerDown(add);
+    act(() => add.click());
+    fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(add).toHaveFocus());
   });
 });
