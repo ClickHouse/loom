@@ -98,6 +98,10 @@ def _ask_search_input(
         known_as_of=input.known_as_of,
         read_token=input.read_token,
         validity_policy=input.validity_policy,
+        # The journal off: as-of replay scopes retrieval to memories known by the
+        # anchor instead. search_sql applies the filter.
+        as_of=input.as_of,
+        as_of_basis=input.as_of_basis,
         observation_date=input.observation_date,
         # Recall telemetry belongs to explicit memory.search calls; don't
         # double-count auto-touch for the retrieval leg of an ask.
@@ -392,8 +396,9 @@ async def _maybe_route_to_synthesize(input: MemoryAskInput) -> MemoryAskOutput |
     from server.settings import settings
 
     # The route is a synthesis over today's documents: `allow_synthesis=False` asked
-    # for no model answer, and a bi-temporal ask must not see a later document.
-    if not input.allow_synthesis or input.temporal_requested():
+    # for no model answer, and an `as_of` replay or a bi-temporal ask must not see a
+    # later document.
+    if not input.allow_synthesis or input.as_of is not None or input.temporal_requested():
         return None
     from server.memory.domain import ask_routing
 

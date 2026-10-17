@@ -132,6 +132,13 @@ def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
         "schema": input.schema_name,
         "lim": input.limit + 1,
     }
+    if input.as_of is not None:
+        # The journal off: both bounds inclusive, as before the journal.
+        where.append(
+            "(r.valid_at IS NULL OR r.valid_at <= {as_of:DateTime}) "
+            "AND (r.valid_to IS NULL OR r.valid_to >= {as_of:DateTime})"
+        )
+        params["as_of"] = input.as_of
     if input.valid_as_of is not None:
         where.append(record_validity_predicate("r"))
         params["valid_as_of"] = input.valid_as_of

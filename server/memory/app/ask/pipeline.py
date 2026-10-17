@@ -7,6 +7,7 @@ import asyncio
 from typing import Any
 
 from server.core.background import create_deferred_task
+from server.core.feature_modes import temporal_on
 from server.memory.app.ask.abstain import _early_answer
 from server.memory.app.ask.cascade import (
     _answer_with_deep_pass,
@@ -258,7 +259,7 @@ async def _fill_pool(
     synthesis pool. Returns the reader notes the question's shape switched on
     (inference, temporal derive, chain)."""
     await _retrieve(run)
-    if run.search_input.temporal_requested():
+    if temporal_on() and run.search_input.temporal_requested():
         # A historical ask's pool is the search at its cutoff, nothing else: the
         # widening and completion legs read today's rows.
         await _order_pool(run)

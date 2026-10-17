@@ -11,6 +11,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
+from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
     _IDENTITY_KEY_TUPLE,
@@ -65,6 +66,7 @@ async def get_by_key(
     *,
     scope: ReadFilters,
     ch: _CHClient | None = None,
+    as_of: datetime | None = None,
     include_tombstoned: bool = False,
     include_usage_totals: bool = False,
     fresh: bool = False,
@@ -77,7 +79,8 @@ async def get_by_key(
     way search does; the default keeps expired rows visible because most
     callers are write paths that must carry the row's columns
     forward (set, touch, lock, delete) or decide about its expiry
-    (update_by_id's EXPIRED).
+    (update_by_id's EXPIRED). Ignored under `as_of`: a replay read asks
+    about a past instant, not about now.
 
     FINAL because loom.memory is ReplacingMergeTree(version).
 
@@ -85,12 +88,16 @@ async def get_by_key(
     (memory.restore) can rebuild a full version row via
     build_memory_version_row.
 
+    `as_of` restricts to rows valid as of that time (replay). The OR form
+    (not coalesce) keeps the `created_at` index prune fast.
+
     `scope`: the request's read scope (`identity.domain.read_scope`); a
     write path that reads the row it replaces passes `WHOLE_NAMESPACE`.
     """
     ch = ch or _default_client()
+    as_of_clause = "AND " + as_of_predicate("valid_time") if as_of is not None else ""
     tomb_clause = "" if include_tombstoned else "AND tombstoned_at IS NULL"
-    if not include_expired:
+    if not include_expired and as_of is None:
         tomb_clause += " AND (expires_at IS NULL OR expires_at > now())"
     params: dict[str, Any] = {
         "org": identity.org,
@@ -100,6 +107,8 @@ async def get_by_key(
         "sid": identity.session_id,
         "key": memory_key,
     }
+    if as_of is not None:
+        params["as_of"] = as_of
     # Wildcard agent ⇒ namespace-wide lookup, matching how memory.list /
     # memory.search treat `*` ("drop the per-agent filter"). Used by the
     # dashboard search re-fetch to hydrate a hit whose writer agent the caller
@@ -118,9 +127,10 @@ async def get_by_key(
     # part before the FINAL merge, so only the granules that hold the key
     # read their remaining ~60 columns. Sort-key columns are identical across
     # a row's versions, so the filter cannot drop a newer version or
-    # resurrect an older one; `tombstoned_at` and `expires_at` are not key
-    # columns and stay in WHERE, after the merge.
-    where_clause = f"WHERE {tomb_clause[4:]}" if tomb_clause.startswith("AND ") else ""
+    # resurrect an older one; `tombstoned_at`, `expires_at` and the as-of
+    # window are not key columns and stay in WHERE, after the merge.
+    post_clauses = " ".join(c for c in (tomb_clause, as_of_clause) if c)
+    where_clause = f"WHERE {post_clauses[4:]}" if post_clauses.startswith("AND ") else ""
     # A point read's cost is the value column of the granule that holds the
     # row, whatever the statement shape (the same row read with or without
     # FINAL, located first or not, costs one granule); the table's granule is
@@ -152,6 +162,7 @@ async def get_by_id(
     scope: ReadFilters,
     org: str | None = None,
     ch: _CHClient | None = None,
+    as_of: datetime | None = None,
     include_usage_totals: bool = False,
     fresh: bool = False,
     strong: bool = False,
@@ -166,7 +177,7 @@ async def get_by_id(
     — without it, a leaked memory_id from one tenant could surface
     another tenant's row.
 
-    `fresh`: the row may have
+    `as_of`: bi-temporal filter — see `get_by_key`. `fresh`: the row may have
     been written moments ago — on a miss, read once more with sequential
     consistency (see `_point_lookup`).
 
@@ -222,6 +233,9 @@ async def get_by_id(
         "ca": key["created_at"],
         "k": str(key["memory_key"]),
     }
+    if as_of is not None:
+        where.append(as_of_predicate("valid_time"))
+        params["as_of"] = as_of
 
     row = await _point_lookup(
         ch,
@@ -608,6 +622,7 @@ async def list_by_namespace(
     limit: int = 200,
     offset: int = 0,
     include_tombstoned: bool = False,
+    as_of: datetime | None = None,
     ch: _CHClient | None = None,
     preview: bool = False,
     exclude_high_sensitivity: bool = False,
@@ -689,6 +704,9 @@ async def list_by_namespace(
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains
+    if as_of is not None:
+        where.append(as_of_predicate("valid_time"))
+        params["as_of"] = as_of
 
     order_clause = _LIST_ORDER.get(order_by)
     if order_clause is None:
@@ -809,6 +827,7 @@ async def count_by_namespace(
     tags: Sequence[str] | None = None,
     contains: str | None = None,
     include_tombstoned: bool = False,
+    as_of: datetime | None = None,
     created_since: datetime | None = None,
     ch: _CHClient | None = None,
     include_duplicates: bool = True,
@@ -864,6 +883,9 @@ async def count_by_namespace(
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains
+    if as_of is not None:
+        where.append(as_of_predicate("valid_time"))
+        params["as_of"] = as_of
     if created_since is not None:
         where.append("created_at >= {since:DateTime}")
         params["since"] = created_since

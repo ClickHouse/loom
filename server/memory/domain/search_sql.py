@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.memory.domain.search_types import SearchQuery
-from server.memory.domain.temporal_sql import served_status_sql
+from server.memory.domain.temporal_sql import as_of_predicate, status_predicate, tombstone_predicate
 
 
 def _plane_enabled(q: SearchQuery, plane: str) -> bool:
@@ -57,22 +57,30 @@ def agent_or_shared_predicate(alias: str = "e") -> str:
 
 
 def _build_where(q: SearchQuery) -> tuple[list[str], dict[str, Any]]:
+    replaying = q.as_of is not None
     where = [
         "e.org = {org:String}",
         "e.namespace = {ns:String}",
         "e.scope = {scope:String}",
         "e.embedding_model = {model:String}",
         "e.embedding_dim > 0",
-        "e.tombstoned_at IS NULL",
+        # Deleted rows are gone — except under knowledge_time replay, where a
+        # row deleted AFTER the anchor was still known at the anchor.
+        tombstone_predicate(q.as_of_basis, alias="e", replaying=replaying),
         # TTL drop; NULL = no expiry.
         "(e.expires_at IS NULL OR e.expires_at > now())",
         # Stated validity window: a fact whose own end date has
         # passed ("on antibiotics until the 14th", "worked at Acme until 2024")
-        # is not current. NULL = open interval.
-        "(e.valid_to IS NULL OR e.valid_to > now())",
-        # Exclude superseded / rejected by default (server/temporal_sql).
-        served_status_sql(
+        # is not current. Under as_of the valid_time predicate below owns the
+        # window instead, so a closed interval stays readable at a date inside
+        # it. NULL = open interval.
+        *(() if replaying else ("(e.valid_to IS NULL OR e.valid_to > now())",)),
+        # Exclude superseded / rejected by default; knowledge_time replay
+        # re-admits a row superseded after the anchor (server/temporal_sql).
+        status_predicate(
+            q.as_of_basis,
             alias="e",
+            replaying=replaying,
             include_duplicates=bool(getattr(q, "include_duplicates", False)),
             include_superseded=bool(getattr(q, "include_superseded", False)),
             include_proposed=bool(getattr(q, "include_proposed", False)),
@@ -130,6 +138,20 @@ def _build_where(q: SearchQuery) -> tuple[list[str], dict[str, Any]]:
     if q.run_id is not None:
         where.append("e.run_id = {run_id:String}")
         params["run_id"] = q.run_id
+    if q.as_of is not None:
+        # Both axes come from server/temporal_sql so every leg agrees:
+        # knowledge_time = written by T and not retired/deleted by T;
+        # valid_time = valid_at, else the event date (temporal_anchor), else
+        # the ingest clock — OR-form so the created_at prune stays fast.
+        where.append(
+            as_of_predicate(
+                q.as_of_basis,
+                alias="e",
+                invalid_col="invalid_at",
+                tomb_col="tombstoned_at",
+            )
+        )
+        params["as_of"] = q.as_of
     if q.category and not q.category_soft:
         # Hard-filter to memory_keys linked to a category with this name;
         # subquery resolves name → id then joins through memory_categories.

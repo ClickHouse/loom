@@ -216,3 +216,30 @@ def test_facts_path_is_registered_read_only() -> None:
     ann = mcp_tools._tool_annotations(op)
     assert ann["readOnlyHint"] is True and ann["idempotentHint"] is True
     assert "facts.traverse" in TOOL_DESCRIPTIONS["facts.path"]
+
+
+@pytest.mark.asyncio
+async def test_as_of_and_typed_relations_mirror_traverse_journal_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import facts as facts_handlers
+
+    ch = StubCH(
+        [
+            [_row("alice", "acme", 1, "work_at", "out")],
+            [_row("retry storm", "acme", 1, "caus", "out")],
+        ]
+    )
+    monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
+    as_of = datetime(2024, 6, 1, tzinfo=UTC)
+    out = await facts_handlers.handle_facts_path(
+        _input(as_of=as_of, relations=["works at", "Causes"])
+    )
+    sql, params = ch.calls[0]
+    assert "loom.entity_triples" in sql and "loom.entity_edges" not in sql
+    assert "valid_from IS NULL OR valid_from <= {as_of:DateTime}" in sql
+    assert "valid_to IS NULL OR valid_to >= {as_of:DateTime}" in sql
+    assert params["as_of"] == as_of
+    assert params["rels"] == ["work_at", "caus"]  # normalised like the write path
+    assert out.found
+    assert [(e.relation, e.direction) for e in out.edges] == [("work_at", "out"), ("caus", "in")]

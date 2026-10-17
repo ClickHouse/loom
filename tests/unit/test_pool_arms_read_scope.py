@@ -4,6 +4,7 @@ cannot be served another user's, another session's, or a later row through them.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -32,6 +33,7 @@ def test_each_arm_carries_the_read_scope(arm: Any, col: str) -> None:
                 user_id="u1",
                 session_id="s1",
                 session_ids=["s1", "s2"],
+                as_of=datetime(2026, 1, 1),
             ),
             params,
         )
@@ -39,6 +41,7 @@ def test_each_arm_carries_the_read_scope(arm: Any, col: str) -> None:
     assert f"{col}user_id = {{rs_user_id:String}}" in where
     assert f"{col}session_id = {{rs_session_id:String}}" in where
     assert f"{col}session_id IN {{rs_session_ids:Array(String)}}" in where
+    assert "{rs_as_of:DateTime}" in where
     assert params["rs_user_id"] == "u1" and params["rs_session_ids"] == ["s1", "s2"]
 
 

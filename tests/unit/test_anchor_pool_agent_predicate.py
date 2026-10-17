@@ -113,14 +113,18 @@ def test_anchor_pool_serves_what_the_key_match_arm_serves() -> None:
 
 
 def test_every_additive_arm_keeps_the_fact_legs_liveness_window() -> None:
-    """An expired row, or one whose stated validity has ended, is served by no leg."""
+    """An expired row, or one whose stated validity has ended, is served by no leg; under
+    an as-of replay the validity window is the as-of predicate's, so only expiry stays."""
+    from datetime import UTC, datetime
 
     from server.memory.app.search.sql import _digest_descent_where
 
-    expiry, validity = "expires_at IS NULL OR", "valid_to > now()"
+    expiry, validity = "expires_at IS NULL OR", "valid_to IS NULL OR"
     for build in (_anchor_pool_where, _key_match_where, _digest_descent_where):
         live = " AND ".join(build(_inp(), {}))
         assert expiry in live and validity in live, build.__name__
+        replay = " AND ".join(build(_inp(as_of=datetime(2026, 1, 1, tzinfo=UTC)), {}))
+        assert expiry in replay and validity not in replay, build.__name__
 
 
 def test_anchor_pool_statement_selects_the_rows_agent_and_scope() -> None:

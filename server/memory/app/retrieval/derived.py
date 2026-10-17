@@ -331,6 +331,8 @@ async def fetch_current_state_observation(
     query_vec: list[float],
     embedding_model: str,
     entity_filter: list[str],
+    as_of: Any = None,
+    as_of_basis: str = "valid_time",
 ) -> list[SearchHit]:
     """The LATEST-dated value of one single-valued attribute.
 
@@ -375,6 +377,17 @@ async def fetch_current_state_observation(
     if agent and agent not in ("*", "-"):
         where.append("agent = {agent:String}")
         params["agent"] = agent
+    # As-of replay: restrict the window's candidates so the "current" state is
+    # the latest one KNOWN/TRUE by the anchor, not the newest overall — else a
+    # point-in-time query reports a future state. Valid-time cuts on the same
+    # event axis the window orders by; knowledge-time cuts on the write time.
+    if as_of is not None:
+        # same two axes, in the same order, as every other leg
+        # (server/temporal_sql)
+        params["as_of"] = as_of
+        from server.memory.domain.temporal_sql import as_of_predicate
+
+        where.append(as_of_predicate(as_of_basis))
     where_sql = " AND ".join(where)
     sql = f"""
         SELECT memory_key, content_excerpt, event_date, distance FROM (

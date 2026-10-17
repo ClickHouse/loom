@@ -11,6 +11,12 @@ import pytest
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import temporal_search
 from server.memory.app.search import handler
+from server.settings import settings
+
+
+@pytest.fixture(autouse=True)
+def _journal_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
 
 
 @pytest.mark.asyncio

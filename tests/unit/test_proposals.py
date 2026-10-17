@@ -20,6 +20,8 @@ def test_served_statuses_admit_proposed_only_when_asked() -> None:
     assert "proposed" not in ts.served_statuses(include_duplicates=True, include_superseded=True)
     assert ts.served_statuses(include_proposed=True)[-1] == "proposed"
     assert "'proposed'" in ts.served_status_sql(include_proposed=True)
+    assert "'proposed'" not in ts.status_predicate()
+    assert "'proposed'" in ts.status_predicate(include_proposed=True)
 
 
 def test_policy_parses_defaults_and_never_turns_auto_on_by_accident() -> None:

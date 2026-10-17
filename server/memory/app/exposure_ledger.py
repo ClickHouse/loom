@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.core.feature_modes import temporal_on
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def build_row(
 ) -> dict[str, Any]:
     """Pure builder for one ledger row; unit-tested without ClickHouse."""
     receipt = receipt or Receipt()
-    return {
+    row = {
         "ts": naive_utc_now(),
         "org": org,
         "namespace": namespace,
@@ -83,12 +84,17 @@ def build_row(
         "returned_keys": [str(k) for k in keys],
         "returned_count": len(keys),
         "below_floor_count": int(below_floor or 0),
-        "returned_ids": list(receipt.ids),
-        "returned_sha256": list(receipt.sha256),
-        "cutoff_seq": int(receipt.cutoff_seq),
-        "valid_as_of": receipt.valid_as_of,
-        "known_as_of": receipt.known_as_of,
     }
+    if temporal_on():
+        # The receipt columns exist only once the journal's migration is applied.
+        row.update(
+            returned_ids=list(receipt.ids),
+            returned_sha256=list(receipt.sha256),
+            cutoff_seq=int(receipt.cutoff_seq),
+            valid_as_of=receipt.valid_as_of,
+            known_as_of=receipt.known_as_of,
+        )
+    return row
 
 
 @dataclass(frozen=True)

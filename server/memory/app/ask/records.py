@@ -94,7 +94,7 @@ async def _gh_items_fallback_answer(
         return None
     from server.memory.domain.temporal_reads import reference_time
 
-    as_of = reference_time(search_input)
+    as_of = getattr(search_input, "as_of", None) or reference_time(search_input)
     as_of_date = as_of.date() if as_of is not None else None
     lines: list[str] = []
     keys: list[str] = []

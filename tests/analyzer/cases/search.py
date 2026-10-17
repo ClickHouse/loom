@@ -126,6 +126,7 @@ async def _fact_leg(ch: RecordingCH, c: dict[str, Any]) -> None:
         ch,
         _q(
             search_mode="semantic",
+            as_of=c["as_of"],
             include_top_n_unmatched=3 if c["unmatched"] else 0,
         ),
     )
@@ -175,6 +176,7 @@ async def _recall_credit_closer(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 
 def cases() -> list[Case]:
+    from datetime import UTC, datetime
 
     return [
         Case(
@@ -253,6 +255,7 @@ def cases() -> list[Case]:
             _fact_leg,
             {
                 "unmatched": (False, True),
+                "as_of": (None, datetime(2026, 1, 1, tzinfo=UTC)),
             },
             rows=_ROWS,
         ),

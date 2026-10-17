@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import Any
 
+from server.core.feature_modes import temporal_on
 from server.memory.app.ask.completion import (
     _bridge_complete_memories,
     _facet_complete_memories,
@@ -376,7 +377,7 @@ async def _order_pool(run: _AskRun) -> None:
     _rw.mark_stage("retrieval")
     # A historical ask reads only what was admitted at its cutoff: today's pending
     # turns are not evidence of it (a read token or strict validity is still today).
-    if search_input.valid_as_of is None and search_input.known_as_of is None:
+    if not temporal_on() or (search_input.valid_as_of is None and search_input.known_as_of is None):
         run.ranked, run.pending_evidence_n = await _pending_evidence_stage(
             search_input, question, run.ranked
         )
@@ -816,7 +817,8 @@ async def _tag_belt(ranked: list[Any], search_input: Any) -> list[Any]:
 
 
 def _reference_time(search_input: Any) -> Any:
-    """The synthesis "now": the instant a time-anchored ask is about."""
+    """The synthesis "now": the instant a time-anchored ask is about (`as_of` with
+    the journal off)."""
     from server.memory.domain.temporal_reads import reference_time
 
-    return reference_time(search_input)
+    return getattr(search_input, "as_of", None) or reference_time(search_input)

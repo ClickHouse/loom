@@ -1,7 +1,7 @@
 """A chunk hit obeys the read's filters.
 
 `memory_chunks` carries no tags, `valid_at` or `status`; the fact leg's hard
-tag filter and served-status set reach the chunk leg through
+tag filter, `as_of` anchor and served-status set reach the chunk leg through
 the parent row in `memory_embeddings`, with the fact leg's own predicate
 helpers and parameter names. Both stages carry the predicate. Without a
 filter the leg is unchanged.
@@ -9,6 +9,7 @@ filter the leg is unchanged.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -65,6 +66,24 @@ async def test_hard_tags_gate_both_stages_through_the_parent() -> None:
     assert "FROM loom.memory_chunks AS c\n" in sql1 and "JOIN" not in sql1
 
 
+@pytest.mark.asyncio
+async def test_as_of_with_tags_replays_the_parent() -> None:
+    at = datetime(2026, 8, 25, 12, 0, 0)
+    (sql1, p1), (_sql2, _p2) = await _both_stages(_q(tags=["workflow:w"], as_of=at))
+    assert _PARENT_IN in sql1 and "{as_of:DateTime}" in sql1
+    assert p1["as_of"] == at and p1["tags"] == ["workflow:w"]
+
+
+@pytest.mark.asyncio
+async def test_as_of_alone_excludes_parents_not_valid_then_and_keeps_orphans() -> None:
+    at = datetime(2026, 8, 25, 12, 0, 0)
+    (sql1, p1), (sql2, _p2) = await _both_stages(_q(as_of=at))
+    for sql in (sql1, sql2):
+        assert _PARENT_NOT_IN in sql and "NOT (" in sql and "{as_of:DateTime}" in sql
+        assert "hasAny(tags" not in sql
+    assert p1["as_of"] == at
+
+
 def test_cross_agent_read_has_no_agent_term() -> None:
     from server.memory.app.retrieval.chunks import _chunk_parent_pred
 
@@ -108,6 +127,7 @@ async def test_no_session_bound_leaves_the_leg_unsessioned() -> None:
         {"user_id": "u1"},
         {"session_id": "s1", "session_ids": ["s1", "s2"]},
         {"run_id": "r1", "tags": ["t"]},
+        {"as_of": datetime(2020, 1, 1)},
     ],
 )
 def test_the_neighbour_fallback_binds_every_parameter_its_predicate_names(

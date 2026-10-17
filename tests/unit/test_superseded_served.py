@@ -18,7 +18,7 @@ from server.memory.api.models_crud import MemoryListInput
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app import served_superseded as ss
 from server.memory.app.ask import prompts, rendering, supersession
-from server.memory.domain.temporal_sql import served_status_sql, served_statuses
+from server.memory.domain.temporal_sql import served_status_sql, served_statuses, status_predicate
 from server.memory.store.dedup import SupersededSuccessor
 
 # ---------------------------------------------------------------- predicate
@@ -41,6 +41,15 @@ def test_status_predicate_and_served_sql_carry_the_flag() -> None:
     assert served_status_sql(alias="e", include_superseded=True) == (
         "e.status IN ('active', 'conflicted', 'superseded')"
     )
+    assert status_predicate(alias="e", include_superseded=True) == (
+        "e.status IN ('active', 'conflicted', 'superseded')"
+    )
+    # knowledge_time replay: the anchor clause is redundant once every
+    # superseded row is admitted, and the widened base stands alone.
+    kt_off = status_predicate("knowledge_time", alias="e", replaying=True)
+    assert kt_off.startswith("(e.status IN ('active', 'conflicted') OR (e.status = 'superseded'")
+    kt_on = status_predicate("knowledge_time", alias="e", replaying=True, include_superseded=True)
+    assert kt_on == "e.status IN ('active', 'conflicted', 'superseded')"
 
 
 def test_search_query_threads_the_flag_into_the_leg_where() -> None:

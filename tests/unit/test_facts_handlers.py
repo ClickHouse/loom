@@ -1014,3 +1014,58 @@ async def test_traverse_rank_by_reads_the_setting_and_the_request_wins(
         )
         == "cosine"
     )
+
+
+@pytest.mark.asyncio
+async def test_facts_related_as_of_uses_interval_containment_journal_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_facts import FactsRelatedInput
+    from server.memory.app import facts as facts_handlers
+
+    ch = StubCH()
+    monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
+    as_of = datetime(2024, 6, 1, tzinfo=UTC)
+
+    await facts_handlers.handle_facts_related(
+        FactsRelatedInput(
+            org="clickhouse",
+            namespace="ns",
+            entity="user",
+            as_of=as_of,
+        )
+    )
+
+    sql, params = ch.query_all_calls[0]
+    assert "valid_from IS NULL OR valid_from <= {as_of:DateTime}" in sql
+    assert "valid_to IS NULL OR valid_to >= {as_of:DateTime}" in sql
+    assert params["as_of"] == as_of
+
+
+@pytest.mark.asyncio
+async def test_facts_traverse_aggregation_preserves_as_of_window_journal_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The validity predicate must filter raw edge rows BEFORE the sum,
+    i.e. inside both UNION ALL legs of the aggregating subquery."""
+    from server.memory.api.models_facts import FactsTraverseInput
+    from server.memory.app import facts as facts_handlers
+
+    ch = StubCH()
+    monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
+    as_of = datetime(2024, 6, 1, tzinfo=UTC)
+
+    await facts_handlers.handle_facts_traverse(
+        FactsTraverseInput(
+            org="clickhouse",
+            namespace="ns",
+            seed_entity="user",
+            as_of=as_of,
+        )
+    )
+
+    sql, params = ch.query_all_calls[0]
+    assert params["as_of"] == as_of
+    inner = sql.split("GROUP BY src, dst")[0]
+    assert inner.count("valid_from IS NULL OR valid_from <= {as_of:DateTime}") == 2
+    assert inner.count("valid_to IS NULL OR valid_to >= {as_of:DateTime}") == 2

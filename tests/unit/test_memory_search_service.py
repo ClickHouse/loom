@@ -151,6 +151,27 @@ async def test_triple_match_filters_to_current_valid_triples() -> None:
 
 
 @pytest.mark.asyncio
+async def test_triple_match_as_of_uses_interval_containment() -> None:
+    from datetime import datetime
+
+    ch = StubCH()
+    as_of = datetime(2024, 6, 1)
+    await fetch_triple_matched_memories(
+        ch,
+        org="clickhouse",
+        namespace="ns",
+        query_triples=[("user", "works_at", "acme")],
+        expand_synonyms=False,
+        as_of=as_of,
+    )
+
+    sql, params = ch.query_all_calls[0]
+    assert "t.valid_from IS NULL OR t.valid_from <= {as_of:DateTime}" in sql
+    assert "t.valid_to IS NULL OR t.valid_to >= {as_of:DateTime}" in sql
+    assert params["as_of"] == as_of
+
+
+@pytest.mark.asyncio
 async def test_entity_filter_adds_additive_boost_not_gating() -> None:
     """Entity match is additive: boost in the SELECT/rank_score, not the WHERE."""
     ch = StubCH()

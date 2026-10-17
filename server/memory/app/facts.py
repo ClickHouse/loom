@@ -387,6 +387,7 @@ def _traverse_key(input: FactsTraverseInput) -> tuple[Any, ...]:
         int(input.top_k_per_hop),
         int(input.min_co_occur),
         int(input.max_nodes),
+        input.as_of.isoformat() if input.as_of is not None else "",
         input.valid_as_of.isoformat() if input.valid_as_of is not None else "",
         input.known_as_of.isoformat() if input.known_as_of is not None else "",
         tuple(sorted(_query_relation(r) for r in (input.relations or []) if r.strip())),
@@ -890,7 +891,15 @@ async def handle_facts_expire_by_adapter(
 
 def _graph_validity(input: Any, params: dict[str, Any]) -> str:
     """The graph interval test for this read's `valid_as_of` and
-    `known_as_of` (knowledge time), with their params bound."""
+    `known_as_of` (knowledge time), with their params bound. With the journal
+    off the read carries `as_of` instead: interval containment at that instant."""
+    as_of = getattr(input, "as_of", None)
+    if as_of is not None:
+        params["as_of"] = as_of
+        return (
+            "(valid_from IS NULL OR valid_from <= {as_of:DateTime}) "
+            "AND (valid_to IS NULL OR valid_to >= {as_of:DateTime})"
+        )
     from server.memory.domain.temporal_reads import resolve_axes
     from server.memory.domain.temporal_sql import graph_validity_predicate
 

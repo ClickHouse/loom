@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 
 
@@ -175,6 +176,23 @@ class SearchQuery:
     # names {"asserted","observed","imported","external"} stops an LLM-derived
     # or extracted row from being boosted like something the user said.
     source_class_boost_eligible: list[str] | None = None
+    # Bi-temporal as-of filter. When set, the SQL drops rows whose
+    # coalesce(valid_at, temporal_anchor, created_at) > as_of (valid_time) or
+    # that were written after / retired before as_of (knowledge_time). One
+    # definition for every leg: server/memory/domain/temporal_sql.py.
+    # `valid_at` is denormalized onto memory_embeddings
+    # so this filter applies in the same WHERE pass as
+    # the identity / scope filters — no hot-path join.
+    as_of: datetime | None = None
+    # Which time axis `as_of` replays. "valid_time" (default):
+    # what was TRUE as of then — coalesce(valid_at, created_at) <= as_of.
+    # "knowledge_time": what loom KNEW as of then — created_at <= as_of AND not
+    # yet retired (invalid_at) or deleted (tombstoned_at) by as_of; a row
+    # superseded AFTER the anchor was still believed then and comes back.
+    # Ignores valid_at: a fact backdated to an earlier valid_at is still
+    # excluded until the write that recorded it. Use it for "what did we know
+    # at T" correctness replay.
+    as_of_basis: str = "valid_time"
     # Recency-intent boost. When the query is asking about
     # CURRENT state ("what is my latest X", "where do I work now",
     # "what is my most recent Y"), bias the rank_score toward rows

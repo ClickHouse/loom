@@ -23,6 +23,7 @@ import re
 from typing import Any
 
 from server.code.domain.anchor import local_name
+from server.core.feature_modes import temporal_on
 from server.memory.domain.temporal_reads import reference_time
 from server.memory.store.code_links import LinkRow
 
@@ -32,6 +33,12 @@ logger = logging.getLogger(__name__)
 # grounding hop, distinguishable in
 # code_search_trace from a direct code.search by the same client.
 GROUNDING_CONSUMER = "memory.ask"
+
+
+def _time_anchor(search_input: Any) -> Any:
+    """The instant the read asks about: `as_of` with the journal off, else its
+    reference time (`valid_as_of`, else `known_as_of`); None for a live read."""
+    return getattr(search_input, "as_of", None) or reference_time(search_input)
 
 
 def _resolve_code_target(search_input: Any, settings: Any) -> tuple[str, str]:
@@ -418,7 +425,7 @@ async def _inject_pr_facts(
     except Exception as e:  # noqa: BLE001 — additive, never fatal
         _warn_once("pr-fact grounding failed: %s", e)
         return []
-    as_of = reference_time(search_input)
+    as_of = _time_anchor(search_input)
     as_of_date = as_of.date() if as_of is not None else None
     hits: list[Any] = []
     # Numbers the merged-PR plane does not know — issues, open or abandoned
@@ -510,7 +517,7 @@ async def _gate_future_prs(
     opened_at after the anchor. No-op without one or a bound code index; additive/fail-open. A PR
     whose open date is unknown is never gated (conservative).
     """
-    as_of_dt = reference_time(search_input)
+    as_of_dt = _time_anchor(search_input)
     if as_of_dt is None or not memories:
         return memories
     numbers = _referenced_pr_numbers("", memories, cap=64)
@@ -685,7 +692,7 @@ async def apply_code_grounding(
     target = await _authorized_code_target(search_input, settings)
     if not target[1]:
         return synth_pool
-    if search_input.temporal_requested():
+    if temporal_on() and search_input.temporal_requested():
         # A historical ask keeps only the PR gate (it honours the reference time):
         # enrichment, PR facts and the staleness note read today's code index.
         if not settings.memory_ask_pr_temporal_gate:

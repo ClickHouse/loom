@@ -283,6 +283,7 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
         row = await memory_repo.get_by_key(
             identity,
             input.memory_key,
+            as_of=input.as_of,
             include_usage_totals=True,
             fresh=True,  # the SDK pattern is set → get; a miss re-reads once
             strong=strong,
@@ -302,6 +303,7 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
         row = await memory_repo.get_by_key(
             wide,
             input.memory_key,
+            as_of=input.as_of,
             include_usage_totals=True,
             fresh=True,
             strong=strong,
@@ -1073,6 +1075,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
     row = await memory_repo.get_by_id(
         input.memory_id,
         org=input.org,
+        as_of=getattr(input, "as_of", None),
         include_usage_totals=True,
         fresh=True,
         scope=request_scope(),

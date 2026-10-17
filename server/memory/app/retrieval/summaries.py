@@ -56,6 +56,38 @@ def dedup_summary_rows(rows: list[dict[str, Any]], *, n: int) -> list[dict[str, 
 _ENTITY_SUMMARY_TOP_N = 5
 
 
+def _as_of_clause(
+    as_of: Any,
+    as_of_basis: str,
+    *,
+    valid_col: str,
+    created_col: str,
+    params: dict[str, Any],
+    anchor_col: str | None = None,
+    invalid_col: str | None = None,
+    tomb_col: str | None = None,
+) -> str | None:
+    """WHERE fragment that replays a summary/observation leg to `as_of`, so it
+    honours the same temporal cutoff the vector leg gets from search_sql.
+    Returns None (and touches nothing) when `as_of` is unset. Built by
+    server/temporal_sql so every leg shares one definition of both axes;
+    pass `anchor_col` when the table carries an event date, and
+    `invalid_col`/`tomb_col` so knowledge_time keeps rows retired after T."""
+    if as_of is None:
+        return None
+    params["as_of"] = as_of
+    from server.memory.domain.temporal_sql import as_of_predicate
+
+    return as_of_predicate(
+        as_of_basis,
+        valid_col=valid_col,
+        created_col=created_col,
+        anchor_col=anchor_col,
+        invalid_col=invalid_col,
+        tomb_col=tomb_col,
+    )
+
+
 async def fetch_session_summaries(
     ch: Any,
     *,
@@ -66,6 +98,8 @@ async def fetch_session_summaries(
     query_vec: list[float],
     embedding_model: str,
     n: int = _SESSION_SUMMARY_TOP_N,
+    as_of: Any = None,
+    as_of_basis: str = "valid_time",
     run_id: str | None = None,
     session_id: str | None = None,
     session_ids: list[str] | None = None,
@@ -116,13 +150,22 @@ async def fetch_session_summaries(
     if session_ids:
         where.append("session_id IN {session_ids:Array(String)}")
         params["session_ids"] = [str(x) for x in session_ids]
+    _aoc = _as_of_clause(
+        as_of, as_of_basis, valid_col="valid_at", created_col="created_at", params=params
+    )
+    if _aoc:
+        where.append(_aoc)
     where_sql = " AND ".join(where)
     sql = f"""
         SELECT session_id,
                substring(summary_text, 1, 1200) AS content_excerpt,
                cosineDistance(summary_embedding, {{q:Array(Float32)}}) AS distance,
-               -- Not aliased `valid_at`: a SELECT alias shadows the base column
-               -- for every clause of the statement under the analyzer.
+               -- NB: alias must NOT be `valid_at` — under the analyzer a
+               -- SELECT alias shadows the base column, so the as_of WHERE clause
+               -- (`valid_at <= {{as_of:DateTime}}`) would bind to this String
+               -- expression instead of the DateTime column and raise "no
+               -- supertype for String, DateTime" — silently swallowed by the
+               -- except below, killing the whole leg under any as_of.
                toString(coalesce(valid_at, toDateTime(0))) AS valid_at_iso,
                derived_from
         FROM loom.session_summaries FINAL
@@ -235,6 +278,8 @@ async def fetch_entity_summaries(
     embedding_model: str,
     entity_filter: list[str],
     n: int = _ENTITY_SUMMARY_TOP_N,
+    as_of: Any = None,
+    as_of_basis: str = "valid_time",
 ) -> list[SearchHit]:
     """Top-N pre-built per-entity summaries for the query's entities, by cosine.
 
@@ -276,12 +321,20 @@ async def fetch_entity_summaries(
         # summaries are the only writer of that marker).
         where.append("agent IN ({agent:String}, '*')")
         params["agent"] = agent
+    _aoc = _as_of_clause(
+        as_of, as_of_basis, valid_col="valid_from", created_col="created_at", params=params
+    )
+    if _aoc:
+        where.append(_aoc)
     where_sql = " AND ".join(where)
     sql = f"""
         SELECT entity,
                substring(summary_text, 1, 1200) AS content_excerpt,
                cosineDistance(summary_embedding, {{q:Array(Float32)}}) AS distance,
-               -- Not aliased `valid_from` (see fetch_session_summaries).
+               -- alias must NOT be `valid_from`: it would shadow the base column
+               -- in the as_of WHERE clause and raise a String/DateTime supertype
+               -- error that the except below swallows, silently killing the leg
+               -- whenever as_of is set. See fetch_session_summaries.
                toString(coalesce(valid_from, toDateTime(0))) AS valid_from_iso
         FROM loom.entity_summaries FINAL
         WHERE {where_sql}

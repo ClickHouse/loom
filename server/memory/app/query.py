@@ -220,6 +220,7 @@ async def _hidden_under_prefix(
         tags=tags,
         contains=input.contains or None,
         include_tombstoned=input.include_tombstoned,
+        as_of=input.as_of,
         include_duplicates=True,
         include_superseded=True,
         include_proposed=True,
@@ -303,6 +304,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             limit=input.limit + 1,
             offset=input.offset,
             include_tombstoned=input.include_tombstoned,
+            as_of=input.as_of,
             preview=True,  # The stored 2 KB preview, not the value
             **_served,
             scope=scope,
@@ -327,6 +329,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         tuple(tags or ()),
         input.contains or "",
         bool(input.include_tombstoned),
+        str(input.as_of or ""),
         tuple(sorted(_served.items())),
         namespace_version,
         _today_start.date().isoformat(),
@@ -343,6 +346,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             tags=tags,
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
+            as_of=input.as_of,
             **_served,
             scope=scope,
         )
@@ -463,6 +467,12 @@ async def _list_by_score(
     if input.contains:
         where.append(memory_repo.CONTAINS_PREDICATE)
         params["contains"] = input.contains
+    if input.as_of is not None:
+        where.append(
+            "(valid_at IS NOT NULL AND valid_at <= {as_of:DateTime} "
+            "OR valid_at IS NULL AND created_at <= {as_of:DateTime})"
+        )
+        params["as_of"] = input.as_of
     # Wider pool so per-type quota trimming has rows to choose from.
     if input.quotas:
         params["lim"] = sum(input.quotas.values()) * 4 + 1
@@ -691,6 +701,7 @@ async def follow_duplicate(input: Any, row: Any) -> tuple[Any, str | None]:
         canon = await memory_repo.get_by_id(
             target,
             org=input.org,
+            as_of=input.as_of,
             include_usage_totals=True,
             fresh=True,
             scope=request_scope(),
