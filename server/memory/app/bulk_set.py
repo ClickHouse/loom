@@ -645,10 +645,11 @@ async def _bulk_settle_verdicts(
             except Exception as e:  # noqa: BLE001 — the rows are in; the link is best-effort
                 log.warning("bulk_set: mark_peers_conflicted failed for %s: %s", new_id, e)
             else:
-                if landed == "clear":
+                if landed != "conflict":
                     clear.add(new_id)
         if clear:
-            # Every peer retired since the verdict: the row stays active, unflagged.
+            # Nothing was flagged (every peer retired, or the row moved on since the
+            # verdict): the row stays active, unflagged, as memory.set leaves it.
             plan.conflict_marks = [(n, p) for n, p in plan.conflict_marks if n not in clear]
             _settle_results(state, plan)
     if plan.refines:
