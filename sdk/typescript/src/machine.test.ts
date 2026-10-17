@@ -482,6 +482,23 @@ describe("Transport with a token provider", () => {
     expect(v1(srv).map(auth)).toEqual(["Bearer shared"]);
   });
 
+  it("leaves no timer behind when a caller gives up on a stalled token", async () => {
+    // A timer left running would keep a cancelled Node command alive until the timeout.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const provider: TokenProvider = { token: () => new Promise<string>(() => {}), origin: BASE };
+      const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: server().fetch });
+      const ctrl = new AbortController();
+      const cancelled = t.post("memory.get", { org: "o" }, { signal: ctrl.signal, timeoutMs: 60_000 });
+      await Promise.resolve();
+      ctrl.abort();
+      await expect(cancelled).rejects.toThrow("aborted");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("times a caller out on a stalled token, and another caller still gets it", async () => {
     let release: (t: string) => void = () => {};
     const pending = new Promise<string>((r) => {
