@@ -134,3 +134,21 @@ async def test_a_repeat_that_names_no_level_is_not_a_label_change(monkeypatch) -
     )
     replay = settle_batch_rows(state, {0: NS(verdict="merge", existing_memory_id="X")})
     assert replay.drop == {1}
+
+
+async def test_a_repeat_of_the_stored_bytes_keeps_a_live_expiry(monkeypatch) -> None:
+    # A pin on the same bytes writes a version; as on memory.set, the row keeps the live
+    # expiry the stored row had. A lapsed one is not revived, and a new value keeps
+    # bulk's rule (its own ttl_seconds, else none).
+    value = "Alice lives in Berlin"
+    soon = (NOW + timedelta(days=10)).replace(tzinfo=None, microsecond=0)
+    past = (NOW - timedelta(days=1)).replace(tzinfo=None, microsecond=0)
+    pin = {"memory_key": "k", "value": value, "pinned": True}
+    for stored_expiry, entry, want in (
+        (soon, pin, soon),
+        (past, pin, None),
+        (soon, {**pin, "value": "Alice lives in Paris"}, None),
+    ):
+        state = await _build(monkeypatch, _stored(value, expires_at=stored_expiry), entry)
+        (row,) = state.memory_rows
+        assert row["expires_at"] == want

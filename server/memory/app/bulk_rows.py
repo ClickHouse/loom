@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
-from server.core.datetimes import parse_iso_dt
+from server.core.datetimes import parse_iso_dt, to_naive_utc
 from server.core.hashing import sha256_value as _content_sha256
 from server.memory.api.models_bulk import (
     BLACKLISTED,
@@ -340,6 +340,22 @@ def _repeated_level(state: _BulkWriteState, entry: Any, entry_sha: str) -> str |
     return str(getattr(live, "sensitivity", "") or "")
 
 
+def _entry_expiry(
+    state: _BulkWriteState, entry: Any, entry_sha: str, now_utc: datetime
+) -> datetime | None:
+    """The expiry an entry's row starts from, before the sensitive retention: its
+    `ttl_seconds`, else the stored row's expiry when the entry repeats its bytes and that
+    expiry has not passed (memory.set keeps it the same way), else none."""
+    if entry.ttl_seconds is not None:
+        return now_utc + timedelta(seconds=entry.ttl_seconds)
+    if state.existing_sha.get(entry.memory_key) != entry_sha:
+        return None
+    stored = to_naive_utc(getattr(state.existing_rows.get(entry.memory_key), "expires_at", None))
+    if stored is not None and stored > to_naive_utc(now_utc):
+        return stored
+    return None
+
+
 def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: str) -> None:
     """Phase 4b, per searchable kept entry (the one just appended to
     `state.memory_rows`): queue its embed text, clean excerpt and key-axis
@@ -637,11 +653,7 @@ async def _bulk_build_rows(
         if _bulk_skip_gate(entry, entry_sha, state, identity_dupes):
             continue
         version = next_version()
-        expires_at = (
-            now_utc + timedelta(seconds=entry.ttl_seconds)
-            if entry.ttl_seconds is not None
-            else None
-        )
+        expires_at = _entry_expiry(state, entry, entry_sha, now_utc)
         serialized_value = json.dumps(entry.value)
         # Sensitivity tier: caller's level, the repeated value's, or detected from
         # the value; rides the row, its `sensitivity:` tag and the embed gate.
