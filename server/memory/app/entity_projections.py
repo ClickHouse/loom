@@ -271,6 +271,18 @@ _SET_ENTITY_STOPWORDS = frozenset(
         "probably",
         "certainly",
         "definitely",
+        # -- Korean pronouns and time words, as `_korean_stem` leaves them: "우리는" is
+        # 우리 (we). 저, 나 and 너 are one syllable, too short to be a name already.
+        "우리",
+        "저희",
+        "너희",
+        "그녀",
+        "그들",
+        "당신",
+        "지금",
+        "오늘",
+        "내일",
+        "어제",
     }
 )
 # Runs of TitleCase words are strong proper-noun candidates. Applied to the

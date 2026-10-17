@@ -404,3 +404,23 @@ def test_a_korean_particle_or_plain_verb_is_not_an_entity(
     ents = _candidate_entities_from_value(text)
     assert all(canonical_entity_text(n) in ents for n in names), ents
     assert not {canonical_entity_text(j) for j in junk} & set(ents), ents
+
+
+@pytest.mark.parametrize(
+    ("text", "names", "junk"),
+    [
+        # "We go to school", "She likes Busan now": a pronoun or a time word, once its
+        # particle is off, is in nearly every sentence and names nothing.
+        ("우리는 학교에 간다", ["학교"], ["우리"]),
+        ("그녀는 지금 부산을 좋아해요", ["부산"], ["그녀", "지금"]),
+        ("저희는 오늘 서울에 가요", ["서울"], ["저희", "오늘"]),
+        ("당신을 어제 만났다", [], ["당신", "어제"]),
+        ("너희를 내일 그들을 본다", [], ["너희", "내일", "그들"]),
+    ],
+)
+def test_a_korean_pronoun_or_time_word_is_not_an_entity(
+    text: str, names: list[str], junk: list[str]
+) -> None:
+    ents = _candidate_entities_from_value(text)
+    assert all(canonical_entity_text(n) in ents for n in names), ents
+    assert not {canonical_entity_text(j) for j in junk} & set(ents), ents
