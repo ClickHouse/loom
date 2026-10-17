@@ -3310,7 +3310,7 @@
         },
         {
          "dest": "entries",
-         "help": "One line per configured repository, for scripts: org namespace checkout lock-file (the lock path resolved).",
+         "help": "One line per configured repository: org namespace checkout lock-file (the lock path resolved; a manual run takes it through `loom code entry-lock`).",
          "metavar": "entries"
         },
         {

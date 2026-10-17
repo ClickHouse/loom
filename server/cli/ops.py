@@ -104,8 +104,7 @@ def _cmd_recalibrate(args: argparse.Namespace) -> int:
 
     Same logic as the weekly recalibration worker, but immediate. Use after
     shipping a new corpus so per-NS thresholds activate without waiting up to
-    a week.
-    Exit 0 on success, 1 on probe failure.
+    a week. Exit 0 on success, 1 on probe failure.
     """
     import sys
 

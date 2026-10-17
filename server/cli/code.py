@@ -410,8 +410,9 @@ def register_code_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
 
     p_entries = csub.add_parser(
         "entries",
-        help="One line per configured repository, for scripts: "
-        "org namespace checkout lock-file (the lock path resolved).",
+        help="One line per configured repository: org namespace checkout "
+        "lock-file (the lock path resolved; a manual run takes it through "
+        "`loom code entry-lock`).",
     )
     p_entries.set_defaults(func=_cmd_entries)
 
