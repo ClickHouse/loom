@@ -56,7 +56,9 @@ from server.tasks.app.common import (
     _load_readable_inbox,
     _load_task_owner_side,
     _loads,
+    _log_transition,
     _naive,
+    _next_row,
     _not_found,
     _payload,
     _record,
@@ -185,19 +187,26 @@ async def _create(input: TaskCreateInput, inbox: InboxRow, subject: str) -> Task
         "version": 0,
         "is_deleted": 0,
     }
-    # ``_record`` writes from a "previous" row: for a create that row has no
-    # status yet, so from_status is empty and to_status is the landing state.
-    row, seq = await _record(
-        cast(TaskRow, {**task, "status": ""}),
+    # The transition starts from a "previous" row with no status yet, so the
+    # event's from_status is empty and to_status is the landing state.
+    start = cast(TaskRow, {**task, "status": ""})
+    actor = _actor(f"process:{input.agent}")
+    row, seq = await _next_row(start, actor=actor, status=status)
+    if input.idempotency_key:
+        stored = await repo.insert_created_task(row)
+        if str(stored["task_id"]) != task_id:
+            return await _prior_task(stored)  # a create whose lease ran out lost the race
+    else:
+        await repo.insert_task_version(row)
+    await _log_transition(
+        start,
+        row,
+        seq,
         event="created",
-        actor=_actor(f"process:{input.agent}"),
+        actor=actor,
         agent=input.agent,
         patch={"kind": input.kind, "mode": mode, "policy": bool(policy)},
-        keyed_create=bool(input.idempotency_key),
-        status=status,
     )
-    if row["task_id"] != task_id:
-        return await _prior_task(row)  # the previous build stored the key's task first
     backend = await repo.lease_backend()
     await backend.ensure_row(task_id, input.org, input.inbox, 0)
     nxt = _triage_note(inbox, input.agent, policy) if status == "triage" else ""

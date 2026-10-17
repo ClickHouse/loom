@@ -326,14 +326,31 @@ async def _record(
     reason: str = "",
     note: str = "",
     patch: dict[str, Any] | None = None,
-    keyed_create: bool = False,
     **changes: Any,
 ) -> tuple[TaskRow, int]:
     """Apply ``changes`` as a new version row and log the transition. Returns
     the new row and the event's ``seq``. Wakes the inbox's pulls and the
-    poster's updates cursor. ``keyed_create``: a create with an idempotency key,
-    which answers the task the key holds (`repo.insert_created_task`) and logs
-    nothing when that is another one."""
+    poster's updates cursor."""
+    row, seq = await _next_row(task, actor=actor, reason=reason, **changes)
+    await repo.insert_task_version(row)
+    await _log_transition(
+        task,
+        row,
+        seq,
+        event=event,
+        actor=actor,
+        agent=agent,
+        reason=reason or (changes.get("reason") or ""),
+        note=note,
+        patch=patch,
+    )
+    return row, seq
+
+
+async def _next_row(
+    task: TaskRow, *, actor: str, reason: str = "", **changes: Any
+) -> tuple[TaskRow, int]:
+    """The new version row for ``changes`` and its ``seq``, not yet inserted."""
     from_status = str(task.get("status") or "")
     # The server's clock, so every replica stamps one event order (the cursor).
     seq = await repo.server_version(int(task.get("version") or 0))
@@ -346,12 +363,22 @@ async def _record(
         # move back to the happy path: resume, unblock, accept), so the board
         # can filter by it; a note or heartbeat leaves the row's reason alone.
         row["reason"] = reason
-    if keyed_create:
-        stored = await repo.insert_created_task(row)
-        if str(stored["task_id"]) != row["task_id"]:
-            return stored, int(stored["version"])
-    else:
-        await repo.insert_task_version(row)
+    return row, seq
+
+
+async def _log_transition(
+    task: TaskRow,
+    row: TaskRow,
+    seq: int,
+    *,
+    event: str,
+    actor: str,
+    agent: str,
+    reason: str = "",
+    note: str = "",
+    patch: dict[str, Any] | None = None,
+) -> None:
+    """The event for the move from ``task`` to the inserted ``row``, and the wakeups."""
     await repo.insert_event(
         {
             "org": row["org"],
@@ -360,14 +387,14 @@ async def _record(
             "task_id": row["task_id"],
             "seq": seq,
             "event": event,
-            "from_status": from_status,
-            "to_status": to_status,
+            "from_status": str(task.get("status") or ""),
+            "to_status": str(row["status"]),
             "actor": actor,
             "agent": agent,
             "from_subject": row.get("from_subject") or "",
             "fence": int(row.get("fence") or 0),
             "version": seq,
-            "reason": reason or (changes.get("reason") or ""),
+            "reason": reason,
             "patch": json.dumps(patch or {}, sort_keys=True, default=str),
             "note": note,
             "ts": datetime.fromtimestamp(seq / 1_000_000, UTC).replace(tzinfo=None),
@@ -377,7 +404,6 @@ async def _record(
         task_wakeups.inbox_key(row["org"], row["inbox"]),
         task_wakeups.poster_key(row["org"], row.get("from_subject") or ""),
     )
-    return row, seq
 
 
 async def _load_inbox(org: str, inbox: str) -> InboxRow:

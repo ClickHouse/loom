@@ -93,14 +93,14 @@ async def ready_event_exists(
 
 
 async def insert_ready_event(row: dict[str, Any], *, ch: _CHClient | None = None) -> bool:
-    """Insert the event row; True when it is the ready event stored.
+    """Insert the event row; True when this row landed.
 
-    The delivery's lease keeps a second one of this build out. The previous build
-    takes no lease and inserts under the event id as the dedup token, so this one
-    does too, and storage drops whichever of the two comes second; the token stays
-    until no build without the lease serves (docs/architecture/rolling-upgrades.md).
-    An erased event's token can outlive it and drop this insert too: with no event
-    stored, the row goes in again under a fresh token."""
+    The delivery's lease keeps a second delivery out. One whose lease ran out before
+    its insert can still race the next, so both insert under the event id as the
+    dedup token and storage drops the later row. An erased event's token can outlive
+    it and drop this row too: with no event stored, it goes in under a fresh token.
+    The previous build sends a random token, so a delivery of each build can both
+    land (docs/architecture/rolling-upgrades.md, rule 10)."""
     ch = ch or _default_client()
     task_id = str(row["task_id"])
     settings = {**_INSERT_SETTINGS, "insert_deduplication_token": task_id}

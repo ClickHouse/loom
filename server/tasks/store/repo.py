@@ -354,18 +354,21 @@ async def insert_task_version(
 
 
 async def insert_created_task(row: TaskRow, *, ch: _CHClient | None = None) -> TaskRow:
-    """Insert a new task that has an idempotency key, and answer the task the key
-    holds: this one, or one the previous build stored first.
+    """Insert a new task that has an idempotency key, and answer the key's task:
+    this row when it landed, else the task another create stored first.
 
-    The previous build takes no lease on the key and relies on the insert's dedup
-    token, so this one inserts under the same token, and storage drops whichever of
-    the two inserts comes second. The token stays until no build without the lease
-    serves (docs/architecture/rolling-upgrades.md). An erased task's token can outlive
-    it and drop this insert too: with no task under the key, the row goes in again
-    under a fresh token."""
+    The key's lease keeps a second create out. A create whose lease ran out before
+    its insert can still race the next one, so both insert under the key's dedup
+    token and storage drops the later row. An erased task's token can outlive it
+    and drop this row too: with no task under the key, it goes in under a fresh
+    token. The previous build sends a random token, so a create of each build can
+    both land (docs/architecture/rolling-upgrades.md, rule 10)."""
     org, inbox, key = row["org"], row["inbox"], row["idempotency_key"]
     token = f"task.create:{org}:{inbox}:{key}"
     await insert_task_version(row, dedup_token=token, ch=ch)
+    if await fetch_task(org, str(row["task_id"]), ch=ch) is not None:
+        return row
+    # The token dropped this row.
     stored = await fetch_task_by_idempotency_key(org, inbox, key, ch=ch)
     if stored is not None:
         return stored

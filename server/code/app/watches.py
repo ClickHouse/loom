@@ -146,7 +146,7 @@ async def deliver(watch: CoverageWatch, coverage: dict[str, Any]) -> tuple[bool,
             raise PreconditionFailedError("another delivery of this ready event is still running")
         if not await repo.ready_event_exists(org, inbox, task_id):
             row = _event_row(watch, task_id, tier_summary(coverage), await server_version())
-            # False when the previous build's delivery stored the event first.
+            # False when a delivery whose lease ran out stored the event first.
             emitted = await repo.insert_ready_event(row)
     if emitted:
         task_wakeups.notify(
