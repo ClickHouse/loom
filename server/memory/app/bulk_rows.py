@@ -224,7 +224,8 @@ def _bulk_skip_gate(
     # (version 0) so the response shape is unchanged.
     if state.existing_sha.get(entry.memory_key) == entry_sha:
         state.skipped_unchanged += 1
-        _rid = state.existing_ids.get(entry.memory_key)
+        # The stored row, or the one an earlier entry of this batch is creating.
+        _rid = state.existing_ids.get(entry.memory_key) or state.new_ids.get(entry.memory_key)
         if _rid and _rid not in state.restated_ids:
             state.restated_ids.append(_rid)
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))

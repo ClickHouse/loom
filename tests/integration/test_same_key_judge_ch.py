@@ -3866,6 +3866,27 @@ async def test_a_new_key_still_dedups_against_another_sessions_copy(ch, org) -> 
     assert ("s1", "k") not in await _live_values(ch, org)
 
 
+async def test_a_key_said_twice_in_its_first_bulk_reinforces_the_row(
+    ch, org, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    async def _record(**kw: Any) -> None:
+        events.append(str(kw["memory_id"]))
+
+    monkeypatch.setattr("server.memory.store.usage.record_usage_event", _record)
+    out = await _bulk_in(
+        org,
+        "s1",
+        {"memory_key": "k", "value": "User lives in Berlin."},
+        {"memory_key": "k", "value": "User lives in Berlin."},
+    )
+    # The second says it again: it writes nothing and reinforces the row the first wrote.
+    first, second = out.written
+    assert first.memory_id and second.version == 0
+    assert events == [first.memory_id]
+
+
 async def test_a_value_its_own_bulk_replaced_retires_no_other_row(ch, org, newest_wins) -> None:
     # k2's Russellville would retire k1's Moscow, but the same bulk then writes k2 again:
     # k2 no longer says anything about the capital, so Moscow stays live and searchable.
