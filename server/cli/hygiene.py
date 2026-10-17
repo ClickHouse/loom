@@ -576,6 +576,12 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
     rc = 0
     # --completed-since takes the completed sagas instead of the failed ones.
     completed = bool(args.completed_since)
+    if completed and args.skip_external:
+        # A completed saga is not resumed, so the flag would be ignored.
+        print(
+            "--skip-external applies to failed sagas only, not --completed-since", file=sys.stderr
+        )
+        return 2
     if completed:
         rows = await erasure_ledger.list_completed_requests(
             since=args.completed_since, org=args.org or None, ch=ch

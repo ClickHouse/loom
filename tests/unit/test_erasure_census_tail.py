@@ -907,6 +907,34 @@ async def test_completed_since_takes_only_completed_sagas(monkeypatch, capsys) -
     assert "c1" in out and "f1" not in out
 
 
+async def test_completed_since_refuses_skip_external(monkeypatch, capsys) -> None:
+    # --skip-external changes how a failed saga resumes; a completed one is not resumed,
+    # so the flag would do nothing. Refuse it before reading the ledger.
+    from datetime import datetime
+
+    from server.cli import hygiene
+
+    async def no_ledger(**k):
+        raise AssertionError("the combination is refused before any read")
+
+    monkeypatch.setattr(erasure_ledger, "list_completed_requests", no_ledger)
+    monkeypatch.setattr(erasure_ledger, "list_failed_requests", no_ledger)
+    args = argparse.Namespace(
+        org="o",
+        id=None,
+        resume=True,
+        skip_external=True,
+        orphan_graph=False,
+        erase=False,
+        batch=200,
+        show=20,
+        requester="t",
+        completed_since=datetime(2026, 10, 17, 8, 0),
+    )
+    assert await hygiene._re_verify_run(object(), args) == 2
+    assert "--skip-external" in capsys.readouterr().err
+
+
 def test_an_orphan_row_link_is_one_whose_memory_has_no_live_row_and_no_later_one() -> None:
     from datetime import datetime
 
