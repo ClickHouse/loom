@@ -271,7 +271,7 @@ def _apply_verdicts(
     plan = apply_bulk_verdicts(
         state.memory_rows, state.embedding_rows, emb_idx_of, row_results, verdicts, stale
     )
-    copy_restated_verdicts(state, plan.merged_into, copies)
+    copy_restated_verdicts(state, plan, copies)
     state.memory_rows = plan.memory_rows
     state.embedding_rows = plan.embedding_rows
     return plan

@@ -22,7 +22,7 @@ from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     _BulkSetResult,
 )
-from server.memory.app.bulk_verdicts import NOT_LANDING, verdict_target
+from server.memory.app.bulk_verdicts import NOT_LANDING, BulkVerdictPlan, verdict_target
 from server.memory.app.projections import (
     resolved_entity_list,
 )
@@ -434,15 +434,19 @@ def drop_built_rows(
 
 
 def copy_restated_verdicts(
-    state: _BulkWriteState, merged_into: dict[int, str], copies: list[tuple[int, int, Any]]
+    state: _BulkWriteState, plan: BulkVerdictPlan, copies: list[tuple[int, int, Any]]
 ) -> None:
     """Each restatement of a merged or rejected row answers that row's verdict, as the
-    same memory.set again would; a merge's restatement reinforces the merge target."""
+    same memory.set again would, and is listed under it in the `plan`; a merge's
+    restatement reinforces the merge target."""
     for res_i, src_i, row in copies:
         src, res = state.results[src_i], state.results[res_i]
         res.conflict_verdict, res.peers, res.next = src.conflict_verdict, list(src.peers), src.next
         if src.conflict_verdict == "merge":
-            _note_restatement(state, merged_into.get(id(row), ""))
+            plan.merged.append(res.memory_key)
+            _note_restatement(state, plan.merged_into.get(id(row), ""))
+        elif src.conflict_verdict == "rejected":
+            plan.rejected_pinned.append(res.memory_key)
 
 
 def _row_id(state: _BulkWriteState, memory_key: str) -> str:

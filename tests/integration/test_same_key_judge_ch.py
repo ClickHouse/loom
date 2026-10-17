@@ -6141,7 +6141,7 @@ async def test_a_bulk_checking_its_revised_rows_edges_reads_once(ch, org, n) -> 
 
 async def _bulk_beside_a_pin(org: str, entries: list[dict[str, Any]]) -> Any:
     """A pinned row says the deploy window, then one bulk writes `entries` in a fresh
-    session. Returns the bulk's per-entry results."""
+    session. Returns the bulk's output."""
     from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app import after_write, bulk_set
@@ -6155,7 +6155,7 @@ async def _bulk_beside_a_pin(org: str, entries: list[dict[str, Any]]) -> Any:
         MemoryBulkSetInput(**ids, session_id="s1", entries=entries)
     )
     await after_write.drain()
-    return out.written
+    return out
 
 
 _PINNED = "The deploy window is Tuesday and Thursday only, never Friday."
@@ -6176,21 +6176,23 @@ async def test_a_restatement_of_a_rejected_bulk_entry_is_rejected_too(ch, org) -
     # Both entries are close to the pinned row: memory.set would refuse each one, so the
     # second must not answer an unchanged no-op the SDK reports as a clear write.
     same = {"memory_key": "plan", "value": _CLOSE}
-    written = await _bulk_beside_a_pin(org, [same, same])
-    assert [(r.version, r.conflict_verdict) for r in written] == [(0, "rejected")] * 2
+    out = await _bulk_beside_a_pin(org, [same, same])
+    assert [(r.version, r.conflict_verdict) for r in out.written] == [(0, "rejected")] * 2
+    assert out.rejected_pinned == ["plan", "plan"]
     assert await _stored_under(ch, org, "plan") == []
 
 
 async def test_a_pin_on_a_rejected_bulk_entry_does_not_gate_the_next_value(ch, org) -> None:
     # The first entry asks for a pin and is refused, so the key still does not exist:
     # the second, unrelated value lands as its own unpinned write.
-    written = await _bulk_beside_a_pin(
+    out = await _bulk_beside_a_pin(
         org,
         [
             {"memory_key": "plan", "value": _CLOSE, "pinned": True},
             {"memory_key": "plan", "value": "Ship the release notes on Monday."},
         ],
     )
+    written = out.written
     assert (written[0].version, written[0].conflict_verdict) == (0, "rejected")
     assert written[1].version > 0 and written[1].conflict_verdict != "pinned"
     stored = await _stored_under(ch, org, "plan")
@@ -6300,12 +6302,12 @@ async def test_the_skip_log_counts_an_entry_a_landed_pin_refused(ch, org, caplog
     import logging
 
     caplog.set_level(logging.INFO, logger="server.memory.app.bulk_set")
-    written = await _bulk_beside_a_pin(
+    out = await _bulk_beside_a_pin(
         org,
         [
             {"memory_key": "plan", "value": "Ship the release notes on Monday.", "pinned": True},
             {"memory_key": "plan", "value": "Ship the release notes on Wednesday."},
         ],
     )
-    assert [r.conflict_verdict for r in written][1] == "pinned"
+    assert out.written[1].conflict_verdict == "pinned"
     assert "skipped 1 entry targeting pinned key(s): ['plan']" in caplog.text

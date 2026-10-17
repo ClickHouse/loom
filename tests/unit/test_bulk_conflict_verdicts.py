@@ -267,3 +267,19 @@ def test_a_merge_stays_a_merge_when_the_earlier_rewrite_of_its_target_did_not_la
     assert plan.memory_rows == [] and plan.merged == ["K", "L"]
     assert [(r.version, r.conflict_verdict) for r in state.results] == [(0, "merge")] * 2
     assert plan.reinforce_ids == ["Y", "X"]
+
+
+def test_a_restated_merge_or_rejection_is_listed_with_its_verdict() -> None:
+    # Entry 0 merges into M (or is refused by a pin); entry 1 repeats its bytes and gets
+    # the same verdict, so the output lists both entries under it.
+    from server.memory.app.bulk_rows import _bulk_skip_gate
+    from server.memory.app.bulk_set import _apply_verdicts
+
+    for verdict in ("merge", "rejected"):
+        state = _stored()
+        _entry(state, "k", "id1", "s1")
+        assert _bulk_skip_gate(NS(memory_key="k"), "s1", state, {})
+        plan = _apply_verdicts(state, [], {0: NS(verdict=verdict, existing_memory_id="M")})
+        assert [r.conflict_verdict for r in state.results] == [verdict] * 2
+        listed = plan.merged if verdict == "merge" else plan.rejected_pinned
+        assert listed == ["k", "k"] and state.skipped_unchanged == 0
