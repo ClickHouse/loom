@@ -310,6 +310,7 @@ python scripts/codegen/docs_reference.py
 | `loom logout` | End the stored session on the server and forget it here. |  |
 | `loom whoami` | Show who the stored session signs you in as. |  |
 | `loom call` | Call any operation or API route with the stored session (`loom call --help`). |  |
+| `loom token` | Make, list and revoke your own tokens for CI and agents (`loom token --help`). |  |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: cli -->

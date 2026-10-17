@@ -12213,6 +12213,30 @@
      ],
      "mutually_exclusive": [],
      "arguments": []
+    },
+    "token": {
+     "prog": "loom token",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": []
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
     }
    },
    "aliases_of": {
@@ -12274,7 +12298,8 @@
     "login": "loom login",
     "logout": "loom logout",
     "whoami": "loom whoami",
-    "call": "loom call"
+    "call": "loom call",
+    "token": "loom token"
    },
    "choices_help": [
     {
@@ -12571,6 +12596,11 @@
      "dest": "call",
      "help": "Call any operation or API route with the stored session (`loom call --help`).",
      "metavar": "call"
+    },
+    {
+     "dest": "token",
+     "help": "Make, list and revoke your own tokens for CI and agents (`loom token --help`).",
+     "metavar": "token"
     }
    ]
   }

@@ -1,5 +1,5 @@
-"""`loom login | logout | whoami | call`: everything the dashboard does, from a
-terminal or an agent's shell. `python -m loom …` runs it with only the SDK
+"""`loom login | logout | whoami | call | token`: everything the dashboard does,
+from a terminal or an agent's shell. `python -m loom …` runs it with only the SDK
 installed; the server's `loom` command hands these four to it.
 
 `loom call` reaches the whole API with the stored session (or LOOM_API_KEY):
@@ -9,6 +9,14 @@ installed; the server's `loom` command hands these four to it.
   loom call memory.search query="deploy window" top_k:=5 --namespace support
   loom call /v1/me/service_accounts
   loom call /v1/me/service_accounts.create --data '{"name": "ci", "namespaces": ["support"]}'
+
+`loom token` makes, lists and revokes your own tokens for CI and agents, as the
+Setup page does:
+
+  loom token create --name ci --namespace-role support=writer --namespace-role docs=viewer
+  loom token create --name nightly --namespace support --ttl-days 0   # never expires
+  loom token list
+  loom token revoke --name ci
 
 An op name is POSTed to /v1/<op> with org and namespace filled in from the
 token (`--org`, `--namespace` override). A path starting with `/` is sent as
@@ -31,7 +39,7 @@ from loom import credentials
 from loom.errors import LoomError
 from loom.ops import OPS
 
-COMMANDS = ("login", "logout", "whoami", "call")
+COMMANDS = ("login", "logout", "whoami", "call", "token")
 
 
 def _field(pair: str) -> tuple[str, Any]:
@@ -103,6 +111,64 @@ async def _call(args: argparse.Namespace) -> Any:
         await agent.close()
 
 
+async def _token(args: argparse.Namespace) -> Any:
+    """`loom token create | list | revoke` with the stored session."""
+    from loom.agent import Agent
+
+    agent = Agent("", "", "loom-cli", base_url=_server(args), profile=args.profile)
+    try:
+        if args.action == "list":
+            return await agent.account.service_accounts()
+        if args.action == "revoke":
+            return await agent.account.revoke_service_account(args.name)
+        # In flag order, which is the read priority; a bare --namespace takes
+        # your own role there (capped server-side, as every entry is).
+        entries: list[str | dict[str, str]] = []
+        for kind, value in args.entries:
+            ns, _, role = value.partition("=")
+            entries.append({"namespace": ns, "role": role} if kind == "role" else ns)
+        return await agent.account.create_service_account(
+            args.name, entries, ttl_days=args.ttl_days
+        )
+    finally:
+        await agent.close()
+
+
+class _Entry(argparse.Action):
+    """--namespace and --namespace-role into one list, in the order given."""
+
+    def __call__(self, parser: Any, namespace: Any, value: Any, option: Any = None) -> None:
+        kind = "role" if option == "--namespace-role" else "ns"
+        if kind == "role" and value.partition("=")[2] not in ("viewer", "writer", "admin"):
+            parser.error(f"--namespace-role must be NS=viewer|writer|admin, got {value!r}")
+        namespace.entries = [*(namespace.entries or []), (kind, value)]
+
+
+def _token_parser(sub: Any) -> None:
+    p = sub.add_parser("token", help="make, list and revoke your tokens for CI and agents")
+    p.add_argument("--profile", help="credentials profile (default: LOOM_PROFILE or 'default')")
+    p.add_argument("--server", help="server URL (default: the one `loom login` signed in to)")
+    actions = p.add_subparsers(dest="action", required=True)
+    create = actions.add_parser("create", help="a token for some of your namespaces")
+    create.add_argument("--name", required=True, help="its name, unique in the org while it lives")
+    create.add_argument(
+        "--namespace-role",
+        action=_Entry,
+        metavar="NS=ROLE",
+        help="a namespace and the role there, up to your own (repeatable; first = searched first)",
+    )
+    create.add_argument(
+        "--namespace", action=_Entry, metavar="NS", help="a namespace at your own role (repeatable)"
+    )
+    create.add_argument(
+        "--ttl-days", type=int, default=None, help="days it lives (default 90; 0: never expires)"
+    )
+    create.set_defaults(entries=[])
+    actions.add_parser("list", help="the tokens you made")
+    revoke = actions.add_parser("revoke", help="end a token now")
+    revoke.add_argument("--name", required=True)
+
+
 def _list_ops() -> None:
     for name, spec in sorted(OPS.items()):
         print(f"{name:<40} {spec.role}")
@@ -118,6 +184,11 @@ def run(args: argparse.Namespace) -> int:
             print("Signed out." if confirmed else "Signed out here; the server did not confirm.")
         elif args.cmd == "whoami":
             print(json.dumps(credentials.whoami(args.profile), indent=2))
+        elif args.cmd == "token":
+            if args.action == "create" and not args.entries:
+                print("loom token create: name a --namespace or --namespace-role", file=sys.stderr)
+                return 2
+            print(json.dumps(asyncio.run(_token(args)), indent=2, default=str))
         elif args.list:
             _list_ops()
         else:
@@ -169,6 +240,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             p.add_argument("--namespace", help="namespace for an op (default: the token's first)")
             p.add_argument("--method", choices=("GET", "POST"), help="for a /path")
             p.add_argument("--list", action="store_true", help="list every op and its role")
+    _token_parser(sub)
     # Fields may follow options (`--namespace x query=…`), which argparse
     # leaves over; anything else left over is a mistake.
     args, extra = parser.parse_known_args(argv)

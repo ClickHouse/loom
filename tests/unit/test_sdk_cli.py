@@ -205,3 +205,34 @@ def test_a_validation_failure_says_which_field(wire, capsys) -> None:
         == 1
     )
     assert "body.value: Field required" in capsys.readouterr().err
+
+
+def test_token_create_sends_the_namespaces_in_flag_order(wire) -> None:
+    argv = ["token", "create", "--name", "ci", "--namespace-role", "support=writer"]
+    argv += ["--namespace", "docs", "--namespace-role", "ops=viewer", "--ttl-days", "0"]
+    assert cli.main(argv) == 0
+    method, path, body = wire.seen[0]
+    assert (method, path) == ("POST", "/v1/me/service_accounts.create")
+    assert body["name"] == "ci" and body["ttl_days"] == 0
+    assert body["namespaces"] == [
+        {"namespace": "support", "role": "writer"},
+        "docs",  # your own role there
+        {"namespace": "ops", "role": "viewer"},
+    ]
+
+
+def test_token_list_and_revoke(wire) -> None:
+    wire.body = {"rows": []}
+    cli.main(["token", "list"])
+    cli.main(["token", "revoke", "--name", "ci"])
+    assert [(m, p) for m, p, _ in wire.seen] == [
+        ("GET", "/v1/me/service_accounts"),
+        ("POST", "/v1/me/service_accounts.revoke"),
+    ]
+
+
+def test_token_create_needs_a_namespace_and_a_known_role(wire, capsys) -> None:
+    assert cli.main(["token", "create", "--name", "ci"]) == 2
+    with pytest.raises(SystemExit):
+        cli.main(["token", "create", "--name", "ci", "--namespace-role", "support=owner"])
+    assert wire.seen == []

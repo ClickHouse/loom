@@ -203,10 +203,10 @@ async def me_service_accounts_create(
         holder = await _name_holder(org, name)
         if holder is not None:
             # Names are one per org; whose token holds one is not the caller's to learn.
-            mine = f"your token {name!r} is live" if holder == subject else "that name is in use"
+            taken = f"your token {name!r} is live" if holder == subject else "that name is in use"
             raise HTTPException(
                 status_code=409,
-                detail={"code": "TOKEN_NAME_TAKEN", "message": f"{mine}; choose another name"},
+                detail={"code": "TOKEN_NAME_TAKEN", "message": f"{taken}; choose another name"},
             )
         delegated = await delegate(
             parent,
@@ -388,68 +388,73 @@ async def me_service_accounts_revoke(
             detail={"code": "VALIDATION_FAILED", "message": "name required"},
         )
 
-    ch = get_client()
-    row = await ch.query_one(
-        """
-        SELECT sa_subject, namespaces, created_by, created_at,
-               expires_at, ttl_days, roles, kind, client,
-               inherit_creator_grants, ns_roles
-        FROM loom.service_accounts FINAL
-        WHERE org = {org:String} AND name = {name:String}
-        LIMIT 1
-        """,
-        params={"org": org, "name": name},
-    )
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "NOT_FOUND",
-                "message": f"service account {name!r} not found",
-            },
-        )
+    from server.auth.grant_claims import service_account_change
 
-    authorized = row["created_by"] == subject
-    if not authorized:
-        for ns in row["namespaces"]:
-            if await me_callers.caller_admin_of(org, ns, subject):
-                authorized = True
-                break
-    if not authorized:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "AUTH_INSUFFICIENT",
-                "message": "must be the creator or admin on a scoped namespace",
-            },
+    # Held as create holds it: a create of this name between the read and the
+    # write would be replaced by the revoked copy of the row read here.
+    async with service_account_change(org, name):
+        ch = get_client()
+        row = await ch.query_one(
+            """
+            SELECT sa_subject, namespaces, created_by, created_at,
+                   expires_at, ttl_days, roles, kind, client,
+                   inherit_creator_grants, ns_roles
+            FROM loom.service_accounts FINAL
+            WHERE org = {org:String} AND name = {name:String}
+            LIMIT 1
+            """,
+            params={"org": org, "name": name},
         )
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": f"service account {name!r} not found",
+                },
+            )
 
-    now = naive_utc_now_seconds()
-    await ch.insert(
-        "loom.service_accounts",
-        [
-            {
-                "org": org,
-                "name": name,
-                "sa_subject": row["sa_subject"],
-                "namespaces": row["namespaces"],
-                "roles": row["roles"],
-                "ttl_days": row["ttl_days"],
-                "created_by": row["created_by"],
-                "created_at": row["created_at"],
-                "expires_at": row["expires_at"],
-                "revoked_at": now,
-                "revoked_by": subject,
-                "version": _time.time_ns(),
-                # Column-mirror discipline (CLAUDE.md): carry every column
-                # forward or the merge zeros it.
-                "kind": row.get("kind") or "service_account",
-                "client": row.get("client") or "",
-                "inherit_creator_grants": bool(row.get("inherit_creator_grants", True)),
-                "ns_roles": row.get("ns_roles") or "{}",
-            }
-        ],
-    )
+        authorized = row["created_by"] == subject
+        if not authorized:
+            for ns in row["namespaces"]:
+                if await me_callers.caller_admin_of(org, ns, subject):
+                    authorized = True
+                    break
+        if not authorized:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "AUTH_INSUFFICIENT",
+                    "message": "must be the creator or admin on a scoped namespace",
+                },
+            )
+
+        now = naive_utc_now_seconds()
+        await ch.insert(
+            "loom.service_accounts",
+            [
+                {
+                    "org": org,
+                    "name": name,
+                    "sa_subject": row["sa_subject"],
+                    "namespaces": row["namespaces"],
+                    "roles": row["roles"],
+                    "ttl_days": row["ttl_days"],
+                    "created_by": row["created_by"],
+                    "created_at": row["created_at"],
+                    "expires_at": row["expires_at"],
+                    "revoked_at": now,
+                    "revoked_by": subject,
+                    "version": _time.time_ns(),
+                    # Column-mirror discipline (CLAUDE.md): carry every column
+                    # forward or the merge zeros it.
+                    "kind": row.get("kind") or "service_account",
+                    "client": row.get("client") or "",
+                    "inherit_creator_grants": bool(row.get("inherit_creator_grants", True)),
+                    "ns_roles": row.get("ns_roles") or "{}",
+                }
+            ],
+        )
 
     # Also revoke the JWT itself. SA tokens carry no `jti`, so revoke by
     # `sub` (the sa_subject); verify_token checks both. Without this the
