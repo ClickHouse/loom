@@ -74,9 +74,6 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # for the same reason `observation_date` does: the queue table needs no
 # migration. `rebuild_input` strips it before validation.
 ENQUEUED_BY_KEY = "enqueued_by"
-# The request's resolved read scope rides the payload under `READ_SCOPE_KEY`, so the
-# replay's lookups stay inside it as the inline call's would. Stamped by the server
-# like `enqueued_by`.
 
 
 def payload_for(
