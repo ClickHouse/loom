@@ -259,7 +259,9 @@ actions, verdicts and confidences, never the text.
 - The queue reads leave out a namespace over its daily LLM cost cap
   (`observability.budget`) and an org with an erasure queued, running or failed and due a
   retry (an abandoned saga does not count), so their rows stay owed without taking places
-  in a pass. The cap is read again before each call, so
+  in a pass. The erasure is read again between the call and the acting: an org whose
+  erasure was requested meanwhile gets no write, and its row stays owed. The cap is read
+  again before each call, so
   at most the calls already in flight cross it. Each call bills its namespace
   (`worker.conflict_resolver`).
 - A provider that refuses the model or the key (401, 403, 404) gets one warning per

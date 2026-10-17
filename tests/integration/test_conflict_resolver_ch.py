@@ -1076,3 +1076,39 @@ async def test_a_value_that_came_back_orders_from_its_return(ch, wired) -> None:
     out = await run_pass()
     assert (await _rows(ch, org))["office_city"]["status"] == "conflicted"
     assert out["retired"] == 0 and out["flagged"] == 1
+
+
+async def test_an_erasure_requested_during_the_call_stops_the_acting(
+    ch, wired, monkeypatch
+) -> None:
+    import uuid
+    from datetime import UTC, datetime
+
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 82)
+    real = llm.complete
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+        row = {
+            "id": str(uuid.uuid4()),
+            "org": org,
+            "scope_type": "org",
+            "scope_value": org,
+            "requester": "test",
+            "status": "queued",
+            "failure_reason": "",
+            "requested_at": now,
+            "last_checkpoint_at": now,
+            "version": 1,
+        }
+        await ch.insert("loom.erasure_requests", [row])
+        return await real(system, user, **kw)
+
+    monkeypatch.setattr(llm, "complete", complete)
+    out = await run_pass()
+    assert out["judged"] == 1 and out["retired"] == 0
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"
+    assert (await _marks(ch, org))["office_location"] == 1, "owed, left to after the saga"

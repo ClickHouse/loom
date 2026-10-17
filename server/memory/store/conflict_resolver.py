@@ -49,12 +49,13 @@ ERASURE_ABANDONED_PREFIX = "max_attempts ("
 # has no directory row and is live), an org with an erasure queued, running or failed
 # and due a retry (its saga deletes what the resolver would write a new version of),
 # and the namespaces in `capped` (over their daily cost cap, read by the worker).
-_NOT_SKIPPED = f"""(org, namespace) NOT IN (
-              SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active)
-          AND org NOT IN (
+_ERASING_ORGS = f"""
               SELECT org FROM loom.erasure_requests FINAL
               WHERE status IN ('queued', 'in_progress', 'failed')
-                AND NOT startsWith(failure_reason, '{ERASURE_ABANDONED_PREFIX}'))
+                AND NOT startsWith(failure_reason, '{ERASURE_ABANDONED_PREFIX}')"""
+_NOT_SKIPPED = f"""(org, namespace) NOT IN (
+              SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active)
+          AND org NOT IN ({_ERASING_ORGS})
           AND (org, namespace) NOT IN {{capped:Array(Tuple(String, String))}}"""
 
 _OWED = f"""conflict_checked_at < toDateTime(2, 'UTC')
@@ -138,6 +139,18 @@ async def unjudged_conflicted_rows(
     older build's judge), in turns across namespaces; none of a namespace in `capped`."""
     ch = ch or _default_client()
     return await ch.query_all(_in_turns(_UNJUDGED), {"lim": int(limit), "capped": _capped(capped)})
+
+
+async def under_erasure(org: str, *, ch: _CHClient | None = None) -> bool:
+    """Whether `org` has an erasure the queue leaves it out for: checked again right
+    before acting, since one can be requested while a row's call is in flight."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT count() AS n FROM ({_ERASING_ORGS}) WHERE org = {{org:String}}"
+        " SETTINGS select_sequential_consistency = 1",
+        {"org": org},
+    )
+    return bool(rows and int(rows[0]["n"]))
 
 
 def _same_write(row: Mapping[str, Any], judged: Mapping[str, Any]) -> bool:
@@ -377,5 +390,6 @@ __all__ = [
     "protected_ids",
     "queued_namespaces",
     "stamp_judged",
+    "under_erasure",
     "unjudged_conflicted_rows",
 ]

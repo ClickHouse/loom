@@ -349,8 +349,14 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def protected(org: str, namespace: str, ids: list[str], **kw: Any) -> set[str]:
         return e.protected & set(ids)
 
+    e.erasing = False
+
+    async def under_erasure(org: str, **kw: Any) -> bool:
+        return e.erasing
+
     monkeypatch.setattr(queue, "asserted_versions", asserted)
     monkeypatch.setattr(queue, "protected_ids", protected)
+    monkeypatch.setattr(queue, "under_erasure", under_erasure)
     monkeypatch.setattr(resolver, "_head", head)
     monkeypatch.setattr(resolver, "_act", act)
     monkeypatch.setattr(resolver, "_audit", audit)
@@ -370,6 +376,14 @@ async def test_a_confident_update_under_newest_wins_retires_and_stamps(row_env: 
     assert row_env.audits[0][0]["action"] == cr.RETIRE
     assert row_env.notes[0].value == "Office is in Paris", "the prompt shows text, not JSON"
     assert row_env.audit_model == "gpt-6.1-sol-2026-09-01"
+
+
+async def test_an_erasure_requested_during_the_call_leaves_everything_owed(row_env: NS) -> None:
+    row_env.erasing = True
+    counts = await _resolve()
+    assert row_env.llm_calls == 1 and row_env.acted == [] and row_env.audits == []
+    assert row_env.stamped == [], "the row stays owed; the queue leaves it out meanwhile"
+    assert counts.retired == 0
 
 
 @pytest.mark.parametrize("peer_at", [2_000, 3_000])

@@ -512,7 +512,7 @@ async def resolve_row(
         row, peers = await _newest_as_new(org, row, peers)
         row, peers = await _still_unprotected(org, row, peers)
     if row is not None and peers:
-        await _judge_and_act(
+        settled = await _judge_and_act(
             org,
             namespace,
             row,
@@ -521,6 +521,8 @@ async def resolve_row(
             counts=counts,
             acting=acting or asyncio.Lock(),
         )
+        if not settled:
+            return  # the org came under erasure: nothing written, the row stays owed
     await queue.stamp_judged(q)
 
 
@@ -585,7 +587,9 @@ async def _judge_and_act(
     policy: str,
     counts: Counts,
     acting: asyncio.Lock,
-) -> None:
+) -> bool:
+    """Judge the row and act on the answer; False when the org came under erasure
+    during the call, and nothing was written."""
     new = cr.Note(
         str(row.memory_id), str(row.memory_key), _plain(memory_repo.stored_value_text(row))
     )
@@ -597,12 +601,16 @@ async def _judge_and_act(
     counts.judged += 1
     if not verdicts:
         counts.errored += 1  # an answer with nothing usable in it: nothing changes
-        return
+        return True
+    # An erasure requested during the call: its saga deletes what this would write.
+    if await queue.under_erasure(org):
+        return False
     # Shielded: a cancellation (the pass deadline, a shutdown) lets the pairs already
     # being acted on finish with their records, follows and audit row.
     await asyncio.shield(
         _act_on_verdicts(org, namespace, row, peers, verdicts, policy, counts, model, acting)
     )
+    return True
 
 
 async def _act_on_verdicts(
