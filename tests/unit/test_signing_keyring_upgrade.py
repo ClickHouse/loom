@@ -151,6 +151,23 @@ def test_an_rs256_deployment_imports_its_default_key_and_keeps_its_tokens(
         verify_token(old)
 
 
+def test_an_alias_kid_of_the_other_algorithm_signs_under_its_own_kid(
+    rsa_pair: tuple[str, str],
+) -> None:
+    """An RS256 key that happens to be named `default-hs256` is an ordinary kid:
+    relabelled `default`, its tokens would find no RS256 key."""
+    ch = _CH()
+    asyncio.run(
+        keyring.import_keys(
+            {keyring.ROOT_HS256_KID: rsa_pair[0]}, keyring.ROOT_HS256_KID, "RS256", ch=ch
+        )
+    )
+    _loaded_from(ch)
+    token = mint_token("s", "o", ["ns"], ["writer"])
+    assert pyjwt.get_unverified_header(token)["kid"] == keyring.ROOT_HS256_KID
+    assert verify_token(token).subject == "s"
+
+
 def test_import_refuses_a_map_with_default_and_its_alias(rsa_pair: tuple[str, str]) -> None:
     with pytest.raises(ValueError, match="both"):
         asyncio.run(

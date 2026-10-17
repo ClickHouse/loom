@@ -309,7 +309,8 @@ def signing_key() -> SigningKey:
             "LOOM_JWT_SECRET is neither an HMAC secret nor an RSA private key, and no "
             "signing key is active here: run `loom signing-key rotate`"
         )
-    if key.kid in (ROOT_RS256_KID, ROOT_HS256_KID) and ROOT_KID not in _view.retired:
+    aliases = {(ROOT_RS256_KID, "RS256"), (ROOT_HS256_KID, "HS256")}
+    if (key.kid, key.algorithm) in aliases and ROOT_KID not in _view.retired:
         # The kid the earlier build signed and verifies with.
         return dataclasses.replace(key, kid=ROOT_KID)
     return key

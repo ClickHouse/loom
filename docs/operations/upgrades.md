@@ -151,8 +151,9 @@ After upgrading:
     `LOOM_JWT_PUBLIC_KEYS_JSON` still lists them, its `default` beside the root's.
 - **Read-replicas of the old build.** The new build also publishes the root fingerprint
   in the fields the old build's replica checks (a key map holding `default`), so an old
-  replica that restarts during the upgrade still boots, if it signs as `default`. A
-  replica that signs with another kid of `LOOM_JWT_SECRETS_JSON` is refused until it is
+  replica that restarts during the upgrade still boots, if it signs as `default` with
+  `LOOM_JWT_SECRET`. A replica whose map's `default` is another key, or that signs with
+  another kid of `LOOM_JWT_SECRETS_JSON` is refused until it is
   upgraded: upgrade those replicas with the main Loom.
 - **Admin overrides.** Rate-limit and budget overrides set through `/v1/admin/*` are
   read from `loom.runtime_overrides`; the old `<bucket file>.overrides.json` is not

@@ -299,7 +299,8 @@ def register_portability_cli(sub: Any) -> None:
         "{--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep "
         "verifying; --active signs from now. Under RS256 the map's 'default' is stored as "
         "'default-rs256', which verifies and signs as the old 'default'; under HS256 a "
-        "'default' that is not LOOM_JWT_SECRET as 'default-hs256', alike.",
+        "'default' other than LOOM_JWT_SECRET is stored as 'default-hs256' and behaves the "
+        "same.",
     )
     p_in.add_argument("--map-env", default="LOOM_JWT_SECRETS_JSON", help="env var with the map")
     p_in.add_argument("--active", required=True, help="the kid that signs new tokens")

@@ -287,7 +287,7 @@ def test_a_default_row_never_replaces_the_root_secret() -> None:
     assert verify_token(token).subject == "s"
 
 
-def test_a_former_default_key_keeps_its_tokens_verifying_and_never_signs() -> None:
+def test_a_verify_only_former_default_keeps_its_tokens_verifying() -> None:
     """An HS256 map's `default` that is not LOOM_JWT_SECRET: the tokens it
     signed as `default` must survive the upgrade, and retiring it ends them."""
     old = pyjwt.encode(
