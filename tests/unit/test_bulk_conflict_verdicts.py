@@ -96,3 +96,29 @@ def test_every_row_carries_status_and_duplicate_of_after_a_duplicate_verdict() -
         plan.memory_rows[2]["status"] == "duplicate"
         and plan.memory_rows[2]["duplicate_of"] == "dup"
     )
+
+
+def test_only_the_version_a_key_keeps_settles_its_verdict() -> None:
+    # One key twice is two versions of one row: entry 0's verdict was on a value entry 1
+    # replaced, so it marks and retires nothing. Entry 1 merged writes no row, and then
+    # entry 0's value is the one kept.
+    def rows():
+        m = [
+            {"memory_key": "alice", "memory_id": "a", "version": v, "value": f"v{v}"}
+            for v in (1, 2)
+        ]
+        r = [NS(memory_key="alice", version=v, memory_id="a") for v in (1, 2)]
+        return m, [], [], r
+
+    peer = NS(memory_id="p", pinned=False)
+    for verdict in ("conflict", "refines"):
+        v = NS(verdict=verdict, peers=[peer], refined_peers=[peer])
+        m, e, ix, r = rows()
+        plan = apply_bulk_verdicts(m, e, ix, r, {0: v})
+        assert not plan.conflict_marks and not plan.refines
+        assert not plan.conflicted and not plan.refined
+        assert r[0].conflict_verdict == "clear"
+        plan = apply_bulk_verdicts(*rows(), {1: v})
+        assert len(plan.conflict_marks) + len(plan.refines) == 1
+        plan = apply_bulk_verdicts(*rows(), {0: v, 1: NS(verdict="merge", peers=[])})
+        assert len(plan.conflict_marks) + len(plan.refines) == 1

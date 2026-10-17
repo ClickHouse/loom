@@ -762,6 +762,59 @@ async def test_a_replayed_bulk_edge_projection_skips_a_value_the_same_bulk_repla
     assert "rome" in walked and "london" not in walked
 
 
+@pytest.mark.parametrize("verdict", ["conflict", "refines"])
+async def test_a_verdict_on_a_value_the_same_bulk_replaced_settles_nothing(
+    ch, org, monkeypatch, verdict
+) -> None:
+    # One bulk writes alice twice; only the first value is judged against Paris. The
+    # row ends holding Rome, so neither it nor Paris may be flagged or retired.
+    from types import SimpleNamespace
+
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, bulk_set
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.conflicts import ConflictPeer
+
+    ids = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
+    paris = await handle_memory_set(
+        MemorySetInput(**ids, memory_key="bob", value="Bob likes Paris")
+    )
+    await after_write.drain()
+    peer = ConflictPeer(
+        memory_id=paris.memory_id,
+        memory_key="bob",
+        similarity=0.9,
+        pinned=False,
+        canonical="bob likes paris",
+        agent="bot",
+        user_id=USER,
+        session_id="s1",
+        value="Bob likes Paris",
+    )
+    judged = SimpleNamespace(
+        verdict=verdict, peers=[peer], refined_peers=[peer], refine_relation="refines"
+    )
+
+    async def first_entry_judged(*a: Any, **k: Any) -> dict[int, Any]:
+        return {0: judged}
+
+    monkeypatch.setattr(bulk_set, "_bulk_conflict_verdicts", first_entry_judged)
+    out = await bulk_set.handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            **ids,
+            entries=[
+                {"memory_key": "alice", "value": "Alice likes London"},
+                {"memory_key": "alice", "value": "Alice likes Rome"},
+            ],
+        )
+    )
+    await after_write.drain()
+    alice = {"memory_id": out.written[-1].memory_id}
+    assert await _status(ch, org, alice) == "active"
+    assert await _status(ch, org, {"memory_id": paris.memory_id}) == "active"
+
+
 @pytest.mark.parametrize(
     "extra",
     [{}, {"valid_at": datetime(2019, 1, 1), "valid_to": datetime(2020, 1, 1)}],

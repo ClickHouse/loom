@@ -8,6 +8,7 @@ from typing import Any
 
 from server.core.datetimes import parse_iso_dt
 from server.memory.app.set_commit import _set_next, _set_peers
+from server.memory.domain.conflicts import kept_versions
 
 # ---------------------------------------------------------------------------
 # Bulk conflict surfacing
@@ -144,6 +145,15 @@ def _kept_embeddings(
     return kept
 
 
+def _settling_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) -> set[int]:
+    """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
+    versions of one row, so only the kept version's verdict may mark or retire
+    peers. A merged or rejected entry writes no row."""
+    dropped = {i for i, v in verdicts.items() if getattr(v, "verdict", "") in ("merge", "rejected")}
+    written = [r for i, r in enumerate(memory_rows) if i not in dropped]
+    return {id(r) for r in kept_versions(written).values()}
+
+
 def apply_bulk_verdicts(
     memory_rows: list[dict[str, Any]],
     embedding_rows: list[dict[str, Any]],
@@ -158,8 +168,13 @@ def apply_bulk_verdicts(
     plan = BulkVerdictPlan()
     drop: set[int] = set()
     dup_idx: set[int] = set()
+    settling = _settling_rows(memory_rows, verdicts)
     for idx, v in verdicts.items():
         verdict = getattr(v, "verdict", "clear")
+        # A later entry of this key replaced the value judged: nothing to mark or retire.
+        replaced = verdict in ("refines", "conflict") and id(memory_rows[idx]) not in settling
+        if replaced:
+            verdict = "clear"
         # The per-row verdict memory.set returns, on the bulk result too. No query: the peers
         # are the ones the check already read. A bulk merge cannot tell a first merge from a
         # repeated one without the reinforced row, so its `next` names only conflicts.
@@ -168,6 +183,8 @@ def apply_bulk_verdicts(
             results[idx].conflict_verdict = str(verdict or "")
             results[idx].peers = _peers
             results[idx].next = _set_next(str(verdict or ""), _peers)
+        if replaced:
+            continue
         _fold_verdict(
             plan,
             memory_rows[idx],
