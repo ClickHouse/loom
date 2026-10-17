@@ -99,7 +99,7 @@ schema. These rules keep that safe. The operator procedure is in
    is configured with.
 8. **Retiring a column or table:** stop using it in N, drop it in N+1 or later.
 9. **No state outside ClickHouse.** Anything a replica must agree on (leases, runs,
-   conflict judgements, the similarity calibration, the frontend bundle of every live
+   the conflict resolver's queue, the similarity calibration, the frontend bundle of every live
    build) is in a table, so a request can land on any replica of either build. This
    holds from this build onward: a build before 033 serves its dashboard from `/me`
    and publishes no bundle, so the upgrade from it needs a colour swap or a sticky load
@@ -151,6 +151,13 @@ schema. These rules keep that safe. The operator procedure is in
     written since the saga's census (orphan row links). It runs no saga step again and
     touches nothing else: data written in the scope after the erasure finished, its
     links included, stays, tombstoned by `memory.delete` or not.
+15. **A marker N writes in a column N-1 reads is not one N-1 reads as its own.** The
+    conflict resolver's queue lives on `memory_embeddings.conflict_checked_at`, where an
+    N-1 with the per-write judge on reads the epoch itself as a judgement it owes and
+    re-runs it. N writes `00:00:01` (owed) and `00:00:02` (judged), which N-1 reads as
+    settled; N treats N-1's epoch marks as owed once N-1's own settle had a minute. While
+    N-1 holds the worker lease (a code-only release keeps it until it stops) N's marks
+    wait, and the first N leader judges them.
 
 ## What checks them
 

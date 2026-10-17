@@ -79,7 +79,6 @@ is never embedded and is readable by key only. The full table is in
 | `conflict_verdict` | The verdict ([table](./conflicts-and-refusal.md#verdicts)). Empty when no check ran.                       |
 | `peers`            | Rows the verdict was reached against, closest first, at most five: key, 200-character excerpt, similarity. |
 | `next`             | A hint naming the call to make, such as `memory.update(memory_key=...)` on a conflict.                     |
-| `verdict_at`       | `inline`, or `deferred` when the verdict is `pending`.                                                     |
 | `noop`             | True when nothing was written: a merge or a dry run.                                                       |
 | `merged_into_key`  | On a merge, the key that already holds the fact. Your key holds no row.                                    |
 | `advisories`       | Value-shape advice.                                                                                        |

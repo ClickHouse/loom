@@ -67,7 +67,7 @@ Every benchmark server ran with the deployment's model settings, recorded field 
 | Job                                                             | Model                            |
 | --------------------------------------------------------------- | -------------------------------- |
 | Embeddings (memories, queries, code chunks)                     | `text-embedding-3-large`, 3072-d |
-| Extraction, rerank, conflict judge (`llm_model`)                | `gpt-6-luna`                     |
+| Extraction, rerank (`llm_model`)                                | `gpt-6-luna`                     |
 | `memory.ask` strong tier                                        | `claude-opus-5-5`                |
 | `memory.ask` cheap tier                                         | `gpt-6-luna`                     |
 | `memory.ask` mid tier                                           | off                              |

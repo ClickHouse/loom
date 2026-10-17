@@ -55,7 +55,7 @@ flowchart TB
 | Layer                        | Owns                                                                                                          |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `server/memory/api/`         | The wire: `memory.*` models and `Operation` declarations.                                                     |
-| `server/memory/app/`         | Validation, verdicts, response shape; retrieval, extraction, the conflict judge.                              |
+| `server/memory/app/`         | Validation, verdicts, response shape; retrieval, extraction, the conflict resolver.                           |
 | `server/memory/domain/`      | Pure rules: provenance, sensitivity, search SQL shapes, synthesis policy.                                     |
 | `server/memory/store/`       | Row shapes and the SQL over `loom.memory` and `loom.memory_embeddings`.                                       |
 | `server/workers/registry.py` | One `_WORKERS` row per worker; switches and cadences are in the [workers reference](../reference/workers.md). |
@@ -114,23 +114,22 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     must not retire anyone's fact. The refusal names no row, id or value, so the narrowed
     token learns only that its write was refused.
 
-    With `LOOM_MEMORY_CONFLICT_JUDGE` on (off by default), an LLM judge
-    (`memory/app/conflict_judge.py`) labels close peers, and peers down to
-    `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`, as `conflict`, `refines`, `merge` or `clear`. It runs after the insert
-    (`memory/app/conflict_deferred.py`): the row lands `active` with
-    `conflict_verdict: pending`, and the verdict is folded on later.
-    `await_verdict=true` and `dry_run=true` judge inline.
+    No verdict on the write calls an LLM. With the conflict resolver on, the peer read
+    reaches down to `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.60), and a write
+    that has a peer in that band, or answers `conflict`, is marked for the resolver
+    (see [The conflict resolver](#the-conflict-resolver)). A peer below the conflict
+    threshold never flags a write.
 
 11. **Dry run** returns the verdict with version 0 and writes nothing, not even an audit
     row.
 12. **Dual write** (`_set_dual_write`). The `memory` row and its `build_embedding_row`
     row are inserted concurrently. The embedding row carries the columns search filters
     on (type, status, tags, entities, validity, `source_class`, `verified`), so no leg
-    joins back to `memory`. Conflict marks then go on the peers, or `refines`
-    supersedes them.
+    joins back to `memory`; its `conflict_checked_at` carries the resolver's mark.
+    Conflict marks then go on the peers, or `refines` supersedes them.
 13. **After the write** (`_set_after_write`, `_set_post_insert`). Same-key supersession
-    under `newest_wins` (`memory/app/key_supersession.py`; under `auto_reinforce` a bulk
-    write judges same-key rows before its insert, see below) and the hash-only audit row are
+    under `newest_wins` (`memory/app/key_supersession.py`; under any other policy the
+    conflict resolver judges same-key rows, see below) and the hash-only audit row are
     awaited in one round trip. The entity-graph projection is scheduled beside the
     response (`memory/app/after_write.py`) and repaired by `entity_extractor` if lost. A
     long value is also split into `memory_chunks`, fail-open.
@@ -143,28 +142,92 @@ the stub's version plus one, so a later real write still wins. A row that keeps 
 accrues `embed_attempts` and is marked `embed_failed_at` so it cannot stall the batch.
 Every vector leg filters `embedding_dim > 0`.
 
-**Why the judge is deferred.** The cosine check is cheap and runs on every searchable
-write. The judge costs a model call for each write in its band. Deferring it keeps write
-latency at the insert's. The deterministic verdicts stay inline because they decide
-whether a row is written. The cost is a window where a row is `active` with a pending
-verdict.
+## The conflict resolver
 
-**How a deferred verdict settles** (`memory/app/conflict_deferred.py`). The row is
-inserted `active` and the response says `conflict_verdict: pending`, `verdict_at:
-deferred`. A task in the request's context then runs the judge-and-fold the inline path
-runs (`conflicts.settle_deferred_judgement`): `conflict` writes the conflict marks,
-`refines` supersedes and links the peers, `merge` and `duplicate` make this row
-`status=duplicate, duplicate_of=<peer>` (a merge cannot un-insert), and `clear` writes
-nothing. `memory.get` shows the settled status and a derived `conflict_verdict`, which
-is `pending` while the row's embedding carries the pending mark.
+A cosine hit says two rows are about the same thing, not whether one replaces the other.
+Deciding that takes a strong model: on 200 real pairs the resolver's judge
+(`gpt-6.1-sol`, one call per row with all its peers) reached update and clear precision
+1.00 at confidence 0.90, where `gpt-6-luna` labelling three peers per write reached 0.35
+to 0.44 on the hard band. That call takes 5.6 s at the median, so it runs on the leader, after the write
+(`memory/workers/conflict_resolver.py`, `memory/app/conflict_resolver.py`).
 
-- `await_verdict: true` keeps the inline behaviour; `dry_run` always judges inline.
-- Each settle writes one `memory_drops` row (`stage=conflict.deferred`,
-  `reason=<verdict>`), and the process drains in-flight judges on shutdown.
-- The embedding is written with `conflict_checked_at` at the pending mark
-  (`store.conflict_marks`) and the settle stamps it, so every replica reads the same
-  state. A judge lost to a crash leaves the mark, and the leader's conflict sweep
-  (`workers.conflict_sweep`) re-judges the row.
+**The queue** is `loom.memory_embeddings.conflict_checked_at`, which every write already
+emits (`memory/store/conflict_resolver.py`):
+
+| Value                 | Meaning                                                                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| NULL                  | Nothing owed: no peer at the resolver floor when written.                                                                          |
+| `1970-01-01 00:00:01` | Owed: a peer at the floor, a `conflict` verdict, or (bulk, outside `newest_wins`) a key another session of the same subject holds. |
+| `1970-01-01 00:00:02` | Judged.                                                                                                                            |
+| `1970-01-01 00:00:00` | A judgement an older build deferred and lost: owed after 60 s.                                                                     |
+| any real time         | Stamped by an older build: owed again only while the row is `conflicted`.                                                          |
+
+A mark belongs to the write that set it: a revision emits a new vector row with its own.
+Each pass reads `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` (20) owed rows and then
+`LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` (10) rows already `conflicted` that no
+resolver judged, so a flag the cosine check raised is judged once too.
+
+**The cluster.** A row is judged against up to `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS`
+(8) live peers of its `memory_type`, nearest first, at cosine
+`LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.60) or more, in its subject: the same
+`user_id`, or for the anonymous user `-` the same agent. Any session counts, so a row of
+the same key written by another session is a peer; the row's own identity is not. Peers
+join their rows by the full identity, never by key alone, since keys repeat across
+sessions. The row's current flags take places first. A `sensitivity='high'` row is never
+a peer, so its value never reaches the LLM.
+
+**The call.** The prompt names each peer `p1`..`p8` with its key and cosine, values cut
+to 700 characters, and asks for a strict JSON schema: per peer a reason, `same_entity`,
+`same_attribute`, a verdict (`update`, `contradiction`, `elaboration`, `restatement`,
+`related`, `unrelated`) and a confidence. An answer may name a peer as `p2`, `[p2]`, its
+key, `key <key>` or its id. The model is `LOOM_CONFLICT_RESOLVER_MODEL`.
+
+**The fold** (`memory/domain/conflict_resolution.py`), precision first:
+
+| Verdict                                                          | Confidence   | Action                                 |
+| ---------------------------------------------------------------- | ------------ | -------------------------------------- |
+| `update` or `contradiction` with a different entity or attribute | any          | read as `related`                      |
+| any                                                              | below 0.90   | nothing                                |
+| `update`, namespace `newest_wins`                                | 0.95 or more | retire the older row                   |
+| `update` (0.90 to 0.95, or any other policy), `contradiction`    | 0.90 or more | flag both rows `conflicted` for review |
+| `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair          |
+
+The two thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.95) and
+`LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90). On held-out pairs, update
+precision was 0.98 to 1.00 at 0.95, and clear precision 0.96 to 0.98 at 0.90; the
+0.90 to 0.95 band was only 80% right, so an update there goes to review. A peer the
+answer leaves out, or an answer that cannot be parsed, changes nothing.
+
+**Acting.** Which row of an update pair is older follows `key_supersession.older_statement`
+(below). A retirement goes through `apply_refines`: the older row is superseded behind the
+newer, a `supersedes` edge records why, one `memory.auto_supersede` record names it
+(reason `conflict_resolver`, so `memory.restore` undoes it), and the triple plane follows
+(`follow_row_supersessions`, left for the repair on failure). A flag is
+`mark_peers_conflicted`; a clear removes the pair from each side's `conflict_with`, and a
+row left with no flag is `active` again, on its vector row too. One hash-only
+`memory.conflict_resolver` audit row per judged row that changed memory lists the pairs,
+actions, verdicts and confidences, never the text.
+
+**Invariants.**
+
+- Both rows are re-read read-your-writes before any action, and acted on only while both
+  are live and still hold the content judged. A row revised meanwhile is left to its new
+  mark; the flag and clear writes land at the read version + 1, so a later revision stays
+  newest.
+- A pinned row is never retired, flagged or cleared; a lock that refuses retirement holds.
+- A row is stamped judged only after its actions. A pass cut short judges it again, and
+  acting twice changes nothing: a retired row is no longer live, an existing flag is left
+  as it is, and a cleared flag has nothing left to clear.
+- Rows are handled per (org, namespace). A namespace over its daily LLM cost cap
+  (`observability.budget`) or an org with an erasure queued or running is skipped and
+  stays owed. Each call bills its namespace (`worker.conflict_resolver`).
+- A provider that does not know the model gets one warning per pass and no call; a
+  failed call leaves the row owed.
+
+**Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written
+version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged.
+`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` resolves at load: on wherever the LLM provider is
+real, off on the fake one; an explicit value wins.
 
 ## `memory.bulk_set` and `memory.set_from_messages`
 
@@ -213,79 +276,33 @@ evidence of one attribute: extraction reuses generic keys (`assistant_recommende
 `user_attended`) for different items, and in a sample of 60 same-key pairs from
 chat-history namespaces 58 were different facts.
 
-So, before its insert, a bulk write asks the conflict judge about the newest live rows
-of each key it writes for the same subject: the same `user_id`, or for the anonymous
-user `-` the same agent (`key_supersession.judge_same_key_rows`). The writer's own
-identity is never a peer: its stored row is the one the write revises.
+Those rows are judged by the conflict resolver like any other peers: a bulk write outside
+`newest_wins` marks each row whose key a live row of the same subject from another
+session holds (`key_supersession.keys_held_elsewhere`): the same `user_id`, or for the
+anonymous user `-` the same agent. The writer's own identity is never a peer: its stored
+row is the one the write revises.
 
-- **What gets judged.** Entries of one bulk share an identity, so for a key written
-  twice only the highest version, the one `FINAL` keeps, is judged.
-- **The cap.** At most `LOOM_MEMORY_CONFLICT_JUDGE_MAX_PEERS` (3) stored rows per key
-  and subject are read, newest first. An older row past them stays live until a later
-  write of the key reaches it.
-- **Which row is older.** Only the older row of a pair ever retires, so two writers that
-  judge each other never retire both. Rows rank by one total key, in Python and in the
-  SQL that picks the newest peers. The key's first part is the row's valid time, else
-  when it was written (`updated_at`, since a revision carries `created_at` forward from
-  the key's first version). It is capped at the write time, because a fact dated in the
-  future was still stated when it was written. Then come the write time and the id.
-  Times are compared in UTC to the second; a valid time outside ClickHouse's `DateTime`
-  range counts as none. Rows that tie on both times are separated by id (as text), which
-  is arbitrary but fixed.
-  - **A late old session:** its rows carry their session date, so it doesn't bury a
-    later value, whether that value is dated or undated.
-  - **An undated late row:** it counts as stated when it was written, so it is the later
-    statement.
-- **Amounts.** The older row retires only if the newer row keeps every amount it states
-  (`preserves_quantities`, the guard the flag path's refines and `newest_wins` apply).
+**Which row is older.** Only the older row of a pair ever retires, so two rows judged
+from either side never retire both (`key_supersession.older_statement`). Rows rank by one
+total key. The key's first part is the row's valid time, else when it was written
+(`updated_at`, since a revision carries `created_at` forward from the key's first
+version). It is capped at the write time, because a fact dated in the future was still
+stated when it was written. Then come the write time and the id. Times are compared in
+UTC to the second; a valid time outside ClickHouse's `DateTime` range counts as none.
+Rows that tie on both times are separated by id (as text), which is arbitrary but fixed.
 
-Then by label:
-
-- **`contradiction`.** When the stored row is the later one, the new row lands
-  `superseded` behind it (`invalid_at` = the write time, as for any retirement). A
-  pinned new row stays live, and so does the later stored row; an older stored row it
-  contradicts still retires. The superseded entry's result answers
-  `conflict_verdict: superseded` with `superseded_by` and no peers, and the row leaves
-  the write's conflict marks, refines and value-update linking. When the new row is the
-  later one, the stored row retires after the insert.
-- **`elaboration` by the newer row.** The older row retires.
-- **Anything else.** `restatement`, `related`, `unrelated` and a peer the judge left
-  unlabelled all keep both rows. The flag path reads an unlabelled peer as a
-  contradiction; a retirement does not.
-
-Neither side retires while a lock is in force: a new row that revises a `no_delete` or
-`read_only` key keeps its lock and stays live, as a stored one does. A new row lands
-superseded only if its winner, re-read after the judge's call, is still the version
-judged, live and unexpired; otherwise it stays live and the next write of the key judges
-it again. Expired rows and rows past their `valid_to` are never peers.
-
-A stored row retires after the insert only if it isn't locked, and wasn't pinned,
-retired or revised since the judge read it (the retirement reads it read-your-writes).
-It also leaves the write's other conflict marks and refines, so no other verdict of the
-write re-emits it; an entry whose key keeps no conflict mark or refine answers `clear`.
-`superseded_by` names the row that was the later statement when the retirement happened.
-That row can itself retire later, so a reader follows the chain. A row labelled
-`sensitivity='high'` is never judged or read as a peer, so its value never reaches the
-LLM. The read is bounded by the writer's read scope, like every same-key retirement.
-
-This costs one judge call per new row that has such peers, on top of the bulk conflict
-check's own calls. The calls are bounded by the same settings
-(`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`, `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY`), and
-they add at least one LLM round trip to a bulk write that has any (one per
-`LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` rows judged). The policy is the namespace's, as
-for the write's conflict verdicts.
+- **A late old session:** its rows carry their session date, so it doesn't bury a later
+  value, whether that value is dated or undated.
+- **An undated late row:** it counts as stated when it was written, so it is the later
+  statement.
 
 Without this, "User is Asian American" (05-23) and "The user has mixed Irish and Italian
 ethnicity" (05-30) both stayed live under `user_ethnicity`, and a reader shown both
-merged them into one answer. The point write keeps the documented `auto_reinforce`
-behaviour and its latency: it doesn't call the judge for same-key rows. The judge is off
-by default (`LOOM_MEMORY_CONFLICT_JUDGE=true` turns it on); with it off, same-key rows
-stay live as before.
+merged them into one answer.
 
 ### Following a retirement in the graph
 
-An entry that lands superseded writes no current graph facts, and when a bulk write's
-judge retires a stored row, the triple plane closes the loser's triples that the live
+When a write or the conflict resolver retires a stored row, the triple plane closes the loser's triples that the live
 end of the winner's chain does not state (`triples_follow_rows`), following
 `superseded_by` up to 8 links (a repair reads to the end, up to 1,024). A row's stated
 triples are the ones `entity_triple_rows` links to its id and current `content_sha256`,
@@ -896,7 +913,7 @@ hash, source class and verdict. The row hash and the checkpoint chain are descri
 | `server/memory/app/extract/handler.py`                                                                                                                          | `set_from_messages`.                                                                                |
 | `server/memory/app/bulk_set.py`, `server/memory/app/bulk_rows.py`, `server/memory/app/bulk_verdicts.py`                                                         | `bulk_set`, its rows, `apply_bulk_verdicts`.                                                        |
 | `server/memory/app/pipeline.py`                                                                                                                                 | `DEFAULT_PIPELINE`, `register_step`, `run_pipeline`; its text rules are in `server/memory/domain/`. |
-| `server/memory/app/{conflicts,conflict_judge,conflict_deferred,key_supersession}.py`                                                                            | Verdicts and supersession.                                                                          |
+| `server/memory/app/{conflicts,conflict_resolver,key_supersession}.py`, `server/memory/workers/conflict_resolver.py`                                             | Verdicts, the conflict resolver and supersession.                                                   |
 | `server/memory/app/search/`, `server/memory/app/retrieval/`, `server/memory/domain/search_sql.py`                                                               | Search phases and leg SQL.                                                                          |
 | `server/memory/store/`                                                                                                                                          | `rows.py`, `inserts.py`, `reads.py`, `lifecycle.py`, `history.py`.                                  |
 | `server/memory/app/{after_write,projections,projection_failures}.py`                                                                                            | Fail-open projections.                                                                              |

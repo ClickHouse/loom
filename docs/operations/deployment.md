@@ -409,26 +409,27 @@ of them in `.env` to move that job to another model. The provider comes from the
 so a job can run on Claude while the rest run on GPT, as long as both keys are set. An
 empty value uses `LOOM_LLM_MODEL`.
 
-| Job                                          | Setting                                 | Default           |
-| -------------------------------------------- | --------------------------------------- | ----------------- |
-| Extraction, conflict judge, rerank, entities | `LOOM_LLM_MODEL`                        | provider default  |
-| Answer when the primary keeps failing        | `LOOM_LLM_FALLBACK_MODEL`               | off               |
-| Embeddings                                   | `LOOM_EMBEDDING_MODEL`                  | `fake-ngram-3072` |
-| `memory.ask` synthesis (strong tier)         | `LOOM_MEMORY_ASK_SYNTH_MODEL`           | `LOOM_LLM_MODEL`  |
-| `memory.ask` cheap tier                      | `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`     | off               |
-| `memory.ask` mid tier                        | `LOOM_MEMORY_ASK_MID_MODEL`             | off               |
-| Coding-capture durability check              | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS`     | `claude-opus-5-5` |
-| Profile fold                                 | `LOOM_PROFILE_CONSOLIDATION_MODEL`      | `LOOM_LLM_MODEL`  |
-| Reflection distillation                      | `LOOM_REFLECTION_DISTILL_MODEL`         | `LOOM_LLM_MODEL`  |
-| Session briefs                               | `LOOM_SESSION_BRIEF_LLM_MODEL`          | `gpt-6-luna`      |
-| `code.ask` synthesis                         | `LOOM_CODE_ASK_LLM_MODEL`               | `LOOM_LLM_MODEL`  |
-| `code.search` HyDE passage                   | `LOOM_CODE_SEARCH_HYDE_MODEL`           | off               |
-| `code.search` concept expansion              | `LOOM_CODE_SEARCH_CONCEPT_EXPAND_MODEL` | off               |
-| `code.bisect_candidates` rerank              | `LOOM_CODE_BISECT_LLM_RERANK_MODEL`     | `gpt-6-luna`      |
-| File and module summary cards                | `LOOM_CODE_SUMMARY_MODEL`               | `LOOM_LLM_MODEL`  |
-| Duplicate check rerank                       | `LOOM_TRACKER_DUPCHECK_RERANK_MODEL`    | `gpt-6-luna`      |
-| Duplicate check judge                        | `LOOM_TRACKER_DUPCHECK_JUDGE_MODEL`     | `LOOM_LLM_MODEL`  |
-| Sampled retrieval judge                      | `LOOM_RETRIEVAL_JUDGE_MODEL`            | `gpt-6.1-sol`     |
+| Job                                   | Setting                                 | Default           |
+| ------------------------------------- | --------------------------------------- | ----------------- |
+| Extraction, rerank, entities          | `LOOM_LLM_MODEL`                        | provider default  |
+| Conflict resolver                     | `LOOM_CONFLICT_RESOLVER_MODEL`          | `gpt-6.1-sol`     |
+| Answer when the primary keeps failing | `LOOM_LLM_FALLBACK_MODEL`               | off               |
+| Embeddings                            | `LOOM_EMBEDDING_MODEL`                  | `fake-ngram-3072` |
+| `memory.ask` synthesis (strong tier)  | `LOOM_MEMORY_ASK_SYNTH_MODEL`           | `LOOM_LLM_MODEL`  |
+| `memory.ask` cheap tier               | `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`     | off               |
+| `memory.ask` mid tier                 | `LOOM_MEMORY_ASK_MID_MODEL`             | off               |
+| Coding-capture durability check       | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS`     | `claude-opus-5-5` |
+| Profile fold                          | `LOOM_PROFILE_CONSOLIDATION_MODEL`      | `LOOM_LLM_MODEL`  |
+| Reflection distillation               | `LOOM_REFLECTION_DISTILL_MODEL`         | `LOOM_LLM_MODEL`  |
+| Session briefs                        | `LOOM_SESSION_BRIEF_LLM_MODEL`          | `gpt-6-luna`      |
+| `code.ask` synthesis                  | `LOOM_CODE_ASK_LLM_MODEL`               | `LOOM_LLM_MODEL`  |
+| `code.search` HyDE passage            | `LOOM_CODE_SEARCH_HYDE_MODEL`           | off               |
+| `code.search` concept expansion       | `LOOM_CODE_SEARCH_CONCEPT_EXPAND_MODEL` | off               |
+| `code.bisect_candidates` rerank       | `LOOM_CODE_BISECT_LLM_RERANK_MODEL`     | `gpt-6-luna`      |
+| File and module summary cards         | `LOOM_CODE_SUMMARY_MODEL`               | `LOOM_LLM_MODEL`  |
+| Duplicate check rerank                | `LOOM_TRACKER_DUPCHECK_RERANK_MODEL`    | `gpt-6-luna`      |
+| Duplicate check judge                 | `LOOM_TRACKER_DUPCHECK_JUDGE_MODEL`     | `LOOM_LLM_MODEL`  |
+| Sampled retrieval judge               | `LOOM_RETRIEVAL_JUDGE_MODEL`            | `gpt-6.1-sol`     |
 
 For example, a deployment with both keys set can run `gpt-6-luna` as `LOOM_LLM_MODEL`
 and for the cheap `memory.ask` tier and HyDE, `claude-opus-5-5` for strong `memory.ask`
@@ -442,17 +443,17 @@ Provider internals (retry, fallback, caching) are in
 These defaults decide what a user sees first: whether a write is flagged and whether a
 search abstains.
 
-| Variable                                      | Default | Effect                                                                                                                                                                                                                                                                                                    |
-| --------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_ADAPTIVE_THRESHOLDS`                    | `true`  | Derives the search and conflict gates from the embedder's cosine distribution at boot. Leave it on.                                                                                                                                                                                                       |
-| `LOOM_CONFLICT_THRESHOLD`                     | `0.85`  | Fallback cosine at or above which a write is flagged `conflicted`. `1.0` disables. A namespace can override it.                                                                                                                                                                                           |
-| `LOOM_MEMORY_CONFLICT_JUDGE`                  | `false` | With a real LLM, set `true` to turn it on: at most one call per write that has a close peer labels the peers, so restatements merge instead of piling up as conflicts; bulk writes and extraction make the call inline, plus, under `auto_reinforce`, one per row with a same-key row from another write. |
-| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`           | `0.22`  | Fallback cosine floor under which hits are dropped.                                                                                                                                                                                                                                                       |
-| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`        | `0.3`   | Fallback top-hit similarity under which a search abstains.                                                                                                                                                                                                                                                |
-| `LOOM_MEMORY_SEARCH_TRUST_WEIGHT`             | `0.0`   | Weight of provenance (`source_class`, `verified`) in ranking; `0` is off.                                                                                                                                                                                                                                 |
-| `LOOM_MEMORY_ASK_EXCLUDE_UNVERIFIED_EXTERNAL` | `true`  | Keeps unattested `external` rows out of `memory.ask` synthesis; they still appear as hits.                                                                                                                                                                                                                |
-| `LOOM_ENTITY_EXTRACT_ENABLED`                 | `true`  | Background LLM entity tagging. Turn it off to save LLM spend on a quiet instance.                                                                                                                                                                                                                         |
-| `LOOM_DEFAULT_DAILY_COST_CAP_USD`             | `1.0`   | Per-namespace rolling 24-hour LLM spend cap; `0` disables. A namespace overrides it with `daily_cost_cap_usd`.                                                                                                                                                                                            |
+| Variable                                      | Default                              | Effect                                                                                                                                                                                                                                                               |
+| --------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_ADAPTIVE_THRESHOLDS`                    | `true`                               | Derives the search and conflict gates from the embedder's cosine distribution at boot. Leave it on.                                                                                                                                                                  |
+| `LOOM_CONFLICT_THRESHOLD`                     | `0.85`                               | Fallback cosine at or above which a write is flagged `conflicted`. `1.0` disables. A namespace can override it.                                                                                                                                                      |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`       | real provider: `true`; fake: `false` | The leader's conflict resolver judges each write that has a live peer of its type at cosine 0.60 or more, or a `conflicted` flag, once per written version: about $0.005 a judged row on `gpt-6.1-sol`, inside the namespace's daily cost cap. `false` turns it off. |
+| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`           | `0.22`                               | Fallback cosine floor under which hits are dropped.                                                                                                                                                                                                                  |
+| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`        | `0.3`                                | Fallback top-hit similarity under which a search abstains.                                                                                                                                                                                                           |
+| `LOOM_MEMORY_SEARCH_TRUST_WEIGHT`             | `0.0`                                | Weight of provenance (`source_class`, `verified`) in ranking; `0` is off.                                                                                                                                                                                            |
+| `LOOM_MEMORY_ASK_EXCLUDE_UNVERIFIED_EXTERNAL` | `true`                               | Keeps unattested `external` rows out of `memory.ask` synthesis; they still appear as hits.                                                                                                                                                                           |
+| `LOOM_ENTITY_EXTRACT_ENABLED`                 | `true`                               | Background LLM entity tagging. Turn it off to save LLM spend on a quiet instance.                                                                                                                                                                                    |
+| `LOOM_DEFAULT_DAILY_COST_CAP_USD`             | `1.0`                                | Per-namespace rolling 24-hour LLM spend cap; `0` disables. A namespace overrides it with `daily_cost_cap_usd`.                                                                                                                                                       |
 
 The fallback gates apply when adaptive thresholds are off or the embedder is a fake. If
 you pin `LOOM_ADAPTIVE_THRESHOLDS=false`, re-bench them after every embedder change.

@@ -3,7 +3,7 @@
 Every memory write is judged against the facts the namespace already holds. A close but
 different value is stored and flagged as a conflict, and the namespace owner decides
 which fact stands: in the dashboard's Review queue, or with `conflicts.resolve`. Loom
-picks a winner only where a policy or the judge says one row replaces another (see
+picks a winner only where a policy or the conflict resolver says one row replaces another (see
 [automatic retirements](#automatic-retirements)), and then records it so it can be
 undone. Refusal works the other way: `blacklist.add` registers a pattern, and every
 later write whose value matches it is refused. This page owns the write verdicts and the
@@ -22,13 +22,11 @@ compare the new value with the active rows of the same `memory_type` in the name
 - Cosine at or above the conflict threshold with a different value is a **conflict**:
   the new row and each peer get `status='conflicted'` and are cross-linked through
   `conflict_with`.
-- With the LLM judge on (`LOOM_MEMORY_CONFLICT_JUDGE=true`; off by default), one call
-  labels the closest peers as contradiction, elaboration, restatement, related or
-  unrelated. The judge also reads peers down to
-  `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY` (0.7), which catches an update filed under
-  a different key. On our benchmark it did not measurably improve answers: a value it
-  retires is no longer returned by search, so a "how did X change" question can lose the
-  earlier value.
+- Under `newest_wins`, a value of the same shape with a different fill ("The office
+  lease ends in 2025" → "... 2027") is an update: the older row retires (`refines`).
+
+No verdict on the write calls an LLM. The [conflict resolver](#the-conflict-resolver)
+judges flagged and nearby pairs afterwards.
 
 A pair on the namespace's allowlist is not flagged.
 
@@ -43,21 +41,16 @@ duplicate threshold follows the same order without the type step, ending at
 Every write answers with `conflict_verdict`, the `peers` it was judged against (closest
 first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>, ...)`.
 
-| Verdict      | Meaning                                                                                                                                       | Row written                                                        |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `clear`      | Nothing close.                                                                                                                                | Yes, `active`.                                                     |
-| `merge`      | The same fact after canonicalisation is already stored.                                                                                       | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
-| `duplicate`  | Near-identical to a peer but not canonically equal.                                                                                           | Yes, `status='duplicate'` with `duplicate_of`.                     |
-| `conflict`   | Close to a peer but different.                                                                                                                | Yes; both rows `conflicted` and cross-linked.                      |
-| `refines`    | The LLM judge read it as an elaboration of a peer.                                                                                            | Yes; the refined peer is superseded.                               |
-| `rejected`   | Close to a pinned peer, or a changed value for a pinned key.                                                                                  | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
-| `pending`    | The LLM judge runs after the write.                                                                                                           | Yes, `active`; the settled verdict lands on the row later.         |
-| `superseded` | Bulk writes under `auto_reinforce` with the judge on: a stored row of the same key and subject is the later statement this entry contradicts. | Yes, `superseded`, with `superseded_by` naming that row.           |
+| Verdict     | Meaning                                                                               | Row written                                                        |
+| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `clear`     | Nothing close.                                                                        | Yes, `active`.                                                     |
+| `merge`     | The same fact after canonicalisation is already stored.                               | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
+| `duplicate` | Near-identical to a peer but not canonically equal.                                   | Yes, `status='duplicate'` with `duplicate_of`.                     |
+| `conflict`  | Close to a peer but different.                                                        | Yes; both rows `conflicted` and cross-linked.                      |
+| `refines`   | Under `newest_wins`, the same statement with a different fill: an update of the peer. | Yes; the replaced peer is superseded.                              |
+| `rejected`  | Close to a pinned peer, or a changed value for a pinned key.                          | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
 
-- `merge`, `duplicate` and `rejected` are deterministic and settled inline.
-- `refines` and `pending` need the judge. It runs after the write unless the request
-  passes `await_verdict=true`.
-- `verdict_at` is `inline` or `deferred`.
+- Every verdict is deterministic and settled in the response.
 - `dry_run=true` runs the whole check and writes nothing.
 - The verdict is empty when no check ran: a non-searchable type or a `high` sensitivity
   row.
@@ -66,12 +59,12 @@ first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>,
 
 `namespace.register` takes `default_conflict_policy`:
 
-| Policy                     | Behaviour                                                                                                                                                                                                                                                                         |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto_reinforce` (default) | Conflicts are flagged; both facts stay live until resolved. With the judge on, a bulk write judges the stored rows of each key it writes for the same user (or, for the anonymous user, agent): the older row of a contradiction, or of an elaboration by the newer row, retires. |
-| `manual_review`            | The same: both stay live and the pair waits for review.                                                                                                                                                                                                                           |
-| `newest_wins`              | A judged contradiction retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it.                                                                                                                      |
-| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                                                                                               |
+| Policy                     | Behaviour                                                                                                                                                                                                      |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto_reinforce` (default) | Conflicts are flagged; both facts stay live until resolved. The conflict resolver may clear a flag or flag a pair, never retire a row. Two sessions' rows of one key are judged as peers.                      |
+| `manual_review`            | The same: both stay live and the pair waits for review.                                                                                                                                                        |
+| `newest_wins`              | A templated substitution, or an update the conflict resolver is sure of, retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it. |
+| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                            |
 
 Superseded rows are served only to reads that pass `include_superseded=true`, and a
 served one names its successor.
@@ -127,6 +120,26 @@ async with Agent(org="acme", namespace="support", agent="curator") as agent:
     )
 ```
 
+### The conflict resolver
+
+With `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` on (the default wherever the LLM provider is
+real), a leader-only worker judges each write that has a live peer of its type at cosine
+0.60 or more, or was flagged `conflicted`, against up to eight such peers in one call to
+`LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`). Per pair:
+
+- an update it is sure of (confidence 0.95 or more) under `newest_wins` retires the older
+  row, recorded for Undo (reason `conflict_resolver`);
+- any other update, and a contradiction, at 0.90 or more flags both rows for review;
+- a compatible pair (elaboration, restatement, related, unrelated) at 0.90 or more has its
+  flag cleared;
+- anything less sure changes nothing.
+
+It also re-checks pairs flagged before it judged them, so a false flag is cleared once.
+A pinned row is never touched, a row that changed since it was judged is left to its
+next judgement, and each written version is judged once. A judgement costs about $0.005;
+a namespace over its daily cost cap waits. The design is in [memory
+architecture](../../architecture/memory-architecture.md#the-conflict-resolver).
+
 ### The Review queue
 
 The dashboard's Review queue (`<server>/admin/review_queue`, `g r`) lists conflicted pairs and
@@ -139,10 +152,9 @@ applies `conflicts.resolve`. Three more tabs appear when they have content: **Le
 When Loom retires memories on its own, each path that retired rows records them as
 `memory.auto_supersede` audit rows (`reason` in brackets):
 
-- the same-key judge on a bulk write (`same_key_judge`);
+- the conflict resolver, for an update it is sure of (`conflict_resolver`);
 - `newest_wins` on a key written again (`same_key_newest_wins`);
-- a `refines` verdict (`refines`), or a judged contradiction under `newest_wins`
-  (`newest_wins_contradiction`);
+- a templated substitution under `newest_wins` (`newest_wins_contradiction`);
 - `newest_wins` inside one bulk batch, or behind a repaired single-valued triple
   (`newest_wins_contradiction`);
 - a value update (`value_update`).
@@ -158,8 +170,8 @@ head; one a later write overtook is not. One the re-read could not see is listed
 `unconfirmed`: a write's result never counts it among the rows it retired, recall is
 left as it was, and the projection repair mirrors the row's head onto recall once it
 can read it (should even queueing that fail, `loom reconcile-status` finds the
-divergence). A point write (`memory.set`, `memory.update_by_id`, the deferred judge)
-writes its record beside the response.
+divergence). A point write (`memory.set`, `memory.update_by_id`) writes its record
+beside the response; the conflict resolver writes its own after the retirement.
 
 #### The Auto-resolved tab
 
@@ -275,15 +287,18 @@ not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md
 
 ## Settings
 
-| Setting                                         | Default | Effect                                                                                                                               |
-| ----------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `LOOM_CONFLICT_THRESHOLD`                       | 0.85    | Fallback conflict cosine; 1.0 disables flagging.                                                                                     |
-| `LOOM_DUPLICATE_THRESHOLD`                      | 0.97    | Fallback duplicate cosine.                                                                                                           |
-| `LOOM_ADAPTIVE_THRESHOLDS`                      | true    | Calibrate both thresholds from the live embedder.                                                                                    |
-| `LOOM_MEMORY_CONFLICT_JUDGE`                    | false   | LLM labelling of close peers: at most one call per write with a peer at the judge's band, inline on bulk writes; `true` turns it on. |
-| `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`     | 0.7     | Lowest cosine the judge reads.                                                                                                       |
-| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`          | 200     | Entries per `memory.bulk_set` checked; 0 = none.                                                                                     |
-| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` | 2.0     | Cross-replica pattern refresh bound.                                                                                                 |
+| Setting                                           | Default                          | Effect                                                                              |
+| ------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
+| `LOOM_CONFLICT_THRESHOLD`                         | 0.85                             | Fallback conflict cosine; 1.0 disables flagging.                                    |
+| `LOOM_DUPLICATE_THRESHOLD`                        | 0.97                             | Fallback duplicate cosine.                                                          |
+| `LOOM_ADAPTIVE_THRESHOLDS`                        | true                             | Calibrate both thresholds from the live embedder.                                   |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`           | real provider: true; fake: false | The background conflict resolver; an explicit value wins.                           |
+| `LOOM_CONFLICT_RESOLVER_MODEL`                    | gpt-6.1-sol                      | The resolver's judge.                                                               |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY`    | 0.60                             | Lowest cosine that marks a write and joins its cluster.                             |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | 0.95                             | An update retires its predecessor (`newest_wins`) at this confidence.               |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE`  | 0.90                             | Below it nothing changes; at it a compatible pair clears and a contradiction flags. |
+| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`            | 200                              | Entries per `memory.bulk_set` checked; 0 = none.                                    |
+| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS`   | 2.0                              | Cross-replica pattern refresh bound.                                                |
 
 See the [configuration reference](../../reference/configuration.md#conflict-detection).
 
