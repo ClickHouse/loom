@@ -137,7 +137,7 @@ class MachineLogin(httpx.Auth):
         by another (internal) URL must still sign for."""
         if not self._token_endpoint:
             r = httpx.get(f"{self.server}/.well-known/oauth-authorization-server", timeout=30.0)
-            r.raise_for_status()
+            _check(r, f"bot {self.profile!r}: server metadata")
             self._token_endpoint = str(r.json()["token_endpoint"])
         return self._token_endpoint
 
@@ -203,6 +203,15 @@ class MachineLogin(httpx.Auth):
             yield request
 
 
+def _check(r: httpx.Response, what: str) -> None:
+    """Raise for an answer other than 200 as the token endpoint's: busy or
+    away is retryable, anything else a refusal."""
+    if r.status_code == 429 or r.status_code >= 500:
+        raise BackendUnavailable(f"{what}: {r.status_code}; retry shortly")
+    if r.status_code != 200:
+        raise AuthInvalid(f"{what}: {r.status_code}")
+
+
 def _key_pem(source: str, value: str) -> bytes:
     """The bot's private key, from where LOOM_CLIENT_KEY_* says."""
     if source == "LOOM_CLIENT_KEY_FILE":
@@ -246,5 +255,5 @@ def _workload_token(audience: str) -> str:
     # The runner's URL carries its own query (an API version): the audience joins it.
     asked = httpx.URL(url).copy_merge_params({"audience": audience})
     r = httpx.get(str(asked), headers={"Authorization": f"Bearer {bearer}"}, timeout=30.0)
-    r.raise_for_status()
+    _check(r, "the CI job's OIDC token")
     return str(r.json()["value"])
