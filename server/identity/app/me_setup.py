@@ -231,7 +231,7 @@ async def _save_mcp_token(
     Returns (minted token, sa_subject)."""
     org = delegated.org
     sa_subject = new_token_subject(org, client, subject)
-    sa_hash = sa_subject.rsplit("-", 1)[1]
+    sa_hash = sa_subject.removeprefix(f"sa:{client}-")
     now = naive_utc_now_seconds()
     minted = delegated.mint(sa_subject)
     client_label = MCP_SETUP_CLIENT_LABELS.get(client, client)

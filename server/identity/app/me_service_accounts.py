@@ -139,7 +139,7 @@ def token_name(raw: object) -> str:
                 "message": "name required, 1-64 chars",
             },
         )
-    if "\x00" in name:  # a JWT claim cannot carry it
+    if "\x00" in name:  # reserved: revocation cutoffs key on a NUL (mint_token refuses it)
         raise HTTPException(
             status_code=422,
             detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a NUL character"},
@@ -210,8 +210,8 @@ async def save_token(
                 "version": time.time_ns(),
                 "kind": kind,
                 "client": client,
-                # The token's `creator` claim does the inheriting now; the
-                # flag stays true so the Tokens list reads the same.
+                # The gate and the namespace listings read this flag: a token
+                # reads through its creator's live grants (server/auth/service_accounts.py).
                 "inherit_creator_grants": True,
             }
         ],
