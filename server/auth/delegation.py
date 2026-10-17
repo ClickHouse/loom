@@ -80,6 +80,25 @@ class Delegated:
             creator=self.creator,
         )
 
+    def as_auth(self, subject: str) -> AuthInfo:
+        """The identity a token minted for `subject` verifies as, without
+        verifying it (no revocation list needed)."""
+        return AuthInfo(
+            subject=subject,
+            org=self.org,
+            namespaces=tuple(self.namespaces),
+            write_namespaces=tuple(self.write_namespaces or ()),
+            ns_roles=tuple((self.ns_roles or {}).items()),
+            roles=tuple(Role[name.upper()] for name in self.roles),
+            is_service_account=self.is_service_account,
+            read_scope=self.read_scope,
+            read_user_id=self.read_user_id,
+            parents=tuple(self.parents),
+            parent_subjects=tuple(self.parent_subjects),
+            parent_iats=tuple(self.parent_iats),
+            creator=self.creator,
+        )
+
 
 def _refuse(message: str) -> HTTPException:
     return HTTPException(status_code=403, detail={"code": "AUTH_INSUFFICIENT", "message": message})

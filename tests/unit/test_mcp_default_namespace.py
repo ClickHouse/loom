@@ -104,64 +104,37 @@ def _auth(subject: str, *, is_service_account: bool = False, creator: str = "") 
 def test_a_claim_capped_below_writer_is_not_the_write_home(monkeypatch) -> None:
     from server.core import grant_cache
 
-    async def _kind_map(org: str) -> dict[str, str]:
-        return KINDS
-
     async def _viewer_on_alice(org: str, subject: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={"alice": 1})
 
-    async def _no_default(*_a: Any, **_k: Any) -> None:
-        return None
-
-    import server.identity.app.namespace_kinds as nk
-
-    monkeypatch.setattr(nk, "kind_map", _kind_map)
     monkeypatch.setattr(grant_cache, "_read", _viewer_on_alice)
-    monkeypatch.setattr(home.caller_defaults, "saved_default", _no_default)
     auth = _auth("alice")
     auth.namespaces = ("alice", "core-tracker")
     claimed = ["alice", "core-tracker"]
-    assert asyncio.run(home.claimed_home_default(auth, "clickhouse", claimed, None, "alice")) == (
+    assert asyncio.run(home.claimed_home_default(auth, "clickhouse", claimed, KINDS, "alice")) == (
         "core-tracker"
     )
 
 
-def test_the_async_wrapper_reads_the_home_subjects_saved_default(monkeypatch) -> None:
-    async def _kind_map(org: str) -> dict[str, str]:
-        return KINDS
-
-    import server.identity.app.namespace_kinds as nk
-
-    monkeypatch.setattr(nk, "kind_map", _kind_map)
-
-    class _CH:
-        def __init__(self) -> None:
-            self.sql: list[str] = []
-
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            self.sql.append(sql)
-            if "user_state" in sql:
-                self.owner_asked = params["sub"]
-                return {"namespace": "alice"} if params["sub"] == "alice" else None
-            return None
-
-    # A delegated token: its signed creator is the home, read with no row lookup.
+def test_the_claimed_default_follows_the_home_subject_and_fails_open(monkeypatch) -> None:
+    # A delegated token: its signed creator is the home.
     auth = _auth("sa:claude-desktop-3b9fb8", is_service_account=True, creator="alice")
-    ch = _CH()
-    owner = home.home_subject(auth)
-    assert owner == "alice"
-    assert asyncio.run(home.claimed_home_default(auth, "clickhouse", CLAIMED, ch, owner)) == "alice"
-    assert ch.owner_asked == "alice", "the creator's saved default, not the token's"
-    assert not any("service_accounts" in q for q in ch.sql)
+    assert home.home_subject(auth) == "alice"
     # No creator (a bot, an operator-minted or self-signup token): its own subject.
     assert home.home_subject(_auth("sa:bot", is_service_account=True)) == "sa:bot"
 
-    # Fail-open: a broken client answers "" and the grant ranking decides.
-    class _Boom:
-        async def query_one(self, *a: Any, **k: Any) -> Any:
-            raise RuntimeError("down")
+    # No claim named after the home: the saved default it was handed wins.
+    claimed = ["alice", "core-tracker"]
+    pick = home.claimed_home_default(auth, "clickhouse", claimed, KINDS, "bob", "core-tracker")
+    assert asyncio.run(pick) == "core-tracker"
 
-    assert asyncio.run(home.claimed_home_default(auth, "clickhouse", CLAIMED, _Boom(), owner)) == ""
+    # Fail-open: a claim check that breaks answers "" and the grant ranking decides.
+    async def _boom(*_a: Any, **_k: Any) -> int:
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(home, "claim_cap", _boom)
+    pick = home.claimed_home_default(auth, "clickhouse", CLAIMED, KINDS, "alice")
+    assert asyncio.run(pick) == ""
 
 
 def test_the_resolver_asks_the_claims_before_it_ranks_grants() -> None:

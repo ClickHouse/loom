@@ -13,7 +13,7 @@ from typing import Any
 from server.auth.authz import claim_cap, live_claims, names_namespace
 from server.auth.personal_namespace import derive_personal_slug
 from server.identity.app import caller_defaults
-from server.operations.base import grant_rank
+from server.operations.base import Role, grant_rank
 
 
 def home_namespace(accessible: list[str], subject: str, fallback: str = "") -> str:
@@ -102,8 +102,6 @@ def token_can_write(auth_info: Any, org: str, namespace: str) -> bool:
         return True
     try:
         if _scoped(auth_info):
-            from server.operations.base import Role
-
             role = auth_info.effective_role(org, namespace)
             if role is None or role < Role.WRITER:
                 return False
@@ -145,15 +143,19 @@ def ranked_grant_default(
     claimed: list[str],
 ) -> str:
     """The grant ranking's pick. A scoped token ranks only the namespaces it
-    claims, in claim order. Writable memory namespaces first, the caller's
-    own ahead; the read-only ones only when
-    nothing is writable, so a viewer-only caller still reads its planes."""
+    claims, in claim order; a delegated token that names its namespaces (no
+    `*`) ranks only those, since the gate reaches its creator's grants only
+    through the claim. Writable memory namespaces first, the caller's own
+    ahead; the read-only ones only when nothing is writable, so a viewer-only
+    caller still reads its planes."""
     if _scoped(auth_info):
         order = {n: i for i, n in enumerate(claimed)}
         rows = sorted(
             (r for r in rows if str(r.get("namespace") or "") in order),
             key=lambda r: order[str(r.get("namespace") or "")],
         )
+    elif getattr(auth_info, "creator", "") and "*" not in auth_info.namespaces:
+        rows = [r for r in rows if auth_info.can_access(org, str(r.get("namespace") or ""))]
     writable = [
         r
         for r in rows
@@ -175,32 +177,37 @@ async def _kinds_or_empty(org: str) -> dict[str, str]:
 
 
 async def _unnamed_restricted(auth: Any, org: str) -> frozenset[str]:
-    """Restricted namespaces the token does not name: the gate refuses it
-    there (`authz._check_restricted`), so none of them is a default."""
+    """Restricted namespaces the gate refuses this token on
+    (`authz._check_restricted`): all of them for a token of another org (or
+    org `*`), else those it does not name. None of them is a default."""
     if auth is None:
         return frozenset()
     try:
         from server.auth.directory import directory
 
         restricted = await directory().restricted_set(org)
+        if auth.org != org:
+            return frozenset(restricted)
         return frozenset(ns for ns in restricted if not names_namespace(auth, org, ns))
     except Exception:  # noqa: BLE001 — an unreadable directory: the gate still decides
         return frozenset()
 
 
 async def claimed_home_default(
-    auth_info: Any, org: str, claimed: list[str], ch: Any, home: str
+    auth_info: Any,
+    org: str,
+    claimed: list[str],
+    kinds: dict[str, str],
+    home: str,
+    owner_default: str = "",
 ) -> str:
-    """`pick_default_namespace` over live inputs: namespace kinds, the
-    token's own write test, and the home subject's login and saved default.
-    Fail-open to "" (the grant ranking then decides)."""
+    """`pick_default_namespace` over live inputs: the token's own write test
+    and live claim caps, with the namespace kinds and the home subject's login
+    and saved default the caller read. Fail-open to "" (the grant ranking then
+    decides)."""
     if not claimed:
         return ""
     try:
-        from server.identity.app.namespace_kinds import kind_map
-
-        kinds = await kind_map(org)
-        owner_default = await caller_defaults.saved_default(org, home, ch=ch)
         # A claim capped below writer there is not a write home.
         caps = {ns: await claim_cap(auth_info, org, ns) for ns in claimed}
 
@@ -275,11 +282,13 @@ async def _multi_user_default(auth: Any, org: str, claimed: list[str], home: str
         subs += await subject_aliases(org, home, ch=ch)
     kinds = await _kinds_or_empty(org)  # only a memory plane is a home
     off_limits = await _unnamed_restricted(auth, org)
-    namespace = await _saved_pick(auth, org, home, subs, kinds, claimed, off_limits, ch)
+    claimed = [n for n in claimed if n not in off_limits]  # refused even when named
+    saved = await caller_defaults.saved_default(org, home, ch=ch)
+    namespace = await _saved_pick(auth, org, saved, subs, kinds, claimed, off_limits, ch)
     if not namespace and auth is not None:
         # The token's own writable memory-kind claim, owner first, beats a
         # viewer grant on an index.
-        namespace = await claimed_home_default(auth, org, claimed, ch, home)
+        namespace = await claimed_home_default(auth, org, claimed, kinds, home, saved)
     if not namespace:
         # Rank grants by role tier first, recency second: recency alone ranked
         # a later viewer grant above the user's own admin namespace.
@@ -295,7 +304,7 @@ async def _multi_user_default(auth: Any, org: str, claimed: list[str], home: str
 async def _saved_pick(
     auth: Any,
     org: str,
-    home: str,
+    saved: str,
     subs: list[str],
     kinds: dict[str, str],
     claimed: list[str],
@@ -306,7 +315,6 @@ async def _saved_pick(
     a memory plane (a QA/code pick is where the user was LOOKING), not a
     restricted namespace the token does not name, and a write grant there now
     (a stale pick whose grant was revoked must not keep coming back)."""
-    saved = await caller_defaults.saved_default(org, home, ch=ch)
     if not saved or saved in off_limits or not is_memory_home(kinds, saved):
         return ""
     role = await caller_defaults.live_role_on(org, saved, subs, ch=ch)

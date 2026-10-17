@@ -8,7 +8,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 
 from server.auth.delegation import Delegated, delegate
-from server.auth.jwt import AuthInfo, verify_token
+from server.auth.jwt import AuthInfo
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.app import me_callers, token_grants
 from server.identity.app.caller_home import caller_org, default_namespace
@@ -341,7 +341,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     reads_everywhere = "*" in delegated.namespaces
     # The page names where this token's unaddressed MCP calls land: the MCP
     # transport's own resolver, asked about the token just minted.
-    token = verify_token(minted)
+    token = delegated.as_auth(sa_subject)
     displayed_namespace = await default_namespace(token, caller_org(token) or org)
 
     # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.

@@ -158,3 +158,37 @@ async def test_the_saved_row_is_an_mcp_row_in_the_token_list(
         "client": "cursor",
         "inherit_creator_grants": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_the_label_needs_no_revocation_list_once_the_token_is_saved(
+    monkeypatch: pytest.MonkeyPatch, grants: dict
+) -> None:
+    # The row is saved before the label is worked out; a revocation list not
+    # loaded (or stale) then must not fail the call and strand an unseen token.
+    from server.auth import revocation
+
+    monkeypatch.setattr(revocation, "loaded", lambda: False)
+    out = await _setup(monkeypatch, _caller(), {"namespace": "a"})
+    assert out["namespace"] == "a" and len(saved) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_label_identity_is_the_one_the_token_verifies_as(
+    monkeypatch: pytest.MonkeyPatch, grants: dict
+) -> None:
+    caller = _caller(namespaces=("a",), roles=(), ns_roles=(("a", "writer"),))
+    delegated = await delegation.delegate(
+        caller,
+        org="o",
+        requested={"a": None},
+        scoped=True,
+        ttl_seconds=3600,
+        is_service_account=True,
+    )
+    verified = verify_token(delegated.mint("sa:cursor-ab12cd"))
+    built = delegated.as_auth("sa:cursor-ab12cd")
+    claims = ("subject", "org", "namespaces", "write_namespaces", "ns_roles", "roles")
+    more = ("is_service_account", "creator", "parents", "parent_subjects", "parent_iats")
+    for field in claims + more + ("read_scope", "read_user_id"):
+        assert getattr(built, field) == getattr(verified, field), field

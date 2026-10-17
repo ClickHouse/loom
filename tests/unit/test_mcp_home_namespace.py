@@ -230,6 +230,35 @@ def test_the_ranking_skips_a_restricted_namespace_the_token_does_not_name(_wired
     assert _defaults(_setup_token())["namespace"] == "agent-box-claude-code"
 
 
+def _token(namespaces: tuple[str, ...], **kw: Any) -> Any:
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+
+    base: dict[str, Any] = {"subject": "sa:cursor-ab12cd", "org": "clickhouse", "creator": "alice"}
+    return AuthInfo(
+        **{**base, **kw},
+        namespaces=namespaces,
+        roles=(Role.WRITER,),
+        is_service_account=True,
+    )
+
+
+def test_a_token_claiming_one_plane_never_defaults_to_a_namespace_it_cannot_read(
+    _wired,
+) -> None:
+    # Setup token for `qa-clickhouse` only: the creator's memory grant is
+    # outside the claim, so the read-only fallback must not name it.
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    assert _defaults(_token(("qa-clickhouse",)))["namespace"] == "personal-alice"
+
+
+def test_a_restricted_namespace_is_off_limits_to_a_token_of_another_org(_wired) -> None:
+    # The gate refuses an org-`*` token on a restricted namespace, even named.
+    _wired(_SetupTokenCH(saved="secret-team", grants=["secret-team", "alice"]))
+    token = _token(("*", "secret-team"), subject="alice", org="*", creator="")
+    assert asyncio.run(home.default_namespace(token, "clickhouse")) == "alice"
+
+
 def test_a_wildcard_setup_token_without_grants_falls_to_its_creators_personal_slug(
     _wired,
 ) -> None:
