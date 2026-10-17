@@ -180,29 +180,14 @@ class _SetCoalescer:
             # unstamped row (unchecked, or a restatement skipped) is clear.
             row["conflict_verdict"] = row.get("conflict_verdict") or "clear"
             row["noop"] = int(row.get("version") or 0) == 0
-            # A change to a pinned or read_only key is skipped: raise the 409 / 423
-            # the same set alone would have. The row says so, not the key's list,
-            # since a restatement of the same key in the batch is not refused.
-            if row["conflict_verdict"] == "pinned":
-                detail = {"code": "PINNED_CONFLICT", "message": "the key is pinned"}
-                fut.set_exception(from_response({"detail": detail}, 409))
-                continue
-            if row["conflict_verdict"] == "locked":
-                detail = {"code": "LOCKED", "message": "the key is locked read_only"}
-                fut.set_exception(from_response({"detail": detail}, 423))
-                continue
-            if row["conflict_verdict"] == "blacklisted":
-                # Refused, as the same set alone is: the 422 it would have raised.
-                detail = {"code": "BLACKLISTED", "message": "value matches a blacklist pattern"}
-                fut.set_exception(from_response({"detail": detail}, 422))
-                continue
-            if row["conflict_verdict"] == "rejected":
-                # Close to a pinned row: the 409 the same set alone would have raised.
-                detail = {
-                    "code": "PINNED_CONFLICT",
-                    "message": "write conflicts with a pinned memory",
-                }
-                fut.set_exception(from_response({"detail": detail}, 409))
+            # A refused entry (a pinned or read_only key, a blacklisted value, a write
+            # close to a pinned row) raises what the same set alone would have. The row
+            # says so, not the key's list, since a restatement of the same key in the
+            # batch is not refused.
+            refusal = _COALESCED_REFUSALS.get(row["conflict_verdict"])
+            if refusal is not None:
+                status, detail = _refusal_detail(row, *refusal)
+                fut.set_exception(from_response({"detail": detail}, status))
                 continue
             fut.set_result(row)
 
@@ -212,6 +197,31 @@ class _SetCoalescer:
             self._close(key, window)
         if self._inflight:
             await asyncio.gather(*list(self._inflight), return_exceptions=True)
+
+
+# A coalesced entry's refusal by its row's verdict: the status, code and message the
+# same memory.set alone answers.
+_COALESCED_REFUSALS: dict[str, tuple[int, str, str]] = {
+    "pinned": (409, "PINNED_CONFLICT", "the key is pinned"),
+    "rejected": (409, "PINNED_CONFLICT", "write conflicts with a pinned memory"),
+    "locked": (423, "LOCKED", "the key is locked read_only"),
+    "blacklisted": (422, "BLACKLISTED", "value matches a blacklist pattern"),
+}
+
+
+def _refusal_detail(
+    row: dict[str, Any], status: int, code: str, message: str
+) -> tuple[int, dict[str, Any]]:
+    """The error detail for a refused coalesced entry. A pinned refusal names the
+    blocker and the peers, as memory.set does; the row carries no lock or blacklist
+    pattern, so those name the key only."""
+    detail: dict[str, Any] = {"code": code, "message": message, "memory_key": row["memory_key"]}
+    if code == "PINNED_CONFLICT":
+        blocker = str(row.get("pinned_blocker_id") or "")
+        peer_ids = [str(p.get("memory_id") or "") for p in row.get("peers") or []]
+        detail["pinned_blocker_id"] = blocker
+        detail["peer_ids"] = peer_ids or ([blocker] if blocker else [])
+    return status, detail
 
 
 def _opt_int(v: Any) -> int | None:

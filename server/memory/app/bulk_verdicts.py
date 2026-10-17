@@ -9,7 +9,7 @@ from collections.abc import Collection
 from typing import Any
 
 from server.core.datetimes import parse_iso_dt
-from server.memory.app.set_commit import _set_next, _set_peers
+from server.memory.app.set_commit import _peer_id_in_read_scope, _set_next, _set_peers
 from server.memory.domain.conflicts import kept_versions
 
 # ---------------------------------------------------------------------------
@@ -196,6 +196,20 @@ def _settling_rows(memory_rows: list[dict[str, Any]], landed: Collection[int]) -
     return {id(r) for r in kept_versions(written).values()}
 
 
+def _stamp_result(result: Any, v: Any, verdict: str) -> None:
+    """The per-row verdict memory.set returns, on the bulk result too. No query: the peers
+    are the ones the check already read. A bulk merge cannot tell a first merge from a
+    repeated one without the reinforced row, so its `next` names only conflicts. A
+    rejection names its pinned blocker, as memory.set's 409 does."""
+    peers = _set_peers(v)
+    result.conflict_verdict = verdict
+    result.peers = peers
+    result.next = _set_next(verdict, peers)
+    if verdict == "rejected":
+        blocker = str(getattr(v, "pinned_blocker_id", "") or "")
+        result.pinned_blocker_id = _peer_id_in_read_scope(v, blocker)
+
+
 def apply_bulk_verdicts(
     memory_rows: list[dict[str, Any]],
     embedding_rows: list[dict[str, Any]],
@@ -237,14 +251,8 @@ def apply_bulk_verdicts(
         replaced = replaced or idx in stale
         if replaced:
             verdict = "clear"
-        # The per-row verdict memory.set returns, on the bulk result too. No query: the peers
-        # are the ones the check already read. A bulk merge cannot tell a first merge from a
-        # repeated one without the reinforced row, so its `next` names only conflicts.
         if idx < len(results):
-            _peers = _set_peers(v)
-            results[idx].conflict_verdict = str(verdict or "")
-            results[idx].peers = _peers
-            results[idx].next = _set_next(str(verdict or ""), _peers)
+            _stamp_result(results[idx], v, str(verdict or ""))
         if replaced:
             continue
         _fold_verdict(

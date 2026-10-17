@@ -283,7 +283,12 @@ def _bulk_skip_gate(
     if state.existing_pinned.get(entry.memory_key):
         state.skipped_pinned.append(entry.memory_key)
         state.results.append(
-            _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=PINNED)
+            _BulkSetResult(
+                memory_key=entry.memory_key,
+                version=0,
+                conflict_verdict=PINNED,
+                pinned_blocker_id=state.existing_ids.get(entry.memory_key, ""),
+            )
         )
         return True
     return False
@@ -368,6 +373,7 @@ def settle_batch_rows(
                 copies.append((res_i, result_of[id(row)], row))
             elif done == PINNED:
                 res.conflict_verdict = PINNED
+                res.pinned_blocker_id = str(row["memory_id"])
                 state.skipped_pinned.append(key)
             else:
                 state.skipped_unchanged += 1
@@ -402,6 +408,7 @@ def _drop_built_row(
     res.version, res.memory_id = 0, ""
     if why == PINNED:
         res.conflict_verdict = PINNED
+        res.pinned_blocker_id = str(row["memory_id"])
         state.skipped_pinned.append(str(row["memory_key"]))
     else:
         state.skipped_unchanged += 1
@@ -444,6 +451,7 @@ def copy_restated_verdicts(
     for res_i, src_i, row in copies:
         src, res = state.results[src_i], state.results[res_i]
         res.conflict_verdict, res.peers, res.next = src.conflict_verdict, list(src.peers), src.next
+        res.pinned_blocker_id = src.pinned_blocker_id
         if src.conflict_verdict == "merge":
             plan.merged.append(res.memory_key)
             _note_restatement(state, plan.merged_into.get(id(row), ""))

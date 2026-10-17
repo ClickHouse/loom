@@ -24,6 +24,8 @@ class _FakeTransport:
         self.value_verdicts: dict[str, str] = {}
         # Values the server skips as already stored (version 0).
         self.unchanged_values: set[str] = set()
+        # More fields on one entry's result row, by key.
+        self.row_extra: dict[str, dict[str, Any]] = {}
 
     async def post(
         self, op_path: str, payload: dict[str, Any], idempotency_key=None, *, timeout_s=None
@@ -50,6 +52,7 @@ class _FakeTransport:
                         "conflict_verdict": self.value_verdicts.get(
                             str(e["value"]), self.row_verdicts.get(e["memory_key"], "")
                         ),
+                        **self.row_extra.get(e["memory_key"], {}),
                     }
                     for i, e in enumerate(payload["entries"])
                 ],
@@ -159,6 +162,44 @@ async def test_a_coalesced_set_to_a_pinned_or_locked_key_raises_as_alone(
     (refused,) = [r for r in results if isinstance(r, BaseException)]
     assert isinstance(refused, LoomError) and refused.code == code
     assert refused.status == status
+
+
+@pytest.mark.parametrize(
+    ("verdict", "extra", "point_keys", "peer_ids"),
+    [
+        # memory.set alone, to a pinned key (server/memory/app/write.py).
+        (
+            "pinned",
+            {"pinned_blocker_id": "X"},
+            {"code", "message", "pinned_blocker_id", "peer_ids", "memory_key"},
+            ["X"],
+        ),
+        # memory.set alone, close to a pinned row (server/memory/app/set_commit.py).
+        (
+            "rejected",
+            {"pinned_blocker_id": "X", "peers": [{"memory_id": "X"}, {"memory_id": "Y"}]},
+            {"code", "message", "pinned_blocker_id", "peer_ids"},
+            ["X", "Y"],
+        ),
+    ],
+)
+async def test_a_coalesced_pinned_refusal_carries_the_point_writes_detail(
+    agent: Agent, verdict: str, extra: dict[str, Any], point_keys: set[str], peer_ids: list[str]
+) -> None:
+    from loom.errors import PreconditionFailed
+
+    t: Any = agent.transport
+    t.row_verdicts = {"d": verdict}
+    t.row_extra = {"d": extra}
+    results = await asyncio.gather(
+        *[agent.memory.set(k, {"v": k}) for k in "abcde"], return_exceptions=True
+    )
+    (refused,) = [r for r in results if isinstance(r, BaseException)]
+    assert isinstance(refused, PreconditionFailed)
+    assert point_keys <= set(refused.detail)
+    assert refused.detail["pinned_blocker_id"] == "X"
+    assert refused.detail["peer_ids"] == peer_ids
+    assert refused.detail["memory_key"] == "d"
 
 
 async def test_a_restatement_of_a_pinned_key_in_a_burst_with_a_change_resolves(

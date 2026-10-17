@@ -318,3 +318,20 @@ def test_a_peer_rewritten_by_a_stale_merge_that_lands_is_not_marked() -> None:
         assert [x["memory_key"] for x in plan.memory_rows] == ["k1", "k2", "k3"]
         assert plan.conflict_marks == [] and plan.refines == []
         assert state.results[2].conflict_verdict == "clear"
+
+
+def test_a_refused_entry_names_its_pinned_blocker() -> None:
+    # memory.set's 409 names the pinned row that refused it; the bulk result does too.
+    from server.memory.app.bulk_rows import _bulk_skip_gate
+
+    pinned = ConflictPeer(memory_id="P", memory_key="p", similarity=0.9, pinned=True, canonical="")
+    v = ConflictResult(verdict="rejected", peers=[pinned], pinned_blocker_id="P")
+    m, e, ix, r = _rows(1)
+    for res in r:
+        res.pinned_blocker_id = ""
+    apply_bulk_verdicts(m, e, ix, r, {0: v})
+    assert r[0].conflict_verdict == "rejected" and r[0].pinned_blocker_id == "P"
+    state = _stored(k=("K1", "s0"))
+    state.existing_pinned = {"k": True}
+    assert _bulk_skip_gate(NS(memory_key="k"), "s1", state, {})
+    assert state.results[0].pinned_blocker_id == "K1"

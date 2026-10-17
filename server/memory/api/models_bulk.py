@@ -318,6 +318,9 @@ class _BulkSetResult(BaseModel):
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
     next: str = ""
+    # With `pinned` or `rejected`: the pinned row that refused the entry, as memory.set's
+    # 409 names it ('' when it is outside the read scope).
+    pinned_blocker_id: str = ""
     # Set when the entry landed superseded: under `auto_reinforce` with the conflict judge
     # on, a stored row of the same key and subject (the user; for the anonymous user `-`,
     # the agent) is the later statement it contradicts, such as an old session ingested
