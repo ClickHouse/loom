@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -35,6 +36,8 @@ from server.core import leases
 from server.core.ch import get_client, own_write_reads
 from server.observability import audit
 from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 TABLE = "loom.scim_users"
 COLUMNS = (
@@ -143,9 +146,20 @@ async def create(user_name: str, email: str, *, active: bool) -> dict[str, Any]:
 
 async def set_active(uid: str, active: bool) -> dict[str, Any] | None:
     """Deactivate or reactivate `uid`; None when there is no such user."""
+    return await update(uid, active=active)
+
+
+async def update(
+    uid: str, *, active: bool | None = None, user_name: str | None = None
+) -> dict[str, Any] | None:
+    """Set `active` and/or rename the userName (it is not the key) of `uid`;
+    None when there is no such user."""
     async with _held(uid):
         row = await get(uid)
-        return None if row is None else await _set_active(row, active)
+        if row is None:
+            return None
+        changes = {"user_name": normalized(user_name)} if user_name else {}
+        return await _set_active(row, bool(row["active"]) if active is None else active, **changes)
 
 
 async def delete(uid: str) -> bool:
@@ -181,10 +195,15 @@ async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict
     if active and not was_active:
         await _lift(row["subjects"])
     elif not active:
-        # Again on a retry: the last try may have stopped short, or an account appeared.
-        new["subjects"] = sorted({*row["subjects"], *await _subjects(row["email"])})
-        for subject in new["subjects"]:
-            await _revoke(subject)
+        found = await _subjects(row["email"])
+        known = set(row["subjects"])
+        new["subjects"] = sorted(known | set(found))
+        # Going inactive (or retrying a try that stopped short of writing the row)
+        # revokes them all; once inactive, only accounts found since, so one an
+        # operator narrowed stays narrowed.
+        first = was_active or "version" not in row
+        for subject in new["subjects"] if first else sorted(set(found) - known):
+            await _revoke(new["id"], subject, set(found.values()))
     if new != row or "version" not in row:  # a change, or a user not yet written
         await _write(new)
     if active != was_active:
@@ -192,13 +211,13 @@ async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict
     return new
 
 
-async def _subjects(email: str) -> list[str]:
-    """Every subject an SSO sign-in with `email` could reach, in any org.
-    Unlike sign-in, several are no reason to stop: each is revoked."""
+async def _subjects(email: str) -> dict[str, str]:
+    """Every subject an SSO sign-in with `email` could reach, in any org, and
+    its org. Unlike sign-in, several are no reason to stop: each is revoked."""
     with own_write_reads():
         rows = await get_client().query_all(
             """
-            SELECT DISTINCT owner_email FROM loom.namespaces FINAL
+            SELECT DISTINCT owner_email, org FROM loom.namespaces FINAL
             WHERE contact_email = {email:String} AND active = 1 AND owner_email != ''
               AND (password_hash = '' OR (org, namespace) IN (
                   SELECT org, namespace FROM loom.sso_links FINAL
@@ -207,14 +226,52 @@ async def _subjects(email: str) -> list[str]:
             """,
             params={"email": email},
         )
-    return [r["owner_email"] for r in rows]
+    return {r["owner_email"]: r["org"] for r in rows}
 
 
-async def _revoke(subject: str) -> None:
+async def _revoke(uid: str, subject: str, orgs: set[str]) -> None:
     """Revoke `subject` outright unless it already is (by an operator, or by
-    the try this one retries)."""
-    if not await revocation.revoked_outright(subject):
-        await revocation.revoke(subject, reason=DEACTIVATED, revoked_by=_BY)
+    the try this one retries). A subject is a name, not an org's: the same one
+    may be someone else's elsewhere, and the revocation reaches them too."""
+    if await revocation.revoked_outright(subject):
+        return
+    elsewhere = await _orgs_beyond(subject, orgs)
+    if elsewhere:
+        # Failing closed, it is still revoked; an operator sees it and can narrow it.
+        log.warning(
+            "scim: deactivating %s revokes a subject that also holds accounts or grants "
+            "in %s, which this email does not reach (see `loom revoke-token --list`)",
+            uid,
+            ", ".join(elsewhere),
+        )
+        await audit.emit(
+            "auth.scim_collateral",
+            org="-",
+            namespace="-",
+            actor=_BY,
+            subject={"id": uid, "subject": _keyed(subject), "orgs": elsewhere},
+        )
+    await revocation.revoke(subject, reason=DEACTIVATED, revoked_by=_BY)
+
+
+async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
+    """The orgs other than `orgs` where `subject` owns an account or holds a grant."""
+    from server.core.grant_sql import LIVE_GRANT
+
+    rows = await get_client().query_all(
+        f"""
+        SELECT DISTINCT org FROM (
+            SELECT org FROM loom.namespaces FINAL WHERE owner_email = {{s:String}} AND active = 1
+            UNION ALL
+            SELECT org FROM loom.namespace_grants FINAL
+            WHERE lower(subject) = lower({{s:String}}) AND {LIVE_GRANT}
+        )
+        WHERE org NOT IN {{orgs:Array(String)}}
+        ORDER BY org
+        """,
+        params={"s": subject, "orgs": sorted(orgs)},
+    )
+    return [r["org"] for r in rows]
 
 
 async def _lift(subjects: list[str]) -> None:

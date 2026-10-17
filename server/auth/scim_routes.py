@@ -125,6 +125,28 @@ def patched_active(body: dict[str, Any]) -> bool | None:
     return active
 
 
+def patched_names(body: dict[str, Any]) -> tuple[str | None, str | None]:
+    """The userName and the email a PatchOp sets, each None when it leaves it
+    alone. Call after `patched_active`, which checks the shape."""
+    user_name = email = None
+    for op in body["Operations"]:
+        path, value = str(op.get("path") or ""), op.get("value")
+        pairs = list(value.items()) if not path and isinstance(value, dict) else [(path, value)]
+        for attr, v in pairs:
+            attr = str(attr).lower()
+            if attr != "username" and not attr.startswith("emails"):
+                continue
+            if str(op.get("op") or "").lower() not in ("add", "replace"):
+                raise ScimError(400, "the userName and email cannot be removed", "mutability")
+            if attr == "username":
+                user_name = v if isinstance(v, str) else None
+            elif isinstance(v, str):  # emails[type eq "work"].value
+                email = v
+            elif isinstance(v, list):
+                email = _primary_email(v) or None
+    return user_name, email
+
+
 def _int_param(request: Request, name: str, default: int) -> int:
     raw = request.query_params.get(name)
     if raw is None:
@@ -145,20 +167,24 @@ async def _body(request: Request) -> dict[str, Any]:
     return body
 
 
-def user_name_and_email(body: dict[str, Any]) -> tuple[str, str]:
-    """The userName, and the email SSO sign-in will carry: the primary
-    `emails` value when there is one, else the userName."""
-    name = body.get("userName")
-    if not isinstance(name, str) or not name.strip():
-        raise ScimError(400, "userName is required", "invalidValue")
-    emails = body.get("emails")
+def _primary_email(emails: Any) -> str:
+    """The primary entry's value of a SCIM `emails` list, else the first's, else ''."""
     entries = (
         [e for e in emails if isinstance(e, dict) and isinstance(e.get("value"), str)]
         if isinstance(emails, list)
         else []
     )
     primary = [e for e in entries if e.get("primary") is True] or entries
-    email = scim.normalized(primary[0]["value"] if primary else name)
+    return str(primary[0]["value"]) if primary else ""
+
+
+def user_name_and_email(body: dict[str, Any]) -> tuple[str, str]:
+    """The userName, and the email SSO sign-in will carry: the primary
+    `emails` value when there is one, else the userName."""
+    name = body.get("userName")
+    if not isinstance(name, str) or not name.strip():
+        raise ScimError(400, "userName is required", "invalidValue")
+    email = scim.normalized(_primary_email(body.get("emails")) or name)
     if "@" not in email:
         raise ScimError(
             400, "userName or a primary email must be the person's email", "invalidValue"
@@ -270,21 +296,35 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
     row = await scim.get(uid)
     if row is None:
         raise _not_found()
-    if user_name_and_email(body)[1] != row["email"]:
-        # The id is the email's: another email is another person.
-        raise ScimError(400, "the email cannot change", "mutability")
-    if "active" in body:
-        row = await scim.set_active(uid, parse_active(body["active"])) or row
+    name, email = user_name_and_email(body)
+    _refuse_another_email(row, email)
+    active = parse_active(body["active"]) if "active" in body else None
+    row = await scim.update(uid, active=active, user_name=name) or row
     return _answer(_resource(request, row))
 
 
 @router.patch("/Users/{uid}")
 async def patch_user(uid: str, request: Request) -> JSONResponse:
-    active = patched_active(await _body(request))
-    row = await scim.get(uid) if active is None else await scim.set_active(uid, active)
+    body = await _body(request)
+    active = patched_active(body)
+    name, email = patched_names(body)
+    row = await scim.get(uid)
     if row is None:
         raise _not_found()
+    if email is not None:
+        _refuse_another_email(row, email)
+    elif name is not None and row["user_name"] == row["email"]:
+        _refuse_another_email(row, name)  # the userName may be where the email came from
+    if active is not None or name is not None:
+        row = await scim.update(uid, active=active, user_name=name) or row
     return _answer(_resource(request, row))
+
+
+def _refuse_another_email(row: dict[str, Any], email: str) -> None:
+    if scim.normalized(email) != row["email"]:
+        # The id is the email's: another email is another person, and the old
+        # one's deactivation would miss the account the new one signs in to.
+        raise ScimError(400, "the email cannot change", "mutability")
 
 
 @router.delete("/Users/{uid}")
@@ -294,11 +334,22 @@ async def delete_user(uid: str) -> Response:
     return Response(status_code=204)
 
 
+def short_token_problem(token: str) -> str:
+    """Why `token` is no SCIM token to start with, or '' (SCIM off is fine)."""
+    if token and len(token) < MIN_TOKEN_LENGTH:
+        return f"LOOM_SCIM_TOKEN is {len(token)} characters; it must be at least {MIN_TOKEN_LENGTH}"
+    return ""
+
+
+def require_scim_token_length(token: str) -> None:
+    """Refuse to start with a guessable SCIM token (run in the lifespan)."""
+    if problem := short_token_problem(token):
+        raise RuntimeError(f"refusing to start: {problem}")
+
+
 def attach(app: Any) -> None:
     if not settings.scim_token:
         return
-    if len(settings.scim_token) < MIN_TOKEN_LENGTH:
-        raise RuntimeError(f"LOOM_SCIM_TOKEN must be at least {MIN_TOKEN_LENGTH} characters")
     app.add_exception_handler(ScimError, _error_response)
     app.add_exception_handler(scim.Busy, _error_response)  # answered as a 503
     app.include_router(router)

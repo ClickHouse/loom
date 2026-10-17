@@ -265,7 +265,7 @@ they do not stop with someone's offboarding.
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
   `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`,
   `auth.session_revoked`, `auth.scim_deactivated`, `auth.scim_reactivated`,
-  `auth.scim_deleted`.
+  `auth.scim_deleted`, `auth.scim_collateral`.
 
 ## Deprovisioning with SCIM
 
@@ -279,7 +279,7 @@ LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
 ```
 
 Empty (the default) leaves SCIM off and its routes unmounted; Loom refuses to
-start with a token shorter than 32 characters. The token is the only
+start with a token shorter than 32 characters (`loom doctor` says so too). The token is the only
 credential `/scim/v2` takes; keep it with the client secret.
 
 Loom keys a SCIM user on an email: the request's primary `emails` value, or
@@ -321,13 +321,23 @@ What Loom does with each request:
 - **Creating a user** records the email and makes no account: the person's
   first SSO sign-in makes it (JIT) or reaches the one they have, as without
   SCIM. A second create of the same email answers 409.
+- **Updating** a user keeps a new `userName`. A new email is refused (400
+  `mutability`, by `PUT` or `PATCH`): the person would sign in to another
+  account, which a later deactivation of the old email would miss. Change an
+  address by deleting the user at the provider and creating it again.
 - **Deactivating** (`active: false` by `PATCH` or `PUT`, or a `DELETE`)
   revokes outright every subject an SSO sign-in with the email could reach
   (each SSO account naming it and each password account linked to it, in any
   org): every session, and every service account and MCP token the person
   made. While it lasts, SSO sign-in with the email is refused ("this account
   is deactivated"), even if it reaches no account yet. The accounts, their
-  grants and their data stay; this is not erasure.
+  grants and their data stay; this is not erasure. A subject is a name, not
+  an org's: when one also owns an account or holds a grant in an org the
+  email does not reach (another person's `alice`), it is still revoked, and
+  Loom logs a warning and audits `auth.scim_collateral` naming those orgs.
+  Find it in `loom revoke-token --list` (reason `scim: deactivated`) and
+  narrow it with `--subject <it> --issued-before <now>` if it is someone
+  else's; a repeated deactivation leaves a narrowed subject alone.
 - **Reactivating** (`active: true`) lets the person sign in again. Tokens from
   before stay revoked; they make new ones. A subject an operator revoked
   (`loom revoke-token --subject`) stays revoked through both.

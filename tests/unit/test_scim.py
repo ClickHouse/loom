@@ -133,9 +133,10 @@ def test_active_takes_booleans_and_their_strings() -> None:
 class _Table:
     """loom.scim_users, and loom.namespaces as `_subjects` reads it."""
 
-    def __init__(self, accounts: dict[str, list[str]]) -> None:
+    def __init__(self, accounts: dict[str, list[str]], elsewhere: dict[str, list[str]]) -> None:
         self.rows: list[dict[str, Any]] = []
         self.accounts = accounts
+        self.elsewhere = elsewhere
 
     def newest(self, uid: str) -> dict[str, Any] | None:
         rows = [r for r in self.rows if r["id"] == uid]
@@ -158,8 +159,11 @@ class _Table:
         return row
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if "loom.namespace_grants" in sql:
+            return [{"org": o} for o in self.elsewhere.get(params["s"], [])]
         if "loom.namespaces" in sql:
-            return [{"owner_email": s} for s in self.accounts.get(params["email"], [])]
+            subjects = self.accounts.get(params["email"], [])
+            return [{"owner_email": s, "org": "acme"} for s in subjects]
         return self.live()[params["skip"] : params["skip"] + params["count"]]
 
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
@@ -172,7 +176,8 @@ class _World:
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.accounts: dict[str, list[str]] = {}  # email -> subjects it reaches
-        self.table = _Table(self.accounts)
+        self.elsewhere: dict[str, list[str]] = {}  # subject -> other orgs it is in
+        self.table = _Table(self.accounts, self.elsewhere)
         self.outright: dict[str, str] = {}  # subject -> reason
         self.narrowed: list[tuple[str, datetime]] = []
         self.audits: list[tuple[str, dict[str, Any]]] = []
@@ -259,6 +264,27 @@ async def test_an_email_reaching_several_accounts_revokes_them_all(world) -> Non
     await scim.set_active(uid, True)
     assert sorted(s for s, _ in world.narrowed) == ["lee", "lee-other-org"]
     assert world.outright == {}
+
+
+async def test_a_subject_someone_else_has_elsewhere_is_revoked_and_flagged(world) -> None:
+    # JIT and self-signup name subjects, so another org may have an `alice` too.
+    world.person("alice@example.com", "alice")
+    world.elsewhere["alice"] = ["other-org"]
+    await scim.set_active(await _create("alice@example.com"), False)
+    assert world.outright == {"alice": scim.DEACTIVATED}  # fail closed
+    [collateral] = [kw for e, kw in world.audits if e == "auth.scim_collateral"]
+    assert collateral["subject"]["orgs"] == ["other-org"]
+    assert "alice" not in str(collateral["subject"]["subject"])
+
+
+async def test_a_repeated_deactivation_leaves_an_operators_narrowing_alone(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    del world.outright["lee"]  # an operator narrowed a collateral subject
+    world.person("lee@example.com", "lee", "lee-new")
+    await scim.set_active(uid, False)  # the provider sends it again
+    assert world.outright == {"lee-new": scim.DEACTIVATED}  # only the account found since
 
 
 async def test_the_audit_row_names_no_subject_in_clear(world) -> None:
@@ -403,9 +429,8 @@ async def test_narrow_touches_only_its_own_outright_revocation(
     if narrows:
         [w] = written
         assert (w["key"], w["issued_before"]) == ("lee", cutoff)
-        assert revocation._recent == []  # a refresh cannot lay the outright one back
     else:
-        assert written == [] and len(revocation._recent) == 1
+        assert written == []
 
 
 async def test_narrow_puts_back_a_revocation_written_while_it_ran(monkeypatch) -> None:
@@ -442,7 +467,6 @@ def _narrowing(
 
     monkeypatch.setattr(ch, "get_client", lambda: Read())
     monkeypatch.setattr(revocation, "revoke", revoke)
-    monkeypatch.setattr(revocation, "_recent", [("revoke", "lee", None, time.monotonic())])
     return written
 
 
@@ -480,10 +504,17 @@ def test_scim_is_not_mounted_without_a_token(monkeypatch: pytest.MonkeyPatch) ->
     assert TestClient(app).get("/scim/v2/ServiceProviderConfig").status_code == 404
 
 
-def test_a_short_token_refuses_to_start(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "scim_token", "x" * 31)
+def test_a_short_token_refuses_to_start_and_doctor_says_so(monkeypatch) -> None:
+    from server.cli import doctor
+
+    scim_routes.require_scim_token_length("")  # off is fine
+    scim_routes.require_scim_token_length("x" * 32)
     with pytest.raises(RuntimeError, match="at least 32"):
-        scim_routes.attach(FastAPI())
+        scim_routes.require_scim_token_length("x" * 31)
+    monkeypatch.setattr(settings, "scim_token", "x" * 31)
+    assert doctor._doctor_scim_token_check(settings)[1] == doctor.FAIL
+    monkeypatch.setattr(settings, "scim_token", "")
+    assert doctor._doctor_scim_token_check(settings)[1] == doctor.PASS
 
 
 def test_a_provider_creates_finds_and_deactivates_a_person(client: TestClient, world) -> None:
@@ -533,3 +564,49 @@ def test_bad_requests_answer_scim_errors(client: TestClient) -> None:
     no_email = client.post("/scim/v2/Users", json={"userName": "lee"})
     assert no_email.status_code == 400 and no_email.json()["scimType"] == "invalidValue"
     assert client.patch("/scim/v2/Users/nobody", json={"Operations": []}).status_code == 404
+
+
+def test_a_patch_cannot_change_the_email(client: TestClient, world) -> None:
+    created = client.post(
+        "/scim/v2/Users",
+        json={"userName": "lee.upn@corp.example", "emails": [{"value": "lee@example.com"}]},
+    )
+    uid = created.json()["id"]
+    for op in [
+        {"op": "Replace", "path": 'emails[type eq "work"].value', "value": "new@example.com"},
+        {"op": "replace", "path": "emails", "value": [{"value": "new@example.com"}]},
+        {"op": "replace", "value": {"emails": [{"value": "new@example.com", "primary": True}]}},
+        {"op": "remove", "path": "emails"},
+    ]:
+        r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": [op]})
+        assert r.status_code == 400 and r.json()["scimType"] == "mutability", op
+    same = {"op": "replace", "path": 'emails[type eq "work"].value', "value": "Lee@example.com"}
+    assert client.patch(f"/scim/v2/Users/{uid}", json={"Operations": [same]}).status_code == 200
+
+
+def test_a_username_rename_is_kept_and_found(client: TestClient, world) -> None:
+    created = client.post(
+        "/scim/v2/Users",
+        json={"userName": "lee.upn@corp.example", "emails": [{"value": "lee@example.com"}]},
+    )
+    uid = created.json()["id"]
+    rename = {
+        "Operations": [{"op": "replace", "path": "userName", "value": "lee.new@corp.example"}]
+    }
+    assert client.patch(f"/scim/v2/Users/{uid}", json=rename).json()["userName"] == (
+        "lee.new@corp.example"
+    )
+    found = client.get("/scim/v2/Users", params={"filter": 'userName eq "lee.new@corp.example"'})
+    assert [u["id"] for u in found.json()["Resources"]] == [uid]
+    put = client.put(
+        f"/scim/v2/Users/{uid}",
+        json={"userName": "lee.put@corp.example", "emails": [{"value": "lee@example.com"}]},
+    )
+    assert put.json()["userName"] == "lee.put@corp.example"
+
+
+def test_a_username_that_is_the_email_cannot_change_by_patch(client: TestClient, world) -> None:
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    rename = {"Operations": [{"op": "replace", "value": {"userName": "new@example.com"}}]}
+    r = client.patch(f"/scim/v2/Users/{uid}", json=rename)
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability"

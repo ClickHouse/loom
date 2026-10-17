@@ -204,7 +204,8 @@ def test_writes_made_here_survive_a_replica_that_has_not_seen_them(monkeypatch) 
 
 def test_a_full_revoke_read_from_elsewhere_stands_over_a_cutoff_made_here(table) -> None:
     asyncio.run(revocation.revoke("sub1", issued_before=datetime.now(UTC) - timedelta(hours=1)))
-    table.rows["sub1"] = {"jti": "sub1", "issued_before": None}  # another replica, later
+    # Another replica, later.
+    table.rows["sub1"] = {"jti": "sub1", "issued_before": None, "version": time.time_ns()}
     asyncio.run(revocation.refresh())
     assert revocation.is_revoked("sub1", issued_at=int(time.time()) + 3600)
 
@@ -214,6 +215,50 @@ def test_a_write_older_than_the_while_is_no_longer_laid_back(monkeypatch) -> Non
 
     monkeypatch.setattr(ch, "get_client", lambda: _LaggingTable())
     old = time.monotonic() - revocation._RECENT_S - 1
-    revocation._recent.append(("revoke", "t-old", None, old))
+    revocation._recent.append(("revoke", "t-old", None, old, time.time_ns()))
     asyncio.run(revocation.refresh())
     assert not revocation.is_revoked("t-old", issued_at=int(time.time())) and not revocation._recent
+
+
+class _NarrowingTable(_Table):
+    """The reads `narrow` makes: a jti's row, and one written since a version."""
+
+    async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        row = self.rows.get(params["j"])
+        if row and "version >" in sql:
+            newer = row["version"] > params["v"] and row["reason"] != params["lifted"]
+            return row if newer else None
+        return row
+
+
+def test_a_narrowing_elsewhere_wins_over_the_outright_revoke_made_here(monkeypatch) -> None:
+    """A deactivation on one process, the reactivation on another: the first
+    must not lay its outright revoke back over the newer narrowing."""
+    from server.core import ch
+
+    shared = _NarrowingTable()
+    monkeypatch.setattr(ch, "get_client", lambda: shared)
+    reason = "scim: deactivated"
+    asyncio.run(revocation.revoke("lee", reason=reason))  # process A
+    on_a = list(revocation._recent)
+    revocation._recent.clear()  # process B
+    cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+    assert asyncio.run(
+        revocation.narrow("lee", reason=reason, issued_before=cutoff, revoked_by="scim")
+    )
+    on_b = list(revocation._recent)
+    old, new = int(cutoff.timestamp()) - 1, int(cutoff.timestamp())
+
+    revocation._recent[:] = on_a  # A's next refresh reads the narrowing
+    asyncio.run(revocation.refresh())
+    assert revocation.is_revoked("lee", issued_at=old)
+    assert not revocation.is_revoked("lee", issued_at=new)
+
+    # B reading a replica that holds only A's row still keeps its narrowing.
+    behind = _Table()
+    behind.rows["lee"] = {"jti": "lee", "issued_before": None, "version": on_a[-1][4]}
+    monkeypatch.setattr(ch, "get_client", lambda: behind)
+    revocation._recent[:] = on_b
+    asyncio.run(revocation.refresh())
+    assert revocation.is_revoked("lee", issued_at=old)
+    assert not revocation.is_revoked("lee", issued_at=new)

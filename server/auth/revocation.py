@@ -74,10 +74,11 @@ CUTOFF_PREFIX = "\x00cutoff:"
 _cut_off: dict[str, int] = {}
 # Writes folded into the snapshot here, kept a while: every refresh lays them
 # over what it read, so neither a read already in flight nor one from a replica
-# behind drops them. Laid back, they only ever tighten: a revocation made
-# weaker here within that while stays at its stronger form in this process.
-# (kind, key, cutoff, when): kind "revoke" or "cut_off".
-_recent: list[tuple[str, str, int | None, float]] = []
+# behind drops them. One is laid back only while the read holds no newer row
+# for its key: a narrowing written elsewhere since wins over an outright
+# revoke made here. (kind, key, cutoff, when, version): kind "revoke" or
+# "cut_off"; version is the row's.
+_recent: list[tuple[str, str, int | None, float, int]] = []
 _RECENT_S = 300.0  # far longer than a read takes
 # False until one refresh has succeeded in this process.
 _loaded = False
@@ -164,18 +165,21 @@ async def refresh() -> None:
         # stands in for it as long as a session revocation lasts (30 days).
         rows = await ch.query_all(
             """
-            SELECT jti, issued_before FROM loom.revoked_tokens FINAL
+            SELECT jti, issued_before, version FROM loom.revoked_tokens FINAL
             WHERE expires_at > now()
             UNION ALL
-            SELECT id AS jti, NULL AS issued_before FROM loom.oauth_state FINAL
+            SELECT id AS jti, NULL AS issued_before, toUInt64(0) AS version
+            FROM loom.oauth_state FINAL
             WHERE record_type = 'revocation_owed' AND expires_at > toUInt32(now())
             """,
         )
         full: set[str] = set()
         before: dict[str, int] = {}
         operator: dict[str, int] = {}
+        versions: dict[str, int] = {}
         for r in rows:
             key, cutoff = str(r["jti"]), _cutoff_seconds(r.get("issued_before"))
+            versions[key] = max(versions.get(key, 0), int(r.get("version") or 0))
             if key.startswith(CUTOFF_PREFIX):
                 operator[key.removeprefix(CUTOFF_PREFIX)] = cutoff or 0
             elif cutoff is None:
@@ -184,13 +188,18 @@ async def refresh() -> None:
                 before[key] = cutoff
         # Writes made here lately, which the read (in flight, or behind) may lack.
         _forget_old()
-        for kind, key, cutoff, _ in _recent:
+        for kind, key, cutoff, _, version in _recent:
+            stored = CUTOFF_PREFIX + key if kind == "cut_off" else key
+            if versions.get(stored, 0) > version:
+                continue  # the read holds a newer row for it, which governs
             if kind == "cut_off":
                 operator[key] = max(operator.get(key, 0), cutoff or 0)
             elif cutoff is None:
                 full.add(key)
-            elif key not in full:
-                before[key] = max(before.get(key, 0), cutoff)
+                before.pop(key, None)
+            else:  # the newest write of its key: it replaces what was there
+                full.discard(key)
+                before[key] = cutoff
         _revoked_jtis = frozenset(full)
         _revoked_before, _cut_off = before, operator
         _loaded = True
@@ -256,10 +265,11 @@ async def revoke(
         "reason": reason or "",
         "revoked_by": revoked_by or "",
         "issued_before": issued_before,
+        "version": time.time_ns(),
     }
     await get_client().insert("loom.revoked_tokens", [row])
     await refresh()
-    _apply_locally(token_id, _cutoff_seconds(issued_before))
+    _apply_locally(token_id, _cutoff_seconds(issued_before), row["version"])
     return row
 
 
@@ -270,6 +280,7 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
 
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     cutoff = issued_before.astimezone(UTC).replace(tzinfo=None)
+    version = time.time_ns()
     await get_client().insert(
         "loom.revoked_tokens",
         [
@@ -280,6 +291,7 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
                 "reason": reason,
                 "revoked_by": revoked_by,
                 "issued_before": cutoff,
+                "version": version,
             }
         ],
     )
@@ -287,7 +299,7 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
     global _cut_off
     seconds = _cutoff_seconds(cutoff) or 0
     _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
-    _remember("cut_off", subject, seconds)
+    _remember("cut_off", subject, seconds, version)
 
 
 async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: str) -> bool:
@@ -308,13 +320,10 @@ async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: 
         )
     if row is None or row["issued_before"] is not None or row["reason"] != reason:
         return False
-    # A refresh lays this process's recent writes back, and the outright one
-    # would win over the narrowing below.
-    _recent[:] = [w for w in _recent if not (w[0] == "revoke" and w[1] == key)]
     lifted = f"{reason}, lifted"
     await revoke(key, issued_before=issued_before, reason=lifted, revoked_by=revoked_by)
-    # Another revocation written between the read and this write is replaced by
-    # it under FINAL: write that one again, on top.
+    # Only for an operator's `revoke-token` landing between the read above and
+    # this write: under FINAL ours replaced it, so write it again, on top.
     with own_write_reads():
         other = await get_client().query_one(
             """
@@ -341,14 +350,15 @@ def revoked_here(jti: str) -> None:
     _apply_locally(jti, None)
 
 
-def _apply_locally(key: str, cutoff: int | None) -> None:
+def _apply_locally(key: str, cutoff: int | None, version: int | None = None) -> None:
     """Fold a revocation this process just wrote into its snapshot. The
     re-read in `revoke` can fail, or land on a replica the insert has not
     reached; either way the old snapshot would keep admitting the token
     here until the next refresh. The written row is the newest for its key,
     so here it replaces any earlier state of that key (a refresh lays it back
-    only to tighten, for `_RECENT_S`). `loaded()` is left as it
-    is: one known row is not a snapshot."""
+    for `_RECENT_S`, unless it reads a newer row). `version` is the row's; one
+    written elsewhere (an owed one) counts as written now. `loaded()` is left
+    as it is: one known row is not a snapshot."""
     global _revoked_jtis, _revoked_before
     before = {k: v for k, v in _revoked_before.items() if k != key}
     if cutoff is None:
@@ -357,12 +367,12 @@ def _apply_locally(key: str, cutoff: int | None) -> None:
         _revoked_jtis = _revoked_jtis - {key}
         before[key] = cutoff
     _revoked_before = before
-    _remember("revoke", key, cutoff)
+    _remember("revoke", key, cutoff, version or time.time_ns())
 
 
-def _remember(kind: str, key: str, cutoff: int | None) -> None:
+def _remember(kind: str, key: str, cutoff: int | None, version: int) -> None:
     _forget_old()
-    _recent.append((kind, key, cutoff, time.monotonic()))
+    _recent.append((kind, key, cutoff, time.monotonic(), version))
 
 
 def _forget_old() -> None:
