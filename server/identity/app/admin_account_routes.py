@@ -42,8 +42,8 @@ class AdoptInput(BaseModel):
 async def sso_adopt(input: AdoptInput, info: Admin) -> dict[str, Any]:
     """The password accounts at a domain and why any is skipped; with `apply`,
     links the rest (see `loom sso adopt`)."""
-    plan = await account_admin.adopt_plan(input.domain, input.org, input.skip)
     try:
+        plan = await account_admin.adopt_plan(input.domain, input.org, input.skip)
         linked = (
             await account_admin.adopt(plan, by=_by(info), keep_tokens=input.keep_tokens)
             if input.apply

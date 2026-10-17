@@ -20,7 +20,7 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
     seen: list[tuple[str, Any]] = []
 
     async def adopt_plan(domain: str, org: str = "", skip: Any = ()) -> list[dict[str, Any]]:
-        seen.append(("plan", domain))
+        seen.append(("plan", (domain, list(skip))))
         return [{"email": "lee@acme.io", "skip": ""}]
 
     async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> int:
@@ -113,9 +113,10 @@ def test_every_route_runs_the_shared_action(calls) -> None:
 
 
 def test_a_dry_run_adopt_writes_nothing(calls) -> None:
-    out = _client().post("/v1/admin/sso.adopt", json={"domain": "acme.io"}).json()
+    body = {"domain": "acme.io", "skip": ["ci-bot@acme.io"]}
+    out = _client().post("/v1/admin/sso.adopt", json=body).json()
     assert out["applied"] is False and out["linked"] == 0
-    assert [name for name, _ in calls] == ["plan"]
+    assert calls == [("plan", ("acme.io", ["ci-bot@acme.io"]))]
 
 
 def test_a_bot_without_a_key_or_trust_is_refused(calls) -> None:

@@ -445,4 +445,9 @@ def test_an_operator_can_leave_a_bots_account_out_of_adoption(monkeypatch) -> No
     monkeypatch.setattr(account_admin.sso_links, "unlinked_in_domain", unlinked)
     monkeypatch.setattr(account_admin.sso_links, "reached_by_sso", on_sso)
     plan = asyncio.run(account_admin.adopt_plan("acme.io", skip=["ci-bot@acme.io"]))
-    assert {a["namespace"]: a["skip"] for a in plan} == {"lee": "", "ci-bot": "left out (--skip)"}
+    assert {a["namespace"]: a["skip"] for a in plan} == {
+        "lee": "",
+        "ci-bot": "left out by the operator",
+    }
+    with pytest.raises(ValueError, match="ci-bot@acme.co"):  # mistyped: the bot would be in
+        asyncio.run(account_admin.adopt_plan("acme.io", skip=["ci-bot@acme.co"]))

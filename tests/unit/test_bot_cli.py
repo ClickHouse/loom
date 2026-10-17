@@ -10,8 +10,9 @@ from typing import Any
 
 import pytest
 
+from server.auth.grant_claims import NotClaimed
 from server.cli import bots
-from server.core.errors import GrantBusyError
+from server.core.errors import BackendUnavailableError, GrantBusyError
 from server.identity.app import account_admin
 
 
@@ -43,6 +44,8 @@ def _offline(monkeypatch) -> None:
     [
         (ValueError("bot exists"), False),
         (GrantBusyError("a namespace is changing"), False),  # its claim not had: nothing saved
+        (NotClaimed("a namespace is changing", operation="grant_change"), False),
+        (BackendUnavailableError("timeout", operation="grant_change"), True),  # maybe saved
         (RuntimeError("CH away"), True),
     ],
 )
@@ -53,7 +56,7 @@ def test_the_key_goes_only_with_a_refused_bot(monkeypatch, tmp_path, error, kept
     monkeypatch.setattr(account_admin, "create_bot", create_bot)
     key = tmp_path / "bot.pem"
     if kept:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(type(error)):
             bots._cmd_create(_args(key))
     else:
         assert bots._cmd_create(_args(key)) == 2

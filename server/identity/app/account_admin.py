@@ -64,6 +64,12 @@ async def adopt_plan(domain: str, org: str = "", skip: Iterable[str] = ()) -> li
     by_email: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         by_email.setdefault(r["contact_email"], []).append(r)
+    unmatched = left_out - {e.lower() for e in by_email}
+    if unmatched:
+        # A mistyped bot's email would leave the bot in, and adopting it revokes its tokens.
+        raise ValueError(
+            f"no unlinked account at {domain} has email {', '.join(sorted(unmatched))}"
+        )
     on_sso = await sso_links.reached_by_sso(list(by_email))
     return [
         {
@@ -72,7 +78,7 @@ async def adopt_plan(domain: str, org: str = "", skip: Iterable[str] = ()) -> li
             "namespace": r["namespace"],
             "owner": r["owner_email"],
             "created_at": str(r["created_at"])[:10],
-            "skip": "left out (--skip)"
+            "skip": "left out by the operator"
             if email.lower() in left_out
             else _skip_reason(accounts, email in on_sso),
         }

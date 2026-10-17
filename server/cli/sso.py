@@ -62,7 +62,11 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
     from server.identity.app import account_admin
 
     async def _run(ch: Any) -> int:
-        plan = await account_admin.adopt_plan(args.domain, args.org, args.skip)
+        try:
+            plan = await account_admin.adopt_plan(args.domain, args.org, args.skip)
+        except ValueError as e:
+            print(f"  ✗ {e}", file=sys.stderr)
+            return 2
         print(f"{len(plan)} password account(s) at {args.domain} not linked to SSO:")
         if plan and not args.keep_tokens:
             print(

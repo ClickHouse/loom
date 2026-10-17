@@ -8,8 +8,10 @@ write, as a lease (`server.core.leases`) every replica sees, with or without a
 Keeper.
 
 Claims nest in one order: account claims first (several sorted by org and
-namespace), then admins or trusts, then a bot or a grant. Taken the other way
-round, two changes wait each other out and both answer 503.
+namespace); then a subject's repository claim (`maintainers.repo_change`),
+the repository's admins and the namespaces' admins, or the trusts; then a
+bot or a grant. Taken the other way round, two changes wait each other out
+and both answer 503.
 """
 
 from __future__ import annotations
