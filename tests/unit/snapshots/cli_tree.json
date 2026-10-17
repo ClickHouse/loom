@@ -4800,7 +4800,7 @@
            "nargs": 0,
            "type": null,
            "required": false,
-           "help": "Write nothing; exit 1 while a value opens only with LOOM_JWT_SECRET_PREVIOUS",
+           "help": "Write nothing; exit 1 while a value, or a sign-in in flight, opens only with LOOM_JWT_SECRET_PREVIOUS",
            "metavar": null
           }
          ]
