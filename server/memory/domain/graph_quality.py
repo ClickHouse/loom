@@ -412,18 +412,23 @@ def _marks_kept(run: re.Match[str]) -> str:
 _DOTTED_I_RE = re.compile("i\u0307+")
 
 
-def _normalise(lowered: str) -> str:
-    # One spelling for one name: a letter typed composed or as a letter and its mark
-    # ("ü", "u" + "¨"), and compatibility forms ("ＴＯＫＹＯ", the ligature "ﬁ").
+def fold_case(text: str) -> str:
+    """One spelling for one name, the fold every comparison with an entity uses: a
+    letter typed composed or as a letter and its mark ("ü", "u" + "¨"), compatibility
+    forms ("ＴＯＫＹＯ", the ligature "ﬁ"), lower case, and the "i" a user types for
+    "İstanbul". Idempotent."""
     # NFKC can turn a lower-case form into an upper-case letter ("ℌ" is "H").
+    text = unicodedata.normalize("NFKC", text or "").lower()
+    # "İ".lower() is "i" and a dot above: keep the "i". NFC again, so a mark after
+    # the dot joins the "i" ("í"), and a mark lowering left apart joins its letter.
+    return unicodedata.normalize("NFC", _DOTTED_I_RE.sub("i", text))
+
+
+def _normalise(lowered: str) -> str:
+    # The possessive goes after lower() ("'S" is "'s" only then) and before the
+    # fold's NFC: a mark after it ("x's" + "¨") then joins the letter before it.
     text = unicodedata.normalize("NFKC", lowered).lower()
-    # The possessive goes after lower() ("'S" is "'s" only then) and before the NFC
-    # below: a mark after it ("x's" + "¨") then joins the letter before it.
-    text = text.replace("'s", "").replace("’s", "")
-    # "İ".lower() is "i" and a dot above: keep the "i" a user types for "istanbul".
-    # NFC again, so a mark after the dot joins the "i" ("í"), and a mark lowering
-    # left apart joins its letter.
-    text = unicodedata.normalize("NFC", _DOTTED_I_RE.sub("i", text))
+    text = fold_case(text.replace("'s", "").replace("’s", ""))
     text = _PUNCT_RE.sub(_marks_kept, text)
     text = _settle(_lead(_SPACE_RE.sub(" ", text)))
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text

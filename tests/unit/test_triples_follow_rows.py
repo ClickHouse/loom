@@ -19,6 +19,31 @@ def test_entity_in_tolerates_backfill_stems() -> None:
     assert not tfr.entity_in("anything", "")
 
 
+@pytest.mark.parametrize(
+    ("text", "written"),
+    [("The office is in İstanbul.", "İstanbul"), ("The client is ＡＣＭＥ Corp.", "ＡＣＭＥ")],
+)
+def test_a_row_names_an_entity_as_the_graph_stores_it(text: str, written: str) -> None:
+    from server.memory.domain.graph_quality import canonical_entity_text
+
+    stored = canonical_entity_text(written)
+    assert stored in ("istanbul", "acme")
+    assert tfr.entity_in(text, stored)
+
+
+def test_a_retired_row_about_istanbul_closes_its_fact() -> None:
+    open_triples = [{"subject": "office", "relation": "located_in", "object": "istanbul"}]
+    pairs = [
+        tfr.RowSupersession(
+            "The office is located in İstanbul.",
+            "The office is located in Ankara.",
+            winner_key="office",
+        )
+    ]
+    plan = tfr.plan_follow(open_triples, pairs)
+    assert plan.closes == [("office", "located_in", "istanbul")]
+
+
 def test_substituted_spans_finds_the_one_differing_span() -> None:
     assert tfr.substituted_spans(
         "The chairperson of Fatah is Mahmoud Abbas.", "The chairperson of Fatah is Moshe Kahlon."

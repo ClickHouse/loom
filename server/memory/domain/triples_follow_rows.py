@@ -36,6 +36,7 @@ from typing import Any, NamedTuple
 from server.memory.domain.graph_quality import (
     SELF_SUBJECT,
     canonical_edge_pair,
+    fold_case,
     is_single_valued_relation,
 )
 from server.memory.domain.triple_provenance import FACET
@@ -103,7 +104,7 @@ def split_words(text: str, *, dots: bool = False) -> list[str]:
 
 
 def _tokens(text: str) -> list[str]:
-    return _without_lead_in(split_words((text or "").casefold()))
+    return _without_lead_in(split_words(fold_case(text)))
 
 
 def _without_lead_in(toks: list[str]) -> list[str]:
@@ -350,13 +351,13 @@ class _Sentence(NamedTuple):
 
 def _words_and_signs(text: str) -> list[str]:
     # An added "❌" or quote is an addition too.
-    return _scan((text or "").casefold(), signs=True)
+    return _scan(fold_case(text), signs=True)
 
 
 def _protect_names(text: str, triple: Triple) -> str:
     """`text` with the commas and dots inside the triple's subject and object blanked,
     so "Austin, Texas" and "St. Louis" are never split. Words match as in `_mentions`."""
-    text = (text or "").casefold()
+    text = fold_case(text)
     for name in (triple[0], triple[2]):
         words = _words_and_signs(name)
         if len(words) < 2:
