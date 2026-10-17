@@ -200,3 +200,19 @@ async def test_a_repeat_keeps_the_expiry_of_the_batch_row_it_repeats(monkeypatch
     ):
         state = await _build(monkeypatch, stored, *entries)
         assert to_naive_utc(state.memory_rows[-1]["expires_at"]) == to_naive_utc(want)
+
+
+async def test_a_relabelling_repeat_still_reinforces_the_row(monkeypatch) -> None:
+    # memory.set counts the same bytes as a restatement even when the write changes a
+    # label: the row lands and is reinforced once.
+    from server.memory.app.bulk_rows import settle_batch_rows
+
+    value = "Alice lives in Berlin"
+    for entry in (
+        {"memory_key": "k", "value": value, "sensitivity": "medium"},
+        {"memory_key": "k", "value": value, "pinned": True},
+    ):
+        state = await _build(monkeypatch, _stored(value), entry)
+        replay = settle_batch_rows(state, {})
+        assert replay.drop == set() and len(replay.landed) == 1
+        assert state.restated_ids == [STORED_ID]

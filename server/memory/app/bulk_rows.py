@@ -517,6 +517,9 @@ def settle_batch_rows(state: _BulkWriteState, verdicts: dict[int, Any]) -> _Repl
         elif getattr(v, "verdict", "") in NOT_LANDING and id(row) not in replay.stale:
             replay.outcome[id(row)] = "verdict"
         else:
+            # The same bytes with a new label: still a restatement, as on memory.set.
+            if same_bytes:
+                _note_restatement(state, str(row["memory_id"]))
             replay.land(row)
     return replay
 
