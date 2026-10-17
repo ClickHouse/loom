@@ -765,11 +765,51 @@ def test_the_resolver_client_never_falls_back_to_another_model(monkeypatch) -> N
 # --- the switch and the write-time mark --------------------------------------------------------
 
 
-def test_unset_the_resolver_follows_the_llm_provider() -> None:
+def test_unset_the_resolver_follows_its_models_provider_and_key(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fake = Settings(_env_file=None, llm_provider="fake", conflict_resolver_model="fake-judge")
+    assert fake.memory_conflict_resolver_enabled is False
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    # A stack pinned to the fake provider stays free, whatever keys the shell holds.
     assert Settings(_env_file=None, llm_provider="fake").memory_conflict_resolver_enabled is False
+    monkeypatch.delenv("OPENAI_API_KEY")
+    # gpt-6.1-sol without OPENAI_API_KEY would be judged by the fake stand-in: off.
+    assert Settings(_env_file=None, llm_provider="openai").memory_conflict_resolver_enabled is False
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
     assert Settings(_env_file=None, llm_provider="openai").memory_conflict_resolver_enabled is True
+    # The resolver's own model decides, not the default provider.
+    claude = Settings(_env_file=None, llm_provider="openai", conflict_resolver_model="claude-x")
+    assert claude.memory_conflict_resolver_enabled is False
     off = Settings(_env_file=None, llm_provider="openai", memory_conflict_resolver_enabled=False)
     assert off.memory_conflict_resolver_enabled is False
+
+
+def test_a_resolver_off_for_a_missing_key_warns_once_at_boot(monkeypatch, caplog) -> None:
+    import server.llm.client as llm_client
+    import server.settings as settings_mod
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(settings_mod, "settings", Settings(_env_file=None, llm_provider="openai"))
+    with caplog.at_level("WARNING"):
+        llm_client.log_conflict_resolver_resolution()
+    assert [r.message for r in caplog.records if "conflict resolver off" in r.message]
+    caplog.clear()
+    monkeypatch.setattr(settings_mod, "settings", Settings(_env_file=None, llm_provider="fake"))
+    with caplog.at_level("WARNING"):
+        llm_client.log_conflict_resolver_resolution()
+    assert caplog.records == [], "off because the provider is fake: nothing to say"
+
+
+async def test_the_judge_refuses_the_fake_stand_in_for_a_missing_key(monkeypatch) -> None:
+    import server.llm.client as llm_client
+    from server.llm.fake import FakeLLMClient
+
+    monkeypatch.setattr(
+        llm_client, "get_llm_client_without_fallback", lambda m, **kw: FakeLLMClient(model=m)
+    )
+    with pytest.raises(resolver.ModelUnavailable):
+        await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
     on = Settings(_env_file=None, llm_provider="fake", memory_conflict_resolver_enabled=True)
     assert on.memory_conflict_resolver_enabled is True
 

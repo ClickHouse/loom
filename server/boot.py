@@ -392,11 +392,12 @@ async def provider_report() -> None:
     embedder.
     """
     from server.embedding import embedder as _embedder_mod
-    from server.llm.client import log_llm_provider_resolution
+    from server.llm.client import log_conflict_resolver_resolution, log_llm_provider_resolution
     from server.settings import log_unknown_env_keys
 
     log_unknown_env_keys()
     log_llm_provider_resolution()
+    log_conflict_resolver_resolution()
     try:
         await _embedder_mod.probe_embedding_dim()
     except Exception as e:  # noqa: BLE001 — an unreachable embedder never fails boot

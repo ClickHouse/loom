@@ -84,6 +84,30 @@ def _key_absent(provider: str) -> bool:
     return bool(env) and not provider_key(provider)
 
 
+def log_conflict_resolver_resolution() -> None:
+    """One boot WARN when the conflict resolver resolved off only because its
+    model's key is missing: writes are then marked and never judged."""
+    import logging
+
+    from server.settings import settings
+
+    provider = settings.conflict_resolver_provider()
+    if (
+        "memory_conflict_resolver_enabled" in settings.env_fields_set()
+        or settings.memory_conflict_resolver_enabled
+        or "fake" in (provider, settings.llm_provider)
+    ):
+        return
+    logging.getLogger(__name__).warning(
+        "conflict resolver off: its model %s runs on %s and %s is not set. Set the key, "
+        "or LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=true when the key is saved in the "
+        "dashboard",
+        settings.conflict_resolver_model,
+        provider,
+        KEY_ENV_BY_PROVIDER.get(provider, "its key"),
+    )
+
+
 def provider_key_missing(provider: str) -> bool:
     """True when a keyed provider's API key is absent — the condition under
     which `_build_llm_client` silently falls back to the fake client.

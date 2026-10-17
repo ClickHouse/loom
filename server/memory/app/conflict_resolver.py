@@ -100,11 +100,15 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
     import httpx
 
     from server.llm.client import get_llm_client_without_fallback
+    from server.llm.fake import FakeLLMClient
     from server.observability.genai import llm_stage
 
     llm = get_llm_client_without_fallback(
         settings.conflict_resolver_model, reasoning_effort=REASONING_EFFORT
     )
+    if isinstance(llm, FakeLLMClient):
+        # The stand-in for a missing key: its echo is no judgement. The rows stay owed.
+        raise ModelUnavailable(f"no key for {settings.conflict_resolver_model}")
     try:
         with llm_stage("conflict_resolver"):
             res = await llm.complete(

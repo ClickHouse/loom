@@ -73,12 +73,24 @@ class Settings(
 
     @model_validator(mode="after")
     def _resolve_conflict_resolver(self) -> Settings:
-        """Unset, the conflict resolver runs wherever the resolved LLM provider is
-        real; an explicit value is never overridden."""
+        """Unset, the conflict resolver runs when the LLM provider is not `fake`, its
+        model's provider is a real one, and that provider's key is set; an explicit
+        value is never overridden."""
+        from server.core.provider_keys import provider_key
+
         if "memory_conflict_resolver_enabled" not in self.model_fields_set:
-            self.memory_conflict_resolver_enabled = self.llm_provider != "fake"
+            provider = self.conflict_resolver_provider()
+            self.memory_conflict_resolver_enabled = (
+                self.llm_provider != "fake" and provider != "fake" and bool(provider_key(provider))
+            )
             self._inferred_fields |= {"memory_conflict_resolver_enabled"}
         return self
+
+    def conflict_resolver_provider(self) -> str:
+        """The provider the conflict resolver's model runs on."""
+        from server.core.llm_provider import provider_for_model
+
+        return provider_for_model(self.conflict_resolver_model, self.llm_provider)
 
     def _mask(self, key: str, value: object) -> object:
         # Only the length, so an operator can confirm it is set: even a short

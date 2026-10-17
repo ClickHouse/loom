@@ -83,9 +83,9 @@ class MemorySettings(BaseModel):
     # The conflict resolver: a leader-only worker that judges each write marked for it
     # (a live peer of its type at cosine >= memory_conflict_resolver_min_similarity, or
     # flagged `conflicted`) against its nearest peers in one LLM call, then retires,
-    # flags or clears. Unset, it is resolved at load: on wherever the LLM provider is
-    # real, off on `fake`; true / false force it. ~$0.005 per judged write on
-    # gpt-6.1-sol.
+    # flags or clears. Unset, it is resolved at load: on when conflict_resolver_model's
+    # provider is a real one and its key is set (never on `fake`), else off; true / false
+    # force it. ~$0.005 per judged write on gpt-6.1-sol.
     memory_conflict_resolver_enabled: bool = False
     # Peers down to this cosine (same memory_type) mark a write for the resolver and
     # join the cluster it is judged in. The cosine `conflicted` flag stays at the
