@@ -88,6 +88,7 @@ async def run_pass() -> CodeScipTsDeltaResult:
         WATERMARK,
         CodeScipTsDeltaResult(),
         _run_repo,
+        gc_checkout=True,
         extras=lambda r: {"lockfile_changed": r.lockfile_changed[:5]},
     )
 

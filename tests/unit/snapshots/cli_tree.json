@@ -3305,12 +3305,12 @@
         },
         {
          "dest": "scip-delta",
-         "help": "One compiler-tier delta pass (same code as the code_scip_delta worker) for the host cron: git_head vs scip_commit per configured repo, scip-clang over the changed TUs, apply. Prints `RESULT: ...`.",
+         "help": "One compiler-tier delta pass (same code as the code_scip_delta worker), by hand: git_head vs scip_commit per configured repo, scip-clang over the changed TUs, apply. Prints `RESULT: ...`.",
          "metavar": "scip-delta"
         },
         {
          "dest": "entries",
-         "help": "One line per configured repository for the host crons: org namespace checkout lock-file (the lock path resolved).",
+         "help": "One line per configured repository, for scripts: org namespace checkout lock-file (the lock path resolved).",
          "metavar": "entries"
         },
         {
@@ -4603,7 +4603,8 @@
            "description": null,
            "dests": [
             "help",
-            "yes"
+            "yes",
+            "check"
            ]
           }
          ],
@@ -4639,6 +4640,21 @@
            "required": false,
            "help": "Replace what must match",
            "metavar": null
+          },
+          {
+           "option_strings": [
+            "--check"
+           ],
+           "dest": "check",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Write nothing; exit 2 when this env differs from the published configuration",
+           "metavar": null
           }
          ]
         }
@@ -4651,6 +4667,153 @@
          "dest": "publish",
          "help": "Publish this env's configuration as the deployment's, replacing its root secret or LOOM_EMBEDDING_MODEL/DIM on purpose.",
          "metavar": "publish"
+        }
+       ]
+      }
+     ]
+    },
+    "secrets": {
+     "prog": "loom secrets",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "secrets_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "secrets_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "reseal": {
+         "prog": "loom secrets reseal",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.secrets:_cmd_reseal"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "dry_run",
+            "check"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Count, write nothing",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--check"
+           ],
+           "dest": "check",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Write nothing; exit 1 while a value opens only with LOOM_JWT_SECRET_PREVIOUS",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "reseal": "loom secrets reseal"
+       },
+       "choices_help": [
+        {
+         "dest": "reseal",
+         "help": "Seal again under LOOM_JWT_SECRET what only LOOM_JWT_SECRET_PREVIOUS opens.",
+         "metavar": "reseal"
         }
        ]
       }
@@ -11283,6 +11446,7 @@
     "ch-setup": "loom ch-setup",
     "participant": "loom participant",
     "deployment": "loom deployment",
+    "secrets": "loom secrets",
     "signing-key": "loom signing-key",
     "blobs": "loom blobs",
     "provider-lock": "loom provider-lock",
@@ -11373,6 +11537,11 @@
      "dest": "deployment",
      "help": "The configuration every replica checks itself against.",
      "metavar": "deployment"
+    },
+    {
+     "dest": "secrets",
+     "help": "Credentials and signing keys stored sealed in ClickHouse.",
+     "metavar": "secrets"
     },
     {
      "dest": "signing-key",

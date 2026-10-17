@@ -301,6 +301,10 @@ Raised in `server/memory/app/bulk_rows.py`, `server/memory/app/update.py`, `serv
 
 HTTP 503, raised as `server.core.errors.CodedWidthMismatchError`. 503 — a vector in the write is not the width its `Quantized` column was created at, so ClickHouse would refuse the insert.
 
+#### `CONFIG_DRIFT`
+
+Raised in `server/transport/model_maintenance.py`.
+
 #### `CONFIRM_CANONICAL_KEY_MISMATCH`
 
 Raised in `server/memory/app/dedup.py`.

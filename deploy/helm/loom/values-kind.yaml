@@ -1,0 +1,40 @@
+# A local cluster (kind, k3d, minikube): ClickHouse inside the release, the
+# fake embedder, small pods. Not for production.
+#   helm install loom deploy/helm/loom -f deploy/helm/loom/values-kind.yaml \
+#     --set secrets.jwtSecret=$(openssl rand -hex 32)
+
+publicBaseUrl: http://localhost:7777
+
+devClickhouse:
+  enabled: true
+
+embedding:
+  model: fake-ngram-3072
+  dim: 3072
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+webWorkers: "1"
+
+cache:
+  sizeLimit: 4Gi
+
+# kind runs on the host's architecture; the C++ tier skips where scip-clang is absent.
+nodeSelector:
+  kubernetes.io/arch: null
+
+workers:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  scipClangJobs: 1

@@ -51,6 +51,9 @@ export LOOM_WEB_WORKERS
 # workers and the code ops spawn git all day. LOOM_GRACEFUL_SHUTDOWN_S bounds
 # the wait for in-flight requests on SIGTERM, so one slow request cannot hold
 # the container until docker's SIGKILL skips the lifespan drains.
+# LOOM_KEEP_ALIVE_S is how long an idle connection stays open; behind a load
+# balancer that reuses connections it must outlast the balancer's idle timeout,
+# or a request lands on a socket uvicorn just closed (a 502).
 # LOOM_TRUSTED_PROXIES names the peers whose X-Forwarded-For/Proto uvicorn
 # applies. LOOM_LISTEN_HOST is the address to bind: loopback by default, every
 # interface in the image.
@@ -59,4 +62,5 @@ export LOOM_WEB_WORKERS
 exec uvicorn server.main:app --host "${LOOM_LISTEN_HOST:-127.0.0.1}" --port "${PORT:-7777}" \
   --workers "$LOOM_WEB_WORKERS" --loop "${LOOM_UVICORN_LOOP:-asyncio}" \
   --timeout-graceful-shutdown "${LOOM_GRACEFUL_SHUTDOWN_S:-10}" \
+  --timeout-keep-alive "${LOOM_KEEP_ALIVE_S:-5}" \
   --proxy-headers --forwarded-allow-ips="${LOOM_TRUSTED_PROXIES:-127.0.0.1}"

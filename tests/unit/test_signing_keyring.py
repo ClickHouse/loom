@@ -687,3 +687,27 @@ def test_a_retired_key_stays_retired_in_any_pem_layout_of_the_gateway_map(
     token = pyjwt.encode(claims, old_pem, algorithm="RS256", headers={"kid": "default"})
     with pytest.raises(TokenError):
         verify_token(token)
+
+
+def test_the_previous_root_never_verifies_a_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LOOM_JWT_SECRET_PREVIOUS only opens sealed values: a root replaced because
+    it leaked must not keep minting accepted tokens."""
+    monkeypatch.setattr(settings, "jwt_secret_previous", "p" * 40)
+    assert keyring.verification_keys("default", "HS256") == [str(settings.jwt_secret)]
+
+
+def test_a_key_resealed_under_a_new_root_keeps_verifying_here(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """During a rotation a process on the old root reads keys `loom secrets
+    reseal` sealed under the new one: the key it opened before still verifies,
+    rather than its tokens getting 401 until the process is replaced."""
+    _load([_row("k1", secret="k" * 40, at=_now())])
+    assert keyring.verification_keys("k1", "HS256") == ["k" * 40]
+    real = settings.jwt_secret
+    monkeypatch.setattr(settings, "jwt_secret", "n" * 40)
+    resealed = _row("k1", secret="k" * 40, at=_now())  # sealed under the new root
+    monkeypatch.setattr(settings, "jwt_secret", real)
+    _load([resealed])
+    assert keyring.verification_keys("k1", "HS256") == ["k" * 40]
+    assert "k1" not in keyring.status()["unsealable"]

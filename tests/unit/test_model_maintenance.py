@@ -97,3 +97,59 @@ async def test_closed_websocket_is_retryable_without_entering_handler():
     )
     app.assert_not_awaited()
     send.assert_awaited_once_with({"type": "websocket.close", "code": 1013})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/v1/memory.set"),
+        ("POST", "/mcp"),
+        ("POST", "/v1/auth/login"),
+        ("POST", "/oauth/token"),
+        ("GET", "/v1/admin/models"),
+    ],
+)
+async def test_drifted_process_refuses_and_closes_without_running_handler(
+    monkeypatch, method, path
+):
+    from server.core import deployment_config
+
+    monkeypatch.setitem(deployment_config.STATE, "drift", ["LOOM_EMBEDDING_MODEL differs"])
+    app, send = AsyncMock(), AsyncMock()
+    await ModelMaintenanceMiddleware(app, ModelWorkGate())(
+        {"type": "http", "method": method, "path": path}, AsyncMock(), send
+    )
+    app.assert_not_awaited()
+    response = send.await_args_list[0].args[0]
+    assert response["status"] == 503
+    assert (b"connection", b"close") in response["headers"]
+    assert b"CONFIG_DRIFT" in send.await_args_list[1].args[0]["body"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,path",
+    [("GET", "/v1/health"), ("GET", "/v1/health/ready"), ("GET", "/"), ("GET", "/assets/a.js")],
+)
+async def test_drifted_process_still_answers_probes_and_pages(monkeypatch, method, path):
+    from server.core import deployment_config
+
+    monkeypatch.setitem(deployment_config.STATE, "drift", ["LOOM_EMBEDDING_MODEL differs"])
+    app = AsyncMock()
+    await ModelMaintenanceMiddleware(app, ModelWorkGate())(
+        {"type": "http", "method": method, "path": path}, AsyncMock(), AsyncMock()
+    )
+    app.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agreeing_process_is_not_refused(monkeypatch):
+    from server.core import deployment_config
+
+    monkeypatch.setitem(deployment_config.STATE, "drift", [])
+    app = AsyncMock()
+    await ModelMaintenanceMiddleware(app, ModelWorkGate())(
+        {"type": "http", "method": "POST", "path": "/v1/memory.set"}, AsyncMock(), AsyncMock()
+    )
+    app.assert_awaited_once()

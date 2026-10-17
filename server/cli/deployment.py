@@ -27,6 +27,12 @@ def _cmd_publish(args: argparse.Namespace) -> int:
         changes = deployment_config.compare(settings, stored) if stored else []
         for change in changes:
             print(f"  • {change}")
+        if args.check:
+            if changes:
+                print("✗ this env differs from the published configuration", file=sys.stderr)
+                return 2
+            print("✓ this env matches the published configuration")
+            return 0
         if changes and not args.yes:
             print(
                 "✗ the replicas that run the published configuration stop being ready "
@@ -58,4 +64,9 @@ def register_deployment_cli(sub: Any) -> None:
         "secret or LOOM_EMBEDDING_MODEL/DIM on purpose.",
     )
     pub.add_argument("--yes", action="store_true", help="Replace what must match")
+    pub.add_argument(
+        "--check",
+        action="store_true",
+        help="Write nothing; exit 2 when this env differs from the published configuration",
+    )
     pub.set_defaults(func=_cmd_publish)

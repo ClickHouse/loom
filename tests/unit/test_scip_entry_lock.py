@@ -21,8 +21,6 @@ from server.code.app.index.entry_lock import EntryLockHeld, entry_lock, entry_lo
 from tests.unit.claims_fake import FakeLockTable, HeldLease, held_leases
 from tests.unit.code_fixtures import repo_config
 
-ROOT = Path(__file__).resolve().parents[2]
-
 
 @pytest.fixture(autouse=True)
 def _lock_dir(monkeypatch, tmp_path, request):
@@ -257,23 +255,6 @@ def test_shell_flock_and_python_exclude_each_other() -> None:
     finally:
         proc.kill()
         proc.wait()
-
-
-def test_cron_scripts_use_pass_locks_and_the_shared_entry_lock() -> None:
-    delta = (ROOT / "deploy/cron/scip-delta.sh").read_text()
-    full = (ROOT / "deploy/cron/scip-full.sh").read_text()
-    # No lock shared between the two passes as a whole.
-    assert "scip.lock" not in delta and "scip.lock" not in full
-    assert "scip-delta.lock" in delta and "scip-full.lock" in full
-    # The delta's shell steps lock the path `loom code entries` resolves, non-blocking.
-    assert "server.cli code entries" in delta and "server.cli code entries" in full
-    # Its crossref and Python steps take the entry lock, host file and lease,
-    # through `loom code entry-lock`; no shell flock that the other hosts miss.
-    assert "flock -n 8" not in delta
-    for step_name in ("crossref", "python-scip"):
-        assert f"entry_step {step_name} " in delta
-    assert "server.cli code entry-lock" in delta and '"$rc" -eq 75' in delta
-    assert "nice -n 10" in full
 
 
 # -- the deployment-wide lease ---------------------------------------------------

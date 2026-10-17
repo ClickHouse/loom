@@ -76,6 +76,18 @@ def test_a_beat_writes_this_process_row_with_its_fingerprints() -> None:
     assert row["serving"] == 1 and row["schema_version"] == instances.schema_version() > 0
 
 
+@pytest.mark.parametrize("why", ["draining", "drifted"])
+def test_a_draining_or_drifted_process_takes_no_rate_limit_share(
+    monkeypatch: pytest.MonkeyPatch, why: str
+) -> None:
+    """It answers no traffic, so the live replicas' shares leave it out."""
+    if why == "draining":
+        monkeypatch.setattr("server.core.readiness.draining", lambda: True)
+    else:
+        monkeypatch.setattr(dc, "drift", lambda: ["LOOM_EMBEDDING_MODEL differs"])
+    assert instances.row(stopped=False)["serving"] == 0
+
+
 def test_a_stopped_process_stops_counting() -> None:
     ch = _Ch()
     asyncio.run(instances.tick(ch, leader=False))

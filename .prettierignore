@@ -14,6 +14,7 @@ var/
 # recursively is both unsafe and breaks on valid Helm templates.
 .claude/worktrees/
 .codex/worktrees/
+deploy/helm/*/templates/
 # Test fixtures are inputs whose exact bytes tests assert on.
 tests/fixtures/
 tests/analyzer/

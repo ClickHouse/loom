@@ -705,6 +705,60 @@ async def test_pull_claims_once_and_owner_writes_need_the_fence(fake: FakeRepo) 
 
 
 @pytest.mark.asyncio
+async def test_a_draining_process_ends_a_long_pull(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stopping pod answers its long polls at once, inside the shutdown
+    window, instead of holding them until uvicorn cancels them."""
+    import time
+
+    await _register(fake)
+    monkeypatch.setattr("server.core.readiness.draining", lambda: True)
+    started = time.monotonic()
+    out = await transitions.handle_task_pull(
+        wire.TaskPullInput(**_caller("private", "bot-a"), inbox="private-bot", wait_seconds=30)
+    )
+    assert out.tasks == [] and time.monotonic() - started < 1
+
+
+@pytest.mark.asyncio
+async def test_a_pull_cancelled_after_its_claim_puts_the_task_back(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The claim won before the cancel is returned, so the task is not leased
+    to a caller that never got the answer."""
+    import asyncio
+
+    await _register(fake)
+    t = (await _post(fake, **_caller("private", "private-bot"), from_subject="")).task
+    claim_one = transitions._claim_one
+    won = asyncio.Event()
+
+    async def slow_claim(*args: Any, **kwargs: Any) -> Any:
+        got = await claim_one(*args, **kwargs)
+        won.set()
+        await asyncio.sleep(0.05)
+        return got
+
+    monkeypatch.setattr(transitions, "_claim_one", slow_claim)
+    pull = asyncio.ensure_future(
+        transitions.handle_task_pull(
+            wire.TaskPullInput(**_caller("private", "bot-a"), inbox="private-bot")
+        )
+    )
+    await won.wait()
+    pull.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pull
+    assert [e["event"] for e in fake.events][-2:] == ["claimed", "claim_returned"]
+    monkeypatch.setattr(transitions, "_claim_one", claim_one)
+    again = await transitions.handle_task_pull(
+        wire.TaskPullInput(**_caller("private", "bot-b"), inbox="private-bot")
+    )
+    assert [x.task_id for x in again.tasks] == [t.task_id] and again.tasks[0].owner == "bot-b"
+
+
+@pytest.mark.asyncio
 async def test_defer_block_unblock_wont_do_reopen_carry_reasons(fake: FakeRepo) -> None:
     await _register(fake)
     t = (await _post(fake, **_caller("private", "private-bot"), from_subject="")).task
