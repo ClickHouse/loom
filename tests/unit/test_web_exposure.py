@@ -367,7 +367,9 @@ def test_the_e2e_spec_serves_the_dashboard_csp_the_server_sends() -> None:
 # ---- `loom serve` ----
 
 
-def _serve_args(monkeypatch: pytest.MonkeyPatch, host: str | None) -> dict[str, object]:
+def _serve_args(
+    monkeypatch: pytest.MonkeyPatch, host: str | None, reload: bool = False
+) -> dict[str, object]:
     import argparse
 
     import uvicorn
@@ -380,7 +382,7 @@ def _serve_args(monkeypatch: pytest.MonkeyPatch, host: str | None) -> dict[str, 
     monkeypatch.setattr(settings, "trusted_proxies", "127.0.0.1")
     monkeypatch.setenv("LOOM_BIND_HOST", "127.0.0.1")
     monkeypatch.setenv("LOOM_INSTANCE_LABEL", "test:serve")
-    _cmd_serve(argparse.Namespace(host=host, port=7777, log_level="info", reload=False))
+    _cmd_serve(argparse.Namespace(host=host, port=7777, log_level="info", reload=reload))
     return seen
 
 
@@ -406,6 +408,17 @@ def test_loom_serve_host_flag_reaches_the_startup_checks(monkeypatch: pytest.Mon
     seen = _serve_args(monkeypatch, "0.0.0.0")
     assert seen["host"] == "0.0.0.0"
     assert settings.bind_host == "0.0.0.0" and os.environ["LOOM_BIND_HOST"] == "0.0.0.0"
+
+
+def test_loom_serve_reload_watches_only_the_server_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.paths import REPO_ROOT
+
+    # A checkout holds Claude Code worktrees under .claude/worktrees/; watching
+    # them would restart the server on every edit there.
+    assert _serve_args(monkeypatch, None, reload=True)["reload_dirs"] == [str(REPO_ROOT / "server")]
+    assert _serve_args(monkeypatch, None)["reload_dirs"] is None
 
 
 def test_the_host_allowlist_and_the_bind_check_share_one_loopback_definition() -> None:

@@ -1,19 +1,19 @@
 # Release process
 
-Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app and the `loom-code` skill share one version `X.Y.Z`. The two coding-agent plugins share their own version, bumped whenever a hook or skill changes: installed clients pick up a hook change only through a new plugin version.
+Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app and the `loom-code` skill share one version `X.Y.Z`. The two coding-agent plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version.
 
 ## Where the version lives
 
 Bump each of these in the release commit:
 
-| Component            | Files                                                                                                                                                                                            |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Server               | `server/__init__.py` (`__version__`) and `pyproject.toml`                                                                                                                                        |
-| Python SDK           | `sdk/python/pyproject.toml` and `sdk/python/loom/_version.py`                                                                                                                                    |
-| TypeScript SDK       | `sdk/typescript/package.json`, `sdk/typescript/package-lock.json`, `sdk/typescript/src/version.ts`                                                                                               |
-| Web app              | `frontend/package.json` and `frontend/package-lock.json`                                                                                                                                         |
-| `loom-code` skill    | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md`                                                                                                           |
-| Coding-agent plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version; bump when a hook, the shared library or a skill changes) |
+| Component            | Files                                                                                                                                                                                                                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Server               | `server/__init__.py` (`__version__`) and `pyproject.toml`                                                                                                                                                                                                                            |
+| Python SDK           | `sdk/python/pyproject.toml` and `sdk/python/loom/_version.py`                                                                                                                                                                                                                        |
+| TypeScript SDK       | `sdk/typescript/package.json`, `sdk/typescript/package-lock.json`, `sdk/typescript/src/version.ts`                                                                                                                                                                                   |
+| Web app              | `frontend/package.json` and `frontend/package-lock.json`                                                                                                                                                                                                                             |
+| `loom-code` skill    | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md`                                                                                                                                                                                               |
+| Coding-agent plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version; bump on a behaviour change to any file the plugin ships: `hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) |
 
 The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo` and `loom report` report it. Three checks keep the numbers consistent:
 

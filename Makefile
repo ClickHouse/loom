@@ -98,7 +98,7 @@ server:
 	LOOM_INSTANCE_LABEL="$${LOOM_INSTANCE_LABEL:-dev:make-server:7777}" \
 	LOOM_BACKGROUND_WORKERS="$${LOOM_BACKGROUND_WORKERS:-on}" \
 	LOOM_BIND_HOST="$${LOOM_BIND_HOST:-127.0.0.1}" \
-		uvicorn server.main:app --host "$${LOOM_BIND_HOST:-127.0.0.1}" --port 7777 --reload \
+		uvicorn server.main:app --host "$${LOOM_BIND_HOST:-127.0.0.1}" --port 7777 --reload --reload-dir server \
 		--loop "$${LOOM_UVICORN_LOOP:-asyncio}" --forwarded-allow-ips "$${LOOM_TRUSTED_PROXIES:-127.0.0.1}" --timeout-graceful-shutdown 10
 
 # Build the React/Vite dashboard. Output lands in frontend/dist/
@@ -279,7 +279,7 @@ bench-clickgap-replay:
 # copies, the configuration and docs/reference tables, the reach manifest) must match its
 # source; regenerate with the script named in the failure.
 lint:
-	$(PYTHON) -m ruff check server sdk/python tests scripts
+	$(PYTHON) -m ruff check server sdk/python tests scripts .claude
 	$(PYTHON) scripts/gates/function_length_gate.py
 	$(PYTHON) scripts/gates/check_no_secrets.py
 	$(PYTHON) scripts/codegen/sdk_py_gen.py --check

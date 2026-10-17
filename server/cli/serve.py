@@ -12,6 +12,7 @@ from typing import Any
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
+    from server.core.paths import REPO_ROOT
     from server.settings import settings
 
     # Every process outside the compose deployment carries a
@@ -32,6 +33,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         forwarded_allow_ips=settings.trusted_proxies,
         log_level=args.log_level,
         reload=args.reload,
+        # only this package: a checkout can hold worktrees under .claude/worktrees/
+        reload_dirs=[str(REPO_ROOT / "server")] if args.reload else None,
     )
     return 0
 
