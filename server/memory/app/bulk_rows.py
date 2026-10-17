@@ -117,6 +117,9 @@ class _BulkWriteState:
     # earlier entry wrote, settled after the verdicts (which may drop that row).
     restated_ids: list[str] = field(default_factory=list)
     restatements: list[tuple[int, dict[str, Any]]] = field(default_factory=list)
+    # Indexes into `memory_rows` of the rows whose entry named no sensitivity and took the
+    # label of the value it repeats: their level is not a change (`_same_labels`).
+    inherited_level_rows: set[int] = field(default_factory=set)
     # Key -> the entry that built `batch_rows[key]`. Only an entry equal to it is a
     # restatement: one that changes a label (sensitivity, pin, tags, dates) builds its own row.
     batch_entries: dict[str, Any] = field(default_factory=dict)
@@ -309,16 +312,32 @@ def _bulk_skip_gate(
 
 def _same_labels_as_stored(state: _BulkWriteState, entry: Any) -> bool:
     """Whether an entry repeating the stored value also keeps its sensitivity and adds no
-    pin. memory.set writes a new version when either changes, so a bulk must too."""
+    pin. memory.set writes a new version when either changes, so a bulk must too. Only a
+    level the entry names counts: an extracted fact names none, and keeps the stored one."""
     live = state.existing_rows.get(entry.memory_key)
     stored_level = str(getattr(live, "sensitivity", "") or "")
-    level = resolve_sensitivity(
-        getattr(entry, "sensitivity", ""), json.dumps(getattr(entry, "value", None))
-    )
+    named_level = str(getattr(entry, "sensitivity", "") or "")
     adds_pin = bool(getattr(entry, "pinned", False)) and not state.existing_pinned.get(
         entry.memory_key
     )
-    return level == stored_level and not adds_pin
+    return named_level in ("", stored_level) and not adds_pin
+
+
+def _repeated_level(state: _BulkWriteState, entry: Any, entry_sha: str) -> str | None:
+    """The label of the value an entry repeats when it names no level of its own: the
+    batch's latest row for its key, else the stored row. None when it names a level or
+    writes a new value."""
+    if getattr(entry, "sensitivity", ""):
+        return None
+    batch_row = state.batch_rows.get(entry.memory_key)
+    if batch_row is not None:
+        if batch_row["content_sha256"] != entry_sha:
+            return None
+        return str(batch_row.get("sensitivity") or "")
+    if state.existing_sha.get(entry.memory_key) != entry_sha:
+        return None
+    live = state.existing_rows.get(entry.memory_key)
+    return str(getattr(live, "sensitivity", "") or "")
 
 
 def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: str) -> None:
@@ -433,7 +452,7 @@ def settle_batch_rows(state: _BulkWriteState, verdicts: dict[int, Any]) -> _Repl
         same_bytes = replay.sha.get(key) == row["content_sha256"]
         if same_bytes and replay.pinned.get(key):
             row["pinned"] = 1  # the same bytes keep the pin, as on memory.set
-        unchanged = same_bytes and _same_labels(replay, row)
+        unchanged = same_bytes and _same_labels(replay, row, idx in state.inherited_level_rows)
         refused = replay.pinned.get(key) and not same_bytes and not row["pinned"]
         if unchanged or refused:
             replay.outcome[id(row)] = "unchanged" if unchanged else PINNED
@@ -446,13 +465,13 @@ def settle_batch_rows(state: _BulkWriteState, verdicts: dict[int, Any]) -> _Repl
     return replay
 
 
-def _same_labels(replay: _Replay, row: dict[str, Any]) -> bool:
-    """Whether `row` keeps the sensitivity and pin its key holds now."""
+def _same_labels(replay: _Replay, row: dict[str, Any], inherited_level: bool) -> bool:
+    """Whether `row` keeps the sensitivity and pin its key holds now. A level the row's
+    entry did not name (`inherited_level`) is never a change."""
     key = str(row["memory_key"])
     level = str(row.get("sensitivity") or "")
-    return level == replay.sensitivity.get(key, "") and bool(row["pinned"]) == bool(
-        replay.pinned.get(key)
-    )
+    same_level = inherited_level or level == replay.sensitivity.get(key, "")
+    return same_level and bool(row["pinned"]) == bool(replay.pinned.get(key))
 
 
 def _replay_restatement(
@@ -624,9 +643,14 @@ async def _bulk_build_rows(
             else None
         )
         serialized_value = json.dumps(entry.value)
-        # Sensitivity tier: caller's level or detected from
+        # Sensitivity tier: caller's level, the repeated value's, or detected from
         # the value; rides the row, its `sensitivity:` tag and the embed gate.
-        entry_sensitivity = resolve_sensitivity(getattr(entry, "sensitivity", ""), serialized_value)
+        repeated_level = _repeated_level(state, entry, entry_sha)
+        entry_sensitivity = (
+            repeated_level
+            if repeated_level is not None
+            else resolve_sensitivity(getattr(entry, "sensitivity", ""), serialized_value)
+        )
         # Sensitive retention window, same rule as memory.set.
         from server.settings import settings as _sr_settings
 
@@ -763,6 +787,8 @@ async def _bulk_build_rows(
         }
         memory_row = _full_version_row(state, memory_row, now_utc.replace(tzinfo=None))
         _keep_row(state, memory_row, original_entry)
+        if repeated_level is not None:
+            state.inherited_level_rows.add(len(state.memory_rows) - 1)
         # created vs updated, decided per row rather than labelling the whole batch
         # "created". Only byte-identical restatements are diverted by the skip-gate above; an
         # entry whose key already exists with DIFFERENT content is inserted as a new version,

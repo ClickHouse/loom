@@ -32,6 +32,9 @@ def _stored(value: str = "Alice lives in Berlin", **cols: Any) -> MemoryRow:
         "value": value,
         "content_sha256": sha256_value(value),
         "version": 1,
+        "confidence": 1.0,
+        "pinned": False,
+        "expires_at": None,
         "created_at": (NOW - timedelta(days=3)).replace(tzinfo=None),
     }
     return MemoryRow(**{**base, **cols})
@@ -79,3 +82,55 @@ async def test_the_embedding_row_carries_the_rows_label_tags(monkeypatch) -> Non
     (row,), (emb,) = state.memory_rows, state.embedding_rows
     assert "sensitivity:medium" in row["tags"]
     assert emb["tags"] == row["tags"]
+
+
+async def test_a_plain_repeat_of_a_high_row_keeps_it_high_and_unembedded(monkeypatch) -> None:
+    # set_from_messages names no sensitivity: re-extracting a stored 'high' fact must not
+    # write it again unlabelled, with a live vector.
+    value = "Alice lives in Berlin"
+    state = await _build(
+        monkeypatch, _stored(value, sensitivity="high"), {"memory_key": "k", "value": value}
+    )
+    assert state.memory_rows == [] and state.embedding_rows == []
+    assert state.skipped_unchanged == 1
+
+
+async def test_a_repeat_that_names_no_level_inherits_the_label_it_repeats(monkeypatch) -> None:
+    # A pin is a new label, so the row is written, but with the 'high' it repeats: the
+    # stored row's, or an earlier entry's.
+    value = "Alice lives in Berlin"
+    pin = {"memory_key": "k", "value": value, "pinned": True}
+    for stored, entries in (
+        (_stored(value, sensitivity="high"), [pin]),
+        (None, [{"memory_key": "k", "value": value, "sensitivity": "high"}, pin]),
+    ):
+        state = await _build(monkeypatch, stored, *entries)
+        row = state.memory_rows[-1]
+        assert row["pinned"] == 1 and row["sensitivity"] == "high"
+        assert "sensitivity:high" in row["tags"]
+        assert state.embedding_rows == []
+
+
+async def test_a_level_the_entry_names_wins(monkeypatch) -> None:
+    value = "Alice lives in Berlin"
+    entry = {"memory_key": "k", "value": value, "sensitivity": "low"}
+    state = await _build(monkeypatch, _stored(value, sensitivity="high"), entry)
+    (row,) = state.memory_rows
+    assert row["sensitivity"] == "low"
+
+
+async def test_a_repeat_that_names_no_level_is_not_a_label_change(monkeypatch) -> None:
+    # Entry 0 relabels the stored value 'high' but merges elsewhere, so the key keeps ''.
+    # Entry 1 repeats the value naming no level: serially it is unchanged, whatever label
+    # it took from entry 0's row when it was built.
+    from server.memory.app.bulk_rows import settle_batch_rows
+
+    value = "Alice lives in Berlin"
+    state = await _build(
+        monkeypatch,
+        _stored(value),
+        {"memory_key": "k", "value": value, "sensitivity": "high"},
+        {"memory_key": "k", "value": value, "entities": ["Alice"]},
+    )
+    replay = settle_batch_rows(state, {0: NS(verdict="merge", existing_memory_id="X")})
+    assert replay.drop == {1}

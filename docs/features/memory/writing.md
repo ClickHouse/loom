@@ -272,6 +272,10 @@ Conflict and duplicate settings are in
 - **Writes are eventually consistent and not transactional across tables.** A bulk write
   is not atomic.
 - **A merge writes nothing at your key.** Read `merged_into_key`.
+- **A `memory.set` that names no `sensitivity` drops the stored label.** Re-writing a
+  `high` row without it stores the new version with only the detected level, embedded
+  unless that is `high`, so restate `sensitivity` on a re-write. A `memory.bulk_set`
+  entry that names none and repeats the stored value keeps its label.
 - **Fake providers give string-similarity verdicts.** Judge verdicts only with real
   providers.
 - **A misspelled argument is refused** (422 `UNKNOWN_ARGUMENT`); an unknown one with no

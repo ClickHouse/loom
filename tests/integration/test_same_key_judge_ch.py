@@ -4177,6 +4177,27 @@ async def test_a_restated_merge_that_lands_keeps_the_last_entrys_high_label(
     assert "alias" not in [h.memory_key for h in found.results]
 
 
+async def test_a_plain_bulk_repeat_of_a_high_row_keeps_it_high_and_unembedded(ch, org) -> None:
+    # set_from_messages names no sensitivity: a re-extracted 'high' fact stays 'high',
+    # with no live vector, and is skipped as unchanged.
+    fact = {"memory_key": "secret", "value": "Alice's door code is 4417"}
+    await _bulk_in(org, "s1", {**fact, "sensitivity": "high"})
+    out = await _bulk_in(org, "s1", fact)
+    assert [(r.version, r.conflict_verdict) for r in out.written] == [(0, "")]
+    (row,) = await ch.query_all(
+        "SELECT sensitivity FROM loom.memory FINAL WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert row["sensitivity"] == "high"
+    (count,) = await ch.query_all(
+        "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {org:String}"
+        " AND tombstoned_at IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert count["n"] == 0
+
+
 async def test_a_restated_merge_that_lands_keeps_the_last_entrys_pin(ch, org, monkeypatch) -> None:
     await _restate_after_a_rewrite(org, monkeypatch, pinned=True)
     assert (await _live_values(ch, org))[("s1", "alias")] == ("Alice lives in Berlin", 1)
