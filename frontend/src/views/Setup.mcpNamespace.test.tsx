@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, ServiceAccountEntry, WhoAmI } from "../api";
@@ -54,7 +54,8 @@ const switchTo = (namespace: string) =>
   act(() => {
     useStore.setState({ identity: { org: ORG, namespace, agent: "loom-ui" } });
   });
-const picker = () => screen.getByRole<HTMLSelectElement>("combobox", { name: /Home namespace/ });
+// Click UI's Select: the label names the trigger, which shows the picked option.
+const picker = () => screen.getByLabelText(/Home namespace/);
 const mintedNamespace = async () => {
   await userEvent.click(screen.getByRole("button", { name: /Generate token/ }));
   await waitFor(() => expect(generateMcpConfig).toHaveBeenCalledTimes(1), WAIT);
@@ -91,18 +92,27 @@ describe("Setup's MCP home namespace", () => {
 
   it("follows a namespace switch into the picker and the mint", async () => {
     render(<Setup />);
-    await waitFor(() => expect(picker().value).toBe("ns-a"), WAIT);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
     switchTo("ns-b");
-    await waitFor(() => expect(picker().value).toBe("ns-b"), WAIT);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-b ·/), WAIT);
     expect(await mintedNamespace()).toBe("ns-b");
   });
 
   it("keeps the namespace the person picked across a switch", async () => {
     render(<Setup />);
-    await screen.findByRole("option", { name: /ns-c/ }, WAIT);
-    await userEvent.selectOptions(picker(), "ns-c");
+    await userEvent.click(await screen.findByLabelText(/Home namespace/, undefined, WAIT));
+    await userEvent.click(await within(screen.getByRole("dialog")).findByText(/^ns-c/, undefined, WAIT));
     switchTo("ns-b");
-    expect(picker().value).toBe("ns-c");
+    expect(picker()).toHaveTextContent(/^ns-c ·/);
     expect(await mintedNamespace()).toBe("ns-c");
+  });
+
+  it("announces each field's hint as its description", async () => {
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    expect(picker()).toHaveAccessibleDescription(/Where this client saves memories/);
+    expect(screen.getAllByLabelText("Expires in (days)")[0]).toHaveAccessibleDescription(
+      "Blank = 90 days. 0 = never expires (needs an SSO or `loom login` session). Max 3650, less if your own sign-in expires sooner.",
+    );
   });
 });

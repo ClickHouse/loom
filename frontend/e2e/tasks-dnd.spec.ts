@@ -27,7 +27,7 @@ test("dragging a to-do card onto In progress claims it, on the board and in the 
   await row.hover();
   await page.mouse.down();
   await page.mouse.move(10, 10, { steps: 4 });
-  const target = page.getByRole("region", { name: /^In progress/ });
+  const target = page.getByRole("rowgroup", { name: /^In progress/ });
   await expect(target).toHaveAttribute("data-drop", "ok");
   await target.hover();
   await page.mouse.up();

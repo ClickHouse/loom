@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReloadBar } from "../components/ReloadBar";
 import { BUILD_FIRST_CHECK_MS, BUILD_POLL_MS } from "./buildWatch";

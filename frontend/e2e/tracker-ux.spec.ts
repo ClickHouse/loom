@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CODE_REPO, codeReposFixture, installApi, isRecord, trackerSourcesFixture } from "./fixtures";
+import { CODE_REPO, codeReposFixture, installApi, isRecord, selectTrigger, trackerSourcesFixture } from "./fixtures";
 
 // The tracker and repository-docs flows in each state, at desktop and 400 px —
 // screenshots for review (SHOT_TAG names the set), and the checks a person would make by
@@ -382,8 +382,8 @@ for (const [label, viewport] of [
       await d.getByLabel(/Read-only user/).fill("loom_ro");
       await d.getByLabel(/^Password/).fill("secret");
       await d.getByRole("button", { name: /Next: map your tables/ }).click();
-      await expect(d.getByLabel("Items: your table")).toHaveValue("tickets");
-      await expect(d.getByLabel(/Reference: number/)).toHaveValue("digits:ticket_key");
+      await expect(selectTrigger(d, "Items: your table")).toContainText("tickets");
+      await expect(selectTrigger(d, /Reference: number/)).toContainText("number in ticket_key");
       if (label === "mobile") await noSidewaysScroll(page);
       await shot(page, `${label}-8b-add-map`);
       await d.getByRole("button", { name: /^Check/ }).click();

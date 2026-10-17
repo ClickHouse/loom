@@ -188,7 +188,8 @@ test.describe("settings tabs", () => {
       for (const name of ["Tokens", "Memory"]) {
         const box = await page.getByRole("tab", { name }).boundingBox();
         expect(box, `${name} tab box`).not.toBeNull();
-        expect(box?.height, `${name} tab height`).toBeGreaterThanOrEqual(44);
+        // Layout lands on sub-pixel values (43.99998 for a 44 px minimum).
+        expect(Math.round(box?.height ?? 0), `${name} tab height`).toBeGreaterThanOrEqual(44);
       }
       await shot(page, "23-settings-phone-tokens");
       await page.getByRole("tab", { name: "Memory" }).click();

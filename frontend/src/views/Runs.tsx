@@ -1,14 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ListChecks, X as XIcon, CheckCircle2, XCircle, CircleDashed, Ban, Layers } from "lucide-react";
-import * as Dialog from "@radix-ui/react-dialog";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Alert } from "../components/ui/Alert";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Select } from "@clickhouse/click-ui/Select";
+import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { getRun, listRuns, type RunGetResponse, type RunRow, type RunStatus } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { Chip, Panel, SectionHeading } from "../components/ui";
+import { Chip, PageHeader, Panel, SectionHeading, Tip, TipTarget, useClamped } from "../components/ui";
+import { IconButton } from "../components/IconButton";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { displayAgent, humanizeError, relativeTime, truncate } from "../lib/format";
 import { PageContainer } from "../layout/PageContainer";
+import { Modal } from "../components/ui/Modal";
 
 // The nine fields a run row reads of the twenty a run carries; run.get carries the rest
 // for the opened run.
@@ -52,31 +59,50 @@ type Filter = "" | RunStatus;
 
 const RUN_FILTERS: readonly Filter[] = ["", "active", "completed", "failed", "cancelled"];
 
-const STATUS_META: Record<RunStatus, { label: string; cls: string; Icon: typeof CheckCircle2 }> = {
-  active: { label: "active", cls: "text-[var(--color-text-muted)] border-[var(--color-border)]", Icon: CircleDashed },
-  completed: { label: "completed", cls: "text-success border-success/40", Icon: CheckCircle2 },
-  failed: { label: "failed", cls: "text-danger border-danger/40", Icon: XCircle },
-  cancelled: { label: "cancelled", cls: "text-warn border-warn/40", Icon: Ban },
+// Every agent filter; "" is not a value the Select can hold.
+const ALL_AGENTS = "*";
+
+const STATUS_META: Record<RunStatus, { label: string; state: BadgeState; icon: IconName }> = {
+  active: { label: "Active", state: "neutral", icon: "sand-glass" },
+  completed: { label: "Completed", state: "success", icon: "check-in-circle" },
+  failed: { label: "Failed", state: "danger", icon: "cross" },
+  cancelled: { label: "Cancelled", state: "warning", icon: "line-in-circle" },
 };
 
-function StatusChip({ status, inferred }: { status: RunStatus; inferred?: boolean }) {
-  const meta = STATUS_META[status] || STATUS_META.active;
-  const Icon = meta.Icon;
+function StatusBadge({ status, inferred }: { status: RunStatus; inferred?: boolean }) {
   // An implicit run's "completed" only means the connection went idle, not
-  // that the task succeeded — render it muted, not green.
-  const cls = inferred && status === "completed" ? STATUS_META.active.cls : meta.cls;
-  const label = inferred && status === "completed" ? "idle-closed" : meta.label;
+  // that the task succeeded — render it neutral, not green.
+  const idleClosed = inferred && status === "completed";
+  const meta = idleClosed ? STATUS_META.active : STATUS_META[status] || STATUS_META.active;
+  if (!idleClosed) return <Badge text={meta.label} state={meta.state} size="sm" />;
   return (
-    <span
-      className={`inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full border ${cls}`}
-      title={
-        inferred && status === "completed"
-          ? "loom inferred this run from a connection; closed on idle, not by run.complete — not a reported outcome"
-          : undefined
-      }
-    >
-      <Icon size={12} /> {label}
-    </span>
+    <TipBadge
+      text="Idle-closed"
+      tip="Loom inferred this run from a connection; closed on idle, not by run.complete — not a reported outcome"
+    />
+  );
+}
+
+/** A neutral badge whose tooltip carries the detail; the wrapper takes focus so keyboard
+ *  users reach the tip. */
+function TipBadge({ text, tip }: { text: string; tip: string }) {
+  return (
+    <TipTarget tip={tip}>
+      <Badge text={text} state="neutral" size="sm" />
+    </TipTarget>
+  );
+}
+
+/** One replay figure: its label, an (i) with what fills it, and the value. */
+function ReplayFigure({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt className="text-xs text-text-muted flex items-center gap-0.5">
+        {label}
+        {help && <IconButton icon="info-in-circle" size="xs" label={`About ${label}`} tooltip={help} />}
+      </dt>
+      <dd className="tabular-nums m-0">{children}</dd>
+    </div>
   );
 }
 
@@ -147,19 +173,11 @@ function budgetText(detail: RunGetResponse): string {
 
 function KeyChipButtons({ keys, empty }: { keys: string[]; empty: string }) {
   const inspect = useStore((s) => s.inspect);
-  if (!keys.length) return <span className="text-xs text-[var(--color-text-subtle)]">{empty}</span>;
+  if (!keys.length) return <span className="text-xs text-text-muted">{empty}</span>;
   return (
     <div className="flex flex-wrap gap-1.5">
       {keys.map((k) => (
-        <button
-          key={k}
-          type="button"
-          onClick={() => inspect(k, { agent: "*" })}
-          title="Open this memory"
-          className="text-2xs font-mono px-2 py-0.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent)] text-[var(--color-text)]"
-        >
-          {k}
-        </button>
+        <Chip key={k} label={k} mono tip="Open this memory" onClick={() => inspect(k, { agent: "*" })} />
       ))}
     </div>
   );
@@ -200,75 +218,113 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function RunRowTr({ r, onOpen }: { r: RunRow; onOpen: (r: RunRow) => void }) {
-  const inferred = metaBool(r.metadata, "implicit");
-  const dim = hasNoMemoryActivity(r);
+// Under 769 px Click UI's Table lays each row out as a card of wrapping cells. There the
+// goal takes the whole first line and the rest pair up two to a line, left-aligned; on
+// the table, counts and durations read down a right edge.
+const CARD = "[@media(max-width:768px)]:min-w-0 [@media(max-width:768px)]:basis-1/2";
+const CARD_GOAL = "[@media(max-width:768px)]:basis-full";
+const NUMERIC = "block w-full text-right [@media(max-width:768px)]:text-left tabular-nums";
+const RUN_HEADERS = [
+  { label: "Goal" },
+  { label: "Agent", width: "160px" },
+  { label: "Status", width: "140px" },
+  { label: <span className={NUMERIC}>Relied on</span>, width: "96px" },
+  { label: <span className={NUMERIC}>Wrote</span>, width: "80px" },
+  { label: <span className={NUMERIC}>Took</span>, width: "96px" },
+  { label: "Started", width: "120px" },
+];
+
+/** The goal, as the button that opens the replay. A goal the row cuts short shows in
+ *  full in a tooltip; the button's name already reads all of it, so the tip is no
+ *  description. */
+function GoalButton({ goal, dim, onClick }: { goal: string; dim: boolean; onClick: (e: MouseEvent) => void }) {
+  const [el, setEl] = useState<HTMLButtonElement | null>(null);
+  const clamped = useClamped(el, goal);
   return (
-    <tr
-      onClick={() => onOpen(r)}
-      className={`border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)] cursor-pointer ${dim ? "opacity-55" : ""}`}
-    >
-      <td className="px-3 py-2 max-w-[48ch]">
-        <div className="truncate flex items-center gap-2" title={r.goal}>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpen(r);
-            }}
-            className="min-w-0 max-w-full truncate text-left rounded outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
-          >
-            {r.goal || <span className="text-[var(--color-text-subtle)]">(no goal)</span>}
-          </button>
-          {inferred && (
-            <span
-              className="text-2xs px-1.5 py-px rounded border border-[var(--color-border)] text-[var(--color-text-subtle)] uppercase tracking-wide"
-              title="loom inferred this run from a connection; the agent did not declare it with run.begin"
-            >
-              auto
-            </span>
-          )}
-        </div>
-        <div className="text-2xs font-mono text-[var(--color-text-subtle)] truncate">
-          {dim ? (inferred ? "connection only — no memory activity" : "no memory activity") : r.run_id}
-        </div>
-      </td>
-      <td className="px-3 py-2 whitespace-nowrap">{displayAgent(r.agent)}</td>
-      <td className="px-3 py-2">
-        <StatusChip status={r.status} inferred={inferred} />
-      </td>
-      <td className="px-3 py-2 text-right tabular-nums">{(r.memories_used ?? []).length}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{(r.memories_written ?? []).length}</td>
-      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtDuration(r.duration_ms)}</td>
-      <td className="px-3 py-2 text-right whitespace-nowrap text-[var(--color-text-muted)]" title={r.started_at}>
-        {relativeTime(r.started_at)}
-      </td>
-    </tr>
+    <Tip content={goal} disabled={!clamped}>
+      <button
+        ref={setEl}
+        type="button"
+        onClick={onClick}
+        className={`min-w-0 max-w-full truncate text-left rounded ${dim ? "text-text-muted" : ""}`}
+        aria-describedby={undefined}
+      >
+        {goal || <span className="text-text-muted">(no goal)</span>}
+      </button>
+    </Tip>
   );
 }
 
-function RunTable({ rows, onOpen, head = true }: { rows: RunRow[]; onOpen: (r: RunRow) => void; head?: boolean }) {
+function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
+  const inferred = metaBool(r.metadata, "implicit");
+  const dim = hasNoMemoryActivity(r);
+  return {
+    id: r.run_id,
+    onClick: () => onOpen(r),
+    className: "cursor-pointer",
+    items: [
+      {
+        className: CARD_GOAL,
+        label: (
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <GoalButton
+                goal={r.goal}
+                dim={dim}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpen(r);
+                }}
+              />
+              {inferred && (
+                <TipBadge
+                  text="Auto"
+                  tip="Loom inferred this run from a connection; the agent did not declare it with run.begin"
+                />
+              )}
+            </div>
+            <div className="text-xs font-mono text-text-muted truncate">
+              {dim ? (inferred ? "connection only — no memory activity" : "no memory activity") : r.run_id}
+            </div>
+          </div>
+        ),
+      },
+      { className: CARD, label: displayAgent(r.agent) },
+      { className: CARD, label: <StatusBadge status={r.status} inferred={inferred} /> },
+      { className: CARD, label: <span className={NUMERIC}>{(r.memories_used ?? []).length}</span> },
+      { className: CARD, label: <span className={NUMERIC}>{(r.memories_written ?? []).length}</span> },
+      { className: CARD, label: <span className={NUMERIC}>{fmtDuration(r.duration_ms)}</span> },
+      {
+        className: CARD,
+        label: (
+          <time dateTime={r.started_at}>
+            {relativeTime(r.started_at)}
+            <span className="sr-only"> ({r.started_at})</span>
+          </time>
+        ),
+      },
+    ],
+  };
+}
+
+// Grouped by session, only the first table draws its header; the rest keep theirs out of
+// sight, since a table without one leaves its cells unlabelled for a screen reader.
+function RunTable({
+  rows,
+  onOpen,
+  hideHeader = false,
+}: {
+  rows: RunRow[];
+  onOpen: (r: RunRow) => void;
+  hideHeader?: boolean;
+}) {
   return (
-    <table className="w-full text-sm">
-      {head && (
-        <thead className="bg-[var(--color-surface-2)] text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
-          <tr>
-            <th className="text-left px-3 py-2 font-medium">Goal</th>
-            <th className="text-left px-3 py-2 font-medium">Agent</th>
-            <th className="text-left px-3 py-2 font-medium">Status</th>
-            <th className="text-right px-3 py-2 font-medium">Relied on</th>
-            <th className="text-right px-3 py-2 font-medium">Wrote</th>
-            <th className="text-right px-3 py-2 font-medium">Took</th>
-            <th className="text-right px-3 py-2 font-medium">Started</th>
-          </tr>
-        </thead>
-      )}
-      <tbody>
-        {rows.map((r) => (
-          <RunRowTr key={r.run_id} r={r} onOpen={onOpen} />
-        ))}
-      </tbody>
-    </table>
+    <Table
+      headers={RUN_HEADERS}
+      rows={rows.map((r) => runRow(r, onOpen))}
+      size="sm"
+      className={hideHeader ? "table-header-sr-only" : undefined}
+    />
   );
 }
 
@@ -361,46 +417,46 @@ export function Runs() {
 
   return (
     <PageContainer>
-      <div className="flex items-baseline gap-3 mb-2">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
-          <ListChecks size={20} /> Runs
-        </h1>
+      <PageHeader title="Runs">
         <ScopeBadge kind="namespace" value={identity.namespace} />
-      </div>
-      <p className="text-sm text-[var(--color-text-muted)] mb-5 max-w-[70ch]">
+      </PageHeader>
+      <p className="text-sm text-text-muted mb-5 max-w-[70ch]">
         One row per agent execution: the goal, how it ended, the memories the agent relied on, and what it wrote. Open a
         run to replay what it recalled, observed and cost. A session is one connection's worth of runs — group by it to
         see a whole working sitting.
       </p>
 
       <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {RUN_FILTERS.map((f) => (
-          <Chip key={f || "all"} label={f || "all"} selected={filter === f} onClick={() => setFilter(f)} />
-        ))}
-        <span className="w-px h-4 bg-[var(--color-border)] mx-1" />
+        {/* Five statuses are wider than a phone: the group scrolls sideways, not the page. */}
+        <div className="max-w-full overflow-x-auto">
+          <ButtonGroup
+            aria-label="Filter runs by status"
+            selected={filter}
+            onClick={(value) => setFilter(value as Filter)}
+            options={RUN_FILTERS.map((f) => ({ value: f, label: f ? STATUS_META[f].label : "All" }))}
+          />
+        </div>
+        <span className="w-px h-4 bg-border mx-1 max-md:hidden" />
         <Chip label="Group by session" selected={groupBy} onClick={() => setGroupBy((v) => !v)} />
-        <Chip
-          label={hideConn ? "Show runs with no memory activity" : "Hide runs with no memory activity"}
-          selected={!hideConn}
-          onClick={() => setHideConn((v) => !v)}
-        />
+        {/* One label; pressed means the folded runs are shown. */}
+        <Chip label="Show runs with no memory activity" selected={!hideConn} onClick={() => setHideConn((v) => !v)} />
         {(agents.length > 1 || agent) && (
-          <select
-            aria-label="Agent"
-            value={agent}
-            onChange={(e) => setAgent(e.target.value)}
-            className="px-2 py-1 text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+          <Select
+            value={agent || ALL_AGENTS}
+            onSelect={(v) => setAgent(v === ALL_AGENTS ? "" : v)}
+            triggerProps={{ "aria-label": "Agent" }}
+            className="w-48"
           >
-            <option value="">every agent</option>
+            <Select.Item value={ALL_AGENTS}>Every agent</Select.Item>
             {agents.map((a) => (
-              <option key={a} value={a}>
+              <Select.Item key={a} value={a}>
                 {displayAgent(a)}
-              </option>
+              </Select.Item>
             ))}
-          </select>
+          </Select>
         )}
         {rows && visible.length > 0 && (
-          <span className="ml-auto text-xs text-[var(--color-text-muted)]">
+          <span className="ml-auto text-xs text-text-muted">
             {counts.total} run{counts.total === 1 ? "" : "s"} · {counts.completed} completed · {counts.failed} failed ·{" "}
             {counts.used} memories relied on · {counts.written} written
           </span>
@@ -417,14 +473,14 @@ export function Runs() {
       {rows !== null && error && <div className="text-sm text-danger mb-4">{error}</div>}
       {rows !== null && !error && rows.length === 0 && !hideConn && (
         <EmptyState
-          icon={ListChecks}
+          icon="list-numbered"
           title="No runs yet"
           description="Agents open a run with run.begin (the Claude Code plugin does it on the first prompt of a session) and close it with run.complete, naming the memories they relied on."
         />
       )}
       {rows !== null && !error && rows.length === 0 && hideConn && (
         <EmptyState
-          icon={ListChecks}
+          icon="list-numbered"
           title="No runs with memory activity"
           description={
             'Runs that neither relied on nor wrote a memory under their run_id are folded. Use "Show runs with no memory activity" to see them. A run fills up when the caller passes run_id on memory.set and names what it relied on in run.complete(memories_used).'
@@ -433,40 +489,40 @@ export function Runs() {
       )}
 
       {/* Flat: run-first table. */}
-      {rows !== null && !groupBy && visible.length > 0 && (
-        <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-          <RunTable rows={visible} onOpen={openRun} />
-        </div>
-      )}
+      {rows !== null && !groupBy && visible.length > 0 && <RunTable rows={visible} onOpen={openRun} />}
 
       {/* Grouped: sessions are headers, runs are their timeline. */}
       {rows !== null && groupBy && visible.length > 0 && (
         <div className="space-y-4">
-          {groups.map((g) => (
-            <div key={g.label} className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-              <div className="flex items-center justify-between gap-3 px-3 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
+          {groups.map((g, i) => (
+            <section key={g.label} aria-label={`Session ${g.label}`}>
+              <div className="flex items-center justify-between gap-3 px-3 py-2">
                 <div className="min-w-0 flex items-center gap-2 text-xs">
-                  <Layers size={13} className="text-[var(--color-text-muted)] shrink-0" />
-                  <span className="font-mono truncate" title={g.session_id || "(no session)"}>
-                    {g.session_id ? truncate(g.session_id, 32) : "(no session)"}
-                  </span>
-                  <span className="text-[var(--color-text-subtle)]">·</span>
-                  <span className="text-[var(--color-text-muted)]">
+                  <Icon name="cards" size="xs" aria-hidden="true" className="shrink-0" />
+                  {g.session_id.length > 32 ? (
+                    <TipTarget tip={g.session_id}>
+                      <span className="font-mono">{truncate(g.session_id, 32)}</span>
+                    </TipTarget>
+                  ) : (
+                    <span className="font-mono truncate">{g.session_id || "(no session)"}</span>
+                  )}
+                  <span className="text-text-muted">·</span>
+                  <span className="text-text-muted">
                     {g.runs.length} run{g.runs.length === 1 ? "" : "s"}
                   </span>
                 </div>
-                <div className="text-2xs text-[var(--color-text-muted)] whitespace-nowrap">
+                <div className="text-xs text-text-muted whitespace-nowrap">
                   {g.used} relied on · {g.written} written · {relativeTime(g.latest)}
                 </div>
               </div>
-              <RunTable rows={g.runs} onOpen={openRun} head={false} />
-            </div>
+              <RunTable rows={g.runs} onOpen={openRun} hideHeader={i > 0} />
+            </section>
           ))}
         </div>
       )}
 
       {/* Replay dialog: the stored row plus what run.get derives live. */}
-      <Dialog.Root
+      <Modal
         open={open !== null}
         onOpenChange={(v) => {
           if (!v) {
@@ -474,205 +530,173 @@ export function Runs() {
             setDetail(null);
           }
         }}
+        title={open?.goal || "Run"}
+        className="max-w-[820px] w-full"
+        initialFocus="dialog"
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          openerRef.current?.focus();
+        }}
       >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-          <Dialog.Content
-            onCloseAutoFocus={(e) => {
-              e.preventDefault();
-              openerRef.current?.focus();
-            }}
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(820px,94vw)] h-[min(85vh,800px)] flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!"
-          >
-            <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-[var(--color-border)] shrink-0">
-              <div className="min-w-0 flex-1">
-                <Dialog.Title className="text-md font-semibold tracking-tight truncate">
-                  {open?.goal || "Run"}
-                </Dialog.Title>
-                <div className="text-2xs text-[var(--color-text-muted)] mt-1 font-mono truncate">{open?.run_id}</div>
-                {open && (
-                  <div className="text-2xs text-[var(--color-text-muted)] mt-1 flex items-center gap-2 flex-wrap">
-                    <StatusChip status={open.status} inferred={metaBool(open.metadata, "implicit")} />
-                    <span>{displayAgent(open.agent)}</span>
-                    {open.session_id && open.session_id !== "-" && (
-                      <>
-                        <span>·</span>
-                        <span className="font-mono">session {truncate(open.session_id, 24)}</span>
-                      </>
-                    )}
-                    <span>·</span>
-                    <span>started {relativeTime(open.started_at)}</span>
-                    {open.duration_ms > 0 && (
-                      <>
-                        <span>·</span>
-                        <span>took {fmtDuration(open.duration_ms)}</span>
-                      </>
-                    )}
-                    {open.confidence > 0 && (
-                      <>
-                        <span>·</span>
-                        <span>confidence {open.confidence.toFixed(2)}</span>
-                      </>
-                    )}
-                  </div>
-                )}
+        <div className="text-xs text-text-muted font-mono truncate">{open?.run_id}</div>
+        {open && (
+          <div className="text-xs text-text-muted mt-1 mb-4 flex items-center gap-2 flex-wrap">
+            <StatusBadge status={open.status} inferred={metaBool(open.metadata, "implicit")} />
+            <span>{displayAgent(open.agent)}</span>
+            {open.session_id && open.session_id !== "-" && (
+              <>
+                <span>·</span>
+                <span className="font-mono">session {truncate(open.session_id, 24)}</span>
+              </>
+            )}
+            <span>·</span>
+            <span>started {relativeTime(open.started_at)}</span>
+            {open.duration_ms > 0 && (
+              <>
+                <span>·</span>
+                <span>took {fmtDuration(open.duration_ms)}</span>
+              </>
+            )}
+            {open.confidence > 0 && (
+              <>
+                <span>·</span>
+                <span>confidence {open.confidence.toFixed(2)}</span>
+              </>
+            )}
+          </div>
+        )}
+        <div className="space-y-3">
+          {open && hasNoMemoryActivity(open) && metaBool(open.metadata, "implicit") && (
+            <Alert
+              state="neutral"
+              size="small"
+              text={
+                'This run was inferred from a connection (implicit MCP session) that did no memory work — it recalled and wrote nothing, and closed on idle rather than by run.complete. Its "completed" status is not a reported outcome.'
+              }
+            />
+          )}
+          {open && hasNoMemoryActivity(open) && !metaBool(open.metadata, "implicit") && (
+            <Alert
+              state="neutral"
+              size="small"
+              text={`This run reported no memory activity: the caller opened it with run.begin and closed it with run.complete${
+                open.duration_ms > 0 ? ` ${fmtDuration(open.duration_ms)} later` : ""
+              }, naming nothing it relied on, and no write carried its run_id. The fields below say what each one would have needed.`}
+            />
+          )}
+          {open?.user_request && (
+            <Section title="User request">
+              <div className="text-sm whitespace-pre-wrap">{open.user_request}</div>
+            </Section>
+          )}
+          {open?.expected_outcome && (
+            <Section title="Expected outcome">
+              <div className="text-sm whitespace-pre-wrap">{open.expected_outcome}</div>
+            </Section>
+          )}
+          <Section title="Memories the agent relied on">
+            <KeyChipButtons keys={open?.memories_used || []} empty={EMPTY_WHY.used} />
+          </Section>
+          <Section title="Memories this run wrote">
+            <KeyChipButtons keys={detail?.memories_written || open?.memories_written || []} empty={EMPTY_WHY.written} />
+          </Section>
+          <Section title="Recalled, observed, cost">
+            {detailLoading && <div className="text-xs text-text-muted">Loading…</div>}
+            {!detailLoading &&
+              detail &&
+              open &&
+              (() => {
+                // The server's names_session: blank or "-" is no session.
+                const session = (open.session_id ?? "").trim();
+                const hasSession = session !== "" && session !== "-";
+                const over = detail.over_budget ?? [];
+                return (
+                  <dl className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm m-0">
+                    <ReplayFigure
+                      label="recalled"
+                      help={
+                        detail.recalled < 0
+                          ? EMPTY_WHY.recalledOff
+                          : detail.recalled === 0
+                            ? EMPTY_WHY.recalledZero
+                            : undefined
+                      }
+                    >
+                      {detail.recalled < 0 ? "n/a" : detail.recalled}
+                    </ReplayFigure>
+                    <ReplayFigure label="observations" help={EMPTY_WHY.observations}>
+                      {detail.observations}
+                    </ReplayFigure>
+                    <ReplayFigure
+                      label="turns"
+                      help={
+                        !hasSession
+                          ? EMPTY_WHY.noSession
+                          : (detail.unpriced_turns ?? 0) > 0
+                            ? `${EMPTY_WHY.sessionCost}. Unpriced: ${EMPTY_WHY.unpriced}`
+                            : EMPTY_WHY.sessionCost
+                      }
+                    >
+                      {hasSession ? (
+                        <>
+                          {detail.turns}
+                          {(detail.unpriced_turns ?? 0) > 0 && (
+                            <span className="text-text-muted"> ({detail.unpriced_turns} unpriced)</span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-text-muted">no session</span>
+                      )}
+                    </ReplayFigure>
+                    <ReplayFigure label="cost" help={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
+                      {!hasSession ? (
+                        <span className="text-text-muted">no session</span>
+                      ) : detail.cost_usd > 0 ? (
+                        usd(detail.cost_usd)
+                      ) : (
+                        "—"
+                      )}
+                    </ReplayFigure>
+                    <ReplayFigure label="budget" help={EMPTY_WHY.budget}>
+                      {budgetText(detail)}
+                      {over.length > 0 && <span className="text-danger"> · over {over.join(" and ")}</span>}
+                    </ReplayFigure>
+                  </dl>
+                );
+              })()}
+            {!detailLoading && detail && detail.recalled_keys.length > 0 && (
+              <div className="mt-3">
+                <div className="text-xs text-text-muted mb-1">recalled keys</div>
+                <KeyChipButtons keys={detail.recalled_keys} empty="" />
               </div>
-              <Dialog.Close
-                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                aria-label="Close"
+            )}
+            {!detailLoading && detail && open && detail.recalled >= 0 && (
+              <Button
+                type="empty"
+                htmlType="button"
+                iconRight="arrow-right"
+                onClick={() => openRecallForRun(open.run_id)}
+                className="mt-3"
               >
-                <XIcon size={16} />
-              </Dialog.Close>
-            </div>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
-              {open && hasNoMemoryActivity(open) && metaBool(open.metadata, "implicit") && (
-                <div className="text-xs text-[var(--color-text-muted)] p-3 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
-                  This run was inferred from a connection (implicit MCP session) that did no memory work — it recalled
-                  and wrote nothing, and closed on idle rather than by run.complete. Its "completed" status is not a
-                  reported outcome.
-                </div>
-              )}
-              {open && hasNoMemoryActivity(open) && !metaBool(open.metadata, "implicit") && (
-                <div className="text-xs text-[var(--color-text-muted)] p-3 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
-                  This run reported no memory activity: the caller opened it with run.begin and closed it with
-                  run.complete{open.duration_ms > 0 ? ` ${fmtDuration(open.duration_ms)} later` : ""}, naming nothing it
-                  relied on, and no write carried its run_id. The fields below say what each one would have needed.
-                </div>
-              )}
-              {open?.user_request && (
-                <Section title="User request">
-                  <div className="text-sm whitespace-pre-wrap">{open.user_request}</div>
-                </Section>
-              )}
-              {open?.expected_outcome && (
-                <Section title="Expected outcome">
-                  <div className="text-sm whitespace-pre-wrap">{open.expected_outcome}</div>
-                </Section>
-              )}
-              <Section title="Memories the agent relied on">
-                <KeyChipButtons keys={open?.memories_used || []} empty={EMPTY_WHY.used} />
-              </Section>
-              <Section title="Memories this run wrote">
-                <KeyChipButtons
-                  keys={detail?.memories_written || open?.memories_written || []}
-                  empty={EMPTY_WHY.written}
-                />
-              </Section>
-              <Section title="Recalled, observed, cost">
-                {detailLoading && <div className="text-xs text-[var(--color-text-muted)]">Loading…</div>}
-                {!detailLoading &&
-                  detail &&
-                  open &&
-                  (() => {
-                    // The server's names_session: blank or "-" is no session.
-                    const session = (open.session_id ?? "").trim();
-                    const hasSession = session !== "" && session !== "-";
-                    const over = detail.over_budget ?? [];
-                    return (
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
-                        <div>
-                          <div className="text-2xs text-[var(--color-text-muted)]">recalled</div>
-                          <div className="tabular-nums">
-                            {detail.recalled < 0 ? (
-                              <span title={EMPTY_WHY.recalledOff}>n/a</span>
-                            ) : detail.recalled === 0 ? (
-                              <span title={EMPTY_WHY.recalledZero} className="underline decoration-dotted">
-                                0
-                              </span>
-                            ) : (
-                              detail.recalled
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-2xs text-[var(--color-text-muted)]">observations</div>
-                          <div className="tabular-nums" title={EMPTY_WHY.observations}>
-                            {detail.observations}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-2xs text-[var(--color-text-muted)]">turns</div>
-                          <div
-                            className="tabular-nums"
-                            title={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}
-                          >
-                            {hasSession ? (
-                              <>
-                                {detail.turns}
-                                {(detail.unpriced_turns ?? 0) > 0 && (
-                                  <span className="text-[var(--color-text-subtle)]" title={EMPTY_WHY.unpriced}>
-                                    {" "}
-                                    ({detail.unpriced_turns} unpriced)
-                                  </span>
-                                )}
-                              </>
-                            ) : (
-                              <span className="text-[var(--color-text-subtle)]">no session</span>
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-2xs text-[var(--color-text-muted)]">cost</div>
-                          <div
-                            className="tabular-nums"
-                            title={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}
-                          >
-                            {!hasSession ? (
-                              <span className="text-[var(--color-text-subtle)]">no session</span>
-                            ) : detail.cost_usd > 0 ? (
-                              usd(detail.cost_usd)
-                            ) : (
-                              "—"
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-2xs text-[var(--color-text-muted)]">budget</div>
-                          <div className="tabular-nums" title={EMPTY_WHY.budget}>
-                            {budgetText(detail)}
-                            {over.length > 0 && (
-                              <span className="text-[var(--color-danger)]"> · over {over.join(" and ")}</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                {!detailLoading && detail && detail.recalled_keys.length > 0 && (
-                  <div className="mt-3">
-                    <div className="text-2xs text-[var(--color-text-muted)] mb-1">recalled keys</div>
-                    <KeyChipButtons keys={detail.recalled_keys} empty="" />
-                  </div>
-                )}
-                {!detailLoading && detail && open && detail.recalled >= 0 && (
-                  <button
-                    type="button"
-                    onClick={() => openRecallForRun(open.run_id)}
-                    className="mt-3 text-xs text-[var(--color-accent)] hover:underline"
-                  >
-                    Recall history for this run →
-                  </button>
-                )}
-                {!detailLoading && !detail && (
-                  <div className="text-xs text-[var(--color-text-subtle)]">Could not load the replay.</div>
-                )}
-              </Section>
-              {open?.final_response && (
-                <Section title="Final response">
-                  <div className="text-sm whitespace-pre-wrap">{open.final_response}</div>
-                </Section>
-              )}
-              {open && Object.keys(open.metadata || {}).length > 0 && (
-                <Section title="Metadata">
-                  <pre className="text-2xs font-mono whitespace-pre-wrap break-all">
-                    {JSON.stringify(open.metadata, null, 2)}
-                  </pre>
-                </Section>
-              )}
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+                Recall history for this run
+              </Button>
+            )}
+            {!detailLoading && !detail && <div className="text-xs text-text-muted">Could not load the replay.</div>}
+          </Section>
+          {open?.final_response && (
+            <Section title="Final response">
+              <div className="text-sm whitespace-pre-wrap">{open.final_response}</div>
+            </Section>
+          )}
+          {open && Object.keys(open.metadata || {}).length > 0 && (
+            <Section title="Metadata">
+              <pre className="text-xs font-mono whitespace-pre-wrap break-all">
+                {JSON.stringify(open.metadata, null, 2)}
+              </pre>
+            </Section>
+          )}
+        </div>
+      </Modal>
     </PageContainer>
   );
 }

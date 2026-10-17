@@ -1,27 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import {
-  X,
-  Star,
-  Trash2,
-  Copy,
-  History,
-  Link2,
-  GitBranch,
-  Pencil,
-  Save,
-  ChevronDown,
-  ChevronRight,
-  Maximize2,
-  Minimize2,
-  AlertTriangle,
-  FolderInput,
-  ShieldCheck,
-  ShieldAlert,
-  ArrowRightLeft,
-  CornerDownRight,
-} from "lucide-react";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Dropdown } from "@clickhouse/click-ui/Dropdown";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
+import { Title } from "@clickhouse/click-ui/Title";
 import type {
   CodeLink,
   Identity,
@@ -49,12 +37,13 @@ import {
   moveMemory,
 } from "../api";
 import { useStore } from "../lib/state";
-import { Waypoints } from "lucide-react";
 import { graphSeedHref, onGraphLinkClick } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
 import { SkeletonText } from "./Skeleton";
 import { DiffView } from "./DiffView";
 import { toast } from "./Toast";
+import { IconButton } from "./IconButton";
+import { Chip, ExternalLink, Tip } from "./ui";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
 import { relativeTime, formatValue, humanizeError, SENTINEL_AGENTS } from "../lib/format";
@@ -62,6 +51,8 @@ import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { historyChange, previousVersion } from "../lib/historyChange";
+import { MenuTrigger } from "./ui/Menu";
+import { shortcutOff } from "../lib/shortcuts";
 
 type SectionId = "history" | "related" | "provenance" | "lineage";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
@@ -79,7 +70,7 @@ function Disclosure({
 }: {
   id: SectionId;
   title: string;
-  icon: React.ReactNode;
+  icon: IconName;
   open: boolean;
   onToggle: (id: SectionId) => void;
   count?: string | number;
@@ -92,10 +83,10 @@ function Disclosure({
         onClick={() => onToggle(id)}
         aria-expanded={open}
         aria-controls={`loom-inspector-${id}`}
-        className="w-full flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors mb-2"
+        className="w-full flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-text transition-colors mb-2"
       >
-        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-        {icon} {title}
+        <Icon name={open ? "chevron-down" : "chevron-right"} size="xs" aria-hidden="true" />
+        <Icon name={icon} size="xs" aria-hidden="true" /> {title}
         {count !== undefined && <span className="normal-case tracking-normal font-normal">· {count}</span>}
       </button>
       {open && <div id={`loom-inspector-${id}`}>{children}</div>}
@@ -104,7 +95,7 @@ function Disclosure({
 }
 
 function SectionEmpty({ children }: { children: React.ReactNode }) {
-  return <div className="text-xs text-[var(--color-text-subtle)]">{children}</div>;
+  return <div className="text-xs text-text-muted">{children}</div>;
 }
 
 interface InspectorProps {
@@ -146,6 +137,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   // key stays readable, the last dry-run.
   const [renaming, setRenaming] = useState(false);
   const [namespaceTags, setNamespaceTags] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState("");
   // The drawer reads what is open. History, related, provenance and lineage are
   // disclosures, closed by default; a section reads once when it is opened, and which
   // ones a person keeps open is remembered for the session so their next card opens the
@@ -229,7 +221,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
       onSaveEdit();
       return;
     }
-    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (typing || e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e.nativeEvent)) return;
     if (e.key === "e" && !editing) {
       e.preventDefault();
       onStartEdit();
@@ -339,6 +331,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   // viewer never sees a button the server would refuse.
   const canMove = canCall("memory.move", role, whoami);
   const canTogglePin = canCall(detail?.pinned ? "memory.unpin" : "memory.pin", role, whoami);
+  const verified = detail?.verification === "human" || detail?.verification === "process";
   useEffect(() => {
     setConflictCount(0);
     if (!conflictsReadable) return;
@@ -570,7 +563,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
             dimmed, blurred backdrop when expanded — pointer-down on it
             collapses back to the drawer. */}
         <Dialog.Overlay
-          className={`fixed inset-0 z-20 animate-fade-in motion-reduce:animate-none! ${expanded ? "bg-overlay backdrop-blur-sm" : "bg-transparent"}`}
+          className={`fixed inset-0 z-20 animate-fade-in ${expanded ? "bg-overlay backdrop-blur-sm" : "bg-transparent"}`}
         />
         <Dialog.Content
           ref={contentRef}
@@ -588,39 +581,29 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}
           onKeyDown={onContentKeyDown}
-          className={`fixed top-0 bottom-0 right-0 z-30 bg-[var(--color-surface)] border-l border-[var(--color-border)] shadow-2xl animate-slide-in motion-reduce:animate-none! flex flex-col outline-none ${
+          className={`fixed top-0 bottom-0 right-0 z-30 bg-surface border-l border-border shadow-2xl animate-slide-in flex flex-col ${
             expanded ? "w-[90vw] md:w-[85vw] max-w-none" : "w-full md:w-[640px] md:max-w-[90vw]"
           }`}
         >
-          <header className="flex items-center justify-between px-6 py-5 border-b border-[var(--color-border)] shrink-0 gap-3">
+          <header className="flex items-center justify-between px-6 py-5 border-b border-border shrink-0 gap-3">
             <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
-              {detail?.pinned && <Star size={16} className="text-warn fill-warn shrink-0" aria-hidden="true" />}
+              {detail?.pinned && <Icon name="star" size="sm" color="var(--color-warn)" aria-hidden="true" />}
               <Dialog.Title asChild>
-                <h2 className="font-mono text-lg text-[var(--color-text)] truncate m-0 font-semibold tracking-tight">
-                  {memoryKey}
-                </h2>
+                <h2 className="font-mono text-text truncate m-0">{memoryKey}</h2>
               </Dialog.Title>
               <LifecycleBadge status={detail?.status} pinned={!!detail?.pinned} />
               {detail?.status === "duplicate" && detail.canonical_key && (
                 <RedirectBadge canonicalKey={detail.canonical_key} onFollow={inspect} />
               )}
             </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <button
+            <div className="flex items-center gap-1 shrink-0">
+              <IconButton
+                icon={expanded ? "popin" : "popout"}
+                label={expanded ? "Collapse inspector" : "Expand inspector"}
+                tooltip={expanded ? "Collapse" : "Expand to full width"}
                 onClick={() => setExpanded((v) => !v)}
-                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors"
-                aria-label={expanded ? "Collapse inspector" : "Expand inspector"}
-                title={expanded ? "Collapse" : "Expand to full width"}
-              >
-                {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-              </button>
-              <button
-                onClick={onClose}
-                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors"
-                aria-label="Close inspector"
-              >
-                <X size={16} />
-              </button>
+              />
+              <IconButton icon="cross" label="Close inspector" onClick={onClose} />
             </div>
           </header>
 
@@ -629,9 +612,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
             {loading && <SkeletonText lines={5} />}
 
             {!loading && detail && !detail.found && (
-              <div className="text-base text-[var(--color-text-muted)]">
-                Memory not found. It may have been deleted.
-              </div>
+              <div className="text-sm text-text-muted">Memory not found. It may have been deleted.</div>
             )}
 
             {!loading && detail && detail.found && (
@@ -649,27 +630,20 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 <section>
                   {editing ? (
                     <div className="space-y-2">
-                      <textarea
+                      <TextAreaField
                         aria-label="Memory value"
                         value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
+                        onChange={(v) => setDraft(v)}
                         rows={Math.min(12, Math.max(3, draft.split("\n").length))}
-                        className="w-full text-base font-mono p-3 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-accent)] outline-none resize-y leading-relaxed"
                         autoFocus
                       />
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={onSaveEdit}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)]"
-                        >
-                          <Save size={12} /> Save new version
-                        </button>
-                        <button
-                          onClick={() => setEditing(false)}
-                          className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md"
-                        >
+                      <div className="flex items-center justify-end gap-2">
+                        <Button type="secondary" htmlType="button" onClick={() => setEditing(false)}>
                           Cancel
-                        </button>
+                        </Button>
+                        <Button type="primary" htmlType="button" iconLeft="disk" onClick={onSaveEdit}>
+                          Save new version
+                        </Button>
                       </div>
                     </div>
                   ) : (
@@ -678,9 +652,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
+                  <Title type="h3" size="sm" className="mb-3">
                     Metadata
-                  </h4>
+                  </Title>
                   <dl className="grid grid-cols-[110px_1fr] gap-y-2 text-sm">
                     <Row label="Type" value={detail.memory_type || "—"} mono />
                     {detail.char_limit != null && (
@@ -688,7 +662,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                     )}
                     {detail.agent && (
                       <>
-                        <dt className="text-[var(--color-text-muted)]">Agent</dt>
+                        <dt className="text-text-muted">Agent</dt>
                         <dd>
                           <AgentBadge agent={detail.agent} />
                         </dd>
@@ -699,7 +673,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                     {detail.updated_at && detail.updated_at !== detail.created_at && (
                       <Row label="Updated" value={relativeTime(detail.updated_at)} />
                     )}
-                    <dt className="text-[var(--color-text-muted)]">Expires</dt>
+                    <dt className="text-text-muted">Expires</dt>
                     <dd>
                       <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
                     </dd>
@@ -713,18 +687,16 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                       if (rows.length === 0) return null;
                       return (
                         <>
-                          <dt className="text-[var(--color-text-muted)]">Recalled by</dt>
+                          <dt className="text-text-muted">Recalled by</dt>
                           <dd>
                             <div className="flex flex-wrap gap-1">
                               {rows.map((r) => (
-                                <span
+                                <Badge
                                   key={r.agent}
-                                  className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                                  title={r.last_at ? `Last by ${r.agent}: ${relativeTime(r.last_at)}` : r.agent}
-                                >
-                                  <span className="font-mono">{r.agent}</span>
-                                  <span className="text-[var(--color-text-muted)]">{r.count}×</span>
-                                </span>
+                                  size="sm"
+                                  state="neutral"
+                                  text={`${r.agent} ${r.count}×${r.last_at ? ` · last ${relativeTime(r.last_at)}` : ""}`}
+                                />
                               ))}
                             </div>
                           </dd>
@@ -735,62 +707,50 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
+                  <Title type="h3" size="sm" className="mb-2">
                     Tags
-                  </h4>
+                  </Title>
                   <div className="flex flex-wrap gap-1.5 items-center">
                     {(detail.tags || []).map((t) => (
-                      <span
+                      <Chip
                         key={t}
-                        className="inline-flex items-center gap-1 text-xs pl-2 pr-1 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                      >
-                        <button
-                          onClick={() => searchByTag(t)}
-                          className="hover:text-[var(--color-accent)] transition-colors cursor-pointer"
-                          title={`Show all memories tagged ${t}`}
-                        >
-                          <span className="opacity-50 mr-0.5">#</span>
-                          {t}
-                        </button>
-                        <button
-                          onClick={() => onRemoveTag(t)}
-                          className="p-0.5 text-[var(--color-text-subtle)] hover:text-danger hover:bg-[var(--color-surface-3)] rounded transition-colors"
-                          aria-label={`Remove tag ${t}`}
-                          title={`Remove tag ${t}`}
-                        >
-                          <X size={10} />
-                        </button>
-                      </span>
+                        label={t}
+                        icon="#"
+                        tip={`Show all memories tagged ${t}`}
+                        onClick={() => searchByTag(t)}
+                        onRemove={() => onRemoveTag(t)}
+                      />
                     ))}
-                    <input
-                      aria-label="Add a tag"
-                      type="text"
-                      placeholder={(detail.tags || []).length > 0 ? "+ add tag" : "Add tags…"}
-                      list="loom-inspector-tags"
-                      onFocus={() => {
-                        // The vocabulary is read when someone goes to add a tag, not on
-                        // every open.
-                        if (namespaceTags.length === 0)
-                          sharedTagVocabulary(identity)
-                            .then(setNamespaceTags)
-                            .catch(() => setNamespaceTags([]));
-                      }}
-                      className="text-xs px-2 py-0.5 rounded-md bg-transparent border border-dashed border-[var(--color-border)] outline-none focus:border-[var(--color-accent)] placeholder:text-[var(--color-text-subtle)] w-[110px]"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === ",") {
-                          e.preventDefault();
-                          const target = e.currentTarget;
-                          onAddTag(target.value);
-                          target.value = "";
-                        }
-                      }}
-                      onBlur={(e) => {
-                        if (e.target.value.trim()) {
-                          onAddTag(e.target.value);
-                          e.target.value = "";
-                        }
-                      }}
-                    />
+                    <span className="w-36">
+                      <TextField
+                        aria-label="Add a tag"
+                        placeholder={(detail.tags || []).length > 0 ? "Add tag" : "Add tags…"}
+                        list="loom-inspector-tags"
+                        value={tagDraft}
+                        onChange={(v) => setTagDraft(v)}
+                        onFocus={() => {
+                          // The vocabulary is read when someone goes to add a tag, not on
+                          // every open.
+                          if (namespaceTags.length === 0)
+                            sharedTagVocabulary(identity)
+                              .then(setNamespaceTags)
+                              .catch(() => setNamespaceTags([]));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            onAddTag(tagDraft);
+                            setTagDraft("");
+                          }
+                        }}
+                        onBlur={() => {
+                          if (tagDraft.trim()) {
+                            onAddTag(tagDraft);
+                            setTagDraft("");
+                          }
+                        }}
+                      />
+                    </span>
                     {namespaceTags.length > 0 && (
                       <datalist id="loom-inspector-tags">
                         {namespaceTags
@@ -807,9 +767,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 memory opens the Explorer walked from it — not from the rail. */}
                 {(detail.entities || []).length > 0 && (
                   <section>
-                    <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
+                    <Title type="h3" size="sm" className="mb-2">
                       Entities
-                    </h4>
+                    </Title>
                     <div className="flex flex-wrap gap-1.5 items-center">
                       {(detail.entities || []).map((en) => (
                         <EntityChip key={en} entity={en} />
@@ -821,7 +781,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 <Disclosure
                   id="provenance"
                   title="Provenance"
-                  icon={<GitBranch size={11} />}
+                  icon="git-merge"
                   open={sections.provenance}
                   onToggle={toggleSection}
                 >
@@ -842,7 +802,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 <Disclosure
                   id="related"
                   title="Related"
-                  icon={<Link2 size={11} />}
+                  icon="url"
                   open={sections.related}
                   onToggle={toggleSection}
                   count={related ? related.length : undefined}
@@ -856,11 +816,12 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                       {related.slice(0, 5).map((r) => (
                         <div
                           key={r.memory_key}
-                          className="px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-2)] transition-colors group"
+                          className="px-2 py-1.5 rounded-md hover:bg-surface-2 transition-colors group"
                         >
                           <button
+                            type="button"
                             onClick={() => inspect(r.memory_key)}
-                            className="w-full text-left font-mono text-xs text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]"
+                            className="w-full text-left font-mono text-xs text-text truncate group-hover:text-accent"
                           >
                             {r.memory_key}
                           </button>
@@ -880,7 +841,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 <Disclosure
                   id="history"
                   title="History"
-                  icon={<History size={11} />}
+                  icon="history"
                   open={sections.history}
                   onToggle={toggleSection}
                   count={history && history.length > 1 ? `${history.length} versions` : undefined}
@@ -900,23 +861,31 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                         const writtenAt = relativeTime(h.written_at || h.created_at);
                         const changed = historyChange(h, previousVersion(history, idx));
                         return (
-                          <div key={h.version} className="rounded-md bg-[var(--color-surface-2)] overflow-hidden">
+                          <div key={h.version} className="rounded-md bg-surface-2 overflow-hidden">
                             <button
+                              type="button"
                               onClick={() => (isCurrent ? undefined : setDiffVersion(isOpen ? null : h.version))}
                               disabled={isCurrent}
+                              aria-expanded={isCurrent ? undefined : isOpen}
                               className={`w-full px-2 py-1.5 text-left transition-colors ${
-                                !isCurrent ? "hover:bg-[var(--color-surface-3)]" : ""
+                                !isCurrent ? "hover:bg-surface-3" : ""
                               }`}
                             >
-                              <div className="flex items-center justify-between text-2xs tabular text-[var(--color-text-muted)] mb-0.5 gap-2">
+                              <div className="flex items-center justify-between text-xs tabular text-text-muted mb-0.5 gap-2">
                                 <span className="inline-flex items-center gap-1">
-                                  {!isCurrent && (isOpen ? <ChevronDown size={9} /> : <ChevronRight size={9} />)}
+                                  {!isCurrent && (
+                                    <Icon
+                                      name={isOpen ? "chevron-down" : "chevron-right"}
+                                      size="xs"
+                                      aria-hidden="true"
+                                    />
+                                  )}
                                   <span className="font-mono">{label}</span>
                                   {isCurrent && <span className="text-success font-medium ml-1">· current</span>}
                                 </span>
                                 <span>{writtenAt}</span>
                               </div>
-                              <div className="text-xs text-[var(--color-text)] line-clamp-1">
+                              <div className="text-xs text-text line-clamp-1">
                                 {formatValue(h.value).slice(0, 80)}
                                 {h.tombstoned_at && <span className="ml-1 text-danger">· tombstoned</span>}
                                 {h.redacted_at && <span className="ml-1 text-warn">· redacted</span>}
@@ -924,7 +893,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                               {changed.length > 0 && (
                                 <div
                                   data-testid="history-change"
-                                  className="text-2xs text-[var(--color-text-muted)] [overflow-wrap:anywhere]"
+                                  className="text-xs text-text-muted [overflow-wrap:anywhere]"
                                 >
                                   {changed.join(" · ")}
                                 </div>
@@ -950,7 +919,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 <Disclosure
                   id="lineage"
                   title="Lineage"
-                  icon={<GitBranch size={11} />}
+                  icon="git-merge"
                   open={sections.lineage}
                   onToggle={toggleSection}
                 >
@@ -959,18 +928,16 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                   ) : lineage.length === 0 ? (
                     <SectionEmpty>No lineage steps.</SectionEmpty>
                   ) : (
-                    <div className="space-y-2 pl-2 border-l border-[var(--color-border)]">
+                    <div className="space-y-2 pl-2 border-l border-border">
                       {lineage.map((s, i) => (
                         <div key={i} className="text-xs -ml-[5px] pl-3 relative">
-                          <span className="absolute left-[-3px] top-1.5 w-1.5 h-1.5 rounded-full bg-[var(--color-accent)]" />
+                          <span className="absolute left-[-3px] top-1.5 w-1.5 h-1.5 rounded-full bg-accent" />
                           <div className="flex items-center gap-2">
-                            <span className="font-mono font-medium text-[var(--color-text)]">{s.step}</span>
-                            <span className="text-[var(--color-text-muted)]">{s.actor}</span>
-                            <span className="text-[var(--color-text-subtle)] tabular ml-auto">
-                              {relativeTime(s.ts)}
-                            </span>
+                            <span className="font-mono font-medium text-text">{s.step}</span>
+                            <span className="text-text-muted">{s.actor}</span>
+                            <span className="text-text-muted tabular ml-auto">{relativeTime(s.ts)}</span>
                           </div>
-                          {s.detail && <div className="text-2xs text-[var(--color-text-muted)] mt-0.5">{s.detail}</div>}
+                          {s.detail && <div className="text-xs text-text-muted mt-0.5">{s.detail}</div>}
                         </div>
                       ))}
                     </div>
@@ -982,89 +949,63 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
 
           {/* Sticky footer actions */}
           {detail && detail.found && (
-            <footer className="absolute bottom-0 left-0 right-0 px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur flex flex-wrap items-center gap-1.5 shrink-0">
+            <footer className="absolute bottom-0 left-0 right-0 px-5 py-3 border-t border-border bg-surface flex flex-wrap items-center gap-2 shrink-0">
               {!editing && (
-                <button
-                  onClick={onStartEdit}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
-                >
-                  <Pencil size={13} /> Edit
-                </button>
+                <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
+                  Edit
+                </Button>
               )}
               {canTogglePin && (
-                <button
-                  onClick={onPin}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    detail.pinned
-                      ? "bg-warn/15 text-warn hover:bg-warn/15"
-                      : "hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                  }`}
-                >
-                  <Star size={13} className={detail.pinned ? "fill-warn text-warn" : ""} />{" "}
+                <Button type="secondary" htmlType="button" iconLeft={detail.pinned ? "unpin" : "pin"} onClick={onPin}>
                   {detail.pinned ? "Unpin" : "Pin"}
-                </button>
+                </Button>
               )}
-              <button
-                onClick={onVerify}
-                title={
+              <Tip
+                content={
                   detail.verification === "stale"
                     ? `Verified by ${detail.verified_by}, then edited — re-verify to confirm the current content`
-                    : detail.verification === "human" || detail.verification === "process"
+                    : verified
                       ? `Verified by ${detail.verified_by}${detail.verified_at ? " · " + relativeTime(detail.verified_at) : ""} — click to remove`
                       : "Attest that this memory is true, as you"
                 }
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  detail.verification === "human" || detail.verification === "process"
-                    ? "bg-success/15 text-success hover:bg-success/15"
-                    : detail.verification === "stale"
-                      ? "bg-warn/15 text-warn hover:bg-warn/15"
-                      : "hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                }`}
               >
-                {detail.verification === "stale" ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}
-                {detail.verification === "human" || detail.verification === "process"
-                  ? "Verified"
-                  : detail.verification === "stale"
-                    ? "Re-verify"
-                    : "Verify"}
-              </button>
-              <button
-                onClick={() => setCopyOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
-                title="Copy to another namespace"
-              >
-                <FolderInput size={13} /> Copy to…
-              </button>
-              {canMove && !editing && (
-                <button
-                  type="button"
-                  onClick={() => setRenaming((v) => !v)}
-                  aria-expanded={renaming}
-                  aria-label="Rename (keep redirect)"
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 min-h-9 text-sm font-medium rounded-md transition-colors ${
-                    renaming
-                      ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                      : "hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                  }`}
-                  title="Move this memory to a new key; the old key keeps answering with a redirect"
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconLeft={detail.verification === "stale" ? "warning" : verified ? "check-in-circle" : "secure"}
+                  onClick={onVerify}
                 >
-                  <ArrowRightLeft size={13} aria-hidden="true" /> Rename
-                </button>
+                  {verified ? "Verified" : detail.verification === "stale" ? "Re-verify" : "Verify"}
+                </Button>
+              </Tip>
+              <Tip content="Copy to another namespace">
+                <Button type="secondary" htmlType="button" iconLeft="folder-open" onClick={() => setCopyOpen(true)}>
+                  Copy to…
+                </Button>
+              </Tip>
+              {canMove && !editing && (
+                <Tip content="Move this memory to a new key; the old key keeps answering with a redirect">
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    iconLeft="arrow-right"
+                    onClick={() => setRenaming((v) => !v)}
+                    aria-expanded={renaming}
+                    aria-label="Rename (keep redirect)"
+                  >
+                    Rename
+                  </Button>
+                </Tip>
               )}
-              <button
-                onClick={onCopyAll}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
-                title="Copy the whole memory — key, value, metadata and tags — to the clipboard"
-              >
-                <Copy size={13} /> Copy
-              </button>
+              <Tip content="Copy the whole memory — key, value, metadata and tags — to the clipboard">
+                <Button type="secondary" htmlType="button" iconLeft="copy" onClick={onCopyAll}>
+                  Copy
+                </Button>
+              </Tip>
               <div className="flex-1" />
-              <button
-                onClick={onDelete}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md text-danger hover:bg-danger/15 transition-colors"
-              >
-                <Trash2 size={13} /> Delete
-              </button>
+              <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
+                Delete
+              </Button>
             </footer>
           )}
           <CopyToNamespaceDialog
@@ -1114,7 +1055,7 @@ function ProvenanceSection({
 }: {
   provenance: MemoryProvenance | null;
   onInspect: (key: string) => void;
-  onOpenThread: (threadId: string) => void;
+  onOpenThread: (threadId: string, agent: string) => void;
   /** Inside a Disclosure: the heading is the disclosure's. */
   embedded?: boolean;
 }) {
@@ -1126,47 +1067,58 @@ function ProvenanceSection({
   const links = p.links || [];
   if (!showSource && !trig && !cited && links.length === 0) return null;
 
-  const link = "text-[var(--color-accent)] hover:underline break-all";
   const isUrl = (s: string) => /^https?:\/\/\S+$/i.test(s);
 
   return (
     <section>
       {!embedded && (
-        <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-1.5">
-          <GitBranch size={11} /> Provenance
-        </h4>
+        <Title type="h3" size="sm" className="mb-2 flex items-center gap-1.5">
+          <Icon name="git-merge" size="xs" aria-hidden="true" /> Provenance
+        </Title>
       )}
       <dl className="grid grid-cols-[92px_1fr] gap-y-1.5 text-xs mb-2">
         {showSource && (
           <>
-            <dt className="text-[var(--color-text-muted)]">Source</dt>
+            <dt className="text-text-muted">Source</dt>
             <dd>
               {p.source_kind === "conversation" && p.thread_exists ? (
-                <button
-                  onClick={() => onOpenThread(p.thread_id)}
-                  className={link}
-                  title="Open the conversation that produced this memory"
-                >
-                  {p.thread_title || "View source conversation"} ↗
-                </button>
+                <Tip content="Open the conversation that produced this memory">
+                  <Link
+                    component="button"
+                    type="button"
+                    size="sm"
+                    onClick={() => onOpenThread(p.thread_id, p.agent)}
+                    className="break-all text-left"
+                  >
+                    {p.thread_title || "View source conversation"}
+                  </Link>
+                </Tip>
               ) : p.source_kind === "conversation" ? (
-                <span title="The source conversation is no longer retained (recording off, or expired past the 180-day window)">
-                  From a conversation · <span className="text-[var(--color-text-subtle)]">transcript not retained</span>
-                </span>
+                <>
+                  From a conversation · <span className="text-text-muted">transcript not retained</span>
+                  <div className="text-xs text-text-muted">
+                    Recording was off, or it expired past the 180-day window.
+                  </div>
+                </>
               ) : (
-                <span title={p.source_trace}>{p.source_label}</span>
+                <>
+                  {p.source_label}
+                  {p.source_trace && p.source_trace !== p.source_label && (
+                    <div className="text-xs text-text-muted font-mono break-all">{p.source_trace}</div>
+                  )}
+                </>
               )}
             </dd>
           </>
         )}
         {trig && (
           <>
-            <dt className="text-[var(--color-text-muted)]">Trigger</dt>
+            <dt className="text-text-muted">Trigger</dt>
             <dd>
               {trig.url ? (
-                <a href={trig.url} target="_blank" rel="noopener noreferrer" className={link} title={trig.url}>
-                  {shortUrl(trig.url)} ↗
-                </a>
+                <ExternalLink href={trig.url} size="sm" className="break-all">
+                  {shortUrl(trig.url)}
+                </ExternalLink>
               ) : (
                 <span>{trig.label}</span>
               )}
@@ -1175,12 +1127,12 @@ function ProvenanceSection({
         )}
         {cited && (
           <>
-            <dt className="text-[var(--color-text-muted)]">Cited source</dt>
+            <dt className="text-text-muted">Cited source</dt>
             <dd>
               {isUrl(cited) ? (
-                <a href={cited} target="_blank" rel="noopener noreferrer" className={link} title={cited}>
-                  {shortUrl(cited)} ↗
-                </a>
+                <ExternalLink href={cited} size="sm" className="break-all">
+                  {shortUrl(cited)}
+                </ExternalLink>
               ) : (
                 <span className="font-mono break-all">{cited}</span>
               )}
@@ -1192,19 +1144,17 @@ function ProvenanceSection({
         <div className="space-y-1">
           {links.map((lk, i) => (
             <button
+              type="button"
               key={`${lk.memory_key}-${i}`}
               onClick={() => onInspect(lk.memory_key)}
-              className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-2)] transition-colors group"
-              title="Open the linked memory"
+              className="w-full text-left px-2 py-1.5 rounded-md hover:bg-surface-2 transition-colors group"
             >
-              <div className="flex items-center gap-1.5 text-2xs text-[var(--color-text-muted)] mb-0.5">
+              <div className="flex items-center gap-1.5 text-xs text-text-muted mb-0.5">
                 <span>{lk.direction === "out" ? "→" : "←"}</span>
                 <span>{lk.relation || "linked"}</span>
-                {lk.label && <span className="text-[var(--color-text-subtle)]">· {lk.label}</span>}
+                {lk.label && <span className="text-text-muted">· {lk.label}</span>}
               </div>
-              <div className="font-mono text-xs text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]">
-                {lk.memory_key}
-              </div>
+              <div className="font-mono text-xs text-text truncate group-hover:text-accent">{lk.memory_key}</div>
             </button>
           ))}
         </div>
@@ -1246,8 +1196,8 @@ function statusLabel(s?: string): string {
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <>
-      <dt className="text-[var(--color-text-muted)]">{label}</dt>
-      <dd className={`text-[var(--color-text)] ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
+      <dt className="text-text-muted">{label}</dt>
+      <dd className={`text-text ${mono ? "font-mono" : ""}`}>{value}</dd>
     </>
   );
 }
@@ -1264,7 +1214,7 @@ function EncodedAwareValue({ raw }: { raw: string }) {
   const encoded = useMemo(() => detectEncodedValue(raw), [raw]);
   if (!encoded) {
     return (
-      <pre className="text-base font-mono whitespace-pre-wrap break-words text-[var(--color-text)] bg-[var(--color-surface-2)] rounded-lg p-3 leading-relaxed">
+      <pre className="text-sm font-mono whitespace-pre-wrap break-words text-text bg-surface-2 rounded-lg p-3 leading-relaxed">
         {raw}
       </pre>
     );
@@ -1276,25 +1226,26 @@ function EncodedAwareValue({ raw }: { raw: string }) {
   return (
     <div className="space-y-2">
       <div
-        className="flex items-start gap-2 text-xs text-[var(--color-text-muted)] bg-[var(--color-warn-soft,var(--color-surface-2))] border border-[var(--color-border)] rounded-lg px-3 py-2"
+        className="flex items-start gap-2 text-xs text-text-muted bg-surface-2 border border-border rounded-lg px-3 py-2"
         role="note"
       >
-        <AlertTriangle size={14} className="text-[var(--color-warn)] shrink-0 mt-0.5" aria-hidden />
+        <Icon name="warning" size="sm" color="var(--color-warn)" aria-hidden="true" className="shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
-          <span className="font-medium text-[var(--color-text)]">Agent-encoded value</span> — {what}. Loom stores values
-          verbatim and hashes them itself; base64 defeats search, fact extraction and dedup. Ask the agent to write
-          plain text or JSON.
+          <span className="font-medium text-text">Agent-encoded value</span> — {what}. Loom stores values verbatim and
+          hashes them itself; base64 defeats search, fact extraction and dedup. Ask the agent to write plain text or
+          JSON.
         </div>
-        <button
-          type="button"
+        <Button
+          type="secondary"
+          htmlType="button"
           onClick={() => setShowDecoded((v) => !v)}
-          className="shrink-0 px-2 py-0.5 text-xs font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
           aria-pressed={showDecoded}
+          className="shrink-0"
         >
           {showDecoded ? "Show stored" : "Show decoded"}
-        </button>
+        </Button>
       </div>
-      <pre className="text-base font-mono whitespace-pre-wrap break-words text-[var(--color-text)] bg-[var(--color-surface-2)] rounded-lg p-3 leading-relaxed">
+      <pre className="text-sm font-mono whitespace-pre-wrap break-words text-text bg-surface-2 rounded-lg p-3 leading-relaxed">
         {showDecoded ? encoded.decoded : raw}
       </pre>
     </div>
@@ -1316,14 +1267,14 @@ function TrustPanel({ detail, conflictCount }: { detail: MemoryDetail; conflictC
       : { label: "Judge flagged this as uncertain at extraction" };
 
   return (
-    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <div className="flex items-center gap-2.5 px-4 py-3 text-[var(--color-warn)] bg-[var(--color-surface-2)]">
-        <AlertTriangle size={16} className="shrink-0" />
-        <span className="text-base font-medium">{primary.label}</span>
+    <section className="rounded-xl border border-border bg-surface overflow-hidden">
+      <div className="flex items-center gap-2.5 px-4 py-3 text-warn bg-surface-2">
+        <Icon name="warning" size="sm" color="var(--color-warn)" aria-hidden="true" className="shrink-0" />
+        <span className="text-sm font-medium">{primary.label}</span>
       </div>
       {conflictCount > 0 && verdictUncertain && (
-        <div className="px-4 py-2 border-t border-[var(--color-border)] text-xs text-[var(--color-text-muted)] flex items-center gap-1.5">
-          <AlertTriangle size={11} className="text-[var(--color-warn)]" />
+        <div className="px-4 py-2 border-t border-border text-xs text-text-muted flex items-center gap-1.5">
+          <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" />
           Judge also flagged this as uncertain at extraction.
         </div>
       )}
@@ -1331,20 +1282,20 @@ function TrustPanel({ detail, conflictCount }: { detail: MemoryDetail; conflictC
   );
 }
 
-const CODE_STATE: Record<CodeLink["state"], { tone: "accent" | "warn" | "danger" | "muted"; label: string }> = {
-  fresh: { tone: "muted", label: "Current" },
-  moved: { tone: "accent", label: "Moved" },
-  changed: { tone: "warn", label: "Code changed" },
-  unresolved: { tone: "warn", label: "Possibly renamed" },
-  missing: { tone: "danger", label: "Code removed" },
+const CODE_STATE: Record<CodeLink["state"], { state: BadgeState; label: string }> = {
+  fresh: { state: "neutral", label: "Current" },
+  moved: { state: "info", label: "Moved" },
+  changed: { state: "warning", label: "Code changed" },
+  unresolved: { state: "warning", label: "Possibly renamed" },
+  missing: { state: "danger", label: "Code removed" },
 };
 
 /** The code the memory is linked to, each with whether that code still matches it. */
 function CodeLinks({ links }: { links: CodeLink[] }) {
   if (links.length === 0) return null;
   return (
-    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
-      <div className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Linked code</div>
+    <section className="rounded-xl border border-border bg-surface px-4 py-3">
+      <div className="text-xs font-medium text-text-muted mb-2">Linked code</div>
       <ul className="space-y-1.5">
         {links.map((l) => {
           const state = CODE_STATE[l.state] ?? CODE_STATE.fresh;
@@ -1352,15 +1303,14 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
           return (
             <li key={`${l.code_namespace}:${l.path}:${l.symbol}`} className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">
-                <span
-                  className="font-mono text-xs truncate"
-                  title={`${l.code_namespace} · ${l.path}${l.symbol ? ` · ${l.symbol}` : ""}`}
-                >
-                  {l.symbol || l.path}
-                </span>
-                <Badge tone={state.tone} label={state.label + since} />
+                <span className="font-mono text-xs truncate">{l.symbol || l.path}</span>
+                <Badge state={state.state} text={state.label + since} size="sm" />
               </div>
-              {l.suggestion && <p className="mt-1 text-xs text-[var(--color-text-muted)]">Suggested: {l.suggestion}</p>}
+              <p className="text-xs font-mono text-text-muted break-all">
+                {l.code_namespace}
+                {l.symbol ? ` · ${l.path}` : ""}
+              </p>
+              {l.suggestion && <p className="mt-1 text-xs text-text-muted">Suggested: {l.suggestion}</p>}
             </li>
           );
         })}
@@ -1386,43 +1336,26 @@ function ExpiryEditor({
   expiresAt: string | null;
   onChange: (ttlSeconds: number | null) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const current = expiresAt ? `Expires ${relativeTime(expiresAt)}` : "Never expires";
   const isExpired = expiresAt ? new Date(expiresAt).getTime() < Date.now() : false;
 
   return (
     <div className="inline-flex items-center gap-2">
-      <span className={isExpired ? "text-danger" : "text-[var(--color-text)]"}>{isExpired ? "Expired" : current}</span>
-      <div className="relative">
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="text-2xs px-1.5 py-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-          aria-haspopup="true"
-          aria-expanded={open}
-        >
-          change ▾
-        </button>
-        {open && (
-          <>
-            {/* Transparent backdrop — next click closes the popover */}
-            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
-            <div className="absolute right-0 top-full mt-1 z-50 min-w-[150px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1">
-              {EXPIRY_PRESETS.map((opt) => (
-                <button
-                  key={opt.label}
-                  onClick={() => {
-                    setOpen(false);
-                    onChange(opt.ttl);
-                  }}
-                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-[var(--color-surface-2)]"
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+      <span className={isExpired ? "text-danger" : "text-text"}>{isExpired ? "Expired" : current}</span>
+      <Dropdown modal={false}>
+        <MenuTrigger>
+          <Button type="empty" htmlType="button" iconRight="chevron-down">
+            Change
+          </Button>
+        </MenuTrigger>
+        <Dropdown.Content align="end">
+          {EXPIRY_PRESETS.map((opt) => (
+            <Dropdown.Item key={opt.label} onSelect={() => onChange(opt.ttl)}>
+              {opt.label}
+            </Dropdown.Item>
+          ))}
+        </Dropdown.Content>
+      </Dropdown>
     </div>
   );
 }
@@ -1431,18 +1364,20 @@ function ExpiryEditor({
  * its canonical: the badge is the way to the row that answers for this one. */
 function RedirectBadge({ canonicalKey, onFollow }: { canonicalKey: string; onFollow: (key: string) => void }) {
   return (
-    <button
-      type="button"
-      onClick={() => onFollow(canonicalKey)}
-      aria-label={`Redirects to ${canonicalKey}; open it`}
-      title="This key answers with the row it redirects to. Open the canonical."
-      className="inline-flex items-center gap-1 max-w-full min-h-9 px-2 rounded-full border text-2xs font-medium tracking-tight bg-[var(--color-accent-soft)] text-[var(--color-accent)] border-[var(--color-accent)]/30 hover:underline pointer-coarse:min-h-11"
-      data-testid="redirect-badge"
-    >
-      <CornerDownRight size={11} aria-hidden="true" />
-      <span className="shrink-0">redirects to </span>
-      <span className="font-mono truncate">{canonicalKey}</span>
-    </button>
+    <Tip content="This key answers with the row it redirects to. Open the canonical.">
+      <Button
+        type="secondary"
+        htmlType="button"
+        iconLeft="arrow-right"
+        onClick={() => onFollow(canonicalKey)}
+        aria-label={`Redirects to ${canonicalKey}; open it`}
+        data-testid="redirect-badge"
+        className="max-w-full min-w-0"
+      >
+        <span className="shrink-0">redirects to </span>
+        <span className="font-mono truncate">{canonicalKey}</span>
+      </Button>
+    </Tip>
   );
 }
 
@@ -1480,70 +1415,52 @@ function RenameForm({
     }
   };
 
-  const field =
-    "w-full min-h-9 px-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none font-mono text-sm text-[var(--color-text)]";
-  const btn =
-    "inline-flex items-center justify-center gap-1.5 min-h-9 px-3 text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed pointer-coarse:min-h-11";
-
   return (
     <section
       aria-labelledby="rename-heading"
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-4 space-y-3"
+      className="rounded-xl border border-border bg-surface-2/50 p-4 space-y-3"
       data-testid="rename-form"
     >
-      <h4
-        id="rename-heading"
-        className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5"
-      >
-        <ArrowRightLeft size={11} aria-hidden="true" /> Rename (keep redirect)
-      </h4>
-      <label className="block text-sm">
-        <span className="block text-[var(--color-text-muted)] mb-1">New key</span>
-        <input
-          aria-label="New key"
-          value={toKey}
-          onChange={(e) => {
-            setToKey(e.target.value);
-            setPreview(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && valid && !busy) {
-              e.preventDefault();
-              void call(true);
-            }
-          }}
-          className={field}
-          autoFocus
-          spellCheck={false}
-        />
-      </label>
-      <label className="flex items-center gap-2 text-sm text-[var(--color-text)] min-h-9 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={keepRedirect}
-          onChange={(e) => {
-            setKeepRedirect(e.target.checked);
-            setPreview(null);
-          }}
-          className="h-4 w-4 accent-[var(--color-accent)]"
-        />
-        Keep old key readable (redirect)
-      </label>
-      <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+      <Title type="h3" size="sm" id="rename-heading" className="flex items-center gap-1.5">
+        <Icon name="arrow-right" size="xs" aria-hidden="true" /> Rename (keep redirect)
+      </Title>
+      <TextField
+        label="New key"
+        value={toKey}
+        onChange={(v) => {
+          setToKey(v);
+          setPreview(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && valid && !busy) {
+            e.preventDefault();
+            void call(true);
+          }
+        }}
+        autoFocus
+        spellCheck={false}
+      />
+      <Checkbox
+        label="Keep old key readable (redirect)"
+        checked={keepRedirect}
+        onCheckedChange={(c) => {
+          setKeepRedirect(c === true);
+          setPreview(null);
+        }}
+      />
+      <p className="text-xs text-text-muted leading-relaxed">
         {keepRedirect
           ? "A reader of the old key keeps getting the old value, with the new key named; nothing changes under an agent that still reads it."
           : "The old key is deleted (restorable for 14 days). An agent that still reads it will get “not found”."}
       </p>
-      {!valid && target === fromKey && (
-        <p className="text-xs text-[var(--color-text-subtle)]">Type a different key to rename.</p>
-      )}
+      {!valid && target === fromKey && <p className="text-xs text-text-muted">Type a different key to rename.</p>}
       {preview && (
         <div
           role="status"
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm space-y-1"
+          className="rounded-lg border border-border bg-surface p-3 text-sm space-y-1"
           data-testid="rename-preview"
         >
-          <div className="text-[var(--color-text)]">
+          <div className="text-text">
             Would write <span className="font-mono">{preview.to_key}</span>
             {preview.memory_type && (
               <>
@@ -1564,12 +1481,12 @@ function RenameForm({
             )}
           </div>
           {preview.value_preview && (
-            <pre className="text-xs font-mono whitespace-pre-wrap break-words text-[var(--color-text-muted)] max-h-32 overflow-y-auto">
+            <pre className="text-xs font-mono whitespace-pre-wrap break-words text-text-muted max-h-32 overflow-y-auto">
               {preview.value_preview}
             </pre>
           )}
           {preview.advisories.length > 0 && (
-            <ul className="text-xs text-[var(--color-warn)] list-disc pl-4">
+            <ul className="text-xs text-warn list-disc pl-4">
               {preview.advisories.map((a, i) => (
                 <li key={i}>{a}</li>
               ))}
@@ -1577,119 +1494,80 @@ function RenameForm({
           )}
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void call(true)}
-          disabled={!valid || busy !== null}
-          className={`${btn} border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]`}
-        >
-          {busy === "preview" ? "Previewing…" : "Preview"}
-        </button>
-        <button
-          type="button"
-          onClick={() => void call(false)}
-          disabled={!valid || busy !== null}
-          className={`${btn} bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]`}
-        >
-          {busy === "rename" ? "Renaming…" : "Rename"}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className={`${btn} text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}
-        >
+      {/* Click UI order: secondary actions first, the primary last, right-aligned. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button type="secondary" htmlType="button" onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
+        <Button
+          type="secondary"
+          htmlType="button"
+          onClick={() => void call(true)}
+          disabled={!valid || busy === "rename"}
+          loading={busy === "preview"}
+        >
+          Preview
+        </Button>
+        <Button
+          type="primary"
+          htmlType="button"
+          onClick={() => void call(false)}
+          disabled={!valid || busy === "preview"}
+          loading={busy === "rename"}
+        >
+          Rename
+        </Button>
       </div>
     </section>
   );
 }
 
-/** Lifecycle-state badge for the Inspector header. */
+const LIFECYCLE: Record<string, { state: BadgeState; text: string; about: string }> = {
+  pinned: {
+    state: "info",
+    text: "Pinned · authoritative",
+    about:
+      "Pinned memories block conflicting writes from non-pinned candidates. Edit the pinned row explicitly to change the value.",
+  },
+  conflicted: {
+    state: "warning",
+    text: "Conflicted",
+    about: "This memory disagrees with one or more peers. Resolve via the Review queue.",
+  },
+  duplicate: {
+    state: "neutral",
+    text: "Duplicate",
+    about: "Exact-text duplicate of an older row. Kept for audit; the original is canonical.",
+  },
+  superseded: {
+    state: "neutral",
+    text: "Superseded",
+    about: "Replaced by a newer version of the same memory_key. History shows the chain.",
+  },
+  tombstoned: {
+    state: "danger",
+    text: "Deleted",
+    about: "Tombstoned. Searchable history is preserved for 14 days before TTL hard-delete.",
+  },
+  rejected: {
+    state: "danger",
+    text: "Rejected",
+    about: "The write-time LLM judge rejected this candidate. It never became active.",
+  },
+};
+
+/** Lifecycle-state badge for the Inspector header, with what the state means on an info
+ *  button beside it. */
 function LifecycleBadge({ status, pinned }: { status?: string; pinned: boolean }) {
   // 'active' is the default — only badge it when also pinned.
-  if (!status || status === "active") {
-    if (pinned) {
-      return (
-        <Badge
-          tone="accent"
-          label="Pinned · authoritative"
-          title="Pinned memories block conflicting writes from non-pinned candidates. Edit the pinned row explicitly to change the value."
-        />
-      );
-    }
-    return null;
-  }
-  switch (status) {
-    case "conflicted":
-      return (
-        <Badge
-          tone="warn"
-          label="Conflicted"
-          title="This memory disagrees with one or more peers. Resolve via the Review queue."
-        />
-      );
-    case "duplicate":
-      return (
-        <Badge
-          tone="muted"
-          label="Duplicate"
-          title="Exact-text duplicate of an older row. Kept for audit; the original is canonical."
-        />
-      );
-    case "superseded":
-      return (
-        <Badge
-          tone="muted"
-          label="Superseded"
-          title="Replaced by a newer version of the same memory_key. History shows the chain."
-        />
-      );
-    case "tombstoned":
-      return (
-        <Badge
-          tone="danger"
-          label="Deleted"
-          title="Tombstoned. Searchable history is preserved for 14 days before TTL hard-delete."
-        />
-      );
-    case "rejected":
-      return (
-        <Badge
-          tone="danger"
-          label="Rejected"
-          title="The write-time LLM judge rejected this candidate. It never became active."
-        />
-      );
-    default:
-      return <Badge tone="muted" label={status} />;
-  }
-}
-
-function Badge({
-  tone,
-  label,
-  title,
-}: {
-  tone: "accent" | "warn" | "danger" | "muted";
-  label: string;
-  title?: string;
-}) {
-  const cls =
-    tone === "accent"
-      ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)] border-[var(--color-accent)]/30"
-      : tone === "warn"
-        ? "bg-[var(--color-warn)]/15 text-[var(--color-warn)] border-[var(--color-warn)]/30"
-        : tone === "danger"
-          ? "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border-[var(--color-danger)]/30"
-          : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]";
+  const key = !status || status === "active" ? (pinned ? "pinned" : "") : status;
+  if (!key) return null;
+  const info = LIFECYCLE[key];
+  if (!info) return <Badge size="sm" state="neutral" text={key} />;
   return (
-    <span
-      title={title}
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-2xs font-medium tracking-tight ${cls}`}
-    >
-      {label}
+    <span className="inline-flex items-center gap-0.5">
+      <Badge size="sm" state={info.state} text={info.text} />
+      <IconButton icon="info-in-circle" size="xs" label={`About ${info.text.toLowerCase()}`} tooltip={info.about} />
     </span>
   );
 }
@@ -1701,10 +1579,10 @@ function EntityChip({ entity, small = false }: { entity: string; small?: boolean
     <a
       href={graphSeedHref(entity)}
       onClick={onGraphLinkClick(entity)}
-      title={`Open the graph around ${entity}`}
-      className={`inline-flex items-center gap-1 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors ${small ? "text-2xs px-1.5 py-px" : "text-xs px-2 py-0.5"}`}
+      className={`inline-flex items-center gap-1 rounded-md bg-surface-2 text-text no-underline hover:text-accent transition-colors ${small ? "text-xs px-1.5 py-px" : "text-xs px-2 py-0.5"}`}
     >
-      <Waypoints size={small ? 9 : 10} className="opacity-60" />
+      <Icon name="share-network" size="xs" aria-hidden="true" />
+      <span className="sr-only">Open the graph around </span>
       {entity}
     </a>
   );

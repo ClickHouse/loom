@@ -1,3 +1,4 @@
+import { Title } from "@clickhouse/click-ui/Title";
 import type { HTMLAttributes, KeyboardEvent } from "react";
 import type { TaskListRow } from "../../api/tasks";
 import { GROUPS, GROUP_META, leaseMinutesLeft, posterName, rel, sublineOf, type Group } from "../../lib/tasks";
@@ -26,11 +27,12 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
   };
   // A div, not a button: Firefox never starts a drag on a <button>.
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a draggable card; Firefox never starts a drag on a <button>
     <div
       role="button"
       tabIndex={0}
       className="tq-card"
-      aria-selected={ctx.selectedId === r.task_id}
+      aria-current={ctx.selectedId === r.task_id ? "true" : undefined}
       data-task-id={r.task_id}
       onClick={() => ctx.onOpen(r)}
       onKeyDown={onKey}
@@ -40,15 +42,15 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
         <span className="tq-pdot" data-p={r.priority} aria-label={`P${r.priority}`} role="img" />
         <KindTag kind={r.kind} />
       </span>
-      <span className="font-medium leading-[18px] text-base">{r.title}</span>
+      <span className="font-medium text-sm">{r.title}</span>
       {s && (
-        <span className="text-xs text-[var(--color-text-muted)] italic">
+        <span className="text-xs text-text-muted italic">
           {s.text}
           {s.href ? ` ${s.href.replace(/^https?:\/\/(www\.)?(github\.com\/)?/, "")}` : ""}
           {s.suffix ? ` ${s.suffix}` : ""}
         </span>
       )}
-      <span className="flex justify-between items-center gap-2 text-xs text-[var(--color-text-subtle)]">
+      <span className="flex justify-between items-center gap-2 text-xs text-text-muted">
         <span className="tq-who min-w-0">
           {running ? (
             <>
@@ -65,9 +67,9 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
             </>
           )}
         </span>
-        <span className="tabular shrink-0" title={r.created_at}>
+        <time className="tabular shrink-0" dateTime={r.created_at}>
           {rel(r.created_at, ctx.now)}
-        </span>
+        </time>
       </span>
     </div>
   );
@@ -85,32 +87,25 @@ export function TaskBoard({
 }) {
   const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
   return (
-    <div className="tq-board" aria-label="Tasks board">
+    <section className="tq-board" aria-label="Tasks board">
       {GROUPS.map((g) => {
         const rows = groups[g];
         const meta = GROUP_META[g];
         return (
           <section key={g} className="tq-col" aria-labelledby={`tq-col-${g}`} {...drag.target(g)}>
-            <h3
+            <Title
+              type="h2"
+              size="sm"
               id={`tq-col-${g}`}
-              className="text-sm font-semibold m-0 px-3 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2"
+              className="px-3 py-2.5 border-b border-border flex items-center gap-2"
             >
-              <span
-                className="inline-block w-2 h-2 rounded-[2px]"
-                style={{ background: meta.color }}
-                aria-hidden="true"
-              />
+              <span className="inline-block w-2 h-2 rounded-xs" style={{ background: meta.color }} aria-hidden="true" />
               {meta.label}
-              <span
-                className="ml-auto text-xs font-medium text-[var(--color-text-subtle)] tabular"
-                aria-label={`${rows.length} in ${meta.label}`}
-              >
-                {rows.length}
-              </span>
-            </h3>
+              <span className="ml-auto text-xs font-medium text-text-muted tabular">{rows.length}</span>
+            </Title>
             <div className="p-2 flex flex-col gap-2">
               {rows.length === 0 ? (
-                <div className="p-4 text-xs text-[var(--color-text-subtle)]">
+                <div className="p-4 text-xs text-text-muted">
                   {g === "closed" && !showClosed ? "closed tasks are hidden — show them in the rail" : "nothing here"}
                 </div>
               ) : (
@@ -120,6 +115,6 @@ export function TaskBoard({
           </section>
         );
       })}
-    </div>
+    </section>
   );
 }

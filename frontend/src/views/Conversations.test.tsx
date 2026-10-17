@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationHit, ConversationThreadDetail, ConversationThreadSummary, MemoryListResponse } from "../api";
 import { useStore } from "../lib/state";
@@ -16,6 +16,7 @@ const listMemories = vi.fn();
 const searchConversations = vi.fn();
 const getNamespace = vi.fn();
 const setConversationLogging = vi.fn();
+const listConversationMessages = vi.fn();
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
@@ -26,6 +27,7 @@ vi.mock("../api", async (importOriginal) => {
     searchConversations: (...args: unknown[]) => searchConversations(...args),
     getNamespace: (...args: unknown[]) => getNamespace(...args),
     setConversationLogging: (...args: unknown[]) => setConversationLogging(...args),
+    listConversationMessages: (...args: unknown[]) => listConversationMessages(...args),
   };
 });
 vi.mock("../lib/namespaceRole", async (importOriginal) => ({
@@ -134,6 +136,8 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     const dialog = await screen.findByRole("dialog");
     expect(await screen.findByText("body of thread-b")).toBeInTheDocument();
     expect(await screen.findByText("from/b")).toBeInTheDocument();
+    // A produced memory is a label, not a tab stop: twenty of them stood before the transcript.
+    expect(screen.getByText("from/b").closest("[tabindex]")).not.toHaveAttribute("role", "note");
 
     await act(async () => {
       detailA.resolve(detail("thread-a", "Title A"));
@@ -153,7 +157,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     setConversationLogging.mockResolvedValue({});
 
     render(<Conversations />);
-    expect(await screen.findByText("Recording on")).toBeInTheDocument();
+    expect(await screen.findByRole("switch", { name: "Record conversations" })).toBeChecked();
     const box = screen.getByLabelText("Search conversation transcripts");
     fireEvent.change(box, { target: { value: "hello" } });
     fireEvent.keyDown(box, { key: "Enter" });
@@ -165,15 +169,239 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     act(() => setNamespace("ns-b"));
     await waitFor(() => expect(screen.queryByText("said in A")).toBeNull());
     // B's recording value is not loaded yet, so there is nothing to toggle.
-    expect(screen.queryByText(/^Recording (on|off)$/)).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Record conversations" })).toBeNull();
     await act(async () => lateA.resolve({ hits: [hit("thread-a", "late from A")] }));
     expect(screen.queryByText("late from A")).toBeNull();
 
     await act(async () => nsB.resolve({ conversation_logging_enabled: false }));
-    fireEvent.click(await screen.findByText("Recording off"));
+    const recording = await screen.findByRole("switch", { name: "Record conversations" });
+    expect(recording).not.toBeChecked();
+    fireEvent.click(recording);
     await waitFor(() => expect(setConversationLogging).toHaveBeenCalledTimes(1));
     expect(setConversationLogging.mock.calls[0][0]).toMatchObject({ namespace: "ns-b" });
     expect(setConversationLogging.mock.calls[0][1]).toBe(true);
+  });
+
+  it("opens a hit from another namespace in that namespace", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    searchConversations.mockResolvedValueOnce({ hits: [{ ...hit("thread-z", "said in Z"), namespace: "ns-z" }] });
+    getConversationThread.mockResolvedValue(detail("thread-z", "Title Z"));
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    const box = screen.getByLabelText("Search conversation transcripts");
+    fireEvent.change(box, { target: { value: "said" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    // The result count is announced: a status region that stays mounted, its text changing.
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent("1 match in 1 thread");
+    fireEvent.click(await screen.findByText("said in Z"));
+    expect(await screen.findByText("body of thread-z")).toBeInTheDocument();
+    const [scope, agent, threadId] = getConversationThread.mock.calls[0];
+    expect(scope).toMatchObject({ namespace: "ns-z" });
+    expect([agent, threadId]).toEqual(["*", "thread-z"]);
+    expect(listMemories.mock.calls[0][0]).toMatchObject({ namespace: "ns-z" });
+    expect(await screen.findByRole("dialog")).toHaveTextContent("ns-z");
+  });
+
+  it("opens a listed thread with every agent's turns, and pages it the same way", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2, next_cursor: "c-1" });
+    listMemories.mockResolvedValue(noMemories);
+    listConversationMessages.mockResolvedValue({ rows: [], next_cursor: null });
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title Y"));
+    fireEvent.click(await screen.findByRole("button", { name: /Load more/ }));
+    await waitFor(() => expect(listConversationMessages).toHaveBeenCalledTimes(1));
+    expect(getConversationThread).toHaveBeenCalledTimes(1);
+    expect(getConversationThread.mock.calls[0][1]).toBe("*");
+    expect(listConversationMessages.mock.calls[0][1]).toBe("*");
+    // The page cursor is the one conversation.get issued, never a message id.
+    expect(listConversationMessages.mock.calls[0][3]).toMatchObject({ cursor: "c-1" });
+  });
+
+  it("falls back to the listed agent where a replica reads '*' literally", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread
+      .mockResolvedValueOnce({ ...detail("thread-y", ""), found: false, msg_count: 0, messages: [] })
+      .mockResolvedValueOnce({ ...detail("thread-y", "Title Y"), msg_count: 2, next_cursor: "c-1" });
+    listMemories.mockResolvedValue(noMemories);
+    listConversationMessages.mockResolvedValue({ rows: [], next_cursor: null });
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title Y"));
+    expect(await screen.findByText("body of thread-y")).toBeInTheDocument();
+    expect(getConversationThread.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
+    fireEvent.click(screen.getByRole("button", { name: /Load more/ }));
+    // Each page asks for every agent first; only an empty answer retries as the listed agent.
+    await waitFor(() => expect(listConversationMessages).toHaveBeenCalledTimes(2));
+    expect(listConversationMessages.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
+    expect(listConversationMessages.mock.calls[0][3]).toMatchObject({ cursor: "c-1" });
+  });
+
+  it("labels each assistant turn with the agent that wrote it", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-p", "Title P")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    const now = new Date().toISOString();
+    getConversationThread.mockResolvedValue({
+      ...detail("thread-p", "Title P"),
+      agent: "planner",
+      msg_count: 2,
+      messages: [
+        { msg_id: "p1", agent: "planner", role: "assistant", content: "plan it", ts: now },
+        { msg_id: "p2", agent: "deployer", role: "assistant", content: "shipped", ts: now },
+      ],
+    });
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title P"));
+    const shipped = await screen.findByText("shipped");
+    expect(must(shipped.closest("[id^='msg-']"), "turn p2")).toHaveTextContent("deployer");
+    expect(must(screen.getByText("plan it").closest("[id^='msg-']"), "turn p1")).toHaveTextContent("planner");
+  });
+
+  it("opens a memory's source thread under the memory's agent where '*' finds nothing", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread
+      .mockResolvedValueOnce({ ...detail("thread-s", ""), found: false, msg_count: 0, messages: [] })
+      .mockResolvedValueOnce(detail("thread-s", "Title S"));
+    listMemories.mockResolvedValue(noMemories);
+    useStore.setState({ pendingConversationThread: { threadId: "thread-s", agent: "claude-code" } });
+
+    render(<Conversations />);
+    expect(await screen.findByText("body of thread-s")).toBeInTheDocument();
+    expect(getConversationThread.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
+  });
+
+  it("says a missing thread is not found, with no message count", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread.mockResolvedValue({ ...detail("thread-x", ""), found: false, msg_count: 0, messages: [] });
+    listMemories.mockResolvedValue(noMemories);
+    useStore.setState({ pendingConversationThread: { threadId: "thread-x", agent: "" } });
+
+    render(<Conversations />);
+    expect(await screen.findByText(/Thread not found/)).toBeInTheDocument();
+    expect(screen.queryByText("0 messages")).toBeNull();
+  });
+
+  it("says a thread read by its agent is cut short when no page cursor came back", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread
+      .mockResolvedValueOnce({ ...detail("thread-y", ""), found: false, msg_count: 0, messages: [] })
+      .mockResolvedValueOnce({ ...detail("thread-y", "Title Y"), msg_count: 260 });
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title Y"));
+    expect(await screen.findByText("Showing 1 of 260 messages.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Load more/ })).toBeNull();
+  });
+
+  it("pages under the listed agent when a '*' page comes back empty", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 3, next_cursor: "c-1" });
+    listMemories.mockResolvedValue(noMemories);
+    const now = new Date().toISOString();
+    listConversationMessages.mockResolvedValueOnce({ rows: [], next_cursor: null }).mockResolvedValueOnce({
+      rows: [{ msg_id: "y-2", role: "user", content: "second turn", ts: now }],
+      next_cursor: "c-2",
+    });
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title Y"));
+    fireEvent.click(await screen.findByRole("button", { name: /Load more/ }));
+    expect(await screen.findByText("second turn")).toBeInTheDocument();
+    // That page was the listed agent's alone; its cursor would skip other agents' turns, so
+    // the dialog stops and says how much it shows.
+    expect(screen.queryByRole("button", { name: /Load more/ })).toBeNull();
+    expect(screen.getByText("Showing 2 of 3 messages.")).toBeInTheDocument();
+    expect(listConversationMessages.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
+  });
+
+  it("keeps two agents' turns that share an id apart", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-d", "Title D")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    const now = new Date().toISOString();
+    getConversationThread.mockResolvedValue({
+      ...detail("thread-d", "Title D"),
+      msg_count: 2,
+      messages: [
+        { msg_id: "1", agent: "planner", role: "user", content: "plan it", ts: now },
+        { msg_id: "1", agent: "deployer", role: "user", content: "ship it", ts: now },
+      ],
+    });
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title D"));
+    await screen.findByText("ship it");
+    const ids = [...document.querySelectorAll("[data-msg-id]")].map((el) => el.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("moves focus to the transcript, at the first new turn, when Load more brings the last page", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2, next_cursor: "c-1" });
+    listMemories.mockResolvedValue(noMemories);
+    const now = new Date().toISOString();
+    listConversationMessages.mockResolvedValue({
+      rows: [{ msg_id: "y-2", agent: "claude-code", role: "user", content: "second turn", ts: now }],
+      next_cursor: null,
+    });
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title Y"));
+    const more = await screen.findByRole("button", { name: /Load more/ });
+    more.focus();
+    fireEvent.click(more);
+    const scrolled = vi.fn();
+    const scrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    await screen.findByText("second turn");
+    // A tabbable region, so Tab moves on from it inside the dialog.
+    const transcript = screen.getByRole("region", { name: "Transcript" });
+    await waitFor(() => expect(transcript).toHaveFocus());
+    expect(transcript).toHaveAttribute("tabindex", "0");
+    expect(scrolled).toHaveBeenCalled();
+    Element.prototype.scrollIntoView = scrollIntoView;
+  });
+
+  it("rings only the turn a hit names when two agents' turns share its id", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    const now = new Date().toISOString();
+    searchConversations.mockResolvedValueOnce({
+      hits: [{ thread_id: "thread-s", msg_id: "1", role: "user", content_excerpt: "ship the fix", ts: now }],
+    });
+    getConversationThread.mockResolvedValue({
+      ...detail("thread-s", "Title S"),
+      msg_count: 2,
+      messages: [
+        { msg_id: "1", agent: "planner", role: "user", content: "plan the fix", ts: now },
+        { msg_id: "1", agent: "deployer", role: "user", content: "ship the fix", ts: now },
+      ],
+    });
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    const box = screen.getByLabelText("Search conversation transcripts");
+    fireEvent.change(box, { target: { value: "ship" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByText("ship the fix"));
+    await screen.findAllByText("plan the fix");
+    const ringed = [...document.querySelectorAll("[data-highlighted]")].map((el) => el.textContent);
+    expect(ringed).toHaveLength(1);
+    expect(ringed[0]).toContain("ship the fix");
   });
 
   it("ignores '/' pressed inside the thread dialog", async () => {

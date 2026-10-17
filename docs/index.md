@@ -146,7 +146,8 @@ For contributors: [repository guide](development/repository-guide.md) ·
 [add an operation](development/adding-an-operation.md) ·
 [add a worker](development/adding-a-worker.md) ·
 [add a table](development/adding-a-table.md) ·
-[add language support](development/adding-language-support.md).
+[add language support](development/adding-language-support.md) ·
+[dashboard design](development/dashboard-design.md).
 [CONTRIBUTING.md](../CONTRIBUTING.md) covers the pull-request workflow.
 
 ## Also

@@ -6,7 +6,7 @@
  * form that passed. The Trackers list says each tracker's state in plain words and gives
  * its admin Check / Rotate / Retire.
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/errors";
@@ -424,9 +424,9 @@ describe("Add a tracker", () => {
       repos: ["Acme/kj"],
     });
     expect(screen.getByText(/Your schema, not Loom's:/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Items: your table")).toHaveValue("tickets");
-    expect(screen.getByLabelText(/^Title/)).toHaveValue("summary");
-    expect(screen.getByLabelText(/Reference: number/)).toHaveValue("digits:ticket_key");
+    expect(screen.getByRole("button", { name: "Items: your table" })).toHaveTextContent("tickets · 42 rows");
+    expect(screen.getByLabelText(/^Title/)).toHaveTextContent("summary · String");
+    expect(screen.getByRole("button", { name: /Reference: number/ })).toHaveTextContent("number in ticket_key");
     expect(screen.getByLabelText(/Reference: fixed repository/)).toHaveValue("Acme/kj");
     expect(screen.getAllByText("matched").length).toBeGreaterThan(0);
     expect(screen.queryByText(/CREATE (OR REPLACE )?VIEW/)).toBeNull();
@@ -473,7 +473,9 @@ describe("Add a tracker", () => {
     expect(screen.getByText(/Your mapping fits the tables in helpdesk/)).toBeInTheDocument();
     // back to the mapping, change a field: the check no longer covers it
     fireEvent.click(screen.getByRole("button", { name: "Edit mapping" }));
-    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: "details" } });
+    // Title is a Click UI Select: open it, pick the column
+    fireEvent.click(screen.getByLabelText(/^Title/));
+    fireEvent.click(within(screen.getAllByRole("dialog").at(-1) as HTMLElement).getByText("details · String"));
     fireEvent.click(screen.getByRole("button", { name: /Step 3 of 3: Check/ }));
     expect(screen.getByText(/The connection or the mapping changed since this check/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add and link Acme/kj" })).toBeDisabled();
@@ -500,7 +502,9 @@ describe("Add a tracker", () => {
     expect(
       within(screen.getByRole("list", { name: "Before the check" })).getByText("Pick the table that holds your items."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Check$/ })).toBeDisabled();
+    const check = screen.getByRole("button", { name: /^Check$/ });
+    expect(check).toHaveAttribute("aria-disabled", "true");
+    expect(check).toHaveAccessibleDescription("Pick the table that holds your items.");
   });
 
   it("a views database that fails the contract gets the fix per table", async () => {

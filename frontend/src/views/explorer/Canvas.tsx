@@ -4,12 +4,14 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { Waypoints, Route } from "lucide-react";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import type { PathResponse, TaxonomyEntry } from "../../api";
 import { EmptyState } from "../../components/EmptyState";
+import { Chip } from "../../components/ui";
 import { Skeleton } from "../../components/Skeleton";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
 
@@ -35,6 +37,9 @@ import { relationLabel, shorten, type Selection, type VisibleTree, type WalkMode
 
 const W = 820;
 const H = 560;
+// Svg units per screen pixel on the 566 px card of a 1400 px window, the scale a first
+// render starts from before the card is measured.
+const USUAL_SCALE = 1.45;
 
 const CATEGORICAL = Array.from({ length: 8 }, (_, i) => `var(--color-cat-${i + 1})`);
 export const COMMUNITY_PALETTE = CATEGORICAL;
@@ -62,18 +67,21 @@ export interface Placed extends XNode {
   angle: number;
   /** Whether this node's label is drawn in "key" mode (budgeted per ring). */
   keyLabel: boolean;
-  /** Characters of the label that fit between the node and the card's edge
-   * (≤ 24); the rest is an explicit ellipsis, never a clip. */
-  labelMax: number;
+  /** Svg units between the node and the card's edge that its label may take. */
+  labelRoom: number;
 }
 
-/** How many characters fit from a node outward to the card's edge, at the
- *  canvas label floor (≈ 9 svg units per character at a 554 px canvas). The
- *  full name is always in the readout, the outline and the inspector. */
-function labelFit(x: number, r: number, angle: number, width: number): number {
+function labelRoom(x: number, r: number, angle: number, width: number): number {
   const cos = Math.cos(angle);
-  const room = Math.abs(cos) < 0.25 ? Math.min(x, width - x) * 2 - 8 : (cos > 0 ? width - x : x) - r - 8;
-  return Math.max(6, Math.min(24, Math.floor(room / 9)));
+  return Math.abs(cos) < 0.25 ? Math.min(x, width - x) * 2 - 8 : (cos > 0 ? width - x : x) - r - 8;
+}
+
+/** How many characters of a label fit in `room` svg units. A character is ~0.6 em
+ *  of the 12 px label floor (--canvas-label-min), times `scale` svg units per screen
+ *  pixel, so a narrow card fits fewer. The rest is an explicit ellipsis, never a clip;
+ *  the full name is always in the readout, the outline and the inspector. */
+function labelFit(room: number, scale: number): number {
+  return Math.max(4, Math.min(24, Math.floor(room / (12 * 0.6 * scale))));
 }
 
 interface Layout {
@@ -103,7 +111,7 @@ function seedPlaced(m: WalkModel, x: number, y: number, maxW: number): Placed {
     r: 11,
     angle: 0,
     keyLabel: true,
-    labelMax: 24,
+    labelRoom: 2 * x - 8,
   };
 }
 
@@ -118,7 +126,9 @@ function radialLayout(m: WalkModel, nodes: XNode[], width: number, height: numbe
   const byHop = new Map<number, XNode[]>();
   for (const n of nodes) byHop.set(n.hop, [...(byHop.get(n.hop) || []), n]);
   const maxW = Math.max(1, ...nodes.map((n) => n.via_co_occur));
-  const maxR = Math.min(cx, cy) - 28;
+  // Above the top ring node and below the bottom one sits a label: 44 units is its
+  // height at the 12 px floor on a ~420 px card (1280 px wide window).
+  const maxR = Math.min(cx - 28, cy - 44);
   const radii: number[] = [];
   for (let hop = 1; hop <= maxHop; hop++) {
     const count = (byHop.get(hop) || []).length;
@@ -165,7 +175,7 @@ function radialLayout(m: WalkModel, nodes: XNode[], width: number, height: numbe
         r,
         angle,
         keyLabel: labelled.has(n.entity),
-        labelMax: labelFit(x, r, angle, width),
+        labelRoom: labelRoom(x, r, angle, width),
       });
     });
   }
@@ -188,17 +198,23 @@ function linearLayout(m: WalkModel, nodes: XNode[], width: number, height: numbe
     r: 6 + 6 * Math.sqrt(n.via_co_occur / maxW),
     angle: Math.PI / 2,
     keyLabel: true,
-    labelMax: Math.max(6, Math.min(24, Math.floor((stepX || width) / 9))),
+    labelRoom: stepX || width,
   }));
   return { seed: seedPlaced(m, left, y, maxW), nodes: placed, rings: [], linear: true };
 }
 
 /** Label placement: outward from the ring, anchored by which side the node
- *  sits on, so labels never cross the ring inwards over other nodes. */
-function labelProps(n: Placed): { dx: number; dy: number; anchor: "start" | "end" | "middle" } {
+ *  sits on, so labels never cross the ring inwards over other nodes. A label above
+ *  or below its node stays inside the card: its baseline is clamped by the label's
+ *  height in svg units (the 12 px floor times `scale`). */
+function labelProps(n: Placed, scale: number): { dx: number; dy: number; anchor: "start" | "end" | "middle" } {
   const cos = Math.cos(n.angle);
   const sin = Math.sin(n.angle);
-  if (Math.abs(cos) < 0.25) return { dx: 0, dy: sin > 0 ? n.r + 12 : -n.r - 5, anchor: "middle" };
+  if (Math.abs(cos) < 0.25) {
+    const size = 12 * scale;
+    const dy = sin > 0 ? n.r + 12 : -n.r - 5;
+    return { dx: 0, dy: Math.min(H - 2 - size * 0.3, Math.max(2 + size, n.y + dy)) - n.y, anchor: "middle" };
+  }
   return { dx: cos > 0 ? n.r + 4 : -n.r - 4, dy: 4, anchor: cos > 0 ? "start" : "end" };
 }
 
@@ -249,7 +265,7 @@ const GraphEdge = memo(function GraphEdge({ id, x1, y1, x2, y2, weight, sel, not
         </text>
       )}
       {note2 && (
-        <text className="graph-edge-note" x={mx} y={my + 22} textAnchor="middle" fill="var(--color-text-subtle)">
+        <text className="graph-edge-note" x={mx} y={my + 22} textAnchor="middle" fill="var(--color-text-muted)">
           {note2}
         </text>
       )}
@@ -267,6 +283,8 @@ interface NodeProps {
   pinned: boolean;
   /** Descendants hidden under this node when collapsed; 0 = not collapsed. */
   hidden: number;
+  /** Svg units per screen pixel: how long and how tall a label is. */
+  scale: number;
 }
 
 const GraphNode = memo(function GraphNode({
@@ -278,8 +296,9 @@ const GraphNode = memo(function GraphNode({
   sel,
   pinned,
   hidden,
+  scale,
 }: NodeProps) {
-  const lp = labelProps(n);
+  const lp = labelProps(n, scale);
   const ax = n.r + 7;
   const ay = -n.r - 7;
   return (
@@ -312,7 +331,7 @@ const GraphNode = memo(function GraphNode({
           fontWeight={selected ? 600 : 400}
           style={{ pointerEvents: "none", paintOrder: "stroke", stroke: "var(--color-surface)", strokeWidth: 3 }}
         >
-          {shorten(n.entity, n.labelMax)}
+          {shorten(n.entity, labelFit(n.labelRoom, scale))}
         </text>
       )}
       {showRelation && n.via_relation && (
@@ -422,13 +441,18 @@ export function Canvas({
   // Canvas text floor: the svg scales with its viewBox, so the card carries
   // `--canvas-scale` = svg units per screen pixel and the stylesheet multiplies
   // --canvas-label-min by it. One DOM write per resize, none on hover; the layout itself
-  // never reads it.
+  // never reads it. The label lengths do (`labelFit`), from a copy in 0.05 steps, so a
+  // resize re-renders the nodes only when a label could change length.
+  const [scale, setScale] = useState(USUAL_SCALE);
   useEffect(() => {
     const card = cardRef.current;
     if (!card || typeof ResizeObserver === "undefined") return;
     const write = (w: number, h: number) => {
-      const scale = Math.min(w / W, h / H);
-      if (scale > 0) card.style.setProperty("--canvas-scale", (1 / scale).toFixed(3));
+      const fit = Math.min(w / W, h / H);
+      if (fit <= 0) return;
+      const next = (1 / fit).toFixed(3);
+      card.style.setProperty("--canvas-scale", next);
+      setScale(Math.round(Number(next) * 20) / 20);
     };
     // No getBoundingClientRect on mount — it forced a layout (46 ms at 4x, the top
     // function of the Graph boot); the observer delivers the card's size on its first
@@ -578,11 +602,16 @@ export function Canvas({
   const showPicture = !loading && !error && placed && model && visible && visible.nodes.length > 0;
   const noPath = mode === "path" && !loading && !error && pathRes && !pathRes.found;
   const seedHidden = placed?.seed.entity ? pinned.has(placed.seed.entity) : false;
+  // An empty state sits in the card's flow and the card stops clipping, so on a phone
+  // the card grows past its aspect ratio to fit the copy instead of scrolling inside it.
+  const emptyShown =
+    (!loading && !error && mode === "walk" && ((!model && !seedTyped) || (model && visible?.nodes.length === 0))) ||
+    Boolean(noPath && pathRes);
 
   return (
     <div
       ref={cardRef}
-      className="relative rounded-xl border border-border bg-surface overflow-hidden aspect-[820/560] max-h-[560px] w-full"
+      className={`relative rounded-xl border border-border bg-surface aspect-[820/560] max-h-[560px] w-full ${emptyShown ? "flex flex-col" : "overflow-hidden"}`}
     >
       {loading && (
         <div className="absolute inset-0 grid place-items-center" role="status" aria-label={loadingLabel}>
@@ -592,24 +621,22 @@ export function Canvas({
           </div>
         </div>
       )}
-      {error && (
-        <div className="absolute inset-0 grid place-items-center p-6 text-sm text-[var(--color-danger)]">{error}</div>
-      )}
+      {error && <div className="absolute inset-0 grid place-items-center p-6 text-sm text-danger">{error}</div>}
       {!loading && !error && !model && mode === "walk" && !seedTyped && (
-        <div className="absolute inset-0 overflow-auto grid place-items-center">
+        <div className="flex-1 grid place-items-center">
           {taxonomyEmpty ? (
             <EmptyState
-              icon={Waypoints}
+              icon="share-network"
               title="No entities yet"
               description="The graph fills as memories with entities are written (and, with the chunk extractor on, as documents are ingested)."
             />
           ) : (
             <div className="flex flex-col items-center text-center px-6 py-8">
-              <div className="mb-5 grid place-items-center w-14 h-14 rounded-2xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-                <Waypoints size={26} strokeWidth={1.5} />
+              <div className="mb-5 grid place-items-center w-14 h-14 rounded-2xl bg-surface-2 text-text-muted">
+                <Icon name="share-network" size="lg" aria-hidden="true" />
               </div>
-              <h2 className="text-lg font-semibold tracking-tight">Pick an entity to walk from</h2>
-              <p className="mt-2 max-w-md text-base text-[var(--color-text-muted)] leading-relaxed">
+              <h2>Pick an entity to walk from</h2>
+              <p className="mt-2 max-w-md text-sm text-text-muted leading-relaxed">
                 Nothing is walked until you ask. Type an entity and press Walk, type{" "}
                 <span className="font-mono">a → b</span> for a path, or start from one the memories mention most.
               </p>
@@ -622,15 +649,13 @@ export function Canvas({
               ) : (
                 <div className="mt-5 flex flex-wrap justify-center gap-1.5 max-w-lg">
                   {starters.map((e) => (
-                    <button
+                    <Chip
                       key={e.value}
-                      type="button"
-                      aria-label={e.value}
+                      label={e.value}
+                      count={e.count}
+                      ariaLabel={e.value}
                       onClick={() => onWalk(e.value)}
-                      className="text-xs px-2.5 py-1 rounded-full border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-                    >
-                      {e.value} <span className="tabular-nums text-[var(--color-text-subtle)]">{e.count}</span>
-                    </button>
+                    />
                   ))}
                 </div>
               )}
@@ -639,9 +664,9 @@ export function Canvas({
         </div>
       )}
       {!loading && !error && mode === "walk" && model && visible && visible.nodes.length === 0 && (
-        <div className="absolute inset-0 overflow-auto grid place-items-center">
+        <div className="flex-1 grid place-items-center">
           <EmptyState
-            icon={Waypoints}
+            icon="share-network"
             title={
               model.nodes.size > 0
                 ? `Every edge from ${model.seed} is filtered out`
@@ -660,9 +685,9 @@ export function Canvas({
         </div>
       )}
       {noPath && pathRes && (
-        <div className="absolute inset-0 overflow-auto grid place-items-center">
+        <div className="flex-1 grid place-items-center">
           <EmptyState
-            icon={Route}
+            icon="arrow-directions"
             title={`No path within ${pathRes.hops} hop${pathRes.hops === 1 ? "" : "s"}`}
             description={
               `${pathRes.entity_a} and ${pathRes.entity_b} are not connected within ${pathRes.hops} hop${pathRes.hops === 1 ? "" : "s"} on ` +
@@ -675,6 +700,7 @@ export function Canvas({
         </div>
       )}
       {showPicture && (
+        // biome-ignore lint/a11y/useKeyWithMouseEvents: hover only lights the picture, which is aria-hidden; keyboard users walk the same nodes in the outline tree
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}
@@ -696,7 +722,7 @@ export function Canvas({
                 x={W / 2 - r * 0.7071 - 6}
                 y={H / 2 - r * 0.7071 - 6}
                 textAnchor="end"
-                fill="var(--color-text-subtle)"
+                fill="var(--color-text-muted)"
                 style={{ paintOrder: "stroke", stroke: "var(--color-surface)", strokeWidth: 3 }}
               >
                 {i + 1} hop{i === 0 ? "" : "s"}
@@ -738,6 +764,7 @@ export function Canvas({
               sel={selChain ? selChain.has(n.entity) : false}
               pinned={pinned.has(n.entity)}
               hidden={visible.hiddenUnder.get(n.entity) || 0}
+              scale={scale}
             />
           ))}
           <g
@@ -770,7 +797,7 @@ export function Canvas({
               textAnchor="middle"
               style={{ pointerEvents: "none", paintOrder: "stroke", stroke: "var(--color-surface)", strokeWidth: 3 }}
             >
-              {shorten(placed.seed.entity, 24)}
+              {shorten(placed.seed.entity, labelFit(placed.seed.labelRoom, scale))}
             </text>
             {(visible.hiddenUnder.get(placed.seed.entity) || 0) > 0 ? (
               <g

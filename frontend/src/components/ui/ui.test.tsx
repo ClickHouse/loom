@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
@@ -7,6 +7,7 @@ import { Kbd } from "./Kbd";
 import { MetaList, MetaRow } from "./Meta";
 import { Panel } from "./Panel";
 import { SectionHeading } from "./SectionHeading";
+import { Stat } from "./Stat";
 import { TextClamp } from "./TextClamp";
 import { Tip } from "./Tooltip";
 import { must } from "../../test/must";
@@ -43,7 +44,8 @@ describe("SectionHeading", () => {
       />,
     );
     expect(screen.getByRole("heading", { level: 3, name: "Memory types" })).toBeInTheDocument();
-    expect(screen.getByText("3")).toHaveAttribute("aria-label", "3 memory types");
+    expect(screen.getByText("3")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("3 memory types")).toHaveClass("sr-only");
     expect(screen.getByText("in namespace")).toBeInTheDocument();
     const about = screen.getByRole("button", { name: "About Memory types" });
     await user.tab();
@@ -65,7 +67,7 @@ describe("Chip", () => {
     );
     const chip = screen.getByRole("button", { name: "semantic, 9518 in namespace" });
     expect(chip).toHaveAttribute("aria-pressed", "true");
-    expect(chip.className).toContain("min-h-7");
+    expect(chip.className).toContain("min-h-6");
     await userEvent.click(chip);
     expect(onClick).toHaveBeenCalledOnce();
     expect(await axeViolations(container)).toEqual([]);
@@ -83,6 +85,21 @@ describe("Chip", () => {
     expect(onRemove).toHaveBeenCalledOnce();
     expect(screen.getAllByRole("button")).toHaveLength(2);
     expect(screen.getByText("run-1").closest("button")).toBeNull();
+    expect(await axeViolations(container)).toEqual([]);
+  });
+});
+
+describe("Chip with a tip", () => {
+  it("a static chip is a TipTarget: a focusable note in the chip's own shape", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Chip label="restricted" tip="Only members read it" />);
+    const chip = screen.getByRole("note");
+    expect(chip).toHaveTextContent("restricted");
+    expect(chip.className).toContain("rounded-full");
+    expect(chip.className).not.toMatch(/(^|\s)rounded(\s|$)/);
+    await user.tab();
+    expect(chip).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Only members read it");
     expect(await axeViolations(container)).toEqual([]);
   });
 });
@@ -119,6 +136,8 @@ describe("TextClamp", () => {
     const { container } = render(<TextClamp text={long} lines={1} max={80} reach="tooltip" />);
     const span = screen.getByText((t) => t.endsWith("…"));
     expect(span).toHaveAttribute("tabindex", "0");
+    // A tab stop with a role, as TipTarget gives one: a note, not an action.
+    expect(span).toHaveAttribute("role", "note");
     expect(must(span.textContent, "clamped text").length).toBeLessThanOrEqual(81);
     await user.tab();
     expect(span).toHaveFocus();
@@ -159,6 +178,22 @@ describe("Kbd and Tip", () => {
     await user.tab();
     expect(screen.getByRole("button", { name: "Walk" })).toHaveFocus();
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Walk from this entity");
+    expect(await axeViolations(container)).toEqual([]);
+  });
+});
+
+describe("Stat", () => {
+  it("is Click UI's small BigStat: the label, then the value and its hint", async () => {
+    const { container } = render(
+      <div>
+        <Stat label="Files" value="1,204" hint="src/ docs/" />
+        <Stat label="Approve ratio" value="12%" error />
+      </div>,
+    );
+    const [files, ratio] = [...container.querySelectorAll("[class*='big-stat_size_sm']")];
+    expect(files).toHaveTextContent("Files1,204src/ docs/");
+    expect(within(files as HTMLElement).getByText("src/ docs/").className).toContain("text-xs");
+    expect(ratio.className).toMatch(/big-stat_error/);
     expect(await axeViolations(container)).toEqual([]);
   });
 });

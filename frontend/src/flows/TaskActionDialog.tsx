@@ -1,16 +1,8 @@
 import { useEffect, useState } from "react";
-import {
-  ArrowLeftRight,
-  Ban,
-  Check,
-  CheckCircle2,
-  Clock,
-  Lock,
-  LockOpen,
-  RotateCcw,
-  XCircle,
-  XOctagon,
-} from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Select } from "@clickhouse/click-ui/Select";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   acceptTask,
   blockTask,
@@ -33,16 +25,7 @@ import {
 import { ACTION_LABEL, PRIORITY_LABEL, isoFromLocal, type TaskAction } from "../lib/tasks";
 import { humanizeError } from "../lib/format";
 import { toast } from "../components/Toast";
-import {
-  CancelButton,
-  DANGER_BTN,
-  DialogFrame,
-  ErrorNote,
-  Field,
-  INPUT_CLS,
-  PRIMARY_BTN,
-  TEXTAREA_CLS,
-} from "./TaskDialogFrame";
+import { CancelButton, DateTimeField, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 import { oneOf } from "../lib/oneOf";
 
 /**
@@ -71,19 +54,6 @@ const BLOCKED_ON: ReadonlyArray<{ value: BlockedOn; label: string }> = [
   { value: "sender", label: "the sender" },
   { value: "external", label: "an external event" },
 ];
-
-const ICON: Record<ReasonAction, typeof Check> = {
-  accept: Check,
-  complete: CheckCircle2,
-  fail: XOctagon,
-  wont_do: Ban,
-  defer: Clock,
-  block: Lock,
-  unblock: LockOpen,
-  cancel: XCircle,
-  reassign: ArrowLeftRight,
-  reopen: RotateCcw,
-};
 
 const DESCRIPTION: Record<ReasonAction, string> = {
   accept: "Moves the task from triage to the queue.",
@@ -140,7 +110,6 @@ export function TaskActionDialog({ open, onOpenChange, identity, action, task, i
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const Icon = ICON[action];
   const canSubmit =
     !busy && (!NEEDS_REASON.has(action) || reason.trim() !== "") && (action !== "reassign" || toInbox !== "");
   const submit = async () => {
@@ -204,117 +173,87 @@ export function TaskActionDialog({ open, onOpenChange, identity, action, task, i
       open={open}
       onOpenChange={onOpenChange}
       title={ACTION_LABEL[action]}
-      icon={<Icon size={16} />}
-      description={
-        <>
-          {DESCRIPTION[action]} <span className="font-medium text-[var(--color-text)]">“{task.title}”</span>
-        </>
-      }
+      description={DESCRIPTION[action]}
       footer={
         <>
           <CancelButton label="Back" />
-          <button
-            type="button"
+          <Button
+            type={DESTRUCTIVE.has(action) ? "danger" : "primary"}
+            htmlType="button"
             onClick={submit}
             disabled={!canSubmit}
-            className={DESTRUCTIVE.has(action) ? DANGER_BTN : PRIMARY_BTN}
+            loading={busy}
           >
-            {busy ? "Working…" : ACTION_LABEL[action]}
-          </button>
+            {ACTION_LABEL[action]}
+          </Button>
         </>
       }
     >
+      <p className="text-sm font-medium text-text">“{task.title}”</p>
       {action === "accept" && (
-        <Field id="task-accept-priority" label="Priority" hint="edit while accepting, optional">
-          <select
-            id="task-accept-priority"
-            value={priority}
-            onChange={(e) => setPriority(Number(e.target.value))}
-            className={INPUT_CLS}
-          >
-            {[1, 2, 3, 4].map((p) => (
-              <option key={p} value={p}>
-                {PRIORITY_LABEL[p]}
-              </option>
+        <Select
+          label="Priority (edit while accepting, optional)"
+          value={String(priority)}
+          onSelect={(v) => setPriority(Number(v))}
+        >
+          {[1, 2, 3, 4].map((p) => (
+            <Select.Item key={p} value={String(p)}>
+              {PRIORITY_LABEL[p]}
+            </Select.Item>
+          ))}
+        </Select>
+      )}
+      {action === "reassign" &&
+        (targets.length === 0 ? (
+          <p className="text-xs text-text-muted">No other inbox you may read or post into.</p>
+        ) : (
+          <Select label="To inbox" value={toInbox} onSelect={setToInbox}>
+            {targets.map((i) => (
+              <Select.Item key={i.inbox} value={i.inbox}>
+                {i.inbox} — {i.owner_agent} ({i.owner_namespace})
+              </Select.Item>
             ))}
-          </select>
-        </Field>
-      )}
-      {action === "reassign" && (
-        <Field id="task-reassign-inbox" label="To inbox">
-          {targets.length === 0 ? (
-            <div className="text-xs text-[var(--color-text-muted)]">No other inbox you may read or post into.</div>
-          ) : (
-            <select
-              id="task-reassign-inbox"
-              value={toInbox}
-              onChange={(e) => setToInbox(e.target.value)}
-              className={INPUT_CLS}
-            >
-              {targets.map((i) => (
-                <option key={i.inbox} value={i.inbox}>
-                  {i.inbox} — {i.owner_agent} ({i.owner_namespace})
-                </option>
-              ))}
-            </select>
-          )}
-        </Field>
-      )}
+          </Select>
+        ))}
       {action === "block" && (
-        <Field id="task-block-on" label="Blocked on">
-          <select
-            id="task-block-on"
-            value={blockedOn}
-            onChange={(e) => {
-              const v = oneOf(
-                BLOCKED_ON.map((o) => o.value),
-                e.target.value,
-              );
-              if (v !== null) setBlockedOn(v);
-            }}
-            className={INPUT_CLS}
-          >
-            {BLOCKED_ON.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <Select
+          label="Blocked on"
+          value={blockedOn}
+          onSelect={(value) => {
+            const v = oneOf(
+              BLOCKED_ON.map((o) => o.value),
+              value,
+            );
+            if (v !== null) setBlockedOn(v);
+          }}
+        >
+          {BLOCKED_ON.map((o) => (
+            <Select.Item key={o.value} value={o.value}>
+              {o.label}
+            </Select.Item>
+          ))}
+        </Select>
       )}
       {action === "defer" && (
-        <Field id="task-defer-resume" label="Resume at" hint="the sweeper returns it to the queue then">
-          <input
-            id="task-defer-resume"
-            type="datetime-local"
-            value={resumeAt}
-            onChange={(e) => setResumeAt(e.target.value)}
-            className={INPUT_CLS}
-          />
-        </Field>
+        <DateTimeField
+          id="task-defer-resume"
+          label="Resume at (the sweeper returns it to the queue then)"
+          value={resumeAt}
+          onChange={setResumeAt}
+        />
       )}
       {NEEDS_REASON.has(action) && (
-        <Field id="task-action-reason" label="Reason" hint="required; shown on the card and in the feed">
-          <textarea
-            id="task-action-reason"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            rows={3}
-            className={TEXTAREA_CLS}
-            autoFocus
-          />
-        </Field>
+        <TextAreaField
+          id="task-action-reason"
+          label="Reason (required; shown on the card and in the feed)"
+          value={reason}
+          onChange={setReason}
+          rows={3}
+          autoFocus
+        />
       )}
       {(action === "accept" || action === "unblock" || action === "complete") && (
-        <Field id="task-action-note" label="Note" hint="optional">
-          <input
-            id="task-action-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className={INPUT_CLS}
-            autoFocus
-          />
-        </Field>
+        <TextField id="task-action-note" label="Note (optional)" value={note} onChange={setNote} autoFocus />
       )}
       {error && <ErrorNote>{error}</ErrorNote>}
     </DialogFrame>

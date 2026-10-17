@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, MyNamespaceEntry, NamespaceAuditResult, WhoAmI } from "../api";
@@ -147,7 +147,8 @@ describe("Memories: usage audit panel", () => {
     expect(within(panel).getByRole("heading", { name: "Usage audit" })).toBeInTheDocument();
     expect(auditNamespace).not.toHaveBeenCalled();
 
-    await userEvent.selectOptions(within(panel).getByLabelText("Audit window"), String(30 * 86_400));
+    await userEvent.click(within(panel).getByLabelText("Audit window"));
+    await userEvent.click(await screen.findByText("30 days"));
     await userEvent.click(within(panel).getByRole("button", { name: /Run audit/ }));
 
     await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(1));

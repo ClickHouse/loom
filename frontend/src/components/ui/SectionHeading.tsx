@@ -1,17 +1,19 @@
-import { createElement, type ReactNode } from "react";
-import { Info } from "lucide-react";
-import { Tip } from "./Tooltip";
+import { Title } from "@clickhouse/click-ui/Title";
+import type { ReactNode } from "react";
+import { IconButton } from "../IconButton";
 
 /**
- * SectionHeading — one line of uppercase label, an optional count, an
+ * SectionHeading — the title of a panel, card or pane section (Click UI's
+ * `Title`, 14 px semibold), an optional count, an
  * optional visible caption, and an optional hint that opens as a tooltip
  * from a small (i) button. Nothing here truncates: the label is `whitespace-nowrap`, the
  * row wraps its caption to a second line when the pane is narrow, and the hint lives in a
  * tooltip instead of trailing the label into an ellipsis ("MEMORY TYPES inspect…").
  *
  * `level` picks the heading element (h2–h4) so the outline of a page is
- * real; the visual is the same at every level. The (i) is 24 px on a fine
- * pointer and 44 px under `pointer: coarse`.
+ * real; the visual is the same at every level. The (i) is Click UI's sm icon button, the
+ * size Click UI gives its own inline icon actions (a popover's or a file row's close).
+ * A label over a group inside a list or menu is `.section-label`, not this.
  */
 export interface SectionHeadingProps {
   label: string;
@@ -40,25 +42,18 @@ export function SectionHeading({
 }: SectionHeadingProps) {
   return (
     <div className={`flex flex-wrap items-center gap-x-inline gap-y-0.5 min-w-0 mb-1.5 ${className}`}>
-      {createElement(`h${level}`, { id, className: "section-label whitespace-nowrap text-text-muted" }, label)}
+      <Title type={`h${level}`} size="sm" id={id} className="whitespace-nowrap">
+        {label}
+      </Title>
       {count !== undefined && (
-        <span className="section-label tabular-nums text-text-subtle" aria-label={`${count} ${label.toLowerCase()}`}>
-          {count}
+        <span className="text-sm tabular-nums text-text-muted">
+          <span aria-hidden="true">{count}</span>
+          <span className="sr-only">{`${count} ${label.toLowerCase()}`}</span>
         </span>
       )}
       {caption && <span className="caption whitespace-nowrap">{caption}</span>}
-      {hint && (
-        <Tip content={hint}>
-          <button
-            type="button"
-            aria-label={`About ${label}`}
-            className="inline-flex items-center justify-center min-w-6 min-h-6 -my-1 rounded text-text-subtle hover:text-text pointer-coarse:min-w-11 pointer-coarse:min-h-11 pointer-coarse:-my-2.5"
-          >
-            <Info size={12} aria-hidden="true" />
-          </button>
-        </Tip>
-      )}
-      {actions && <span className="ml-auto inline-flex items-center gap-1 text-2xs">{actions}</span>}
+      {hint && <IconButton icon="info-in-circle" size="sm" label={`About ${label}`} tooltip={hint} />}
+      {actions && <span className="ml-auto inline-flex items-center gap-1 text-xs">{actions}</span>}
     </div>
   );
 }

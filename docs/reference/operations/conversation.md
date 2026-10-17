@@ -113,7 +113,7 @@ Fetch one thread by id: thread metadata + optional messages.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `agent` | `str` | required | "*" or "-" reads every agent's turns in the thread (a turn two agents both logged once), for a caller that has only its id, as conversation.search reads "*" and "-"; any other value reads that one agent's. |
 | `thread_id` | `str` | required | The thread to fetch. |
 | `include_messages` | `bool` | `False` | Default off: keeps the metadata lookup to two point reads. |
 | `limit` | `int` | `100` | At most this many messages when `include_messages` is set (1-1000). |
@@ -128,11 +128,12 @@ Fetch one thread by id: thread metadata + optional messages.
 | `metadata` | `dict[str, Any]` | Thread metadata JSON; `{}` when none was set. |
 | `run_id` | `str` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `user_id` | `str` | The end user the row belongs to; `'-'` for none. |
-| `agent` | `str` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `agent` | `str` | The thread's owner (the agent of its thread row); for a thread built by appends only, the latest writer among the messages read, so empty without `include_messages`. |
 | `created_at` | `datetime \| None` | When the thread row was first written; None for a thread built by appends only. |
 | `updated_at` | `datetime \| None` | When the thread row last changed; None for a thread built by appends only. |
 | `msg_count` | `int` | Live (not tombstoned) messages in the thread, returned even without messages. |
 | `messages` | `list[_ConversationEntry]` | Populated only when include_messages=True; simple limit/offset slicing (cursor-paginated walks belong on conversation.list). |
+| `next_cursor` | `str \| None` | With `order="asc"`, the `conversation.list` cursor for the turns after this page; None when the page reaches the end, or the order is `desc`. |
 
 ## `conversation.list`
 
@@ -144,7 +145,7 @@ Enumerate stored conversation threads for an agent / namespace.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `agent` | `str` | required | "*" or "-" reads every agent's turns in the thread (a turn two agents both logged once), for a caller that has only its id, as conversation.search reads "*" and "-"; any other value reads that one agent's. |
 | `thread_id` | `str` | required | The thread to page through, oldest message first. |
 | `run_id` | `str \| None` | `None` | optional filter |
 | `limit` | `int` | `100` | At most this many messages per page (1-1000). |
@@ -165,7 +166,7 @@ Text search across a namespace's conversation history (ILIKE over message conten
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `agent` | `str` | required | "*" or "-" searches every agent's turns; any other value, that one agent's. |
 | `query` | `str` | required | Text matched against message content, by embedding similarity, or by substring when the embedder is unavailable. |
 | `thread_id` | `str \| None` | `None` | optional: scope to one thread |
 | `run_id` | `str \| None` | `None` | optional: filter by run_id |
@@ -205,7 +206,7 @@ Recent conversation threads of a namespace, newest first.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | `'*'` | "*" drops the agent filter |
+| `agent` | `str` | `'*'` | "*" or "-" lists every agent's threads |
 | `window_days` | `int` | `30` | Only threads with a live message in the last this many days (1-365). |
 | `limit` | `int` | `30` | At most this many threads (1-200). |
 | `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |

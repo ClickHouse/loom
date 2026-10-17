@@ -31,6 +31,7 @@ import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { ProblemsBanner } from "./components/ProblemsBanner";
+import { shortcutOff } from "./lib/shortcuts";
 
 // One view per chunk, so a person opening Memories does not pay for the code index
 // explorer, the graph and every admin page. React.lazy loads a view the first time it is
@@ -137,10 +138,16 @@ export default function App() {
   useKeyboard(
     {
       "?": () => setHelpOpen(true),
-      Escape: () => {
-        if (helpOpen) setHelpOpen(false);
-        else if (inspectedKey) inspect(null);
-      },
+      // Bound only while it has something to close, so it does not take the key (and
+      // preventDefault it) from a view or a component that handles Escape itself.
+      ...(helpOpen || inspectedKey
+        ? {
+            Escape: () => {
+              if (helpOpen) setHelpOpen(false);
+              else inspect(null);
+            },
+          }
+        : {}),
     },
     authed,
   );
@@ -172,7 +179,7 @@ export default function App() {
       const t = e.target;
       if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable))
         return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e)) return;
       if (!armed) {
         if (e.key === "g") {
           armed = true;
@@ -327,8 +334,9 @@ export default function App() {
           const target = landingTarget(saved, claims, mine);
           setIdentity({ org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" });
           if (target.namespace === null) {
+            // Setup's notice says how to get in and opens the picker on request; opened here
+            // it would cover that notice's actions.
             bootView("setup");
-            useStore.getState().openNamespacePicker(true);
             toast(
               "Your token can reach no namespace yet — join one from Repositories or Spaces (namespace picker → Browse and join)",
               "error",
@@ -393,7 +401,7 @@ export default function App() {
   }
   if (!authed && isProxyMode()) {
     return (
-      <main className="min-h-screen grid place-items-center text-base text-[var(--color-text-muted)]">
+      <main className="min-h-screen grid place-items-center text-sm text-text-muted">
         <h1 className="sr-only">Loom</h1>
         Proxy auth failed — check your gateway session.
       </main>
@@ -401,7 +409,7 @@ export default function App() {
   }
   if (!identity || !whoami_) {
     return (
-      <main className="min-h-screen grid place-items-center text-base text-[var(--color-text-muted)]" aria-busy="true">
+      <main className="min-h-screen grid place-items-center text-sm text-text-muted" aria-busy="true">
         <h1 className="sr-only">Loom</h1>
         Loading…
       </main>
@@ -409,10 +417,10 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-text)]">
+    <div className="h-screen flex flex-col bg-bg text-text">
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-[var(--color-accent)] focus:text-[var(--color-on-accent)] focus:rounded-md focus:shadow-lg text-xs font-medium"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-accent focus:text-on-accent focus:rounded-sm focus:shadow-lg text-xs font-medium"
       >
         Skip to main content
       </a>
@@ -421,7 +429,9 @@ export default function App() {
         <div className="flex-1 flex flex-col min-w-0">
           <ReloadBar />
           <Header />
-          <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto" ref={mainRef}>
+          {/* `relative`: a visually hidden (absolute) label inside a scrolled row is placed
+              against main, so it can never stretch the page past the viewport. */}
+          <main id="main" tabIndex={-1} className="relative flex-1 overflow-y-auto" ref={mainRef}>
             <ProblemsBanner />
             <PendingRequestBanner />
             {/* Keyed by view so each navigation replays the fade-in. `h-full`

@@ -1,6 +1,11 @@
 import { startTransition, useEffect, useState } from "react";
-import { History, User, ChevronRight, Trash2 } from "lucide-react";
-import * as Tabs from "@radix-ui/react-tabs";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { Table } from "@clickhouse/click-ui/Table";
+import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { listAuditLog, listErasures, type AuditEntry, type ErasureListRow } from "../../api";
 import { useStore, useIdentity } from "../../lib/state";
 import { hasOrgAdminClaim } from "../../lib/role";
@@ -11,6 +16,7 @@ import { relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { PageContainer } from "../../layout/PageContainer";
+import { PageHeader, TabTrigger, TipTarget } from "../../components/ui";
 
 // Events recorded by the control plane that don't represent a user
 // or agent action — operator observability that pollutes the user-
@@ -162,8 +168,13 @@ const ACTIVITY_FIELDS = ["ts", "event_type", "actor", "subject"];
 
 const FIRST_SCREEN_ROWS = 12;
 
+type ActivityTab = "events" | "erasures";
+// One name per tab, for its trigger and the document title.
+const ACTIVITY_TABS: Record<ActivityTab, string> = { events: "Events", erasures: "Erasures" };
+
 export function Audit() {
   const identity = useIdentity();
+  const [tab, setTab] = useState<ActivityTab>("events");
   const whoami = useStore((s) => s.whoami);
   const [rows, setRows] = useState<AuditEntry[] | null>(null);
   const [showSystem, setShowSystem] = useState(false);
@@ -226,13 +237,10 @@ export function Audit() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <div className="flex items-baseline gap-3 mb-1">
-          <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
-            <History size={20} /> Activity
-          </h1>
+        <PageHeader title="Activity" tab={ACTIVITY_TABS[tab]}>
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)] max-w-2xl leading-relaxed">
+        </PageHeader>
+        <p className="text-sm text-text-muted max-w-2xl leading-relaxed">
           Audit trail of every meaningful write — deletes, promotions, conflict resolutions, erasures, redactions. Each
           row is content-hashed, and hourly checkpoints chain each closed window's row count and digest to the previous
           one, so edits and deletions are detectable. Use this when you need to answer "who did what and when" or trace
@@ -240,59 +248,42 @@ export function Audit() {
         </p>
       </div>
 
-      <Tabs.Root defaultValue="events">
-        <Tabs.List className="flex border-b border-[var(--color-border)] mb-5">
-          <Tabs.Trigger
-            value="events"
-            className="inline-flex items-center gap-2 px-4 py-2.5 text-base font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] data-[state=active]:text-[var(--color-text)] data-[state=active]:border-b-2 data-[state=active]:border-[var(--color-accent)] -mb-px outline-none transition-colors"
-          >
-            <History size={14} /> Events
-          </Tabs.Trigger>
-          <Tabs.Trigger
-            value="erasures"
-            className="inline-flex items-center gap-2 px-4 py-2.5 text-base font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] data-[state=active]:text-[var(--color-text)] data-[state=active]:border-b-2 data-[state=active]:border-[var(--color-accent)] -mb-px outline-none transition-colors"
-          >
-            <Trash2 size={14} /> Erasures
-          </Tabs.Trigger>
-        </Tabs.List>
-        <Tabs.Content value="events" className="outline-none">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as ActivityTab)}>
+        <Tabs.TriggersList className="mb-5" aria-label="Activity">
+          <TabTrigger value="events" icon="history">
+            {ACTIVITY_TABS.events}
+          </TabTrigger>
+          <TabTrigger value="erasures" icon="trash">
+            {ACTIVITY_TABS.erasures}
+          </TabTrigger>
+        </Tabs.TriggersList>
+        <Tabs.Content value="events">
           {rows !== null && rows.length > 0 && (
             <>
-              <div className="mb-3 relative">
-                <input
+              <div className="mb-3">
+                <SearchField
                   value={filterQuery}
-                  onChange={(e) => setFilterQuery(e.target.value)}
+                  onChange={(value) => setFilterQuery(value)}
                   placeholder="Filter by actor or event type — e.g. alice@, redact, promote…"
                   aria-label="Filter audit events"
-                  className="w-full px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-sm outline-none focus:border-[var(--color-accent)]"
                 />
               </div>
-              <div className="mb-3 flex items-center justify-end gap-4">
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-4">
+                <span role="status" className="mr-auto text-xs text-text-muted tabular">
+                  {visibleRows.length} {visibleRows.length === 1 ? "event" : "events"}
+                </span>
                 {me && (
-                  <label className="inline-flex items-center gap-2 text-xs text-[var(--color-text-muted)] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={onlyMe}
-                      onChange={(e) => setOnlyMe(e.target.checked)}
-                      className="accent-[var(--color-accent)]"
-                    />
-                    Only my actions
-                  </label>
+                  <Checkbox label="Only my actions" checked={onlyMe} onCheckedChange={(c) => setOnlyMe(c === true)} />
                 )}
-                <label className="inline-flex items-center gap-2 text-xs text-[var(--color-text-muted)] cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showSystem}
-                    onChange={(e) => setShowSystem(e.target.checked)}
-                    className="accent-[var(--color-accent)]"
-                  />
-                  Include system events
-                  {hiddenSystemCount > 0 && !showSystem && (
-                    <span className="text-[var(--color-text-subtle)] tabular">
-                      ({hiddenSystemCount} hidden — budget / rate-limit / worker)
-                    </span>
-                  )}
-                </label>
+                <Checkbox
+                  label={
+                    hiddenSystemCount > 0 && !showSystem
+                      ? `Include system events (${hiddenSystemCount} hidden — budget / rate-limit / worker)`
+                      : "Include system events"
+                  }
+                  checked={showSystem}
+                  onCheckedChange={(c) => setShowSystem(c === true)}
+                />
               </div>
             </>
           )}
@@ -300,13 +291,13 @@ export function Audit() {
           {rows === null && <Skeleton className="h-40 w-full" />}
           {rows !== null && rows.length === 0 && (
             <EmptyState
-              icon={History}
+              icon="history"
               title="No audit events"
               description="Memory deletes, promotions, conflict resolutions, erasures and redactions all land here once activity begins. Each row is content-hashed, and hourly checkpoints chain each closed window's row count and digest to the previous one."
             />
           )}
           {rows !== null && rows.length > 0 && visibleRows.length === 0 && (
-            <div className="p-6 text-center text-sm text-[var(--color-text-muted)] bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
+            <div className="p-6 text-center text-sm text-text-muted bg-surface rounded-xl border border-border">
               Only system events in this window. Toggle "Include system events" to see them.
             </div>
           )}
@@ -318,10 +309,10 @@ export function Audit() {
             </div>
           )}
         </Tabs.Content>
-        <Tabs.Content value="erasures" className="outline-none">
+        <Tabs.Content value="erasures">
           <ErasuresPanel org={identity.org} />
         </Tabs.Content>
-      </Tabs.Root>
+      </Tabs>
     </PageContainer>
   );
 }
@@ -352,7 +343,7 @@ function ErasuresPanel({ org }: { org: string }) {
   );
 
   if (error) {
-    return <EmptyState icon={Trash2} title="Couldn't load" description={error} />;
+    return <EmptyState icon="trash" title="Couldn't load" description={error} />;
   }
   if (rows === null) {
     return (
@@ -365,7 +356,7 @@ function ErasuresPanel({ org }: { org: string }) {
   if (rows.length === 0) {
     return (
       <EmptyState
-        icon={Trash2}
+        icon="trash"
         title="No erasures yet"
         description="When anyone issues an erasure.request (right-to-be-forgotten or operator-driven cleanup), it lands here with status + provenance. Tombstoned individual memories are recoverable from Memories → Recently deleted; this surface is the org-wide saga history."
       />
@@ -373,67 +364,53 @@ function ErasuresPanel({ org }: { org: string }) {
   }
 
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="bg-[var(--color-surface-2)]">
-          <tr className="text-left text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">
-            <th className="px-4 py-2.5">Scope</th>
-            <th className="px-4 py-2.5">Requester</th>
-            <th className="px-4 py-2.5">Status</th>
-            <th className="px-4 py-2.5 text-right">Steps</th>
-            <th className="px-4 py-2.5 text-right">Requested</th>
-            <th className="px-4 py-2.5 text-right">Completed</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const tone =
-              r.status === "failed"
-                ? "text-[var(--color-danger)]"
-                : r.status === "completed"
-                  ? "text-[var(--color-success)]"
-                  : "text-[var(--color-text-muted)]";
-            return (
-              <tr
-                key={r.erasure_id}
-                className="border-t border-[var(--color-border)]"
-                title={r.failure_reason || r.erasure_id}
-              >
-                <td className="px-4 py-3">
-                  <div className="font-mono text-xs">
-                    <span className="text-[var(--color-text-muted)]">{r.scope_type}=</span>
-                    <span>{r.scope_value}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3 font-mono text-xs">{r.requester}</td>
-                <td className={`px-4 py-3 text-xs font-medium ${tone}`}>
-                  {r.status}
-                  {r.reversals_count > 0 && (
-                    <span
-                      className="ml-2 px-1.5 py-0.5 text-2xs rounded bg-warn/15 text-warn font-normal"
-                      title={`${r.reversals_count} memor${r.reversals_count === 1 ? "y" : "ies"} restored via memory.restore — the "completed" status overstates what's actually erased.`}
-                    >
-                      {r.reversals_count} reversed
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right tabular text-xs text-[var(--color-text-muted)]">
-                  {r.steps_completed_count}
-                </td>
-                <td className="px-4 py-3 text-right tabular text-2xs text-[var(--color-text-muted)] whitespace-nowrap">
-                  {relativeTime(r.requested_at)}
-                </td>
-                <td className="px-4 py-3 text-right tabular text-2xs text-[var(--color-text-muted)] whitespace-nowrap">
-                  {r.completed_at ? relativeTime(r.completed_at) : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <Table
+      size="sm"
+      headers={[
+        { label: "Scope" },
+        { label: "Requester" },
+        { label: "Status" },
+        { label: "Steps", width: "80px" },
+        { label: "Requested", width: "120px" },
+        { label: "Completed", width: "120px" },
+      ]}
+      rows={rows.map((r) => ({
+        id: r.erasure_id,
+        title: r.failure_reason || r.erasure_id,
+        items: [
+          {
+            label: (
+              <span className="font-mono text-xs">
+                <span className="text-text-muted">{r.scope_type}=</span>
+                {r.scope_value}
+              </span>
+            ),
+          },
+          { label: <span className="font-mono text-xs">{r.requester}</span> },
+          {
+            label: (
+              <span className="inline-flex items-center gap-2">
+                <Badge text={r.status} state={ERASURE_STATE[r.status] ?? "neutral"} size="sm" />
+                {r.reversals_count > 0 && (
+                  <TipTarget
+                    tip={`${r.reversals_count} memor${r.reversals_count === 1 ? "y" : "ies"} restored via memory.restore — the "completed" status overstates what's actually erased.`}
+                  >
+                    <Badge text={`${r.reversals_count} reversed`} state="warning" size="sm" />
+                  </TipTarget>
+                )}
+              </span>
+            ),
+          },
+          { label: <span className="tabular">{r.steps_completed_count}</span> },
+          { label: <span className="tabular">{relativeTime(r.requested_at)}</span> },
+          { label: <span className="tabular">{r.completed_at ? relativeTime(r.completed_at) : "—"}</span> },
+        ],
+      }))}
+    />
   );
 }
+
+const ERASURE_STATE: Record<string, BadgeState> = { completed: "success", failed: "danger" };
 
 function AuditRow({ row }: { row: AuditEntry }) {
   const [expanded, setExpanded] = useState(false);
@@ -443,15 +420,15 @@ function AuditRow({ row }: { row: AuditEntry }) {
   const hasDetails = Object.keys(parsed).length > 0;
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+    <div className="rounded-xl border border-border bg-surface">
       <div className="flex items-start gap-3 p-3">
-        <div className="w-2 h-2 rounded-full bg-[var(--color-accent)] mt-1.5 shrink-0" />
+        <div className="w-2 h-2 rounded-full bg-accent mt-1.5 shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-[var(--color-text)]">{summary}</span>
-            <span className="text-[var(--color-text-subtle)] ml-auto tabular text-2xs">{relativeTime(row.ts)}</span>
+            <span className="text-text">{summary}</span>
+            <span className="text-text-muted ml-auto tabular text-xs">{relativeTime(row.ts)}</span>
           </div>
-          <div className="flex items-center gap-2 text-2xs text-[var(--color-text-muted)] mt-0.5">
+          <div className="flex items-center gap-2 text-xs text-text-muted mt-0.5">
             <span className="font-mono">{row.event_type}</span>
             <span>·</span>
             {/* "by" is load-bearing. This column is the ACTOR, but subjects and
@@ -462,21 +439,23 @@ function AuditRow({ row }: { row: AuditEntry }) {
                   `namespace.join` by that user. The User icon alone does not
                   carry the distinction at 11px. */}
             <span className="inline-flex items-center gap-1">
-              <User size={10} /> by {row.actor || "—"}
+              <Icon name="user" size="xs" aria-hidden="true" /> by {row.actor || "—"}
             </span>
             {hasDetails && (
-              <button
+              <Button
+                type="empty"
+                htmlType="button"
+                className="ml-auto"
+                iconLeft={expanded ? "chevron-down" : "chevron-right"}
                 onClick={() => setExpanded((v) => !v)}
-                className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors"
                 aria-expanded={expanded}
               >
-                <ChevronRight size={10} className={`transition-transform ${expanded ? "rotate-90" : ""}`} />
                 {expanded ? "Hide" : "Details"}
-              </button>
+              </Button>
             )}
           </div>
           {expanded && hasDetails && (
-            <pre className="mt-2 p-2 text-2xs font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded overflow-x-auto leading-relaxed">
+            <pre className="mt-2 p-2 text-xs font-mono text-text-muted bg-surface-2 rounded overflow-x-auto leading-relaxed">
               {JSON.stringify(parsed, null, 2)}
             </pre>
           )}

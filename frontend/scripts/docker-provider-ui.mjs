@@ -2,6 +2,14 @@
 import { chromium, expect } from "@playwright/test";
 
 const [base, action, model, dimensions, key] = process.argv.slice(2);
+
+// A Click UI Select: its label names the trigger button; the items render in a portal and
+// carry `data-value` (e2e/fixtures.ts `pickOption`).
+async function pickOption(page, name, value) {
+  await page.getByRole("button", { name, exact: true }).click();
+  await page.locator(`[cui-select-item][data-value="${value}"]`).click();
+}
+
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage();
@@ -19,9 +27,9 @@ try {
     button = page.getByRole("button", { name: "Retry rebuild", exact: true });
   } else {
     await expect(page.getByRole("heading", { name: "Models & keys", exact: true })).toBeVisible({ timeout: 30_000 });
-    await page.getByRole("combobox", { name: "LLM provider", exact: true }).selectOption("openai");
+    await pickOption(page, "LLM provider", "openai");
     await page.getByLabel("LLM model", { exact: true }).fill("gpt-6-luna");
-    await page.getByRole("combobox", { name: "Embedding provider", exact: true }).selectOption("compatible");
+    await pickOption(page, "Embedding provider", "compatible");
     await page.getByLabel("Embedding model", { exact: true }).fill(model);
     await page.getByLabel("Embedding API base URL", { exact: true }).fill("http://provider-smoke:8080/v1");
     if (key) {

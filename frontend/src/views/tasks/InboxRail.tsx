@@ -1,6 +1,8 @@
-import { Plus } from "lucide-react";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import type { Inbox, InboxCount } from "../../api/tasks";
 import { initials, type Filters, type PosterFilter } from "../../lib/tasks";
+import { Chip, Tip } from "../../components/ui";
 import { Avatar } from "./TaskBits";
 
 /**
@@ -34,6 +36,16 @@ export function railCounts(counts: readonly InboxCount[]): Map<string, RailCount
     else if (c.status === "in_progress") e.running += c.n;
   }
   return by;
+}
+
+/** What the rail's folder leaves out: the inbox's description and the agent that owns it. */
+function InboxTip({ inbox }: { inbox: Inbox }) {
+  return (
+    <>
+      {inbox.description && <div>{inbox.description}</div>}
+      {inbox.owner_agent && <div>Owner agent: {inbox.owner_agent}</div>}
+    </>
+  );
 }
 
 function CountText({ c }: { c: RailCounts | undefined }) {
@@ -108,26 +120,31 @@ export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onF
             </button>
           )}
           {inboxes.map((i) => (
-            <button
+            <Tip
               key={i.inbox}
-              type="button"
-              className="tq-inbox"
-              aria-current={picked === i.inbox}
-              onClick={() => onPick(i.inbox)}
-              title={i.description || i.inbox}
+              content={<InboxTip inbox={i} />}
+              side="right"
+              disabled={!i.description && !i.owner_agent}
             >
-              <span className="nm">
-                <Avatar name={i.owner_agent || initials(i.inbox)} kind="bot" title={i.owner_agent} />
-                <span>{i.inbox}</span>
-              </span>
-              <CountText c={counts?.get(i.inbox) ?? (counts ? { todo: 0, running: 0 } : undefined)} />
-            </button>
+              <button
+                type="button"
+                className="tq-inbox"
+                aria-current={picked === i.inbox}
+                onClick={() => onPick(i.inbox)}
+              >
+                <span className="nm">
+                  <Avatar name={i.owner_agent || initials(i.inbox)} kind="bot" />
+                  <span>{i.inbox}</span>
+                </span>
+                <CountText c={counts?.get(i.inbox) ?? (counts ? { todo: 0, running: 0 } : undefined)} />
+              </button>
+            </Tip>
           ))}
           {onRegister && (
             <button type="button" className="tq-inbox text-xs" onClick={onRegister}>
               <span className="nm">
                 <span className="tq-av" aria-hidden="true">
-                  <Plus size={11} />
+                  <Icon name="plus" size="xs" aria-hidden="true" />
                 </span>
                 <span>Register inbox…</span>
               </span>
@@ -140,17 +157,16 @@ export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onF
           <h2 id="tq-rail-kind" className="section-label mb-1.5 ml-2">
             Kind
           </h2>
+          {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of toggle chips, not form fields */}
           <div className="flex flex-wrap gap-1.5 px-2" id="tq-kind-chips" role="group" aria-label="Kind">
             {kinds.map((k) => (
-              <button
+              <Chip
                 key={k}
-                type="button"
-                aria-pressed={filters.kind === k}
+                label={k}
+                mono
+                selected={filters.kind === k}
                 onClick={() => onFilters({ ...filters, kind: filters.kind === k ? null : k })}
-                className={`font-mono text-xs px-2 py-0.5 rounded-full border ${filters.kind === k ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-              >
-                {k}
-              </button>
+              />
             ))}
           </div>
         </section>
@@ -159,29 +175,21 @@ export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onF
         <h2 id="tq-rail-poster" className="section-label mb-1.5 ml-2">
           Posted by
         </h2>
+        {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of toggle chips, not form fields */}
         <div className="flex flex-wrap gap-1.5 px-2" role="group" aria-label="Posted by">
           {POSTER_OPTIONS.map(([k, l]) => (
-            <button
-              key={k}
-              type="button"
-              aria-pressed={filters.poster === k}
-              onClick={() => setPoster(k)}
-              className={`text-xs px-2 py-0.5 rounded-full border ${filters.poster === k ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-            >
-              {l}
-            </button>
+            <Chip key={k} label={l} selected={filters.poster === k} onClick={() => setPoster(k)} />
           ))}
         </div>
       </section>
       <section className="tq-filters">
-        <label className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] px-2 py-1.5">
-          <input
-            type="checkbox"
+        <div className="px-2 py-1.5">
+          <Checkbox
+            label="Show closed"
             checked={filters.showClosed}
-            onChange={(e) => onFilters({ ...filters, showClosed: e.target.checked })}
-          />{" "}
-          Show closed
-        </label>
+            onCheckedChange={(v) => onFilters({ ...filters, showClosed: v === true })}
+          />
+        </div>
       </section>
     </aside>
   );

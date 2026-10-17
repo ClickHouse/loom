@@ -95,6 +95,9 @@ class ConversationSetLoggingOutput(BaseModel):
 
 class _ConversationEntry(BaseModel):
     msg_id: str
+    # The agent that wrote this turn; a thread read with agent "*" holds several.
+    # Empty from a server of the previous release, which does not send it.
+    agent: str = ""
     role: ConversationRole
     content: str
     reasoning: str
@@ -164,6 +167,9 @@ class ConversationGetInput(BaseModel):
 
     org: str
     namespace: str
+    # "*" or "-" reads every agent's turns in the thread (a turn two agents both logged
+    # once), for a caller that has only its id, as conversation.search reads "*" and "-";
+    # any other value reads that one agent's.
     agent: str
     # The thread to fetch.
     thread_id: str
@@ -191,6 +197,8 @@ class ConversationGetOutput(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     run_id: str = "-"
     user_id: str = "-"
+    # The thread's owner (the agent of its thread row); for a thread built by appends
+    # only, the latest writer among the messages read, so empty without `include_messages`.
     agent: str = ""
     # When the thread row was first written; None for a thread built by appends only.
     created_at: datetime | None = None
@@ -201,11 +209,17 @@ class ConversationGetOutput(BaseModel):
     # Populated only when include_messages=True; simple limit/offset slicing
     # (cursor-paginated walks belong on conversation.list).
     messages: list[_ConversationEntry] = Field(default_factory=list)
+    # With `order="asc"`, the `conversation.list` cursor for the turns after this page;
+    # None when the page reaches the end, or the order is `desc`.
+    next_cursor: str | None = None
 
 
 class ConversationListInput(BaseModel):
     org: str
     namespace: str
+    # "*" or "-" reads every agent's turns in the thread (a turn two agents both logged
+    # once), for a caller that has only its id, as conversation.search reads "*" and "-";
+    # any other value reads that one agent's.
     agent: str
     # The thread to page through, oldest message first.
     thread_id: str
@@ -218,7 +232,9 @@ class ConversationListInput(BaseModel):
 class ConversationListOutput(BaseModel):
     # The page of messages in chronological order.
     rows: list[_ConversationEntry]
-    # Pass as `cursor` for the next page; None when this is the last page.
+    # Pass as `cursor` for the next page; None when this is the last page. Read with "*",
+    # two agents' different turns that share a millisecond and an id across a page
+    # boundary lose the second to the cursor; the next release's cursor carries the text.
     next_cursor: str | None = None
 
 
@@ -227,6 +243,7 @@ class ConversationSearchInput(BaseModel):
 
     org: str
     namespace: str
+    # "*" or "-" searches every agent's turns; any other value, that one agent's.
     agent: str
     # Text matched against message content, by embedding similarity, or by substring
     # when the embedder is unavailable.
@@ -234,7 +251,9 @@ class ConversationSearchInput(BaseModel):
     thread_id: str | None = None  # optional: scope to one thread
     run_id: str | None = None  # optional: filter by run_id
     role: ConversationRole | None = None  # optional: filter by speaker
-    # At most this many hits (1-200).
+    # At most this many hits (1-200). Across agents ("*" or "-") a turn several agents
+    # logged is one hit: the embeddings hold one row per turn, and the substring path
+    # collapses its copies before the limit.
     top_k: int = Field(default=20, ge=1, le=200)
     # "all_mine" also reads the caller's own namespaces, up to
     # `memory_search_fanout_max_namespaces`, as knowledge.search does.
@@ -263,7 +282,7 @@ class ConversationSearchOutput(BaseModel):
 class ConversationThreadsInput(BaseModel):
     org: str
     namespace: str
-    agent: str = "*"  # "*" drops the agent filter
+    agent: str = "*"  # "*" or "-" lists every agent's threads
     # Only threads with a live message in the last this many days (1-365).
     window_days: int = Field(default=30, ge=1, le=365)
     # At most this many threads (1-200).
