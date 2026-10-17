@@ -111,6 +111,11 @@ class _FakeCH:
     async def disconnect(self) -> None:
         self.disconnected += 1
 
+    async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
+        # The newest version a revoke writes past; nothing else is read by key here.
+        rows = [r for r in self.rows if r["jti"] == (params or {}).get("j")]
+        return {"v": max((r.get("version", 0) for r in rows), default=0)} if "max(" in sql else None
+
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
         self.inserts.append((table, rows))
         by_key = {r["jti"]: r for r in self.rows}
@@ -258,6 +263,11 @@ class _WriteOnlyCH:
         self.fail = fail
         self.inserted: list[dict[str, Any]] = []
 
+    async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
+        # The newest version a revoke writes past; nothing else is read by key here.
+        rows = [r for r in self.inserted if r["jti"] == (params or {}).get("j")]
+        return {"v": max((r.get("version", 0) for r in rows), default=0)} if "max(" in sql else None
+
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserted.extend(rows)
 
@@ -304,3 +314,13 @@ def test_a_local_revoke_does_not_pretend_the_list_is_loaded(
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     asyncio.run(revocation.revoke("sa:bot"))
     assert revocation.is_revoked("sa:bot") and not revocation.loaded()
+
+
+def test_cli_warns_when_a_cutoff_replaces_an_outright_revocation(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asyncio.run(revocation.revoke("alice", reason="offboarded"))
+    rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", "2026-09-17T16:30:00Z"])
+    assert rc == 0 and "revoked outright" in capsys.readouterr().err
+    cli.main(["revoke-token", "--subject", "bob", "--issued-before", "2026-09-17T16:30:00Z"])
+    assert "revoked outright" not in capsys.readouterr().err

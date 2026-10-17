@@ -154,7 +154,7 @@ def test_ttl_help_recommends_an_expiry_without_changing_the_default(
 
 
 class _FakeCH:
-    """The four calls the revoke path makes, with `query_all` answering from
+    """The calls the revoke path makes, with `query_all` answering from
     what `insert` wrote, so the snapshot refresh sees the new row."""
 
     def __init__(self) -> None:
@@ -169,6 +169,11 @@ class _FakeCH:
 
     async def disconnect(self) -> None:
         self.disconnected += 1
+
+    async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
+        # The newest version a revoke writes past; nothing else is read by key here.
+        rows = [r for r in self.rows if r["jti"] == (params or {}).get("j")]
+        return {"v": max((r.get("version", 0) for r in rows), default=0)} if "max(" in sql else None
 
     async def insert(self, table: str, rows: list[dict[str, Any]], *a: Any, **kw: Any) -> None:
         self.inserts.append((table, rows))

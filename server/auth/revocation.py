@@ -265,7 +265,7 @@ async def revoke(
         "reason": reason or "",
         "revoked_by": revoked_by or "",
         "issued_before": issued_before,
-        "version": time.time_ns(),
+        "version": await _next_version(token_id),
     }
     await get_client().insert("loom.revoked_tokens", [row])
     await refresh()
@@ -280,7 +280,7 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
 
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     cutoff = issued_before.astimezone(UTC).replace(tzinfo=None)
-    version = time.time_ns()
+    version = await _next_version(CUTOFF_PREFIX + subject)
     await get_client().insert(
         "loom.revoked_tokens",
         [
@@ -300,6 +300,20 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
     seconds = _cutoff_seconds(cutoff) or 0
     _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
     _remember("cut_off", subject, seconds, version)
+
+
+async def _next_version(jti: str) -> int:
+    """A version past the newest row of `jti`, whichever host's clock wrote it:
+    under FINAL the highest version wins, not the latest write, so one host
+    running fast must not outvote a later revocation from another."""
+    from server.core.ch import get_client, own_write_reads
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            "SELECT max(version) AS v FROM loom.revoked_tokens WHERE jti = {j:String}",
+            params={"j": jti},
+        )
+    return max(time.time_ns(), int((row or {}).get("v") or 0) + 1)
 
 
 async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: str) -> bool:

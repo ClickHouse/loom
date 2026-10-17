@@ -63,7 +63,7 @@ _LEASE_WAIT_S = 10.0
 
 
 class Exists(Exception):
-    """A live SCIM user already has this email."""
+    """A live SCIM user already has this email or userName."""
 
 
 class Busy(Exception):
@@ -132,6 +132,7 @@ async def create(user_name: str, email: str, *, active: bool) -> dict[str, Any]:
         row = await _row(uid)
         if row is not None and not row["deleted"]:
             raise Exists
+        await _refuse_taken(user_name, uid)
         if row is None:
             row = {
                 "id": uid,
@@ -158,7 +159,10 @@ async def update(
         row = await get(uid)
         if row is None:
             return None
-        changes = {"user_name": normalized(user_name)} if user_name else {}
+        changes: dict[str, Any] = {}
+        if user_name and normalized(user_name) != row["user_name"]:
+            await _refuse_taken(user_name, uid)
+            changes["user_name"] = normalized(user_name)
         return await _set_active(row, bool(row["active"]) if active is None else active, **changes)
 
 
@@ -171,6 +175,13 @@ async def delete(uid: str) -> bool:
         row = await _set_active(row, False, deleted=1)
         await _audit("auth.scim_deleted", row)
         return True
+
+
+async def _refuse_taken(user_name: str, uid: str) -> None:
+    """Raise Exists when another live user holds `user_name`: a filter must find one."""
+    other = await find(user_name)
+    if other is not None and other["id"] != uid:
+        raise Exists
 
 
 @asynccontextmanager

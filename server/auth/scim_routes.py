@@ -100,6 +100,24 @@ def parse_active(value: Any) -> bool:
     raise ScimError(400, "active must be a boolean", "invalidValue")
 
 
+# A path may name its schema: `urn:…:core:2.0:User:active` is `active`.
+_USER_URN = USER_SCHEMA.lower() + ":"
+
+
+def _attributes(op: Any) -> list[tuple[str, Any]]:
+    """The (attribute, value) pairs an operation sets, lower-cased and without
+    the User schema prefix: its path's, or each key of a path-less value's."""
+    if not isinstance(op, dict):
+        raise ScimError(400, "each operation must be an object", "invalidSyntax")
+    path, value = str(op.get("path") or ""), op.get("value")
+    pairs = list(value.items()) if not path and isinstance(value, dict) else [(path, value)]
+    return [(str(k).lower().removeprefix(_USER_URN), v) for k, v in pairs]
+
+
+def _replaces(op: dict[str, Any]) -> bool:
+    return str(op.get("op") or "").lower() in ("add", "replace")
+
+
 def patched_active(body: dict[str, Any]) -> bool | None:
     """What a PatchOp sets `active` to, or None when it leaves it alone.
     Operations on other attributes are accepted and dropped."""
@@ -108,43 +126,44 @@ def patched_active(body: dict[str, Any]) -> bool | None:
         raise ScimError(400, "a PatchOp needs Operations", "invalidSyntax")
     active = None
     for op in ops:
-        if not isinstance(op, dict):
-            raise ScimError(400, "each operation must be an object", "invalidSyntax")
-        path, value = str(op.get("path") or ""), op.get("value")
-        if path.lower() == "active":
-            touched = value
-        elif not path and isinstance(value, dict):
-            touched = next((v for k, v in value.items() if k.lower() == "active"), None)
-            if touched is None:
+        for attr, value in _attributes(op):
+            if attr != "active":
                 continue
-        else:
-            continue
-        if str(op.get("op") or "").lower() not in ("add", "replace"):
-            raise ScimError(400, "active can only be replaced", "invalidSyntax")
-        active = parse_active(touched)
+            if not _replaces(op):
+                raise ScimError(400, "active can only be replaced", "invalidSyntax")
+            active = parse_active(value)
     return active
 
 
 def patched_names(body: dict[str, Any]) -> tuple[str | None, str | None]:
-    """The userName and the email a PatchOp sets, each None when it leaves it
-    alone. Call after `patched_active`, which checks the shape."""
+    """The userName and the primary email a PatchOp leaves, each None when it
+    does not touch it. Call after `patched_active`, which checks the shape."""
     user_name = email = None
     for op in body["Operations"]:
-        path, value = str(op.get("path") or ""), op.get("value")
-        pairs = list(value.items()) if not path and isinstance(value, dict) else [(path, value)]
-        for attr, v in pairs:
-            attr = str(attr).lower()
+        for attr, value in _attributes(op):
             if attr != "username" and not attr.startswith("emails"):
                 continue
-            if str(op.get("op") or "").lower() not in ("add", "replace"):
+            if not _replaces(op):
                 raise ScimError(400, "the userName and email cannot be removed", "mutability")
             if attr == "username":
-                user_name = v if isinstance(v, str) else None
-            elif isinstance(v, str):  # emails[type eq "work"].value
-                email = v
-            elif isinstance(v, list):
-                email = _primary_email(v) or None
+                user_name = value if isinstance(value, str) else None
+            else:
+                email = _email_in(attr, value) or email
     return user_name, email
+
+
+def _email_in(attr: str, value: Any) -> str | None:
+    """The address an `emails…` operation writes: a whole list, one entry
+    (`emails[type eq "work"]`) or its `.value`; None for another sub-attribute
+    (`.type`, `.primary`), which changes no address."""
+    sub = attr.rsplit("]", 1)[-1] if "[" in attr else attr.removeprefix("emails")
+    if sub not in ("", ".value"):
+        return None
+    if isinstance(value, dict):
+        value = value.get("value")
+    if isinstance(value, list):
+        return _primary_email(value) or None
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _int_param(request: Request, name: str, default: int) -> int:
@@ -285,7 +304,7 @@ async def create_user(request: Request) -> JSONResponse:
     try:
         row = await scim.create(name, email, active=parse_active(body.get("active", True)))
     except scim.Exists:
-        raise ScimError(409, "a user with this email exists", "uniqueness") from None
+        raise ScimError(409, "a user with this email or userName exists", "uniqueness") from None
     resource = _resource(request, row)
     return _answer(resource, 201, Location=resource["meta"]["location"])
 
@@ -299,7 +318,7 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
     name, email = user_name_and_email(body)
     _refuse_another_email(row, email)
     active = parse_active(body["active"]) if "active" in body else None
-    row = await scim.update(uid, active=active, user_name=name) or row
+    row = await _update(uid, active, name) or row
     return _answer(_resource(request, row))
 
 
@@ -316,8 +335,15 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
     elif name is not None and row["user_name"] == row["email"]:
         _refuse_another_email(row, name)  # the userName may be where the email came from
     if active is not None or name is not None:
-        row = await scim.update(uid, active=active, user_name=name) or row
+        row = await _update(uid, active, name) or row
     return _answer(_resource(request, row))
+
+
+async def _update(uid: str, active: bool | None, name: str | None) -> dict[str, Any] | None:
+    try:
+        return await scim.update(uid, active=active, user_name=name)
+    except scim.Exists:
+        raise ScimError(409, "another user has this userName", "uniqueness") from None
 
 
 def _refuse_another_email(row: dict[str, Any], email: str) -> None:

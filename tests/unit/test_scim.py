@@ -20,6 +20,7 @@ from server.auth.scim_routes import (
     parse_active,
     parse_filter,
     patched_active,
+    patched_names,
     user_name_and_email,
 )
 from server.observability import audit
@@ -610,3 +611,70 @@ def test_a_username_that_is_the_email_cannot_change_by_patch(client: TestClient,
     rename = {"Operations": [{"op": "replace", "value": {"userName": "new@example.com"}}]}
     r = client.patch(f"/scim/v2/Users/{uid}", json=rename)
     assert r.status_code == 400 and r.json()["scimType"] == "mutability"
+
+
+_URN = "urn:ietf:params:scim:schemas:core:2.0:User:"
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "replace", "path": f"{_URN}active", "value": False},
+        {"op": "replace", "value": {f"{_URN}active": False}},
+    ],
+)
+def test_a_schema_qualified_active_is_active(op: dict[str, Any]) -> None:
+    assert patched_active({"Operations": [op]}) is False
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "replace", "path": 'emails[type eq "work"]', "value": {"value": "new@example.com"}},
+        {
+            "op": "replace",
+            "path": f'{_URN}emails[type eq "work"].value',
+            "value": "new@example.com",
+        },
+        {"op": "replace", "value": {f"{_URN}emails": [{"value": "new@example.com"}]}},
+        {"op": "add", "path": "emails", "value": [{"value": "new@example.com", "primary": True}]},
+    ],
+)
+def test_every_shape_of_an_email_change_is_seen(op: dict[str, Any]) -> None:
+    assert patched_names({"Operations": [op]}) == (None, "new@example.com")
+
+
+def test_a_sub_attribute_of_an_email_changes_no_address() -> None:
+    op = {"op": "replace", "path": 'emails[type eq "work"].primary', "value": True}
+    assert patched_names({"Operations": [op]}) == (None, None)
+
+
+def test_a_schema_qualified_patch_deactivates_and_refuses_a_new_email(
+    client: TestClient, world
+) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    entry = {"op": "replace", "path": 'emails[type eq "work"]', "value": {"value": "b@example.com"}}
+    r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": [entry]})
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability"
+    off = {"op": "replace", "value": {f"{_URN}active": False}}
+    assert (
+        client.patch(f"/scim/v2/Users/{uid}", json={"Operations": [off]}).json()["active"] is False
+    )
+    assert world.outright == {"lee": scim.DEACTIVATED}
+
+
+def test_a_username_another_user_holds_is_refused(client: TestClient, world) -> None:
+    def user(name: str, email: str) -> dict[str, Any]:
+        return {"userName": name, "emails": [{"value": email}]}
+
+    first = client.post("/scim/v2/Users", json=user("lee.upn@corp.example", "lee@example.com"))
+    assert first.status_code == 201
+    taken = client.post("/scim/v2/Users", json=user("lee.upn@corp.example", "kim@example.com"))
+    assert taken.status_code == 409 and taken.json()["scimType"] == "uniqueness"
+    kim = client.post("/scim/v2/Users", json=user("kim.upn@corp.example", "kim@example.com"))
+    rename = {
+        "Operations": [{"op": "replace", "path": "userName", "value": "LEE.upn@corp.example"}]
+    }
+    r = client.patch(f"/scim/v2/Users/{kim.json()['id']}", json=rename)
+    assert r.status_code == 409 and r.json()["scimType"] == "uniqueness"

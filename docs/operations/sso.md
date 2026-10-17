@@ -320,8 +320,10 @@ What Loom does with each request:
 
 - **Creating a user** records the email and makes no account: the person's
   first SSO sign-in makes it (JIT) or reaches the one they have, as without
-  SCIM. A second create of the same email answers 409.
-- **Updating** a user keeps a new `userName`. A new email is refused (400
+  SCIM. A second create of the same email, or of a `userName` another user
+  has, answers 409.
+- **Updating** a user keeps a new `userName`, unless another user has it
+  (409). A new email is refused (400
   `mutability`, by `PUT` or `PATCH`): the person would sign in to another
   account, which a later deactivation of the old email would miss. Change an
   address by deleting the user at the provider and creating it again.
@@ -337,7 +339,9 @@ What Loom does with each request:
   Loom logs a warning and audits `auth.scim_collateral` naming those orgs.
   Find it in `loom revoke-token --list` (reason `scim: deactivated`) and
   narrow it with `--subject <it> --issued-before <now>` if it is someone
-  else's; a repeated deactivation leaves a narrowed subject alone.
+  else's. The provider repeating the deactivation leaves it narrowed, but
+  once the person is reactivated, their next deactivation revokes it outright
+  again: narrow it again then.
 - **Reactivating** (`active: true`) lets the person sign in again. Tokens from
   before stay revoked; they make new ones. A subject an operator revoked
   (`loom revoke-token --subject`) stays revoked through both.

@@ -28,6 +28,11 @@ class _Table:
         keys = (params or {}).get("keys")
         return [r for k, r in self.rows.items() if keys is None or k in keys]
 
+    async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        assert "max(version)" in sql
+        row = self.rows.get(params["j"])
+        return {"v": row.get("version", 0) if row else 0}
+
 
 @pytest.fixture
 def table(monkeypatch) -> _Table:
@@ -224,6 +229,8 @@ class _NarrowingTable(_Table):
     """The reads `narrow` makes: a jti's row, and one written since a version."""
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        if "max(version)" in sql:
+            return await super().query_one(sql, params)
         row = self.rows.get(params["j"])
         if row and "version >" in sql:
             newer = row["version"] > params["v"] and row["reason"] != params["lifted"]
@@ -262,3 +269,17 @@ def test_a_narrowing_elsewhere_wins_over_the_outright_revoke_made_here(monkeypat
     asyncio.run(revocation.refresh())
     assert revocation.is_revoked("lee", issued_at=old)
     assert not revocation.is_revoked("lee", issued_at=new)
+
+
+def test_a_host_clock_behind_still_writes_past_the_newest_row(monkeypatch, table) -> None:
+    """Under FINAL the highest version wins: a narrowing from a host running
+    10 s fast must not outvote a deactivation written after it elsewhere."""
+    real = time.time_ns
+    monkeypatch.setattr(revocation.time, "time_ns", lambda: real() + 10 * 10**9)
+    asyncio.run(revocation.revoke("lee", issued_before=datetime.now(UTC), reason="lifted"))
+    fast = table.rows["lee"]["version"]
+    monkeypatch.setattr(revocation.time, "time_ns", real)  # the next host's clock is right
+    asyncio.run(revocation.revoke("lee", reason="deactivated"))
+    assert table.rows["lee"]["version"] > fast
+    asyncio.run(revocation.refresh())
+    assert revocation.is_revoked("lee", issued_at=int(time.time()) + 3600)

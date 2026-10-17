@@ -21,6 +21,8 @@ class _CH:
         self.unclaimed: list[str] = []  # what ran outside it
 
     async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any]:
+        if "loom.revoked_tokens" in sql:  # the version a revocation writes past
+            return {"v": 0}
         assert "inherit_creator_grants" in sql and "ns_roles" in sql
         if not self.claimed:
             self.unclaimed.append("read")
