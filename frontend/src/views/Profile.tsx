@@ -27,6 +27,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { pluginInstallLines } from "../lib/clients";
 import { PopoverTrigger } from "../components/ui/Menu";
+import { PageHeader } from "../components/ui";
 
 const DEFAULT_CHAR_LIMIT = 8192;
 
@@ -302,18 +303,17 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
 
   return (
     <>
-      <div className="flex items-start justify-between gap-3 mb-1">
-        <div>
-          <h1 className="text-2xl">Your AI profile</h1>
-          <div className="mt-1">
-            <ScopeBadge kind="namespace" value={namespace} />
-          </div>
-          <p className="text-sm text-text-muted mt-1">One profile. Every AI you use reads it before responding.</p>
-        </div>
-        <Button type="primary" htmlType="button" iconLeft="plus" onClick={onNew}>
-          New section
-        </Button>
-      </div>
+      <PageHeader
+        title="Your AI profile"
+        actions={
+          <Button type="primary" htmlType="button" iconLeft="plus" onClick={onNew}>
+            New section
+          </Button>
+        }
+      >
+        <ScopeBadge kind="namespace" value={namespace} />
+      </PageHeader>
+      <p className="text-sm text-text-muted">One profile. Every AI you use reads it before responding.</p>
 
       <div className="flex items-center gap-4 mt-4 text-xs">
         <ActivityChip empty={empty} />

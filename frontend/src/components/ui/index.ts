@@ -13,3 +13,4 @@ export { ChoiceGroup, type ChoiceGroupProps, type ChoiceOption } from "./ChoiceG
 export { Unavailable } from "./Unavailable";
 export { TabTrigger } from "./TabTrigger";
 export { TipTarget } from "./TipTarget";
+export { PageHeader, type PageHeaderProps } from "./PageHeader";

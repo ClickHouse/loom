@@ -144,6 +144,29 @@ test.describe("open overlays", () => {
     expect(await violations(page)).toEqual([]);
   });
 
+  test("j moves focus over the memory cards, one ring on the card, and the inspector returns it", async ({ page }) => {
+    await open(page, "/memories");
+    const opens = page.locator("[data-memory-open]");
+    await page.keyboard.press("j");
+    await page.keyboard.press("j");
+    await expect(opens.nth(1)).toBeFocused();
+    // The card draws the ring; its stretched button draws none of its own.
+    const rings = await opens.nth(1).evaluate((el) => ({
+      button: getComputedStyle(el).outlineStyle,
+      card: getComputedStyle(el.closest("[data-card]") as Element).outlineStyle,
+    }));
+    expect(rings).toEqual({ button: "none", card: "solid" });
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect(opens.nth(1)).toBeFocused();
+    // Space selects the focused card instead of opening it.
+    await page.keyboard.press(" ");
+    await expect(page.locator("[data-card]").nth(1).getByRole("checkbox")).toBeChecked();
+    await expect(page.getByRole("dialog")).toBeHidden();
+  });
+
   test("the Add memory dialog, and focus back on New after Escape", async ({ page }) => {
     await open(page, "/memories");
     const trigger = page.getByRole("button", { name: "New" });

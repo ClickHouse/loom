@@ -6,6 +6,7 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import type { Identity, TaxonomyEntry } from "../../api";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { matchEntities, parsePathQuery, shorten } from "./model";
+import { PageHeader } from "../../components/ui";
 
 /**
  * Bar — the top strip: scope, the omnibox, Walk, Path, and the trail.
@@ -118,10 +119,7 @@ export function Bar({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="share-network" size="md" aria-hidden="true" /> Graph
-        </h1>
+      <PageHeader title="Graph">
         <ScopeBadge kind="namespace" value={identity.namespace} />
         {/* biome-ignore lint/a11y/useSemanticElements: the box submits, so it stays a <form>; role="search" makes it the search landmark */}
         <form
@@ -256,7 +254,7 @@ export function Bar({
         <span id="explorer-path-hint" className="sr-only">
           Type a second entity while a walk is open, or a → b, to ask for a path.
         </span>
-      </div>
+      </PageHeader>
       {trail.length > 0 && (
         <div className="text-xs text-text-muted flex items-center gap-1 flex-wrap">
           <span>walked:</span>

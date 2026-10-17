@@ -568,6 +568,18 @@ textarea:focus-visible {
 [role="dialog"]:focus-visible {
   outline: none;
 }
+/* A tab row scrolls in its own box, which would clip a ring drawn outside the tab. */
+[role="tablist"] [role="tab"]:focus-visible {
+  outline-offset: -2px;
+}
+/* A memory card's body is one stretched button: the ring goes round the card. */
+[data-memory-open]:focus-visible {
+  outline: none;
+}
+[data-card]:has([data-memory-open]:focus-visible) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
 
 /* ============================================================
    Selection — the primary-button slate, white text
@@ -709,6 +721,16 @@ textarea:focus-visible {
   }
   .graph-readout[data-side="below"] {
     transform: translate(-50%, 0);
+  }
+  /* Every tab row: a label keeps to one line, and a row wider than the page scrolls
+     sideways in its own box. */
+  [role="tablist"] {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  [role="tablist"] [role="tab"] {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   /* Outline tree rows: one line of name, one of metadata. */
   .explorer-outline [role="treeitem"]:focus-visible {

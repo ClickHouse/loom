@@ -88,7 +88,7 @@ import { branchState, branchOrder, buildCards, type CodeFacet } from "../lib/rep
 import { RepositoryCard, BranchChip, FRESH_STATE, type CodeActions, type RecordActionProps } from "./RepositoryCard";
 import { useTrackerSources, useRecordActions, TRACKER_SOURCES_ABSENT } from "./TrackerSources";
 import { TrackersPanel } from "./TrackersPanel";
-import { Chip, ExternalLink, TabTrigger, TextClamp, Tip, TipTarget } from "../components/ui";
+import { Chip, ExternalLink, PageHeader, TabTrigger, TextClamp, Tip, TipTarget } from "../components/ui";
 import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
 
@@ -515,43 +515,41 @@ function RepositoriesHome({
 
   return (
     <PageContainer>
-      <div className="mb-5 flex items-start justify-between gap-4 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-2xl inline-flex items-center gap-2">
-            <Icon name="code" size="md" aria-hidden="true" /> Repositories
-          </h1>
-          <p className="text-sm text-text-muted mt-1 max-w-2xl">
-            One card per repository: its <strong className="font-medium text-text">code</strong> — indexed branches you
-            can search and ask about — and its <strong className="font-medium text-text">tracker</strong> — issues and
-            PRs, read live. Everything here is read-only. An <strong className="font-medium text-text">open</strong> one
-            joins in one click; a <strong className="font-medium text-text">restricted</strong> one is requested and a
-            maintainer approves.
-          </p>
-        </div>
-        {org && (
-          <div className="flex flex-wrap items-center gap-2 mt-2">
-            {tracker.selfService && (
-              <Tip content="Connect a ClickHouse database of issues, PRs and incidents. You become its admin.">
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  iconLeft="plus"
-                  onClick={() => setRegistering({ group: null })}
-                >
-                  Add a tracker
-                </Button>
-              </Tip>
-            )}
-            {canAdd && (
-              <Tip content="Index a Git repository. You become its maintainer.">
-                <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAdding(true)}>
-                  Add repository
-                </Button>
-              </Tip>
-            )}
-          </div>
-        )}
-      </div>
+      <PageHeader
+        title="Repositories"
+        actions={
+          org && (
+            <>
+              {tracker.selfService && (
+                <Tip content="Connect a ClickHouse database of issues, PRs and incidents. You become its admin.">
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    iconLeft="plus"
+                    onClick={() => setRegistering({ group: null })}
+                  >
+                    Add a tracker
+                  </Button>
+                </Tip>
+              )}
+              {canAdd && (
+                <Tip content="Index a Git repository. You become its maintainer.">
+                  <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAdding(true)}>
+                    Add repository
+                  </Button>
+                </Tip>
+              )}
+            </>
+          )
+        }
+      />
+      <p className="text-sm text-text-muted mb-5 max-w-2xl">
+        One card per repository: its <strong className="font-medium text-text">code</strong> — indexed branches you can
+        search and ask about — and its <strong className="font-medium text-text">tracker</strong> — issues and PRs, read
+        live. Everything here is read-only. An <strong className="font-medium text-text">open</strong> one joins in one
+        click; a <strong className="font-medium text-text">restricted</strong> one is requested and a maintainer
+        approves.
+      </p>
 
       {loaded && repos.length > 0 && (
         <div className="mb-5 flex items-center gap-3 flex-wrap text-xs text-text-muted tabular-nums">
@@ -1569,15 +1567,14 @@ function RepoDetail({
         Repositories
       </Button>
       <div className="mb-5">
-        <h1 className="text-2xl inline-flex items-center gap-3 flex-wrap">
-          <Icon name="git-merge" size="lg" aria-hidden="true" /> {repo.repo}
+        <PageHeader title={repo.repo}>
           <Mono className="text-sm px-2 py-0.5 rounded bg-surface-2 text-text-muted">{repo.branch}</Mono>
           <TipTarget tip={f.detail}>
             <Badge text={f.label} state={FRESH_STATE[f.tone]} size="sm" />
           </TipTarget>
-          <span className="text-xs font-normal text-text-muted">read-only</span>
-        </h1>
-        <p className="text-sm text-text-muted mt-1">
+          <span className="text-xs text-text-muted">read-only</span>
+        </PageHeader>
+        <p className="text-sm text-text-muted">
           namespace <Mono>{repo.namespace}</Mono> · answers are as of <Mono>{short(repo.git_head) || "—"}</Mono>
         </p>
         {others.length > 0 && (

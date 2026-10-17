@@ -19,7 +19,7 @@ import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { Panel, Tip } from "../components/ui";
+import { PageHeader, Panel, Tip } from "../components/ui";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
@@ -163,14 +163,9 @@ export function Browse() {
 
   return (
     <PageContainer>
-      <div className="flex items-baseline justify-between mb-2">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="globe" size="lg" aria-hidden="true" /> Spaces
-        </h1>
-      </div>
-      <div className="mb-3">
+      <PageHeader title="Spaces">
         <ScopeBadge kind="namespace" value={identity.namespace} />
-      </div>
+      </PageHeader>
       <p className="text-sm text-text-muted mb-6">
         Connect people and namespaces. Browse public namespaces to join, or invite members into namespaces you manage.
       </p>

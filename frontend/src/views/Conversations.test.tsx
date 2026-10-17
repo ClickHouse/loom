@@ -273,6 +273,18 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(getConversationThread.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
   });
 
+  it("says a missing thread is not found, with no message count", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread.mockResolvedValue({ ...detail("thread-x", ""), found: false, msg_count: 0, messages: [] });
+    listMemories.mockResolvedValue(noMemories);
+    useStore.setState({ pendingConversationThread: { threadId: "thread-x", agent: "" } });
+
+    render(<Conversations />);
+    expect(await screen.findByText(/Thread not found/)).toBeInTheDocument();
+    expect(screen.queryByText("0 messages")).toBeNull();
+  });
+
   it("says a thread read by its agent is cut short when no page cursor came back", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });

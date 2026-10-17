@@ -22,7 +22,7 @@ import { useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { Skeleton } from "../components/Skeleton";
-import { Chip, ExternalLink, SectionHeading } from "../components/ui";
+import { Chip, ExternalLink, PageHeader, SectionHeading } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -461,10 +461,9 @@ export function Conversations() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl mb-1">Conversations</h1>
-        <div className="mb-2">
+        <PageHeader title="Conversations">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
+        </PageHeader>
         <p className="text-sm text-text-muted">
           The raw chats your agents recorded. Search to find what was said; click any thread to replay the full
           exchange.
@@ -649,7 +648,7 @@ export function Conversations() {
             <ScopeBadge kind="namespace" value={openThread.namespace} />
           </div>
         )}
-        {threadDetail && (
+        {threadDetail?.found && (
           <div className="text-xs text-text-muted mt-1 flex items-center gap-2 flex-wrap">
             <span>
               {threadDetail.msg_count} message{threadDetail.msg_count === 1 ? "" : "s"}

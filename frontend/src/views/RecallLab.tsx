@@ -11,7 +11,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Chip, TabTrigger, TipTarget } from "../components/ui";
+import { Chip, PageHeader, TabTrigger, TipTarget } from "../components/ui";
 import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
@@ -370,10 +370,9 @@ export function RecallLab() {
   return (
     <PageContainer>
       <div className="mb-4">
-        <h1 className="text-2xl">Memories</h1>
-        <div className="mt-1 mb-3">
+        <PageHeader title="Memories">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
+        </PageHeader>
         <MemoryTabs active="recall" />
         <h2 className="flex items-center gap-2 text-text">
           <Icon name="flask" size="md" color="var(--color-accent)" aria-hidden="true" /> Recall

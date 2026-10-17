@@ -129,15 +129,17 @@ describe("ReviewQueue", () => {
     expect(screen.queryByRole("tabpanel")).toBeNull();
   });
 
-  it("reads conflicts once when a late probe reveals the Learnings tab", async () => {
+  it("shows conflicts before the probes answer, and reads them once when a late probe reveals the Learnings tab", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("a/key")], next_before_version: null });
     let reveal: (v: { rows: ReturnType<typeof learning>[] }) => void = () => {};
     vi.mocked(listLearnings).mockReturnValue(new Promise((r) => (reveal = r)));
     seed("ns-a");
     render(<ReviewQueue />);
+    await screen.findByText("value of a/key", {}, WAIT);
+    expect(screen.queryByRole("tabpanel")).toBeNull();
     await act(async () => reveal({ rows: [learning("a/learned")] }));
     await screen.findByRole("tab", { name: /Learnings/ }, WAIT);
-    await screen.findByText("value of a/key", {}, WAIT);
+    expect(screen.getByRole("tabpanel", { name: /Conflicts/ })).toHaveTextContent("value of a/key");
     expect(vi.mocked(listConflicts)).toHaveBeenCalledTimes(1);
   });
 

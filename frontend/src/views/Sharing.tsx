@@ -15,7 +15,7 @@ import { EmptyState } from "../components/EmptyState";
 import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../lib/format";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { TipTarget } from "../components/ui";
+import { PageHeader, TipTarget } from "../components/ui";
 
 export function Sharing() {
   // The summary itself spans every namespace the caller holds a grant on
@@ -27,12 +27,9 @@ export function Sharing() {
   // One heading for the four render branches below: the H1 and the scope
   // it reads from.
   const heading = (
-    <>
-      <h1 className="text-2xl mb-1">Flow</h1>
-      <div className="mb-3">
-        <ScopeBadge kind="namespace" value={identity.namespace} />
-      </div>
-    </>
+    <PageHeader title="Flow">
+      <ScopeBadge kind="namespace" value={identity.namespace} />
+    </PageHeader>
   );
   const [data, setData] = useState<SharingSummary | null>(null);
   const [repoNames, setRepoNames] = useState<Set<string>>(new Set());

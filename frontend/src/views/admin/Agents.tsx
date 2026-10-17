@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useAbortableEffect } from "../../lib/hooks";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { Table } from "@clickhouse/click-ui/Table";
 import { useStore } from "../../lib/state";
 import { listConnectedAgents, type ConnectedAgentRow } from "../../api";
@@ -11,6 +10,7 @@ import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
+import { PageHeader } from "../../components/ui";
 
 /**
  * Agents — which AI clients have written to Loom in the last N hours.
@@ -51,14 +51,9 @@ export function Agents() {
 
   return (
     <PageContainer>
-      <div className="flex items-baseline gap-3 mb-2">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="plug" size="md" aria-hidden="true" /> Agents
-        </h1>
-      </div>
-      <div className="mb-3">
+      <PageHeader title="Agents">
         <ScopeBadge kind="namespace" value={identity.namespace} />
-      </div>
+      </PageHeader>
       <div className="text-sm text-text-muted mb-6 max-w-2xl">
         Every AI client that writes to Loom identifies itself in the request. This page rolls those requests up so you
         can see which clients are connected, when each was last active, and how much they're writing. If a client you
@@ -91,7 +86,7 @@ export function Agents() {
           title="No client has written in this window"
           description={
             windowHours <= 24
-              ? "If you just configured a client, make sure you restarted it. The Setup tab generates the MCP config; paste it into Claude Desktop / Cursor / VS Code and restart."
+              ? "If you just configured a client, make sure you restarted it. Settings generates the MCP config; paste it into Claude Desktop / Cursor / VS Code and restart."
               : "Either no client has ever written to this org, or the window is too narrow. Try 7 days or 30 days."
           }
         />

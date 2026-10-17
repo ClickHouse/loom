@@ -16,7 +16,7 @@ import { relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { PageContainer } from "../../layout/PageContainer";
-import { TabTrigger, TipTarget } from "../../components/ui";
+import { PageHeader, TabTrigger, TipTarget } from "../../components/ui";
 
 // Events recorded by the control plane that don't represent a user
 // or agent action — operator observability that pollutes the user-
@@ -232,12 +232,9 @@ export function Audit() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <div className="flex items-baseline gap-3 mb-1">
-          <h1 className="text-2xl inline-flex items-center gap-2">
-            <Icon name="history" size="md" aria-hidden="true" /> Activity
-          </h1>
+        <PageHeader title="Activity">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
+        </PageHeader>
         <p className="text-sm text-text-muted max-w-2xl leading-relaxed">
           Audit trail of every meaningful write — deletes, promotions, conflict resolutions, erasures, redactions. Each
           row is content-hashed, and hourly checkpoints chain each closed window's row count and digest to the previous

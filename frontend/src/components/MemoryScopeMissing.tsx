@@ -5,6 +5,7 @@ import { kindOf } from "../lib/namespace";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "./ScopeBadge";
 import { EmptyState } from "./EmptyState";
+import { PageHeader } from "./ui";
 
 /**
  * The page a memory view renders when the picked namespace is not a memory
@@ -79,10 +80,9 @@ export function MemoryScopeMissing({ view }: { view: View }) {
 
   return (
     <PageContainer>
-      <h1 className="text-2xl">{title}</h1>
-      <div className="mt-1 mb-6">
+      <PageHeader title={title}>
         <ScopeBadge kind="namespace" value={namespace} />
-      </div>
+      </PageHeader>
       {body}
       <p className="text-center text-sm text-text-muted">
         Reading memories? Pick a memory namespace from the{" "}

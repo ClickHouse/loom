@@ -18,6 +18,7 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
+import { PageHeader } from "../../components/ui";
 
 type Filter = "all" | "pending" | "active7d";
 
@@ -76,13 +77,10 @@ export function Users() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="users" size="md" aria-hidden="true" /> Users
-        </h1>
-        <div className="mt-1">
+        <PageHeader title="Users">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
-        <p className="text-sm text-text-muted mt-1 max-w-2xl">
+        </PageHeader>
+        <p className="text-sm text-text-muted max-w-2xl">
           Every subject in <span className="font-mono">{identity.org}</span> with namespace grants + last-activity. Use
           this to answer "who has access to X" and "when was Y last on."
         </p>

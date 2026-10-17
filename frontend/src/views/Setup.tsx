@@ -4,7 +4,6 @@ import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
@@ -34,7 +33,7 @@ import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall, canCallCodeRepos } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { TabTrigger, Tip, Unavailable } from "../components/ui";
+import { PageHeader, TabTrigger, Tip, Unavailable } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
 import { READ_ONLY_TIP, canWrite, roleOnNamespace, useNamespaceRole } from "../lib/namespaceRole";
@@ -215,16 +214,13 @@ export function Setup() {
 
   return (
     <PageContainer>
-      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="gear" size="md" aria-hidden="true" /> Settings
-        </h1>
+      <PageHeader title="Settings">
         {tab === "models" ? (
           <span className="text-sm text-text-muted">Deployment-wide</span>
         ) : (
           <ScopeBadge kind="namespace" value={namespace} />
         )}
-      </div>
+      </PageHeader>
       {!namespace && (
         // No saved pick, no own namespace, no usable claim. Say so here — the landing
         // view — instead of inventing a name. The token reaches no namespace of ANY kind

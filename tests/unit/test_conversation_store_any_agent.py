@@ -107,3 +107,13 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
     await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, ch=ch)
     sql, _ = ch.calls[-1]
     assert "uniqExact(msg_id, cityHash64(content))" in sql
+
+
+@pytest.mark.asyncio
+async def test_a_read_across_agents_orders_two_turns_that_tie_on_time_and_id() -> None:
+    # Two agents' different turns can share a client-chosen msg_id and a millisecond: the
+    # content hash breaks the tie, so offsets and page order are stable.
+    ch = StubCH()
+    await conversation_repo.list_thread("o", "ns", None, "t-1", ch=ch)
+    sql, _ = ch.calls[-1]
+    assert sql.count("ORDER BY ts ASC, msg_id ASC, cityHash64(content) ASC") == 2

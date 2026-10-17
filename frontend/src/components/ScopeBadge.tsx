@@ -16,7 +16,7 @@ import { isReferenceKind, kindOf } from "../lib/namespace";
  * to show null/empty values (because of SQL aggregation), they
  * conclude "the page is broken" — when it's just unscoped display.
  *
- * Place this just under the page H1 in every admin view. Users learn
+ * Every page passes it to its PageHeader, beside the title. Users learn
  * the pattern: badge says where the numbers come from, full stop.
  */
 

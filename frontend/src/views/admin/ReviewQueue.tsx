@@ -2,7 +2,6 @@ import { useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import {
@@ -21,7 +20,7 @@ import {
 import { useIdentity } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
-import { TabTrigger } from "../../components/ui";
+import { PageHeader, TabTrigger } from "../../components/ui";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -44,6 +43,9 @@ import { PageContainer } from "../../layout/PageContainer";
  *   - Learnings:   facts the extractor proposed for promotion
  *   - Exceptions:  allowlist of pairs we've explicitly said may coexist
  */
+// Radix's tab panel attributes, cleared while Conflicts is the only panel.
+const LONE_PANEL = { role: undefined, "aria-labelledby": undefined, tabIndex: undefined };
+
 export function ReviewQueue() {
   const identity = useIdentity();
   // Probe whether the two niche sub-tabs (Learnings, Exceptions) have
@@ -57,6 +59,7 @@ export function ReviewQueue() {
   const [probedExceptions, setProbedExceptions] = useState<AllowlistRow[] | null>(null);
   const hasLearnings = (probedLearnings?.length ?? 0) > 0;
   const hasExceptions = (probedExceptions?.length ?? 0) > 0;
+  const tabbed = hasLearnings || hasExceptions;
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
   // viewer on a hidden panel.
@@ -86,22 +89,17 @@ export function ReviewQueue() {
 
   return (
     <PageContainer>
-      <div className="flex items-baseline gap-3 mb-2">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="warning" size="md" color="var(--color-warn)" aria-hidden="true" /> Review queue
-        </h1>
+      <PageHeader title="Review queue">
         <ScopeBadge kind="namespace" value={identity.namespace} />
-      </div>
+      </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-2xl">
         Memory disputes needing a human decision — your agent flip-flopped on a fact, or the extractor wants to promote
         one. Most users never see anything here; that's a feature.
       </p>
-      {/* Tabs only when there is something to switch to: one panel is the page itself. The
-          layout waits for both probes, so Conflicts mounts (and reads) once, where it stays. */}
-      {probedLearnings === null || probedExceptions === null ? (
-        <Skeleton className="h-40 w-full" />
-      ) : hasLearnings || hasExceptions ? (
-        <Tabs value={tab} onValueChange={setTab}>
+      {/* Conflicts mounts (and reads) once, at once; the sub-tabs join it when a probe finds
+          rows. Until then the lone panel is the page itself, not a tab panel without tabs. */}
+      <Tabs value={tab} onValueChange={setTab}>
+        {tabbed && (
           <Tabs.TriggersList className="mb-5" aria-label="Review queue">
             <TabTrigger value="conflicts" icon="warning">
               Conflicts
@@ -117,23 +115,21 @@ export function ReviewQueue() {
               </TabTrigger>
             )}
           </Tabs.TriggersList>
-          <Tabs.Content value="conflicts">
-            <ConflictsPanel />
+        )}
+        <Tabs.Content value="conflicts" {...(!tabbed && LONE_PANEL)}>
+          <ConflictsPanel />
+        </Tabs.Content>
+        {hasLearnings && (
+          <Tabs.Content value="learnings">
+            <LearningsPanel initialPending={probedLearnings} />
           </Tabs.Content>
-          {hasLearnings && (
-            <Tabs.Content value="learnings">
-              <LearningsPanel initialPending={probedLearnings} />
-            </Tabs.Content>
-          )}
-          {hasExceptions && (
-            <Tabs.Content value="exceptions">
-              <AllowlistPanel initial={probedExceptions} />
-            </Tabs.Content>
-          )}
-        </Tabs>
-      ) : (
-        <ConflictsPanel />
-      )}
+        )}
+        {hasExceptions && (
+          <Tabs.Content value="exceptions">
+            <AllowlistPanel initial={probedExceptions} />
+          </Tabs.Content>
+        )}
+      </Tabs>
     </PageContainer>
   );
 }

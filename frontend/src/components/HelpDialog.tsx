@@ -19,7 +19,7 @@ const GOTO: Shortcut[] = [
   { key: "g d", label: "Go to Spaces (browse and join)" },
   { key: "g r", label: "Go to Review queue" },
   { key: "g a", label: "Go to Activity" },
-  { key: "g s", label: "Go to Setup" },
+  { key: "g s", label: "Go to Settings" },
 ];
 
 const LIST: Shortcut[] = [

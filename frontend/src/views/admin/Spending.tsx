@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { NumberField } from "@clickhouse/click-ui/NumberField";
 import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { Select } from "@clickhouse/click-ui/Select";
@@ -30,6 +29,7 @@ import { Tip } from "../../components/ui/Tooltip";
 import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
+import { PageHeader } from "../../components/ui";
 
 /**
  * Usage — LLM operations / cost rollup view.
@@ -176,12 +176,9 @@ export function Spending() {
 
   return (
     <PageContainer>
-      <div className="flex items-baseline gap-3 mb-6">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="dollar" size="md" aria-hidden="true" /> Usage
-        </h1>
+      <PageHeader title="Usage">
         <ScopeBadge kind="namespace" value={identity.namespace} />
-      </div>
+      </PageHeader>
 
       {orgBudget && orgBudget.spent_24h_usd > 0 && (
         <div className="mb-4 rounded-xl border border-border bg-surface p-4 flex items-baseline justify-between gap-3">

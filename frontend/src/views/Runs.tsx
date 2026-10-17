@@ -9,7 +9,7 @@ import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { getRun, listRuns, type RunGetResponse, type RunRow, type RunStatus } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { Chip, Panel, SectionHeading, Tip, TipTarget } from "../components/ui";
+import { Chip, PageHeader, Panel, SectionHeading, Tip, TipTarget } from "../components/ui";
 import { IconButton } from "../components/IconButton";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -383,12 +383,9 @@ export function Runs() {
 
   return (
     <PageContainer>
-      <div className="flex items-baseline gap-3 mb-2">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="list-numbered" size="md" aria-hidden="true" /> Runs
-        </h1>
+      <PageHeader title="Runs">
         <ScopeBadge kind="namespace" value={identity.namespace} />
-      </div>
+      </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-[70ch]">
         One row per agent execution: the goal, how it ended, the memories the agent relied on, and what it wrote. Open a
         run to replay what it recalled, observed and cost. A session is one connection's worth of runs — group by it to

@@ -26,7 +26,7 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { Chip, SectionHeading } from "../components/ui";
+import { Chip, PageHeader, SectionHeading } from "../components/ui";
 import { SkeletonCard } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -133,7 +133,6 @@ export function Recent() {
   // Of `total`, how many were created today (server-computed, not the page).
   const [todayCount, setTodayCount] = useState(0);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
-  const [focusIdx, setFocusIdx] = useState(-1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [pinnedOnly, setPinnedOnly] = useState(false);
@@ -412,8 +411,6 @@ export function Recent() {
     }
     return all;
   }, [entries, searchHits, searchExtra, pinnedOnly, showDeleted, agentFilter, queryAgent, queryTags, memoryTagFilter]);
-  // One lookup per row, not a scan of the list per row.
-  const flatIndex = useMemo(() => new Map(flatList.map((x, i) => [x.memory_key, i])), [flatList]);
 
   // Agents present in the unfiltered list (powers the chip row).
   const agentsInList = useMemo(() => {
@@ -440,21 +437,23 @@ export function Recent() {
     [selecting, toggleSelect, inspect],
   );
 
-  // Keyboard nav — active when no inspector is open and not typing.
+  // Keyboard nav, active when no inspector is open and not typing. j / k move the focus
+  // itself from card to card, as on Tasks: Enter opens the focused card (its button), Space
+  // selects it (MemoryCard's onToggle), and the inspector returns focus to it on close.
+  const moveFocus = (step: number) => {
+    const cards = [...document.querySelectorAll<HTMLElement>("[data-memory-open]")];
+    const here = document.activeElement?.closest("[data-card]")?.querySelector<HTMLElement>("[data-memory-open]");
+    const at = here ? cards.indexOf(here) : -1;
+    const next = cards[at < 0 ? 0 : Math.max(0, Math.min(cards.length - 1, at + step))];
+    next?.scrollIntoView?.({ block: "nearest" });
+    next?.focus({ preventScroll: true });
+  };
   useKeyboard(
     {
-      j: () => setFocusIdx((i) => Math.min(flatList.length - 1, i + 1)),
-      k: () => setFocusIdx((i) => Math.max(0, i - 1)),
-      ArrowDown: () => setFocusIdx((i) => Math.min(flatList.length - 1, i + 1)),
-      ArrowUp: () => setFocusIdx((i) => Math.max(0, i - 1)),
-      Enter: () => {
-        const e = flatList[focusIdx];
-        if (e) inspect(e.memory_key, { agent: e.agent });
-      },
-      " ": () => {
-        const e = flatList[focusIdx];
-        if (e) toggleSelect(e.memory_key);
-      },
+      j: () => moveFocus(1),
+      k: () => moveFocus(-1),
+      ArrowDown: () => moveFocus(1),
+      ArrowUp: () => moveFocus(-1),
       Escape: () => setSelected(new Set()),
     },
     !inspectedKey && flatList.length > 0,
@@ -546,12 +545,6 @@ export function Recent() {
     );
     bumpMemoriesVersion();
   };
-
-  // Reset focus to "no focus" when the list reloads, so the page never
-  // looks as if it had selected a memory on its own.
-  useEffect(() => {
-    setFocusIdx(-1);
-  }, [flatList.length === 0]);
 
   // Values the list response did not carry (a server predating the preview
   // field), read back in ONE memory.bulk_get for the page instead of one
@@ -666,7 +659,7 @@ export function Recent() {
   if (entries === null) {
     return (
       <PageContainer className="space-y-3">
-        <h1 className="text-2xl mb-3">Memories</h1>
+        <PageHeader title="Memories" />
         <MemoryTabs active="memories" />
         <SkeletonCard />
         <SkeletonCard />
@@ -678,10 +671,9 @@ export function Recent() {
   if (entries.length === 0 && loadError) {
     return (
       <PageContainer>
-        <h1 className="text-2xl">Memories</h1>
-        <div className="mt-1 mb-3">
+        <PageHeader title="Memories">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
+        </PageHeader>
         <MemoryTabs active="memories" />
         <EmptyState
           icon="warning"
@@ -703,10 +695,9 @@ export function Recent() {
   if (entries.length === 0) {
     return (
       <PageContainer>
-        <h1 className="text-2xl">Memories</h1>
-        <div className="mt-1 mb-3">
+        <PageHeader title="Memories">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
+        </PageHeader>
         <MemoryTabs active="memories" />
         <EmptyState
           icon="clock"
@@ -717,7 +708,7 @@ export function Recent() {
             // (LOOM_DEFAULT_NAMESPACE), and this onboarding copy is about the
             // mode, not the name.
             isAuthDisabled()
-              ? "This is your private single-user namespace. Anything you or your agent writes here stays — across browser sessions, container restarts, and Loom upgrades. Add a memory below, or wire up an MCP client (Setup) so your agent writes here automatically."
+              ? "This is your private single-user namespace. Anything you or your agent writes here stays — across browser sessions, container restarts, and Loom upgrades. Add a memory below, or wire up an MCP client (Settings) so your agent writes here automatically."
               : readOnly
                 ? `Memories accumulate when an agent with writer access writes via MCP. ${READ_ONLY_TIP}.`
                 : "Memories accumulate when your agent writes via MCP — or add one yourself to seed."
@@ -760,43 +751,42 @@ export function Recent() {
 
   return (
     <PageContainer className="pb-24">
-      {/* Wraps below the title on a phone: at 390 px a non-wrapping row
-          clips "Add memory" off-screen. */}
-      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
-        <h1 className="text-2xl">Memories</h1>
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <span className="text-sm text-text-muted tabular whitespace-nowrap">
-            {searchActive
-              ? `${flatList.length} shown`
-              : showDeleted
-                ? `${flatList.length.toLocaleString()} recently deleted`
-                : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
-          </span>
-          <span id={SHOWN_GROUP} className="whitespace-nowrap">
-            <ButtonGroup
-              aria-label="Memories shown"
-              selected={showDeleted ? "deleted" : "live"}
-              onClick={(value) => {
-                if ((value === "deleted") === showDeleted) return;
-                refocusShown.current = true;
-                setShowDeleted(value === "deleted");
-              }}
-              options={[
-                { value: "live", label: "Live" },
-                { value: "deleted", label: "Recently deleted" },
-              ]}
-            />
-          </span>
-          <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
-            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-              Add memory
-            </Button>
-          </Unavailable>
-        </div>
-      </div>
-      <div className="mb-3">
+      <PageHeader
+        title="Memories"
+        actions={
+          <>
+            <span className="text-sm text-text-muted tabular whitespace-nowrap">
+              {searchActive
+                ? `${flatList.length} shown`
+                : showDeleted
+                  ? `${flatList.length.toLocaleString()} recently deleted`
+                  : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
+            </span>
+            <span id={SHOWN_GROUP} className="whitespace-nowrap">
+              <ButtonGroup
+                aria-label="Memories shown"
+                selected={showDeleted ? "deleted" : "live"}
+                onClick={(value) => {
+                  if ((value === "deleted") === showDeleted) return;
+                  refocusShown.current = true;
+                  setShowDeleted(value === "deleted");
+                }}
+                options={[
+                  { value: "live", label: "Live" },
+                  { value: "deleted", label: "Recently deleted" },
+                ]}
+              />
+            </span>
+            <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+                Add memory
+              </Button>
+            </Unavailable>
+          </>
+        }
+      >
         <ScopeBadge kind="namespace" value={identity.namespace} />
-      </div>
+      </PageHeader>
       <MemoryTabs active="memories" />
 
       {/* Authoritative counts (server-computed, not the truncated page). */}
@@ -995,8 +985,6 @@ export function Recent() {
             />
             <div className="space-y-1.5 mt-2">
               {items.map((e) => {
-                const globalIdx = flatIndex.get(e.memory_key) ?? -1;
-                const isFocused = !inspectedKey && globalIdx === focusIdx;
                 const isNew = newKeys.has(e.memory_key);
                 const isSelected = selected.has(e.memory_key);
                 const isTombstoned = !!e.tombstoned_at;
@@ -1005,6 +993,7 @@ export function Recent() {
                 return (
                   <div
                     key={e.memory_key}
+                    data-card=""
                     className={[
                       // The browser lays out and paints only the rows in view
                       "p-3.5 rounded-xl border flex items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_112px]",
@@ -1014,7 +1003,6 @@ export function Recent() {
                           ? "border-accent bg-accent-soft"
                           : "border-border bg-surface hover:border-border-strong",
                       isNew ? "animate-fade-in ring-2 ring-accent" : "",
-                      isFocused && !isSelected ? "ring-2 ring-accent" : "",
                       // A deleted memory keeps full-contrast text; the dashed edge and the
                       // "Deleted" line under it set it apart.
                       isTombstoned ? "border-dashed" : "",
@@ -1038,6 +1026,7 @@ export function Recent() {
                         value={e.value !== undefined ? e.value : bulkValues.get(e.memory_key)}
                         active={isActive}
                         onSelect={openCard}
+                        onToggle={toggleSelect}
                         onTagClick={setMemoryTagFilter}
                         timeMode="absolute"
                       />

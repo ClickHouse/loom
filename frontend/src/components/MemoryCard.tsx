@@ -20,6 +20,8 @@ interface MemoryCardProps {
   identity: Identity;
   entry: MemoryListEntry;
   onSelect: (entry: MemoryListEntry) => void;
+  /** Space on the card: the Memories list selects it instead of opening it. */
+  onToggle?: (key: string) => void;
   active: boolean;
   /** Show full ISO time prefix vs relative time. */
   timeMode?: "absolute" | "relative";
@@ -48,6 +50,7 @@ export const MemoryCard = memo(function MemoryCard({
   identity,
   entry,
   onSelect,
+  onToggle,
   active,
   timeMode = "relative",
   hasConflict = false,
@@ -103,10 +106,21 @@ export const MemoryCard = memo(function MemoryCard({
   // The card's body is one button stretched over the whole card (its ::after); the tag
   // chips sit beside it, above the stretch, so no control is nested in another.
   return (
-    <div data-memory-key={entry.memory_key} className={`group ${card}`}>
+    <div data-memory-key={entry.memory_key} data-card={embedded ? undefined : ""} className={`group ${card}`}>
       <button
         type="button"
+        data-memory-open=""
         onClick={() => onSelect(entry)}
+        // A button clicks on Space's keyup, so both halves are taken.
+        onKeyDown={
+          onToggle &&
+          ((e) => {
+            if (e.key !== " ") return;
+            e.preventDefault();
+            onToggle(entry.memory_key);
+          })
+        }
+        onKeyUp={onToggle && ((e) => e.key === " " && e.preventDefault())}
         className="flex w-full items-start justify-between gap-3 text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:rounded-xl after:content-['']"
       >
         <span className="block min-w-0 flex-1">

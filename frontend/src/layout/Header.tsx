@@ -34,9 +34,9 @@ import { MenuTrigger } from "../components/ui/Menu";
  * focus to the trigger.
  *
  * Below `md` the search input leaves the first row: a search button reveals it on its own
- * full-width row, the action cluster wraps instead of overlapping, and "New" drops its
- * word, so at 390 px the search and the actions never overlap. "New" is disabled with a
- * tooltip when the caller's role on the namespace is viewer.
+ * full-width row and the action cluster wraps instead of overlapping, so at 390 px the
+ * search and the actions never overlap. "New" keeps its word at every width, and is
+ * disabled with a tooltip when the caller's role on the namespace is viewer.
  */
 export function Header() {
   const whoami = useStore((s) => s.whoami);

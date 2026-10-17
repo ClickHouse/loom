@@ -3,7 +3,6 @@ import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
@@ -37,7 +36,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
-import { TipTarget } from "../../components/ui";
+import { PageHeader, TipTarget } from "../../components/ui";
 
 /**
  * Policies — history rules over what an agent may do next.
@@ -231,13 +230,10 @@ export function Policies() {
 
   return (
     <PageContainer>
-      <div className="flex items-baseline gap-3 mb-2 flex-wrap">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="secure" size="md" aria-hidden="true" /> Policies
-        </h1>
+      <PageHeader title="Policies">
         <ScopeBadge kind="namespace" value={identity.namespace} />
         <ModeBadge mode={mode} />
-      </div>
+      </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-[80ch]">
         Rules over an agent's own recent history: forbid or require an action based on what the same caller did in the
         last minutes or hours. <span className="text-text">{meta.blurb}</span> The mode is the server's{" "}

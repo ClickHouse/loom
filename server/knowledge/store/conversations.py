@@ -438,7 +438,12 @@ async def search_substring(
     return [_hydrate(r) for r in rows]
 
 
-# One turn of a thread, however many agents logged it: its id and its content.
+# One turn of a thread, however many agents logged it: its id and its content, since a
+# msg_id is unique per agent only and a client may number its own turns. The content hash
+# also orders two turns that share a millisecond and an id; the page cursor carries only
+# (ts, msg_id), a format the previous release reads, so a page boundary that falls
+# between two such turns skips the second. Carrying the hash in the cursor is the next
+# release's change (docs/architecture/rolling-upgrades.md, rule 4).
 TURN = "msg_id, cityHash64(content)"
 
 
@@ -506,11 +511,12 @@ async def list_thread(
     if agent is None:
         # Two agents logging the same turn store it under one content-hashed msg_id. A
         # read across agents keeps each turn's first copy before it pages, so a later
-        # copy never slips past the cursor onto the next page. A turn is its id AND its
-        # content (`TURN`): ids are unique per agent only, and a client may number its own.
+        # copy never slips past the cursor onto the next page. That reads the thread
+        # from its start on every page: a thread is one key prefix, and the copy before
+        # the cursor is what says a later one is not a new turn.
         source = f"""(
             SELECT {columns} FROM {source}
-            ORDER BY ts ASC, msg_id ASC
+            ORDER BY ts ASC, msg_id ASC, cityHash64(content) ASC
             LIMIT 1 BY {TURN}
         )"""
     rows = await ch.query_all(
@@ -518,7 +524,7 @@ async def list_thread(
         SELECT {columns}
         FROM {source}
         {"WHERE " + " AND ".join(page_where) if page_where else ""}
-        ORDER BY ts {direction}, msg_id {direction}
+        ORDER BY ts {direction}, msg_id {direction}, cityHash64(content) {direction}
         LIMIT {{limit:UInt32}}
         """,
         params=params,

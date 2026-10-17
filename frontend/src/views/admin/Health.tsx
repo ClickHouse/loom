@@ -3,7 +3,6 @@ import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { useStore, useIdentity } from "../../lib/state";
@@ -27,7 +26,7 @@ import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
-import { TabTrigger } from "../../components/ui";
+import { PageHeader, TabTrigger } from "../../components/ui";
 
 // Friendly label + blurb per worker; unknown workers fall through to
 // a default rendering (raw name + "background worker").
@@ -163,10 +162,8 @@ export function Health() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl inline-flex items-center gap-2">
-          <Icon name="activity" size="md" aria-hidden="true" /> Health
-        </h1>
-        <p className="text-sm text-text-muted mt-1 max-w-2xl">
+        <PageHeader title="Health" />
+        <p className="text-sm text-text-muted max-w-2xl">
           {seesOpMix
             ? "Operator view: worker schedules, operation mix + extraction quality across the org."
             : seesWorkers
@@ -327,7 +324,9 @@ export function WorkersPanel() {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3 flex-wrap">
           <ScopeBadge kind="loom-wide" />
+          {/* With no rows at all the empty state below says it. */}
           {rows !== null &&
+            rows.length > 0 &&
             (allHealthy ? (
               <Badge text="All systems running" state="success" iconDir="start" />
             ) : issues.length > 0 ? (

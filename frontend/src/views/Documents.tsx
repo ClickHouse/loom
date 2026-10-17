@@ -23,7 +23,7 @@ import { EmptyState } from "../components/EmptyState";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
-import { Chip, Tip, TipTarget } from "../components/ui";
+import { Chip, PageHeader, Tip, TipTarget } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { formatBytesShort, relativeTime } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
@@ -320,24 +320,25 @@ export function Documents() {
 
   return (
     <PageContainer>
-      <div className="flex items-baseline justify-between mb-1">
-        <h1 className="text-2xl">Library</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-text-muted tabular">
-            {rows
-              ? visibleRows && visibleRows.length !== rows.length
-                ? `${visibleRows.length} of ${rows.length} shown`
-                : `showing ${rows.length}`
-              : ""}
-          </span>
-          <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-            Add document
-          </Button>
-        </div>
-      </div>
-      <div className="mb-3">
+      <PageHeader
+        title="Library"
+        actions={
+          <>
+            <span className="text-sm text-text-muted tabular">
+              {rows
+                ? visibleRows && visibleRows.length !== rows.length
+                  ? `${visibleRows.length} of ${rows.length} shown`
+                  : `showing ${rows.length}`
+                : ""}
+            </span>
+            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+              Add document
+            </Button>
+          </>
+        }
+      >
         <ScopeBadge kind="namespace" value={identity.namespace} />
-      </div>
+      </PageHeader>
       <p className="text-sm text-text-muted mb-6">
         Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to
         read.

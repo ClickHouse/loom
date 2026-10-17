@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { listBlacklist, addBlacklist, removeBlacklist, type BlacklistRow, type BlacklistScope } from "../../api";
@@ -16,7 +15,7 @@ import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { oneOf } from "../../lib/oneOf";
 import { IconButton } from "../../components/IconButton";
-import { Chip } from "../../components/ui";
+import { Chip, PageHeader } from "../../components/ui";
 
 /** What a visitor who cannot list the patterns reads instead of a request: the token's
  * role here is unknown, so the panel says who manages the
@@ -37,12 +36,9 @@ export function Blacklist() {
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   return (
     <PageContainer>
-      <h1 className="text-2xl inline-flex items-center gap-2 mb-1">
-        <Icon name="line-in-circle" size="md" aria-hidden="true" /> Guardrails
-      </h1>
-      <div className="mb-6">
+      <PageHeader title="Guardrails">
         <ScopeBadge kind="namespace" value={namespace} />
-      </div>
+      </PageHeader>
       <PrivacyFilters />
     </PageContainer>
   );

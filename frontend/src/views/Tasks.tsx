@@ -39,7 +39,7 @@ import {
   type TaskAction,
 } from "../lib/tasks";
 import { SkeletonCard } from "../components/Skeleton";
-import { Kbd, Tip } from "../components/ui";
+import { Kbd, PageHeader, Tip } from "../components/ui";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { toast, toastError } from "../components/Toast";
@@ -544,37 +544,36 @@ export function Tasks() {
 
   return (
     <PageContainer>
-      <header className="flex items-center justify-between gap-4 flex-wrap pb-3">
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <h1 className="text-2xl inline-flex items-center gap-2.5 m-0">
-            <Icon name="email" size="md" aria-hidden="true" /> Tasks
-          </h1>
-          <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <ButtonGroup
-            aria-label="View"
-            selected={mode}
-            onClick={(v) => setModeAndRemember(v === "board" ? "board" : "list")}
-            options={[
-              { value: "list", label: <ViewLabel icon="list-bulleted" text="List" /> },
-              { value: "board", label: <ViewLabel icon="services" text="Board" /> },
-            ]}
-          />
-          {mayAdmin && inbox && (
-            <Tip content="Inbox settings: posters, disclosure, trust, leases">
-              <Button type="empty" htmlType="button" iconLeft="gear" onClick={() => setSettings("edit")}>
-                Inbox settings
+      <PageHeader
+        title="Tasks"
+        actions={
+          <>
+            <ButtonGroup
+              aria-label="View"
+              selected={mode}
+              onClick={(v) => setModeAndRemember(v === "board" ? "board" : "list")}
+              options={[
+                { value: "list", label: <ViewLabel icon="list-bulleted" text="List" /> },
+                { value: "board", label: <ViewLabel icon="services" text="Board" /> },
+              ]}
+            />
+            {mayAdmin && inbox && (
+              <Tip content="Inbox settings: posters, disclosure, trust, leases">
+                <Button type="empty" htmlType="button" iconLeft="gear" onClick={() => setSettings("edit")}>
+                  Inbox settings
+                </Button>
+              </Tip>
+            )}
+            {mayWrite && createInbox && (
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreating(true)}>
+                New task
               </Button>
-            </Tip>
-          )}
-          {mayWrite && createInbox && (
-            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreating(true)}>
-              New task
-            </Button>
-          )}
-        </div>
-      </header>
+            )}
+          </>
+        }
+      >
+        <ScopeBadge kind="namespace" value={identity.namespace} />
+      </PageHeader>
 
       {inboxes === null && (
         <div className="space-y-3">
