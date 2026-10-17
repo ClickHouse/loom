@@ -301,12 +301,14 @@ BLACKLISTED = "blacklisted"
 PINNED = "pinned"
 # The verdict of an entry skipped on a read_only key (memory.set answers 423 LOCKED).
 LOCKED = "locked"
+# The verdict of an entry close to a pinned peer (memory.set answers 409 PINNED_CONFLICT).
+REJECTED = "rejected"
 # The verdict of an entry that landed retired behind a later stored row.
 SUPERSEDED = "superseded"
 # The verdicts of an entry refused outright (version 0): the message produced no row,
 # so nothing it carries attaches to the stored one. A restatement of the stored value
 # is not among them.
-REFUSED = frozenset({BLACKLISTED, PINNED, LOCKED})
+REFUSED = frozenset({BLACKLISTED, PINNED, LOCKED, REJECTED})
 
 
 class _BulkSetResult(BaseModel):

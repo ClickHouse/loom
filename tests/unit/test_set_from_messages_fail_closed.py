@@ -338,13 +338,14 @@ async def test_a_record_the_write_kept_out_projects_no_typed_record(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("verdict", "linked_keys"),
-    [("pinned", []), ("locked", []), ("blacklisted", []), ("", ["rec1"])],
+    [("pinned", []), ("locked", []), ("blacklisted", []), ("rejected", []), ("", ["rec1"])],
 )
 async def test_a_refused_record_gets_no_evidence_and_no_count(
     monkeypatch: pytest.MonkeyPatch, verdict: str, linked_keys: list[str]
 ) -> None:
-    # A pinned, locked or blacklisted key refuses the record (version 0): the message
-    # never produced the stored row, so no evidence links to it and it is not counted.
+    # A pinned, locked or blacklisted key, or a pinned peer, refuses the record
+    # (version 0): the message never produced the stored row, so no evidence links to
+    # it and it is not counted.
     # A restatement of the stored value (version 0, no verdict) keeps both.
     import server.memory.app.extract.handler as mx
     from server.llm.client import LLMResult
