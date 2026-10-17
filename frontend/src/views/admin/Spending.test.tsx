@@ -4,7 +4,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
-import type { BudgetStatus, NamespaceInfo } from "../../api";
+import type { BudgetStatus, CostRow, NamespaceInfo } from "../../api";
+import { ApiError } from "../../lib/errors";
 import { useStore } from "../../lib/state";
 import { invalidateShared } from "../../lib/sharedReads";
 import { Spending } from "./Spending";
@@ -165,5 +166,50 @@ describe("Spending daily budget meter", () => {
     const meter = await screen.findByRole("progressbar", { name: "Daily LLM budget used" });
     expect(meter).toHaveAttribute("aria-valuenow", "100");
     expect(meter).toHaveAttribute("aria-valuetext", "130% — $1.3000 of the $1.00 cap");
+  });
+});
+
+const cost = (operation: string, cost_usd: number): CostRow => ({
+  day: "2026-09-20",
+  agent: "claude-code",
+  namespace: "team-a",
+  user_id: "-",
+  operation,
+  ops: 3,
+  errors: 0,
+  tokens: cost_usd > 0 ? 100 : 0,
+  embed_tokens: 0,
+  cost_usd,
+  latency_p50_ms: 10,
+  latency_p95_ms: 20,
+  latency_p99_ms: 30,
+});
+
+describe("Spending table count and failure", () => {
+  beforeEach(() => {
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0, 1, "uncapped"));
+  });
+
+  it("counts the rows the table shows at the end of the toolbar", async () => {
+    vi.mocked(api.listCostRollup).mockResolvedValueOnce({
+      rows: [cost("memory.set", 0.01), cost("memory.ask", 0.02), cost("memory.list", 0)],
+    });
+    render(<Spending />);
+    await screen.findByText("memory.set");
+    const bar = document.querySelector<HTMLElement>('search[aria-label="Usage breakdown"]');
+    expect(bar).toHaveTextContent("2 rows");
+  });
+
+  it("says a failed read failed, with Retry, never 'No operations recorded'", async () => {
+    vi.mocked(api.listCostRollup).mockRejectedValueOnce(
+      new ApiError({ status: 503, message: "down", requestId: "r-1" }),
+    );
+    render(<Spending />);
+    expect(await screen.findByText("Couldn't load usage")).toBeInTheDocument();
+    expect(screen.getByText(/r-1/)).toBeInTheDocument();
+    expect(screen.queryByText("No operations recorded")).toBeNull();
+    vi.mocked(api.listCostRollup).mockResolvedValueOnce({ rows: [cost("memory.set", 0.01)] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("memory.set")).toBeInTheDocument();
   });
 });

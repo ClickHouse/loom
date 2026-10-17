@@ -1,4 +1,5 @@
-import { render, screen } from "../../test/rtl";
+import { render, screen, waitFor } from "../../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
 import { Inspector } from "./Inspector";
@@ -10,11 +11,12 @@ import { expandNotice } from "./notices";
 // about, it names the node when another is selected, and the pane passes axe with it
 // showing.
 
+const facts: { rows: unknown[] } = { rows: [] };
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
   return {
     ...actual,
-    listFacts: vi.fn(async () => ({ rows: [] })),
+    listFacts: vi.fn(async () => facts),
     searchMemory: vi.fn(async () => ({ results: [], embedding_model: "test" })),
   };
 });
@@ -130,5 +132,32 @@ describe("Inspector links", () => {
     for (const b of reached) expect(b.className).toMatch(/\blink_size_sm/);
     reached[0].click();
     expect(onSelect).toHaveBeenCalled();
+  });
+});
+
+// A list of more than 20 shows the first 20 and "Show all N" (SPEC §7.2): an edge reads
+// its rows in both directions, up to 24.
+describe("Inspector lists", () => {
+  it("an edge's rows over 20 show the first 20 and Show all N", async () => {
+    facts.rows = Array.from({ length: 12 }, (_, i) => ({
+      subject: "logical",
+      relation: "mentions",
+      object: `mergetree-${i}`,
+      co_occur: 1,
+      provenance: "",
+      last_seen: "",
+      stale: false,
+      sources: [],
+    }));
+    mount({ selection: { kind: "edge", parent: "logical", child: "mergetree" } });
+    // Both directions: 24 rows.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Show all 24" })).toBeInTheDocument(), {
+      timeout: 2000,
+    });
+    const list = () => screen.getAllByRole("listitem").filter((li) => li.textContent?.includes("mentions"));
+    expect(list()).toHaveLength(20);
+    await userEvent.click(screen.getByRole("button", { name: "Show all 24" }));
+    expect(list()).toHaveLength(24);
+    facts.rows = [];
   });
 });

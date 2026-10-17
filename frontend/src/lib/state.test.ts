@@ -231,6 +231,13 @@ describe("the object a page shows is in its URL", () => {
     expect(useStore.getState().inspectedMemoryKey).toBe("api/rate-limit");
   });
 
+  // The sidebar's Memories link lands on the list, not on the Insights tab it was left on.
+  it("navigating to Memories drops its tab from the URL", () => {
+    setLocation("/memories?section=insights");
+    useStore.getState().navigate("memories");
+    expect(window.location.search).toBe("");
+  });
+
   it("opening a document or a thread from elsewhere pushes its URL", () => {
     setLocation("/memories");
     useStore.getState().openDocument("docs/a.md");

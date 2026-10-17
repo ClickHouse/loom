@@ -8,8 +8,9 @@ import { Recent } from "./Recent";
 import { must } from "../test/must";
 
 // While a search is active the Memories view asks memory.search with `explain: true` (so
-// the per-hit evidence rides above the excerpt k) and renders a why-line under each
-// ranked card.
+// the per-hit evidence rides above the excerpt k) and puts a "Why this result" button in
+// each ranked row's meta slot (SPEC-LISTS A1), whose popover holds the scoring. The count
+// is the toolbar's alone: no summary line, no "Results" heading.
 
 const entry = (memory_key: string): MemoryListEntry => ({
   memory_key,
@@ -107,13 +108,20 @@ describe("Recent search why-line", () => {
     expect(query).toBe("milk");
     expect(opts).toMatchObject({ top_k: 50, explain: true, legs: ["memory"] }); // Memory legs only
 
+    // The hit that did not match carries no button; the scoring stays out of the row.
+    const button = await screen.findByRole("button", { name: "Why this result" });
+    expect(screen.getAllByRole("button", { name: "Why this result" })).toHaveLength(1);
+    expect(screen.queryByTestId("search-why")).toBeNull();
+    expect(button.closest("[data-memory-key]")).toHaveAttribute("data-memory-key", "coffee_pref");
+    await userEvent.click(button);
     const why = await screen.findByTestId("search-why");
     expect(why).toHaveTextContent("#1");
     expect(why).toHaveTextContent("similarity 0.70");
     expect(why).toHaveTextContent("semantic +0.70");
     expect(why).toHaveTextContent("key match +0.10");
-    // The hit that did not match carries no line.
-    expect(screen.getAllByTestId("search-why")).toHaveLength(1);
+    // One count, in the toolbar; no summary line or Results heading on screen.
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1 match");
+    expect(screen.queryByRole("heading", { name: /Results/ })).toBeNull();
   });
 });
 
@@ -222,9 +230,11 @@ describe("Recent search finds every row that names the word", () => {
       "keyword list call",
     );
     expect(kw[2]).toMatchObject({ contains: "Azure" });
-    const lines = await screen.findAllByTestId("search-why");
-    expect(lines.map((l) => l.textContent)).toEqual(['contains "Azure"', 'contains "Azure"']);
-    expect(screen.getByText(/146 contain the text \(newest 2 of 146\)/)).toBeInTheDocument();
+    expect(await screen.findAllByRole("button", { name: "Why this result" })).toHaveLength(2);
+    await userEvent.click(screen.getAllByRole("button", { name: "Why this result" })[0]);
+    expect(await screen.findByTestId("search-why")).toHaveTextContent('Contains "Azure"');
+    // The summary is for a screen reader; the count on screen is the toolbar's.
+    expect(screen.getByText(/146 contain the text \(newest 2 of 146\)/)).toHaveClass("sr-only");
     // The keyword rows lead: the newest match is the first card.
     const keys = screen.getAllByText(/^(azure_new|coffee_pref|tea_pref)$/).map((n) => n.textContent);
     expect(keys[0]).toBe("azure_new");
@@ -303,8 +313,8 @@ describe("Recent search finds every row that names the word", () => {
 
     await userEvent.type(screen.getByLabelText("Search memories"), "milk");
 
-    const why = await screen.findByTestId("search-why");
-    expect(why).toHaveTextContent("similarity 0.70");
+    await userEvent.click(await screen.findByRole("button", { name: "Why this result" }));
+    expect(await screen.findByTestId("search-why")).toHaveTextContent("similarity 0.70");
     expect(screen.getByText(/ranked by relevance/)).toBeInTheDocument();
   });
 });

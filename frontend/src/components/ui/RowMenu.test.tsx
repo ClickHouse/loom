@@ -44,3 +44,10 @@ describe("RowMenu", () => {
     expect(trigger).toHaveFocus();
   });
 });
+
+describe("RowMenu in a one-tab-stop grid row", () => {
+  it("can leave the tab order, its row's keys reaching it", () => {
+    render(<RowMenu name="task 1" items={[{ label: "Defer", onSelect: () => {} }]} tabIndex={-1} />);
+    expect(screen.getByRole("button", { name: "Actions for task 1" })).toHaveAttribute("tabindex", "-1");
+  });
+});

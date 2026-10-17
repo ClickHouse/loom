@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { listFacts, searchMemory, type FactRow, type Identity, type SearchHit, type TaxonomyResponse } from "../../api";
@@ -117,6 +118,24 @@ function seedNode(m: WalkModel): XNode {
   };
 }
 
+/** Rows a list shows before "Show all N" (SPEC §7.2). */
+const CAP = 20;
+
+/** The rows to draw: the first 20 of a longer list until "Show all N" is pressed. */
+function useCapped<T>(items: T[] | null): { shown: T[]; more: ReactNode } {
+  const [all, setAll] = useState(false);
+  const list = items ?? [];
+  if (all || list.length <= CAP) return { shown: list, more: null };
+  return {
+    shown: list.slice(0, CAP),
+    more: (
+      <Button type="empty" htmlType="button" onClick={() => setAll(true)} className="mt-1">
+        Show all {list.length}
+      </Button>
+    ),
+  };
+}
+
 /** The memory types `memory.search` filters on server-side; any other facet value is filtered client-side only. */
 function isSearchMemoryType(t: string): t is "semantic" | "procedural" | "preference" {
   return t === "semantic" || t === "procedural" || t === "preference";
@@ -135,78 +154,82 @@ function FactList({
   onOpenMemory: (k: string) => void;
   emptyText: string;
 }) {
+  const { shown, more } = useCapped(facts);
   if (facts === null) return <Loading layout="inline" label="Loading facts" />;
   if (facts.length === 0) return <div className="text-xs text-text-muted">{emptyText}</div>;
   return (
-    <ul className="space-y-1">
-      {facts.map((f) => {
-        const rel = relationLabel(f.relation);
-        const link = (e: string) => (
-          <Link
-            component="button"
-            type="button"
-            size="sm"
-            weight="mono"
-            className="break-words text-left"
-            onClick={() => onWalk(e)}
-          >
-            {e}
-          </Link>
-        );
-        return (
-          <li
-            key={`${f.subject}|${f.relation}|${f.object}`}
-            className="text-xs rounded-md border border-border bg-surface px-2 py-1.5"
-          >
-            <div className="flex items-start gap-1.5">
-              <span className="flex-1 min-w-0 leading-snug break-words">
-                {about && f.subject === about ? (
-                  <>
-                    <span className="text-text-muted">{rel}</span> {link(f.object)}
-                  </>
-                ) : about && f.object === about ? (
-                  <>
-                    {link(f.subject)} <span className="text-text-muted">{rel}</span>
-                  </>
-                ) : (
-                  <>
-                    {link(f.subject)} <span className="text-text-muted">{rel}</span> {link(f.object)}
-                  </>
-                )}
-              </span>
-              <span className="tabular-nums text-text-muted shrink-0">{f.co_occur}×</span>
-            </div>
-            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted min-w-0 flex-wrap">
-              {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
-              <span className="tabular-nums">{f.last_seen ? f.last_seen.slice(0, 10) : ""}</span>
-              {f.stale ? (
-                <span className="inline-flex items-center gap-1 text-warn">
-                  <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> stale —{" "}
-                  {f.sources.length} source row
-                  {f.sources.length === 1 ? "" : "s"}, none active
+    <>
+      <ul className="space-y-1">
+        {shown.map((f) => {
+          const rel = relationLabel(f.relation);
+          const link = (e: string) => (
+            <Link
+              component="button"
+              type="button"
+              size="sm"
+              weight="mono"
+              className="break-words text-left"
+              onClick={() => onWalk(e)}
+            >
+              {e}
+            </Link>
+          );
+          return (
+            <li
+              key={`${f.subject}|${f.relation}|${f.object}`}
+              className="text-xs rounded-md border border-border bg-surface px-2 py-1.5"
+            >
+              <div className="flex items-start gap-1.5">
+                <span className="flex-1 min-w-0 leading-snug break-words">
+                  {about && f.subject === about ? (
+                    <>
+                      <span className="text-text-muted">{rel}</span> {link(f.object)}
+                    </>
+                  ) : about && f.object === about ? (
+                    <>
+                      {link(f.subject)} <span className="text-text-muted">{rel}</span>
+                    </>
+                  ) : (
+                    <>
+                      {link(f.subject)} <span className="text-text-muted">{rel}</span> {link(f.object)}
+                    </>
+                  )}
                 </span>
-              ) : f.sources.length > 0 ? (
-                <span className="flex items-center gap-1 min-w-0">
-                  {f.sources.slice(0, 2).map((sref) => (
-                    <Tip key={sref.memory_key} content={`${sref.memory_key} · ${sref.status || "status unknown"}`}>
-                      <button
-                        type="button"
-                        onClick={() => onOpenMemory(sref.memory_key)}
-                        aria-label={`Open ${sref.memory_key} (${sref.status || "status unknown"})`}
-                        className={`font-mono px-1 rounded border border-border truncate max-w-[110px] hover:text-text ${sref.status === "active" || sref.status === "conflicted" ? "" : "line-through"}`}
-                      >
-                        {sref.memory_key}
-                      </button>
-                    </Tip>
-                  ))}
-                  {f.sources.length > 2 && <span>+{f.sources.length - 2}</span>}
-                </span>
-              ) : null}
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+                <span className="tabular-nums text-text-muted shrink-0">{f.co_occur}×</span>
+              </div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted min-w-0 flex-wrap">
+                {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
+                <span className="tabular-nums">{f.last_seen ? f.last_seen.slice(0, 10) : ""}</span>
+                {f.stale ? (
+                  <span className="inline-flex items-center gap-1 text-warn">
+                    <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> stale —{" "}
+                    {f.sources.length} source row
+                    {f.sources.length === 1 ? "" : "s"}, none active
+                  </span>
+                ) : f.sources.length > 0 ? (
+                  <span className="flex items-center gap-1 min-w-0">
+                    {f.sources.slice(0, 2).map((sref) => (
+                      <Tip key={sref.memory_key} content={`${sref.memory_key} · ${sref.status || "status unknown"}`}>
+                        <button
+                          type="button"
+                          onClick={() => onOpenMemory(sref.memory_key)}
+                          aria-label={`Open ${sref.memory_key} (${sref.status || "status unknown"})`}
+                          className={`font-mono px-1 rounded border border-border truncate max-w-[110px] hover:text-text ${sref.status === "active" || sref.status === "conflicted" ? "" : "line-through"}`}
+                        >
+                          {sref.memory_key}
+                        </button>
+                      </Tip>
+                    ))}
+                    {f.sources.length > 2 && <span>+{f.sources.length - 2}</span>}
+                  </span>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {more}
+    </>
   );
 }
 

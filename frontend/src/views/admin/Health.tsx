@@ -17,12 +17,13 @@ import {
   type OpsHealthCheck,
   type OpMixData,
 } from "../../api";
-
-import { humanizeError, relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
+import { ListState } from "../../components/ui/ListState";
+import { ListTime } from "../../components/ui/ListTime";
+import { ListToolbar } from "../../components/ui/ListToolbar";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
 import { Alert, LoadingSkeleton, PageHeader, Stat, TabTrigger } from "../../components/ui";
@@ -288,6 +289,7 @@ export function WorkersPanel() {
   const [store, setStore] = useState<WorkersStore | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showAll, setShowAll] = useState(false);
+  const [error, setError] = useState<unknown>(null);
   // workers.status is a /v1/admin/* handler: the JWT claim alone opens it. Without the
   // claim there is no request — the panel reads "not reachable from here" (the dashboard
   // never issues a request the token cannot make).
@@ -304,6 +306,7 @@ export function WorkersPanel() {
         return;
       }
       setRefreshing(true);
+      setError(null);
       getJson<unknown>("/v1/admin/workers.status", { signal })
         .then((d) => {
           if (!live()) return;
@@ -311,11 +314,8 @@ export function WorkersPanel() {
           setStore(parsed.store);
           setRows(parsed.rows);
         })
-        .catch(() => {
-          if (live()) {
-            setRows([]);
-            setStore(null);
-          }
+        .catch((e) => {
+          if (live()) setError(e);
         })
         .finally(() => {
           if (live()) setRefreshing(false);
@@ -343,48 +343,59 @@ export function WorkersPanel() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <ScopeBadge kind="loom-wide" />
-          {/* With no rows at all the empty state below says it. */}
-          {rows !== null &&
-            rows.length > 0 &&
-            (allHealthy ? (
-              <Badge text="All systems running" state="success" iconDir="start" />
-            ) : issues.length > 0 ? (
-              <Badge
-                text={`${issues.length} ${issues.length === 1 ? "issue" : "issues"}`}
-                state="danger"
-                iconDir="start"
-              />
-            ) : (
-              <span className="text-sm text-text-muted">No workers reporting</span>
-            ))}
-          {rows !== null && colours.length > 0 && (
-            <span className="text-xs text-text-muted" data-testid="reporting-colours">
-              Reporting from {colours.join(", ")}
-              {store?.rows ? (
-                <>
-                  {" "}
-                  · {store.rows} {store.rows === 1 ? "row" : "rows"} in {store.table || "loom.worker_status"}
-                </>
-              ) : null}
-            </span>
-          )}
-        </div>
+      <ListToolbar
+        label="Workers status"
+        count={
+          !error && rows !== null && visible.length > 0
+            ? `${visible.length} ${visible.length === 1 ? "worker" : "workers"}`
+            : undefined
+        }
+      >
+        <ScopeBadge kind="loom-wide" />
+        {/* With no rows at all the empty state below says it. */}
+        {!error &&
+          rows !== null &&
+          rows.length > 0 &&
+          (allHealthy ? (
+            <Badge text="All systems running" state="success" iconDir="start" />
+          ) : issues.length > 0 ? (
+            <Badge
+              text={`${issues.length} ${issues.length === 1 ? "issue" : "issues"}`}
+              state="danger"
+              iconDir="start"
+            />
+          ) : (
+            <span className="truncate text-sm text-text-muted">No workers reporting</span>
+          ))}
         <Button
           type="secondary"
           htmlType="button"
           iconLeft="refresh"
           onClick={() => setRefreshKey((k) => k + 1)}
           loading={refreshing}
+          className="ml-auto shrink-0"
         >
           Refresh
         </Button>
-      </div>
-      {rows === null && <Table aria-label="Workers" aria-busy loading size="sm" headers={WORKER_HEADERS} rows={[]} />}
-      {rows !== null && (rows.length === 0 || visible.length === 0) && (
-        <EmptyState
+      </ListToolbar>
+      {!error && rows !== null && colours.length > 0 && (
+        <p className="-mt-1 mb-3 text-xs text-text-muted" data-testid="reporting-colours">
+          Reporting from {colours.join(", ")}
+          {store?.rows ? (
+            <>
+              {" "}
+              · {store.rows} {store.rows === 1 ? "row" : "rows"} in {store.table || "loom.worker_status"}
+            </>
+          ) : null}
+        </p>
+      )}
+      {!!error && <ListState kind="error" things="workers" error={error} onRetry={() => setRefreshKey((k) => k + 1)} />}
+      {!error && rows === null && (
+        <Table aria-label="Workers" aria-busy loading size="sm" headers={WORKER_HEADERS} rows={[]} />
+      )}
+      {!error && rows !== null && (rows.length === 0 || visible.length === 0) && (
+        <ListState
+          kind="empty"
           icon="settings"
           title={rows.length === 0 ? "No workers reporting" : "Nothing to show"}
           description={
@@ -394,7 +405,7 @@ export function WorkersPanel() {
           }
         />
       )}
-      {rows !== null && rows.length > 0 && reporting.length === 0 && effective.length > 0 && (
+      {!error && rows !== null && rows.length > 0 && reporting.length === 0 && effective.length > 0 && (
         <Alert
           role="status"
           className="mb-3"
@@ -409,7 +420,7 @@ export function WorkersPanel() {
           }
         />
       )}
-      {rows !== null && visible.length > 0 && (
+      {!error && rows !== null && visible.length > 0 && (
         <div className="space-y-1.5" data-testid="workers-list" aria-busy={refreshing || undefined}>
           <Table
             aria-label="Workers"
@@ -479,7 +490,7 @@ export function WorkersPanel() {
                         <div className="text-xs text-text-muted tabular">
                           {w.last_run_at ? (
                             <>
-                              Last ran {relativeTime(w.last_run_at)}
+                              Last ran <ListTime iso={w.last_run_at} />
                               {w.last_duration_ms != null && <> · took {fmtDuration(w.last_duration_ms)}</>}
                               {written > 0 && <> · {written.toLocaleString()} rows written</>}
                               {w.total_runs != null && <> · {w.total_runs.toLocaleString()} runs total</>}
@@ -763,21 +774,27 @@ const CLASS_BAR: Record<string, string> = {
 function ConsolidationsPanel() {
   const identity = useIdentity();
   const [rows, setRows] = useState<ConsolidationRunRow[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [reload, setReload] = useState(0);
 
   useAbortableEffect(
     (signal, live) => {
       setRows(null);
+      setError(null);
       listConsolidations({ org: identity.org, namespace: identity.namespace }, { limit: 50, signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
-        .catch(() => {
-          if (live()) setRows([]);
+        .catch((e) => {
+          if (live()) setError(e);
         });
     },
-    [identity.org, identity.namespace],
+    [identity.org, identity.namespace, reload],
   );
 
+  if (error) {
+    return <ListState kind="error" things="consolidations" error={error} onRetry={() => setReload((n) => n + 1)} />;
+  }
   if (rows === null)
     return (
       <LoadingSkeleton label="Loading consolidations">
@@ -797,7 +814,8 @@ function ConsolidationsPanel() {
 function ConsolidationsTable({ rows }: { rows: ConsolidationRunRow[] }) {
   if (rows.length === 0) {
     return (
-      <EmptyState
+      <ListState
+        kind="empty"
         icon="cards"
         title="No consolidation runs yet"
         description="The background consolidator merges semantically-similar memories. Runs appear here once it fires."
@@ -823,7 +841,7 @@ function ConsolidationsTable({ rows }: { rows: ConsolidationRunRow[] }) {
           { label: <span className="tabular">{r.cluster_size}</span> },
           { label: <span className="tabular">{(r.tokens_in ?? 0) + (r.tokens_out ?? 0)}</span> },
           { label: <span className="tabular">{r.duration_ms}ms</span> },
-          { label: <span className="tabular text-text-muted">{relativeTime(r.ran_at)}</span> },
+          { label: <ListTime iso={r.ran_at} className="text-text-muted" /> },
         ],
       }))}
     />
@@ -836,7 +854,7 @@ const RUN_STATE: Record<string, BadgeState> = { written: "success", failed: "dan
 function ExtractionQualityPanel() {
   const identity = useStore((s) => s.identity);
   const [rows, setRows] = useState<ExtractionQualityRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   // Refresh re-runs the effect, so a refresh superseded by an org switch is aborted and its
   // answer dropped like any other stale read.
   const [refreshKey, setRefreshKey] = useState(0);
@@ -853,7 +871,7 @@ function ExtractionQualityPanel() {
           if (live()) setRows(r.rows || []);
         })
         .catch((e: unknown) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(e);
         })
         .finally(() => {
           if (live()) setRefreshing(false);
@@ -864,7 +882,9 @@ function ExtractionQualityPanel() {
 
   if (!identity) return null;
   if (error) {
-    return <EmptyState icon="sparkle" title="Couldn't load extraction quality" description={error} />;
+    return (
+      <ListState kind="error" things="extraction quality" error={error} onRetry={() => setRefreshKey((k) => k + 1)} />
+    );
   }
   if (rows === null) {
     return (
@@ -878,7 +898,8 @@ function ExtractionQualityPanel() {
   }
   if (rows.length === 0) {
     return (
-      <EmptyState
+      <ListState
+        kind="empty"
         icon="sparkle"
         title="No extraction activity yet"
         description="Nothing has been extracted from saved conversations yet. Once it starts, this panel shows how many candidates were proposed, approved and rejected, so you can tune extraction for signal."

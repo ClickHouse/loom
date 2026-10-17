@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AllowlistRow, ConflictRow, LearningEntry } from "../../api";
 import { useStore } from "../../lib/state";
 import { ReviewQueue } from "./ReviewQueue";
+import { ApiError } from "../../lib/errors";
 
 // The review queue is keyed to the namespace in the header: a reload after a decision
 // must not paint the previous namespace's rows, and switching namespace must not leave
@@ -280,5 +281,45 @@ describe("ReviewQueue", () => {
     await waitFor(() => expect(within(table).getByRole("button", { name: "k/three" })).toBeInTheDocument(), WAIT);
     expect(within(table).queryByRole("button", { name: "k/one" })).toBeNull();
     expect(within(table).getByRole("button", { name: "k/two" })).toBeInTheDocument();
+  });
+
+  it("counts the queue in its toolbar and shows each conflict's time as a list time", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(4);
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [conflict("k/one"), conflict("k/two")],
+      next_before_version: 7,
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+    const bar = document.querySelector<HTMLElement>('search[aria-label="Queue"]');
+    await waitFor(() => expect(bar).toHaveTextContent("2 of 4"), WAIT);
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    expect(within(table).getAllByText("Sep 20")[0].tagName).toBe("TIME");
+  });
+
+  it("says a failed read failed, with Retry, never 'No conflicts'", async () => {
+    vi.mocked(listConflicts).mockRejectedValueOnce(new ApiError({ status: 503, message: "down", requestId: "rq-5" }));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    expect(await screen.findByText("Couldn't load conflicts", {}, WAIT)).toBeInTheDocument();
+    expect(screen.getByText(/rq-5/)).toBeInTheDocument();
+    expect(screen.queryByText("No conflicts")).toBeNull();
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("k/one")], next_before_version: null });
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("value of k/one", {}, WAIT)).toBeInTheDocument();
+  });
+
+  it("says a failed exceptions read failed, with Retry", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAllowlist)
+      .mockResolvedValueOnce({ rows: [exception("k/a", "k/b")] })
+      .mockRejectedValueOnce(new ApiError({ status: 500, message: "boom" }));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: /Remove exception/ }, WAIT));
+    expect(await screen.findByText("Couldn't load allowed exceptions", {}, WAIT)).toBeInTheDocument();
+    expect(screen.queryByText("No allowed exceptions")).toBeNull();
   });
 });

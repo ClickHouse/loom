@@ -121,7 +121,8 @@ describe("Recall Lab: score a query", () => {
     expect(await screen.findByText("excerpt of finding_1")).toBeInTheDocument();
     expect(searchMemory.mock.calls[0][2]).toMatchObject({ explain: true, legs: ["memory"] });
     expect(screen.getByText("key match +0.85")).toBeInTheDocument();
-    expect(screen.getByText("sim 0.330")).toBeInTheDocument();
+    // Similarity is its own column now (SPEC-LISTS A7).
+    expect(screen.getByText("0.330")).toBeInTheDocument();
   });
 
   it("folds a result set the search abstained on until the reader asks", async () => {

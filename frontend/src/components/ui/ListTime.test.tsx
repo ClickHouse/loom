@@ -30,6 +30,25 @@ describe("ListTime", () => {
     expect(screen.getByText("12m ago")).not.toHaveAttribute("tabindex");
   });
 
+  // Review findings: a time in a table or grid row took its own tab stop (fifty per page of
+  // runs); there it is quiet, and a screen reader still hears the absolute time.
+  it("takes no tab stop in a table or grid row, and says the absolute time to a screen reader", () => {
+    render(
+      <table>
+        <tbody>
+          <tr>
+            <td>
+              <ListTime iso="2026-09-20 14:32:00" />
+            </td>
+          </tr>
+        </tbody>
+      </table>,
+    );
+    const time = screen.getByText("Sep 20");
+    expect(time).not.toHaveAttribute("tabindex");
+    expect(time.closest("td")).toHaveTextContent("Sep 20, 2026, 14:32 UTC");
+  });
+
   it("renders nothing for a missing or unreadable time", () => {
     const { container } = render(
       <>

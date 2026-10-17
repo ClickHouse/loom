@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import * as RadixPopover from "@radix-ui/react-popover";
-import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
@@ -22,7 +22,6 @@ import {
 import { sharedMine } from "../lib/sharedReads";
 import { setViewParam, useStore, viewHref } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
-import { relativeTime } from "../lib/format";
 import { Kbd, Loading } from "./ui";
 import { toast } from "./Toast";
 import { paletteShortcut } from "../lib/platform";
@@ -521,7 +520,7 @@ export function HeaderSearch({
         {activations.length > 0 && (
           <div id={listboxId} role="listbox" aria-label="Search results">
             {recentShown.length > 0 && (
-              <OptionGroup id={`${listboxId}-recent`} icon="document" label="Recent memories">
+              <OptionGroup id={`${listboxId}-recent`} icon="clock" label="Recent memories">
                 {recentShown.map((e, i) => (
                   <button
                     type="button"
@@ -530,8 +529,8 @@ export function HeaderSearch({
                     onClick={() => openMemory(e)}
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <TypeChip label="memory" />
-                      <span className="font-mono text-sm truncate">{e.memory_key}</span>
+                      <TypeIcon kind="memory" />
+                      <span className="font-mono text-xs truncate">{e.memory_key}</span>
                     </div>
                   </button>
                 ))}
@@ -548,8 +547,8 @@ export function HeaderSearch({
                     onClick={() => openProfileSection(s.label)}
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <TypeChip label="profile" />
-                      <span className="font-mono text-sm truncate">{s.label}</span>
+                      <TypeIcon kind="profile" />
+                      <span className="font-mono text-xs truncate">{s.label}</span>
                     </div>
                   </button>
                 ))}
@@ -571,8 +570,8 @@ export function HeaderSearch({
                       }}
                     >
                       <div className="flex items-center gap-2">
-                        <TypeChip label="namespace" />
-                        <span className="font-mono text-sm">{r.namespace}</span>
+                        <TypeIcon kind="namespace" />
+                        <span className="font-mono text-xs">{r.namespace}</span>
                         <Badge
                           text={r.visibility}
                           size="sm"
@@ -580,7 +579,9 @@ export function HeaderSearch({
                         />
                         {!r.joined && <span className="text-xs text-text-muted">not joined</span>}
                       </div>
-                      {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
+                      {r.description && (
+                        <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">{r.description}</div>
+                      )}
                     </a>
                   );
                 })}
@@ -599,10 +600,10 @@ export function HeaderSearch({
                       onClick={() => openProfileSection(s.label)}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <TypeChip label="profile" />
-                        <span className="font-mono text-sm truncate">{s.label}</span>
+                        <TypeIcon kind="profile" />
+                        <span className="font-mono text-xs truncate">{s.label}</span>
                       </div>
-                      <div className="text-xs text-text-muted mt-0.5 truncate">{truncateForRow(s.value)}</div>
+                      <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">{truncateForRow(s.value)}</div>
                     </button>
                   );
                 })}
@@ -610,7 +611,7 @@ export function HeaderSearch({
             )}
 
             {memoryShown.length > 0 && (
-              <OptionGroup id={`${listboxId}-mem`} icon="document" label="Best matches">
+              <OptionGroup id={`${listboxId}-mem`} icon="clock" label="Best matches">
                 {memoryShown.map((e, i) => {
                   const idx = offMem + i;
                   return (
@@ -621,19 +622,11 @@ export function HeaderSearch({
                       onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <TypeChip label="memory" />
-                        <span className="font-mono text-sm truncate">{e.memory_key}</span>
-                        <span className="text-xs text-text-muted shrink-0 ml-auto">
-                          {e.memory_type}
-                          {e.created_at ? ` · ${relativeTime(e.created_at)}` : ""}
-                        </span>
+                        <TypeIcon kind="memory" />
+                        <span className="font-mono text-xs truncate">{e.memory_key}</span>
+                        <span className="text-xs text-text-muted shrink-0 ml-auto">{e.memory_type}</span>
                       </div>
-                      <div className="text-xs text-text-muted mt-0.5 truncate">
-                        {e.agent ? (
-                          <>
-                            <span className="text-text-muted">{e.agent}</span> ·{" "}
-                          </>
-                        ) : null}
+                      <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">
                         {e.content_excerpt || "(empty)"}
                       </div>
                     </button>
@@ -643,20 +636,20 @@ export function HeaderSearch({
             )}
 
             {documentsShown.length > 0 && (
-              <OptionGroup id={`${listboxId}-doc`} icon="book" label="Library">
+              <OptionGroup id={`${listboxId}-doc`} icon="document" label="Library">
                 {documentsShown.map((d, i) => {
                   const idx = offDoc + i;
                   const label = d.title || d.original_filename || d.source_uri;
                   return (
                     <button type="button" key={d.source_uri} {...optionProps(idx)} onClick={() => openDocument(d)}>
                       <div className="flex items-center gap-2 min-w-0">
-                        <TypeChip label="library" />
-                        <span className={`text-sm truncate ${d.title ? "" : "font-mono"}`}>{label}</span>
+                        <TypeIcon kind="document" />
+                        <span className={`truncate ${d.title ? "text-sm" : "font-mono text-xs"}`}>{label}</span>
                         {(d.tags || []).slice(0, 3).map((t) => (
                           <Badge key={t} text={`#${t}`} size="sm" className="shrink-0" />
                         ))}
                       </div>
-                      <div className="text-xs text-text-muted mt-0.5 truncate">
+                      <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">
                         {d.chunk_count} chunk{d.chunk_count === 1 ? "" : "s"}
                         {d.description ? ` · ${d.description}` : ""}
                       </div>
@@ -744,15 +737,24 @@ function OptionGroup({
   );
 }
 
-function TypeChip({ label }: { label: "namespace" | "profile" | "memory" | "library" }) {
-  const states: Record<typeof label, BadgeState> = {
-    namespace: "default",
-    profile: "neutral",
-    memory: "info",
-    library: "neutral",
-  };
-  const state = states[label];
-  return <Badge text={label} state={state} size="sm" className="shrink-0" />;
+/** A result's type, as a 16 px icon at the start of its row: the group heading names the
+ *  type, so a coloured badge on every row would only decorate (SPEC-LISTS A10). */
+const TYPE_ICONS: Record<"namespace" | "profile" | "memory" | "document", IconName> = {
+  namespace: "folder-closed",
+  profile: "user",
+  memory: "clock",
+  document: "document",
+};
+function TypeIcon({ kind }: { kind: keyof typeof TYPE_ICONS }) {
+  return (
+    <Icon
+      name={TYPE_ICONS[kind]}
+      size="sm"
+      color="var(--global-color-text-muted)"
+      aria-hidden="true"
+      className="shrink-0"
+    />
+  );
 }
 
 function MoreLink({

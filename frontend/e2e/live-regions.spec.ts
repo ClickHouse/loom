@@ -20,7 +20,7 @@ test("the library's filter count is announced from a status region mounted befor
   await page.getByRole("textbox", { name: "Search library" }).fill("tag:lane-0");
   await expect
     .poll(async () =>
-      (await Promise.all(regions.map((r) => r.evaluate((e) => e.textContent ?? "")))).includes("1 of 4 shown"),
+      (await Promise.all(regions.map((r) => r.evaluate((e) => e.textContent ?? "")))).includes("1 match"),
     )
     .toBe(true);
 });

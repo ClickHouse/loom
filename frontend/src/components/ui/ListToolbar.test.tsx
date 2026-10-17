@@ -58,4 +58,40 @@ describe("ListToolbar", () => {
     );
     expect(screen.getByLabelText("Search memories")).toHaveFocus();
   });
+
+  // Click UI Table's header checkbox: select every row on the page, mixed while some are.
+  it("leads the selection with a select-all checkbox, mixed while some rows are selected", () => {
+    const onToggleAll = vi.fn();
+    const { rerender } = render(
+      <ListToolbar
+        label="Search and filters"
+        selection={{
+          count: 2,
+          onClear: () => {},
+          actions: [],
+          all: { total: 5, checked: false, onToggle: onToggleAll },
+        }}
+      >
+        <input aria-label="Search memories" />
+      </ListToolbar>,
+    );
+    const all = screen.getByRole("checkbox", { name: "Select all 5 on this page" });
+    expect(all).toHaveAttribute("aria-checked", "mixed");
+    fireEvent.click(all);
+    expect(onToggleAll).toHaveBeenCalled();
+    rerender(
+      <ListToolbar
+        label="Search and filters"
+        selection={{
+          count: 5,
+          onClear: () => {},
+          actions: [],
+          all: { total: 5, checked: true, onToggle: onToggleAll },
+        }}
+      >
+        <input aria-label="Search memories" />
+      </ListToolbar>,
+    );
+    expect(screen.getByRole("checkbox", { name: "Select all 5 on this page" })).toHaveAttribute("aria-checked", "true");
+  });
 });

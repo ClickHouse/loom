@@ -997,7 +997,7 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         return json({ repos: projectRows(codeRepos, body, "namespace") });
       case "/v1/run.list":
         if (!options.runRows) break;
-        return json({ runs: projectRows(runRowsFixture(options.runRows, ns), body, "run_id") });
+        return json(runListFixture(runRowsFixture(options.runRows, ns), body));
       case "/v1/run.get":
         return json(runGetFixture(runRowsFixture(options.runRows ?? 0, ns), String(body.run_id ?? "")));
       case "/v1/tracker.source.list":
@@ -1420,3 +1420,33 @@ export const ROUTES = [
   "/admin/agents",
   "/admin/users",
 ];
+
+/** `run.list` as the server answers it: the filters (status, agent, memory_activity, q in
+ *  the goal, run id or agent, any case), then `order_by`, then the page `offset` and
+ *  `limit` cut, with `total` counting every run the filters keep. */
+function runListFixture(all: Record<string, unknown>[], body: Record<string, unknown>): Record<string, unknown> {
+  const q = String(body.q ?? "").toLowerCase();
+  const used = (r: Record<string, unknown>) => (r.memories_used as string[]).length;
+  const active = (r: Record<string, unknown>) => used(r) + (r.memories_written as string[]).length > 0;
+  const kept = all.filter(
+    (r) =>
+      (!body.status || r.status === body.status) &&
+      (!body.agent || r.agent === body.agent) &&
+      (body.memory_activity !== "with" || active(r)) &&
+      (body.memory_activity !== "without" || !active(r)) &&
+      (!q || `${r.goal} ${r.run_id} ${r.agent}`.toLowerCase().includes(q)),
+  );
+  const order = String(body.order_by || "started_desc");
+  const value = (r: Record<string, unknown>) =>
+    order.startsWith("duration") ? Number(r.duration_ms) : order.startsWith("relied_on") ? used(r) : 0;
+  const sign = order.endsWith("_asc") ? 1 : -1;
+  kept.sort(
+    (a, b) =>
+      sign * (value(a) - value(b)) ||
+      sign * String(a.started_at).localeCompare(String(b.started_at)) ||
+      sign * String(a.run_id).localeCompare(String(b.run_id)),
+  );
+  const offset = Number(body.offset ?? 0);
+  const page = kept.slice(offset, offset + Number(body.limit ?? 50));
+  return { runs: projectRows(page, body, "run_id"), total: kept.length };
+}

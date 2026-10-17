@@ -11,9 +11,9 @@ export interface ListTimeProps {
 
 /**
  * ListTime — a list row's time: `listTime` ("12m ago", "Sep 20") in a `<time dateTime>`,
- * with the absolute UTC time ("Sep 20, 2026, 14:32 UTC") in a tooltip. In a list row or
- * inside a control it takes no tab stop (`inRowOrControl`); elsewhere it is focusable, so
- * the tooltip opens from the keyboard. Nothing renders for a missing or unreadable time.
+ * with the absolute UTC time ("Sep 20, 2026, 14:32 UTC") in a tooltip. In a list or table
+ * row, or inside a control, it takes no tab stop (`inRowOrControl`) and says the absolute
+ * time to a screen reader; elsewhere it is focusable, so the tooltip opens from the keyboard. Nothing renders for a missing or unreadable time.
  */
 export function ListTime({ iso, className = "" }: ListTimeProps) {
   const [el, setEl] = useState<HTMLElement | null>(null);
@@ -29,6 +29,9 @@ export function ListTime({ iso, className = "" }: ListTimeProps) {
         className={`tabular whitespace-nowrap ${quiet ? "relative z-[1]" : "rounded"} ${className}`}
       >
         {listTime(iso)}
+        {/* Quiet, it takes no focus, so its tooltip is out of a keyboard's reach: the
+            absolute time is said instead. */}
+        {quiet && <span className="sr-only"> ({listTimeTitle(iso)})</span>}
       </time>
     </Tip>
   );

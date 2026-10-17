@@ -43,7 +43,8 @@ for (const width of [1400, 375]) {
         // A selection made down the list shows in the same bar, which keeps its height,
         // so the row just checked stays in view.
         const before = (await bar.boundingBox())?.height;
-        const box8 = page.getByRole("checkbox").nth(8);
+        // A row's own checkbox (once one is checked, the toolbar leads with its select-all).
+        const box8 = page.getByRole("checkbox", { name: /^Select (?!all )/ }).nth(8);
         await box8.click();
         await expect(bar.getByText(/selected/)).toBeVisible();
         expect((await bar.boundingBox())?.height).toBe(before);
@@ -99,7 +100,8 @@ test.describe("phone", () => {
 
   test("a row's checkbox takes a 44 px tap", async ({ page }) => {
     await memories(page);
-    const box = page.getByRole("checkbox").first();
+    // A row's own checkbox: once one is checked, the toolbar leads with its select-all.
+    const box = page.getByRole("checkbox", { name: /^Select alerts\// }).first();
     await box.scrollIntoViewIfNeeded();
     const r = await box.boundingBox();
     if (!r) throw new Error("no checkbox");

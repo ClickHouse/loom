@@ -2,7 +2,7 @@ import { cleanup, render, screen, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationThreadDetail } from "../api";
 import { shortDate } from "../lib/format";
-import { ThreadReplayDialog } from "./ThreadReplayDialog";
+import { ThreadReplayDialog, threadTitle } from "./ThreadReplayDialog";
 
 // The replay's turns are told apart by a neutral role badge, not by coloured rails; the
 // turn a search hit names takes the active stroke, and the first read is a labelled loader.
@@ -93,5 +93,15 @@ describe("ThreadReplayDialog", () => {
     expect(dialog.textContent).not.toMatch(/\d+\/\d+\/\d{4}/);
     const times = [...dialog.querySelectorAll("time")].map((t) => t.firstChild?.textContent);
     expect(times).toEqual([shortDate(old), shortDate(old), shortDate(old)]);
+  });
+});
+
+// SPEC-LISTS A3: a thread is named by its title, else by the user's first message on one
+// line; never by its id.
+describe("threadTitle", () => {
+  it("takes the title, else the user's message flattened, else nothing", () => {
+    expect(threadTitle("  Release notes ", "ignored")).toBe("Release notes");
+    expect(threadTitle("", "Can you draft\n  the notes?")).toBe("Can you draft the notes?");
+    expect(threadTitle(undefined, "")).toBe("");
   });
 });

@@ -211,7 +211,8 @@ test.describe("open overlays", () => {
   });
 
   test("a button that loads in place keeps focus through its loading state", async ({ page }) => {
-    await open(page, "/memories");
+    // The usage audit is on the Memories page's Insights tab.
+    await open(page, "/memories?section=insights");
     // Click UI disables a loading button, which drops its focus; it takes it back after.
     await page.route("**/v1/namespace.audit", async (route) => {
       await new Promise((r) => setTimeout(r, 300));

@@ -1,43 +1,26 @@
+import { Avatar } from "@clickhouse/click-ui/Avatar";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
-import type { TaskListRow, TaskStatus } from "../../api/tasks";
-import {
-  GROUP_META,
-  PRIORITY_LABEL,
-  STATUS_META,
-  initials,
-  leaseMinutesLeft,
-  posterKind,
-  posterName,
-  type Group,
-  type PosterKind,
-} from "../../lib/tasks";
+import type { TaskStatus } from "../../api/tasks";
+import { GROUP_META, PRIORITY_LABEL, STATUS_META, leaseMinutesLeft, type Group } from "../../lib/tasks";
+import { Tip } from "../../components/ui";
 
 /**
- * The Tasks page's small shapes: the poster avatar, the lease bar (the `tq-*` classes in
- * styles.css), and the kind, status and priority badges. The list, the
- * board and the panel draw them the same way.
+ * The Tasks page's small shapes: the assignee avatar, the lease bar (the `tq-*` classes in
+ * styles.css), and the kind, status and priority badges. The list, the board and the
+ * panel draw them the same way.
  */
 
-/** The inbox's own agent is round with a stroke, another agent square on
- *  info, a person by initials on the neutral surface. Decorative: the name it stands for
- *  is written beside it. */
-export function Avatar({ name, kind }: { name: string; kind: PosterKind }) {
+/** Who has the task in hand, as Click UI's neutral Avatar: the name is its tooltip and
+ *  what a screen reader reads (the initials are decoration). */
+export function Assignee({ name, label }: { name: string; label: string }) {
   return (
-    <span className="tq-av" data-kind={kind} aria-hidden="true">
-      {initials(name)}
-    </span>
+    <Tip content={label}>
+      <span className="tq-assignee relative z-[1]">
+        <Avatar text={name.replace(/^(sa|human|process):/, "").replace(/[-_.@]+/g, " ")} aria-hidden="true" />
+        <span className="sr-only">{label}</span>
+      </span>
+    </Tip>
   );
-}
-
-export function PosterAvatar({
-  r,
-  ownerAgent,
-}: {
-  r: Pick<TaskListRow, "from_agent" | "from_subject">;
-  ownerAgent: string | undefined;
-}) {
-  const name = posterName(r);
-  return <Avatar name={name} kind={posterKind(r, ownerAgent)} />;
 }
 
 /** A list row's priority: "P1" in a neutral badge, read in full ("P1 urgent"). */
@@ -52,8 +35,9 @@ export function PriorityBar({ priority }: { priority: number }) {
   );
 }
 
+/** A task's kind: a neutral badge in plain text (a label, not code). */
 export function KindTag({ kind }: { kind: string }) {
-  return <Badge text={<span className="font-mono">{kind}</span>} size="md" />;
+  return <Badge text={kind} state="neutral" size="sm" />;
 }
 
 /** How much of the lease is left, amber under ten minutes. */
@@ -68,6 +52,7 @@ export function LeaseBar({
 }) {
   const left = leaseMinutesLeft(leaseUntil, now);
   if (left === null) return <span className="text-xs text-text-muted">no lease</span>;
+  // The bar is the lease's share left, against the inbox's lease length.
   const total = Math.max(1, leaseSeconds / 60);
   const pct = Math.max(4, Math.min(100, (left / total) * 100));
   return (
@@ -76,7 +61,7 @@ export function LeaseBar({
         <i style={{ width: `${pct}%` }} />
       </span>
       <span className="tabular" aria-hidden="true">
-        {left} min
+        {left}m left
       </span>
     </>
   );
@@ -95,8 +80,9 @@ const STATUS_STATE: Record<TaskStatus, BadgeState> = {
 };
 
 export function StatusPill({ status }: { status: TaskStatus }) {
-  const meta = STATUS_META[status] ?? STATUS_META.todo;
-  return <Badge text={meta.label} state={STATUS_STATE[status] ?? "neutral"} size="md" />;
+  const { label } = STATUS_META[status] ?? STATUS_META.todo;
+  // Sentence case, as every label: "In progress".
+  return <Badge text={label[0].toUpperCase() + label.slice(1)} state={STATUS_STATE[status] ?? "neutral"} size="md" />;
 }
 
 export function PriorityBadge({ priority }: { priority: number }) {

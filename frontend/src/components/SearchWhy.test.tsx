@@ -2,10 +2,12 @@ import { cleanup, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SearchHit } from "../api";
+import { axeViolations } from "../test/axe";
 import { SearchWhy } from "./SearchWhy";
 
-// One line under a ranked hit — rank, similarity, blended score and the signed ranking
-// terms — so the Memories list says why a row is there without leaving for Recall Lab.
+// A ranked hit's "Why this result" (SPEC-LISTS A1): an info button in the row's meta slot
+// whose popover says the rank, similarity, blended score and the signed ranking terms, so
+// the Memories list says why a row is there without a debug line under every row.
 
 const hit = (over: Partial<SearchHit> = {}): SearchHit => ({
   memory_key: "k1",
@@ -18,11 +20,16 @@ const hit = (over: Partial<SearchHit> = {}): SearchHit => ({
   ...over,
 });
 
+const open = async () => {
+  await userEvent.click(screen.getByRole("button", { name: "Why this result" }));
+  return screen.findByTestId("search-why");
+};
+
 describe("SearchWhy", () => {
   afterEach(cleanup);
 
-  it("shows rank, similarity, score and the ranking terms by magnitude", async () => {
-    render(
+  it("is one button until opened; the popover shows rank, similarity, score and the terms by magnitude", async () => {
+    const { container } = render(
       <SearchWhy
         rank={3}
         hit={hit({
@@ -36,27 +43,32 @@ describe("SearchWhy", () => {
         })}
       />,
     );
-    const line = screen.getByTestId("search-why");
-    expect(line).toHaveTextContent("#3");
-    expect(line).toHaveTextContent("similarity 0.62");
-    expect(line).toHaveTextContent("score 0.71");
+    expect(screen.queryByTestId("search-why")).toBeNull();
+    const why = await open();
+    expect(why).toHaveTextContent("#3");
+    expect(why).toHaveTextContent("similarity 0.62");
+    expect(why).toHaveTextContent("score 0.71");
     // Terms by |value|: semantic 0.25, key match 0.12, date proximity -0.05.
-    expect(line.textContent).toMatch(/semantic \+0\.25.*key match \+0\.12.*date proximity -0\.05/);
-    // The raw server note is a tooltip on an info button, not inline text.
-    expect(line).not.toHaveTextContent("rank_score");
-    await userEvent.setup().hover(screen.getByRole("button", { name: "Ranking note" }));
-    expect((await screen.findAllByText(/fact hit from namespace alice/)).length).toBeGreaterThan(0);
+    expect(why.textContent).toMatch(/semantic \+0\.25.*key match \+0\.12.*date proximity -0\.05/);
+    // The server's note is in the popover as written, flattened to one line.
+    expect(why).toHaveTextContent("fact hit from namespace alice");
+    expect(await axeViolations(container.ownerDocument.body)).toEqual([]);
   });
 
-  it("marks a term that pushed the hit down", () => {
+  it("marks a term that pushed the hit down", async () => {
     render(<SearchWhy rank={1} hit={hit({ score_components: { reinforcement: -0.2 } })} />);
+    await open();
     const chip = screen.getByText(/reinforcement -0\.20/);
     expect(chip.closest('[class*="state_warning"]')).not.toBeNull();
   });
 
-  it("says so when the server reported no ranking terms", () => {
+  it("says so when the server reported no ranking terms", async () => {
     render(<SearchWhy rank={1} hit={hit()} />);
-    expect(screen.getByTestId("search-why")).toHaveTextContent("no ranking terms reported");
-    expect(screen.queryByRole("button", { name: "Ranking note" })).toBeNull();
+    expect(await open()).toHaveTextContent("No ranking terms reported");
+  });
+
+  it("says a keyword row holds the typed text", async () => {
+    render(<SearchWhy contains="refund" />);
+    expect(await open()).toHaveTextContent('Contains "refund"');
   });
 });

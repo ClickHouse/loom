@@ -6,8 +6,10 @@ import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Table } from "@clickhouse/click-ui/Table";
 import { useStore } from "../../lib/state";
 import { listConnectedAgents, type ConnectedAgentRow } from "../../api";
-import { relativeTime } from "../../lib/format";
-import { EmptyState } from "../../components/EmptyState";
+import { parseChTime } from "../../lib/format";
+import { ListState } from "../../components/ui/ListState";
+import { ListTime } from "../../components/ui/ListTime";
+import { ListToolbar } from "../../components/ui/ListToolbar";
 import { IconButton } from "../../components/IconButton";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -42,7 +44,7 @@ export function Agents() {
   const identity = useStore((s) => s.identity);
   const [windowHours, setWindowHours] = useState<number>(24);
   const [rows, setRows] = useState<ConnectedAgentRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   // A refresh or a new window keeps the table on screen, marked busy, until it answers.
   const [refreshing, setRefreshing] = useState(false);
 
@@ -55,7 +57,7 @@ export function Agents() {
         if (live()) setRows(r.rows || []);
       })
       .catch((e) => {
-        if (live()) setError(String(e?.message || e));
+        if (live()) setError(e);
       })
       .finally(() => {
         if (live()) setRefreshing(false);
@@ -67,7 +69,14 @@ export function Agents() {
 
   return (
     <PageContainer>
-      <PageHeader title="Agents">
+      <PageHeader
+        title="Agents"
+        actions={
+          <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()} loading={refreshing}>
+            Refresh
+          </Button>
+        }
+      >
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
       <div className="text-sm text-text-muted mb-4 max-w-[72ch]">
@@ -82,24 +91,25 @@ export function Agents() {
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+      <ListToolbar
+        label="Time window and count"
+        count={!error && rows !== null ? `${rows.length} client${rows.length === 1 ? "" : "s"}` : undefined}
+      >
         <ButtonGroup
           aria-label="Time window"
           options={WINDOWS}
           selected={String(windowHours)}
           onClick={(value) => setWindowHours(Number(value))}
         />
-        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()} loading={refreshing}>
-          Refresh
-        </Button>
-      </div>
+      </ListToolbar>
 
-      {error && <EmptyState icon="plug" title="Couldn't load" description={error} />}
+      {!!error && <ListState kind="error" things="connected clients" error={error} onRetry={() => load()} />}
       {!error && rows === null && (
         <Table aria-label="Connected clients" aria-busy loading size="sm" headers={HEADERS} rows={[]} />
       )}
       {!error && rows !== null && rows.length === 0 && (
-        <EmptyState
+        <ListState
+          kind="empty"
           icon="plug"
           title="No client has written in this window"
           description={
@@ -116,7 +126,7 @@ export function Agents() {
             size="sm"
             headers={HEADERS}
             rows={rows.map((r) => {
-              const stale = Date.now() - new Date(r.last_seen).getTime() > 24 * 3600 * 1000;
+              const stale = Date.now() - (parseChTime(r.last_seen)?.getTime() ?? 0) > 24 * 3600 * 1000;
               return {
                 id: r.agent,
                 items: [
@@ -129,7 +139,7 @@ export function Agents() {
                     label: (
                       // Not seen for a day: said by a badge, not by the colour of the time alone.
                       <span className="inline-flex items-center gap-1.5">
-                        <span className="tabular text-text-muted">{relativeTime(r.last_seen)}</span>
+                        <ListTime iso={r.last_seen} className="text-text-muted" />
                         {stale && <Badge text="Stale" state="warning" size="sm" />}
                       </span>
                     ),

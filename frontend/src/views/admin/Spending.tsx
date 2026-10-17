@@ -20,7 +20,9 @@ import { useStore, useIdentity } from "../../lib/state";
 import { canUpdateNamespace, hasOrgAdminClaim } from "../../lib/role";
 import { invalidateShared, sharedBudgetStatus } from "../../lib/sharedReads";
 import { Skeleton } from "../../components/Skeleton";
-import { EmptyState } from "../../components/EmptyState";
+import { ListState } from "../../components/ui/ListState";
+import { ListToolbar } from "../../components/ui/ListToolbar";
+import { usePhone } from "./usePhone";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
@@ -65,6 +67,10 @@ export function Spending() {
   // the row count but have $0 cost and no tokens, drowning the few rows that
   // actually matter for spend. Toggle exposes them for performance debugging.
   const [showAllOps, setShowAllOps] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  // Bumped by Retry after a failed read.
+  const [reload, setReload] = useState(0);
+  const phone = usePhone();
 
   // Org-wide breakdown is meaningful only for ORG_ADMIN+ (the operator); for
   // anyone below, resolve_org_scope narrows it to their own namespaces, so we
@@ -92,6 +98,7 @@ export function Spending() {
   useAbortableEffect(
     (signal, live) => {
       setRows(null);
+      setError(null);
       listCostRollup(
         { org: identity.org, namespace: identity.namespace },
         { days: 7, ...BREAKDOWN_QUERY[breakdown], signal },
@@ -99,11 +106,11 @@ export function Spending() {
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
-        .catch(() => {
-          if (live()) setRows([]);
+        .catch((e) => {
+          if (live()) setError(e);
         });
     },
-    [identity.org, identity.namespace, breakdown],
+    [identity.org, identity.namespace, breakdown, reload],
   );
 
   // Bumped after a cap save: the bars re-read the server's answer instead of guessing it.
@@ -172,6 +179,18 @@ export function Spending() {
   }
   const days = Array.from(byDay.entries()).sort();
   const maxCost = Math.max(0.0001, ...days.map(([, c]) => c));
+
+  const allOps = (
+    <Checkbox
+      label={
+        hiddenCount > 0 && !showAllOps
+          ? `Show all operations (${hiddenCount} zero-cost rows hidden)`
+          : "Show all operations"
+      }
+      checked={showAllOps}
+      onCheckedChange={(c) => setShowAllOps(c === true)}
+    />
+  );
 
   // The share of the daily cap spent, in percent; past 100 once over the cap.
   const pct = Math.round((budget?.pct_of_cap ?? 0) * 100);
@@ -243,13 +262,15 @@ export function Spending() {
         </div>
       )}
 
-      {rows === null && (
+      {!!error && <ListState kind="error" things="usage" error={error} onRetry={() => setReload((n) => n + 1)} />}
+      {!error && rows === null && (
         <LoadingSkeleton label="Loading spending">
           <Skeleton className="h-40 w-full" />
         </LoadingSkeleton>
       )}
       {rows !== null && rows.length === 0 && (
-        <EmptyState
+        <ListState
+          kind="empty"
           icon="dollar"
           title="No operations recorded"
           description="No API calls against this namespace in the last 7 days. Activity (reads + LLM-touching writes) shows up here once your agent runs."
@@ -322,34 +343,34 @@ export function Spending() {
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-4 mb-2">
+          <ListToolbar
+            label="Usage breakdown"
+            count={`${visibleRows.length.toLocaleString()} ${visibleRows.length === 1 ? "row" : "rows"}`}
+          >
             <Select
-              label="Break down by"
-              orientation="horizontal"
               value={breakdown}
               onSelect={(value) => {
                 if (isBreakdown(value)) setBreakdown(value);
               }}
+              triggerProps={{ "aria-label": "Break down by" }}
+              className={phone ? "min-w-0 flex-1" : "w-60 shrink-0"}
             >
-              <Select.Item value="operation">Operation</Select.Item>
-              <Select.Item value="agent">Agent</Select.Item>
-              <Select.Item value="user">User</Select.Item>
-              {isOrgAdmin && <Select.Item value="namespace">Namespace (org-wide)</Select.Item>}
+              <Select.Item value="operation">By operation</Select.Item>
+              <Select.Item value="agent">By agent</Select.Item>
+              <Select.Item value="user">By user</Select.Item>
+              {isOrgAdmin && <Select.Item value="namespace">By namespace (org-wide)</Select.Item>}
             </Select>
-            <Checkbox
-              label={
-                hiddenCount > 0 && !showAllOps
-                  ? `Show all operations (${hiddenCount} zero-cost rows hidden)`
-                  : "Show all operations"
-              }
-              checked={showAllOps}
-              onCheckedChange={(c) => setShowAllOps(c === true)}
-            />
-          </div>
+            {!phone && allOps}
+          </ListToolbar>
+          {/* A phone's toolbar has room for the breakdown only; the switch sits under it. */}
+          {phone && <div className="-mt-1 mb-3">{allOps}</div>}
           {visibleRows.length === 0 && (
-            <div className="p-6 text-center text-sm text-text-muted bg-surface rounded-xl border border-border">
-              No cost-bearing operations in this window. Toggle "Show all operations" to see read-only API activity.
-            </div>
+            <ListState
+              kind="filtered"
+              things="cost-bearing operations"
+              filter="this window"
+              onClear={() => setShowAllOps(true)}
+            />
           )}
           {visibleRows.length > 0 && (
             <Table

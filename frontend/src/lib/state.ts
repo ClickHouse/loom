@@ -89,7 +89,8 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   setup: ["tab"],
   // The object open on a page rides its URL, so a deep link, a reload and Back reopen it:
   // the memory in the drawer, the document in the preview, the thread in the replay.
-  memories: ["memory"],
+  // Memories also carries its tab: `?section=insights` is the Insights tab (MemoryTabs).
+  memories: ["memory", "section"],
   knowledge: ["doc"],
   sessions: ["thread"],
 };
@@ -322,6 +323,8 @@ export const useStore = create<AppState>((set, get) => ({
     // A navigation closes the memory the drawer had open; on Memories itself the URL is the
     // same page, so its `?memory=` goes too, or a reload would reopen what was closed.
     if (!opts.query && urlParam("memory") !== null) setViewParam("memory", null, { loomInspect: null });
+    // Its tab too: a link to Memories means the list (the tabs set `section` themselves).
+    if (!opts.query && view === "memories" && urlParam("section") !== null) setViewParam("section", null);
     set((s) => ({ view, inspectedMemoryKey: null, navSeq: s.navSeq + 1, navNote: opts.note ?? null }));
   },
   bootView: (view) => {

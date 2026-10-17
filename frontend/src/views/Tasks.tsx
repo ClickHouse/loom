@@ -2,8 +2,10 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import { Icon } from "@clickhouse/click-ui/Icon";
-import { Link } from "@clickhouse/click-ui/Link";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { Select } from "@clickhouse/click-ui/Select";
 import {
   acceptTask,
   claimTask,
@@ -25,29 +27,36 @@ import { useVisiblePoll } from "../lib/hooks";
 import {
   ACTION_LABEL,
   DIALOG_ACTIONS,
-  GROUPS,
   NO_FILTERS,
+  actionDone,
   actionsFor,
   attentionCounts,
   dropAction,
+  filterSummary,
   groupTasks,
   kindsOf,
   latestProgressNote,
+  menuLabel,
   passesFilters,
   type Attention,
   type Filters,
   type Group,
+  type PosterFilter,
   type TaskAction,
 } from "../lib/tasks";
 import { SkeletonCard } from "../components/Skeleton";
-import { LoadingSkeleton, PageHeader, Tip } from "../components/ui";
+import { LoadingSkeleton, PageHeader } from "../components/ui";
+import { MenuTrigger } from "../components/ui/Menu";
+import { ListState } from "../components/ui/ListState";
+import { ListToolbar } from "../components/ui/ListToolbar";
+import type { RowMenuItem } from "../components/ui/RowMenu";
+import { IconButton } from "../components/IconButton";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { toast, toastError } from "../components/Toast";
-import { humanizeError } from "../lib/format";
 import { PageContainer } from "../layout/PageContainer";
 import { AttentionTiles } from "./tasks/AttentionTiles";
-import { ALL_INBOXES, InboxRail, railCounts } from "./tasks/InboxRail";
+import { ALL_INBOXES, InboxRail, InboxSelect, railCounts } from "./tasks/InboxRail";
 import { TaskList, type RowContext } from "./tasks/TaskList";
 import { TaskBoard } from "./tasks/TaskBoard";
 import { TaskPanel } from "./tasks/TaskPanel";
@@ -66,13 +75,15 @@ const InboxSettingsDialog = lazy(() =>
  *
  * Attention first: four tiles count what needs a person (triage, blocked on
  * a person, failed, a lease ending within ten minutes) and filter on a
- * click. Inboxes are folders in a left rail with to-do and running counts;
- * the picked one is the page's scope (`?inbox=`). Rows group by what
- * happens next — Triage, To do, In progress, Waiting, Closed — as a list or
- * a board; each row carries the one line that matters for its state and,
- * in Triage, inline Accept / Won't do. A row opens the document-shaped
- * panel beside the list (under 1280 px, a modal sheet over it); its footer holds the
- * status's actions.
+ * click. Inboxes are folders in a left rail with to-do and running counts (a
+ * Select on a phone); the picked one is the page's scope (`?inbox=`). The
+ * toolbar searches the loaded rows and filters them by kind and poster. Rows
+ * group by what happens next — Triage, To do, In progress, Waiting, Closed
+ * (folded) — as a list or a board; each row carries the one line that matters
+ * for its state, its menu of moves and, in Triage, an inline Accept. A row opens
+ * the document-shaped panel beside the list (under 1280 px, a modal sheet over
+ * it); the action bar under its header holds the status's moves. After a move
+ * made from the list, the focus goes on to the next row.
  *
  * Reads on load: `inbox.list` once, `task.counts` once (the rail), and
  * `task.list` once for the picked inbox (the list's projection); a 60 s poll while
@@ -80,7 +91,7 @@ const InboxSettingsDialog = lazy(() =>
  * click only. The panel reads `task.get` + `task.history` when it opens.
  *
  * Keys: j / k move, Enter opens, a accepts, s starts, c marks done, x won't do, d defers,
- * / focuses the kind filter, Esc closes the panel.
+ * / focuses the search, Esc closes the panel.
  */
 type Mode = "list" | "board";
 
@@ -104,24 +115,71 @@ function readQuery(key: string): string | null {
 // Below Click UI's xl breakpoint the panel is a modal sheet over the list, not a column
 // beside it. The one place the breakpoint lives: styles.css keys on what this decides.
 const SHEET_QUERY = "(max-width: 1279px)";
+// Below md the inbox rail is a Select and the toolbar's filters sit on a row under it.
+const PHONE_QUERY = "(max-width: 767px)";
 
-function matchesSheet(): boolean {
-  return typeof window.matchMedia === "function" && window.matchMedia(SHEET_QUERY).matches;
+function matches(query: string): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia(query).matches;
 }
 
-/** True while the viewport is narrow enough for the panel to be a modal sheet. */
-function useSheetLayout(): boolean {
-  const [sheet, setSheet] = useState(matchesSheet);
+/** True while the viewport matches the media query. */
+function useMedia(query: string): boolean {
+  const [on, setOn] = useState(() => matches(query));
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia(SHEET_QUERY);
-    const sync = () => setSheet(mq.matches);
+    const mq = window.matchMedia(query);
+    const sync = () => setOn(mq.matches);
     sync();
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
-  }, []);
-  return sheet;
+  }, [query]);
+  return on;
 }
+
+// A row's menu, in this order: the move forward, the other ways out, then the hand-offs.
+// Accept is the triage row's inline button; Edit brief needs the full task (the panel).
+const ROW_MENU: readonly TaskAction[] = [
+  "start",
+  "complete",
+  "unblock",
+  "resume",
+  "fail",
+  "defer",
+  "block",
+  "wont_do",
+  "reopen",
+  "reassign",
+  "cancel",
+];
+
+const ANY = "*";
+const POSTED_BY: ReadonlyArray<readonly [PosterFilter | typeof ANY, string]> = [
+  [ANY, "Anyone"],
+  ["me", "This agent"],
+  ["others", "Other posters"],
+];
+
+/** The task rows the list or the board shows, in their order on screen. */
+function shownTaskIds(): string[] {
+  return [...document.querySelectorAll<HTMLElement>(".tq-main [data-task-id]")].map((el) => el.dataset.taskId ?? "");
+}
+
+/** The row after this one on screen, else the one before: where the focus goes once it moves on. */
+function neighbourOf(taskId: string): string | null {
+  const ids = shownTaskIds();
+  const i = ids.indexOf(taskId);
+  return i < 0 ? null : (ids[i + 1] ?? ids[i - 1] ?? null);
+}
+
+function copyId(id: string) {
+  navigator.clipboard
+    ?.writeText(id)
+    .then(() => toast("Task id copied", "ok"))
+    .catch(() => toast(id, "ok"));
+}
+
+/** Where a move was made: a row (its button, its menu, a key) or the open panel. */
+type Origin = "list" | "panel";
 
 function inEditable(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
@@ -157,12 +215,13 @@ export function Tasks() {
   const mayAdmin = canCall("inbox.register", role, whoami);
 
   const [inboxes, setInboxes] = useState<Inbox[] | null>(null);
-  const [inboxError, setInboxError] = useState<string | null>(null);
+  const [inboxError, setInboxError] = useState<unknown>(null);
+  const [inboxReads, setInboxReads] = useState(0);
   const [counts, setCounts] = useState<InboxCount[] | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [rows, setRows] = useState<TaskListRow[] | null>(null);
   const [truncated, setTruncated] = useState(false);
-  const [rowsError, setRowsError] = useState<string | null>(null);
+  const [rowsError, setRowsError] = useState<unknown>(null);
   const [mode, setMode] = useState<Mode>(() => {
     try {
       return localStorage.getItem("loom_tasks_mode") === "board" ? "board" : "list";
@@ -171,6 +230,13 @@ export function Tasks() {
     }
   });
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [collapsed, setCollapsed] = useState<Record<Group, boolean>>({
+    triage: false,
+    todo: false,
+    in_progress: false,
+    waiting: false,
+    closed: true,
+  });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openRow, setOpenRow] = useState<TaskListRow | null>(null);
   const openRowRef = useRef(openRow);
@@ -179,10 +245,18 @@ export function Tasks() {
   const [progressNotes, setProgressNotes] = useState<ReadonlyMap<string, string>>(new Map());
   const [creating, setCreating] = useState(false);
   const [settings, setSettings] = useState<"register" | "edit" | null>(null);
-  const [dialog, setDialog] = useState<{ action: ReasonAction; task: TaskListRow | TaskRow } | null>(null);
+  const [dialog, setDialog] = useState<{
+    action: ReasonAction;
+    task: TaskListRow | TaskRow;
+    origin: Origin;
+    /** The row the focus goes on to once the move is made. */
+    next: string | null;
+  } | null>(null);
+  const dialogDone = useRef(false);
   const [editing, setEditing] = useState<TaskRow | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const sheetLayout = useSheetLayout();
+  const sheetLayout = useMedia(SHEET_QUERY);
+  const phone = useMedia(PHONE_QUERY);
 
   // Only the latest task.counts may write the counts: a namespace switch while A's read is
   // in flight drops A's answer, so B's tiles never show A's numbers.
@@ -204,6 +278,8 @@ export function Tasks() {
 
   useEffect(() => {
     // A namespace switch restores only its own inboxes, and drops any row read in flight.
+    // `inboxReads` is the error state's Retry.
+    void inboxReads;
     let live = true;
     rowsSeq.current += 1;
     setInboxes(null);
@@ -225,14 +301,14 @@ export function Tasks() {
       })
       .catch((e) => {
         if (!live) return;
-        setInboxError(humanizeError(e));
+        setInboxError(e);
         setInboxes([]);
       });
     refreshCounts();
     return () => {
       live = false;
     };
-  }, [caller, refreshCounts]);
+  }, [caller, refreshCounts, inboxReads]);
 
   // A navigation to Tasks while it is up (the bell's inbox) names the inbox in the URL:
   // open it, when this namespace has it.
@@ -256,7 +332,7 @@ export function Tasks() {
       })
       .catch((e) => {
         if (seq !== rowsSeq.current) return;
-        setRowsError(humanizeError(e));
+        setRowsError(e);
         setRows([]);
       });
   }, [caller, picked, inboxes]);
@@ -303,19 +379,15 @@ export function Tasks() {
   const leaseSecondsOf = useCallback((inbox: string) => byInbox.get(inbox)?.default_lease_seconds || 1800, [byInbox]);
   const inbox = picked && picked !== ALL_INBOXES ? (byInbox.get(picked) ?? null) : null;
 
-  const attention = useMemo(() => attentionCounts(rows ?? [], now), [rows, now]);
+  const loaded = rows !== null && !rowsError;
+  const attention = useMemo(() => (loaded ? attentionCounts(rows ?? [], now) : null), [loaded, rows, now]);
   const kinds = useMemo(() => kindsOf(rows ?? []), [rows]);
   const visible = useMemo(
     () => (rows ?? []).filter((r) => passesFilters(r, filters, ownerAgentOf, now)),
     [rows, filters, ownerAgentOf, now],
   );
   const groups = useMemo(() => groupTasks(visible), [visible]);
-  const showClosed = filters.showClosed || filters.attention === "failed";
-  const ordered = useMemo(
-    () => GROUPS.flatMap((g) => (g === "closed" && !showClosed ? [] : groups[g])),
-    [groups, showClosed],
-  );
-  const filtering = !!(filters.attention || filters.kind || filters.poster);
+  const filtering = !!(filters.attention || filters.kind || filters.poster || filters.q.trim());
 
   const setModeAndRemember = (m: Mode) => {
     setMode(m);
@@ -333,6 +405,7 @@ export function Tasks() {
     setViewParam("task", null);
   };
   const toggleTile = (k: Attention) => setFilters((f) => ({ ...f, attention: f.attention === k ? null : k }));
+  const toggleLane = useCallback((g: Group) => setCollapsed((c) => ({ ...c, [g]: !c[g] })), []);
 
   const openTask = useCallback((r: TaskListRow) => {
     setSelectedId(r.task_id);
@@ -351,6 +424,36 @@ export function Tasks() {
     setViewParam("task", null);
   }, []);
 
+  // Moving the selection (j / k here, the arrow keys in the list) follows with the open
+  // panel and takes the focus to the row.
+  const selectRow = useCallback(
+    (r: TaskListRow) => {
+      setSelectedId(r.task_id);
+      if (openRowRef.current) openTask(r);
+      const el = document.querySelector<HTMLElement>(`[data-task-id="${r.task_id}"]`);
+      el?.scrollIntoView?.({ block: "nearest" });
+      el?.focus({ preventScroll: true });
+    },
+    [openTask],
+  );
+
+  // Where the focus goes once a move went through: on to the next row after a move made
+  // from the list (the row itself is leaving its lane), to the panel's title after one
+  // made in the panel (the button pressed may now be another move).
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const focusAfter = useCallback(
+    (origin: Origin, next: string | null) => {
+      if (origin === "panel") {
+        document.querySelector<HTMLElement>(".tq-panel [data-panel-title]")?.focus({ preventScroll: true });
+        return;
+      }
+      const r = next ? rowsRef.current?.find((x) => x.task_id === next) : undefined;
+      if (r) selectRow(r);
+    },
+    [selectRow],
+  );
+
   const afterChange = useCallback(
     (t: TaskRow, replacement?: TaskRow) => {
       setRows((cur) => {
@@ -367,15 +470,17 @@ export function Tasks() {
   );
 
   const onAction = useCallback(
-    async (action: TaskAction, task: TaskListRow | TaskRow) => {
+    async (action: TaskAction, task: TaskListRow | TaskRow, origin: Origin) => {
       if (!mayWrite || !actionsFor(task.status).includes(action)) return;
       if (action === "edit") {
         if (isFullTask(task)) setEditing(task);
         return;
       }
+      const next = origin === "list" ? neighbourOf(task.task_id) : null;
       // Resume and start never open the dialog; ruling them out narrows the action to a ReasonAction.
       if (action !== "resume" && action !== "start" && DIALOG_ACTIONS.has(action)) {
-        setDialog({ action, task });
+        dialogDone.current = false;
+        setDialog({ action, task, origin, next });
         return;
       }
       try {
@@ -387,52 +492,59 @@ export function Tasks() {
               : action === "unblock"
                 ? await unblockTask(caller, task.task_id)
                 : await resumeTask(caller, task.task_id);
-        toast(`${ACTION_LABEL[action]}: done`, "ok");
+        toast(actionDone(action, task.title), "ok");
         afterChange(r.task);
+        focusAfter(origin, next);
       } catch (e) {
         toastError(ACTION_LABEL[action], e);
       }
     },
-    [mayWrite, caller, afterChange],
+    [mayWrite, caller, afterChange, focusAfter],
   );
+
+  // The action dialog closes: on to the next row once the move is made from the list, back
+  // to the row when it is not; a move made in the panel ends on the panel's title.
+  const dialogCloseFocus = (e: Event) => {
+    const d = dialog;
+    if (!d) return;
+    if (d.origin === "panel") {
+      if (!dialogDone.current) return; // back to the button that opened it
+      e.preventDefault();
+      focusAfter("panel", null);
+      return;
+    }
+    e.preventDefault();
+    if (dialogDone.current) focusAfter("list", d.next);
+    else document.querySelector<HTMLElement>(`[data-task-id="${d.task.task_id}"]`)?.focus({ preventScroll: true });
+  };
 
   const onHistory = useCallback((taskId: string, events: TaskEvent[]) => {
     const note = latestProgressNote(events);
     setProgressNotes((m) => (m.get(taskId) === note ? m : new Map(m).set(taskId, note)));
   }, []);
 
-  // Moving the selection (j / k here, the arrow keys in the list) follows with the open
-  // panel and takes the focus to the row.
-  const selectRow = useCallback(
-    (r: TaskListRow) => {
-      setSelectedId(r.task_id);
-      if (openRow) openTask(r);
-      const el = document.querySelector<HTMLElement>(`[data-task-id="${r.task_id}"]`);
-      el?.scrollIntoView?.({ block: "nearest" });
-      el?.focus({ preventScroll: true });
-    },
-    [openRow, openTask],
-  );
-
-  // Keys: j / k over the visible rows, Enter opens, a / s / c / x / d act on the
-  // selected row, / focuses the kind filter, Esc closes the panel. Ignored
-  // while typing or while a dialog is open.
-  const orderedRef = useRef(ordered);
-  orderedRef.current = ordered;
-  const stateRef = useRef({ selectedId, openRow, onAction, openTask, closeTask, selectRow });
-  stateRef.current = { selectedId, openRow, onAction, openTask, closeTask, selectRow };
+  // Keys: j / k over the rows on screen, Enter opens, a / s / c / x / d act on the
+  // selected row, / focuses the search, Esc closes the panel. Ignored while typing or
+  // while a dialog or a menu is open.
+  const rowsById = useMemo(() => new Map((rows ?? []).map((r) => [r.task_id, r])), [rows]);
+  const stateRef = useRef({ selectedId, openRow, onAction, openTask, closeTask, selectRow, rowsById });
+  stateRef.current = { selectedId, openRow, onAction, openTask, closeTask, selectRow, rowsById };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target) || shortcutOff(e)) return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return;
       const { selectedId: sel, openRow: open, onAction: act, openTask: openT, closeTask: closeT } = stateRef.current;
-      const list = orderedRef.current;
+      const list = shownTaskIds()
+        .map((id) => stateRef.current.rowsById.get(id))
+        .filter((r): r is TaskListRow => !!r);
       const i = list.findIndex((r) => r.task_id === sel);
       const move = (to: number) => {
         const r = list[Math.max(0, Math.min(list.length - 1, to))];
         if (r) stateRef.current.selectRow(r);
       };
       const row = i >= 0 ? list[i] : null;
+      const origin: Origin = e.target instanceof Element && e.target.closest(".tq-panel") ? "panel" : "list";
+      const keyed: Record<string, TaskAction> = { a: "accept", s: "start", c: "complete", x: "wont_do", d: "defer" };
       switch (e.key) {
         case "j":
           e.preventDefault();
@@ -454,46 +566,34 @@ export function Tasks() {
             closeT();
           }
           break;
-        case "a":
-          if (row) {
-            e.preventDefault();
-            void act("accept", row);
-          }
-          break;
-        case "s":
-          if (row) {
-            e.preventDefault();
-            void act("start", row);
-          }
-          break;
-        case "c":
-          if (row) {
-            e.preventDefault();
-            void act("complete", row);
-          }
-          break;
-        case "x":
-          if (row) {
-            e.preventDefault();
-            void act("wont_do", row);
-          }
-          break;
-        case "d":
-          if (row) {
-            e.preventDefault();
-            void act("defer", row);
-          }
-          break;
-        case "/": {
+        case "/":
           e.preventDefault();
-          document.querySelector<HTMLElement>("#tq-kind-chips button")?.focus();
+          document.querySelector<HTMLElement>('.tq-main input[aria-label="Search tasks"]')?.focus();
           break;
-        }
+        default:
+          if (row && keyed[e.key]) {
+            e.preventDefault();
+            void act(keyed[e.key], row, origin);
+          }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  const menuFor = useCallback(
+    (r: TaskListRow): RowMenuItem[] => {
+      const offered = mayWrite ? actionsFor(r.status) : [];
+      const items: RowMenuItem[] = ROW_MENU.filter((a) => offered.includes(a)).map((a) => ({
+        label: menuLabel(a),
+        onSelect: () => void onAction(a, r, "list"),
+        danger: a === "cancel",
+      }));
+      items.push({ label: "Copy id", onSelect: () => copyId(r.task_id) });
+      return items;
+    },
+    [mayWrite, onAction],
+  );
 
   const ctx: RowContext = useMemo(
     () => ({
@@ -506,20 +606,30 @@ export function Tasks() {
       onOpen: openTask,
       onSelect: selectRow,
       onAccept: (r) => {
-        void onAction("accept", r);
+        void onAction("accept", r, "list");
       },
-      onWontDo: (r) => {
-        void onAction("wont_do", r);
-      },
+      menuFor,
       onDrop: (r: TaskListRow, to: Group) => {
         const a = dropAction(r.status, to);
-        if (a) void onAction(a, r);
+        if (a) void onAction(a, r, "list");
       },
     }),
-    [now, ownerAgentOf, leaseSecondsOf, progressNotes, selectedId, mayWrite, openTask, selectRow, onAction],
+    [now, ownerAgentOf, leaseSecondsOf, progressNotes, selectedId, mayWrite, openTask, selectRow, onAction, menuFor],
   );
 
   const createInbox = inbox?.inbox ?? inboxes?.[0]?.inbox ?? null;
+  const newTask = mayWrite && createInbox ? () => setCreating(true) : null;
+  // The empty inbox's own New task is the page's one primary while it shows.
+  const emptyInbox = loaded && rows?.length === 0;
+  const openCount = visible.length - groups.closed.length;
+  const onlyClosed = mode === "list" && !filtering && openCount === 0 && visible.length > 0 && collapsed.closed;
+  const count =
+    loaded && !emptyInbox
+      ? filtering
+        ? `${visible.length} ${visible.length === 1 ? "match" : "matches"}`
+        : `${visible.length} ${visible.length === 1 ? "task" : "tasks"}`
+      : undefined;
+  const clearFilters = () => setFilters(NO_FILTERS);
 
   // The open task beside the list, or (narrow) as the content of a modal sheet.
   const panelFor = (task: TaskListRow, sheet: boolean) => (
@@ -533,7 +643,7 @@ export function Tasks() {
       reloadKey={reloadKey}
       onClose={closeTask}
       onAction={(a, t) => {
-        void onAction(a, t);
+        void onAction(a, t, "panel");
       }}
       onHistory={onHistory}
       onOpenTask={(id) => {
@@ -543,16 +653,48 @@ export function Tasks() {
     />
   );
 
+  // A phone, or the list beside the open panel: the toolbar holds the search, the filters a row under it.
+  const compact = phone || (!!openRow && !sheetLayout);
+  const filterSelects = (
+    <>
+      {(kinds.length > 1 || filters.kind) && (
+        <Select
+          value={filters.kind ?? ANY}
+          onSelect={(v) => setFilters((f) => ({ ...f, kind: v === ANY ? null : v }))}
+          triggerProps={{ "aria-label": "Kind" }}
+          className={compact ? "min-w-0 flex-1" : "w-40 shrink-0"}
+        >
+          <Select.Item value={ANY}>Every kind</Select.Item>
+          {kinds.map((k) => (
+            <Select.Item key={k} value={k}>
+              {k}
+            </Select.Item>
+          ))}
+        </Select>
+      )}
+      {(!!rows?.length || filters.poster) && (
+        <Select
+          value={filters.poster ?? ANY}
+          onSelect={(v) => setFilters((f) => ({ ...f, poster: v === "me" || v === "others" ? v : null }))}
+          triggerProps={{ "aria-label": "Posted by" }}
+          className={compact ? "min-w-0 flex-1" : "w-40 shrink-0"}
+        >
+          {POSTED_BY.map(([v, label]) => (
+            <Select.Item key={v} value={v}>
+              {label}
+            </Select.Item>
+          ))}
+        </Select>
+      )}
+    </>
+  );
+
   return (
     <PageContainer>
       <PageHeader
         title="Tasks"
         actions={
           <>
-            {/* The keys are listed in the help dialog and each action's tooltip, not on the page. */}
-            <Link component="button" type="button" size="sm" onClick={() => openHelp(true)}>
-              Keyboard shortcuts
-            </Link>
             <ButtonGroup
               aria-label="View"
               selected={mode}
@@ -562,15 +704,21 @@ export function Tasks() {
                 { value: "board", label: <ViewLabel icon="services" text="Board" /> },
               ]}
             />
-            {mayAdmin && inbox && (
-              <Tip content="Inbox settings: posters, disclosure, trust, leases">
-                <Button type="empty" htmlType="button" iconLeft="gear" onClick={() => setSettings("edit")}>
-                  Inbox settings
-                </Button>
-              </Tip>
-            )}
-            {mayWrite && createInbox && (
-              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreating(true)}>
+            {/* The page's rarer controls; the keys are in the help dialog and each action's tooltip. */}
+            <Dropdown modal={false}>
+              <MenuTrigger>
+                <IconButton icon="dots-horizontal" label="Page options" />
+              </MenuTrigger>
+              <Dropdown.Content align="end" aria-label="Page options" aria-labelledby={undefined}>
+                {mayAdmin && inbox && (
+                  <Dropdown.Item onSelect={() => setSettings("edit")}>Inbox settings…</Dropdown.Item>
+                )}
+                {mayAdmin && <Dropdown.Item onSelect={() => setSettings("register")}>Register inbox…</Dropdown.Item>}
+                <Dropdown.Item onSelect={() => openHelp(true)}>Keyboard shortcuts</Dropdown.Item>
+              </Dropdown.Content>
+            </Dropdown>
+            {newTask && !emptyInbox && (
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={newTask}>
                 New task
               </Button>
             )}
@@ -588,8 +736,10 @@ export function Tasks() {
           </div>
         </LoadingSkeleton>
       )}
-      {inboxes && inboxError && <EmptyState icon="email" title="Couldn't load the inboxes" description={inboxError} />}
-      {inboxes && !inboxError && inboxes.length === 0 && (
+      {inboxes && inboxError !== null && (
+        <ListState kind="error" things="inboxes" error={inboxError} onRetry={() => setInboxReads((n) => n + 1)} />
+      )}
+      {inboxes && inboxError === null && inboxes.length === 0 && (
         <EmptyState
           icon="email"
           title="No inbox here yet"
@@ -607,19 +757,35 @@ export function Tasks() {
 
       {inboxes && inboxes.length > 0 && picked && (
         <>
+          {phone && (
+            <div className="mb-3">
+              <InboxSelect
+                inboxes={inboxes}
+                counts={counts ? railCounts(counts) : null}
+                picked={picked}
+                onPick={pick}
+              />
+            </div>
+          )}
           <AttentionTiles counts={attention} active={filters.attention} onToggle={toggleTile} />
           <div className="tq-body" data-panel={!!openRow && !sheetLayout}>
-            <InboxRail
-              inboxes={inboxes}
-              counts={counts ? railCounts(counts) : null}
-              picked={picked}
-              onPick={pick}
-              kinds={kinds}
-              filters={filters}
-              onFilters={setFilters}
-              onRegister={mayAdmin ? () => setSettings("register") : undefined}
-            />
-            <div className="min-w-0">
+            {!phone && (
+              <InboxRail inboxes={inboxes} counts={counts ? railCounts(counts) : null} picked={picked} onPick={pick} />
+            )}
+            <div className="tq-main min-w-0">
+              <ListToolbar label="Search and filters" count={count}>
+                <div className="min-w-[10rem] flex-1">
+                  <SearchField
+                    value={filters.q}
+                    onChange={(q) => setFilters((f) => ({ ...f, q }))}
+                    placeholder="Search tasks"
+                    aria-label="Search tasks"
+                  />
+                </div>
+                {!compact && filterSelects}
+              </ListToolbar>
+              {compact && <div className="-mt-1 mb-3 flex items-center gap-2">{filterSelects}</div>}
+
               {rows === null && (
                 <LoadingSkeleton label="Loading tasks">
                   <div className="space-y-3">
@@ -629,31 +795,43 @@ export function Tasks() {
                   </div>
                 </LoadingSkeleton>
               )}
-              {rows && rowsError && <EmptyState icon="email" title="Couldn't load the tasks" description={rowsError} />}
-              {rows && !rowsError && visible.length === 0 && (
-                <div className="tq-empty">
-                  {rows.length === 0 ? "Nothing here yet." : "No tasks match."} Bots post with{" "}
-                  <span className="font-mono text-xs">task.create</span>; people use New task.
-                  {filtering && (
-                    <div className="mt-2">
-                      <Button
-                        type="secondary"
-                        htmlType="button"
-                        onClick={() => setFilters((f) => ({ ...NO_FILTERS, showClosed: f.showClosed }))}
-                      >
-                        Clear filters
-                      </Button>
-                    </div>
-                  )}
-                </div>
+              {rows !== null && rowsError !== null && (
+                <ListState kind="error" things="tasks" error={rowsError} onRetry={refresh} />
               )}
-              {rows &&
-                !rowsError &&
+              {emptyInbox && (
+                <ListState
+                  kind="empty"
+                  icon="email"
+                  title={inbox ? `No tasks in ${inbox.inbox} yet` : "No tasks in these inboxes yet"}
+                  description="Agents post with task.create; people use New task."
+                  action={newTask ? { label: "New task", onClick: newTask } : undefined}
+                />
+              )}
+              {loaded && !emptyInbox && visible.length === 0 && (
+                <ListState kind="filtered" things="tasks" filter={filterSummary(filters)} onClear={clearFilters} />
+              )}
+              {onlyClosed && (
+                <ListState
+                  kind="empty"
+                  icon="check-in-circle"
+                  title="No open tasks"
+                  description={`${visible.length} closed ${visible.length === 1 ? "task" : "tasks"} in this inbox.`}
+                  action={{ label: "Show closed", onClick: () => toggleLane("closed") }}
+                />
+              )}
+              {loaded &&
                 visible.length > 0 &&
+                !onlyClosed &&
                 (mode === "list" ? (
-                  <TaskList groups={groups} ctx={ctx} forceOpen={filtering} showClosed={showClosed} />
+                  <TaskList
+                    groups={groups}
+                    ctx={ctx}
+                    collapsed={collapsed}
+                    onToggle={toggleLane}
+                    forceOpen={filtering}
+                  />
                 ) : (
-                  <TaskBoard groups={groups} ctx={ctx} showClosed={showClosed} />
+                  <TaskBoard groups={groups} ctx={ctx} />
                 ))}
               {truncated && (
                 <div className="text-xs text-text-muted px-1 pt-1">Showing the first 200 tasks per inbox.</div>
@@ -720,7 +898,11 @@ export function Tasks() {
             action={dialog.action}
             task={dialog.task}
             inboxes={inboxes ?? []}
-            onDone={afterChange}
+            onDone={(t, replacement) => {
+              dialogDone.current = true;
+              afterChange(t, replacement);
+            }}
+            onCloseAutoFocus={dialogCloseFocus}
           />
         </Suspense>
       )}

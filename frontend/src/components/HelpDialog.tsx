@@ -65,7 +65,7 @@ function groups(): Group[] {
         { keys: "c", label: "Mark done" },
         { keys: "x", label: "Won't do" },
         { keys: "d", label: "Defer" },
-        { keys: "/", label: "Filter by kind" },
+        { keys: "/", label: "Search tasks" },
         { keys: "Esc", label: "Close the task panel" },
       ],
     },

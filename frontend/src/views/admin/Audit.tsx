@@ -9,11 +9,12 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { listAuditLog, listErasures, type AuditEntry, type ErasureListRow } from "../../api";
 import { useStore, useIdentity } from "../../lib/state";
 import { hasOrgAdminClaim } from "../../lib/role";
-import { EmptyState } from "../../components/EmptyState";
+import { ListState } from "../../components/ui/ListState";
+import { ListTime } from "../../components/ui/ListTime";
+import { ListToolbar } from "../../components/ui/ListToolbar";
 import { toastError } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { PageContainer } from "../../layout/PageContainer";
@@ -178,6 +179,9 @@ export function Audit() {
   const [tab, setTab] = useState<ActivityTab>("events");
   const whoami = useStore((s) => s.whoami);
   const [rows, setRows] = useState<AuditEntry[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  // Bumped by Retry after a failed first read.
+  const [reload, setReload] = useState(0);
   // The next, older page's cursor; null once the last page is shown.
   const [older, setOlder] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -213,6 +217,7 @@ export function Audit() {
       focusAfterLoad.current = null;
       setLoadingOlder(false);
       setRows(null);
+      setError(null);
       setOlder(null);
       since.current = new Date(Date.now() - AUDIT_WINDOW_MS).toISOString();
       listAuditLog(scope, { limit: 100, since: since.current, signal, fields: ACTIVITY_FIELDS })
@@ -221,11 +226,11 @@ export function Audit() {
           setRows(r.rows || []);
           setOlder(r.next_cursor ?? null);
         })
-        .catch(() => {
-          if (live()) setRows([]);
+        .catch((e) => {
+          if (live()) setError(e);
         });
     },
-    [identity.org, identity.namespace, isPlatformAdmin],
+    [identity.org, identity.namespace, isPlatformAdmin, reload],
   );
 
   // 100 more, older than the last row shown; the rows already shown stay.
@@ -326,48 +331,67 @@ export function Audit() {
           </TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="events">
-          {rows !== null && rows.length > 0 && (
-            <>
-              <div className="mb-3">
-                <SearchField
-                  value={filterQuery}
-                  onChange={(value) => setFilterQuery(value)}
-                  placeholder="Filter by actor or event type — e.g. alice@, redact, promote…"
-                  aria-label="Filter audit events"
-                />
-              </div>
-              <div className="mb-3 flex flex-wrap items-center justify-end gap-4">
-                <span role="status" className="mr-auto text-xs text-text-muted tabular">
-                  {visibleRows.length} {visibleRows.length === 1 ? "event" : "events"}
-                </span>
-                {me && (
-                  <Checkbox label="Only my actions" checked={onlyMe} onCheckedChange={(c) => setOnlyMe(c === true)} />
-                )}
-                <Checkbox
-                  label={
-                    hiddenSystemCount > 0 && !showSystem
-                      ? `Include system events (${hiddenSystemCount} hidden — budget / rate-limit / worker)`
-                      : "Include system events"
-                  }
-                  checked={showSystem}
-                  onCheckedChange={(c) => setShowSystem(c === true)}
-                />
-              </div>
-            </>
+          <ListToolbar
+            label="Filter audit events"
+            count={
+              !error && rows !== null
+                ? `${visibleRows.length} ${visibleRows.length === 1 ? "event" : "events"}`
+                : undefined
+            }
+          >
+            <div className="min-w-0 flex-1">
+              <SearchField
+                value={filterQuery}
+                onChange={(value) => setFilterQuery(value)}
+                placeholder="Filter by actor or event type — e.g. alice@, redact, promote…"
+                aria-label="Filter audit events"
+              />
+            </div>
+          </ListToolbar>
+          {/* The toolbar's count, said aloud as the filter changes it. */}
+          <p role="status" className="sr-only">
+            {!error && rows !== null ? `${visibleRows.length} ${visibleRows.length === 1 ? "event" : "events"}` : ""}
+          </p>
+          {!error && rows !== null && rows.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+              {me && (
+                <Checkbox label="Only my actions" checked={onlyMe} onCheckedChange={(c) => setOnlyMe(c === true)} />
+              )}
+              <Checkbox
+                label={
+                  hiddenSystemCount > 0 && !showSystem
+                    ? `Include system events (${hiddenSystemCount} hidden — budget / rate-limit / worker)`
+                    : "Include system events"
+                }
+                checked={showSystem}
+                onCheckedChange={(c) => setShowSystem(c === true)}
+              />
+            </div>
           )}
 
-          {rows === null && <EventsTable rows={[]} loading />}
+          {!!error && (
+            <ListState kind="error" things="audit events" error={error} onRetry={() => setReload((n) => n + 1)} />
+          )}
+          {!error && rows === null && <EventsTable rows={[]} loading />}
           {rows !== null && rows.length === 0 && (
-            <EmptyState
+            <ListState
+              kind="empty"
               icon="history"
               title="No audit events"
               description="Memory deletes, promotions, conflict resolutions, erasures and redactions all land here once activity begins. Each row is content-hashed, and hourly checkpoints chain each closed window's row count and digest to the previous one."
             />
           )}
           {rows !== null && rows.length > 0 && visibleRows.length === 0 && (
-            <div className="p-6 text-center text-sm text-text-muted bg-surface rounded-xl border border-border">
-              Only system events in this window. Toggle "Include system events" to see them.
-            </div>
+            <ListState
+              kind="filtered"
+              things="events"
+              filter={q ? filterQuery.trim() : "the filters set"}
+              onClear={() => {
+                setFilterQuery("");
+                setOnlyMe(false);
+                setShowSystem(true);
+              }}
+            />
           )}
           {rows !== null && visibleRows.length > 0 && (
             <EventsTable
@@ -400,28 +424,31 @@ export function Audit() {
  */
 function ErasuresPanel({ org }: { org: string }) {
   const [rows, setRows] = useState<ErasureListRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [reload, setReload] = useState(0);
 
   useAbortableEffect(
     (signal, live) => {
       setError(null);
+      setRows(null);
       listErasures({ org }, { limit: 100, signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
         .catch((e) => {
-          if (live()) setError(String(e?.message || e));
+          if (live()) setError(e);
         });
     },
-    [org],
+    [org, reload],
   );
 
   if (error) {
-    return <EmptyState icon="trash" title="Couldn't load" description={error} />;
+    return <ListState kind="error" things="erasures" error={error} onRetry={() => setReload((n) => n + 1)} />;
   }
   if (rows !== null && rows.length === 0) {
     return (
-      <EmptyState
+      <ListState
+        kind="empty"
         icon="trash"
         title="No erasures yet"
         description="When anyone issues an erasure.request (right-to-be-forgotten or operator-driven cleanup), it lands here with status + provenance. Tombstoned individual memories are recoverable from Memories → Recently deleted; this surface is the org-wide saga history."
@@ -472,8 +499,8 @@ function ErasuresPanel({ org }: { org: string }) {
             ),
           },
           { label: <span className="tabular">{r.steps_completed_count}</span> },
-          { label: <span className="tabular">{relativeTime(r.requested_at)}</span> },
-          { label: <span className="tabular">{r.completed_at ? relativeTime(r.completed_at) : "—"}</span> },
+          { label: <ListTime iso={r.requested_at} /> },
+          { label: r.completed_at ? <ListTime iso={r.completed_at} /> : "—" },
         ],
       }))}
     />
@@ -526,11 +553,7 @@ function eventRow(row: AuditEntry, i: number): TableRowType {
         ),
       },
       {
-        label: (
-          <time dateTime={row.ts} className="tabular text-xs text-text-muted">
-            {relativeTime(row.ts)}
-          </time>
-        ),
+        label: <ListTime iso={row.ts} className="text-xs text-text-muted" />,
       },
     ],
   };

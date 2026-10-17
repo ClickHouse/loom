@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { installApi } from "./fixtures";
 
-// The Library's cards and rows: a phone-width card keeps its parts inside it, and the row
-// actions keep their space before a hover and show on a touch screen.
+// The Library's cards and rows: a phone-width card keeps its parts inside it, and the row's
+// More menu shows before a hover and on a touch screen.
 
 async function open(page: Page, path: string) {
   await installApi(page, { memoryRows: 8, knowledgeRows: 4, runRows: 6, profileRows: 3 });
@@ -11,7 +11,9 @@ async function open(page: Page, path: string) {
   await page.waitForLoadState("networkidle");
 }
 
-test("library row actions keep their space before a hover, and a touch screen shows them", async ({ browser }) => {
+// A row's actions are one More menu (SPEC-LISTS C2), always visible: a pointer and a
+// touch screen both see it before any hover.
+test("a library row's More menu shows without a hover, with a pointer or a touch screen", async ({ browser }) => {
   for (const touch of [false, true]) {
     const context = await browser.newContext({
       hasTouch: touch,
@@ -21,15 +23,7 @@ test("library row actions keep their space before a hover, and a touch screen sh
     const page = await context.newPage();
     await open(page, "/library");
     const row = page.locator("main [data-doc-row]").first();
-    const preview = row.getByRole("button", { name: /^Preview / });
-    const before = (await preview.boundingBox())?.width;
-    if (touch) {
-      await expect(row.getByRole("button", { name: "Delete document" })).toBeVisible();
-    } else {
-      await row.hover();
-      await expect(row.getByRole("button", { name: "Delete document" })).toBeVisible();
-      expect((await preview.boundingBox())?.width).toBe(before);
-    }
+    await expect(row.getByRole("button", { name: /^Actions for / })).toBeVisible();
     await context.close();
   }
 });

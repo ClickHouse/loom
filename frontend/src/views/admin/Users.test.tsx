@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminUserRow, AdminUsersResult } from "../../api";
 import { useStore } from "../../lib/state";
 import { Users } from "./Users";
+import { ApiError } from "../../lib/errors";
 
 // admin.users has no offset: the page reads up to 1,000 accounts once and pages them in
 // Click UI's Table, 50 at a time. A filter starts again from the first page; the first
@@ -91,5 +92,38 @@ describe("Users table", () => {
     expect(table).toHaveAttribute("aria-busy", "true");
     expect(within(table).getByText("Loading data")).toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Subject" })).toBeInTheDocument();
+  });
+});
+
+const toolbar = () => document.querySelector<HTMLElement>('search[aria-label="Filter users"]');
+
+describe("Users count, times and failure", () => {
+  it("counts the page in the toolbar, once", async () => {
+    adminListUsers.mockResolvedValue(result(Array.from({ length: 120 }, (_, i) => user(i + 1))));
+    render(<Users />);
+    await screen.findByText("user-1@example.com");
+    expect(toolbar()).toHaveTextContent("1–50 of 120");
+    expect(screen.queryByText(/accounts? shown/)).toBeNull();
+    // The All filter keeps its count.
+    expect(screen.getByRole("button", { name: /All/ })).toHaveTextContent("All120");
+  });
+
+  it("shows last activity as a list time", async () => {
+    const at = new Date(Date.now() - 3 * 3600_000).toISOString();
+    adminListUsers.mockResolvedValue(result([{ ...user(1), last_active: at }]));
+    render(<Users />);
+    const time = await screen.findByText("3h ago");
+    expect(time.tagName).toBe("TIME");
+  });
+
+  it("says a failed read failed, with Retry, and draws no filters or count", async () => {
+    adminListUsers.mockRejectedValueOnce(new ApiError({ status: 503, message: "down", requestId: "req-7" }));
+    render(<Users />);
+    expect(await screen.findByText("Couldn't load users")).toBeInTheDocument();
+    expect(screen.getByText(/req-7/)).toBeInTheDocument();
+    expect(screen.queryByText("No accounts yet")).toBeNull();
+    adminListUsers.mockResolvedValue(result([user(1)]));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("user-1@example.com")).toBeInTheDocument();
   });
 });

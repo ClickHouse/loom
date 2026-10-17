@@ -5,7 +5,7 @@
 // tests share one reading and the tests need no DOM.
 import { ApiError } from "./errors";
 import type { PosterPolicy, TaskEvent, TaskListRow, TaskRow, TaskStatus } from "../api/tasks";
-import { displaySubject } from "./format";
+import { displaySubject, listTime } from "./format";
 import { isRecord } from "./guards";
 
 // ------------------------------------------------------------------ time
@@ -16,16 +16,19 @@ function parseTs(iso: string | null | undefined): number {
   return Date.parse(iso.endsWith("Z") || /[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`);
 }
 
-/** "42 min ago" / "in 2 h" / "3 d ago" — the page's age and countdown copy. */
+/** "42m ago" / "in 2h" / "3d ago": the date rule every list follows (`listTime` in
+ *  lib/format.ts), measured from the page's ticking `now`, with the countdowns listTime
+ *  has no form for ("in 2h", past a week "on Sep 29"). */
 export function rel(iso: string | null | undefined, now = Date.now()): string {
   const t = parseTs(iso);
   if (Number.isNaN(t)) return "";
-  const d = Math.round((now - t) / 60_000);
-  if (Math.abs(d) < 60) return d < 0 ? `in ${-d} min` : d === 0 ? "just now" : `${d} min ago`;
-  const h = Math.round(d / 60);
-  if (Math.abs(h) < 48) return h < 0 ? `in ${-h} h` : `${h} h ago`;
-  const dd = Math.round(h / 24);
-  return dd < 0 ? `in ${-dd} d` : `${dd} d ago`;
+  const s = Math.floor((now - t) / 1000);
+  if (s > -60 && s < 60) return "just now";
+  const a = Math.abs(s);
+  const span =
+    a < 3600 ? `${Math.floor(a / 60)}m` : a < 86400 ? `${Math.floor(a / 3600)}h` : `${Math.floor(a / 86400)}d`;
+  if (a < 7 * 86400) return s > 0 ? `${span} ago` : `in ${span}`;
+  return s > 0 ? listTime(iso) : `on ${listTime(iso)}`;
 }
 
 /** Whole minutes left on a lease, never negative; null without a lease. */
@@ -102,11 +105,12 @@ export type Attention = "triage" | "human" | "failed" | "soon";
 
 export const ATTENTIONS: readonly Attention[] = ["triage", "human", "failed", "soon"];
 
-export const ATTENTION_META: Record<Attention, { label: string; color: string }> = {
-  triage: { label: "Triage · decide", color: "var(--color-accent)" },
-  human: { label: "Blocked on a person", color: "var(--color-warn)" },
-  failed: { label: "Failed · reopen or close", color: "var(--color-danger)" },
-  soon: { label: `Lease ending ≤${LEASE_SOON_MINUTES} min`, color: "var(--color-info)" },
+/** `short` is the tile's label on a phone, where four sit in one row. */
+export const ATTENTION_META: Record<Attention, { label: string; short: string }> = {
+  triage: { label: "Triage · decide", short: "Triage" },
+  human: { label: "Blocked on a person", short: "Blocked" },
+  failed: { label: "Failed · reopen or close", short: "Failed" },
+  soon: { label: `Lease ending ≤${LEASE_SOON_MINUTES} min`, short: "Expiring" },
 };
 
 export function matchesAttention(
@@ -143,10 +147,23 @@ export interface Filters {
   attention: Attention | null;
   kind: string | null;
   poster: PosterFilter | null;
-  showClosed: boolean;
+  /** The toolbar's search: every word must appear in the title, kind, poster, reason or id. */
+  q: string;
 }
 
-export const NO_FILTERS: Filters = { attention: null, kind: null, poster: null, showClosed: false };
+export const NO_FILTERS: Filters = { attention: null, kind: null, poster: null, q: "" };
+
+const POSTER_FILTER_LABEL: Record<PosterFilter, string> = { me: "this agent", others: "others" };
+
+/** What is in force, as the filtered state names it: `"recall" · kind:docs · posted by others`. */
+export function filterSummary(f: Filters): string {
+  const parts: string[] = [];
+  if (f.q.trim()) parts.push(`"${f.q.trim()}"`);
+  if (f.kind) parts.push(`kind:${f.kind}`);
+  if (f.poster) parts.push(`posted by ${POSTER_FILTER_LABEL[f.poster]}`);
+  if (f.attention) parts.push(ATTENTION_META[f.attention].label);
+  return parts.join(" · ");
+}
 
 /** Own work and handed work: a row whose `from_agent` is the inbox's own
  *  agent (and that no person posted) is the agent's own task. */
@@ -161,10 +178,21 @@ export function posterKind(
   return "bot";
 }
 
-/** Does a row pass the page's filters? Closed rows hide unless shown, or
- *  unless the Failed tile is on (its rows are closed by definition). */
+/** Does a row pass the page's filters? Closed rows pass: their lane is folded until opened. */
 export function passesFilters(
-  r: Pick<TaskListRow, "status" | "blocked_on" | "lease_until" | "kind" | "from_agent" | "from_subject" | "inbox">,
+  r: Pick<
+    TaskListRow,
+    | "status"
+    | "blocked_on"
+    | "lease_until"
+    | "kind"
+    | "from_agent"
+    | "from_subject"
+    | "inbox"
+    | "title"
+    | "reason"
+    | "task_id"
+  >,
   f: Filters,
   ownerAgentOf: (inbox: string) => string | undefined,
   now = Date.now(),
@@ -176,8 +204,22 @@ export function passesFilters(
     if (f.poster === "me" && !mine) return false;
     if (f.poster === "others" && mine) return false;
   }
-  if (!f.showClosed && groupOf(r.status) === "closed" && f.attention !== "failed") return false;
+  const words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length > 0) {
+    const text = [r.title, r.kind, posterName(r), r.reason, r.task_id].join(" ").toLowerCase();
+    if (!words.every((w) => text.includes(w))) return false;
+  }
   return true;
+}
+
+/** Who has the task in hand: its owner once claimed, else the agent the inbox is for. */
+export function assigneeOf(
+  r: Pick<TaskListRow, "owner">,
+  ownerAgent: string | undefined,
+): { name: string; label: string } | null {
+  if (r.owner) return { name: r.owner, label: `Claimed by ${r.owner}` };
+  if (ownerAgent) return { name: ownerAgent, label: `For ${ownerAgent}, the inbox's agent` };
+  return null;
 }
 
 // --------------------------------------------------------------- posters
@@ -264,12 +306,15 @@ export function sublineOf(
     }
     case "todo": {
       const t = parseTs(r.not_before);
-      return !Number.isNaN(t) && t > now ? { text: `scheduled · ${rel(r.not_before, now)}` } : null;
+      const from = `from ${posterName(r)}`;
+      return !Number.isNaN(t) && t > now
+        ? { text: from, suffix: `· scheduled ${rel(r.not_before, now)}` }
+        : { text: from };
     }
     case "in_progress":
       return progressNote ? { text: progressNote, italic: true } : null;
     case "triage":
-      return { text: `from ${posterName(r)} · ${rel(r.created_at, now)}` };
+      return { text: `from ${posterName(r)}` };
   }
 }
 
@@ -355,6 +400,44 @@ export const ACTION_LABEL: Record<TaskAction, string> = {
   edit: "Edit brief",
   reopen: "Reopen",
 };
+
+/** A move's name in a menu: the ones that open the action dialog end in "…". */
+export function menuLabel(a: TaskAction): string {
+  return DIALOG_ACTIONS.has(a) ? `${ACTION_LABEL[a]}…` : ACTION_LABEL[a];
+}
+
+/** What the toast says once an action went through: what happened, to which task. */
+export function actionDone(action: TaskAction, title: string): string {
+  const t = `“${title}”`;
+  switch (action) {
+    case "accept":
+      return `Accepted ${t}: it moved to To do`;
+    case "start":
+      return `Started ${t}`;
+    case "complete":
+      return `Marked ${t} done`;
+    case "fail":
+      return `Marked ${t} failed`;
+    case "wont_do":
+      return `Closed ${t} as won't do`;
+    case "defer":
+      return `Deferred ${t}`;
+    case "block":
+      return `Blocked ${t}`;
+    case "unblock":
+      return `Unblocked ${t}: it is back in To do`;
+    case "resume":
+      return `Resumed ${t}: it is back in To do`;
+    case "cancel":
+      return `Cancelled ${t}`;
+    case "reassign":
+      return `Reassigned ${t}`;
+    case "edit":
+      return `Saved ${t}`;
+    case "reopen":
+      return `Reopened ${t}`;
+  }
+}
 
 /** Actions that take a reason or a choice and so open the action dialog;
  *  the rest (accept, start, unblock, resume) fire on the click. */

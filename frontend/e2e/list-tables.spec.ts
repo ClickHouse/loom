@@ -134,7 +134,8 @@ const TABLES: [string, string][] = [
 for (const width of [1400, 375]) {
   test.describe(`${width} px`, () => {
     test.use({ viewport: { width, height: 900 } });
-    for (const [path, name] of TABLES) {
+    // Under 769 px the runs are list rows, not a table (SPEC-LISTS A4): see runs.spec.ts.
+    for (const [path, name] of TABLES.filter(([p]) => width > 768 || p !== "/runs")) {
       test(`${path} is a table with rows, axe clean and no sideways scroll`, async ({ page }) => {
         await withRows(page);
         await open(page, path);
@@ -148,16 +149,22 @@ for (const width of [1400, 375]) {
   });
 }
 
-test("runs page 50 at a time over the newest 200, and say so", async ({ page }) => {
+test("runs page on the server and count its total", async ({ page }) => {
   await withRows(page);
   await open(page, "/runs");
   const table = page.getByRole("table", { name: "Runs", exact: true });
   await expect(table.locator("tbody tr")).toHaveCount(50);
-  await expect(page.getByText(/Newest 200 runs/)).toBeVisible();
+  const bar = page.getByRole("search", { name: "Search and filters" });
+  await expect(bar).toContainText("1–50 of 200");
   const pager = page.getByRole("navigation", { name: "Runs pages" });
   await expect(pager).toContainText("1–50 of 200");
+  const asked = page.waitForRequest(
+    (r) => r.url().endsWith("/v1/run.list") && (r.postDataJSON() as { offset?: number }).offset === 50,
+  );
   await pager.getByRole("button", { name: "Next page" }).click();
+  await asked;
   await expect(pager).toContainText("51–100 of 200");
+  await expect(bar).toContainText("51–100 of 200");
   await expect(page.locator("#runs-list")).toBeFocused();
   await expect(table.locator("tbody tr")).toHaveCount(50);
 });
@@ -205,3 +212,103 @@ test("repositories page above 50 and not below", async ({ page }) => {
   await expect(page.locator("#repositories-list")).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Repository pages" })).toHaveCount(0);
 });
+
+// Admin lists (SPEC-LISTS A9): the count sits at the end of the 48 px toolbar, a time is
+// a list time, and a failed read is the error state with Retry, never an empty one.
+
+const CLIENTS = [
+  {
+    agent: "claude-code",
+    ops: 120,
+    namespaces_touched: 2,
+    primary_namespace: "team-alerts",
+    cost_usd: 0.4,
+    last_seen: ago(5),
+  },
+  {
+    agent: "cursor",
+    ops: 7,
+    namespaces_touched: 1,
+    primary_namespace: "team-alerts",
+    cost_usd: 0,
+    last_seen: ago(3 * 1440),
+  },
+];
+const COSTS = ["memory.set", "memory.ask", "memory.list"].map((operation, i) => ({
+  day: new Date(now).toISOString().slice(0, 10),
+  agent: "claude-code",
+  namespace: "team-alerts",
+  user_id: "-",
+  operation,
+  ops: 10 + i,
+  errors: 0,
+  tokens: i < 2 ? 1200 : 0,
+  embed_tokens: 0,
+  cost_usd: i < 2 ? 0.01 * (i + 1) : 0,
+  latency_p50_ms: 12,
+  latency_p95_ms: 40,
+  latency_p99_ms: 80,
+}));
+
+async function withAdminRows(page: Page) {
+  await withRows(page);
+  await page.route("**/v1/agents.connected", (r) => r.fulfill({ json: { rows: CLIENTS, window_hours: 24 } }));
+  await page.route("**/v1/cost.summary", (r) => r.fulfill({ json: { rows: COSTS } }));
+}
+
+const ADMIN_COUNTS: [string, string, string][] = [
+  ["/admin/users", "Filter users", "1–50 of 60"],
+  ["/admin/activity", "Filter audit events", "30 events"],
+  ["/admin/agents", "Time window and count", "2 clients"],
+  ["/admin/usage", "Usage breakdown", "2 rows"],
+  ["/admin/review_queue", "Queue", "3 of 4"],
+  ["/admin/health", "Workers status", "2 workers"],
+];
+
+for (const width of [1400, 375]) {
+  test.describe(`admin lists at ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 } });
+    for (const [path, bar, count] of ADMIN_COUNTS) {
+      test(`${path} counts in its 48 px toolbar, axe clean and no sideways scroll`, async ({ page }) => {
+        await withAdminRows(page);
+        await open(page, path);
+        const toolbar = page.getByRole("search", { name: bar, exact: true });
+        expect((await toolbar.boundingBox())?.height).toBe(48);
+        // Click UI's count is on the toolbar from 640 px; a phone has no room for it.
+        if (width >= 640) await expect(toolbar).toContainText(count);
+        const box = await toolbar.boundingBox();
+        expect(box && box.x >= 0 && box.x + box.width <= width).toBe(true);
+        expect(await sideways(page)).toBeLessThanOrEqual(0);
+        expect(await violations(page)).toEqual([]);
+      });
+    }
+
+    test("a failed users read is the error state with Retry, and Retry reads again", async ({ page }) => {
+      await withAdminRows(page);
+      let fail = true;
+      await page.route("**/v1/admin.users", (r) =>
+        fail
+          ? r.fulfill({ status: 503, json: { detail: "users store down" }, headers: { "x-request-id": "req-e2e-1" } })
+          : r.fallback(),
+      );
+      await open(page, "/admin/users");
+      await expect(page.getByRole("heading", { name: "Couldn't load users" })).toBeVisible();
+      await expect(page.getByText("request id req-e2e-1")).toBeVisible();
+      await expect(page.getByText("No accounts yet")).toHaveCount(0);
+      expect(await violations(page)).toEqual([]);
+      fail = false;
+      await page.getByRole("button", { name: "Retry" }).click();
+      await expect(page.getByRole("table", { name: "Users", exact: true }).locator("tbody tr").first()).toBeVisible();
+    });
+
+    test("a failed activity read is the error state, never 'No audit events'", async ({ page }) => {
+      await withAdminRows(page);
+      await page.route("**/v1/audit.list", (r) => r.fulfill({ status: 503, json: { detail: "down" } }));
+      await open(page, "/admin/activity");
+      await expect(page.getByRole("heading", { name: "Couldn't load audit events" })).toBeVisible();
+      await expect(page.getByText("No audit events")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+      expect(await violations(page)).toEqual([]);
+    });
+  });
+}

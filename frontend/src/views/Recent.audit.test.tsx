@@ -118,10 +118,15 @@ const owner: WhoAmI = {
   namespaces: ["team-alerts"],
 };
 
+// The panel lives on the Memories page's Insights tab (`?section=insights`), not above
+// the list.
 async function openMemories() {
+  window.history.replaceState(null, "", "/memories?section=insights");
   render(<Recent />);
-  await waitFor(() => expect(listMemories).toHaveBeenCalled());
-  await screen.findByText("coffee_pref");
+  await screen.findByTestId("usage-audit");
+  expect(screen.getByRole("tab", { name: "Insights" })).toHaveAttribute("aria-selected", "true");
+  // Insights reads no rows.
+  expect(listMemories).not.toHaveBeenCalled();
 }
 
 describe("Memories: usage audit panel", () => {
@@ -141,6 +146,7 @@ describe("Memories: usage audit panel", () => {
   });
   afterEach(() => {
     cleanup();
+    window.history.replaceState(null, "", "/");
     useStore.setState({ whoami: null, myNamespaces: null, identity: null, inspectedMemoryKey: null });
   });
 
@@ -242,7 +248,9 @@ describe("Memories: usage audit panel", () => {
 
   it("an unknown role on the namespace shows no panel and sends nothing", async () => {
     useStore.setState({ myNamespaces: [] });
-    await openMemories();
+    window.history.replaceState(null, "", "/memories?section=insights");
+    render(<Recent />);
+    await screen.findByRole("tab", { name: "Insights" });
     expect(screen.queryByTestId("usage-audit")).toBeNull();
     expect(auditNamespace).not.toHaveBeenCalled();
   });

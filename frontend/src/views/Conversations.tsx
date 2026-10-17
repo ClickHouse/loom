@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Switch } from "@clickhouse/click-ui/Switch";
@@ -18,21 +17,54 @@ import { useNamespaceRole } from "../lib/namespaceRole";
 import { Skeleton } from "../components/Skeleton";
 import { ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
 import { ListPager } from "../components/ui/ListPager";
+import { ListState } from "../components/ui/ListState";
+import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar } from "../components/ui/ListToolbar";
-import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
-import { displayAgent, relativeTime, shortDate, truncate, humanizeError, errorRequestId } from "../lib/format";
+import { AgentBadge } from "../components/AgentBadge";
+import { displayAgent, truncate, humanizeError } from "../lib/format";
 import { useAbortableEffect, useKeyboard } from "../lib/hooks";
+import { useRowNav } from "../lib/useRowNav";
 import { IconButton } from "../components/IconButton";
 import { SessionBriefsSection } from "../components/SessionBriefsSection";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { ThreadReplayDialog, type ReplayThread } from "../components/ThreadReplayDialog";
+import { ThreadReplayDialog, threadTitle, UNTITLED_THREAD, type ReplayThread } from "../components/ThreadReplayDialog";
 
 const THREADS_PAGE = 30;
 
 // The fields the Sessions list reads of a thread.
 const THREADS_FIELDS = ["thread_id", "agent", "msg_count", "title", "last_role", "last_seen", "last_content_excerpt"];
+// The hit lines a thread's search row shows; its match count says how many it has.
+const HIT_LINES = 3;
+
+/** A listed thread's name: its title, else the user's message the list carries (its last
+ *  turn, when that is the user's), else "" ("Untitled thread"). The list has no first
+ *  user message; the replay names the thread by it once its turns are read. */
+function listedTitle(t: ConversationThreadSummary): string {
+  return threadTitle(t.title, t.last_role === "user" ? t.last_content_excerpt : "");
+}
+
+/** `text` with each word of the query that it holds in 600 weight: Click UI has no
+ *  highlight colour, so a match is set in bold, never coloured. */
+function emphasize(text: string, query: string) {
+  const words = query
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 1)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (words.length === 0) return text;
+  const re = new RegExp(`(${words.join("|")})`, "gi");
+  return text.split(re).map((part, i) =>
+    i % 2 === 1 ? (
+      <strong key={i} className="font-semibold">
+        {part}
+      </strong>
+    ) : (
+      part
+    ),
+  );
+}
 
 export function Conversations() {
   const identity = useIdentity();
@@ -55,7 +87,11 @@ export function Conversations() {
   // recovery path instead of just "try a different phrase."
   const [threads, setThreads] = useState<ConversationThreadSummary[] | null>(null);
   // Thread-list read failure, shown inline with a Retry.
-  const [threadsError, setThreadsError] = useState<string | null>(null);
+  const [threadsError, setThreadsError] = useState<unknown>(null);
+  // A failed search: said with a Retry, never as "no matches".
+  const [searchError, setSearchError] = useState<unknown>(null);
+  // The query the hits on screen answer, for the matched words' weight.
+  const [hitsFor, setHitsFor] = useState("");
   const [threadsRetry, setThreadsRetry] = useState(0);
   // Threads come a page at a time, most recently active first, over the past year.
   const [threadPage, setThreadPage] = useState(0);
@@ -146,8 +182,7 @@ export function Conversations() {
           if (!live()) return;
           // An empty list that is really a failed read looked like "no
           // conversations yet".
-          const rid = errorRequestId(e);
-          setThreadsError(rid ? `${humanizeError(e)} (request id ${rid})` : humanizeError(e));
+          setThreadsError(e);
           setThreads([]);
         });
     },
@@ -171,14 +206,16 @@ export function Conversations() {
     if (!q.trim()) return;
     const seq = ++searchSeq.current;
     setBusy(true);
+    setSearchError(null);
     try {
       const r = await searchConversations(identity, q, { top_k: 50, agent: agentFilter });
       if (seq !== searchSeq.current) return;
       setHits(r.hits || []);
+      setHitsFor(q);
     } catch (e) {
       if (seq !== searchSeq.current) return;
-      toast(`Search failed: ${humanizeError(e)}`, "error");
-      setHits([]);
+      setSearchError(e);
+      setHits(null);
     } finally {
       if (seq === searchSeq.current) setBusy(false);
     }
@@ -199,22 +236,24 @@ export function Conversations() {
       arr.push(h);
       byThread.set(key, arr);
     }
-    const threadAgent = new Map((threads || []).map((t) => [t.thread_id, t.agent] as const));
+    const listed = new Map((threads || []).map((t) => [t.thread_id, t] as const));
     return Array.from(byThread.entries()).map(([key, items]) => {
       const { thread_id } = items[0];
       const namespace = items[0].namespace || identity.namespace;
-      const agent = namespace === identity.namespace ? threadAgent.get(thread_id) : undefined;
-      return { key, thread_id, namespace, agent, hits: items };
+      const known = namespace === identity.namespace ? listed.get(thread_id) : undefined;
+      // Named as the list names it, else by the earliest thing the user said among the hits.
+      const firstUser = [...items].sort((a, b) => a.ts.localeCompare(b.ts)).find((h) => h.role === "user");
+      const title = (known && listedTitle(known)) || threadTitle("", firstUser?.content_excerpt);
+      const newest = items.reduce((a, b) => (b.ts > a.ts ? b : a)).ts;
+      return { key, thread_id, namespace, agent: known?.agent, title, newest, hits: items };
     });
   }, [hits, threads, identity.namespace]);
 
-  const searchStatus = busy
-    ? "Searching…"
-    : groupedHits === null
+  const matchCount =
+    groupedHits === null
       ? ""
-      : groupedHits.length === 0
-        ? "No matches"
-        : `${hits?.length} match${hits?.length === 1 ? "" : "es"} in ${groupedHits.length} thread${groupedHits.length === 1 ? "" : "s"}`;
+      : `${hits?.length} match${hits?.length === 1 ? "" : "es"} in ${groupedHits.length} thread${groupedHits.length === 1 ? "" : "s"}`;
+  const searchStatus = busy ? "Searching…" : groupedHits?.length === 0 ? "No matches" : matchCount;
 
   // Distinct agents for the filter; the displayed thread list is the
   // namespace-wide set narrowed to the selected agent.
@@ -224,13 +263,17 @@ export function Conversations() {
 
   // The open thread is the page's URL (`?thread=`): a reload or Back reopens it.
   const openThreadDialog = useCallback(
-    (thread_id: string, opts: { namespace?: string; hit?: ConversationHit; knownAgent?: string } = {}) => {
+    (
+      thread_id: string,
+      opts: { namespace?: string; hit?: ConversationHit; knownAgent?: string; knownTitle?: string } = {},
+    ) => {
       setViewParam("thread", thread_id);
       setOpenThread({
         thread_id,
         namespace: opts.namespace || identity.namespace,
         knownAgent: opts.knownAgent,
         hit: opts.hit,
+        knownTitle: opts.knownTitle,
       });
     },
     [identity.namespace],
@@ -265,12 +308,47 @@ export function Conversations() {
     }
   };
 
-  const threadsCount =
+  // One count, at the end of the toolbar (SPEC-LISTS C4): the matches of a search, the
+  // threads shown (the total is known only once the last page is read), the last one while
+  // a read is in flight, nothing on an error.
+  const pageStart = threadPage * THREADS_PAGE;
+  const countText =
     hits !== null
-      ? `${hits.length} found`
-      : visibleThreads && visibleThreads.length > 0
-        ? `${(threadPage * THREADS_PAGE + 1).toLocaleString()}–${(threadPage * THREADS_PAGE + visibleThreads.length).toLocaleString()}`
-        : undefined;
+      ? matchCount
+      : threadsError || !visibleThreads || visibleThreads.length === 0
+        ? ""
+        : threadsTotal !== undefined
+          ? `${(pageStart + 1).toLocaleString()}–${(pageStart + visibleThreads.length).toLocaleString()} of ${threadsTotal.toLocaleString()}`
+          : `${visibleThreads.length.toLocaleString()} shown`;
+  const loadingThreads = threads === null;
+  const lastCount = useRef("");
+  if (countText && !busy && !loadingThreads) lastCount.current = countText;
+  const countShown = busy || (loadingThreads && hits === null) ? lastCount.current : countText;
+
+  // One tab stop over each list's rows: arrows and j/k move, Enter opens.
+  const threadsNav = useRowNav({ enabled: openThread === null && !!visibleThreads?.length });
+  const hitsNav = useRowNav({ enabled: openThread === null && !!groupedHits?.length });
+
+  const agentSelect = (className: string) =>
+    agentOptions.length > 1 && (
+      <Select
+        value={agentFilter}
+        onSelect={(value) => {
+          setAgentFilter(value);
+          setThreadsTotal(undefined);
+          setThreadPage(0);
+        }}
+        triggerProps={{ "aria-label": "Agent" }}
+        className={className}
+      >
+        <Select.Item value="*">Every agent</Select.Item>
+        {agentOptions.map((a) => (
+          <Select.Item key={a} value={a}>
+            {displayAgent(a)}
+          </Select.Item>
+        ))}
+      </Select>
+    );
 
   const renderRecentThreads = (label = "Recent threads") => {
     if (!visibleThreads || visibleThreads.length === 0) return null;
@@ -279,36 +357,51 @@ export function Conversations() {
         <div id="threads-list" tabIndex={-1} className="outline-none">
           <SectionHeading level={2} label={label} caption="active in the last year" />
         </div>
-        {visibleThreads.map((t) => {
-          // An untitled thread is named by its last message, so no row looks broken.
-          const title = t.title || truncate(t.last_content_excerpt, 140);
-          return (
-            <ListRow key={t.thread_id} className="group">
-              <button
-                type="button"
-                data-row-open=""
-                onClick={() => openThreadDialog(t.thread_id, { knownAgent: t.agent })}
-                className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
-              >
-                <span className="flex items-baseline gap-3">
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{title}</span>
-                  <span className="shrink-0 text-xs text-text-muted tabular">{shortDate(t.last_seen)}</span>
-                </span>
-                <span className="mt-1 flex items-center gap-2 text-xs text-text-muted">
-                  <span className="inline-flex shrink-0">
-                    <Badge text={t.last_role} state="neutral" size="sm" />
+        <div ref={threadsNav} className="space-y-2">
+          {visibleThreads.map((t) => {
+            const title = listedTitle(t);
+            return (
+              <ListRow key={t.thread_id} data-thread-row="">
+                <button
+                  type="button"
+                  data-row-open=""
+                  onClick={() =>
+                    openThreadDialog(t.thread_id, { knownAgent: t.agent, knownTitle: title || UNTITLED_THREAD })
+                  }
+                  className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+                >
+                  {/* Line 1: the thread; right, when it was last active. */}
+                  <span className="flex items-baseline gap-3">
+                    <span
+                      className={`min-w-0 flex-1 truncate text-sm font-medium ${title ? "text-text" : "text-text-muted"}`}
+                    >
+                      {title || UNTITLED_THREAD}
+                    </span>
+                    <span className="shrink-0 text-xs text-text-muted">
+                      <ListTime iso={t.last_seen} />
+                    </span>
                   </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {t.title ? truncate(t.last_content_excerpt, 140) : null}
+                  {/* Line 2: the last turn; right, who and how long. Under 640 px the right
+                      part takes its own line. */}
+                  <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
+                    <span className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-0">
+                      <span className="inline-flex shrink-0">
+                        <Badge text={t.last_role} state="neutral" size="sm" />
+                      </span>{" "}
+                      <span className="min-w-0 flex-1 truncate">{truncate(t.last_content_excerpt, 140)}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2 tabular">
+                      {t.agent && <AgentBadge agent={t.agent} />}
+                      <span>
+                        {t.msg_count.toLocaleString()} message{t.msg_count === 1 ? "" : "s"}
+                      </span>
+                    </span>
                   </span>
-                  <span className="shrink-0 tabular">
-                    {t.msg_count.toLocaleString()} message{t.msg_count === 1 ? "" : "s"} · {displayAgent(t.agent)}
-                  </span>
-                </span>
-              </button>
-            </ListRow>
-          );
-        })}
+                </button>
+              </ListRow>
+            );
+          })}
+        </div>
         {threadsPaged && hits === null && (
           <ListPager
             label="Thread pages"
@@ -324,96 +417,70 @@ export function Conversations() {
     );
   };
 
+  const recording = canSetLogging && loggingEnabled !== null && (
+    <span className="flex items-center gap-1">
+      <Switch
+        checked={loggingEnabled}
+        onCheckedChange={toggleLogging}
+        label="Record conversations"
+        orientation="horizontal"
+        dir="start"
+      />
+      <IconButton
+        icon="info-in-circle"
+        size="xs"
+        label="About recording"
+        tooltip="When off, new conversation turns are not stored for this namespace"
+      />
+    </span>
+  );
+
   return (
     <PageContainer>
-      <div className="mb-6">
-        <PageHeader title="Conversations">
+      {/* Recording is the namespace's setting, not a filter: it sits with the title. */}
+      <PageHeader title="Conversations" actions={recording || undefined}>
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </PageHeader>
-        <p className="text-sm text-text-muted">
-          The raw chats your agents recorded. Search to find what was said; click any thread to replay the full
-          exchange.
-        </p>
+        </span>
+      </PageHeader>
+      {/* Left to the title on a phone, where the threads need the room (SPEC-LISTS C10). */}
+      <div className="mb-4 hidden items-center gap-1 text-sm text-text-muted sm:flex">
+        The raw chats your agents recorded.
+        <IconButton
+          icon="info-in-circle"
+          size="xs"
+          label="About conversations"
+          tooltip="Search to find what was said; open a thread to replay the full exchange."
+        />
       </div>
 
       {/* The search and the agent filter, in the bar that stays at the top as the threads
-          scroll. Recording is a namespace setting, not a filter: it sits under the bar. */}
-      <ListToolbar label="Search and filters" count={threadsCount}>
+          scroll. */}
+      <ListToolbar
+        label="Search and filters"
+        count={countShown && <span aria-busy={busy || loadingThreads || undefined}>{countShown}</span>}
+      >
         <div className="min-w-[10rem] flex-1">
           <SearchField
             ref={searchRef}
             value={q}
             onChange={(value) => {
               setQ(value);
-              if (!value) setHits(null);
+              if (!value) {
+                setHits(null);
+                setSearchError(null);
+              }
             }}
             onKeyDown={(e) => e.key === "Enter" && run()}
             placeholder="Search transcripts"
             aria-label="Search conversation transcripts"
           />
         </div>
-        {agentOptions.length > 1 && (
-          <Select
-            value={agentFilter}
-            onSelect={(value) => {
-              setAgentFilter(value);
-              setThreadsTotal(undefined);
-              setThreadPage(0);
-            }}
-            triggerProps={{ "aria-label": "Agent" }}
-            className="hidden w-48 shrink-0 sm:block"
-          >
-            <Select.Item value="*">All agents</Select.Item>
-            {agentOptions.map((a) => (
-              <Select.Item key={a} value={a}>
-                {displayAgent(a)}
-              </Select.Item>
-            ))}
-          </Select>
-        )}
+        {agentSelect("hidden w-48 shrink-0 sm:block")}
       </ListToolbar>
-
-      {(agentOptions.length > 1 || (canSetLogging && loggingEnabled !== null)) && (
-        <div className="mb-4 flex items-center gap-3">
-          {agentOptions.length > 1 && (
-            // A phone's bar has room for the search only; the agent filter sits under it.
-            <Select
-              value={agentFilter}
-              onSelect={(value) => {
-                setAgentFilter(value);
-                setThreadsTotal(undefined);
-                setThreadPage(0);
-              }}
-              triggerProps={{ "aria-label": "Agent" }}
-              className="w-48 sm:hidden"
-            >
-              <Select.Item value="*">All agents</Select.Item>
-              {agentOptions.map((a) => (
-                <Select.Item key={a} value={a}>
-                  {displayAgent(a)}
-                </Select.Item>
-              ))}
-            </Select>
-          )}
-          {canSetLogging && loggingEnabled !== null && (
-            <div className="ml-auto flex items-center gap-1">
-              <Switch
-                checked={loggingEnabled}
-                onCheckedChange={toggleLogging}
-                label="Record conversations"
-                orientation="horizontal"
-                dir="start"
-              />
-              <IconButton
-                icon="info-in-circle"
-                size="xs"
-                label="About recording"
-                tooltip="When off, new conversation turns are not stored for this namespace"
-              />
-            </div>
-          )}
-        </div>
-      )}
+      {/* A phone's bar has room for the search and the count only; the agent filter sits under it. */}
+      {agentOptions.length > 1 && <div className="-mt-1 mb-3 sm:hidden">{agentSelect("w-48")}</div>}
 
       {/* Always mounted, so a screen reader announces each change of its text. */}
       <p role="status" className="sr-only">
@@ -425,31 +492,37 @@ export function Conversations() {
         </LoadingSkeleton>
       )}
 
-      {hits === null && <SessionBriefsSection org={identity.org} namespace={identity.namespace} />}
-      {!busy && hits === null && threads === null && (
+      {!busy && searchError !== null && (
+        <ListState kind="error" things="search results" error={searchError} onRetry={() => void run()} />
+      )}
+
+      {hits === null && searchError === null && (
+        <SessionBriefsSection org={identity.org} namespace={identity.namespace} />
+      )}
+      {!busy && hits === null && searchError === null && threads === null && (
         <LoadingSkeleton label="Loading threads" className="space-y-2">
-          <Skeleton className="h-14" />
-          <Skeleton className="h-14" />
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
         </LoadingSkeleton>
       )}
 
-      {!busy && hits === null && threads !== null && threads.length === 0 && threadsError && (
-        <EmptyState
-          icon="warning"
-          title="Couldn't load conversations"
-          description={threadsError}
-          action={{
-            label: "Retry",
-            onClick: () => {
-              setThreads(null);
-              setThreadsRetry((n) => n + 1);
-            },
+      {!busy && hits === null && searchError === null && threads !== null && threadsError !== null && (
+        <ListState
+          kind="error"
+          things="conversations"
+          error={threadsError}
+          onRetry={() => {
+            setThreads(null);
+            setThreadsError(null);
+            setThreadsRetry((n) => n + 1);
           }}
         />
       )}
 
-      {!busy && hits === null && threads !== null && threads.length === 0 && !threadsError && (
-        <EmptyState
+      {!busy && hits === null && searchError === null && threads !== null && threads.length === 0 && !threadsError && (
+        <ListState
+          kind="empty"
           icon="chat"
           title="No conversations yet in this namespace"
           description="Once an AI agent connected to this namespace starts saving its chats, each thread shows up here."
@@ -462,69 +535,86 @@ export function Conversations() {
         />
       )}
 
-      {!busy && hits === null && threads !== null && threads.length > 0 && renderRecentThreads()}
+      {!busy &&
+        hits === null &&
+        searchError === null &&
+        threads !== null &&
+        threads.length > 0 &&
+        renderRecentThreads()}
 
       {!busy && hits !== null && hits.length === 0 && (
         <div className="space-y-6">
-          <div className="py-8 text-center">
-            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
-              <Icon name="search" size="md" aria-hidden="true" />
-            </div>
-            <h2>No matches for "{q}"</h2>
-            <p className="mt-1 text-sm text-text-muted">Try a different phrase, or browse recent threads below.</p>
-          </div>
+          <ListState
+            kind="filtered"
+            things="conversations"
+            filter={`"${hitsFor}"`}
+            onClear={() => {
+              setQ("");
+              setHits(null);
+            }}
+          />
           {renderRecentThreads("Or, the most recent threads")}
         </div>
       )}
 
+      {/* One row per thread: its name, then up to three of its matching turns, each of which
+          opens the replay at that turn. */}
       {!busy && groupedHits !== null && groupedHits.length > 0 && (
-        <div className="space-y-3">
-          <div className="text-xs text-text-muted tabular" aria-hidden="true">
-            {searchStatus}
-          </div>
+        <div ref={hitsNav} className="space-y-2">
           {groupedHits.map((g) => (
-            <div key={g.key} className="rounded-xl border border-border bg-surface overflow-hidden">
+            <ListRow key={g.key} data-thread-row="">
               <button
                 type="button"
-                onClick={() => openThreadDialog(g.thread_id, { namespace: g.namespace, knownAgent: g.agent })}
-                className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-xs tabular hover:bg-surface-2 border-b border-border"
+                data-row-open=""
+                onClick={() =>
+                  openThreadDialog(g.thread_id, {
+                    namespace: g.namespace,
+                    knownAgent: g.agent,
+                    knownTitle: g.title || UNTITLED_THREAD,
+                  })
+                }
+                className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
               >
-                <span className="font-mono text-text truncate">{g.thread_id}</span>
-                {g.agent && (
-                  <>
-                    <span className="text-text-muted">·</span>
-                    <span className="font-mono text-text-muted">{displayAgent(g.agent)}</span>
-                  </>
-                )}
-                {g.namespace !== identity.namespace && (
-                  <>
-                    <span className="text-text-muted">·</span>
-                    <span className="font-mono text-text-muted truncate">{g.namespace}</span>
-                  </>
-                )}
-                <span className="ml-auto text-accent font-medium">
-                  {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · open
+                <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span
+                    className={`min-w-0 flex-1 truncate text-sm font-medium ${g.title ? "text-text" : "text-text-muted"}`}
+                  >
+                    {g.title || UNTITLED_THREAD}
+                  </span>
+                  {g.namespace !== identity.namespace && (
+                    <span className="min-w-0 truncate font-mono text-xs text-text-muted">{g.namespace}</span>
+                  )}
+                  <span className="shrink-0 text-xs text-text-muted tabular">
+                    {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · <ListTime iso={g.newest} />
+                  </span>
                 </span>
               </button>
-              <div className="divide-y divide-border">
-                {g.hits.map((h, i) => (
+              <div className="mt-1 space-y-0.5">
+                {g.hits.slice(0, HIT_LINES).map((h, i) => (
                   <button
                     type="button"
                     key={`${h.msg_id}-${i}`}
                     onClick={() =>
-                      openThreadDialog(g.thread_id, { namespace: g.namespace, hit: h, knownAgent: g.agent })
+                      openThreadDialog(g.thread_id, {
+                        namespace: g.namespace,
+                        hit: h,
+                        knownAgent: g.agent,
+                        knownTitle: g.title || UNTITLED_THREAD,
+                      })
                     }
-                    className="w-full text-left px-3.5 py-2.5 hover:bg-surface-2"
+                    className="relative z-[1] -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-xs text-text-muted hover:bg-surface-2"
                   >
-                    <div className="flex items-center gap-2 mb-1 text-xs tabular">
+                    <span className="inline-flex shrink-0">
                       <Badge text={h.role} state="neutral" size="sm" />
-                      <span className="text-text-muted ml-auto">{relativeTime(h.ts)}</span>
-                    </div>
-                    <div className="text-sm text-text leading-snug">{truncate(h.content_excerpt || "", 280)}</div>
+                    </span>
+                    {/* A space for the line's name ("user Are refunds…"); the flex gap draws it. */}{" "}
+                    <span className="min-w-0 flex-1 truncate">
+                      {emphasize(truncate(h.content_excerpt || "", 280), hitsFor)}
+                    </span>
                   </button>
                 ))}
               </div>
-            </div>
+            </ListRow>
           ))}
         </div>
       )}

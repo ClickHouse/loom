@@ -330,11 +330,21 @@ class RunClient:
         limit: int = 50,
         memory_activity: str = "",
         grade: str = "",
+        offset: int = 0,
+        order_by: str = "",
+        q: str = "",
     ) -> dict[str, Any]:
         """Newest runs first. `memory_activity="with"` keeps only runs that
         relied on or wrote a memory, `"without"` only the hollow ones;
         `grade="ungraded"` the closed runs still owed a verdict (`"graded"`,
-        `"pass"`, `"fail"` also work). Filters apply before `limit`."""
+        `"pass"`, `"fail"` also work). Filters apply before `limit`.
+
+        Paging: `offset` skips that many runs; `order_by` is `started_desc`
+        (the default), `started_asc`, `duration_desc` / `_asc` or
+        `relied_on_desc` / `_asc`; `q` keeps runs whose goal, run id or agent
+        holds the text, any case. The answer's `total` counts every run the
+        filters match; a server a release behind sends none and ignores these
+        three, so each is sent only when set."""
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,
@@ -345,6 +355,12 @@ class RunClient:
             "memory_activity": memory_activity,
             "grade": grade,
         }
+        if offset:
+            payload["offset"] = offset
+        if order_by:
+            payload["order_by"] = order_by
+        if q.strip():
+            payload["q"] = q
         return await self._agent.transport.post("/v1/run.list", payload)
 
     async def grade(

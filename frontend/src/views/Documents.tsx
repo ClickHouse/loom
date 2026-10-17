@@ -19,21 +19,25 @@ import {
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { EmptyState } from "../components/EmptyState";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
-import { Chip, ListRow, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
+import { ListRow, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
+import { ListState } from "../components/ui/ListState";
+import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar } from "../components/ui/ListToolbar";
+import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { Modal } from "../components/ui/Modal";
-import { formatBytesShort, humanizeError, relativeTime, shortDate } from "../lib/format";
+import { formatBytesShort, relativeTime } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
-import { parseSearchQuery, removeQueryToken, toggleQueryToken } from "../lib/memoriesSearch";
+import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
+import { useRowNav } from "../lib/useRowNav";
+import { useRowSelection } from "../lib/useRowSelection";
 
 const FIRST_SCREEN_ROWS = 12;
 type SortBy = "recency" | "title" | "chunks" | "size";
@@ -71,13 +75,6 @@ export function Documents() {
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("recency");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  // A row's four icon actions (each a tooltip'd button with an SVG) are rendered only for
-  // the row under the pointer, focused, or selected — 50 rows carried ~30 nodes each for
-  // controls nobody could use at once. Their slot keeps its width meanwhile, so the row
-  // does not reflow on hover. A touch screen has no hover: there every row shows them.
-  const [hotRow, setHotRow] = useState<string | null>(null);
-  const [touch] = useState(() => typeof window.matchMedia === "function" && matchMedia("(pointer: coarse)").matches);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
@@ -109,7 +106,7 @@ export function Documents() {
   const shownScope = useRef("");
   // The tags the rows on screen were read for, and why the last read failed.
   const [rowsFor, setRowsFor] = useState("");
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [retry, setRetry] = useState(0);
 
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
@@ -143,7 +140,7 @@ export function Documents() {
         if (!live()) return;
         // Said as a failure: an empty list that is really a failed read looked like an
         // empty library.
-        setLoadError(humanizeError(e));
+        setLoadError(e);
         setRows([]);
         setRowsFor(serverTags);
       });
@@ -328,16 +325,16 @@ export function Documents() {
     return sorted;
   }, [rows, query, sortBy]);
 
-  const toggleSelected = (uri: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(uri)) next.delete(uri);
-      else next.add(uri);
-      return next;
-    });
-  };
-
-  const clearSelection = () => setSelected(new Set());
+  // Checkboxes: one row, a Shift-click range, every row shown; Escape clears them while no
+  // dialog is up (each owns its Escape).
+  const shownRows = firstScreenOnly ? visibleRows?.slice(0, FIRST_SCREEN_ROWS) : visibleRows;
+  const rowKeys = useMemo(() => (visibleRows ?? []).map((r) => r.source_uri), [visibleRows]);
+  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry;
+  const selection = useRowSelection(rowKeys, { enabled: !dialogOpen });
+  const { selected } = selection;
+  const clearSelection = selection.clear;
+  // One tab stop over the rows: arrows and j/k move, Enter previews, Space selects.
+  const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 });
 
   const onBulkDelete = async () => {
     if (selected.size === 0 || bulkBusy) return;
@@ -379,6 +376,62 @@ export function Documents() {
     return { chunks, bytes, withBlob };
   }, [rows]);
 
+  const filtering = query.trim() !== "";
+  const failed = !!loadError;
+  const docCount = aggregateStats && rows ? `${rows.length.toLocaleString()}${nextCursor ? "+" : ""}` : "";
+  // One count, at the end of the toolbar (SPEC-LISTS C4): how many rows are shown (the
+  // cursor has no total), the matches for a search or a tag, nothing on an error or before
+  // the first read. While a new filter is read the last one stays up.
+  const matches = (n: number) => `${n.toLocaleString()} match${n === 1 ? "" : "es"}`;
+  const countText =
+    rows === null || failed || emptyLibrary
+      ? ""
+      : filtering
+        ? matches(visibleRows?.length ?? 0)
+        : `${(visibleRows ?? []).length.toLocaleString()} shown`;
+  const reading = rows !== null && rowsFor !== serverTags;
+  const lastCount = useRef("");
+  if (countText && !reading) lastCount.current = countText;
+  const countShown = reading ? lastCount.current : countText;
+  const sortSelect = (className: string) => (
+    <Select
+      value={sortBy}
+      onSelect={(value) => {
+        const v = oneOf(
+          SORTS.map((o) => o.value),
+          value,
+        );
+        if (v !== null) setSortBy(v);
+      }}
+      triggerProps={{ "aria-label": "Sort documents" }}
+      className={className}
+    >
+      {SORTS.map((o) => (
+        <Select.Item key={o.value} value={o.value}>
+          {o.label}
+        </Select.Item>
+      ))}
+    </Select>
+  );
+  const rowMenu = (r: KnowledgeEntry): RowMenuItem[] => [
+    { label: "Preview", icon: "eye", onSelect: () => void onOpen(r) },
+    { label: downloadLabel(r), icon: "download", onSelect: () => void onDownload(r) },
+    // Uploading a file into a text-only document is the same replace flow.
+    { label: "Replace content", icon: "refresh", onSelect: () => setReplaceEntry(r) },
+    { label: "Edit details", icon: "pencil", onSelect: () => setEditEntry(r) },
+    {
+      label: "Copy URI",
+      icon: "copy",
+      onSelect: () => {
+        void navigator.clipboard?.writeText(r.source_uri).then(
+          () => toast("Copied", "ok"),
+          () => toast("Couldn't copy", "error"),
+        );
+      },
+    },
+    { label: "Delete", icon: "trash", danger: true, onSelect: () => void onDelete(r.source_uri) },
+  ];
+
   return (
     <PageContainer>
       <PageHeader
@@ -387,125 +440,81 @@ export function Documents() {
           <>
             {/* The toolbar shows the count; this says it when a search or filter moves it. */}
             <span role="status" className="sr-only">
-              {rows && visibleRows && visibleRows.length !== rows.length
-                ? `${visibleRows.length} of ${rows.length} shown`
-                : ""}
+              {filtering && rows && !reading ? countText : ""}
             </span>
-            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-              Add document
-            </Button>
+            {/* The empty state's own Add is the one primary while it shows. */}
+            {!emptyLibrary && (
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+                Add document
+              </Button>
+            )}
           </>
         }
       >
-        <ScopeBadge kind="namespace" value={identity.namespace} />
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
       </PageHeader>
-      <p className="text-sm text-text-muted mb-6">
-        Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to
-        read.
-      </p>
+      {/* One line: the library's figures once they are read, what the library is behind the tip. */}
+      <div className="mb-4 flex min-h-6 items-center gap-1 text-sm text-text-muted tabular">
+        <span className="min-w-0 truncate">
+          {docCount && aggregateStats && rows && rows.length > 0
+            ? [
+                `${docCount} document${rows.length === 1 && !nextCursor ? "" : "s"}`,
+                `${aggregateStats.chunks.toLocaleString()} chunk${aggregateStats.chunks === 1 ? "" : "s"}`,
+                ...(aggregateStats.withBlob > 0 ? [formatBytesShort(aggregateStats.bytes)] : []),
+              ].join(" · ")
+            : "Reference docs your agents can read."}
+        </span>
+        <IconButton
+          icon="info-in-circle"
+          size="xs"
+          label="About the library"
+          tooltip="Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to read."
+        />
+      </div>
 
-      {rows !== null && !emptyLibrary && !loadError && (
-        <>
-          {/* The search, the tags in force, the sort and the count, in the one bar that
-              stays at the top as the list scrolls: a tag picked from a row further down is
-              seen to apply. While documents are selected, the bar holds their actions. */}
-          <ListToolbar
-            label="Search and filters"
-            count={`${(visibleRows ?? []).length.toLocaleString()} shown`}
-            selection={
-              selected.size > 0
-                ? {
-                    count: selected.size,
-                    onClear: clearSelection,
-                    actions: [
-                      { label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete },
-                    ],
-                  }
-                : null
-            }
+      {/* The search, the sort and the count, in the one bar that stays at the top as the list
+          scrolls, in every state: nothing moves when the rows land. A tag picked from a row
+          further down is seen to apply, as its `tag:` in the field. While documents are
+          selected, the bar holds their actions. */}
+      <ListToolbar
+        label="Search and filters"
+        count={countShown && <span aria-busy={reading || undefined}>{countShown}</span>}
+        selection={
+          selected.size > 0
+            ? {
+                count: selected.size,
+                onClear: clearSelection,
+                all: { total: rowKeys.length, checked: selection.allSelected, onToggle: selection.toggleAll },
+                actions: [{ label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete }],
+              }
+            : null
+        }
+      >
+        <div className="min-w-[10rem] flex-1">
+          <SearchField
+            value={query}
+            onChange={(value) => setQuery(value)}
+            placeholder="Search title, filename, description, or tag — try tag:specs"
+            aria-label="Search library"
+          />
+        </div>
+        {queryTags.length > 0 && (
+          <Button
+            type="empty"
+            htmlType="button"
+            className="hidden shrink-0 sm:inline-flex"
+            onClick={() => setQuery(parseSearchQuery(query).text)}
           >
-            <div className="min-w-[10rem] flex-1">
-              <SearchField
-                value={query}
-                onChange={(value) => setQuery(value)}
-                placeholder="Search title, filename, description, or tag — try tag:specs"
-                aria-label="Search library"
-              />
-            </div>
-            {queryTags.length > 0 && (
-              // biome-ignore lint/a11y/useSemanticElements: a group of filter chips, not a fieldset of inputs
-              <div
-                role="group"
-                aria-label="Filters in force"
-                className="hidden min-w-0 items-center gap-1.5 overflow-x-auto text-xs sm:flex"
-              >
-                {queryTags.map((t) => (
-                  <Chip
-                    key={t}
-                    label={`tag:${t}`}
-                    mono
-                    onRemove={() => setQuery((q) => removeQueryToken(q, `tag:${t}`))}
-                  />
-                ))}
-                <Button type="empty" htmlType="button" onClick={() => setQuery(parseSearchQuery(query).text)}>
-                  Clear filters
-                </Button>
-              </div>
-            )}
-            {queryTags.length > 0 && (
-              // A phone's search shows the `tag:` text itself; the chips would not fit beside it.
-              <Button
-                type="empty"
-                htmlType="button"
-                className="sm:hidden"
-                onClick={() => setQuery(parseSearchQuery(query).text)}
-                aria-label="Clear filters"
-              >
-                Clear
-              </Button>
-            )}
-            <Select
-              value={sortBy}
-              onSelect={(value) => {
-                const v = oneOf(
-                  SORTS.map((o) => o.value),
-                  value,
-                );
-                if (v !== null) setSortBy(v);
-              }}
-              triggerProps={{ "aria-label": "Sort documents" }}
-              className="hidden w-40 shrink-0 sm:block"
-            >
-              {SORTS.map((o) => (
-                <Select.Item key={o.value} value={o.value}>
-                  {o.label}
-                </Select.Item>
-              ))}
-            </Select>
-          </ListToolbar>
-          {/* A phone's toolbar has room for the search only; the sort sits under it. */}
-          <div className="-mt-1 mb-3 flex justify-end sm:hidden">
-            <Select
-              value={sortBy}
-              onSelect={(value) => {
-                const v = oneOf(
-                  SORTS.map((o) => o.value),
-                  value,
-                );
-                if (v !== null) setSortBy(v);
-              }}
-              triggerProps={{ "aria-label": "Sort documents" }}
-              className="w-40"
-            >
-              {SORTS.map((o) => (
-                <Select.Item key={o.value} value={o.value}>
-                  {o.label}
-                </Select.Item>
-              ))}
-            </Select>
-          </div>
-        </>
-      )}
+            Clear filters
+          </Button>
+        )}
+        {sortSelect("hidden w-40 shrink-0 sm:block")}
+      </ListToolbar>
+      {/* A phone's toolbar has room for the search only; the sort sits under it. */}
+      <div className="-mt-1 mb-3 flex justify-end sm:hidden">{sortSelect("w-40")}</div>
 
       {/* Mounted while open, not on every render. */}
       {addOpen && (
@@ -550,20 +559,15 @@ export function Documents() {
         <LoadingSkeleton label="Loading documents" className="space-y-2">
           <SkeletonCard />
           <SkeletonCard />
+          <SkeletonCard />
         </LoadingSkeleton>
       )}
 
-      {loadError && (
-        <EmptyState
-          icon="warning"
-          title="Couldn't load the library"
-          description={loadError}
-          action={{ label: "Retry", onClick: () => setRetry((n) => n + 1) }}
-        />
-      )}
+      {failed && <ListState kind="error" things="documents" error={loadError} onRetry={() => setRetry((n) => n + 1)} />}
 
       {emptyLibrary && (
-        <EmptyState
+        <ListState
+          kind="empty"
           icon="document"
           title="Your library is empty"
           description="Upload PDFs, DOCX, Markdown or any text-shaped file. Your agents can search the extracted text via knowledge.search, and you can download the originals back any time."
@@ -571,174 +575,93 @@ export function Documents() {
         />
       )}
 
-      {rows !== null && !emptyLibrary && !loadError && rowsFor === serverTags && visibleRows?.length === 0 && (
-        <div className="py-12 text-center">
-          <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
-            <Icon name="search" size="md" aria-hidden="true" />
-          </div>
-          <h2>Nothing matches {query.trim()}</h2>
-          <p className="mt-1 text-sm text-text-muted">No document in this namespace passes the search and filters.</p>
-          <Button type="secondary" htmlType="button" onClick={() => setQuery("")} className="mt-4">
-            Clear filters
-          </Button>
-        </div>
+      {rows !== null && !emptyLibrary && !failed && rowsFor === serverTags && visibleRows?.length === 0 && (
+        <ListState kind="filtered" things="documents" filter={query.trim()} onClear={() => setQuery("")} />
       )}
 
-      {rows !== null && rows.length > 0 && visibleRows && visibleRows.length > 0 && (
-        <div className="space-y-2">
-          {(firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows).map((r) => (
-            <ListRow
-              key={r.source_uri}
-              onMouseEnter={() => setHotRow(r.source_uri)}
-              onMouseLeave={() => setHotRow((cur) => (cur === r.source_uri ? null : cur))}
-              onFocus={() => setHotRow(r.source_uri)}
-              data-doc-row
-              checked={selected.has(r.source_uri)}
-              leading={
-                <Checkbox
-                  checked={selected.has(r.source_uri)}
-                  onCheckedChange={() => toggleSelected(r.source_uri)}
-                  aria-label={`Select ${r.title || r.original_filename || r.source_uri}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="relative z-[1]"
-                />
-              }
-            >
-              <div className="flex flex-wrap items-start gap-3 sm:flex-nowrap">
-                <div className="min-w-0 flex-1">
-                  <button
-                    type="button"
-                    data-row-open=""
-                    onClick={() => onOpen(r)}
-                    className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
-                    aria-label={`Preview ${r.title || r.original_filename || r.source_uri}`}
-                  >
-                    {/* Line 1: the document, its state, how much of it is indexed and when. */}
-                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
-                      <span className={`min-w-0 truncate text-sm font-medium text-text ${r.title ? "" : "font-mono"}`}>
-                        {r.title || r.original_filename || r.source_uri}
+      {rows !== null && rows.length > 0 && shownRows && shownRows.length > 0 && (
+        <div ref={listNav} className="space-y-2" aria-busy={reading || undefined}>
+          {shownRows.map((r) => {
+            const name = r.title || r.original_filename || r.source_uri;
+            const file = r.title ? r.original_filename || r.source_uri : "";
+            return (
+              <ListRow
+                key={r.source_uri}
+                data-doc-row
+                checked={selected.has(r.source_uri)}
+                leading={
+                  <Checkbox
+                    checked={selected.has(r.source_uri)}
+                    aria-label={`Select ${name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      selection.toggle(r.source_uri, e.shiftKey);
+                    }}
+                    className="relative z-[1]"
+                  />
+                }
+              >
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      data-row-open=""
+                      onClick={() => (selected.size > 0 ? selection.toggle(r.source_uri) : onOpen(r))}
+                      className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+                      aria-label={`Preview ${name}`}
+                    >
+                      {/* Line 1: the document and its state; right, how much is indexed and when. */}
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        {/* The icon, the name and its state stay on one line; a long name is cut. */}
+                        <span className="flex min-w-0 max-w-full items-center gap-2">
+                          <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
+                          <span
+                            className={`min-w-0 truncate text-text ${r.title ? "text-sm font-medium" : "font-mono text-xs"}`}
+                          >
+                            {name}
+                          </span>
+                          {r.superseded && (
+                            <span className="inline-flex shrink-0">
+                              <Badge text="Superseded" state="neutral" size="sm" aria-hidden="true" />
+                              <span className="sr-only">, superseded: a newer version of this URI was uploaded</span>
+                            </span>
+                          )}
+                        </span>
+                        {/* The meta slot: flush right; under 640 px its own line. */}
+                        <span className="basis-full text-xs text-text-muted tabular sm:ml-auto sm:basis-auto sm:shrink-0">
+                          {(r.chunk_count ?? 0).toLocaleString()} chunk{r.chunk_count === 1 ? "" : "s"} ·{" "}
+                          <ListTime iso={r.ingested_at} />
+                        </span>
                       </span>
-                      {r.superseded && (
-                        <span className="inline-flex shrink-0">
-                          <Badge text="Superseded" state="warning" size="sm" aria-hidden="true" />
-                          <span className="sr-only">, superseded: a newer version of this URI was uploaded</span>
+                      {/* Line 2: the file it came from and what it is about. */}
+                      {(file || r.description) && (
+                        <span className="mt-1 block truncate text-xs text-text-muted">
+                          {file && <span className="font-mono">{file}</span>}
+                          {file && r.description && " · "}
+                          {r.description}
                         </span>
                       )}
-                      <span className="ml-auto shrink-0 text-xs text-text-muted tabular">
-                        {r.chunk_count} chunks · {shortDate(r.ingested_at)}
-                      </span>
-                    </span>
-                    {/* Line 2: the file it came from and what it is about. */}
-                    {((r.title && (r.original_filename || r.source_uri)) || r.description) && (
-                      <span className="mt-1 block truncate text-xs text-text-muted">
-                        {r.title && (r.original_filename || r.source_uri) && (
-                          <span className="font-mono">{r.original_filename || r.source_uri}</span>
-                        )}
-                        {r.title && (r.original_filename || r.source_uri) && r.description && " — "}
-                        {r.description}
-                      </span>
-                    )}
-                  </button>
-                  <TagList
-                    tags={r.tags ?? []}
-                    activeTags={activeTags}
-                    onTagClick={(t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`))}
-                    className="mt-2"
-                  />
+                    </button>
+                    <TagList
+                      tags={r.tags ?? []}
+                      activeTags={activeTags}
+                      onTagClick={(t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`))}
+                      className="mt-2"
+                    />
+                  </div>
+                  <RowMenu name={name} items={rowMenu(r)} />
                 </div>
-                <div className="doc-acts relative z-[1]">
-                  {(touch || hotRow === r.source_uri || selected.has(r.source_uri)) && (
-                    <>
-                      {/* Icon actions: ≥36 px targets, named by aria-label + tooltip.
-                    "Edit content" also covers the no-blob case — uploading a file
-                    into a text-only document is the same replace flow. Download is
-                    offered for every document: the original file
-                    when one was preserved, else the stored text as Markdown. */}
-                      <IconButton
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDownload(r);
-                        }}
-                        label={hasOriginalFile(r) ? "Download original file" : "Download text (.md)"}
-                        tooltip={
-                          hasOriginalFile(r)
-                            ? r.original_filename
-                              ? `Download ${r.original_filename}${r.blob_size ? ` (${formatBytesShort(r.blob_size)})` : ""}`
-                              : "Download original file"
-                            : `Download text (.md) — ${textDownloadName(r.source_uri)}`
-                        }
-                        icon="download"
-                        size="sm"
-                      />
-                      <IconButton
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditEntry(r);
-                        }}
-                        label="Edit details"
-                        tooltip="Edit details (title, description, tags — no re-upload)"
-                        icon="pencil"
-                        size="sm"
-                      />
-                      <IconButton
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setReplaceEntry(r);
-                        }}
-                        label="Edit content"
-                        tooltip={
-                          r.has_blob
-                            ? `Edit content — upload a new file version of ${r.title || r.original_filename || r.source_uri}`
-                            : "Edit content — upload the source file to enable download and preserve the original"
-                        }
-                        icon="refresh"
-                        size="sm"
-                      />
-                      <IconButton
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(r.source_uri);
-                        }}
-                        label="Delete document"
-                        icon="trash"
-                        type="danger"
-                        size="sm"
-                      />
-                    </>
-                  )}
-                </div>
-              </div>
-            </ListRow>
-          ))}
+              </ListRow>
+            );
+          })}
         </div>
       )}
 
-      {aggregateStats && rows && rows.length > 0 && (
-        <div className="mt-8 pt-4 border-t border-border text-xs text-text-muted tabular flex items-center justify-between flex-wrap gap-2">
-          <span>
-            Showing <span className="text-text font-medium">{rows.length}</span>
-            {" · "}
-            <span className="text-text font-medium">{aggregateStats.chunks.toLocaleString()}</span> chunk
-            {aggregateStats.chunks === 1 ? "" : "s"} indexed
-            {aggregateStats.withBlob > 0 && (
-              <>
-                {" · "}
-                <span className="text-text font-medium">{formatBytesShort(aggregateStats.bytes)}</span> stored (
-                {aggregateStats.withBlob} file{aggregateStats.withBlob === 1 ? "" : "s"})
-              </>
-            )}
-          </span>
-          {aggregateStats.withBlob < rows.length && (
-            <span className="text-text-muted">
-              {rows.length - aggregateStats.withBlob} text-only · no preserved original
-            </span>
-          )}
-          {nextCursor && (
-            <Button type="secondary" htmlType="button" loading={loadingMore} onClick={loadMore}>
-              Load more
-            </Button>
-          )}
+      {nextCursor && !failed && (
+        <div className="mt-4">
+          <Button type="secondary" htmlType="button" loading={loadingMore} onClick={loadMore}>
+            Load more
+          </Button>
         </div>
       )}
 
@@ -898,6 +821,16 @@ export function Documents() {
       </Modal>
     </PageContainer>
   );
+}
+
+/** The More menu's download item, naming what it saves: "Download PDF, 1.8 MB" for an
+ *  original file, "Download text (.md)" for a text-only document. */
+function downloadLabel(r: KnowledgeEntry): string {
+  if (!hasOriginalFile(r)) return "Download text (.md)";
+  const ext = /\.([a-z0-9]{1,8})$/i.exec(r.original_filename || "")?.[1];
+  const kind = (ext || r.blob_content_type?.split("/")[1]?.split(/[;+.]/)[0] || "").toUpperCase();
+  const size = r.blob_size ? formatBytesShort(r.blob_size) : "";
+  return ["Download" + (kind ? ` ${kind}` : " original file"), size].filter(Boolean).join(", ");
 }
 
 /** Whether a document has an original file to download. False for a

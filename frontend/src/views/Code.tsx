@@ -20,10 +20,11 @@ import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextField } from "@clickhouse/click-ui/TextField";
+import { VerticalStepper } from "@clickhouse/click-ui/VerticalStepper";
 import { PageContainer } from "../layout/PageContainer";
 import { useStore, useIdentity } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
-import { fmtInt, relativeTime, humanizeError, refreshDetail } from "../lib/format";
+import { fmtInt, relativeTime, humanizeError, listTime, refreshDetail } from "../lib/format";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { EmptyState } from "../components/EmptyState";
 import { IconButton } from "../components/IconButton";
@@ -32,6 +33,8 @@ import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Skeleton, SkeletonCard } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
+import { ListState } from "../components/ui/ListState";
+import { ListToolbar } from "../components/ui/ListToolbar";
 import { stageFlips } from "../lib/codeStage";
 import { confirmAction } from "../components/ConfirmDialog";
 import {
@@ -430,11 +433,22 @@ function RepositoriesHome({
     };
   }, [repos, cards]);
   const pendingRows = (repos ?? []).filter((r) => branchState(r) === "pending");
-  const firstJoin =
-    cards.find((c) => c.code && c.code.joinedCount === 0 && branchState(c.code.primary) === "open")?.code ?? null;
   const busy = actions.busy ?? record.busy;
   const loaded = repos !== null && !error;
   const empty = loaded && repos.length === 0 && cards.length === 0;
+  // The toolbar's count: the whole list, or what the filter matches.
+  const count = !loaded
+    ? undefined
+    : query.trim()
+      ? `${visible.length} match${visible.length === 1 ? "" : "es"}`
+      : `${totals.repos} repositor${totals.repos === 1 ? "y" : "ies"} · ${totals.branches} branch${totals.branches === 1 ? "" : "es"}`;
+  // Said on each repository's tracker line when no tracker can be shown.
+  const trackerNote =
+    tracker.status.kind === "absent"
+      ? TRACKER_SOURCES_ABSENT
+      : tracker.status.kind === "error"
+        ? `Couldn't load the trackers — ${tracker.status.message}`
+        : undefined;
 
   const bindSource = async (g: RepoGroup, tracker_namespaces: string[]) => {
     try {
@@ -451,6 +465,37 @@ function RepositoriesHome({
       toast(`Couldn't link the tracker: ${humanizeError(e)}`, "error");
     }
   };
+  const refreshBranch = async (b: CodeRepoSummary) => {
+    try {
+      const r = await codeRefresh({ org: b.org, namespace: b.namespace });
+      toast(
+        r.already_running
+          ? `An ingest pass is already running on ${b.repo} @ ${b.branch}`
+          : `Ingest pass triggered on ${b.repo} @ ${b.branch}`,
+        "ok",
+      );
+    } catch (e) {
+      toast(`Refresh failed: ${humanizeError(e)}`, "error");
+    }
+  };
+  const removeBranch = async (b: CodeRepoSummary) => {
+    if (
+      !(await confirmAction({
+        title: `Retire ${b.repo} @ ${b.branch}?`,
+        message: `The index ${b.namespace} is retired now: its readers are refused from this moment, its rows are purged by an erasure that runs in the background (Audit → Erasures), and the mirror goes if no other branch uses it. This cannot be undone; adding the branch again re-indexes from scratch.`,
+        confirmLabel: "Retire index",
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      const out = await removeCodeRepo(b.org, b.namespace);
+      toast(`Retired ${out.repo} @ ${out.branch} · its rows are purging in the background`, "ok");
+      onChanged();
+    } catch (e) {
+      toast(humanizeError(e), "error");
+    }
+  };
   /** The links a repository holds now, primary first. */
   const linksOf = (g: RepoGroup): string[] => g.primary.bound_trackers ?? [];
 
@@ -464,6 +509,8 @@ function RepositoriesHome({
     onLeaveAll: (bs) => void actions.leaveAll(bs),
     onManage: (g) => setManaging(g),
     onAddBranch: canAdd ? (g) => setAddingBranch(g) : undefined,
+    onRefresh: (b) => void refreshBranch(b),
+    onRemove: (b) => void removeBranch(b),
     // Every branch the person maintains takes the new access; the QA binding is set on
     // the primary branch's namespace (the record is per repository)
     onSetAccess: (g, classification, join_policy, opening) => {
@@ -540,7 +587,8 @@ function RepositoriesHome({
                   </Button>
                 </Tip>
               )}
-              {canAdd && (
+              {/* The empty state carries the one Add repository while the list is empty. */}
+              {canAdd && !empty && (
                 <Tip content="Index a Git repository. You become its maintainer.">
                   <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAdding(true)}>
                     Add repository
@@ -551,54 +599,24 @@ function RepositoriesHome({
           )
         }
       />
-      <div className="text-sm text-text-muted mb-5 max-w-[72ch]">
-        One card per repository: its indexed code branches and its tracker of issues and PRs, all read-only.{" "}
-        <span className="inline-flex align-middle">
-          <IconButton
-            icon="info-in-circle"
-            size="xs"
-            label="About repositories"
-            tooltip="You can search and ask about a branch's code; the tracker is read live. An open repository joins in one click; a restricted one is requested and a maintainer approves."
-          />
-        </span>
-      </div>
-
-      {loaded && repos.length > 0 && (
-        <div className="mb-5 flex items-center gap-3 flex-wrap text-xs text-text-muted tabular-nums">
-          <span>
-            <span className="font-semibold text-text">{totals.repos}</span> repositor{totals.repos === 1 ? "y" : "ies"}
-          </span>
-          <span>·</span>
-          <span>
-            <span className="font-semibold text-text">{totals.joined}</span> of {totals.branches} branches you read
-          </span>
-          {totals.pending > 0 && (
-            <>
-              <span>·</span>
-              <span className="text-warn">
-                {totals.pending} request{totals.pending === 1 ? "" : "s"} waiting
-              </span>
-            </>
-          )}
-          <span className="ml-auto" />
-          <div className="w-64 max-w-full">
-            <SearchField
-              value={query}
-              onChange={(v) => {
-                setQuery(v);
-                setPage(0);
-              }}
-              placeholder="Filter repositories or branches"
-              aria-label="Filter repositories"
+      {!empty && (
+        <p className="text-sm text-text-muted mb-3 max-w-[72ch]">
+          Indexed code branches and their trackers of issues and PRs, read-only.{" "}
+          <span className="inline-flex align-middle">
+            <IconButton
+              icon="info-in-circle"
+              size="xs"
+              label="About repositories"
+              tooltip="You can search and ask about a branch's code; the tracker is read live. An open repository joins in one click; a restricted one is requested and a maintainer approves."
             />
-          </div>
-        </div>
+          </span>
+        </p>
       )}
 
       {pendingRows.length > 0 && (
         <Alert
-          className="mb-5"
-          state="warning"
+          className="mb-3"
+          state="info"
           customIcon="clock"
           text={
             <span className="break-words">
@@ -610,56 +628,52 @@ function RepositoriesHome({
         />
       )}
 
+      {!empty && (
+        <ListToolbar label="Repositories" count={count}>
+          <div className="min-w-0 flex-1">
+            <SearchField
+              value={query}
+              onChange={(v) => {
+                setQuery(v);
+                setPage(0);
+              }}
+              placeholder="Filter repositories or branches"
+              aria-label="Filter repositories"
+            />
+          </div>
+        </ListToolbar>
+      )}
+
       {repos === null && !error && (
         <LoadingSkeleton label="Loading repositories">
           <div className="space-y-2">
             <SkeletonCard />
             <SkeletonCard />
+            <SkeletonCard />
           </div>
         </LoadingSkeleton>
       )}
-      {error && <EmptyState icon="code" title="Couldn't load repositories" description={error} />}
+      {error && <ListState kind="error" things="repositories" error={error} onRetry={() => onChanged()} />}
 
       {empty && (
         <EmptyState
           icon="code"
-          title="No repositories yet"
+          title="Index your first repository"
           description={
             canAdd
-              ? "Add the first one: a Git remote and a branch. You become its maintainer and the indexer builds it in the background."
+              ? "Loom indexes a Git branch so you and your agents can search and ask about its code."
               : sandbox === "warn"
                 ? "This server cannot add repositories from this page, because it runs without the repository-job sandbox. Ask the operator to list them in LOOM_CODE_REPOS_JSON."
                 : "This server cannot index repositories until its repository-job sandbox runs. Ask the operator."
           }
           action={org && canAdd ? { label: "Add repository", onClick: () => setAdding(true) } : undefined}
-        />
-      )}
-
-      {loaded && repos.length > 0 && totals.joined === 0 && firstJoin && (
-        <div className="mb-5 p-4 rounded-lg border border-accent/40 bg-accent-soft flex items-center gap-4 flex-wrap">
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold break-words">
-              Start with {firstJoin.repo} @ {firstJoin.primary.branch}
-            </div>
-            <div className="text-xs text-text-muted mt-0.5">
-              Open repository — joins instantly, read-only. Agents you mint a token for can then search and ask about
-              it.
-            </div>
-          </div>
-          <Button
-            type="primary"
-            htmlType="button"
-            iconLeft="users"
-            onClick={() => void actions.join(firstJoin.primary)}
-            disabled={busy !== null}
-          >
-            Join · {firstJoin.primary.branch}
-          </Button>
-        </div>
+        >
+          {canAdd && <OnboardingSteps />}
+        </EmptyState>
       )}
 
       {loaded && visible.length > 0 && (
-        // Folded rows, so the list is a compact stack; a card grows only when opened. A new
+        // Folded rows, so the list is a compact stack; a row grows only when opened. A new
         // page scrolls here and takes focus.
         <div id="repositories-list" tabIndex={-1} className="space-y-2 outline-none">
           {pageCards.map((c) => (
@@ -670,6 +684,7 @@ function RepositoriesHome({
               code={codeActions}
               record={recordActions}
               adminOpsPresent={tracker.selfService}
+              trackerNote={trackerNote}
             />
           ))}
         </div>
@@ -690,20 +705,9 @@ function RepositoriesHome({
         />
       )}
       {loaded && cards.length > 0 && visible.length === 0 && (
-        <div className="text-sm text-text-muted py-6">No repository or branch matches “{query}”.</div>
+        <ListState kind="filtered" things="repositories or branches" filter={query} onClear={() => setQuery("")} />
       )}
 
-      {/* An absent op is a stated result, never an error banner. */}
-      {tracker.status.kind === "absent" && (
-        <p className="mt-4 text-xs text-text-muted" role="status">
-          {TRACKER_SOURCES_ABSENT}
-        </p>
-      )}
-      {tracker.status.kind === "error" && (
-        <p className="mt-4 text-xs text-text-muted" role="status">
-          Couldn't load the trackers — {tracker.status.message}
-        </p>
-      )}
       {(tracker.status.kind === "ready" || tracker.status.kind === "loading") && loaded && (
         <TrackersPanel
           org={org}
@@ -776,6 +780,33 @@ function RepositoriesHome({
         </Suspense>
       )}
     </PageContainer>
+  );
+}
+
+/** The empty page's three steps (SPEC-LISTS B5), in Click UI's VerticalStepper. The steps
+ *  say what happens; none is a control, so their buttons stay disabled (no tab stop). */
+function OnboardingSteps() {
+  const steps = [
+    ["Add a Git remote and a branch", "You become the repository's maintainer."],
+    ["Loom indexes it in the background", "Minutes for about 10,000 files; the row says how far it is."],
+    ["Agents search it with code.search", "Join the repository, then mint a token for your agents."],
+  ];
+  return (
+    <div className="repo-onboarding mt-6 w-full max-w-md text-left">
+      <VerticalStepper aria-label="How a repository is indexed">
+        {steps.map(([label, hint], i) => (
+          <VerticalStepper.Step
+            key={label}
+            label={label}
+            status={i === 0 ? "active" : "incomplete"}
+            collapsed={false}
+            disabled
+          >
+            <p className="text-sm text-text-muted">{hint}</p>
+          </VerticalStepper.Step>
+        ))}
+      </VerticalStepper>
+    </div>
   );
 }
 
@@ -1746,7 +1777,7 @@ function StageCard({
       </div>
       <div className="mt-2 text-xs text-text-muted">
         watermark <Mono className="text-text">{watermarkText(watermark) || "—"}</Mono>
-        {updatedAt && <> · advanced {relativeTime(updatedAt.replace(" ", "T") + "Z")}</>}
+        {updatedAt && <> · advanced {listTime(updatedAt)}</>}
       </div>
       {note && <div className={`mt-1 text-xs ${tone === "warn" ? "text-warn" : "text-text-muted"}`}>{note}</div>}
       {workers.length > 0 && (
@@ -1862,7 +1893,7 @@ export function HealthTab({ id }: { id: CodeId }) {
 
   const W = st.workers;
   const gitHeadAt = st.state.git_head?.updated_at;
-  const ago = (t: string) => (t ? relativeTime(t.replace(" ", "T") + "Z") : "—");
+  const ago = (t: string) => (t ? listTime(t) : "—");
 
   return (
     <div className="space-y-6">
@@ -1953,7 +1984,7 @@ export function HealthTab({ id }: { id: CodeId }) {
             note={
               cov
                 ? cov.pr_history_enabled
-                  ? `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)} · last fetch ${cov.pr_history_last_fetch_at ? relativeTime(cov.pr_history_last_fetch_at.replace(" ", "T") + "Z") : "pending"}${cov.pr_history_auth === "anonymous" ? " · anonymous GitHub API (60 req/h; set LOOM_CODE_GITHUB_TOKEN for headroom)" : ""}`
+                  ? `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)} · last fetch ${cov.pr_history_last_fetch_at ? listTime(cov.pr_history_last_fetch_at) : "pending"}${cov.pr_history_auth === "anonymous" ? " · anonymous GitHub API (60 req/h; set LOOM_CODE_GITHUB_TOKEN for headroom)" : ""}`
                   : `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)}, then stopped: worker disabled — set LOOM_CODE_PR_HISTORY_ENABLED=true (a token is optional for public repos). New packs show no PR titles until then.`
                 : st.state.pr_backfill_date
                   ? `backfilled to ${st.state.pr_backfill_date.value}`
@@ -2097,7 +2128,7 @@ export function HealthTab({ id }: { id: CodeId }) {
                   {c.pr_number > 0 && <span className="text-xs text-text-muted tabular shrink-0">#{c.pr_number}</span>}
                   <span className="text-xs text-text-muted tabular shrink-0">
                     <TipTarget tip={`${c.files} files · committed ${c.committed_at}`}>
-                      {c.files}f · {c.ingested_at ? relativeTime(c.ingested_at.replace(" ", "T") + "Z") : "—"}
+                      {c.files}f · {c.ingested_at ? listTime(c.ingested_at) : "—"}
                     </TipTarget>
                   </span>
                 </div>
@@ -2745,9 +2776,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
                   </span>
                   <span className="text-xs text-text-muted tabular shrink-0 hidden md:inline">{r.author}</span>
                   <span className="text-xs text-text-muted tabular shrink-0">{fmtInt(r.pack_tokens)} tok</span>
-                  <span className="text-xs text-text-muted tabular shrink-0">
-                    {relativeTime(r.created_at.replace(" ", "T") + "Z")}
-                  </span>
+                  <span className="text-xs text-text-muted tabular shrink-0">{listTime(r.created_at)}</span>
                 </button>
                 <ExternalLink
                   href={`https://github.com/${repo}/pull/${r.pr_number}`}

@@ -25,11 +25,13 @@ import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
 import { LoadingSkeleton, PageHeader, TabTrigger } from "../../components/ui";
 import { Skeleton } from "../../components/Skeleton";
-import { EmptyState } from "../../components/EmptyState";
+import { ListState } from "../../components/ui/ListState";
+import { ListTime } from "../../components/ui/ListTime";
+import { ListToolbar } from "../../components/ui/ListToolbar";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { relativeTime, formatValue, truncate, humanizeError } from "../../lib/format";
+import { formatValue, truncate, humanizeError } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 
@@ -149,6 +151,7 @@ function ConflictsPanel() {
   const [next, setNext] = useState<number | null>(null);
   const [total, setTotal] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<unknown>(null);
   const [index, setIndex] = useState(0);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -164,6 +167,7 @@ function ConflictsPanel() {
         rowsFor.current = `${identity.org}/${identity.namespace}`;
         setRows(null);
       }
+      setError(null);
       listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: CONFLICT_PAGE, signal })
         .then((r) => {
           if (live()) {
@@ -173,8 +177,8 @@ function ConflictsPanel() {
             setReason("");
           }
         })
-        .catch(() => {
-          if (live()) setRows([]);
+        .catch((e) => {
+          if (live()) setError(e);
         });
       countConflicts({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((n) => {
@@ -212,10 +216,14 @@ function ConflictsPanel() {
     }
   };
 
+  if (error) {
+    return <ListState kind="error" things="conflicts" error={error} onRetry={() => setReload((n) => n + 1)} />;
+  }
   if (rows === null) return <QueueTable rows={[]} current={null} onPick={() => {}} loading />;
   if (rows.length === 0) {
     return (
-      <EmptyState
+      <ListState
+        kind="empty"
         icon="secure"
         title="No conflicts"
         description="A conflict appears when two memories with the same key disagree — your agent saying 'user lives in X' once and 'user lives in Y' later. None right now means your agent's been consistent."
@@ -224,7 +232,8 @@ function ConflictsPanel() {
   }
 
   const current = rows[index];
-  if (!current) return <EmptyState icon="secure" title="All clear" description="You worked through the queue." />;
+  if (!current)
+    return <ListState kind="empty" icon="secure" title="All clear" description="You worked through the queue." />;
 
   const peerId = current.conflict_with?.[0];
   // The server's count is cached for a minute; it is never less than the rows on hand.
@@ -257,14 +266,8 @@ function ConflictsPanel() {
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-3 text-sm text-text-muted tabular">
-        <span>
-          Conflict {index + 1} of {rows.length} · resolve in order
-        </span>
-        <span className="ml-auto text-xs">
-          {held === null ? `${rows.length} loaded` : `${rows.length} of ${held}`}
-          <span className="sr-only"> conflicts loaded</span>
-        </span>
+      <div className="mb-3 text-sm text-text-muted tabular">
+        Conflict {index + 1} of {rows.length} · resolve in order
       </div>
       <Panel>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
@@ -313,7 +316,19 @@ function ConflictsPanel() {
         </div>
       </Panel>
 
-      <h2 className="mt-6 mb-2 text-sm font-semibold">Queue</h2>
+      <div className="mt-6">
+        <ListToolbar
+          label="Queue"
+          count={
+            <>
+              {held === null ? `${rows.length} loaded` : `${rows.length} of ${held}`}
+              <span className="sr-only"> conflicts loaded</span>
+            </>
+          }
+        >
+          <h2 className="text-sm font-semibold">Queue</h2>
+        </ListToolbar>
+      </div>
       <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} />
       {next !== null && (
         <Button
@@ -377,7 +392,7 @@ function QueueTable({
           },
           { label: <span className="tabular">v{c.version}</span> },
           { label: c.pinned ? "Pinned" : <span className="text-text-muted">—</span> },
-          { label: <span className="tabular text-text-muted">{relativeTime(c.created_at)}</span> },
+          { label: <ListTime iso={c.created_at} className="text-text-muted" /> },
         ],
       }))}
     />
@@ -399,6 +414,7 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
   // A reload after a decision keeps the list on screen, marked busy; another namespace or
   // status is another list, so it starts from the skeleton.
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<unknown>(null);
   const rowsFor = useRef("");
 
   useAbortableEffect(
@@ -415,12 +431,13 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
         setRows(null);
       }
       setRefreshing(true);
+      setError(null);
       listLearnings({ org: identity.org, namespace: identity.namespace }, status, 50, { signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
-        .catch(() => {
-          if (live()) setRows([]);
+        .catch((e) => {
+          if (live()) setError(e);
         })
         .finally(() => {
           if (live()) setRefreshing(false);
@@ -441,29 +458,35 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
 
   return (
     <div>
-      <ButtonGroup
-        aria-label="Learning status"
-        className="mb-4"
-        options={LEARNING_STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] }))}
-        selected={status}
-        onClick={(value) => {
-          const next = LEARNING_STATUSES.find((s) => s === value);
-          if (next) setStatus(next);
-        }}
-      />
-      {rows === null && (
+      <ListToolbar
+        label="Learning status"
+        count={!error && rows !== null ? `${rows.length} ${rows.length === 1 ? "learning" : "learnings"}` : undefined}
+      >
+        <ButtonGroup
+          aria-label="Learning status"
+          options={LEARNING_STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] }))}
+          selected={status}
+          onClick={(value) => {
+            const next = LEARNING_STATUSES.find((s) => s === value);
+            if (next) setStatus(next);
+          }}
+        />
+      </ListToolbar>
+      {!!error && <ListState kind="error" things="learnings" error={error} onRetry={() => setReload((n) => n + 1)} />}
+      {!error && rows === null && (
         <LoadingSkeleton label="Loading learnings">
           <Skeleton className="h-40 w-full" />
         </LoadingSkeleton>
       )}
-      {rows !== null && rows.length === 0 && (
-        <EmptyState
+      {!error && rows !== null && rows.length === 0 && (
+        <ListState
+          kind="empty"
           icon="sparkle"
           title={`No ${status} learnings`}
           description="Learnings are facts noticed across several agents in your organisation and proposed as shared knowledge for everyone. Solo and development setups usually have none."
         />
       )}
-      {rows !== null && rows.length > 0 && (
+      {!error && rows !== null && rows.length > 0 && (
         <div className="space-y-2" aria-busy={refreshing || undefined}>
           {rows.map((r) => (
             <Panel key={r.candidate_id}>
@@ -471,7 +494,7 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
                 <span className="font-mono text-sm text-text-muted">{r.memory_key}</span>
                 <span className="text-xs text-text-muted tabular">
                   {r.supporter_count} supporters · conf {(r.confidence_avg ?? 0).toFixed(2)} ·{" "}
-                  {relativeTime(r.proposed_at)}
+                  <ListTime iso={r.proposed_at} />
                 </span>
               </div>
               <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
@@ -507,9 +530,13 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
               )}
               {status !== "pending" && (
                 <div className="mt-1 text-sm text-text-muted">
-                  {status === "promoted"
-                    ? `Promoted ${r.decided_at ? relativeTime(r.decided_at) : ""}`
-                    : `Rejected ${r.decided_at ? relativeTime(r.decided_at) : ""}`}
+                  {status === "promoted" ? "Promoted" : "Rejected"}
+                  {r.decided_at && (
+                    <>
+                      {" "}
+                      <ListTime iso={r.decided_at} />
+                    </>
+                  )}
                   {r.decided_by && <> by {r.decided_by}</>}
                 </div>
               )}
@@ -531,6 +558,7 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
   // A reload after a removal keeps the list on screen, marked busy; another namespace
   // starts from the skeleton.
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<unknown>(null);
   const rowsFor = useRef("");
 
   useAbortableEffect(
@@ -546,12 +574,13 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
         setRows(null);
       }
       setRefreshing(true);
+      setError(null);
       listAllowlist({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
-        .catch(() => {
-          if (live()) setRows([]);
+        .catch((e) => {
+          if (live()) setError(e);
         })
         .finally(() => {
           if (live()) setRefreshing(false);
@@ -580,9 +609,13 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
     }
   };
 
+  if (error) {
+    return <ListState kind="error" things="allowed exceptions" error={error} onRetry={() => setReload((n) => n + 1)} />;
+  }
   if (rows !== null && rows.length === 0) {
     return (
-      <EmptyState
+      <ListState
+        kind="empty"
         icon="line-in-circle"
         title="No allowed exceptions"
         description="Pairs you explicitly said may coexist. Fills only as a side-effect of clicking 'Allow both' when resolving a conflict — there's nothing for you to add proactively."
@@ -618,7 +651,7 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
               ),
             },
             { label: <span className="text-xs">{r.allowed_by}</span> },
-            { label: <span className="tabular text-xs text-text-muted">{relativeTime(r.allowed_at)}</span> },
+            { label: <ListTime iso={r.allowed_at} className="text-xs text-text-muted" /> },
             {
               label: r.reason ? (
                 <span className="text-xs">{r.reason}</span>
@@ -677,7 +710,7 @@ function Side({
       <div className="flex items-center gap-2 text-xs text-text-muted tabular">
         {version != null && <span>v{version}</span>}
         {pinned && <Badge text="Pinned" state="warning" size="sm" />}
-        {createdAt && <span>{relativeTime(createdAt)}</span>}
+        {createdAt && <ListTime iso={createdAt} />}
       </div>
     </Panel>
   );

@@ -7,8 +7,9 @@ import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Recent } from "./Recent";
 
 // A tag on a memory card adds that tag to the filter, and another tag narrows it further
-// (every tag must match, as `tag:a tag:b` typed in the search does). The active filters
-// sit in the toolbar with the search, so they stay in view as the list scrolls.
+// (every tag must match, as `tag:a tag:b` typed in the search does). The tags in force
+// are the `tag:` tokens in the search field (SPEC-LISTS C9: no chip beside it), so they
+// stay in view as the list scrolls.
 
 const entry = (memory_key: string, tags: string[]): MemoryListEntry => ({
   memory_key,
@@ -63,6 +64,8 @@ const row: MyNamespaceEntry = {
 };
 
 const shown = () => ["both", "alerts_only", "storage_only"].filter((k) => screen.queryByText(k));
+// Click UI's Select items carry no option role; they are addressed by value.
+const item = (value: string) => document.querySelector<HTMLElement>(`[cui-select-item][data-value="${value}"]`);
 const card = (key: string) => screen.getByText(key).closest("[data-memory-key]") as HTMLElement;
 
 describe("Memories: filtering by tags", () => {
@@ -90,7 +93,7 @@ describe("Memories: filtering by tags", () => {
     await screen.findByText("both");
   }
 
-  it("stacks a second tag onto the first, and shows each in the toolbar", async () => {
+  it("stacks a second tag onto the first, and shows each in the search field", async () => {
     await openMemories();
     await userEvent.click(within(card("alerts_only")).getByRole("button", { name: "Filter by tag Alerts" }));
     expect(shown()).toEqual(["both", "alerts_only"]);
@@ -98,9 +101,10 @@ describe("Memories: filtering by tags", () => {
     expect(shown()).toEqual(["both"]);
 
     const toolbar = screen.getByLabelText("Search and filters");
-    expect(within(toolbar).getByText("tag:Alerts")).toBeInTheDocument();
-    expect(within(toolbar).getByText("tag:storage")).toBeInTheDocument();
     expect(screen.getByLabelText("Search memories")).toHaveValue("tag:Alerts tag:storage");
+    // The field says it once; no chip repeats it.
+    expect(within(toolbar).queryByRole("group", { name: "Filters in force" })).toBeNull();
+    expect(within(toolbar).queryByText("tag:Alerts")).toBeNull();
     // On the card, an applied tag reads as pressed.
     expect(within(card("both")).getByRole("button", { name: "Filter by tag storage" })).toHaveAttribute(
       "aria-pressed",
@@ -108,16 +112,16 @@ describe("Memories: filtering by tags", () => {
     );
   });
 
-  it("takes one tag out from the toolbar or the card, and clears them all", async () => {
+  it("takes one tag out from the card, and clears them all", async () => {
     await openMemories();
     await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag Alerts" }));
     await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag storage" }));
     const toolbar = screen.getByLabelText("Search and filters");
-
-    await userEvent.click(within(toolbar).getByRole("button", { name: "Remove tag:Alerts" }));
-    expect(shown()).toEqual(["both", "storage_only"]);
+    expect(shown()).toEqual(["both"]);
     // Pressing an applied tag on a card takes it out again.
     await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag storage" }));
+    expect(shown()).toEqual(["both", "alerts_only"]);
+    await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag Alerts" }));
     expect(shown()).toEqual(["both", "alerts_only", "storage_only"]);
 
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:alerts tag:storage");
@@ -176,7 +180,9 @@ describe("Memories: filtering by tags", () => {
           },
     );
     await openMemories();
-    await userEvent.click(screen.getByRole("button", { name: /^Pinned/ }));
+    await userEvent.click(within(screen.getByLabelText("Search and filters")).getByRole("button", { name: "Status" }));
+    await waitFor(() => expect(item("pinned")).not.toBeNull());
+    await userEvent.click(item("pinned") as HTMLElement);
     expect(await screen.findByText("old_pin")).toBeInTheDocument();
     expect(vi.mocked(listMemories).mock.calls.at(-1)?.[1]).toBe(1000);
     expect(screen.queryByRole("navigation", { name: "Memories pages" })).toBeNull();
@@ -192,7 +198,8 @@ describe("Memories: filtering by tags", () => {
     );
     await openMemories();
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:nomatch");
-    expect(await screen.findByText("Nothing matches tag:nomatch")).toBeInTheDocument();
+    // One line, not the big state: "No memories match tag:nomatch" and Clear filters.
+    expect(await screen.findByText((_, el) => el?.textContent === "No memories match tag:nomatch")).toBeInTheDocument();
     expect(screen.queryByText("No memories yet")).toBeNull();
     expect(screen.getByLabelText("Search memories")).toHaveValue("tag:nomatch");
     await userEvent.click(screen.getAllByRole("button", { name: "Clear filters" }).at(-1)!);
@@ -218,7 +225,7 @@ describe("Memories: filtering by tags", () => {
     await waitFor(() => expect(vi.mocked(listMemories).mock.calls.at(-1)?.[2]).toMatchObject({ tags: ["storage"] }), {
       timeout: 150,
     });
-    expect(screen.queryByText(/^Nothing matches/)).toBeNull();
+    expect(screen.queryByText(/^No memories match/)).toBeNull();
     answer({ entries: [entry("storage_only", ["storage"])], total: 1, today: 1, truncated: false } as never);
     expect(await screen.findByText("storage_only")).toBeInTheDocument();
   });

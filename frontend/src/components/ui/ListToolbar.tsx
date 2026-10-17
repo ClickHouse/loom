@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import type { IconName } from "@clickhouse/click-ui/Icon";
 import { MenuTrigger } from "./Menu";
@@ -21,7 +22,13 @@ export interface ListToolbarProps {
   /** Where the list stands, at the end of the bar ("1–50 of 1,234"). */
   count?: ReactNode;
   /** While rows are selected: their number and what can be done to them. */
-  selection?: { count: number; onClear: () => void; actions: ListToolbarAction[] } | null;
+  selection?: {
+    count: number;
+    onClear: () => void;
+    actions: ListToolbarAction[];
+    /** The select-all checkbox, as Click UI's Table header has: every row on the page. */
+    all?: { total: number; checked: boolean; onToggle: () => void };
+  } | null;
 }
 
 /**
@@ -68,6 +75,13 @@ export function ListToolbar({ label, children, count, selection }: ListToolbarPr
       >
         {selecting && selection ? (
           <>
+            {selection.all && (
+              <Checkbox
+                checked={selection.all.checked ? true : "indeterminate"}
+                onCheckedChange={selection.all.onToggle}
+                aria-label={`Select all ${selection.all.total.toLocaleString()} on this page`}
+              />
+            )}
             <span className="text-sm font-medium tabular whitespace-nowrap">{selection.count} selected</span>
             <Button type="empty" htmlType="button" onClick={selection.onClear} aria-label="Clear selection">
               Clear
@@ -112,8 +126,11 @@ export function ListToolbar({ label, children, count, selection }: ListToolbarPr
         ) : (
           <>
             <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
+            {/* Said when it changes (a search, a filter, a page), and shown on a phone too. */}
             {count && (
-              <span className="hidden whitespace-nowrap text-xs text-text-muted tabular sm:inline">{count}</span>
+              <span aria-live="polite" className="shrink-0 whitespace-nowrap text-xs text-text-muted tabular">
+                {count}
+              </span>
             )}
           </>
         )}

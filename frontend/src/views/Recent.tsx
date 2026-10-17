@@ -1,10 +1,8 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
-import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { Select } from "@clickhouse/click-ui/Select";
 import {
   getMemory,
   listMemories,
@@ -24,33 +22,29 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { Alert, Chip, ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
+import { Alert, ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
+import { ListState } from "../components/ui/ListState";
+import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { SkeletonCard } from "../components/Skeleton";
-import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { dayLabel, displayAgent, humanizeError, searchSummary, SENTINEL_AGENTS } from "../lib/format";
-import { useKeyboard } from "../lib/hooks";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { PageContainer } from "../layout/PageContainer";
-import { MemoryTabs } from "../components/MemoryTabs";
+import { MemoryTabs, useMemoriesSection } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { NamespaceAuditPanel } from "../components/NamespaceAuditPanel";
 import { MentorPanel } from "../components/MentorPanel";
 import { Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import {
-  KEYWORD_PAGE,
-  keywordThenRanked,
-  parseSearchQuery,
-  removeQueryToken,
-  toggleQueryToken,
-} from "../lib/memoriesSearch";
+import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
+import { oneOf } from "../lib/oneOf";
 import { shortcutOff } from "../lib/shortcuts";
 import { useRowNav } from "../lib/useRowNav";
+import { useRowSelection } from "../lib/useRowSelection";
 
 // Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
 // The browse feed pages up to this; past it, search covers the whole namespace.
@@ -105,9 +99,48 @@ function detailToEntry(key: string, d: MemoryDetail): MemoryListEntry {
   };
 }
 
-const SHOWN_GROUP = "memories-shown";
+/** What the Status select shows (SPEC-LISTS C9). Every status but Live and Recently
+ *  deleted reads the newest 1,000 and keeps the matching rows: none has a server filter. */
+type Status = "live" | "pinned" | "conflicted" | "verified" | "deleted";
+const STATUSES: ReadonlyArray<{ value: Status; label: string }> = [
+  { value: "live", label: "Live" },
+  { value: "pinned", label: "Pinned" },
+  { value: "conflicted", label: "Conflicted" },
+  { value: "verified", label: "Verified" },
+  { value: "deleted", label: "Recently deleted" },
+];
+const EVERY_AGENT = "*";
 
+/** Memories: the list, or the Insights tab (the usage audit and the mentor). */
 export function Recent() {
+  return useMemoriesSection() === "insights" ? <MemoryInsights /> : <MemoryList />;
+}
+
+/** The Insights tab: what the namespace's usage says, read as a whole. Each panel runs on a
+ *  click, never on mount. */
+function MemoryInsights() {
+  const identity = useIdentity();
+  return (
+    <PageContainer>
+      <PageHeader title="Memories" tab="Insights">
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
+      </PageHeader>
+      <MemoryTabs active="insights" />
+      <div className="space-y-4">
+        {/* How the namespace is being used. A click, never on mount — the op is ~14 reads. */}
+        <NamespaceAuditPanel identity={identity} />
+        {/* What the store would tell an agent working here — the planes it never touched
+            and whether past hints were followed. */}
+        <MentorPanel identity={identity} />
+      </div>
+    </PageContainer>
+  );
+}
+
+function MemoryList() {
   const identity = useIdentity();
   // Viewers see the page read-only — the write CTAs are disabled with the reason, not
   // offered and then refused by the server.
@@ -139,29 +172,19 @@ export function Recent() {
   const [total, setTotal] = useState(0);
   // A filtered read that hit its 1,000-row cap: the list says it shows the newest matches.
   const [truncated, setTruncated] = useState(false);
-  // Of `total`, how many were created today (server-computed, not the page).
-  const [todayCount, setTodayCount] = useState(0);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [pinnedOnly, setPinnedOnly] = useState(false);
+  const [status, setStatus] = useState<Status>("live");
   // Surfaces tombstoned rows + a Restore action in the 14-day grace window.
-  const [showDeleted, setShowDeleted] = useState(false);
-  // The list reloads behind the loading skeleton, which unmounts the toolbar; the chosen
-  // option takes focus back once the rows are in.
-  const refocusShown = useRef(false);
-  useEffect(() => {
-    if (entries === null || !refocusShown.current) return;
-    refocusShown.current = false;
-    document.querySelector<HTMLElement>(`#${SHOWN_GROUP} [aria-pressed="true"]`)?.focus();
-  }, [entries]);
+  const showDeleted = status === "deleted";
   // Tag filter from the global store — set by clicking a tag chip in the
-  // Inspector, shown as a dismissable chip at the top of the list.
+  // Inspector; it joins the search as a `tag:` token.
   const memoryTagFilter = useStore((s) => s.memoryTagFilter);
   const setMemoryTagFilter = useStore((s) => s.setMemoryTagFilter);
-  // Per-agent filter chip — null means "all agents." Derived from the
-  // entries actually present, not a static list.
+  // The Agent select — null means every agent. Its options are the agents seen in this
+  // namespace so far, so picking one does not take the others away.
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  const [seenAgents, setSeenAgents] = useState<string[]>([]);
   // Zero-indexed page into the recency-ordered namespace list.
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = usePageSize("memories");
@@ -412,7 +435,9 @@ export function Recent() {
     } else {
       all = all.filter((e) => !e.tombstoned_at);
     }
-    if (pinnedOnly) all = all.filter((e) => e.pinned);
+    if (status === "pinned") all = all.filter((e) => e.pinned);
+    else if (status === "conflicted") all = all.filter((e) => conflictKeys.has(e.memory_key));
+    else if (status === "verified") all = all.filter((e) => e.verification === "human" || e.verification === "process");
     // The agent chip and the `agent:` / `tag:` query syntax. What was typed keeps its case,
     // so a typed tag or agent and the rows' compare lowercased (humans and agents both
     // write tags).
@@ -436,40 +461,18 @@ export function Recent() {
         .sort((a, b) => (rank.get(a.memory_key) ?? Infinity) - (rank.get(b.memory_key) ?? Infinity));
     }
     return all;
-  }, [entries, searchHits, searchExtra, pinnedOnly, showDeleted, agentFilter, queryAgent, activeTags]);
+  }, [entries, searchHits, searchExtra, status, conflictKeys, showDeleted, agentFilter, queryAgent, activeTags]);
 
-  // Agents present in the unfiltered list (powers the chip row).
-  const agentsInList = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const e of entries ?? []) {
-      const a = e.agent || "";
-      // Sentinels (*, -) aren't useful filter targets.
-      if (a && !SENTINEL_AGENTS.has(a)) m.set(a, (m.get(a) || 0) + 1);
-    }
-    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
-  }, [entries]);
-
-  const toggleSelect = useCallback((key: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
+  // The agents the namespace's rows were written by, gathered as pages and filters load
+  // (sentinels "*" and "-" are not writers); a new namespace starts again.
+  useEffect(() => setSeenAgents([]), [identity.org, identity.namespace]);
+  useEffect(() => {
+    const here = (entries ?? []).map((e) => e.agent || "").filter((a) => a && !SENTINEL_AGENTS.has(a));
+    setSeenAgents((prev) => {
+      const next = [...new Set([...prev, ...here])].sort();
+      return next.length === prev.length ? prev : next;
     });
-  }, []);
-  // One callback for every card, so the memoised cards skip a render when it is not theirs.
-  const selecting = selected.size > 0;
-  const openCard = useCallback(
-    (e: MemoryListEntry) => (selecting ? toggleSelect(e.memory_key) : inspect(e.memory_key, { agent: e.agent })),
-    [selecting, toggleSelect, inspect],
-  );
-
-  // Keyboard nav, active when no inspector is open and not typing: the list is one tab
-  // stop, j / k and the arrows move the focus from card to card, Enter opens the focused
-  // card (its button), Space selects it, and the inspector returns focus to it on close.
-  const listNav = useRowNav({ enabled: !inspectedKey && flatList.length > 0 });
-  // Escape clears a selection; with none it is left to whatever else listens for it.
-  const clearOnEscape = useMemo(() => ({ Escape: () => setSelected(new Set()) }), []);
-  useKeyboard(clearOnEscape, selecting && !inspectedKey && flatList.length > 0);
+  }, [entries]);
 
   // A memory's identity is (org, namespace, agent, user_id, session_id) +
   // memory_key, and this list spans agents (there is an agent filter chip). The
@@ -514,7 +517,7 @@ export function Recent() {
       }
     }
     setBusy(false);
-    setSelected(new Set());
+    selection.clear();
     toast(`Pinned ${ok}${fail ? ` · ${fail} failed` : ""}`, fail ? "error" : "ok");
     bumpMemoriesVersion();
   };
@@ -548,7 +551,7 @@ export function Recent() {
       }
     }
     setBusy(false);
-    setSelected(new Set());
+    selection.clear();
     toast(
       ok === 0 && fail > 0
         ? `Nothing deleted — ${fail} could not be matched`
@@ -567,9 +570,9 @@ export function Recent() {
   // A filter covers the whole namespace, not the page on screen (which showed empty pages
   // while matches sat on others). A tag or agent filter is asked of the server: it narrows
   // to rows with any of the tags (and the agent), and the list then requires every tag, in
-  // any case. Pinned has no server filter: the list reads the newest 1,000 and keeps the
-  // pinned ones. What is typed is debounced, so `tag:…` sends one read, not one per key; a
-  // chip applies at once.
+  // any case. Pinned, Conflicted and Verified have no server filter: the list reads the
+  // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends
+  // one read, not one per key; a chip applies at once.
   const typedKey = JSON.stringify({ tags: queryTags, agent: queryAgent ?? "" });
   const [typedFilter, setTypedFilter] = useState(typedKey);
   useEffect(() => {
@@ -581,9 +584,33 @@ export function Recent() {
   const filterPending = typedKey !== typedFilter;
   const listFilter = useMemo(() => {
     const typed = JSON.parse(typedFilter) as { tags: string[]; agent: string };
-    return { tags: typed.tags, agent: typed.agent || agentFilter || "", pinned: pinnedOnly };
-  }, [typedFilter, agentFilter, pinnedOnly]);
-  const listFiltered = listFilter.tags.length > 0 || listFilter.agent !== "" || listFilter.pinned;
+    return { tags: typed.tags, agent: typed.agent || agentFilter || "", status: showDeleted ? "live" : status };
+  }, [typedFilter, agentFilter, status, showDeleted]);
+  const listFiltered = listFilter.tags.length > 0 || listFilter.agent !== "" || listFilter.status !== "live";
+
+  // A filtered list is one read of its newest 1,000 matches, paged here.
+  const searchActive = searchHits != null;
+  const pageList = useMemo(
+    () => (listFiltered && !searchActive ? flatList.slice(page * pageSize, (page + 1) * pageSize) : flatList),
+    [flatList, listFiltered, searchActive, page, pageSize],
+  );
+  const pageKeys = useMemo(() => pageList.map((e) => e.memory_key), [pageList]);
+  // Checkboxes: one row, a Shift-click range, every row on the page; Escape clears them
+  // while the drawer is closed (it owns Escape while open).
+  const selection = useRowSelection(pageKeys, { enabled: !inspectedKey });
+  const { selected, toggle: toggleSelect } = selection;
+  // One callback for every card, so the memoised cards skip a render when it is not theirs.
+  const selecting = selected.size > 0;
+  const openCard = useCallback(
+    (e: MemoryListEntry) => (selecting ? toggleSelect(e.memory_key) : inspect(e.memory_key, { agent: e.agent })),
+    [selecting, toggleSelect, inspect],
+  );
+
+  // Keyboard nav, active when no inspector is open and not typing: the list is one tab
+  // stop, j / k and the arrows move the focus from card to card, Enter opens the focused
+  // card (its button), Space selects it, and the inspector returns focus to it on close.
+  const listNav = useRowNav({ enabled: !inspectedKey && flatList.length > 0 });
+
   // A new namespace, view or filter starts at its first page, set before the read so the
   // read never asks for a page of the old scope.
   const pageScope = `${identity.org}/${identity.namespace}/${showDeleted}/${JSON.stringify(listFilter)}`;
@@ -656,12 +683,12 @@ export function Recent() {
           if (isFirst) {
             setRefreshing(false);
             setReadFor(readKey);
+            setLoadError(null);
           }
           if (r.unchanged) return;
           knownVersion = r.namespace_version ?? "";
           setTruncated(listFiltered && r.truncated);
           setTotal(r.total);
-          setTodayCount(r.today);
           // Fill before painting so a list without values never sends 100 cards to
           // their per-card fallback while the one bulk read is in flight.
           await fillMissingValues(r.entries);
@@ -716,169 +743,119 @@ export function Recent() {
     void fetchOnceRef.current(false);
   }, 8000);
 
-  if (entries === null) {
-    return (
-      <PageContainer className="space-y-3">
-        <PageHeader title="Memories" />
-        <MemoryTabs active="memories" />
-        <LoadingSkeleton label="Loading memories" className="space-y-2">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-        </LoadingSkeleton>
-      </PageContainer>
-    );
-  }
+  const retry = () => {
+    setLoadError(null);
+    setEntries(null);
+    void fetchOnceRef.current?.(true);
+  };
+  // The namespace is empty only when the read worked and no filter narrowed it; a filter
+  // that matches nothing keeps the toolbar and says so below.
+  const failed = entries !== null && entries.length === 0 && !!loadError;
+  const emptyNamespace =
+    entries !== null && entries.length === 0 && !loadError && !listFiltered && !filterPending && !showDeleted;
 
-  if (entries.length === 0 && loadError) {
-    return (
-      <PageContainer>
-        <PageHeader title="Memories">
-          <ScopeBadge kind="namespace" value={identity.namespace} />
-        </PageHeader>
-        <MemoryTabs active="memories" />
-        <EmptyState
-          icon="warning"
-          title="Couldn't load memories"
-          description={loadError.requestId ? `${loadError.text} (request id ${loadError.requestId})` : loadError.text}
-          action={{
-            label: "Retry",
-            onClick: () => {
-              setLoadError(null);
-              setEntries(null);
-              void fetchOnceRef.current?.(true);
-            },
-          }}
-        />
-      </PageContainer>
-    );
-  }
-
-  // The namespace is empty only when no filter narrowed the read; a filter that matches
-  // nothing keeps the toolbar and says so below.
-  if (entries.length === 0 && !listFiltered && !filterPending) {
-    return (
-      <PageContainer>
-        <PageHeader title="Memories">
-          <ScopeBadge kind="namespace" value={identity.namespace} />
-        </PageHeader>
-        <MemoryTabs active="memories" />
-        <EmptyState
-          icon="clock"
-          title="No memories yet"
-          description={
-            // Keyed on auth-off, not on the name "local": the namespace an
-            // auth-disabled deployment serves is configurable
-            // (LOOM_DEFAULT_NAMESPACE), and this onboarding copy is about the
-            // mode, not the name.
-            isAuthDisabled()
-              ? "This is your private single-user namespace. Anything you or your agent writes here stays — across browser sessions, container restarts, and Loom upgrades. Add a memory below, or wire up an MCP client (Settings) so your agent writes here automatically."
-              : readOnly
-                ? `Memories accumulate when an agent with writer access writes via MCP. ${READ_ONLY_TIP}.`
-                : "Memories accumulate when your agent writes via MCP — or add one yourself to seed."
-          }
-          action={readOnly ? undefined : { label: "Add memory", onClick: () => setAddOpen(true) }}
-        />
-        <AddMemoryDialog
-          open={addOpen}
-          onOpenChange={setAddOpen}
-          identity={identity}
-          onAdded={() => bumpMemoriesVersion()}
-        />
-      </PageContainer>
-    );
-  }
-
-  // Group entries by day label, but not while searching — day buckets
-  // would hide the relevance ranking. Ranked results go under one heading.
-  const searchActive = searchHits != null;
-  const filtering = queryTags.length > 0 || !!queryAgent || agentFilter != null || pinnedOnly;
+  // Group entries by day label, but not while searching — day buckets would hide the
+  // relevance ranking.
+  // A tag or an agent narrows any status; a status but Live is a filter too.
+  const narrowed = queryTags.length > 0 || !!queryAgent || agentFilter != null;
+  const filtering = narrowed || status !== "live";
   // The filters in force, as they read in the toolbar ("tag:api, agent:bot, Pinned").
   const filterNames = [
     ...queryTags.map((t) => `tag:${t}`),
     ...(queryAgent ? [`agent:${queryAgent}`] : agentFilter != null ? [displayAgent(agentFilter)] : []),
-    ...(pinnedOnly ? ["Pinned"] : []),
+    ...(status !== "live" ? [STATUSES.find((o) => o.value === status)?.label ?? status] : []),
   ].join(", ");
   const clearFilters = () => {
     setQuery(rawQuery);
-    setPinnedOnly(false);
+    setStatus("live");
     setAgentFilter(null);
   };
-  // A filtered list is one read of its newest 1,000 matches, paged here.
-  const pageList = listFiltered && !searchActive ? flatList.slice(page * pageSize, (page + 1) * pageSize) : flatList;
   const mountedList = firstScreenOnly ? pageList.slice(0, FIRST_SCREEN_CARDS) : pageList;
   const byDay = new Map<string, MemoryListEntry[]>();
-  if (!searchActive) {
-    for (const e of mountedList) {
-      const label = dayLabel(e.created_at);
-      const arr = byDay.get(label) || [];
-      arr.push(e);
-      byDay.set(label, arr);
-    }
-  } else {
-    byDay.set("Results", mountedList);
+  for (const e of mountedList) {
+    const label = searchActive ? "" : dayLabel(e.created_at);
+    const arr = byDay.get(label) || [];
+    arr.push(e);
+    byDay.set(label, arr);
   }
   // The deleted view is fetched in one shot: the namespace's live total has nothing to do
   // with the deleted count. A filtered list counts its matches.
-  const listTotal = showDeleted ? flatList.length : listFiltered ? flatList.length : total || entries.length;
+  const listTotal = showDeleted || listFiltered ? flatList.length : total || (entries?.length ?? 0);
   const rangeStart = pageList.length === 0 ? 0 : (showDeleted ? 0 : page * pageSize) + 1;
   const rangeEnd = (showDeleted ? 0 : page * pageSize) + pageList.length;
-  const countLine = searchActive
-    ? `${flatList.length} shown`
-    : showDeleted
-      ? `${flatList.length.toLocaleString()} recently deleted`
-      : listFiltered
-        ? `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()} matching`
+  // One count, at the end of the toolbar (SPEC-LISTS C4): the range while browsing, the
+  // matches for a search or a filter, the last one while a read is in flight, nothing on an
+  // error or before the first read.
+  const matches = (n: number) => `${n.toLocaleString()} match${n === 1 ? "" : "es"}`;
+  const countText =
+    entries === null || failed
+      ? ""
+      : searchActive || showDeleted || listFiltered
+        ? matches(flatList.length)
         : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()}`;
+  const lastCount = useRef("");
+  if (countText && !(searching || refreshing)) lastCount.current = countText;
+  const countShown = searching || refreshing ? lastCount.current : countText;
+  const busyList = refreshing || searching || ranking;
+
+  const statusSelect = (className: string) => (
+    <Select
+      value={status}
+      onSelect={(value) => {
+        const v = oneOf(
+          STATUSES.map((o) => o.value),
+          value,
+        );
+        if (v !== null) setStatus(v);
+      }}
+      triggerProps={{ "aria-label": "Status" }}
+      className={className}
+    >
+      {STATUSES.filter((o) => o.value !== "conflicted" || conflictsReadable).map((o) => (
+        <Select.Item key={o.value} value={o.value}>
+          {o.label}
+        </Select.Item>
+      ))}
+    </Select>
+  );
+  const agentSelect = (className: string) =>
+    (seenAgents.length > 1 || agentFilter != null) && (
+      <Select
+        value={agentFilter ?? EVERY_AGENT}
+        onSelect={(value) => setAgentFilter(value === EVERY_AGENT ? null : value)}
+        triggerProps={{ "aria-label": "Agent" }}
+        className={className}
+      >
+        <Select.Item value={EVERY_AGENT}>Every agent</Select.Item>
+        {seenAgents.map((a) => (
+          <Select.Item key={a} value={a}>
+            {displayAgent(a)}
+          </Select.Item>
+        ))}
+      </Select>
+    );
 
   return (
     <PageContainer className="pb-24">
       <PageHeader
         title="Memories"
         actions={
-          <>
-            <span id={SHOWN_GROUP} className="whitespace-nowrap">
-              <ButtonGroup
-                aria-label="Memories shown"
-                selected={showDeleted ? "deleted" : "live"}
-                onClick={(value) => {
-                  if ((value === "deleted") === showDeleted) return;
-                  refocusShown.current = true;
-                  setShowDeleted(value === "deleted");
-                }}
-                options={[
-                  { value: "live", label: "Live" },
-                  { value: "deleted", label: "Recently deleted" },
-                ]}
-              />
-            </span>
+          // The empty state's own Add is the one primary while it shows.
+          !emptyNamespace && (
             <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
               <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
                 Add memory
               </Button>
             </Unavailable>
-          </>
+          )
         }
       >
-        <ScopeBadge kind="namespace" value={identity.namespace} />
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
       </PageHeader>
       <MemoryTabs active="memories" />
-
-      {/* Authoritative counts (server-computed, not the truncated page). */}
-      {total > 0 && !searchActive && (
-        <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
-          <Badge text={`${total.toLocaleString()} total`} state="neutral" />
-          <Badge text={`${todayCount.toLocaleString()} today`} state="neutral" />
-        </div>
-      )}
-
-      {/* How the namespace is being used, next to how many
-          rows it has. A click, never on mount — the op is ~14 reads. */}
-      {!searchActive && !showDeleted && <NamespaceAuditPanel identity={identity} />}
-
-      {/* What the store would tell an agent working here —
-          the planes it never touched and whether past hints were followed. */}
-      {!searchActive && !showDeleted && <MentorPanel identity={identity} />}
 
       <AddMemoryDialog
         open={addOpen}
@@ -887,17 +864,19 @@ export function Recent() {
         onAdded={() => bumpMemoriesVersion()}
       />
 
-      {/* The search, the filters in force and where the list stands, in the one bar that
-          stays at the top as the list scrolls: a filter picked from a card further down is
-          seen to apply. While memories are selected, the bar holds their actions instead. */}
+      {/* The search, the filters and where the list stands, in the one bar that stays at
+          the top as the list scrolls, in every state: nothing moves when the rows land. A
+          filter picked from a card further down is seen to apply. While memories are
+          selected, the bar holds their actions instead. */}
       <ListToolbar
         label="Search and filters"
-        count={countLine}
+        count={countShown && <span aria-busy={busyList || undefined}>{countShown}</span>}
         selection={
-          selected.size > 0
+          selecting
             ? {
                 count: selected.size,
-                onClear: () => setSelected(new Set()),
+                onClear: selection.clear,
+                all: { total: pageKeys.length, checked: selection.allSelected, onToggle: selection.toggleAll },
                 actions: [
                   { label: "Pin", icon: "pin", disabled: busy, onClick: bulkPin },
                   {
@@ -921,52 +900,32 @@ export function Recent() {
             aria-label="Search memories"
           />
         </div>
+        {statusSelect("hidden w-44 shrink-0 sm:block")}
+        {agentSelect("hidden w-44 shrink-0 sm:block")}
         {filtering && (
-          // biome-ignore lint/a11y/useSemanticElements: a group of filter chips, not a fieldset of inputs
-          <div
-            role="group"
-            aria-label="Filters in force"
-            className="hidden min-w-0 items-center gap-1.5 overflow-x-auto text-xs sm:flex"
-          >
-            {queryAgent && (
-              <Chip
-                label={`agent:${queryAgent}`}
-                mono
-                onRemove={() => setQuery((q) => removeQueryToken(q, `agent:${queryAgent}`))}
-              />
-            )}
-            {!queryAgent && agentFilter != null && (
-              <Chip label={displayAgent(agentFilter)} onRemove={() => setAgentFilter(null)} />
-            )}
-            {queryTags.map((t) => (
-              <Chip key={t} label={`tag:${t}`} mono onRemove={() => setQuery((q) => removeQueryToken(q, `tag:${t}`))} />
-            ))}
-            {pinnedOnly && <Chip label="Pinned" onRemove={() => setPinnedOnly(false)} />}
-            <Button type="empty" htmlType="button" onClick={clearFilters}>
-              Clear filters
-            </Button>
-          </div>
-        )}
-        {filtering && (
-          // A phone's search shows the `tag:` text itself; the chips would not fit beside it.
-          <Button
-            type="empty"
-            htmlType="button"
-            className="sm:hidden"
-            onClick={clearFilters}
-            aria-label="Clear filters"
-          >
-            Clear
+          <Button type="empty" htmlType="button" className="hidden shrink-0 sm:inline-flex" onClick={clearFilters}>
+            Clear filters
           </Button>
         )}
       </ListToolbar>
-      {/* Mounted before the first search, so a screen reader hears each summary. */}
-      <div role="status" className={searchHits != null ? "-mt-1 mb-3 text-xs text-text-muted tabular" : ""}>
+      {/* A phone's toolbar has room for the search only; the filters sit under it. */}
+      <div className="-mt-1 mb-3 flex items-center gap-2 sm:hidden">
+        {statusSelect("min-w-0 flex-1")}
+        {agentSelect("min-w-0 flex-1")}
+        {filtering && (
+          <Button type="empty" htmlType="button" onClick={clearFilters} aria-label="Clear filters">
+            Clear
+          </Button>
+        )}
+      </div>
+      {/* Mounted before the first search, so a screen reader hears each summary; the
+          toolbar's count is the one on screen. */}
+      <p role="status" className="sr-only">
         {searchHits != null &&
           (searching
             ? "Searching…"
             : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`)}
-      </div>
+      </p>
       {!searching && searchAbstain && (
         <Alert
           role="status"
@@ -982,86 +941,86 @@ export function Recent() {
         />
       )}
 
-      {(entries.some((e) => e.pinned) || agentsInList.length > 1 || showDeleted) && (
-        <div className="mb-5 flex flex-wrap items-center gap-1">
-          {entries.some((e) => e.pinned) && !showDeleted && (
-            <Chip
-              label="Pinned"
-              icon={<Icon name="star" size="xs" aria-hidden="true" />}
-              count={entries.filter((e) => e.pinned).length}
-              selected={pinnedOnly}
-              onClick={() => setPinnedOnly((v) => !v)}
-            />
-          )}
-          {showDeleted && (
-            <Chip label="Recently deleted · 14-day grace" selected onRemove={() => setShowDeleted(false)} />
-          )}
-          {/* Agent filter chips — only when more than one agent exists.
-              Click toggles; clicking the active chip clears the filter. */}
-          {agentsInList.length > 1 &&
-            agentsInList.map(([agent, count]) => {
-              const active = agentFilter === agent;
-              return (
-                <Chip
-                  key={`a-${agent}`}
-                  label={displayAgent(agent)}
-                  count={count}
-                  selected={active}
-                  tip={`Show only memories written by ${displayAgent(agent)}`}
-                  onClick={() => setAgentFilter(active ? null : agent)}
-                />
-              );
-            })}
-        </div>
+      {entries === null && (
+        <LoadingSkeleton label="Loading memories" className="space-y-2">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </LoadingSkeleton>
       )}
 
-      {/* Filter-zeroed empty state: entries exist but filters are too
-          tight. Truly-empty namespace is handled by the EmptyState branch above. */}
-      {flatList.length === 0 &&
-        (entries.length > 0 || listFiltered) &&
+      {failed && (
+        <ListState
+          kind="error"
+          things="memories"
+          error={loadError.text}
+          requestId={loadError.requestId || undefined}
+          onRetry={retry}
+        />
+      )}
+
+      {emptyNamespace && (
+        <ListState
+          kind="empty"
+          icon="clock"
+          title="No memories yet"
+          description={
+            // Keyed on auth-off, not on the name "local": the namespace an
+            // auth-disabled deployment serves is configurable
+            // (LOOM_DEFAULT_NAMESPACE), and this onboarding copy is about the
+            // mode, not the name.
+            isAuthDisabled()
+              ? "This is your private single-user namespace. Anything you or your agent writes here stays — across browser sessions, container restarts, and Loom upgrades. Add a memory below, or wire up an MCP client (Settings) so your agent writes here automatically."
+              : readOnly
+                ? `Memories accumulate when an agent with writer access writes via MCP. ${READ_ONLY_TIP}.`
+                : "Memories accumulate when your agent writes via MCP — or add one yourself to seed."
+          }
+          action={readOnly ? undefined : { label: "Add memory", onClick: () => setAddOpen(true) }}
+        />
+      )}
+
+      {/* Rows exist, or a filter was asked of the server, and none pass: one line and a way
+          out, once the read for the filter in force has landed. */}
+      {entries !== null &&
+        !failed &&
+        !emptyNamespace &&
+        flatList.length === 0 &&
+        !searching &&
         readFor === JSON.stringify(listFilter) &&
         !filterPending &&
-        (showDeleted ? (
-          <div className="py-12 text-center">
-            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
-              <Icon name="trash" size="md" aria-hidden="true" />
-            </div>
-            <h2>No recently deleted memories</h2>
-            <p className="mt-1 text-sm text-text-muted leading-relaxed">
-              Deleted memories stay here for 14 days so you can restore them — nothing has been deleted recently.
-            </p>
-            <Button type="secondary" htmlType="button" onClick={() => setShowDeleted(false)} className="mt-4">
-              Back to live
-            </Button>
-          </div>
-        ) : (
-          <div className="py-12 text-center">
-            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
-              <Icon name="clock" size="md" aria-hidden="true" />
-            </div>
-            <h2>Nothing matches {filterNames || "your filters"}</h2>
-            <p className="mt-1 text-sm text-text-muted leading-relaxed">
-              No memory in this namespace passes the filters in force.
-            </p>
-            <Button
-              type="secondary"
-              htmlType="button"
-              className="mt-4"
-              onClick={() => {
-                setQuery("");
-                clearFilters();
-              }}
-            >
-              Clear filters
-            </Button>
-          </div>
+        (showDeleted && !narrowed ? null : (
+          <ListState
+            kind="filtered"
+            things="memories"
+            filter={
+              [searchActive ? `"${rawQuery.trim()}"` : "", filterNames].filter(Boolean).join(", ") || "your filters"
+            }
+            onClear={() => {
+              setQuery("");
+              clearFilters();
+            }}
+          />
         ))}
+      {entries !== null &&
+        !failed &&
+        showDeleted &&
+        flatList.length === 0 &&
+        !narrowed &&
+        readFor === JSON.stringify(listFilter) && (
+          <ListState
+            kind="empty"
+            icon="trash"
+            title="No recently deleted memories"
+            description="Deleted memories stay here for 14 days so you can restore them — nothing has been deleted recently."
+            action={{ label: "Show live memories", onClick: () => setStatus("live") }}
+          />
+        )}
 
       {truncated && (
         <p className="mb-3 text-xs text-text-muted">
           {listFilter.tags.length > 0 || listFilter.agent
             ? "Showing the newest 1,000 matches. Add a tag or a search word to narrow them."
-            : "Showing the pinned memories among the newest 1,000."}
+            : `Showing the ${filterNames.toLowerCase()} memories among the newest 1,000.`}
         </p>
       )}
       {/* Where a page change takes the reader: a heading a screen reader announces. */}
@@ -1070,9 +1029,9 @@ export function Recent() {
       </h2>
       <div ref={listNav} className="space-y-6" aria-busy={refreshing || undefined}>
         {Array.from(byDay.entries()).map(([day, items]) => (
-          <section key={day}>
-            <SectionHeading level={2} label={day} count={items.length} />
-            <div className="space-y-2 mt-2">
+          <section key={day || "results"} aria-label={day ? undefined : "Search results"}>
+            {day && <SectionHeading level={2} label={day} count={items.length} />}
+            <div className={`space-y-2 ${day ? "mt-2" : ""}`}>
               {items.map((e) => {
                 const isNew = newKeys.has(e.memory_key);
                 const isSelected = selected.has(e.memory_key);
@@ -1092,8 +1051,10 @@ export function Recent() {
                     leading={
                       <Checkbox
                         checked={isSelected}
-                        onCheckedChange={() => toggleSelect(e.memory_key)}
-                        onClick={(ev) => ev.stopPropagation()}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          toggleSelect(e.memory_key, ev.shiftKey);
+                        }}
                         aria-label={`Select ${e.memory_key}`}
                         className="relative z-[1]"
                       />
@@ -1109,23 +1070,18 @@ export function Recent() {
                       onSelect={openCard}
                       onTagClick={toggleTag}
                       activeTags={activeTags}
-                      timeMode="absolute"
+                      aside={
+                        searchActive && keywordKeys.has(e.memory_key) ? (
+                          <SearchWhy contains={rawQuery.trim()} />
+                        ) : (
+                          why && <SearchWhy hit={why} rank={(searchHits?.indexOf(e.memory_key) ?? 0) + 1} />
+                        )
+                      }
                     />
-                    {searchActive && keywordKeys.has(e.memory_key) ? (
-                      <div className="mt-1 px-2 text-xs text-text-muted" data-testid="search-why">
-                        contains "{rawQuery.trim()}"
-                      </div>
-                    ) : (
-                      why && <SearchWhy hit={why} rank={(searchHits?.indexOf(e.memory_key) ?? 0) + 1} />
-                    )}
                     {isTombstoned && (
-                      <div className="flex items-center justify-between mt-1 px-2 py-1 text-xs text-text-muted">
+                      <div className="flex items-center justify-between mt-1 py-1 text-xs text-text-muted">
                         <span>
-                          Deleted
-                          {e.tombstoned_at
-                            ? ` ${new Date(e.tombstoned_at).toISOString().slice(0, 16).replace("T", " ")}`
-                            : ""}{" "}
-                          ·{(() => {
+                          Deleted <ListTime iso={e.tombstoned_at} /> ·{(() => {
                             if (!e.tombstoned_at) return " in grace window";
                             const ageMs = Date.now() - new Date(e.tombstoned_at).getTime();
                             const daysLeft = Math.max(0, 14 - Math.floor(ageMs / (24 * 3600 * 1000)));
@@ -1166,7 +1122,7 @@ export function Recent() {
         ))}
       </div>
 
-      {!searchActive && !showDeleted && (
+      {!searchActive && !showDeleted && !failed && entries !== null && (
         <ListPager
           label="Memories pages"
           page={page}

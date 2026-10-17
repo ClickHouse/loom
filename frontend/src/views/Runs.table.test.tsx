@@ -13,7 +13,11 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listRuns: (...args: Parameters<typeof actual.listRuns>) => listRuns(...args),
+    // The page reads run.list a page at a time; these tests answer with the rows alone.
+    listRunsPage: async (...args: Parameters<typeof actual.listRunsPage>) => {
+      const runs = await listRuns(...args);
+      return { runs, total: runs.length };
+    },
     getRun: vi.fn(async () => ({ found: false, run: null })),
     listMine: vi.fn(async () => []),
     isAuthDisabled: () => false,

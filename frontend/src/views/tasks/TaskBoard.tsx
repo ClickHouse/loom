@@ -1,24 +1,35 @@
+import { useState, type HTMLAttributes, type KeyboardEvent } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
 import { Title } from "@clickhouse/click-ui/Title";
-import type { HTMLAttributes, KeyboardEvent } from "react";
 import type { TaskListRow } from "../../api/tasks";
-import { GROUPS, leaseMinutesLeft, posterName, rel, sublineOf, type Group } from "../../lib/tasks";
-import { Avatar, KindTag, LaneBadge, PosterAvatar } from "./TaskBits";
-import type { RowContext } from "./TaskList";
+import { GROUPS, assigneeOf, type Group } from "../../lib/tasks";
+import { Assignee, LaneBadge, PriorityBar } from "./TaskBits";
+import { LANE_ROWS, SublineView, type RowContext } from "./TaskList";
 import { useTaskDrag } from "./drag";
+import { ListTime } from "../../components/ui/ListTime";
 
 /**
- * The board: the list's five groups as columns that scroll sideways, compact cards —
- * priority dot, kind, title, the state's one line, poster or owner, age. Board and list
- * share the rows, the filters and the selection; switching keeps the open panel.
+ * The board: the list's five groups as columns that scroll sideways, compact cards — the
+ * priority and the title, the kind and the state's one line, the assignee and the age. A
+ * column lists 20 cards, then "Show all N". Board and list share the rows, the filters and
+ * the selection; switching keeps the open panel.
  *
  * A writer drags a card onto another column to move it: the move is the one `dropAction`
  * names (a reason still opens its dialog). While a card is held, the columns it may land
  * in are marked and the others dimmed. The panel's buttons are the keyboard path.
  */
+
+// What an empty column says: what would put a task there.
+const EMPTY_COLUMN: Record<Group, string> = {
+  triage: "Nothing waiting for a decision.",
+  todo: "Accepted tasks queue here for an agent.",
+  in_progress: "Nothing is running.",
+  waiting: "Blocked and deferred tasks wait here.",
+  closed: "Nothing closed yet.",
+};
+
 function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAttributes<HTMLElement> }) {
-  const s = sublineOf(r, ctx.now, ctx.progressNotes.get(r.task_id));
-  const running = r.status === "in_progress";
-  const left = running ? leaseMinutesLeft(r.lease_until, ctx.now) : null;
+  const who = assigneeOf(r, ctx.ownerAgentOf(r.inbox));
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
       e.preventDefault();
@@ -38,58 +49,27 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
       onKeyDown={onKey}
       {...drag}
     >
-      <span className="flex items-center gap-2">
-        <span className="tq-pdot" data-p={r.priority} aria-label={`P${r.priority}`} role="img" />
-        <KindTag kind={r.kind} />
+      <span className="flex items-start gap-2">
+        <PriorityBar priority={r.priority} />
+        <span className="font-medium text-sm min-w-0 [overflow-wrap:anywhere]">{r.title}</span>
       </span>
-      <span className="font-medium text-sm">{r.title}</span>
-      {s && (
-        <span className="text-xs text-text-muted italic">
-          {s.text}
-          {s.href ? ` ${s.href.replace(/^https?:\/\/(www\.)?(github\.com\/)?/, "")}` : ""}
-          {s.suffix ? ` ${s.suffix}` : ""}
-        </span>
-      )}
+      <SublineView r={r} ctx={ctx} plain />
       <span className="flex justify-between items-center gap-2 text-xs text-text-muted">
-        <span className="tq-who min-w-0">
-          {running ? (
-            <>
-              <Avatar name={r.owner || "?"} kind="me" />
-              <span className="truncate">
-                {r.owner}
-                {left !== null ? ` · ${left} min left` : ""}
-              </span>
-            </>
-          ) : (
-            <>
-              <PosterAvatar r={r} ownerAgent={ctx.ownerAgentOf(r.inbox)} />
-              <span className="truncate">{posterName(r)}</span>
-            </>
-          )}
-        </span>
-        <time className="tabular shrink-0" dateTime={r.created_at}>
-          {rel(r.created_at, ctx.now)}
-        </time>
+        {who ? <Assignee name={who.name} label={who.label} /> : <span />}
+        <ListTime iso={r.created_at} />
       </span>
     </div>
   );
 }
 
-export function TaskBoard({
-  groups,
-  ctx,
-  showClosed,
-}: {
-  groups: Record<Group, TaskListRow[]>;
-  ctx: RowContext;
-  /** Closed rows are filtered out unless shown; the column stays as a drop target. */
-  showClosed: boolean;
-}) {
+export function TaskBoard({ groups, ctx }: { groups: Record<Group, TaskListRow[]>; ctx: RowContext }) {
   const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
+  const [all, setAll] = useState<ReadonlySet<Group>>(new Set());
   return (
     <section className="tq-board" aria-label="Tasks board">
       {GROUPS.map((g) => {
         const rows = groups[g];
+        const listed = all.has(g) ? rows : rows.slice(0, LANE_ROWS);
         return (
           <section key={g} className="tq-col" aria-labelledby={`tq-col-${g}`} {...drag.target(g)}>
             <Title
@@ -103,11 +83,22 @@ export function TaskBoard({
             </Title>
             <div className="p-2 flex flex-col gap-2">
               {rows.length === 0 ? (
-                <div className="p-4 text-xs text-text-muted">
-                  {g === "closed" && !showClosed ? "closed tasks are hidden — show them in the rail" : "nothing here"}
-                </div>
+                <div className="p-4 text-xs text-text-muted">{EMPTY_COLUMN[g]}</div>
               ) : (
-                rows.map((r) => <Card key={r.task_id} r={r} ctx={ctx} drag={drag.source(r)} />)
+                listed.map((r) => <Card key={r.task_id} r={r} ctx={ctx} drag={drag.source(r)} />)
+              )}
+              {listed.length < rows.length && (
+                <Button
+                  type="empty"
+                  htmlType="button"
+                  onClick={() => {
+                    const first = rows[LANE_ROWS];
+                    setAll((s) => new Set(s).add(g));
+                    if (first) window.setTimeout(() => ctx.onSelect(first), 0);
+                  }}
+                >
+                  {`Show all ${rows.length}`}
+                </Button>
               )}
             </div>
           </section>

@@ -27,6 +27,17 @@ export interface ReplayThread {
   namespace: string;
   knownAgent?: string;
   hit?: ConversationHit;
+  /** The name its opener shows (`threadTitle`), until the thread's own detail lands. */
+  knownTitle?: string;
+}
+
+export const UNTITLED_THREAD = "Untitled thread";
+
+/** What a thread is called (SPEC-LISTS A3): its title, else the first thing the user said
+ *  in it, flattened to one line; "" when neither is known, which a caller shows as
+ *  "Untitled thread". Never the thread id. */
+export function threadTitle(title: string | null | undefined, firstUserMessage?: string | null): string {
+  return (title || "").trim() || (firstUserMessage || "").replace(/\s+/g, " ").trim();
 }
 
 // Role → treatment for the thread replay. The role is a neutral badge on each turn, and the
@@ -300,7 +311,11 @@ export function ThreadReplayDialog({
       onOpenChange={(v) => {
         if (!v) onClose();
       }}
-      title={threadDetail?.title || "Thread"}
+      title={
+        threadTitle(threadDetail?.title, threadDetail?.messages?.find((m) => m.role === "user")?.content) ||
+        thread?.knownTitle ||
+        UNTITLED_THREAD
+      }
       className="max-w-[820px] w-full"
       initialFocus="dialog"
     >

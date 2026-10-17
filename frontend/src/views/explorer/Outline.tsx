@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../../components/IconButton";
 import { DirectionIcon, directionWord } from "./Direction";
@@ -15,8 +16,12 @@ import { shortcutOff } from "../../lib/shortcuts";
  * place (`facts.related`), `r` selects the edge that reached the row, `x` pins. A click on
  * the row selects its node; the edge that reached it has its own button at the row's end,
  * clear of the name and the metadata. The other actions are drawn on the selected row
- * only, so 200 rows stay 200 rows.
+ * only, so 200 rows stay 200 rows. A tree of more than 20 rows shows the first 20 and
+ * "Show all N" (SPEC §7.2), unless the selection sits further down.
  */
+
+/** Rows shown before "Show all N". */
+const CAP = 20;
 
 export interface OutlineProps {
   model: WalkModel;
@@ -77,7 +82,10 @@ export function Outline({
     ...order,
   ];
   const [active, setActive] = useState<string>(model.seed);
+  const [all, setAll] = useState(false);
   const refs = useRef(new Map<string, HTMLDivElement>());
+  // A new walk starts capped again.
+  useEffect(() => setAll(false), [model.seed]);
   // A new picture puts the roving focus back on the seed when the active
   // row is gone.
   useEffect(() => {
@@ -93,6 +101,9 @@ export function Outline({
 
   const selectedEntity = selection?.kind === "node" ? selection.entity : null;
   const selectedEdgeChild = selection?.kind === "edge" ? selection.child : null;
+  const selectedAt = rows.findIndex((r) => r.entity === selectedEntity || r.entity === selectedEdgeChild);
+  const capped = !all && rows.length > CAP && selectedAt < CAP;
+  const shown = capped ? rows.slice(0, CAP) : rows;
 
   const onKey = (e: ReactKeyboardEvent<HTMLDivElement>, n: XNode, index: number) => {
     const kids = children.get(n.entity) || [];
@@ -103,19 +114,19 @@ export function Outline({
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        if (index + 1 < rows.length) focusRow(rows[index + 1].entity);
+        if (index + 1 < shown.length) focusRow(shown[index + 1].entity);
         break;
       case "ArrowUp":
         e.preventDefault();
-        if (index > 0) focusRow(rows[index - 1].entity);
+        if (index > 0) focusRow(shown[index - 1].entity);
         break;
       case "Home":
         e.preventDefault();
-        focusRow(rows[0].entity);
+        focusRow(shown[0].entity);
         break;
       case "End":
         e.preventDefault();
-        focusRow(rows[rows.length - 1].entity);
+        focusRow(shown[shown.length - 1].entity);
         break;
       case "ArrowRight":
         e.preventDefault();
@@ -180,7 +191,7 @@ export function Outline({
         aria-describedby="explorer-outline-summary explorer-outline-keys"
         className="lg:flex-1 min-h-[120px] max-h-[320px] lg:max-h-none overflow-auto rounded-lg border border-border bg-surface text-xs"
       >
-        {rows.map((n, i) => {
+        {shown.map((n, i) => {
           const kids = children.get(n.entity) || [];
           const hidden = visible.hiddenUnder.get(n.entity) || 0;
           const hasKids = kids.length > 0 || hidden > 0;
@@ -226,18 +237,22 @@ export function Outline({
                 <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} size="xs" aria-hidden="true" />
               </button>
               <div className="min-w-0 flex-1">
-                <div className={`font-mono truncate ${isSelected ? "text-text font-semibold" : "text-text"}`}>
-                  {isSeed ? <span className="text-text-muted mr-1">seed</span> : null}
-                  {n.entity}
+                {/* Line 1, the primary: the entity at 14 px. */}
+                <div className="flex items-center gap-1 min-w-0">
+                  {isSeed ? <span className="text-xs text-text-muted shrink-0">seed</span> : null}
+                  <span className={`truncate text-sm text-text ${isSelected ? "font-semibold" : ""}`}>{n.entity}</span>
                   {pinned.has(n.entity) && (
-                    <Icon name="pin" size="xs" aria-hidden="true" className="inline ml-1" color="var(--color-accent)" />
+                    <Icon name="pin" size="xs" aria-hidden="true" className="shrink-0" color="var(--color-accent)" />
                   )}
-                  {hidden > 0 && <Badge text={`+${hidden}`} state="neutral" size="sm" className="inline-flex ml-1.5" />}
+                  {hidden > 0 && (
+                    <Badge text={`+${hidden}`} state="neutral" size="sm" className="inline-flex shrink-0" />
+                  )}
                 </div>
+                {/* Line 2, muted 12 px: "hop 1 · co-mentioned 20× with logical". */}
                 <div className="text-xs text-text-muted flex items-center gap-1.5 min-w-0">
-                  <span className="tabular-nums shrink-0">hop {n.hop}</span>
-                  {parent && (
+                  {parent ? (
                     <span className={`truncate ${edgeSelected ? "text-text" : ""}`}>
+                      hop {n.hop} ·{" "}
                       {typedEdge ? (
                         <>
                           <DirectionIcon direction={n.via_direction} />
@@ -248,6 +263,8 @@ export function Outline({
                       )}{" "}
                       with {shorten(parent, 20)}
                     </span>
+                  ) : (
+                    <span className="tabular-nums shrink-0">hop {n.hop}</span>
                   )}
                   {hasCommunities && n.community_id !== null && (
                     <span className="truncate">· {communityLabel(n.community_id)}</span>
@@ -300,6 +317,13 @@ export function Outline({
           );
         })}
       </div>
+      {capped && (
+        <div className="mt-1">
+          <Button type="empty" htmlType="button" onClick={() => setAll(true)}>
+            Show all {rows.length}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -797,21 +797,6 @@ textarea[aria-invalid="true"]:focus-visible {
     }
   }
 
-  /* A library row's actions: the width of its four small icon buttons, kept while they
-     are not rendered; on a phone they take a line of their own under the document. */
-  .doc-acts {
-    display: flex;
-    flex: none;
-    gap: 12px;
-    min-width: 140px;
-  }
-  @media (max-width: 639px) {
-    .doc-acts {
-      flex-basis: 100%;
-      justify-content: flex-end;
-    }
-  }
-
   /* ============================================================
      Tasks page. Attention tiles, an inbox rail,
      five groups by what happens next, a document-shaped detail panel. The
@@ -820,83 +805,87 @@ textarea[aria-invalid="true"]:focus-visible {
      ============================================================ */
   .tq-body {
     display: grid;
-    grid-template-columns: 224px minmax(0, 1fr);
+    grid-template-columns: 208px minmax(0, 1fr);
     gap: 16px;
     align-items: start;
   }
   .tq-body[data-panel="true"] {
-    grid-template-columns: 224px minmax(0, 1fr) 440px;
+    grid-template-columns: 208px minmax(0, 1fr) 440px;
   }
+
+  /* ---- attention tiles: toggle buttons on Click UI's small BigStat (label over value,
+     its stroke and radius); a pressed tile is a checked filter, the selected-row tint and
+     the active stroke so it does not rest on the tint alone. */
   .tq-attn {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
-    margin: 4px 0 16px;
+    margin: 0 0 16px;
   }
   .tq-tile {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 10px 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 8px 16px;
     text-align: left;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-xl);
-    background: var(--color-surface);
+    border: var(--click-bigStat-stroke) solid var(--click-bigStat-color-stroke-default);
+    border-radius: var(--click-bigStat-radii-all);
+    background: var(--click-bigStat-color-background-default);
   }
-  .tq-tile:hover {
-    border-color: var(--color-border-strong);
+  .tq-tile .lbl {
+    font: var(--click-bigStat-typography-sm-label-default);
+    color: var(--click-bigStat-color-label-default);
   }
-  /* A pressed tile is a checked filter: the selected-row tint, and the active stroke so it
-     does not rest on the tint alone. */
+  .tq-tile .n {
+    font: var(--click-bigStat-typography-sm-title-default);
+    color: var(--click-bigStat-color-title-default);
+  }
+  .tq-tile:hover:not(:disabled) {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
   .tq-tile[aria-pressed="true"] {
     border-color: var(--click-card-horizontal-default-color-stroke-active);
     background: var(--click-table-row-color-background-active);
   }
-  .tq-tile .n {
-    font-size: var(--text-2xl);
-    line-height: 24px;
-    font-weight: 600;
-  }
-  .tq-tile[data-zero="true"] .n {
+  .tq-tile[data-zero="true"] .n,
+  .tq-tile:disabled .n {
     color: var(--color-text-muted);
     font-weight: 500;
   }
-
-  .tq-rail section {
-    margin-bottom: 18px;
+  .tq-tile .short {
+    display: none;
   }
+
+  /* ---- the inbox rail */
   .tq-inbox {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
     width: 100%;
     gap: 8px;
-    padding: 7px 8px;
+    padding: 6px 8px;
     border-radius: var(--radius-md);
     color: var(--color-text-muted);
+    font-size: var(--text-sm);
     text-align: left;
   }
   .tq-inbox:hover {
-    background: var(--color-surface-2);
+    background: var(--click-card-horizontal-default-color-background-hover);
   }
   .tq-inbox[aria-current="true"] {
-    background: var(--color-surface-2);
+    background: var(--click-table-row-color-background-active);
     color: var(--color-text);
+    font-weight: 500;
   }
   .tq-inbox .nm {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     min-width: 0;
-  }
-  .tq-inbox .nm > span:last-child {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .tq-inbox .cnt {
     font-size: var(--text-xs);
+    font-weight: 400;
     color: var(--color-text-muted);
     white-space: nowrap;
   }
@@ -905,34 +894,7 @@ textarea[aria-invalid="true"]:focus-visible {
     font-weight: 500;
   }
 
-  /* ---- avatars: the inbox's own agent round with a stroke, another agent square on info, a person by initials */
-  .tq-av {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--color-surface-3);
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--color-text);
-    text-transform: lowercase;
-  }
-  .tq-av[data-kind="bot"] {
-    border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--color-info) 15%, transparent);
-    color: var(--color-info);
-  }
-  .tq-av[data-kind="me"] {
-    background: var(--global-color-background-muted);
-    color: var(--global-color-text-default);
-    border: 1px solid var(--global-color-stroke-default);
-  }
-
-  /* ---- list */
+  /* ---- list: a lane is a bordered group, its rows split by a rule (the task grid) */
   .tq-group {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-xl);
@@ -945,12 +907,12 @@ textarea[aria-invalid="true"]:focus-visible {
     align-items: center;
     gap: 10px;
     width: 100%;
-    padding: 10px 14px;
+    padding: 10px 16px;
     text-align: left;
     border-bottom: 1px solid var(--color-border);
   }
   .tq-ghead:hover {
-    background: var(--color-surface-2);
+    background: var(--click-card-horizontal-default-color-background-hover);
   }
   .tq-ghead .car {
     transition: transform 0.15s;
@@ -962,42 +924,61 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-group[data-collapsed="true"] .tq-ghead .car {
     transform: rotate(-90deg);
   }
+  /* A row (SPEC-LISTS A5): line 1 the priority, the title and the meta (assignee, age,
+     menu); line 2 the kind and the state's one line. */
   .tq-row {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 0 12px;
+    grid-template-areas:
+      "pri title meta"
+      ". sub sub";
+    gap: 4px 12px;
     align-items: center;
     width: 100%;
-    padding: 9px 14px 9px 10px;
+    padding: 10px 12px 10px 16px;
     text-align: left;
     border-top: 1px solid var(--color-border);
     cursor: pointer;
     user-select: none;
   }
-  /* A list narrower than a row's title and metadata side by side (beside the open
-     panel, on a phone) stacks the metadata under the title. */
+  .tq-row .tq-pri {
+    grid-area: pri;
+    display: flex;
+  }
+  .tq-row .tq-title {
+    grid-area: title;
+    min-width: 0;
+  }
+  .tq-row .tq-metacell {
+    grid-area: meta;
+  }
+  .tq-row .tq-subcell {
+    grid-area: sub;
+    min-width: 0;
+  }
+  /* A list narrower than a row's title and meta side by side (beside the open panel, on a
+     phone): the meta takes its own line under the title, never the second line's. */
   .tq-rows {
     container-type: inline-size;
   }
   @container (max-width: 560px) {
     .tq-row {
       grid-template-columns: auto minmax(0, 1fr);
-    }
-    .tq-row > [role="gridcell"]:last-child {
-      grid-column: 2;
-      margin-top: 4px;
+      grid-template-areas:
+        "pri title"
+        ". meta"
+        ". sub";
     }
     .tq-row .tq-meta {
       justify-content: flex-start;
       flex-wrap: wrap;
-      gap: 10px;
     }
   }
   .tq-rows .tq-row:first-child {
     border-top: 0;
   }
   .tq-row:hover {
-    background: var(--color-surface-2);
+    background: var(--click-card-horizontal-default-color-background-hover);
   }
   .tq-row[aria-selected="true"] {
     background: var(--click-table-row-color-background-active);
@@ -1009,12 +990,6 @@ textarea[aria-invalid="true"]:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: -2px;
   }
-  .tq-row .t {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
   /* Two lines before it ellipsises, so a long title is read in the row. */
   .tq-row .title {
     font-weight: 500;
@@ -1022,19 +997,18 @@ textarea[aria-invalid="true"]:focus-visible {
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     overflow: hidden;
+    overflow-wrap: anywhere;
   }
   .tq-sub {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     align-items: center;
     font-size: var(--text-xs);
     color: var(--color-text-muted);
-    margin-top: 2px;
     min-width: 0;
     flex-wrap: wrap;
   }
   .tq-sub .reason {
-    color: var(--color-text-muted);
     font-style: italic;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1044,18 +1018,21 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-meta {
     display: flex;
     align-items: center;
-    gap: 14px;
+    justify-content: flex-end;
+    gap: 12px;
     font-size: var(--text-xs);
     color: var(--color-text-muted);
     white-space: nowrap;
   }
-  .tq-who {
+  .tq-assignee {
     display: inline-flex;
-    align-items: center;
-    gap: 6px;
+  }
+  .tq-more {
+    padding: 4px 8px;
+    border-top: 1px solid var(--color-border);
   }
   .tq-lease {
-    width: 72px;
+    width: 56px;
     height: 4px;
     border-radius: 2px;
     background: var(--color-surface-3);
@@ -1068,17 +1045,6 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   .tq-lease[data-low="true"] i {
     background: var(--color-warn);
-  }
-  .tq-acts {
-    display: inline-flex;
-    gap: 6px;
-    opacity: 0;
-    transition: opacity 0.1s;
-  }
-  .tq-row:hover .tq-acts,
-  .tq-row:focus-within .tq-acts,
-  .tq-row[aria-selected="true"] .tq-acts {
-    opacity: 1;
   }
 
   /* ---- board */
@@ -1097,20 +1063,23 @@ textarea[aria-invalid="true"]:focus-visible {
     min-height: 200px;
     display: flex;
     flex-direction: column;
+    min-width: 0;
   }
   .tq-card {
-    background: var(--color-surface-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    padding: 10px 10px 8px;
+    grid-template-columns: minmax(0, 1fr);
+    background: var(--click-card-horizontal-default-color-background-default);
+    border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+    border-radius: var(--click-card-horizontal-radii-all);
+    padding: 10px 12px;
     text-align: left;
     width: 100%;
+    min-width: 0;
     display: grid;
     gap: 6px;
     cursor: pointer;
   }
   .tq-card:hover {
-    border-color: var(--color-border-strong);
+    background: var(--click-card-horizontal-default-color-background-hover);
   }
   .tq-card[draggable="true"]:active {
     cursor: grabbing;
@@ -1129,22 +1098,6 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-group[data-drop="no"] {
     opacity: 0.5;
   }
-  .tq-card[aria-current="true"] {
-    border-color: var(--color-accent);
-  }
-  .tq-pdot {
-    width: 6px;
-    height: 14px;
-    border-radius: 2px;
-    background: var(--color-surface-3);
-    flex: none;
-  }
-  .tq-pdot[data-p="1"] {
-    background: var(--color-danger);
-  }
-  .tq-pdot[data-p="2"] {
-    background: var(--color-warn);
-  }
 
   /* ---- detail panel: a sticky column beside the list, a sheet under 1280 px */
   .tq-panel {
@@ -1158,18 +1111,16 @@ textarea[aria-invalid="true"]:focus-visible {
     flex-direction: column;
     min-width: 0;
   }
+  .tq-panel [data-panel-title]:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
   .tq-sec {
     padding: 12px 0;
     border-bottom: 1px solid var(--color-border);
   }
   .tq-sec:last-child {
     border-bottom: 0;
-  }
-  .tq-sec h4 {
-    font-size: var(--text-xs);
-    color: var(--color-text-muted);
-    font-weight: 500;
-    margin: 0 0 6px;
   }
   .tq-kv {
     display: grid;
@@ -1200,38 +1151,24 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   .tq-tl li {
     display: grid;
-    grid-template-columns: 18px minmax(0, 1fr) auto;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
     gap: 10px;
     padding: 5px 0;
     font-size: var(--text-sm);
     align-items: start;
   }
   .tq-tl .ic {
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
-    background: var(--color-surface-3);
-    margin-top: 2px;
+    background: var(--global-color-background-muted);
+    color: var(--color-text-muted);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: var(--text-xs);
-    font-family: var(--font-mono);
-    color: var(--color-text);
   }
   .tq-tl .ic[data-kind="human"] {
-    background: var(--color-accent-soft);
-    color: var(--color-accent);
-  }
-  .tq-tl .ic[data-kind="sweeper"] {
-    color: var(--color-text-muted);
-  }
-  .tq-empty {
-    border: 1px dashed var(--color-border-strong);
-    border-radius: var(--radius-xl);
-    padding: 28px;
-    text-align: center;
-    color: var(--color-text-muted);
+    color: var(--color-text);
   }
 
   /* The task panel as a sheet (Tasks.tsx decides when, below 1280 px). */
@@ -1244,29 +1181,36 @@ textarea[aria-invalid="true"]:focus-visible {
     max-height: none;
     box-shadow: var(--shadow-2xl);
   }
+  /* Below md the rail is a Select (Tasks.tsx), so the list takes the width. */
   @media (max-width: 767px) {
     .tq-body,
     .tq-body[data-panel="true"] {
       grid-template-columns: minmax(0, 1fr);
     }
-    .tq-rail {
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      padding-bottom: 4px;
+    .tq-attn {
+      gap: 6px;
+      margin-bottom: 12px;
     }
-    .tq-rail section {
-      min-width: max-content;
-      margin-bottom: 0;
+    /* Four tiles in one row: the figure, then a one-word label. */
+    .tq-tile {
+      flex-direction: row-reverse;
+      justify-content: flex-end;
+      align-items: baseline;
+      gap: 6px;
+      padding: 6px 8px;
     }
-    .tq-rail .tq-filters {
+    .tq-tile .lbl {
+      font-size: var(--text-xs);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tq-tile .long {
       display: none;
     }
-    .tq-attn {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .tq-acts {
-      opacity: 1;
+    .tq-tile .short {
+      display: inline;
     }
     .tq-panel {
       width: 100vw;
@@ -1434,4 +1378,63 @@ textarea[aria-invalid="true"]:focus-visible {
     position: absolute;
     inset: -14px;
   }
+}
+
+/* Recall Lab: a score cell's bar is Click UI's table bar chart, its width the score
+   against the top ranked hit; it darkens with the row's hover. */
+.recall-bar {
+  display: block;
+  height: 4px;
+  margin-top: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.recall-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--click-table-row-color-barChart-default);
+}
+tr:hover .recall-bar > span {
+  background: var(--click-table-row-color-barChart-hover);
+}
+
+/* Runs: a numeric column's header (Relied on, Took) sits right, over its numbers, with
+   Click UI's sort arrow before the label. */
+.runs-numeric-header > div {
+  justify-content: flex-end;
+}
+
+/* Repositories (SPEC-LISTS B): a row's one action is Click UI's SplitButton. Its root clips
+   its two halves, so each half's focus ring is drawn inside it; on a phone it takes the
+   row's width under the summary line; under a coarse pointer its menu half (a div that
+   RepositoryCard makes a button) is a 44 px target like every other button. */
+.repo-action button:focus-visible,
+.repo-action [data-testid="split-button-dropdown"]:focus-visible {
+  outline-offset: -2px;
+}
+@media (max-width: 639px) {
+  .repo-action {
+    display: block;
+  }
+  .repo-action .split-button > div {
+    display: flex;
+    width: 100%;
+  }
+  .repo-action .split-button > div > button {
+    flex: 1;
+  }
+}
+@media (pointer: coarse) {
+  .repo-action [data-testid="split-button-dropdown"] {
+    display: grid;
+    place-items: center;
+    min-width: var(--spacing-hit);
+    min-height: var(--spacing-hit);
+  }
+}
+/* The onboarding steps: Click UI's incomplete step title is #c0c0c0 on white (1.8:1); the
+   muted text colour passes. */
+.repo-onboarding {
+  --click-stepper-vertical-numbered-color-title-incomplete: var(--color-text-muted);
 }

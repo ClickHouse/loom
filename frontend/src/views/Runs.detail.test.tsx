@@ -16,7 +16,11 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listRuns: (...args: Parameters<typeof actual.listRuns>) => listRuns(...args),
+    // The page reads run.list a page at a time; these tests answer with the rows alone.
+    listRunsPage: async (...args: Parameters<typeof actual.listRunsPage>) => {
+      const runs = await listRuns(...args);
+      return { runs, total: runs.length };
+    },
     getRun: (...args: unknown[]) => getRun(...args),
     listMine: vi.fn(async () => []),
     isAuthDisabled: () => false,
@@ -108,7 +112,7 @@ describe("Runs page", () => {
 
   it("asks run.list to fold runs with no memory activity, and refetches everything on the toggle", async () => {
     // The fold is the server's WHERE, so the page never sees the hollow rows until the
-    // reader asks — the newest 200 of a chatty consumer can all be hollow, and slicing
+    // reader asks — the newest page of a chatty consumer can all be hollow, and slicing
     // after LIMIT would leave the page empty.
     listRuns.mockImplementation(async (_id, opts) => (opts?.memoryActivity === "with" ? [full] : [row(), full]));
     render(<Runs />);
@@ -116,7 +120,7 @@ describe("Runs page", () => {
     expect(screen.queryByText("ISSUE_TRIAGE issue_114194")).toBeNull();
     const [, first] = listRuns.mock.calls[0];
     expect(first?.memoryActivity).toBe("with");
-    expect(first?.limit).toBe(200);
+    expect(first?.limit).toBe(50);
     fireEvent.click(screen.getByText("Show runs with no memory activity"));
     await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(2));
     const [, second] = listRuns.mock.calls[1];

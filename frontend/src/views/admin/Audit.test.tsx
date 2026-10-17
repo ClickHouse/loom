@@ -7,6 +7,7 @@ import * as api from "../../api";
 import type { AuditEntry } from "../../api";
 import { useStore } from "../../lib/state";
 import { Audit } from "./Audit";
+import { ApiError } from "../../lib/errors";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
@@ -61,13 +62,46 @@ describe("Audit filter", () => {
       rows: [row("alice", "{}"), row("bob", "{}"), row("bob", "{}")],
     });
     render(<Audit />);
-    // The count's status region is the one on the page once rows land.
-    await screen.findByText("3 events");
+    // The count's status region is the one on the page, mounted before rows land.
     const status = screen.getByRole("status");
+    await waitFor(() => expect(status).toHaveTextContent("3 events"));
     expect(status).toHaveTextContent("3 events");
     await userEvent.setup().type(screen.getByRole("textbox", { name: "Filter audit events" }), "alice");
     expect(screen.getByRole("status")).toBe(status);
     expect(status).toHaveTextContent("1 event");
+  });
+
+  it("counts the events at the end of the toolbar, and nowhere else", async () => {
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({ rows: [row("alice", "{}"), row("bob", "{}")] });
+    render(<Audit />);
+    await screen.findAllByText("Created namespace (private)");
+    const bar = document.querySelector<HTMLElement>('search[aria-label="Filter audit events"]');
+    expect(bar).toHaveTextContent("2 events");
+    expect(within(bar!).getByRole("textbox", { name: "Filter audit events" })).toBeInTheDocument();
+  });
+});
+
+describe("Audit failure", () => {
+  it("says a failed read failed, with its request id and Retry, never 'No audit events'", async () => {
+    vi.mocked(api.listAuditLog).mockRejectedValueOnce(
+      new ApiError({ status: 503, message: "audit store down", requestId: "req-3" }),
+    );
+    render(<Audit />);
+    expect(await screen.findByText("Couldn't load audit events")).toBeInTheDocument();
+    expect(screen.getByText(/req-3/)).toBeInTheDocument();
+    expect(screen.queryByText("No audit events")).toBeNull();
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({ rows: [row("alice", '{"namespace":"team"}')] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText(/Created namespace team/)).toBeInTheDocument();
+  });
+
+  it("says a failed erasures read failed, with Retry", async () => {
+    vi.mocked(api.listErasures).mockRejectedValueOnce(new ApiError({ status: 500, message: "boom" }));
+    render(<Audit />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Erasures/ }));
+    expect(await screen.findByText("Couldn't load erasures")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("No erasures yet")).toBeInTheDocument();
   });
 });
 
@@ -95,6 +129,7 @@ describe("Audit table", () => {
     const cells = within(within(table).getAllByRole("row")[1]).getAllByRole("cell");
     expect(cells[0]).toHaveTextContent("Created namespace team (org)");
     expect(cells[1]).toHaveTextContent("alice");
+    expect(within(cells[2]).getByText("just now").tagName).toBe("TIME");
   });
 });
 

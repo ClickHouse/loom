@@ -49,6 +49,24 @@ beforeEach(() => {
 });
 
 describe("HeaderSearch", () => {
+  // SPEC-LISTS A10: the group heading names the type, so a row leads with the type's icon
+  // instead of a coloured "memory" badge; line 1 is the key with the memory type at its
+  // end, line 2 the excerpt.
+  it("leads each memory row with its type icon, not a badge, and puts the type at the end", async () => {
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "coffee");
+    await screen.findByRole("listbox", { name: "Search results" });
+    const [first] = screen.getAllByRole("option");
+    expect(first).not.toHaveTextContent(/^memory/);
+    expect(first.querySelector('[class*="badge"]')).toBeNull();
+    expect(first.querySelector("svg")).not.toBeNull();
+    expect(first).toHaveTextContent("coffee/order");
+    expect(first).toHaveTextContent("semantic");
+    expect(first).toHaveTextContent("flat white");
+    expect(first.textContent?.indexOf("coffee/order")).toBeLessThan(first.textContent?.indexOf("semantic") ?? 0);
+  });
+
   it("highlights options with the arrow keys and opens the highlighted one on Enter", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);

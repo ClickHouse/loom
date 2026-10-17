@@ -69,7 +69,8 @@ describe("MemoryCard preview", () => {
     const stringify = vi.spyOn(JSON, "stringify");
     const value = { alert: "z".repeat(4000), n: 1 };
     render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={value} />);
-    const shown = await screen.findByText(/^\{"alert":"zzz/);
+    // An object reads as its pairs (SPEC-LISTS A1), still cut to two lines' worth.
+    const shown = await screen.findByText(/^alert: zzz/);
     // two lines' worth, cut before the clamp
     expect(must(shown.textContent, "preview text").length).toBeLessThanOrEqual(281);
     // no `JSON.stringify(v, null, 2)` anywhere on the card's path

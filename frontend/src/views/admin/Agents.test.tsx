@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "../../test/rtl"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../lib/state";
 import { Agents } from "./Agents";
+import { ApiError } from "../../lib/errors";
 
 const listConnectedAgents = vi.fn();
 vi.mock("../../api", async (importOriginal) => {
@@ -65,8 +66,35 @@ describe("Agents: last seen", () => {
     const fresh = screen.getByText("claude-code").closest("tr") as HTMLElement;
     const badge = within(stale).getByText("Stale");
     expect(badge.closest('[data-testid="ellipsed-badge-content"]')).not.toBeNull();
-    expect(within(stale).getByText("3d ago")).toHaveClass("text-text-muted");
+    const time = within(stale).getByText("3d ago");
+    expect(time.tagName).toBe("TIME");
+    expect(time).toHaveClass("text-text-muted");
     expect(stale.querySelector(".text-warn")).toBeNull();
     expect(within(fresh).queryByText("Stale")).toBeNull();
+  });
+});
+
+const toolbar = () => document.querySelector<HTMLElement>('search[aria-label="Time window and count"]');
+
+describe("Agents: count and failure", () => {
+  it("counts the clients at the end of the toolbar", async () => {
+    listConnectedAgents.mockResolvedValueOnce({ rows: [ROW, { ...ROW, agent: "cursor" }] });
+    render(<Agents />);
+    await screen.findByText("cursor");
+    expect(toolbar()).toHaveTextContent("2 clients");
+  });
+
+  it("says a failed read failed, with its request id and Retry, never the empty state", async () => {
+    listConnectedAgents.mockRejectedValueOnce(
+      new ApiError({ status: 503, code: "UNAVAILABLE", message: "down", requestId: "req-9" }),
+    );
+    render(<Agents />);
+    expect(await screen.findByText("Couldn't load connected clients")).toBeInTheDocument();
+    expect(screen.getByText(/req-9/)).toBeInTheDocument();
+    expect(screen.queryByText("No client has written in this window")).toBeNull();
+    expect(toolbar()).not.toHaveTextContent(/client/);
+    listConnectedAgents.mockResolvedValueOnce({ rows: [ROW] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("claude-code")).toBeInTheDocument();
   });
 });

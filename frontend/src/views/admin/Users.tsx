@@ -4,6 +4,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { useStore, useIdentity } from "../../lib/state";
@@ -11,7 +12,11 @@ import { ListPager, usePageSize } from "../../components/ui/ListPager";
 import { hasOrgAdminClaim } from "../../lib/role";
 import { adminListUsers, claimRelease, type AdminUserRow, type AdminUsersResult } from "../../api";
 import { EmptyState } from "../../components/EmptyState";
-import { relativeTime, humanizeError } from "../../lib/format";
+import { humanizeError, parseChTime } from "../../lib/format";
+import { ListState } from "../../components/ui/ListState";
+import { ListTime } from "../../components/ui/ListTime";
+import { ListToolbar } from "../../components/ui/ListToolbar";
+import { usePhone } from "./usePhone";
 import { useAbortableEffect } from "../../lib/hooks";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
@@ -33,10 +38,13 @@ type Filter = "all" | "pending" | "active7d";
 export function Users() {
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
+  const phone = usePhone();
   const [data, setData] = useState<AdminUsersResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [includeServiceAccounts, setIncludeServiceAccounts] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize("users");
   // A refresh keeps the list on screen, marked busy, until it answers.
   const [refreshing, setRefreshing] = useState(false);
 
@@ -57,13 +65,15 @@ export function Users() {
         if (live()) setData(d);
       })
       .catch((e) => {
-        if (live()) setError(String(e?.message || e));
+        if (live()) setError(e);
       })
       .finally(() => {
         if (live()) setRefreshing(false);
       });
   };
   useAbortableEffect(load, [identity?.org, includeServiceAccounts]);
+
+  const rows = useMemo(() => filtered(data, filter), [data, filter]);
 
   if (!identity) return null;
 
@@ -80,10 +90,41 @@ export function Users() {
     );
   }
 
+  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
+  const count =
+    !error && data && rows.length > 0
+      ? `${(page * pageSize + 1).toLocaleString()}–${(page * pageSize + pageRows.length).toLocaleString()} of ${rows.length.toLocaleString()}`
+      : undefined;
+  const pick = (value: string) => {
+    setFilter(value as Filter);
+    setPage(0);
+  };
+  const options = data
+    ? [
+        { value: "all", label: "All", count: data.users.length },
+        { value: "pending", label: "Pending elevation", count: data.total_pending_elevations, icon: "clock" as const },
+        { value: "active7d", label: "Active last 7d", count: data.total_active_last_7d },
+      ]
+    : [];
+  const serviceAccounts = (
+    <Checkbox
+      label="Include service accounts"
+      checked={includeServiceAccounts}
+      onCheckedChange={(x) => setIncludeServiceAccounts(x === true)}
+    />
+  );
+
   return (
     <PageContainer>
       <div className="mb-6">
-        <PageHeader title="Users">
+        <PageHeader
+          title="Users"
+          actions={
+            <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()} loading={refreshing}>
+              Refresh
+            </Button>
+          }
+        >
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </PageHeader>
         <p className="text-sm text-text-muted max-w-2xl">
@@ -92,39 +133,49 @@ export function Users() {
         </p>
       </div>
 
-      {data && (
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <ButtonGroup
-            aria-label="Filter users"
-            selected={filter}
-            onClick={(value) => setFilter(value as Filter)}
-            options={[
-              { value: "all", label: <FilterLabel label="All" count={data.users.length} /> },
-              {
-                value: "pending",
-                label: <FilterLabel label="Pending elevation" count={data.total_pending_elevations} icon="clock" />,
-              },
-              { value: "active7d", label: <FilterLabel label="Active last 7d" count={data.total_active_last_7d} /> },
-            ]}
-          />
-          <div className="flex-1" />
-          <Checkbox
-            label="Include service accounts"
-            checked={includeServiceAccounts}
-            onCheckedChange={(x) => setIncludeServiceAccounts(x === true)}
-          />
-          <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()} loading={refreshing}>
-            Refresh
-          </Button>
-        </div>
+      {data && !error && (
+        <>
+          <ListToolbar label="Filter users" count={count}>
+            {/* Three filters with their counts are wider than a phone: there they are a select. */}
+            {phone ? (
+              <Select
+                value={filter}
+                onSelect={pick}
+                triggerProps={{ "aria-label": "Filter users" }}
+                className="min-w-0 flex-1"
+              >
+                {options.map((o) => (
+                  <Select.Item key={o.value} value={o.value}>
+                    {`${o.label} ${o.count}`}
+                  </Select.Item>
+                ))}
+              </Select>
+            ) : (
+              <>
+                <ButtonGroup
+                  aria-label="Filter users"
+                  selected={filter}
+                  onClick={pick}
+                  options={options.map((o) => ({
+                    value: o.value,
+                    label: <FilterLabel label={o.label} count={o.count} icon={o.icon} />,
+                  }))}
+                />
+                {serviceAccounts}
+              </>
+            )}
+          </ListToolbar>
+          {phone && <div className="-mt-1 mb-3">{serviceAccounts}</div>}
+        </>
       )}
 
-      {error && <EmptyState icon="users" title="Couldn't load" description={error} />}
+      {!!error && <ListState kind="error" things="users" error={error} onRetry={() => load()} />}
       {!error && data === null && (
         <Table aria-label="Users" aria-busy loading size="sm" headers={USER_HEADERS} rows={[]} />
       )}
       {!error && data !== null && data.users.length === 0 && (
-        <EmptyState
+        <ListState
+          kind="empty"
           icon="users"
           title="No accounts yet"
           description="When users sign up in the dashboard or get granted on a namespace, they'll appear here."
@@ -144,12 +195,24 @@ export function Users() {
             </div>
           )}
 
-          {/* Keyed by the filter, so another filter starts from its first page. */}
-          <UserList key={filter} data={data} filter={filter} />
+          <UserListTable rows={pageRows} filter={filter} />
+          <ListPager
+            label="Users pages"
+            page={page}
+            pageSize={pageSize}
+            shown={pageRows.length}
+            total={rows.length}
+            onPage={setPage}
+            onPageSize={(n) => {
+              setPageSize(n);
+              setPage(0);
+            }}
+            topId="users-list"
+          />
 
           <div className="mt-3 text-xs text-text-muted">
-            {data.total} account{data.total === 1 ? "" : "s"} shown. To promote someone to platform admin, add their
-            email to <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">LOOM_PLATFORM_ADMINS</code> in{" "}
+            To promote someone to platform admin, add their email to{" "}
+            <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">LOOM_PLATFORM_ADMINS</code> in{" "}
             <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">.env</code> and have them re-login.
           </div>
         </div>
@@ -158,6 +221,20 @@ export function Users() {
       <ClaimReleaseSection />
     </PageContainer>
   );
+}
+
+const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
+
+/** The accounts the filter keeps (admin.users has no offset, so the pages are cut here). */
+function filtered(data: AdminUsersResult | null, filter: Filter): AdminUserRow[] {
+  if (!data) return [];
+  if (filter === "pending") return data.users.filter((u) => u.grants.some((g) => g.pending_role));
+  if (filter === "active7d") {
+    return data.users.filter(
+      (u) => Date.now() - (parseChTime(u.last_active)?.getTime() ?? Number.NEGATIVE_INFINITY) < SEVEN_DAYS_MS,
+    );
+  }
+  return data.users;
 }
 
 /**
@@ -249,43 +326,6 @@ function FilterLabel({ label, count, icon }: { label: string; count: number; ico
 
 const USER_HEADERS = [{ label: "Subject" }, { label: "Namespaces" }, { label: "Auth" }, { label: "Last active" }];
 
-/** The accounts the filter keeps, 50 to a page (admin.users has no offset, so the pages
- *  are cut here). */
-function UserList({ data, filter }: { data: AdminUsersResult; filter: Filter }) {
-  const sevenDaysMs = 7 * 24 * 3600 * 1000;
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = usePageSize("users");
-  const rows = useMemo(() => {
-    if (filter === "pending") {
-      return data.users.filter((u) => u.grants.some((g) => g.pending_role));
-    }
-    if (filter === "active7d") {
-      return data.users.filter((u) => u.last_active && Date.now() - new Date(u.last_active).getTime() < sevenDaysMs);
-    }
-    return data.users;
-  }, [data, filter, sevenDaysMs]);
-  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
-
-  return (
-    <>
-      <UserListTable rows={pageRows} filter={filter} />
-      <ListPager
-        label="Users pages"
-        page={page}
-        pageSize={pageSize}
-        shown={pageRows.length}
-        total={rows.length}
-        onPage={setPage}
-        onPageSize={(n) => {
-          setPageSize(n);
-          setPage(0);
-        }}
-        topId="users-list"
-      />
-    </>
-  );
-}
-
 // A new page scrolls to the table and gives it focus.
 function UserListTable({ rows, filter }: { rows: AdminUserRow[]; filter: Filter }) {
   return (
@@ -353,8 +393,8 @@ function UserListTable({ rows, filter }: { rows: AdminUserRow[]; filter: Filter 
           { label: <span className="text-xs text-text-muted">{u.has_password_auth ? "password" : "token / SA"}</span> },
           {
             label: (
-              <span className="text-xs tabular text-text-muted whitespace-nowrap">
-                {u.last_active ? relativeTime(u.last_active) : "never"}
+              <span className="text-xs text-text-muted">
+                {u.last_active ? <ListTime iso={u.last_active} /> : "never"}
               </span>
             ),
           },

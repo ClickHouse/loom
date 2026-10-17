@@ -16,6 +16,8 @@ export interface RowMenuProps {
   /** The row's name, for the trigger's "Actions for <name>". */
   name: string;
   items: RowMenuItem[];
+  /** -1 inside a grid row that is one tab stop (its keys reach the menu). */
+  tabIndex?: number;
 }
 
 /**
@@ -26,12 +28,19 @@ export interface RowMenuProps {
  * Radix's: Enter, Space or ArrowDown open it, the arrows move, Escape closes it and focus
  * returns to the trigger. An item that opens a dialog takes the focus there.
  */
-export function RowMenu({ name, items }: RowMenuProps) {
+export function RowMenu({ name, items, tabIndex }: RowMenuProps) {
   const label = `Actions for ${name}`;
   return (
     <Dropdown modal={false}>
       <MenuTrigger>
-        <IconButton icon="dots-vertical" size="sm" label={label} tooltip="More actions" className="relative z-[1]" />
+        <IconButton
+          icon="dots-vertical"
+          size="sm"
+          label={label}
+          tooltip="More actions"
+          tabIndex={tabIndex}
+          className="relative z-[1]"
+        />
       </MenuTrigger>
       {/* Radix names the menu after its trigger; the label names it instead. */}
       <Dropdown.Content align="end" aria-label={label} aria-labelledby={undefined}>

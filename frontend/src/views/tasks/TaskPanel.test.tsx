@@ -172,7 +172,13 @@ describe("TaskPanel", () => {
     // The hand-off arrow is an icon; its text says "to".
     const handed = within(panel).getByText((_, el) => el?.tagName === "SPAN" && el.textContent === "to private-bot");
     expect(handed.querySelector("svg")).not.toBeNull();
-    expect(within(panel).getByText("01234567…")).toBeInTheDocument();
+    // The id is in the More menu (Copy id), not a truncated string in the header.
+    expect(within(panel).queryByText("01234567…")).toBeNull();
+    expect(
+      within(panel)
+        .getByText(/· posted/)
+        .querySelector("time"),
+    ).toHaveTextContent("42m ago");
     expect(getTask).toHaveBeenCalledTimes(1);
     expect(taskHistory).toHaveBeenCalledTimes(1);
     expect(listPolicies).not.toHaveBeenCalled(); // only a triage task reads the rule
@@ -191,6 +197,8 @@ describe("TaskPanel", () => {
     expect(events).toEqual(["lease expired", "3 heartbeats", "claimed", "accepted", "posted"]);
     const kinds = [...items].map((li) => must(li.querySelector(".ic"), "event icon").getAttribute("data-kind"));
     expect(kinds).toEqual(["sweeper", "bot", "bot", "human", "bot"]);
+    // Click UI icons, not letters standing in for them.
+    for (const li of items) expect(must(li.querySelector(".ic"), "event icon").querySelector("svg")).not.toBeNull();
     expect(within(panel).getByText("lease of 'reporter' expired")).toBeInTheDocument();
   });
 
@@ -237,7 +245,9 @@ describe("TaskPanel", () => {
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label") ?? b.textContent);
 
-  it("footer per status: triage accepts, todo starts/defers/blocks/won't do, in progress finishes, fails, blocks, defers or cancels", async () => {
+  // The action bar sits under the header, in view at any height: one primary, at most one
+  // secondary, every other move under More.
+  it("actions per status: triage accepts, todo starts or defers, in progress finishes or fails; the rest under More", async () => {
     const onAction = mount("triage");
     let f = await footerOf();
     expect(buttons(f)).toEqual(["More actions", "Won't do…", "Accept"]);
@@ -247,16 +257,33 @@ describe("TaskPanel", () => {
 
     mount("todo");
     f = await footerOf();
-    expect(buttons(f)).toEqual(["More actions", "Defer…", "Block…", "Won't do…", "Start"]);
+    expect(buttons(f)).toEqual(["More actions", "Defer…", "Start"]);
+    let user = userEvent.setup();
+    await user.click(within(f).getByRole("button", { name: "More actions" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Block…",
+      "Won't do…",
+      "Edit brief",
+      "Reassign…",
+      "Cancel task…",
+      "Copy id",
+    ]);
     cleanup();
 
     mount("in_progress", { owner: "reporter", lease_until: iso(-22) });
     f = await footerOf();
-    expect(buttons(f)).toEqual(["More actions", "Fail…", "Defer…", "Block…", "Won't do…", "Mark done…"]);
-    expect(f).toHaveTextContent("owned by reporter · lease ends in 22 min");
-    const user = userEvent.setup();
+    expect(buttons(f)).toEqual(["More actions", "Fail…", "Mark done…"]);
+    const panel = screen.getByRole("complementary", { name: "Task detail" });
+    expect(panel).toHaveTextContent("claimed by reporter · lease ends in 22m");
+    user = userEvent.setup();
     await user.click(within(f).getByRole("button", { name: "More actions" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Cancel task…", "Copy id"]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Block…",
+      "Defer…",
+      "Won't do…",
+      "Cancel task…",
+      "Copy id",
+    ]);
   });
 
   it("footer per status: blocked unblocks, deferred resumes now (task.resume) and says when the sweeper would, closed short of done reopens, done only copies", async () => {
@@ -264,14 +291,22 @@ describe("TaskPanel", () => {
     let f = await footerOf();
     expect(buttons(f)).toEqual(["More actions", "Won't do…", "Unblock"]);
     expect(screen.getByRole("heading", { name: "Blocked on sender" })).toBeInTheDocument();
+    // Why it waits comes first, then the brief; the actions sit above them both.
+    await screen.findByText(/Confirm and file/);
+    const order = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(order.slice(0, 2)).toEqual(["Blocked on sender", "Objective"]);
+    expect(
+      f.compareDocumentPosition(screen.getByRole("heading", { name: "Blocked on sender" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.getByText("need the exact server flags")).toBeInTheDocument();
     cleanup();
 
     onAction = mount("deferred", { reason: "binary for merge SHA not built yet", resume_at: iso(-120) });
     f = await footerOf();
     expect(buttons(f)).toEqual(["More actions", "Won't do…", "Resume now"]);
-    expect(f).toHaveTextContent("otherwise resumes in 2 h");
-    expect(screen.getByRole("heading", { name: "Deferred · resumes in 2 h" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Task detail" })).toHaveTextContent("resumes in 2h");
+    expect(screen.getByRole("heading", { name: "Deferred · resumes in 2h" })).toBeInTheDocument();
     await userEvent.setup().click(within(f).getByRole("button", { name: "Resume now" }));
     expect(onAction).toHaveBeenCalledWith("resume", expect.anything());
     cleanup();

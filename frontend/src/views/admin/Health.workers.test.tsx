@@ -435,3 +435,73 @@ describe("OpMixPanel", () => {
     expect(screen.queryByText("Operation mix check failed")).not.toBeInTheDocument();
   });
 });
+
+describe("WorkersPanel count, times and failure", () => {
+  beforeEach(() => useStore.setState({ whoami: { authenticated: false } }));
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    useStore.setState({ whoami: null });
+  });
+  const worker = {
+    enabled: true,
+    effective: true,
+    interval_seconds: 30,
+    last_run_at: recent,
+    last_duration_ms: 420,
+    consecutive_failures: 0,
+    last_pass_status: "ok",
+  };
+
+  it("counts the workers shown at the end of the toolbar, and shows the last pass as a list time", async () => {
+    respond({ workers: { embedding_worker: worker, dedup_worker: worker } });
+    render(<WorkersPanel />);
+    await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
+    const bar = document.querySelector<HTMLElement>('search[aria-label="Workers status"]');
+    expect(bar).toHaveTextContent("2 workers");
+    expect(within(bar!).getByRole("button", { name: /Refresh/ })).toBeInTheDocument();
+    expect(screen.getAllByText("just now")[0].tagName).toBe("TIME");
+  });
+
+  it("says a failed read failed, with Retry, never 'No workers reporting'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ detail: "down" }), { status: 503 })),
+    );
+    render(<WorkersPanel />);
+    expect(await screen.findByText("Couldn't load workers")).toBeInTheDocument();
+    expect(screen.queryByText("No workers reporting")).toBeNull();
+    expect(document.querySelector('search[aria-label="Workers status"]')).not.toHaveTextContent(/worker/);
+    respond({ workers: { embedding_worker: worker } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
+  });
+});
+
+describe("Extraction quality failure", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    useStore.setState({ whoami: null, identity: null });
+  });
+
+  it("says a failed read failed, with Retry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url === "/v1/learnings.quality"
+          ? new Response(JSON.stringify({ detail: "down" }), { status: 503 })
+          : new Response(JSON.stringify({ rows: [] }), { status: 200 }),
+      ),
+    );
+    useStore.setState({
+      identity: { org: "dev", namespace: "team-a", agent: "loom-ui" },
+      whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"] },
+    });
+    render(<Health />);
+    expect(await screen.findByText("Couldn't load extraction quality")).toBeInTheDocument();
+    respond({ rows: [{ namespace: "dev-ns", pending: 1, promoted: 0, rejected: 0, approve_ratio: 0 }] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByText("dev-ns")).toBeInTheDocument());
+  });
+});

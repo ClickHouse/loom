@@ -48,7 +48,7 @@ describe("Library: filtering by tags", () => {
     useStore.setState({ identity: null });
   });
 
-  it("stacks tags, shows them by the search, and takes one out again", async () => {
+  it("stacks tags in the search field, and takes one out again", async () => {
     render(<Documents />);
     await settle();
     await userEvent.click(within(row("Specs only")).getByRole("button", { name: "Filter by tag Specs" }));
@@ -63,7 +63,9 @@ describe("Library: filtering by tags", () => {
     );
 
     const bar = screen.getByLabelText("Search and filters");
-    expect(within(bar).getByText("tag:Specs")).toBeInTheDocument();
+    // The field says the tags; no chip beside it repeats them (SPEC-LISTS C9).
+    expect(screen.getByLabelText("Search library")).toHaveValue("tag:Specs tag:onboarding");
+    expect(within(bar).queryByText("tag:Specs")).toBeNull();
     await waitFor(() =>
       expect(api.listKnowledge).toHaveBeenLastCalledWith(
         { org: "acme", namespace: "team" },
@@ -71,7 +73,7 @@ describe("Library: filtering by tags", () => {
       ),
     );
 
-    await userEvent.click(within(bar).getByRole("button", { name: "Remove tag:Specs" }));
+    await userEvent.click(within(row("Both")).getByRole("button", { name: "Filter by tag Specs" }));
     await settle();
     expect(shown()).toEqual(["Both", "Onboarding only"]);
     await userEvent.click(within(bar).getAllByRole("button", { name: "Clear filters" })[0]);
@@ -100,7 +102,9 @@ describe("Library: filtering by tags", () => {
     render(<Documents />);
     await settle();
     await userEvent.type(screen.getByLabelText("Search library"), "tag:nomatch");
-    expect(await screen.findByText("Nothing matches tag:nomatch")).toBeInTheDocument();
+    expect(
+      await screen.findByText((_, el) => el?.textContent === "No documents match tag:nomatch"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Your library is empty")).toBeNull();
     expect(screen.getByLabelText("Search library")).toHaveValue("tag:nomatch");
   });
@@ -108,7 +112,7 @@ describe("Library: filtering by tags", () => {
   it("a failed read says so and offers to retry, never the empty library", async () => {
     api.listKnowledge.mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce({ rows: ROWS, next_cursor: null });
     render(<Documents />);
-    expect(await screen.findByText("Couldn't load the library")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load documents")).toBeInTheDocument();
     expect(screen.queryByText("Your library is empty")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Both")).toBeInTheDocument();
