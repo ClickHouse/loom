@@ -59,6 +59,9 @@ log = logging.getLogger(__name__)
 ROOT_KID = "default"
 # The kid an RS256 deployment's former `default` key is imported under.
 ROOT_RS256_KID = "default-rs256"
+# The kid an HS256 deployment's former `default` key is imported under when it
+# is not LOOM_JWT_SECRET: it verifies the tokens of `default` and never signs.
+ROOT_HS256_KID = "default-hs256"
 ALGORITHMS = ("HS256", "RS256")
 _PURPOSE = "signing_key"
 _COLUMNS = (
@@ -338,7 +341,11 @@ def verification_keys(kid: str, algorithm: str) -> list[str]:
     key = keys.get(kid)
     if key is None and kid == ROOT_KID:
         if algorithm == "HS256":
-            return [_root().secret] if _root_signs(_view.retired) else []
+            if ROOT_KID in _view.retired:
+                return []
+            former = keys.get(ROOT_HS256_KID)
+            root = [_root().secret] if root_is_hmac_key() else []
+            return root + [former.secret] if former and former.algorithm == "HS256" else root
         if ROOT_KID not in _view.retired:
             key = keys.get(ROOT_RS256_KID)
     out: list[str] = []
@@ -706,28 +713,30 @@ async def import_keys(
     """Copy a deployment's existing kid → key map in (the former
     LOOM_JWT_SECRETS_JSON): `active` signs from `activate_in_s` from now, the
     others only verify (`VERIFY_ONLY`). A kid the keyring already has is left
-    as it is (a re-run must not bring back a retired key). Kid `default` is
-    the root secret: an HS256 map's must be it, and an RS256 map's is stored
-    as `ROOT_RS256_KID`, which verifies the RS256 tokens of `default`.
-    Returns the kids imported."""
+    as it is (a re-run must not bring back a retired key). Kid `default` signs
+    with the root secret only: an HS256 map's that is not it is stored as
+    `ROOT_HS256_KID` and an RS256 map's as `ROOT_RS256_KID`, and either then
+    verifies the tokens of `default` it signed. Returns the kids imported."""
     if active not in keys:
         raise ValueError(f"the active kid {active!r} is not in the map")
     if algorithm not in ALGORITHMS:
         raise ValueError(f"algorithm must be one of {ALGORITHMS}")
     if algorithm == "HS256" and any(len(k.encode()) < 32 for k in keys.values()):
         raise ValueError("an HS256 key shorter than 32 bytes is too weak to import")
-    if algorithm == "RS256" and ROOT_KID in keys:
-        if ROOT_RS256_KID in keys:
-            raise ValueError(f"the map holds both {ROOT_KID!r} and {ROOT_RS256_KID!r}")
-        keys = {ROOT_RS256_KID if k == ROOT_KID else k: v for k, v in keys.items()}
-        active = ROOT_RS256_KID if active == ROOT_KID else active
-    if ROOT_KID in keys and keys[ROOT_KID] != str(settings.jwt_secret):
-        raise ValueError(
-            f"kid {ROOT_KID!r} in the map is not LOOM_JWT_SECRET, and this build signs "
-            f"{ROOT_KID!r} with LOOM_JWT_SECRET only. Drop it from the map (its tokens stop "
-            "verifying), or set LOOM_JWT_SECRET to it everywhere (which re-keys every "
-            "sealed credential)"
-        )
+    if algorithm == "HS256" and keys.get(ROOT_KID) == str(settings.jwt_secret):
+        keys = {k: v for k, v in keys.items() if k != ROOT_KID}
+    if ROOT_KID in keys:
+        alias = ROOT_RS256_KID if algorithm == "RS256" else ROOT_HS256_KID
+        if alias in keys:
+            raise ValueError(f"the map holds both {ROOT_KID!r} and {alias!r}")
+        if algorithm == "HS256" and active == ROOT_KID:
+            raise ValueError(
+                f"the active kid {ROOT_KID!r} is not LOOM_JWT_SECRET, and this build signs "
+                f"{ROOT_KID!r} with LOOM_JWT_SECRET only: name another active kid, or set "
+                "LOOM_JWT_SECRET to it everywhere (which re-keys every sealed credential)"
+            )
+        keys = {alias if k == ROOT_KID else k: v for k, v in keys.items()}
+        active = alias if active == ROOT_KID else active
     await _same_root(ch)
     existing = {str(r["kid"]) for r in await listing(ch=ch)}
     now = await _ch_now(ch)

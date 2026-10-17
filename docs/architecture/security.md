@@ -37,7 +37,9 @@ are in [tokens and grants](../guides/tokens-and-grants.md).
   algorithm are refused.
 - The key is picked by the header's `kid` and `alg` (`server/auth/keyring.py`): a key in
   `loom.signing_keys`, the root secret (kid `default`, HS256), or a gateway's RS256 public
-  key in `LOOM_JWT_PUBLIC_KEYS_JSON`. A missing `kid` means `default`; an RS256 token of
+  key in `LOOM_JWT_PUBLIC_KEYS_JSON`. A missing `kid` means `default`; an HS256 token of
+  `default` tries the root secret, then the `default-hs256` key an import kept of the old
+  `default` (verify-only); an RS256 token of
   `default` verifies with the `default-rs256` key (imported, else a PEM RSA root secret,
   which signs as `default`) and with the gateway map's `default`. A `kid`
   with no key under the token's algorithm is refused, and so is a retired one, unless

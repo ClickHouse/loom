@@ -287,17 +287,46 @@ def test_a_default_row_never_replaces_the_root_secret() -> None:
     assert verify_token(token).subject == "s"
 
 
-def test_import_refuses_a_default_kid_that_is_not_the_root_secret() -> None:
+def test_a_former_default_key_keeps_its_tokens_verifying_and_never_signs() -> None:
+    """An HS256 map's `default` that is not LOOM_JWT_SECRET: the tokens it
+    signed as `default` must survive the upgrade, and retiring it ends them."""
+    old = pyjwt.encode(
+        {"sub": "s", "iss": settings.jwt_issuer, "aud": settings.jwt_audience, "iat": 1},
+        "i" * 40,
+        algorithm="HS256",
+        headers={"kid": "default"},
+    )
     ch = _CH()
     with pytest.raises(ValueError, match="not LOOM_JWT_SECRET"):
-        asyncio.run(
-            keyring.import_keys({"default": "i" * 40, "k1": "o" * 40}, "k1", "HS256", ch=ch)
-        )
-    assert ch.inserted == []
+        asyncio.run(keyring.import_keys({"default": "i" * 40}, "default", "HS256", ch=ch))
+    done = asyncio.run(
+        keyring.import_keys({"default": "i" * 40, "k1": "o" * 40}, "k1", "HS256", ch=ch)
+    )
+    assert sorted(done) == ["default-hs256", "k1"]
+    ch.rows = [{**r, "retired": False} for r in ch.inserted]
+    asyncio.run(keyring.refresh(ch=ch))
+    assert keyring.signing_key().kid == "k1"
+    assert verify_token(old).subject == "s"
+    assert verify_token(mint_token("s", "o", ["ns"], ["writer"])).subject == "s"
+
+    ch.rows = [{**r, "retired": r["kid"] == "default-hs256"} for r in ch.rows]
+    asyncio.run(keyring.refresh(ch=ch))
+    with pytest.raises(TokenError):
+        verify_token(old)
+
+
+def test_import_skips_a_default_kid_that_is_the_root_secret() -> None:
+    ch = _CH()
     done = asyncio.run(
         keyring.import_keys({"default": settings.jwt_secret, "k1": "o" * 40}, "k1", "HS256", ch=ch)
     )
     assert done == ["k1"]
+    with pytest.raises(ValueError, match="both"):
+        asyncio.run(
+            keyring.import_keys(
+                {"default": "i" * 40, "default-hs256": "o" * 40}, "default-hs256", "HS256", ch=ch
+            )
+        )
 
 
 def test_import_delays_the_active_kid_when_asked() -> None:
