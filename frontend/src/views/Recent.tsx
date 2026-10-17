@@ -4,7 +4,6 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
-import { Pagination } from "@clickhouse/click-ui/Pagination";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import {
   getMemory,
@@ -25,7 +24,16 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { Alert, Chip, ListRow, ListToolbar, PageHeader, SectionHeading } from "../components/ui";
+import {
+  Alert,
+  Chip,
+  ListPager,
+  ListRow,
+  ListToolbar,
+  PageHeader,
+  SectionHeading,
+  usePageSize,
+} from "../components/ui";
 import { SkeletonCard } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -53,7 +61,6 @@ import { shortcutOff } from "../lib/shortcuts";
 // Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
 // The browse feed pages up to this; past it, search covers the whole namespace.
 // Page size for the paginated browse feed (server caps memory.list at 1000/call).
-const PAGE_SIZE = 100;
 // The twelve fields the page and its cards read, and the preview length a card shows (140
 // characters; the base64 envelope check needs 64). Unprojected, a page of a hundred is
 // 166 kB of JSON — 2 KB previews, entities, timestamps nothing reads; twelve fields at
@@ -163,6 +170,7 @@ export function Recent() {
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   // Zero-indexed page into the recency-ordered namespace list.
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize("memories");
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -635,8 +643,8 @@ export function Recent() {
           // Recently-deleted is a bounded 14-day grace set; fetch it in one shot
           // (no live-total pagination, which would be wrong for the deleted view).
           // A filtered list is one read of its newest 1,000 matches, with no pages.
-          const lim = showDeleted ? 500 : listFiltered ? 1000 : PAGE_SIZE;
-          const off = showDeleted || listFiltered ? 0 : page * PAGE_SIZE;
+          const lim = showDeleted ? 500 : listFiltered ? 1000 : pageSize;
+          const off = showDeleted || listFiltered ? 0 : page * pageSize;
           const tags = [...new Set(listFilter.tags.flatMap((t) => [t, t.toLowerCase()]))];
           const r = await listMemories(identity, lim, {
             include_tombstoned: showDeleted,
@@ -699,7 +707,8 @@ export function Recent() {
       fetchOnceRef.current = fetchOnce;
       return fetchOnce(true);
     },
-    [identity, page, memoriesVersion, showDeleted, listFilter],
+    // A filtered list holds every match already: its pages need no read.
+    [identity, listFiltered ? 0 : page, pageSize, memoriesVersion, showDeleted, listFilter],
   );
   // The 8 s refresh sleeps while the tab is hidden and catches up once on
   // return; it always runs the current effect's fetchOnce, so a response
@@ -792,7 +801,9 @@ export function Recent() {
     setPinnedOnly(false);
     setAgentFilter(null);
   };
-  const mountedList = firstScreenOnly ? flatList.slice(0, FIRST_SCREEN_CARDS) : flatList;
+  // A filtered list is one read of its newest 1,000 matches, paged here.
+  const pageList = listFiltered && !searchActive ? flatList.slice(page * pageSize, (page + 1) * pageSize) : flatList;
+  const mountedList = firstScreenOnly ? pageList.slice(0, FIRST_SCREEN_CARDS) : pageList;
   const byDay = new Map<string, MemoryListEntry[]>();
   if (!searchActive) {
     for (const e of mountedList) {
@@ -804,21 +815,18 @@ export function Recent() {
   } else {
     byDay.set("Results", mountedList);
   }
-  // More rows exist server-side than we've loaded. Prefer the true total;
-  // fall back to the page-cap heuristic if total wasn't returned.
-  // Pagination math off the authoritative total.
-  // No pagination in the deleted view — it's fetched in one shot, and the
-  // namespace's live `total` (6k+) has nothing to do with the deleted count.
-  const pageCount = showDeleted || listFiltered ? 1 : Math.max(1, Math.ceil((total || entries.length) / PAGE_SIZE));
-  const rangeStart = entries.length === 0 ? 0 : page * PAGE_SIZE + 1;
-  const rangeEnd = page * PAGE_SIZE + entries.length;
+  // The deleted view is fetched in one shot: the namespace's live total has nothing to do
+  // with the deleted count. A filtered list counts its matches.
+  const listTotal = showDeleted ? flatList.length : listFiltered ? flatList.length : total || entries.length;
+  const rangeStart = pageList.length === 0 ? 0 : (showDeleted ? 0 : page * pageSize) + 1;
+  const rangeEnd = (showDeleted ? 0 : page * pageSize) + pageList.length;
   const countLine = searchActive
     ? `${flatList.length} shown`
     : showDeleted
       ? `${flatList.length.toLocaleString()} recently deleted`
       : listFiltered
-        ? `${flatList.length.toLocaleString()} matching`
-        : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`;
+        ? `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()} matching`
+        : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()}`;
 
   return (
     <PageContainer className="pb-24">
@@ -1051,7 +1059,13 @@ export function Recent() {
           Showing the newest 1,000 matches. Add a tag or a search word to narrow them.
         </p>
       )}
-      <div className="space-y-6" aria-busy={refreshing || undefined}>
+      <div
+        id="memories-list"
+        tabIndex={-1}
+        className="space-y-6 outline-none"
+        aria-label="Memories"
+        aria-busy={refreshing || undefined}
+      >
         {Array.from(byDay.entries()).map(([day, items]) => (
           <section key={day}>
             <SectionHeading level={2} label={day} count={items.length} />
@@ -1147,10 +1161,20 @@ export function Recent() {
         ))}
       </div>
 
-      {!searchActive && pageCount > 1 && (
-        <nav className="mt-8" aria-label="Pagination">
-          <Pagination totalPages={pageCount} currentPage={page + 1} onChange={(n) => setPage(n - 1)} />
-        </nav>
+      {!searchActive && !showDeleted && (
+        <ListPager
+          label="Memories pages"
+          page={page}
+          pageSize={pageSize}
+          shown={pageList.length}
+          total={listTotal}
+          onPage={setPage}
+          onPageSize={(n) => {
+            setPageSize(n);
+            setPage(0);
+          }}
+          topId="memories-list"
+        />
       )}
     </PageContainer>
   );

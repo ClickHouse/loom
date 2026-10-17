@@ -59,6 +59,9 @@ const LIBRARY_LIST_FIELDS = [
   "original_filename",
 ];
 
+// Documents per read; "Load more" asks for the next 50 (knowledge.list has a cursor, no total).
+const LIBRARY_PAGE = 50;
+
 export function Documents() {
   const identity = useIdentity();
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
@@ -83,7 +86,7 @@ export function Documents() {
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
 
-  // knowledge.list pages at 100: `nextCursor` is the server's continuation, null once the
+  // knowledge.list pages at 50 (LIBRARY_PAGE): `nextCursor` is the server's continuation, null once the
   // namespace is fully loaded. `scopeRef` stamps each first-page load so a "Load more"
   // that resolves after the scope moved on is dropped instead of appended under the wrong
   // header.
@@ -116,7 +119,12 @@ export function Documents() {
     const tags = (JSON.parse(serverTags) as string[]).flatMap((t) => [t, t.toLowerCase()]);
     listKnowledge(
       { org: identity.org, namespace: identity.namespace },
-      { signal, fields: LIBRARY_LIST_FIELDS, ...(tags.length ? { tags: [...new Set(tags)], limit: 500 } : {}) },
+      {
+        signal,
+        fields: LIBRARY_LIST_FIELDS,
+        limit: LIBRARY_PAGE,
+        ...(tags.length ? { tags: [...new Set(tags)] } : {}),
+      },
     )
       .then((r) => {
         if (live()) {
@@ -142,9 +150,8 @@ export function Documents() {
         {
           cursor: nextCursor,
           fields: LIBRARY_LIST_FIELDS,
-          ...(queryTags.length
-            ? { tags: [...new Set(queryTags.flatMap((t) => [t, t.toLowerCase()]))], limit: 500 }
-            : {}),
+          limit: LIBRARY_PAGE,
+          ...(queryTags.length ? { tags: [...new Set(queryTags.flatMap((t) => [t, t.toLowerCase()]))] } : {}),
         },
       );
       if (scopeRef.current !== scope) return;

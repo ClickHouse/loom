@@ -1338,3 +1338,23 @@ textarea[aria-invalid="true"]:focus-visible {
   flex-shrink: 0;
   padding-top: 1px;
 }
+
+/* ui/ListPager: Click UI's Pagination stacks into a column under 768 px (its containers are
+   responsive); a pager stays one row, the range wrapping above the arrows, and keeps the
+   widths it sets (a 50 px page field). On a phone the page size goes. */
+@media (max-width: 768px) {
+  .list-pager [class*="container_responsive"] {
+    flex-direction: row;
+    width: var(--container-width);
+    max-width: var(--container-max-width);
+  }
+  .list-pager > [class*="container_responsive"] {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+}
+@media (max-width: 639px) {
+  .list-pager > [class*="container_responsive"] > :nth-child(3) {
+    display: none;
+  }
+}

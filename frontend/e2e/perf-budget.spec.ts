@@ -123,6 +123,8 @@ async function renderBudget(
 }
 
 test("Memories with 100 rows: DOM nodes and long tasks within budget at 4x CPU", async ({ page }) => {
+  // The largest page a reader can pick: the worst case the budget is for.
+  await page.addInitScript(() => localStorage.setItem("loom_page_size_memories_v1", "100"));
   await installApi(page, { memoryRows: ROWS });
   const m = await renderBudget(page, "/memories", "Memories", /^alerts\/2026-09-19\/\d{4}$/, ROWS);
   expect(m.shown, "every row is in the DOM (no virtualisation — containment instead)").toBe(ROWS);

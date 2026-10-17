@@ -942,14 +942,19 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           });
         }
         if (!options.memoryRows) break;
-        return json({
-          entries: projectRows(memoryRowsFixture(options.memoryRows, ns), body, "memory_key"),
-          total: options.memoryRows,
-          today: options.memoryRows,
-          truncated: false,
-          namespace_version: "1",
-          unchanged: false,
-        });
+        {
+          // One page of the rows, as the server answers `limit` and `offset`.
+          const from = Number(body.offset ?? 0);
+          const rows = memoryRowsFixture(options.memoryRows, ns).slice(from, from + Number(body.limit ?? 100));
+          return json({
+            entries: projectRows(rows, body, "memory_key"),
+            total: options.memoryRows,
+            today: options.memoryRows,
+            truncated: false,
+            namespace_version: "1",
+            unchanged: false,
+          });
+        }
       case "/v1/memory.get": {
         // The inspector's one read on open answers from the same fixture rows, so a card
         // open can be measured end to end.

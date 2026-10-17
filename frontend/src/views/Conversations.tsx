@@ -23,7 +23,7 @@ import { useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { Skeleton } from "../components/Skeleton";
-import { Chip, ExternalLink, ListRow, ListToolbar, PageHeader, SectionHeading } from "../components/ui";
+import { Chip, ExternalLink, ListPager, ListRow, ListToolbar, PageHeader, SectionHeading } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -35,6 +35,8 @@ import { SessionBriefPanel } from "../components/SessionBriefPanel";
 import { SessionBriefsSection } from "../components/SessionBriefsSection";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
+
+const THREADS_PAGE = 30;
 
 // The fields the Sessions list reads of a thread.
 const THREADS_FIELDS = ["thread_id", "agent", "msg_count", "title", "last_role", "last_seen", "last_content_excerpt"];
@@ -163,6 +165,11 @@ export function Conversations() {
   // Thread-list read failure, shown inline with a Retry.
   const [threadsError, setThreadsError] = useState<string | null>(null);
   const [threadsRetry, setThreadsRetry] = useState(0);
+  // Threads come a page at a time, most recently active first, over the past year.
+  const [threadPage, setThreadPage] = useState(0);
+  const [threadsPaged, setThreadsPaged] = useState(true);
+  const [seenAgents, setSeenAgents] = useState<string[]>([]);
+  const firstThreadRef = useRef<string | null>(null);
   // Selected thread for the message-replay dialog. Click a thread
   // card OR a search-hit thread header → fetch full messages → show.
   // `knownAgent`: the agent the opener named, for a replica of the previous release.
@@ -221,6 +228,8 @@ export function Conversations() {
     setHits(null);
     setBusy(false);
     setThreads(null);
+    setThreadPage(0);
+    setSeenAgents([]);
     setAgentFilter("*");
     setLoggingEnabled(null);
   }, [identity.org, identity.namespace]);
@@ -230,10 +239,28 @@ export function Conversations() {
       setThreadsError(null);
       listConversationThreads(
         { org: identity.org, namespace: identity.namespace },
-        { limit: 50, signal, fields: THREADS_FIELDS },
+        {
+          limit: THREADS_PAGE,
+          offset: threadPage * THREADS_PAGE,
+          window_days: 365,
+          agent: agentFilter,
+          signal,
+          fields: THREADS_FIELDS,
+        },
       )
         .then((r) => {
-          if (live()) setThreads(r.threads || []);
+          if (!live()) return;
+          const rows = r.threads || [];
+          // A build that predates `offset` answers the first page again: stay on it and
+          // offer no further page rather than show the same threads twice.
+          if (threadPage === 0) firstThreadRef.current = rows[0]?.thread_id ?? null;
+          else if (rows[0] && rows[0].thread_id === firstThreadRef.current) {
+            setThreadsPaged(false);
+            setThreadPage(0);
+            return;
+          }
+          setThreads(rows);
+          setSeenAgents((prev) => Array.from(new Set([...prev, ...rows.map((t) => t.agent)])).sort());
         })
         .catch((e) => {
           if (!live()) return;
@@ -251,7 +278,7 @@ export function Conversations() {
           if (live()) setLoggingEnabled(null);
         });
     },
-    [identity.org, identity.namespace, threadsRetry],
+    [identity.org, identity.namespace, threadsRetry, threadPage, agentFilter],
   );
 
   const highlightedTurn = useMemo(() => {
@@ -322,11 +349,9 @@ export function Conversations() {
 
   // Distinct agents for the filter; the displayed thread list is the
   // namespace-wide set narrowed to the selected agent.
-  const agentOptions = useMemo(() => Array.from(new Set((threads || []).map((t) => t.agent))).sort(), [threads]);
-  const visibleThreads = useMemo(
-    () => (agentFilter === "*" ? threads : (threads || []).filter((t) => t.agent === agentFilter)),
-    [threads, agentFilter],
-  );
+  // The agents seen on any page so far; the filter itself is the server's.
+  const agentOptions = seenAgents;
+  const visibleThreads = threads;
 
   const openThreadDialog = useCallback(
     async (thread_id: string, opts: { namespace?: string; hit?: ConversationHit; knownAgent?: string } = {}) => {
@@ -472,7 +497,9 @@ export function Conversations() {
     if (!visibleThreads || visibleThreads.length === 0) return null;
     return (
       <div className="space-y-2">
-        <SectionHeading level={2} label={label} count={visibleThreads.length} />
+        <div id="threads-list" tabIndex={-1} className="outline-none">
+          <SectionHeading level={2} label={label} caption="active in the last year" />
+        </div>
         {visibleThreads.map((t) => {
           // An untitled thread is named by its last message, so no row looks broken.
           const title = t.title || truncate(t.last_content_excerpt, 140);
@@ -502,6 +529,16 @@ export function Conversations() {
             </ListRow>
           );
         })}
+        {threadsPaged && hits === null && (
+          <ListPager
+            label="Thread pages"
+            page={threadPage}
+            pageSize={THREADS_PAGE}
+            shown={visibleThreads.length}
+            onPage={setThreadPage}
+            topId="threads-list"
+          />
+        )}
       </div>
     );
   };
@@ -537,7 +574,10 @@ export function Conversations() {
         {agentOptions.length > 1 && (
           <Select
             value={agentFilter}
-            onSelect={(value) => setAgentFilter(value)}
+            onSelect={(value) => {
+              setAgentFilter(value);
+              setThreadPage(0);
+            }}
             triggerProps={{ "aria-label": "Agent" }}
             className="hidden w-48 shrink-0 sm:block"
           >
@@ -557,7 +597,10 @@ export function Conversations() {
             // A phone's bar has room for the search only; the agent filter sits under it.
             <Select
               value={agentFilter}
-              onSelect={(value) => setAgentFilter(value)}
+              onSelect={(value) => {
+                setAgentFilter(value);
+                setThreadPage(0);
+              }}
               triggerProps={{ "aria-label": "Agent" }}
               className="w-48 sm:hidden"
             >

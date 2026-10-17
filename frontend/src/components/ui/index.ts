@@ -21,3 +21,4 @@ export { Loading, LoadingSkeleton, Spinner } from "./Loading";
 export { ListToolbar, type ListToolbarAction, type ListToolbarProps } from "./ListToolbar";
 export { ListRow, type ListRowProps } from "./ListRow";
 export { TagList, type TagListProps } from "./TagList";
+export { ListPager, usePageSize, type ListPagerProps } from "./ListPager";
