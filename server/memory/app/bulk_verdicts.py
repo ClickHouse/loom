@@ -157,14 +157,16 @@ def _target_rewritten_before(v: Any, idx: int, first_row: dict[str, int]) -> boo
 
 
 def _without_rewritten_peers(v: Any, idx: int, first_row: dict[str, int]) -> Any:
-    """A refines or conflict verdict without the peers an earlier row of the batch
-    rewrote: their stored bytes are gone too. Returns `v` itself when none was."""
+    """A refines or conflict verdict without the peers another row of the batch
+    rewrites. An earlier row replaced the bytes judged; a later one would have its new
+    value retired or flagged, since the marks run after the insert. Returns `v` itself
+    when no peer was dropped."""
     if getattr(v, "verdict", "") not in ("refines", "conflict"):
         return v
     old_peers = list(getattr(v, "peers", None) or [])
     old_refined = list(getattr(v, "refined_peers", None) or [])
-    peers = [p for p in old_peers if first_row.get(str(p.memory_id), idx) >= idx]
-    refined = [p for p in old_refined if first_row.get(str(p.memory_id), idx) >= idx]
+    peers = [p for p in old_peers if first_row.get(str(p.memory_id), idx) == idx]
+    refined = [p for p in old_refined if first_row.get(str(p.memory_id), idx) == idx]
     if len(peers) == len(old_peers) and len(refined) == len(old_refined):
         return v
     return dataclasses.replace(v, peers=peers, refined_peers=refined)
@@ -194,7 +196,8 @@ def apply_bulk_verdicts(
     drop: set[int] = set()
     dup_idx: set[int] = set()
     # A verdict against a stored row an earlier entry of the batch rewrote matched bytes
-    # that are gone: memory.set in the same order would find the new value there.
+    # that are gone: memory.set in the same order would find the new value there. A merge
+    # or duplicate against a row a later entry rewrites is fine: it changes no peer row.
     first_row: dict[str, int] = {}
     for i, r in enumerate(memory_rows):
         first_row.setdefault(str(r.get("memory_id") or ""), i)
