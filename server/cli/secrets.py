@@ -158,8 +158,8 @@ async def in_flight(ch: Any) -> tuple[int, int]:
             doc = json.loads(row["value"])
         except ValueError:
             continue  # a session's "<generation>:<rid>"
-        if not isinstance(doc, dict):
-            continue
+        if not isinstance(doc, dict) or doc.get("spent"):
+            continue  # a spent code or grant has no sign-in left to finish
         # A code's or a device grant's at the top, an approval's or a link's in its data.
         data = doc["data"] if isinstance(doc.get("data"), dict) else {}
         sealed = doc.get("upstream_refresh") or data.get("upstream_refresh")
