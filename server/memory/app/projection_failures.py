@@ -22,6 +22,8 @@ from server.identity.domain.read_scope import (
 )
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
+    LANDED_ENTRIES,
+    LANDED_RESULTS,
     TRIPLES_ARRIVED_AT,
     TRIPLES_ENTITY_MAP,
     TRIPLES_INSERTED_AT,
@@ -821,8 +823,9 @@ async def _retry_graph_projection(
     the value they wrote. A triples replay runs within the writer's read scope; it
     returns the reason that abandons the failure when that scope was refused or
     incomplete."""
-    entries = failure.payload.get("entries")
-    results = failure.payload.get("results")
+    # A replay that inserted the triples moved them out of the build before's reach.
+    entries = failure.payload.get(LANDED_ENTRIES, failure.payload.get("entries"))
+    results = failure.payload.get(LANDED_RESULTS, failure.payload.get("results"))
     if not isinstance(entries, list) or not isinstance(results, list):
         raise ValueError("graph projection retry requires entries/results payload")
 
@@ -935,27 +938,18 @@ async def _replay_triples(
             entity_map=_recorded_entity_map(failure.payload),
         )
     except TriplesRepairFailed as e:
-        # What this replay wrote rides the failure, for the next to finish: the
-        # entries it kept and the closes it made.
-        changes = {**repair_failure_payload(e), **kept}
+        # The closes this replay made ride the failure, for the next to finish.
+        changes = repair_failure_payload(e)
         if landed:
             await _record_changes(failure, changes, ch=ch)
             raise
-        # This replay inserted the triples. Recorded as `entity_triples` with them
-        # landed, the build before would insert them again, so the repair moves to a
-        # failure of its own and this one resolves.
-        await record_projection_failure(
-            org=failure.org,
-            namespace=failure.namespace,
-            agent=failure.agent,
-            projection=TRIPLES_REPAIR,
-            source_operation=failure.source_operation,
-            source_resource_id=failure.source_resource_id,
-            memory_keys=failure.memory_keys,
-            error=e,
-            payload={**failure.payload, **changes},
-            ch=ch,
-        )
+        # This replay inserted the triples (the entries it kept). One mutation records
+        # that in the failure before anything can replay it, so no replay inserts them
+        # again. They move to keys the build before does not read: it would insert them.
+        changes[LANDED_ENTRIES] = kept["entries"]
+        changes[LANDED_RESULTS] = kept["results"]
+        await _update_payload(failure, changes, drop=("entries", "results"), ch=ch)
+        raise
 
 
 async def _record_changes(
@@ -969,9 +963,15 @@ async def _record_changes(
 
 
 async def _update_payload(
-    failure: ProjectionFailureRow, changes: dict[str, Any], *, ch: Any
+    failure: ProjectionFailureRow,
+    changes: dict[str, Any],
+    *,
+    drop: tuple[str, ...] = (),
+    ch: Any,
 ) -> None:
-    payload = {**failure.payload, **changes}
+    """Write `changes` into the failure's payload, without the keys in `drop`."""
+    payload = {k: v for k, v in failure.payload.items() if k not in drop}
+    payload.update(changes)
     # Synchronous: the next retry reads the payload this one leaves.
     await ch.execute(
         """

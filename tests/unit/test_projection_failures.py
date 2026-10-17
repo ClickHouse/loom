@@ -483,7 +483,8 @@ async def test_the_closes_a_failed_replay_made_are_finished_by_the_next(monkeypa
 
 async def test_a_failed_replay_keeps_only_the_entries_it_wrote(monkeypatch) -> None:
     # k2's row was revised since, so the replay writes only k1, then its repair fails:
-    # the repair failure it hands over finishes k1's repair, and never acts on k2.
+    # the failure then keeps only k1, so the next replay finishes k1's repair and never
+    # acts on k2.
     from datetime import datetime
 
     from server.memory.app import entity_projections, projections
@@ -505,18 +506,10 @@ async def test_a_failed_replay_keeps_only_the_entries_it_wrote(monkeypatch) -> N
 
     monkeypatch.setattr(entity_projections, "versions_held", holding)
     monkeypatch.setattr(projections, "write_entity_triples", fails)
-    recorded: list = []
-
-    class _RecordingCH(_GraphCH):
-        async def insert(self, table, rows, settings=None):
-            recorded.extend(rows)
-
-    assert (await retry_projection_failure(failure, ch=_RecordingCH())).resolved
-    (handed,) = recorded
-    assert handed["projection"] == "entity_triples_repair"
-    payload = json.loads(handed["payload"])
-    assert [e["memory_key"] for e in payload["entries"]] == ["k1"]
-    assert [r["memory_key"] for r in payload["results"]] == ["k1"]
+    assert not (await retry_projection_failure(failure, ch=_FailureRowCH(failure))).resolved
+    payload = failure.payload
+    assert [e["memory_key"] for e in payload["triples_landed_entries"]] == ["k1"]
+    assert [r["memory_key"] for r in payload["triples_landed_results"]] == ["k1"]
     assert payload["triples_inserted_at"] == "2026-10-01T09:00:00"
 
 
