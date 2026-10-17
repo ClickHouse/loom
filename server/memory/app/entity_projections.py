@@ -1332,6 +1332,7 @@ async def _carried_by(
               AND (memory_id, content_sha256) IN {keys:Array(Tuple(UUID, String))}
               AND redacted_at IS NULL
             GROUP BY id, sha
+            SETTINGS select_sequential_consistency = 1
             """,
             params={"org": org, "ns": namespace, "keys": old},
         )
