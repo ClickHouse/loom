@@ -265,8 +265,8 @@ def _apply_verdicts(
     """Settle which batch rows land now that the verdicts are known (a row an earlier
     entry's landed pin refuses, or one its key already holds, is dropped), then fold the
     verdicts into the rows that are left."""
-    drop, copies, stale, landed = settle_batch_rows(state, verdicts)
-    emb_idx_of, verdicts = drop_built_rows(state, emb_idx_of, verdicts, drop)
+    replay = settle_batch_rows(state, verdicts)
+    emb_idx_of, verdicts = drop_built_rows(state, emb_idx_of, verdicts, replay.drop)
     # Verdicts are keyed by row; skipped entries have results but no row.
     row_results = [state.results[i] for i in state.row_results]
     plan = apply_bulk_verdicts(
@@ -275,11 +275,13 @@ def _apply_verdicts(
         emb_idx_of,
         row_results,
         verdicts,
-        stale_rows=stale,
-        landed_rows=landed,
+        stale_rows=replay.stale,
+        landed_rows=replay.landed,
     )
-    land_restated_merges(state, plan)
-    copy_restated_verdicts(state, plan, copies)
+    land_restated_merges(state, plan, replay)
+    copy_restated_verdicts(state, plan, replay.copies)
+    # `_projected` reads the landings after the insert.
+    state.restated_landings = replay.landings
     state.memory_rows = plan.memory_rows
     state.embedding_rows = plan.embedding_rows
     return plan

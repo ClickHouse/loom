@@ -236,8 +236,8 @@ def test_a_pin_from_a_landed_bulk_row_refuses_a_later_value() -> None:
     from server.memory.app.bulk_rows import settle_batch_rows
 
     state = _batch("s0", ("s1", True), ("s2", False))
-    drop, _copies, _stale, _landed = settle_batch_rows(state, {})
-    assert drop == {1} and state.skipped_pinned == ["k"]
+    assert settle_batch_rows(state, {}).drop == {1}
+    assert state.skipped_pinned == ["k"]
     assert [r.conflict_verdict for r in state.results] == ["", "pinned"]
 
 
@@ -246,8 +246,8 @@ def test_returning_to_the_stored_value_after_a_rejected_row_is_unchanged() -> No
     from server.memory.app.bulk_rows import settle_batch_rows
 
     state = _batch("s0", ("s1", False), ("s0", False))
-    drop, _copies, _stale, _landed = settle_batch_rows(state, {0: NS(verdict="rejected")})
-    assert drop == {1} and state.results[1].version == 0
+    replay = settle_batch_rows(state, {0: NS(verdict="rejected")})
+    assert replay.drop == {1} and state.results[1].version == 0
     assert state.skipped_unchanged == 1 and state.restated_ids == ["e1"]
 
 
