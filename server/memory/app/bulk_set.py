@@ -286,11 +286,14 @@ def _apply_verdicts(
 
 
 async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
-    """Phase 8b: with the conflict resolver on, a row whose key another session of
-    the same subject holds live is owed a judgement (outside `newest_wins`, which
-    retires the older row itself after the insert). Fail-open."""
+    """Phase 8b: with the conflict resolver on, a row is owed a judgement when an
+    earlier row of the batch of its type sits at the resolver floor (the verdicts
+    never compare siblings), or when another session of the same subject holds its
+    key live (outside `newest_wins`, which retires the older row itself after the
+    insert). Not under `append_only`. Fail-open."""
     from server.memory.app.conflicts import namespace_conflict_policy
     from server.memory.app.key_supersession import keys_held_elsewhere
+    from server.memory.domain.conflict_resolution import later_close_siblings
     from server.memory.store.conflict_resolver import OWED_MARK
     from server.settings import settings
 
@@ -298,7 +301,16 @@ async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWr
         return
     try:
         policy = await namespace_conflict_policy(input.org, input.namespace, ch=ch)
-        if policy in ("newest_wins", "append_only"):
+        if policy == "append_only":
+            return
+        rows = state.embedding_rows
+        for i in later_close_siblings(
+            [list(r.get("embedding") or []) for r in rows],
+            [str(r.get("memory_type") or "") for r in rows],
+            float(settings.memory_conflict_resolver_min_similarity),
+        ):
+            rows[i]["conflict_checked_at"] = OWED_MARK
+        if policy == "newest_wins":
             return
         held = await keys_held_elsewhere(
             org=input.org, namespace=input.namespace, memory_rows=state.memory_rows, ch=ch

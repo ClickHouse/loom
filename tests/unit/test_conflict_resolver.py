@@ -897,6 +897,50 @@ async def test_a_bulk_row_whose_key_another_session_holds_is_owed(monkeypatch) -
     assert ch.sql == []
 
 
+def test_a_later_close_sibling_of_its_type_is_marked() -> None:
+    paris, rome, car = [1.0, 0.0, 0.0], [0.8, 0.6, 0.0], [0.0, 0.0, 1.0]
+    kinds = ["semantic", "semantic", "semantic"]
+    assert cr.later_close_siblings([paris, rome, car], kinds, 0.60) == {1}
+    assert cr.later_close_siblings([rome, paris], kinds[:2], 0.60) == {1}, "the later one"
+    assert cr.later_close_siblings([paris, rome], ["semantic", "preference"], 0.60) == set()
+    assert cr.later_close_siblings([paris, [], rome], kinds, 0.85) == set()
+
+
+async def test_a_bulk_update_inside_the_batch_is_owed_under_every_policy_but_append_only(
+    monkeypatch,
+) -> None:
+    from server.memory.app import bulk_set
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    class CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return []
+
+    current = {"policy": "newest_wins"}
+
+    async def policy(org: str, namespace: str, ch: Any = None) -> str:
+        return current["policy"]
+
+    monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", policy)
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
+    monkeypatch.setattr("server.memory.app.key_supersession.request_scope", lambda: WHOLE_NAMESPACE)
+    monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", True)
+    for name, want in (("newest_wins", 1), ("auto_reinforce", 1), ("append_only", None)):
+        current["policy"] = name
+        state = _BulkWriteState()
+        ident = {"agent": "a", "user_id": "u", "session_id": "s1", "memory_type": "semantic"}
+        state.memory_rows = [{**ident, "memory_key": k} for k in ("office", "office_now")]
+        state.embedding_rows = [
+            {**ident, "memory_key": "office", "embedding": [1.0, 0.0], "conflict_checked_at": None},
+            {**ident, "memory_key": "office_now", "embedding": [0.8, 0.6]}
+            | {"conflict_checked_at": None},
+        ]
+        await bulk_set._bulk_mark_same_key(CH(), NS(org="o", namespace="ns"), state)
+        marks = [r["conflict_checked_at"] for r in state.embedding_rows]
+        assert marks == [None, queue.OWED_MARK if want else None], name
+
+
 def test_the_defaults_are_the_benched_operating_point() -> None:
     # gpt-6.1-sol at low effort: update precision 0.98-1.00 at >= 0.95 on held-out pairs,
     # clear precision 0.96-0.98 at >= 0.90; a 0.60 floor flagged nothing it should not.

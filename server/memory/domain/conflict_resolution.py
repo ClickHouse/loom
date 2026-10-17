@@ -226,3 +226,27 @@ def action_for(v: PeerVerdict, *, policy: str, retire_at: float, clear_at: float
     if verdict == CONTRADICTION:
         return FLAG
     return CLEAR
+
+
+def later_close_siblings(vectors: list[list[float]], types: list[str], floor: float) -> set[int]:
+    """The indexes of a batch's rows that have an EARLIER row of the same type at
+    cosine >= `floor`. The verdicts compare each row with the store only, so an
+    update inside one batch is marked here; the later row is the newer statement
+    (the batch keeps reading order). Rows without a vector never pair."""
+    import numpy as np
+
+    groups: dict[tuple[str, int], list[int]] = {}
+    for i, (vec, kind) in enumerate(zip(vectors, types, strict=True)):
+        if vec:
+            groups.setdefault((kind, len(vec)), []).append(i)
+    out: set[int] = set()
+    for idx in groups.values():
+        if len(idx) < 2:
+            continue
+        m = np.asarray([vectors[i] for i in idx], dtype=np.float32)
+        norms = np.linalg.norm(m, axis=1, keepdims=True)
+        unit = m / np.where(norms == 0, 1.0, norms)
+        # close[a, b]: rows a and b of the group are near; only an earlier a counts.
+        close = np.triu(unit @ unit.T >= floor, k=1)
+        out.update(idx[b] for b in np.flatnonzero(close.any(axis=0)))
+    return out
