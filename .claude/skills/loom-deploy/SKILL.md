@@ -41,7 +41,6 @@ docker logs --since 5m loom-<colour> 2>&1 | grep -iE 'error|traceback' | tail
 ```
 
 - `build_commit` is the commit you meant to deploy. The script fetched `origin/main` and rebased onto it (`--autostash`), refused a dirty tree that was behind, and asked `[y/N]` before pulling commits that touch the deploy files; a dirty tree it was not behind ships as it is.
-- Reinstall host cron scripts when the deploy moved what they call (`deploy/cron/`).
 - Watch error rate and p95 for the first minutes; a ClickHouse replica restarting at the same moment slows inserts without a code cause.
 
 ## 4. Rollback
