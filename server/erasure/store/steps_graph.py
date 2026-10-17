@@ -109,19 +109,23 @@ ROW_LINK_TABLES = ("loom.entity_triple_rows", "loom.entity_edge_rows")
 
 
 def _orphan_row_links(
-    scope_type: str, scope_value: str | Sequence[str], verified_at: datetime
+    table: str, scope_type: str, scope_value: str | Sequence[str], verified_at: datetime
 ) -> tuple[str, dict[str, Any]]:
-    """The scope predicate of an orphan row link, and its params. `verified_at`
-    is when the saga's census ran."""
+    """The scope predicate of an orphan row link in `table`, and its params.
+    `verified_at` is when the saga's census ran."""
     if scope_type == "namespace":
         scope = NS_IN
         memories = f"org = {{org:String}} AND {NS_IN}"
         params: dict[str, Any] = {"ns": namespaces_of(scope_value)}
     else:
         # A link carries its writer, and another user may own the memory now, so
-        # any memory of the org keeps its link.
+        # any memory of the org keeps its link. Only the memories this user's links
+        # name are read, not every memory of the org.
         scope = UID
-        memories = "org = {org:String}"
+        memories = (
+            "org = {org:String} AND memory_id IN "
+            f"(SELECT memory_id FROM {table} WHERE org = {{org:String}} AND {UID})"
+        )
         params = {"uid": str(scope_value)}
     live_ids = f"SELECT memory_id FROM loom.memory FINAL WHERE {memories} AND tombstoned_at IS NULL"
     # DateTime keeps whole seconds, so a row from the census's own second counts
@@ -144,9 +148,9 @@ async def count_orphan_row_links(
 ) -> dict[str, int]:
     """Orphan row links in scope, per table."""
     ch = ch or _default_client()
-    where, params = _orphan_row_links(scope_type, scope_value, verified_at)
     out: dict[str, int] = {}
     for table in ROW_LINK_TABLES:
+        where, params = _orphan_row_links(table, scope_type, scope_value, verified_at)
         # A memory written a moment ago on another replica must count as live.
         row = await ch.query_one(
             f"SELECT count() AS n FROM {table} WHERE org = {{org:String}} AND {where} "
@@ -167,9 +171,9 @@ async def delete_orphan_row_links(
 ) -> int:
     """Delete the orphan row links in scope. The mutation reads the memory ids
     again when it runs, so a memory written since the count keeps its link."""
-    where, params = _orphan_row_links(scope_type, scope_value, verified_at)
     total = 0
     for table in ROW_LINK_TABLES:
+        where, params = _orphan_row_links(table, scope_type, scope_value, verified_at)
         total += await delete_scoped(table, org=org, scope_where=where, params=params, ch=ch)
     return total
 

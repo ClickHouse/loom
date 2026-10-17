@@ -939,17 +939,33 @@ def test_an_orphan_row_link_is_one_whose_memory_has_no_live_row_and_no_later_one
     from datetime import datetime
 
     cut = datetime(2026, 10, 17, 8, 0)
-    where, params = graph_steps._orphan_row_links("namespace", ["a", "b"], cut)
+    where, params = graph_steps._orphan_row_links(
+        "loom.entity_triple_rows", "namespace", ["a", "b"], cut
+    )
     assert where.startswith("namespace IN {ns:Array(String)} AND memory_id NOT IN (")
     assert "FROM loom.memory FINAL" in where and "tombstoned_at IS NULL" in where
     # A memory with any row written since the census keeps its link, tombstoned or not.
     assert "AND memory_id NOT IN (SELECT memory_id FROM loom.memory WHERE " in where
     assert "updated_at >= {verified_at:DateTime}" in where
     assert params == {"ns": ["a", "b"], "verified_at": cut}
-    where, params = graph_steps._orphan_row_links("user_id", "u1", cut)
+    where, params = graph_steps._orphan_row_links("loom.entity_triple_rows", "user_id", "u1", cut)
     assert where.startswith("user_id = {uid:String} AND memory_id NOT IN (")
     assert "updated_at >= {verified_at:DateTime}" in where
     assert params == {"uid": "u1", "verified_at": cut}
+
+
+def test_a_user_scope_reads_only_the_memories_its_links_name() -> None:
+    from datetime import datetime
+
+    cut = datetime(2026, 10, 17, 8, 0)
+    for table in graph_steps.ROW_LINK_TABLES:
+        where, _ = graph_steps._orphan_row_links(table, "user_id", "u1", cut)
+        bound = (
+            f"AND memory_id IN (SELECT memory_id FROM {table} "
+            "WHERE org = {org:String} AND user_id = {uid:String})"
+        )
+        # Both the live-row and the later-row reads, not the whole org.
+        assert where.count(bound) == 2
 
 
 async def test_list_completed_requests_takes_sagas_verified_since() -> None:
