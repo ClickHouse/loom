@@ -472,6 +472,25 @@ async def test_idempotency_key_returns_the_first_task(fake: FakeRepo) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_retried_create_writes_a_lease_row_only_for_an_unclaimed_task(
+    fake: FakeRepo,
+) -> None:
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1")
+    tid = a.task.task_id
+    # A create cut off after its task row: the retry writes the missing lease row.
+    fake.leases.rows.pop(tid)
+    await _post(fake, idempotency_key="k1")
+    assert tid in fake.leases.rows
+    # A claimed task finishing drops its lease before it records the terminal status:
+    # a retry in between must not write the lease row back.
+    fake.tasks[tid].update(status="in_progress", fence=1)
+    fake.leases.rows.pop(tid)
+    await _post(fake, idempotency_key="k1")
+    assert tid not in fake.leases.rows
+
+
+@pytest.mark.asyncio
 async def test_racing_creates_with_one_key_answer_with_the_task_that_landed(
     fake: FakeRepo,
 ) -> None:

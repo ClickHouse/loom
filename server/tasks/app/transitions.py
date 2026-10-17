@@ -102,8 +102,10 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
             if prior is not None:
                 # The first create may have been cut off (the key's lease timed out)
                 # after its task row and before its lease row; without one the task can
-                # never be claimed. Writing it again is a no-op when it is there.
-                if prior["status"] not in TERMINAL:
+                # never be claimed. Writing it again is a no-op when it is there. Only a
+                # task never claimed can be in that state: a claimed one finishing drops
+                # its lease before it records the end, and must not get it back.
+                if prior["status"] in ("todo", "triage") and int(prior["fence"]) == 0:
                     backend = await repo.lease_backend()
                     await backend.ensure_row(
                         str(prior["task_id"]), prior["org"], prior["inbox"], int(prior["fence"])
