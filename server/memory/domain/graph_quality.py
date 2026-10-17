@@ -397,13 +397,22 @@ def is_lexical_junk_entity(text: str) -> bool:
 
 def _marks_kept(run: re.Match[str]) -> str:
     """A run of punctuation as spaces, but for its combining marks: the vowel signs of
-    Hindi or Thai are part of their word ("दिल्ली", "กรุงเทพ")."""
-    return "".join(c if unicodedata.category(c).startswith("M") else " " for c in run.group())
+    Hindi or Thai are part of their word ("दिल्ली", "กรุงเทพ"). A mark with no letter
+    before it (at the start, or after a space or a sign) marks nothing and goes too."""
+    after_letter = run.start() > 0 and run.string[run.start() - 1].isalnum()
+    out = []
+    for c in run.group():
+        keep = after_letter and unicodedata.category(c).startswith("M")
+        out.append(c if keep else " ")
+        after_letter = keep
+    return "".join(out)
 
 
 def _normalise(lowered: str) -> str:
-    # One form for a letter typed composed or as a letter and its mark ("ü", "u" + "¨").
-    text = unicodedata.normalize("NFC", lowered)
+    # One spelling for one name: a letter typed composed or as a letter and its mark
+    # ("ü", "u" + "¨"), and compatibility forms ("ＴＯＫＹＯ", the ligature "ﬁ").
+    # NFKC can turn a lower-case form into an upper-case letter ("ℌ" is "H").
+    text = unicodedata.normalize("NFKC", lowered).lower()
     # "İ".lower() is "i" and a dot above: keep the "i" a user types for "istanbul".
     text = text.replace("i\u0307", "i")
     text = text.replace("'s", "").replace("’s", "")

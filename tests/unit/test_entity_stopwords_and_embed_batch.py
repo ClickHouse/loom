@@ -120,6 +120,13 @@ def test_a_dot_is_inside_a_word_unless_every_part_is_one_letter(
         ("Café-Bar!", "café-bar"),
         ("node.js", "node.js"),
         ("Alice's   API responses", "alice api response"),
+        # A compatibility spelling is the same name: full-width letters, a ligature.
+        ("ＴＯＫＹＯ", "tokyo"),
+        ("Tokyo", "tokyo"),
+        ("ﬁnance", "finance"),
+        # A mark with no letter before it marks nothing.
+        ("\u0301Tokyo", "tokyo"),
+        ('"\u0301Tokyo"', "tokyo"),
     ],
 )
 def test_the_canonical_form_keeps_combining_marks(raw: str, canonical: str) -> None:

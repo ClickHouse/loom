@@ -127,8 +127,10 @@ schema. These rules keep that safe. The operator procedure is in
     `memory.update_by_id` are dropped there, so that write graphs none of the facts it
     names.
 13. **A name N spells differently is a different node.** N keeps combining marks and
-    NFC-normalises an entity's name (`दिल्ली`, `İstanbul` as `istanbul`); N-1 split them
-    into fragments (`द ल ल`, `i stanbul`). Latin and ASCII names spell the same in both.
+    NFKC-normalises an entity's name (`दिल्ली`, `İstanbul` as `istanbul`); N-1 split them
+    into fragments (`द ल ल`, `i stanbul`). ASCII names spell the same in both, and so do
+    Latin ones but for compatibility characters, which N folds and N-1 keeps (the
+    ligatures `ﬁ` and `ĳ`, full-width letters, superscripts, fractions, `ª`, `º`, `ſ`).
     For the other scripts the two builds write separate nodes until N-1 stops serving,
     and a node N-1 wrote keeps its fragment name until a write states that entity again.
 
