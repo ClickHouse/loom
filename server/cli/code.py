@@ -401,14 +401,14 @@ def register_code_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     p_delta = csub.add_parser(
         "scip-delta",
         help="One compiler-tier delta pass (same code as the code_scip_delta "
-        "worker) for the host cron: git_head vs scip_commit per configured "
+        "worker), by hand: git_head vs scip_commit per configured "
         "repo, scip-clang over the changed TUs, apply. Prints `RESULT: ...`.",
     )
     p_delta.set_defaults(func=_cmd_scip_delta)
 
     p_entries = csub.add_parser(
         "entries",
-        help="One line per configured repository for the host crons: "
+        help="One line per configured repository, for scripts: "
         "org namespace checkout lock-file (the lock path resolved).",
     )
     p_entries.set_defaults(func=_cmd_entries)

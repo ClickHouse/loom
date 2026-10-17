@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from functools import cache
 from typing import Any
 
-from server.core import deployment_config
+from server.core import deployment_config, readiness
 from server.core.ch import query_tag, set_query_tag
 from server.settings import settings
 
@@ -99,7 +99,13 @@ def row(*, stopped: bool = False) -> dict[str, Any]:
         "pid": os.getpid(),
         "build_commit": settings.build_commit,
         "schema_version": schema_version(),
-        "serving": int(bool(settings.serves_traffic)),
+        # A draining or drifted process answers no traffic: the live replicas'
+        # rate-limit shares leave it out.
+        "serving": int(
+            bool(settings.serves_traffic)
+            and not readiness.draining()
+            and not deployment_config.drift()
+        ),
         "workers_lease": _workers_lease(),
         **deployment_config.fingerprints(settings),
         "started_at": _this_process()[2],

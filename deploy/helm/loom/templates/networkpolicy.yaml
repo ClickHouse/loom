@@ -1,0 +1,86 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "loom.fullname" . }}
+  labels:
+    {{- include "loom.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "loom.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - port: http
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+        # helm test.
+        - podSelector:
+            matchLabels:
+              {{- include "loom.selectorLabels" $ | nindent 14 }}
+      {{- end }}
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        # NodeLocal DNSCache's default address.
+        - ipBlock: { cidr: 169.254.20.10/32 }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    # helm test reaches the web pods.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "loom.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: web
+      ports:
+        - port: http
+    {{- if .Values.devClickhouse.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "loom.chHost" . }}
+      ports:
+        - port: 8123
+    {{- end }}
+    - to:
+        {{- $v4 := list }}{{- $v6 := list }}
+        {{- range .Values.networkPolicy.egressExcept }}
+        {{- if contains ":" . }}{{ $v6 = append $v6 . }}{{ else }}{{ $v4 = append $v4 . }}{{ end }}
+        {{- end }}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            {{- with $v4 }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+        - ipBlock:
+            cidr: ::/0
+            {{- with $v6 }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        - port: 443
+        {{- if .Values.retireLostPods }}
+        # The Kubernetes API (443 on EKS; 6443 on most other clusters).
+        - port: 6443
+        {{- end }}
+        {{- if and (not .Values.devClickhouse.enabled) (ne (int .Values.clickhouse.port) 443) }}
+        - port: {{ .Values.clickhouse.port }}
+        {{- end }}
+    # The EKS Pod Identity agent, which hands out this service account's credentials.
+    - to:
+        - ipBlock: { cidr: 169.254.170.23/32 }
+        - ipBlock: { cidr: fd00:ec2::23/128 }
+      ports:
+        - port: 80
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

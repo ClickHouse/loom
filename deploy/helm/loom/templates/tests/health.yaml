@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "loom.fullname" . }}-test-health
+  labels:
+    {{- include "loom.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    # Kept after it passes, so `helm test --logs` can read it.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  {{- include "loom.podCommon" (dict "root" . "leads" false) | nindent 2 }}
+  containers:
+    - name: health
+      image: {{ include "loom.image" . }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      command:
+        - python
+        - -c
+        - |
+          import json, urllib.request
+          base = "http://{{ include "loom.fullname" . }}:{{ .Values.service.port }}"
+          for path in ("/v1/health/live", "/v1/health/ready"):
+              with urllib.request.urlopen(base + path, timeout=10) as r:
+                  assert r.status == 200, (path, r.status)
+              print(path, "ok")
+          # ClickHouse answers and no replica drifts from the published config.
+          with urllib.request.urlopen(base + "/v1/health", timeout=10) as r:
+              health = json.load(r)
+          assert health["ch_ok"] and health["status"] == "ok", health["problems"]
+          print("/v1/health ok, build", health["build_commit"])
+      resources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { cpu: 200m, memory: 128Mi }
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}

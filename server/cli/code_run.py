@@ -108,9 +108,9 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
 def _run(name: str, coro: asyncio.Future[int] | Coroutine[Any, Any, int]) -> int:
     """Run one `loom code <name>` subcommand inside a root span `cli.code.<name>`.
 
-    The crons (scip-full, scip-delta, backfill, repack) are observed
+    Scheduled runs (scip-full, scip-delta, backfill, repack) are observed
     through this: stderr logging with timestamps and levels (stdout is
-    untouched; cron logs and whoever greps them see the same lines), OTel
+    untouched; their logs and whoever greps them see the same lines), OTel
     spans + logs to the backend the server writes, and one root span per
     invocation carrying exit code, duration and whatever counters the
     subcommand `_note()`s. Metrics are NOT started in the CLI: the state
@@ -241,10 +241,10 @@ def _setup_cli_logging() -> None:
     """Timestamps + levels on stderr for every logger, once.
 
     Deliberately not `server.core.logging_config.configure_logging()`: that one
-    writes to STDOUT, and the cron scripts append stdout to their log files
-    and operators grep those lines (`RESULT:`, `applied:`, `scip_commit ->`).
-    Logging goes to stderr so the stdout contract is untouched; the crons'
-    `2>&1` lands both in the same file.
+    writes to STDOUT, and a scheduled run appends stdout to its log file and
+    operators grep those lines (`RESULT:`, `applied:`, `scip_commit ->`).
+    Logging goes to stderr so the stdout contract is untouched; a `2>&1`
+    lands both in the same file.
     """
     global _LOGGING_CONFIGURED
     if _LOGGING_CONFIGURED:

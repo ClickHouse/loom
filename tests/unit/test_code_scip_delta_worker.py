@@ -139,7 +139,7 @@ async def test_missing_checkout_skips(monkeypatch):
 async def test_pass_is_recorded_in_the_worker_status_registry() -> None:
     """The pass calls `record_pass`, so /v1/admin/workers.status shows its
     last_run_at/outcome and a stalled compiler tier is visible there, not
-    only in the cron log."""
+    only in a log."""
     from server.workers.status import get_registry
 
     get_registry().reset()

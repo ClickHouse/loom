@@ -164,6 +164,10 @@ def _add_code_okf_up_parsers(sub: Any) -> None:
 
     register_deployment_cli(sub)
 
+    from server.cli.secrets import register_secrets_cli
+
+    register_secrets_cli(sub)
+
     from server.cli.portability import register_portability_cli
 
     register_portability_cli(sub)

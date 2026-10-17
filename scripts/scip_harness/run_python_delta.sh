@@ -17,6 +17,8 @@ set -euo pipefail
 
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# as the workers do: no repack inside a fetch of the checkout
+NO_GC=(-c gc.auto=0 -c maintenance.auto=false)
 # absolute before any cd: the indexing step runs inside the checkout
 PY_STUBS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/python_stubs
 
@@ -53,8 +55,8 @@ else
   # them; the transport then checks GLOBAL roles), the fast tier's git_head
   # (the commit this pass indexes — the checkout's own HEAD only says where
   # the last pass left it), the entry's bare clone, and who may move the
-  # checkout: this pass (the cron holds the entry's lock around it, the
-  # same lock a full C++ re-index holds), the in-process code_scip_py_delta worker, or the go/typescript
+  # checkout: this pass (run under `loom code entry-lock`, the same lock a
+  # full C++ re-index holds), the in-process code_scip_py_delta worker, or the go/typescript
   # worker whose checkout it is. "-" stands for an empty field so `read`
   # keeps the columns aligned.
   IDENT=$(
@@ -78,11 +80,11 @@ async def m():
     if cfg and settings.code_scip_py_delta_enabled and await worker_owns(repo, cfg, "python"):
         owner = "worker"
     elif producer in ("go", "typescript"):
-        owner = producer  # its in-process worker moves this checkout, outside the cron lock
+        owner = producer  # its in-process worker moves this checkout
     elif cfg and not producer and not await worker_owns(repo, cfg, "python"):
         owner = "none"  # the tree calls for no Python tier
     else:
-        owner = "cron"
+        owner = "manual"
     print(org, ns, wm or "-", head or "-", bare or "-", owner)
     await c.disconnect()
 asyncio.run(m())
@@ -98,7 +100,7 @@ PYEOF
     echo ">> $NS: the tree has no Python build file — no python tier"
     exit 0
   fi
-  if [[ "$OWNER" != "cron" ]]; then
+  if [[ "$OWNER" != "manual" ]]; then
     echo ">> $NS: the checkout belongs to the $OWNER worker — skipping the python tier"
     exit 0
   fi
@@ -119,10 +121,10 @@ PYEOF
       SOURCE=$BARE
     fi
     # a remote that refuses a bare-SHA want still serves it through its branches
-    git -C "$CHECKOUT" fetch --quiet --recurse-submodules=no "$SOURCE" "$HEAD_SHA" \
-      || git -C "$CHECKOUT" fetch --quiet --recurse-submodules=no "$SOURCE"
+    git -C "$CHECKOUT" "${NO_GC[@]}" fetch --quiet --recurse-submodules=no "$SOURCE" "$HEAD_SHA" \
+      || git -C "$CHECKOUT" "${NO_GC[@]}" fetch --quiet --recurse-submodules=no "$SOURCE"
   fi
-  git -C "$CHECKOUT" checkout --quiet --force "$HEAD_SHA"
+  git -C "$CHECKOUT" "${NO_GC[@]}" checkout --quiet --force "$HEAD_SHA"
 fi
 
 cd "$CHECKOUT"

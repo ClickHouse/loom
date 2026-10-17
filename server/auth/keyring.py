@@ -119,6 +119,8 @@ class _View:
     loaded: bool = False
     # The RS256 public keys of retired rows (`_key_id`).
     retired_public: frozenset[bytes] = frozenset()
+    # A digest of the root secret this view was opened with.
+    opened_with: str = ""
 
 
 _view = _View()
@@ -452,6 +454,12 @@ def _parse(rows: list[dict[str, Any]]) -> _View:
         if r["retired"]:
             continue
         secret = unseal(_PURPOSE, str(r["sealed_key"]), warn=False)
+        if not secret and kid in _view.keys and _view.opened_with == _opener():
+            # Resealed under a root this process does not hold yet (a rotation
+            # under way): the key it already opened still verifies, until this
+            # process is replaced.
+            keys[kid] = _view.keys[kid]
+            continue
         if not secret:
             unsealable.add(kid)
             continue
@@ -469,18 +477,30 @@ def _parse(rows: list[dict[str, Any]]) -> _View:
         retired_public=frozenset(
             _key_id(str(r["public_pem"])) for r in rows if r["retired"] and r["public_pem"]
         ),
+        opened_with=_opener(),
     )
+
+
+def _opener() -> str:
+    return hashlib.sha256(str(settings.jwt_secret).encode()).hexdigest()
 
 
 _ROOT_LABEL = b"loom.signing_keys.root"
 _ROOT_PREFIX = "hmac-sha256:"
 
 
-def _root_record() -> str:
+def _root_record(secret: str | None = None) -> str:
     """What the `default` row stores: an HMAC of a fixed label under the root
-    secret, which says whether a process holds it and reveals nothing else."""
-    mac = hmac.new(str(settings.jwt_secret).encode(), _ROOT_LABEL, hashlib.sha256)
+    secret (or `secret`), which says whether a process holds it and reveals
+    nothing else."""
+    root = str(settings.jwt_secret) if secret is None else secret
+    mac = hmac.new(root.encode(), _ROOT_LABEL, hashlib.sha256)
     return _ROOT_PREFIX + mac.hexdigest()
+
+
+def records_root(recorded: str, secret: str) -> bool:
+    """Whether the `default` row's `recorded` value is `secret`'s."""
+    return hmac.compare_digest(recorded, _root_record(secret))
 
 
 def _is_this_root(recorded: str) -> bool:

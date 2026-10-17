@@ -19,7 +19,7 @@ from server.insights.app import provider_barrier as barrier
 pytestmark = pytest.mark.skipif(not pp.host_proof(), reason="needs /proc")
 
 
-_KEYS = ("host", "boot", "container", "pidns", "pid", "start")
+_KEYS = ("host", "boot", "container", "pidns", "pid", "start", "namespace", "pod")
 
 
 def _with(**part: str) -> str:
@@ -158,3 +158,122 @@ async def test_this_host_retires_its_dead_participants_once_their_queries_ended(
     assert await barrier.retire_dead_here(now=100.0) == 1
     record.assert_awaited_once_with(dead, UUID(int=0), "retired", after=5)
     assert await barrier.retire_dead_here(now=100.0 + barrier.HERE_S / 2) == 0  # throttled
+
+
+# -- a pod Kubernetes deleted ------------------------------------------------
+
+_POD_UID = "0b6f2c1e-1111-2222-3333-444455556666"
+
+
+def _pod_proof(
+    namespace: str = "loom", container: str = f"{_POD_UID}/loom", pod: str = "loom-7d9-abc"
+) -> str:
+    # The host name is the pod name cut to 63 characters; the lookup uses the pod name.
+    return "|".join((pod[:63], "boot", container, "4026", "7", "99", namespace, pod))
+
+
+@pytest.fixture
+def kube(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
+    """A service-account mount, the API's address and a stand-in API: it answers
+    the (status, body) pairs queued in `answers` and keeps what it saw in `seen`."""
+    from types import SimpleNamespace
+
+    import httpx
+
+    (tmp_path / "token").write_text("tok")
+    (tmp_path / "ca.crt").write_text("")
+    monkeypatch.setattr(pp, "_SA", str(tmp_path))
+    monkeypatch.setenv("POD_NAMESPACE", "loom")
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+    api = SimpleNamespace(answers=[], seen=[])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        api.seen.append(request)
+        status, body = api.answers.pop(0)
+        return httpx.Response(status, json=body)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(handler), timeout=kw.get("timeout")),
+    )
+    return api
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,uid,phase,gone",
+    [
+        (404, "", "", True),
+        (200, "another-uid", "Running", True),
+        (200, _POD_UID, "Failed", True),  # evicted: the object stays, its containers stopped
+        (200, _POD_UID, "Succeeded", True),
+        (200, _POD_UID, "Running", False),
+        (200, _POD_UID, "Pending", False),
+        (403, "", "", False),
+    ],
+)
+async def test_a_pod_is_gone_only_when_the_api_says_so(kube, status, uid, phase, gone) -> None:
+    kube.answers.append((status, {"metadata": {"uid": uid}, "status": {"phase": phase}}))
+    assert await pp.pod_gone(_pod_proof()) is gone
+    assert kube.seen[0].url.path == "/api/v1/namespaces/loom/pods/loom-7d9-abc"
+    assert kube.seen[0].headers["authorization"] == "Bearer tok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "proof",
+    [
+        _pod_proof(namespace="other"),
+        _pod_proof(container="a" * 64),
+        _pod_proof(pod=""),
+        "h|b|c|p|1|2",
+        "h|b|" + _POD_UID + "/loom|p|1|2|loom",  # a 7-part proof (no pod name) proves nothing
+        "",
+    ],
+)
+async def test_a_pod_elsewhere_or_outside_kubernetes_is_never_gone(kube, proof) -> None:
+    assert await pp.pod_gone(proof) is False
+    assert kube.seen == []  # nothing to ask: another namespace, a Docker container, an old row
+
+
+@pytest.mark.asyncio
+async def test_the_leader_retires_an_expired_participant_whose_pod_is_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    me, lost, busy, kept = (uuid4() for _ in range(4))
+    monkeypatch.setattr(barrier, "process_identity", lambda: me)
+    rows = [
+        _row(me, pp.host_proof()),
+        _row(lost, _pod_proof(), expired=True, version=9),
+        _row(busy, _pod_proof(), expired=True),
+        _row(kept, _pod_proof(), expired=True),
+    ]
+    monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
+    monkeypatch.setattr(barrier, "prune_retired", AsyncMock())
+    monkeypatch.setattr(
+        barrier, "running_queries", AsyncMock(side_effect=lambda p: int(str(p) == str(busy)))
+    )
+    asked: list[str] = []
+
+    async def gone(proof: str) -> bool:
+        asked.append(proof)
+        return len(asked) == 1  # the first asked (lost) is gone, kept's pod still exists
+
+    monkeypatch.setattr(barrier, "pod_gone", gone)
+    record = AsyncMock()
+    monkeypatch.setattr(barrier, "record_participant", record)
+    monkeypatch.setattr(barrier, "_STALE", None)
+    await barrier.sweep_stopped(now=5000.0)
+    record.assert_awaited_once_with(lost, UUID(int=0), "retired", after=9)
+    assert len(asked) == 2  # a participant with a query running is never asked about
+    assert [p["participant_id"] for p in barrier.stale_participants()] == [str(busy), str(kept)]
+
+
+@pytest.mark.asyncio
+async def test_a_long_pod_name_is_looked_up_whole_not_by_its_cut_host_name(kube) -> None:
+    long = "loom-memory-platform-production-workers-7d9c8b6f5d-x4kqz-abcdefgh"
+    kube.answers.append((200, {"metadata": {"uid": _POD_UID}, "status": {"phase": "Running"}}))
+    assert await pp.pod_gone(_pod_proof(pod=long)) is False
+    assert kube.seen[0].url.path == f"/api/v1/namespaces/loom/pods/{long}"

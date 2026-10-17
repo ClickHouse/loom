@@ -1,0 +1,288 @@
+# Loom on Kubernetes. Every pod is a full replica over one ClickHouse service:
+# docs/operations/kubernetes.md. Values-eks.yaml and values-kind.yaml layer on this.
+
+image:
+  repository: ghcr.io/clickhouse/loom
+  # Defaults to the chart's appVersion. Pin a version or digest in production.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 3
+
+# Public URL clients reach Loom on (LOOM_PUBLIC_BASE_URL). Required: a pod that
+# listens on every interface refuses to start without it.
+publicBaseUrl: ""
+
+clickhouse:
+  # One ClickHouse service for every pod (Cloud, or a self-managed server with
+  # Keeper). On a self-managed replicated cluster point every pod at one replica.
+  # The schema lives in a database named `loom`, which must exist.
+  host: ""
+  port: 8443
+  secure: true
+  user: loom
+  # Read-only user for caller-shaped reads (LOOM_CH_READER_USER); "" = none.
+  readerUser: ""
+  # LOOM_CH_CLUSTER: the cluster clusterAllReplicas reads ("default" on Cloud).
+  cluster: default
+
+embedding:
+  # Must match on every pod and cannot roll (see mustMatchChange below).
+  # text-embedding-3-* needs OPENAI_API_KEY in secrets.extra; fake-ngram-3072
+  # needs nothing and is for tests only.
+  provider: ""
+  model: text-embedding-3-large
+  dim: 3072
+  baseUrl: ""
+  sendDimensions: false
+
+llm:
+  provider: ""
+  model: ""
+
+# Secrets. Either the chart creates one Secret from these values, or name an
+# existing Secret (External Secrets Operator, Sealed Secrets, ...) holding the
+# same keys: LOOM_JWT_SECRET, LOOM_CH_PASSWORD and any provider key.
+secrets:
+  existingSecret: ""
+  jwtSecret: ""
+  # The root secret jwtSecret replaced, while a rotation is under way
+  # (LOOM_JWT_SECRET_PREVIOUS): what it sealed still opens (it verifies no
+  # token). A post-upgrade Job reseals the stored values under jwtSecret; remove
+  # it once `loom secrets reseal --check` exits 0. With existingSecret, put
+  # LOOM_JWT_SECRET_PREVIOUS in that Secret instead.
+  jwtSecretPrevious: ""
+  clickhousePassword: ""
+  # Extra keys, e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY, LOOM_CH_READER_PASSWORD.
+  extra: {}
+
+# Any other LOOM_* setting (docs/reference/configuration.md). Values are strings.
+env: {}
+# Extra env entries in Kubernetes form (valueFrom etc.).
+extraEnv: []
+envFrom: []
+# Extra volumes and their mounts on the Loom container, e.g. a projected
+# service-account token for a workload-identity exchange.
+extraVolumes: []
+extraVolumeMounts: []
+
+# Peers whose X-Forwarded-For uvicorn trusts: the ingress controller's or load
+# balancer's source range (on EKS with target-type ip: the ALB's subnets). Left
+# at loopback behind a proxy, every client counts as the proxy for the per-address
+# sign-in limits, so the chart refuses that with ingress.enabled.
+trustedProxies: "127.0.0.1"
+
+# Seconds uvicorn keeps an idle connection open. Longer than the idle timeout
+# of the balancer in front, or it reuses a connection Loom just closed (a 502).
+keepAliveSeconds: 75
+
+# uvicorn processes per pod. Empty lets the image size it from the pod's CPU
+# limit and memory (one per CPU, one per GiB, at most 8).
+webWorkers: ""
+
+shutdown:
+  # Seconds a stopping pod keeps serving while answering not-ready. Longer than
+  # the time your balancer takes to drop a not-ready target.
+  readyDelaySeconds: 15
+  # uvicorn's wait for in-flight requests after the port closes: at least the
+  # longest call clients make (task.pull and task.updates wait up to 30 s).
+  gracefulSeconds: 30
+  # The lifespan drains (at most 40 s), participant retirement and slack.
+  # terminationGracePeriodSeconds is the sum of the three.
+  drainSeconds: 50
+
+# Unless an ephemeral-storage request or limit is set here, the chart requests
+# tmpSizeLimit plus, with cache.volume emptyDir, cache.sizeLimit (whole Gi).
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+probes:
+  startup:
+    # A first boot can run the migrations, or wait on another pod's
+    # migration lease, and clone the git mirrors: up to 15 minutes.
+    periodSeconds: 10
+    failureThreshold: 90
+  readiness:
+    periodSeconds: 5
+    failureThreshold: 2
+  liveness:
+    periodSeconds: 10
+    failureThreshold: 3
+
+strategy:
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+autoscaling:
+  # Rate-limit shares resize by themselves as pods come and go.
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+service:
+  type: ClusterIP
+  port: 7777
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  #  - host: loom.example.com
+  #    paths: [{ path: /, pathType: Prefix }]
+  tls: []
+
+serviceAccount:
+  create: true
+  name: ""
+  # IRSA (eks.amazonaws.com/role-arn) or other cloud identity annotations.
+  annotations: {}
+  # Mount the service-account token (retireLostPods mounts it too).
+  automountToken: false
+
+# The workers leader retires the provider participant of a pod Kubernetes has
+# deleted (lost with its node, evicted past its grace period), which would
+# otherwise hold the next model change until `loom participant retire`. Grants
+# the service account `get` on pods in this namespace and mounts its token.
+retireLostPods: true
+
+podAnnotations: {}
+podLabels: {}
+# amd64 by default: the C++ compiler tier's scip-clang ships for x86_64 only. The
+# rest of the image is multi-arch; on arm64 nodes set this to null and point
+# LOOM_CODE_SCIP_CLANG_PATH at your own scip-clang build.
+nodeSelector:
+  kubernetes.io/arch: amd64
+tolerations: []
+priorityClassName: ""
+
+# Spread pods over zones and nodes; off with topologySpread.enabled=false.
+topologySpread:
+  enabled: true
+  zoneSkew: 1
+  nodeSkew: 1
+  whenUnsatisfiable: ScheduleAnyway
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 999
+  runAsGroup: 999
+  fsGroup: 999
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+# The pod's cache at /app/var: git mirrors and checkouts, the Go module cache
+# and lock files. Every pod rebuilds it (mirrors are cloned again), so it is
+# lost with the pod. emptyDir counts against node storage and evicts the pod
+# past sizeLimit; ephemeral gives each pod its own volume from a StorageClass.
+# Size it for full clones of every indexed repository plus the Go module cache;
+# the workers pods (`workers.cache`) also hold one checkout per compiler tier.
+cache:
+  volume: emptyDir
+  sizeLimit: 20Gi
+  ephemeral:
+    storageClassName: ""
+    size: 50Gi
+    # Where each new pod's volume starts from instead of empty, e.g. a
+    # VolumeSnapshot of a warm cache:
+    #   { apiGroup: snapshot.storage.k8s.io, kind: VolumeSnapshot, name: loom-cache }
+    # The mirrors then only fetch what is new.
+    dataSourceRef: {}
+
+# /tmp: repository-job and indexer scratch.
+tmpSizeLimit: 4Gi
+
+# The repository-job sandbox (bubblewrap) needs unprivileged user namespaces,
+# which the default pod security does not grant. Off: the compiler tiers of the
+# operator's repositories run as plain processes in the pod, and repositories
+# added from the dashboard are refused. Required: a pod is ready only once the
+# sandbox works, so set it after preparing the nodes
+# (docs/operations/kubernetes.md).
+sandbox:
+  required: false
+  # Merged over securityContext on the Loom container: the node's profiles, e.g.
+  #   seccompProfile: { type: Localhost, localhostProfile: loom-repo-sandbox.json }
+  #   appArmorProfile: { type: Localhost, localhostProfile: loom-repo-sandbox }
+  #   procMount: Unmasked
+  securityContext: {}
+  # false runs the pod in its own user namespace (`hostUsers: false`), which
+  # procMount: Unmasked requires (Kubernetes 1.33+).
+  hostUsers: true
+
+# A pre-upgrade Job that records this release's LOOM_JWT_SECRET as the root and
+# publishes its env (`loom deployment publish --yes`), for a change to the root
+# secret or the embedding settings, which cannot roll. The chart refuses such a
+# change unless this is a token the pods do not carry yet (e.g. a date): the
+# upgrade that brings a new token publishes, later ones with the same token
+# don't. Pods on the old values answer 503 until the rollout replaces them.
+mustMatchChange:
+  publish: ""
+
+# Separate background-workers Deployment (LOOM_SERVES_TRAFFIC=false). Off: the
+# web pods elect one leader that runs the workers in a child process.
+workers:
+  enabled: false
+  # One leader runs the workers; a second pod is a warm standby that takes the
+  # lease within seconds of a graceful stop (30 s after a crash) and gets a PDB.
+  replicaCount: 1
+  # Sized for the C++ compiler tier: scip-clang runs `scipClangJobs` translation
+  # units at once, a few GiB each on a large tree. Without a C++ entry 2 CPUs
+  # and 8Gi are plenty.
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      cpu: "8"
+      memory: 32Gi
+  # LOOM_CODE_SCIP_CLANG_JOBS on the workers pods (a web pod that leads the
+  # workers runs 1); 0 = half the node's CPUs, which the memory limit rarely covers.
+  scipClangJobs: 4
+  # Merged over `cache` for the workers pods: mirrors plus a checkout (and its
+  # build tree) per compiler tier, the Go module cache.
+  cache: {}
+
+# Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
+# release's web pods, and TCP 443 and the ClickHouse port anywhere except
+# `egressExcept` (providers, the IdP and git remotes have no fixed range).
+networkPolicy:
+  enabled: false
+  # NetworkPolicy peers allowed to reach the pods (the ALB's subnets, the
+  # ingress controller's namespace). [] = any source.
+  ingressFrom: []
+  # Never reachable: the instance metadata service, so a pod cannot take the
+  # node's IAM role. Add the cluster's own ranges to keep pods off them.
+  egressExcept: [169.254.169.254/32, fd00:ec2::254/128]
+  # More egress rules, e.g. SSH git remotes or an OTLP collector.
+  extraEgress: []
+
+# A single-node ClickHouse with embedded Keeper inside the release, for kind or
+# a laptop. Never production: no replication, one volume.
+devClickhouse:
+  enabled: false
+  image: clickhouse/clickhouse-server:26.9.18.11
+  password: loomdev
+  storage: 10Gi
