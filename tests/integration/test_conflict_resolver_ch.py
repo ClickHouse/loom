@@ -862,3 +862,24 @@ async def test_a_retirement_owes_its_follow_until_the_follow_lands(
     assert len(rows) == 1, "one intent, never a second row for the same pair"
     assert rows[0]["status"] == ("active" if follow_fails else "resolved")
     assert json.loads(rows[0]["payload"])["pairs"] == [[ids["office_city"], ids["office_location"]]]
+
+
+async def test_a_flagged_pair_is_judged_once_from_both_sides(ch, wired, monkeypatch) -> None:
+    from server.memory.app import conflicts
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+
+    async def auto(org: str, namespace: str, ch: Any = None) -> str:
+        return "auto_reinforce"
+
+    monkeypatch.setattr(conflicts, "namespace_conflict_policy", auto)
+    await _pair(ch, org, "office_city", "office_location", 68)
+    out = await run_pass()
+    rows = await _rows(ch, org)
+    assert out["flagged"] == 1 and rows["office_city"]["status"] == "conflicted"
+    marks = await _marks(ch, org)
+    assert marks["office_city"] == marks["office_location"] == 2
+    calls = len(llm.calls)
+    await run_pass()
+    assert len(llm.calls) == calls, "the peer's flag is not judged again, reversed"

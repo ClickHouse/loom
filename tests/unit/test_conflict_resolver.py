@@ -535,12 +535,24 @@ async def test_a_flag_already_raised_is_not_written_again(monkeypatch) -> None:
         called.append(kw)
         return "conflict"
 
+    stamped: list[dict[str, Any]] = []
+
+    async def stamp(q: Any, **kw: Any) -> int:
+        stamped.append(dict(q))
+        return 1
+
     monkeypatch.setattr(conflicts, "mark_peers_conflicted", mark)
+    monkeypatch.setattr(queue, "stamp_judged", stamp)
     a = _mem("m1", status="conflicted", conflict_with=["m2"])
     b = _mem("m2", status="conflicted", conflict_with=["m1"])
     assert await resolver._flag("o", a, b) is False and called == []
-    assert await resolver._flag("o", _mem("m1"), _mem("m2")) is True
+    peer = _mem("m2", org="o", session_id="s2", content_sha256="sha-m2", version=7)
+    assert await resolver._flag("o", _mem("m1"), peer) is True
     assert called[0]["expected_sha256"] == "sha-new", "only the judged write is flagged"
+    # The peer's side of the pair is judged too: its flag is not re-checked reversed.
+    assert [(q["session_id"], q["content_sha256"], q["version"]) for q in stamped] == [
+        ("s2", "sha-m2", 7)
+    ]
 
 
 async def test_unlinking_a_pair_leaves_other_flags_and_reactivates_a_row_left_with_none(

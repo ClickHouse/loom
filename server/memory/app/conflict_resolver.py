@@ -290,7 +290,18 @@ async def _flag(org: str, row: Any, peer: Any) -> bool:
         expected_sha256=str(row.content_sha256 or ""),
         peer_sha256={str(peer.memory_id): str(peer.content_sha256 or "")},
     )
-    return landed == "conflict"
+    if landed != "conflict":
+        return False
+    # The pair is judged: the peer's flag is not an unjudged one to re-check, the other
+    # way round, next pass.
+    await queue.stamp_judged(_queue_key(peer))
+    return True
+
+
+def _queue_key(row: Any) -> dict[str, Any]:
+    """A memory row as the queue row `stamp_judged` takes."""
+    cols = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "version")
+    return {c: getattr(row, c) for c in cols} | {"content_sha256": str(row.content_sha256 or "")}
 
 
 async def _unlink(org: str, row: Any, other_id: str) -> bool:
