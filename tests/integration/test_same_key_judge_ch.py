@@ -455,6 +455,44 @@ async def test_a_close_never_ends_a_triple_before_it_starts(ch, org) -> None:
     assert valid_to == {"paris": future, "rome": rome_until, "oslo": now, "lima": None}
 
 
+async def test_ending_a_future_triple_again_keeps_its_close(ch, org) -> None:
+    # A row dated ahead ends at its own start; a later end_triples_now finds nothing to
+    # end and must leave invalid_at, the close's own mark, where the first one put it.
+    from server.memory.app.projections import end_triples_now, entity_triple_row
+
+    start = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(days=30)
+    row = entity_triple_row(
+        org,
+        NS,
+        "user",
+        "live_in",
+        "paris",
+        provenance="extracted",
+        confidence=1.0,
+        adapter_name="itest",
+        last_seen=start,
+        seen_at=start,
+        valid_from=start,
+    )
+    row["valid_to"] = start + timedelta(days=30)
+    await ch.insert("loom.entity_triples", [row], settings={"wait_for_async_insert": 1})
+
+    async def _end() -> dict[str, Any]:
+        await end_triples_now(ch, org=org, namespace=NS, triples=[("user", "live_in", "paris")])
+        await _mutations_done(ch, org)
+        (got,) = await ch.query_all(
+            "SELECT valid_to, invalid_at FROM loom.entity_triples WHERE org = {org:String}"
+            " SETTINGS select_sequential_consistency = 1",
+            params={"org": org},
+        )
+        return got
+
+    first = await _end()
+    assert first["valid_to"] == start and first["invalid_at"] is not None
+    await asyncio.sleep(1.1)  # a second later: a rewrite would move invalid_at
+    assert await _end() == first
+
+
 async def test_open_triples_are_looked_up_by_their_exact_key(ch, org) -> None:
     # Only the open copy counts: a closed one may be written again by a replay.
     from server.memory.app.projections import entity_triple_row, open_triples_among

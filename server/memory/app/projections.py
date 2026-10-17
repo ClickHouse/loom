@@ -1040,9 +1040,11 @@ async def end_triples_now(
         "arrayElement({ends:Array(DateTime)}, indexOf("
         "{triples:Array(Tuple(String, String, String))}, (subject, relation, object)))"
     )
+    # Compared with the end it would write: a row dated ahead already ended at its own
+    # start, and rewriting it would move its close's invalid_at.
     where = f"""org = {{org:String}} AND namespace = {{ns:String}}
           AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
-          AND valid_to > {end}"""
+          AND valid_to > greatest({end}, ifNull(valid_from, {end}))"""
     if stated_ends_only:
         where += " AND invalid_at IS NULL"
     later = await ch.query_all(
