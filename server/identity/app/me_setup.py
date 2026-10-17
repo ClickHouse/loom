@@ -11,7 +11,12 @@ from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.app import me_callers, token_grants
-from server.identity.app.me_service_accounts import dev_parent, parse_ttl_days
+from server.identity.app.me_service_accounts import (
+    dev_parent,
+    new_token_subject,
+    parse_ttl_days,
+    save_token,
+)
 from server.settings import settings
 
 router = APIRouter()
@@ -142,13 +147,11 @@ MCP_SETUP_CLIENT_LABELS: dict[str, str] = {
 }
 
 
-async def _validate_restricted_request(
-    org: str, subject: str, raw: object, persist: bool
-) -> list[str]:
+async def _validate_restricted_request(org: str, subject: str, raw: object) -> list[str]:
     """Parse `restricted_namespaces` on the Setup mint: each must be classified restricted
-    (422 NOT_RESTRICTED otherwise — a standard namespace needs no naming) and the token
-    must be persisted (422) so the grant has a subject to belong to and a revocation to die
-    with. `delegate` then refuses (403) one the caller holds no grant on."""
+    (422 NOT_RESTRICTED otherwise — a standard namespace needs no naming). The grant
+    belongs to the token's own subject and dies with its revocation. `delegate` then
+    refuses (403) one the caller holds no grant on."""
     from server.identity.app.namespace_classification import is_restricted
 
     if not raw:
@@ -159,14 +162,6 @@ async def _validate_restricted_request(
             detail={
                 "code": "VALIDATION_FAILED",
                 "message": "restricted_namespaces must be an array of namespace names",
-            },
-        )
-    if not persist:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "restricted_namespaces requires persist=true",
             },
         )
     names: list[str] = []
@@ -223,7 +218,7 @@ def _mcp_token_name(client_label: str, now: datetime, sa_hash: str) -> str:
     return f"{client_label} · {now.strftime('%Y-%m-%d %H:%M:%S')} · {sa_hash}"
 
 
-async def _persist_mcp_token(
+async def _save_mcp_token(
     *,
     subject: str,
     client: str,
@@ -234,44 +229,15 @@ async def _persist_mcp_token(
     the Tokens list, minted under its own `sa:` subject so revocation-by-sub kills this
     token and not the person's JWT. Restricted namespaces get the token's own direct grant.
     Returns (minted token, sa_subject)."""
-    import hashlib
-    import time as _time
-
     org = delegated.org
-    sa_hash = hashlib.sha1(
-        f"mcp:{org}:{client}:{subject}:{_time.time_ns()}".encode(),
-    ).hexdigest()[:6]
-    sa_subject = f"sa:{client}-{sa_hash}"
+    sa_subject = new_token_subject(org, client, subject)
+    sa_hash = sa_subject.removeprefix(f"sa:{client}-")
     now = naive_utc_now_seconds()
     minted = delegated.mint(sa_subject)
     client_label = MCP_SETUP_CLIENT_LABELS.get(client, client)
     token_name = _mcp_token_name(client_label, now, sa_hash)
-
-    from server.core.ch import get_client
-
-    await get_client().insert(
-        "loom.service_accounts",
-        [
-            {
-                "org": org,
-                "name": token_name,
-                "sa_subject": sa_subject,
-                "namespaces": delegated.namespaces,
-                "roles": delegated.roles,
-                "ttl_days": delegated.ttl_days,
-                "created_by": subject,
-                "created_at": now,
-                "expires_at": delegated.expires_at(now),
-                "revoked_at": None,
-                "revoked_by": "",
-                "version": _time.time_ns(),
-                "kind": "mcp",
-                "client": client,
-                # The token's `creator` claim does the inheriting now; the
-                # flag stays true so the Tokens list reads the same.
-                "inherit_creator_grants": True,
-            }
-        ],
+    await save_token(
+        token_name, sa_subject, delegated, created_by=subject, now=now, kind="mcp", client=client
     )
     if restricted_names:
         caller_roles = {
@@ -310,10 +276,10 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
       {
         client: str,             # a key of MCP_SETUP_CLIENT_LABELS (claude-code, codex, cursor, …)
         namespace?: str,         # defaults to caller's namespace
-        ttl_days?: int | null,   # null = 90 days, 0 = never (saved tokens only)
-        persist?: bool,          # saved to the token list; one not saved from a
-                                 # sign-in session lasts at most 30 days
+        ttl_days?: int | null,   # null = 90 days, 0 = never
       }
+
+    The token is saved to the caller's token list, where it is revoked.
 
     Returns:
       {
@@ -322,8 +288,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         config_key: str,         # "mcpServers" (most clients) or "servers" (VS Code)
         config: dict,            # the JSON block to merge into the client's config file
         token: str,              # the minted JWT
-        persisted: bool,         # saved to the token list, as `sa_subject`
-        sa_subject: str,
+        sa_subject: str,         # its subject in the token list
         expires_at: str | null,  # ISO-8601; null: never expires
         …                        # and the namespace, scope and URL it reads
       }
@@ -354,19 +319,8 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         displayed_namespace = next((ns for ns in parent.namespaces if ns != "*"), "default")
     # Restricted namespaces the token should read are named in the claim and, once the token
     # has a subject, granted to it directly.
-    persist = bool(payload.get("persist") or False)
-    if parent.is_service_account and not persist:
-        # delegate() refuses it too; this says what to send instead.
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "AUTH_INSUFFICIENT",
-                "message": "a service-account token must pass persist=true, so the "
-                "token it mints is recorded and revocable",
-            },
-        )
     restricted_names = await _validate_restricted_request(
-        org, subject, payload.get("restricted_namespaces"), persist
+        org, subject, payload.get("restricted_namespaces")
     )
     for ns in restricted_names:
         requested.setdefault(ns, None)
@@ -377,22 +331,14 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         requested=requested,
         scoped=False,
         ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
-        is_service_account=persist,
-        recorded=persist,
+        is_service_account=True,
     )
-
-    # persist=True tracks the token in service_accounts (kind='mcp') so
-    # it's revocable from the Tokens list. Skipped for preview-only calls.
-    sa_subject = ""
-    if persist:
-        minted, sa_subject = await _persist_mcp_token(
-            subject=subject,
-            client=client,
-            delegated=delegated,
-            restricted_names=restricted_names,
-        )
-    else:
-        minted = delegated.mint(subject)
+    minted, sa_subject = await _save_mcp_token(
+        subject=subject,
+        client=client,
+        delegated=delegated,
+        restricted_names=restricted_names,
+    )
     reads_everywhere = "*" in delegated.namespaces
 
     # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.
@@ -422,7 +368,8 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         # that dies with the token.
         "restricted_namespaces": restricted_names,
         "mcp_url": mcp_url,
-        "persisted": bool(sa_subject),
         "sa_subject": sa_subject,
         "expires_at": expires_at.isoformat() if expires_at else None,
+        # Retired: every token is saved now.
+        **({"ignored_args": ["persist"]} if "persist" in payload else {}),
     }

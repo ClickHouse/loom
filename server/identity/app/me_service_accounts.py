@@ -6,12 +6,14 @@ namespaces, with no operator round-trip.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
-from server.auth.delegation import delegate
+from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
 from server.auth.self_signup import AGENT_NAME_PREFIX
 from server.core.datetimes import naive_utc_now_seconds
@@ -126,6 +128,96 @@ async def _name_holder(org: str, name: str) -> str | None:
     return str(row["created_by"]) if row is not None else None
 
 
+def token_name(raw: object) -> str:
+    """A new token's name in its owner's token list; 422 for one off its shape."""
+    name = str(raw or "").strip()
+    if not name or not (1 <= len(name) <= 64):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "name required, 1-64 chars",
+            },
+        )
+    if "\x00" in name:  # reserved: revocation cutoffs key on a NUL (mint_token refuses it)
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a NUL character"},
+        )
+    if name.startswith(AGENT_NAME_PREFIX):  # self-signup's, written without this check
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": f"names starting {AGENT_NAME_PREFIX!r} are agents'",
+            },
+        )
+    return name
+
+
+async def refuse_taken_name(org: str, name: str, subject: str) -> None:
+    """409 when a live token holds `name` in `org`. Called under the name's claim."""
+    holder = await _name_holder(org, name)
+    if holder is not None:
+        # Names are one per org; whose token holds one is not the caller's to learn.
+        taken = f"your token {name!r} is live" if holder == subject else "that name is in use"
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "TOKEN_NAME_TAKEN", "message": f"{taken}; choose another name"},
+        )
+
+
+def new_token_subject(org: str, name: str, creator: str) -> str:
+    """A new token's own `sa:` subject, so revoking it ends this token alone."""
+    sa_hash = hashlib.sha1(f"{org}:{name}:{creator}:{time.time_ns()}".encode()).hexdigest()[:6]
+    return f"sa:{name}-{sa_hash}"
+
+
+async def save_token(
+    name: str,
+    sa_subject: str,
+    delegated: Delegated,
+    *,
+    created_by: str,
+    now: datetime,
+    kind: str = "service_account",
+    client: str = "",
+) -> None:
+    """List the token in its owner's token list (`loom.service_accounts`).
+    `kind` is "mcp" for a Setup-page token, with the MCP client it was made for."""
+    from server.core.ch import get_client
+
+    ns_roles = delegated.ns_roles or {}
+    # `roles` keeps the distinct effective roles for the list view; `ns_roles`
+    # the authoritative per-namespace map (JSON), when the token has one.
+    roles = sorted(set(ns_roles.values()), key=grant_rank) if ns_roles else delegated.roles
+    await get_client().insert(
+        "loom.service_accounts",
+        [
+            {
+                "org": delegated.org,
+                "name": name,
+                "sa_subject": sa_subject,
+                "namespaces": delegated.namespaces,
+                "roles": roles,
+                "ns_roles": json.dumps(ns_roles),
+                "ttl_days": delegated.ttl_days,
+                "created_by": created_by,
+                "created_at": now,
+                "expires_at": delegated.expires_at(now),
+                "revoked_at": None,
+                "revoked_by": "",
+                "version": time.time_ns(),
+                "kind": kind,
+                "client": client,
+                # The gate and the namespace listings read this flag: a token
+                # reads through its creator's live grants (server/auth/service_accounts.py).
+                "inherit_creator_grants": True,
+            }
+        ],
+    )
+
+
 def dev_parent(payload: dict[str, object]) -> AuthInfo:
     """The parent a token is delegated from in dev mode (no auth, no bearer): a
     flat writer for the body's subject and org, issued now."""
@@ -164,50 +256,20 @@ async def me_service_accounts_create(
     per-namespace role) and an ordered `namespaces` claim (the read priority).
     Returns the JWT exactly once.
     """
-    import hashlib
-    import json as _json
-    import time as _time
-
-    from server.core.ch import get_client
-
     if settings.auth_actually_required():
         parent = me_callers.require_authed_info(request)
     else:
         parent = dev_parent(payload)
     subject, org = parent.subject, parent.org
 
-    name = str(payload.get("name") or "").strip()
-    if not name or not (1 <= len(name) <= 64):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "name required, 1-64 chars",
-            },
-        )
-
-    if name.startswith(AGENT_NAME_PREFIX):  # self-signup's, written without this check
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": f"names starting {AGENT_NAME_PREFIX!r} are agents'",
-            },
-        )
+    name = token_name(payload.get("name"))
     requested_role = _requested_roles(payload)
     ttl_seconds = parse_ttl_days(payload.get("ttl_days"))
 
     from server.auth.grant_claims import service_account_change
 
     async with service_account_change(org, name):
-        holder = await _name_holder(org, name)
-        if holder is not None:
-            # Names are one per org; whose token holds one is not the caller's to learn.
-            taken = f"your token {name!r} is live" if holder == subject else "that name is in use"
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "TOKEN_NAME_TAKEN", "message": f"{taken}; choose another name"},
-            )
+        await refuse_taken_name(org, name, subject)
         delegated = await delegate(
             parent,
             org=org,
@@ -215,45 +277,14 @@ async def me_service_accounts_create(
             scoped=True,
             ttl_seconds=ttl_seconds,
             is_service_account=True,
-            recorded=True,
         )
         ordered_ns = delegated.namespaces
         ns_roles = delegated.ns_roles or {}
-
-        sa_hash = hashlib.sha1(
-            f"{org}:{name}:{subject}:{_time.time_ns()}".encode(),
-        ).hexdigest()[:6]
-        sa_subject = f"sa:{name}-{sa_hash}"
+        sa_subject = new_token_subject(org, name, subject)
         minted = delegated.mint(sa_subject)
-
         now = naive_utc_now_seconds()
         expires_at = delegated.expires_at(now)
-
-        # `roles` column keeps the distinct effective roles for the list view;
-        # `ns_roles` persists the authoritative per-namespace map (JSON).
-        distinct_roles = sorted({r for r in ns_roles.values()}, key=grant_rank)
-
-        ch = get_client()
-        await ch.insert(
-            "loom.service_accounts",
-            [
-                {
-                    "org": org,
-                    "name": name,
-                    "sa_subject": sa_subject,
-                    "namespaces": ordered_ns,
-                    "roles": distinct_roles,
-                    "ns_roles": _json.dumps(ns_roles),
-                    "ttl_days": delegated.ttl_days,
-                    "created_by": subject,
-                    "created_at": now,
-                    "expires_at": expires_at,
-                    "revoked_at": None,
-                    "revoked_by": "",
-                    "version": _time.time_ns(),
-                }
-            ],
-        )
+        await save_token(name, sa_subject, delegated, created_by=subject, now=now)
     # A restricted namespace ticked here is read only when the token's own subject holds a
     # direct grant — write it now, capped, revoked with the token; a name in the claim alone
     # would have every read of it refused.

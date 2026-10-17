@@ -365,7 +365,7 @@ export class Transport {
       });
     throwIfAborted(ctx);
     // The caller may give up on its wait, or time out; a renewal other calls share goes on.
-    ctx.bearer = await untilAborted(withinTimeout(provider.token(ctx.refused), timeoutMs, ctx), ctx);
+    ctx.bearer = await untilTimeoutOrAbort(provider.token(ctx.refused), timeoutMs, ctx);
     ctx.refused = undefined;
     ctx.headers.Authorization = `Bearer ${ctx.bearer}`;
   }
@@ -414,7 +414,7 @@ export class Transport {
       // What the token wait left of this attempt's timeout.
       const responseMs = Math.max(0, timeoutMs - (Date.now() - asked));
       this.log.debug(
-        `${op} → ${method} ${url} attempt ${attempt} timeout ${timeoutMs} ms bytes ${payload?.length ?? 0}`,
+        `${op} → ${method} ${url} attempt ${attempt} waits ${responseMs} of ${timeoutMs} ms bytes ${payload?.length ?? 0}`,
         redactHeaders(headers),
       );
       throwIfAborted(ctx);
@@ -424,9 +424,13 @@ export class Transport {
         const e = ex.error;
         if (isAbort(e)) {
           throwIfAborted(ctx, e);
-          const err = new TimeoutError(`${op}: no response within ${timeoutMs} ms`, { op, cause: e, requestId });
+          const err = new TimeoutError(`${op}: no response within the call's ${timeoutMs} ms timeout`, {
+            op,
+            cause: e,
+            requestId,
+          });
           const may = policy.retryTimeouts === "always" || (policy.retryTimeouts === "idempotent" && ctx.deduplicated);
-          if (may && (await retryAfter(attempt, `timed out after ${timeoutMs} ms`))) continue;
+          if (may && (await retryAfter(attempt, `ran past the call's ${timeoutMs} ms timeout`))) continue;
           throw err;
         }
         if (ex.failed === "body") {
@@ -611,35 +615,33 @@ function abortError(): Error {
   return Object.assign(new Error("aborted"), { name: "AbortError" });
 }
 
-/** `work`, or the caller's abort if that comes first; `work` itself runs on. */
-function untilAborted<T>(work: T | Promise<T>, ctx: AttemptContext): Promise<T> {
+/**
+ * `work`, or a TimeoutError once `ms` pass, or the caller's abort, whichever
+ * comes first. Either way the timer and the abort listener go, so a cancelled
+ * call holds nothing open; `work` itself goes on for whoever else waits on it.
+ */
+function untilTimeoutOrAbort<T>(work: T | Promise<T>, ms: number, ctx: AttemptContext): Promise<T> {
   const signal = ctx.opts.signal;
-  if (!signal) return Promise.resolve(work);
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const cut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const requestId = ctx.headers["X-Request-Id"] ?? "";
+      reject(new TimeoutError(`${ctx.op}: no token within ${ms} ms`, { op: ctx.op, requestId }));
+    }, ms);
+    onAbort = () => {
       try {
         throwIfAborted(ctx);
       } catch (e) {
         reject(e);
       }
     };
-    signal.addEventListener("abort", onAbort, { once: true });
-    Promise.resolve(work)
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener("abort", onAbort));
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-/** `work`, or a TimeoutError once `ms` pass; `work` itself goes on for whoever else waits on it. */
-function withinTimeout<T>(work: T | Promise<T>, ms: number, ctx: AttemptContext): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const requestId = ctx.headers["X-Request-Id"] ?? "";
-      reject(new TimeoutError(`${ctx.op}: no token within ${ms} ms`, { op: ctx.op, requestId }));
-    }, ms);
+  return Promise.race([Promise.resolve(work), cut]).finally(() => {
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
   });
-  return Promise.race([Promise.resolve(work), late]).finally(() => clearTimeout(timer));
 }
 
 /** Throws once the caller's signal has fired. */

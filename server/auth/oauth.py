@@ -30,7 +30,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from server.auth import agents, claims, machines, scim, shielded, sso_links
 from server.auth.attempts import Attempts, address_key, client_address
-from server.auth.delegation import SESSION_TTL
 from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.auth.oauth_store import (
     PENDING_TTL,
@@ -94,7 +93,7 @@ def oauth_error_response(request: Request, exc: Exception) -> JSONResponse:
 
 _ACCESS_TTL = 3600  # 1h access token
 _CODE_TTL = 60  # auth code: short-lived, single-use
-_REFRESH_TTL = SESSION_TTL  # 30d refresh token: a session's horizon
+_REFRESH_TTL = 30 * 86400  # 30d refresh token; each refresh issues a new one
 store: OAuthStore = ClickHouseStore()
 
 
@@ -1434,7 +1433,7 @@ async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> 
         raise OAuthError(
             "invalid_client", 401, description="this client assertion was used already"
         )
-    return await _machine_tokens(m, since, int(time.time()) + machines.TOKEN_TTL, {"by": "key"})
+    return await _machine_tokens(m, since, since + machines.TOKEN_TTL, {"by": "key"})
 
 
 async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
@@ -1459,9 +1458,9 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
         raise _refused(e) from None
     except (GrantBusyError, BackendUnavailableError):  # its first exchange, made elsewhere now
         raise _unavailable() from None
-    # The token never outlives the proof; `since` stays the issue time
-    # revocation is judged by.
-    ends = min(int(proof["exp"]), int(time.time()) + machines.TOKEN_TTL)
+    # The token never outlives the proof, nor an hour from `since`: its issue
+    # time, which revocation is judged by.
+    ends = min(int(proof["exp"]), since + machines.TOKEN_TTL)
     issued = await _machine_tokens(
         m, since, ends, {"by": "workload", "workload_sub": str(proof["sub"])}, agent, own
     )

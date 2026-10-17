@@ -255,6 +255,24 @@ def test_a_malformed_answer_keeps_the_token_in_hand(monkeypatch) -> None:
     assert login.token() == "t1"
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"access_token": "a", "expires_in": "soon"},
+        {"access_token": "a", "expires_in": None},
+        {"access_token": "a", "expires_in": True},
+        {"access_token": None},
+        {"access_token": ""},
+        {"expires_in": 3600},
+    ],
+)
+def test_a_token_answer_of_the_wrong_shape_is_refused(monkeypatch, body: dict[str, Any]) -> None:
+    monkeypatch.setattr(machine.httpx, "post", lambda *a, **k: httpx.Response(200, json=body))
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "ci")
+    with pytest.raises(AuthInvalid, match="bot 'deploy': "):
+        machine.MachineLogin("https://loom.example", "deploy").token()
+
+
 @pytest.fixture
 def signed(monkeypatch) -> list[dict[str, str]]:
     sent: list[dict[str, str]] = []

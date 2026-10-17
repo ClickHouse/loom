@@ -81,7 +81,8 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
     # grants) without re-issuing. Explicit `namespace` in the body
     # scopes the token to one workspace (see test below).
     decoded = pyjwt.decode(body["token"], options={"verify_signature": False})
-    assert decoded["sub"] == "alice"
+    # Saved to alice's token list under its own subject.
+    assert decoded["sub"] == body["sa_subject"] and decoded["sub"].startswith("sa:claude-desktop-")
     assert decoded["org"] == "clickhouse"
     assert decoded["namespaces"] == ["*"]
     assert body["namespace_scope"] == "all"
@@ -221,12 +222,10 @@ async def test_setup_mcp_config_requires_auth(control_plane_url: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_restricted_namespaces_must_be_restricted_and_persisted(
+async def test_restricted_namespaces_must_be_restricted(
     control_plane_url: str,
 ) -> None:
-    """Naming a standard namespace is refused (it is read
-    through membership), and a restricted request needs a persisted token
-    for its grant to belong to."""
+    """Naming a standard namespace is refused: it is read through membership."""
     from server.auth.jwt import mint_token
 
     token = mint_token(
@@ -242,18 +241,6 @@ async def test_restricted_namespaces_must_be_restricted_and_persisted(
         {
             "client": "claude-code",
             "namespace": "personal-alice",
-            "restricted_namespaces": ["personal-alice"],
-        },
-    )
-    assert r.status_code == 422, r.text
-    assert r.json()["detail"]["message"] == "restricted_namespaces requires persist=true"
-    r = await _post(
-        control_plane_url,
-        token,
-        {
-            "client": "claude-code",
-            "namespace": "personal-alice",
-            "persist": True,
             "restricted_namespaces": ["personal-alice"],
         },
     )

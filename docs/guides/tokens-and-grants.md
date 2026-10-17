@@ -9,16 +9,16 @@ of the token. This guide holds the procedures;
 
 ## Mint a token
 
-| Path                                               | Who                                              | Produces                                                                                                                                                                                         |
-| -------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `loom mint-token`                                  | an operator holding the signing key              | any token (the CLI signs locally)                                                                                                                                                                |
-| `POST /v1/admin/token.mint`                        | an `org_admin` token                             | a token [delegated](#delegated-tokens) from the caller's, inside the caller's own org; body fields `subject`, `namespaces`, `roles`, `ns_roles`, `consumer`, `ttl_seconds`, `is_service_account` |
-| `POST /v1/me/setup/mcp_config`                     | any signed-in person (the dashboard's Setup tab) | a flat token [delegated](#delegated-tokens) from the person's: `*` (every namespace they hold a grant on, now and later) or the one namespace named                                              |
-| `POST /v1/me/service_accounts.create`              | any signed-in person (the dashboard)             | a scoped service-account token [delegated](#delegated-tokens) from the person's, over a subset of their own namespaces                                                                           |
-| `loom login`, `loom.login()`                       | a person, on any browser                         | an hour-long user token and a rotating refresh token, stored in `~/.loom/credentials` ([below](#sign-in-from-a-terminal-or-a-notebook))                                                          |
-| `POST /v1/auth/login`, OAuth                       | a person                                         | a user token for their own subject                                                                                                                                                               |
-| `POST /v1/auth/self-signup`                        | anyone, when `LOOM_SELF_SIGNUP=open`             | a writer token on the namespace the caller claims                                                                                                                                                |
-| `POST /v1/auth/agent-signup` (`loom init --agent`) | a bot, when `LOOM_SELF_SIGNUP=open`              | a service-account writer token on `agent-<slug>` plus a one-time claim code ([headless bots](headless-bots.md))                                                                                  |
+| Path                                               | Who                                              | Produces                                                                                                                                                                                                                  |
+| -------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom mint-token`                                  | an operator holding the signing key              | any token, for any subject (the CLI signs locally): the way to mint in another principal's name                                                                                                                           |
+| `POST /v1/admin/token.mint`                        | an `org_admin` token                             | a service-account token [delegated](#delegated-tokens) from the caller's, inside the caller's own org, saved to the caller's token list; body fields `name`, `namespaces`, `roles`, `ns_roles`, `consumer`, `ttl_seconds` |
+| `POST /v1/me/setup/mcp_config`                     | any signed-in person (the dashboard's Setup tab) | a flat token [delegated](#delegated-tokens) from the person's, saved to their token list: `*` (every namespace they hold a grant on, now and later) or the one namespace named                                            |
+| `POST /v1/me/service_accounts.create`              | any signed-in person (the dashboard)             | a scoped service-account token [delegated](#delegated-tokens) from the person's, over a subset of their own namespaces                                                                                                    |
+| `loom login`, `loom.login()`                       | a person, on any browser                         | an hour-long user token and a rotating refresh token, stored in `~/.loom/credentials` ([below](#sign-in-from-a-terminal-or-a-notebook))                                                                                   |
+| `POST /v1/auth/login`, OAuth                       | a person                                         | a user token for their own subject                                                                                                                                                                                        |
+| `POST /v1/auth/self-signup`                        | anyone, when `LOOM_SELF_SIGNUP=open`             | a writer token on the namespace the caller claims                                                                                                                                                                         |
+| `POST /v1/auth/agent-signup` (`loom init --agent`) | a bot, when `LOOM_SELF_SIGNUP=open`              | a service-account writer token on `agent-<slug>` plus a one-time claim code ([headless bots](headless-bots.md))                                                                                                           |
 
 ```bash
 loom mint-token --subject my-bot --org acme --namespaces support --roles writer --ttl-days 30 --save
@@ -270,14 +270,13 @@ what was asked for, cut to what the caller's token allows and to the caller's li
 - the caller's `read_scope`, `read_user_id` and `ns_write`; a per-namespace child asking for
   `writer` or `admin` on a namespace outside the caller's `ns_write` is refused, and the
   inherited `ns_write` binds the child's writes whatever its `ns_roles` say;
-- a service-account caller mints only service-account tokens (on the Setup page: send
-  `persist=true`);
-- an expiry: `ttl_days`/`ttl_seconds`, 90 days when unset, `ttl_days: 0` for never, and
-  never past the caller's own token's `exp` (a longer TTL is clipped, and a token that
-  expires cannot make one that never does), except from a sign-in session's hour-long token
-  (`loom login`, dashboard SSO): a child saved to the person's service-account list lasts
-  what was asked, one listed nowhere at most 30 days and never for ever;
-- a name, for a saved one: unique in its org while its token lives (`409
+- a service-account token under its own `sa:` subject, saved to the caller's token list
+  (`loom.service_accounts`), where it is revoked on its own;
+- an expiry: `ttl_days`/`ttl_seconds`, 90 days when unset, `0` for never, and never past
+  the caller's own token's `exp` (a longer TTL is clipped, and a token that expires cannot
+  make one that never does), except from a sign-in session's hour-long token (`loom login`,
+  dashboard SSO), whose children last what was asked;
+- a name: unique in its org while its token lives (`409
 TOKEN_NAME_TAKEN`, which does not say whose it is), free again once the token is revoked
   or has expired; names starting `agent · ` are agents' own;
 - `parents` (every ancestor's token id), `parent_subjects` (every ancestor's `sub`),

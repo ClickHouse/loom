@@ -119,9 +119,12 @@ class MachineLogin(httpx.Auth):
             }
         what = f"bot {self.profile!r}"
         body = _answer(lambda: httpx.post(endpoint, data=form, timeout=30.0), what)
-        if "access_token" not in body:
+        token, expires_in = body.get("access_token"), body.get("expires_in", 3600)
+        if not isinstance(token, str) or not token:
             raise AuthInvalid(f"{what}: no access_token in the answer")
-        return str(body["access_token"]), time.time() + float(body.get("expires_in", 3600))
+        if isinstance(expires_in, bool) or not isinstance(expires_in, int | float):
+            raise AuthInvalid(f"{what}: expires_in is not a number")
+        return token, time.time() + expires_in
 
     def _audience_of_assertion(self) -> str:
         """The token endpoint the server names itself by, which a bot reaching it
@@ -198,8 +201,9 @@ class MachineLogin(httpx.Auth):
 
 
 def _answer(send: Callable[[], httpx.Response], what: str) -> dict[str, Any]:
-    """The JSON object `send` answers, {} for any other body (a proxy's page):
-    unreachable is retryable, as `_check` says for the status."""
+    """The JSON object `send` answers, {} for any other body (a proxy's page).
+    Unreachable, busy or away (Keeper, the CI issuer) is retryable; any
+    answer other than 200 is a refusal."""
     try:
         r = send()
     except httpx.RequestError as e:
@@ -210,18 +214,12 @@ def _answer(send: Callable[[], httpx.Response], what: str) -> dict[str, Any]:
         body = {}
     if not isinstance(body, dict):
         body = {}
-    _check(r, what, body)
-    return body
-
-
-def _check(r: httpx.Response, what: str, body: dict[str, Any]) -> None:
-    """Raise for an answer other than 200: busy or away (Keeper, the CI
-    issuer) is retryable, anything else a refusal."""
     if r.status_code == 429 or r.status_code >= 500:
         raise BackendUnavailable(f"{what}: {r.status_code}; retry shortly")
     if r.status_code != 200:
         why = f"{body.get('error', r.status_code)} {body.get('error_description', '')}"
         raise AuthInvalid(f"{what}: {why.strip()}")
+    return body
 
 
 def _key_pem(source: str, value: str) -> bytes:

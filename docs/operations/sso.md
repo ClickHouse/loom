@@ -251,9 +251,8 @@ they do not stop with someone's offboarding.
 - Okta refusing the user at a refresh ends that session.
 - Service accounts and MCP tokens a person creates from a sign-in session
   outlive it, including `loom logout`, for as long as they chose (blank is 90
-  days, 0 never expires). One that is not saved to their list (an MCP config
-  previewed without saving) lasts at most 30 days, so nothing a person cannot
-  see outlives that. Disabling someone at the provider ends their
+  days, 0 never expires). Every one is saved to their token list, so nothing a
+  person cannot see outlives the session. Disabling someone at the provider ends their
   sessions at the next refresh (within the hour) but not these tokens: only a
   refresh asks the provider about a person. With
   [SCIM](#deprovisioning-with-scim) set up, the provider tells Loom at once,

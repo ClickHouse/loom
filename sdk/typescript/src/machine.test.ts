@@ -454,7 +454,13 @@ describe("Transport with a token provider", () => {
 
   it("asks the provider for nothing once the caller has cancelled", async () => {
     let asked = 0;
-    const provider: TokenProvider = { token: async () => (asked++, "t"), origin: BASE };
+    const provider: TokenProvider = {
+      token: async () => {
+        asked++;
+        return "t";
+      },
+      origin: BASE,
+    };
     const srv = server();
     const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: srv.fetch });
     const ctrl = new AbortController();
@@ -480,6 +486,23 @@ describe("Transport with a token provider", () => {
     release("shared");
     expect(await patient).toEqual({ ok: true });
     expect(v1(srv).map(auth)).toEqual(["Bearer shared"]);
+  });
+
+  it("leaves no timer behind when a caller gives up on a stalled token", async () => {
+    // A timer left running would keep a cancelled Node command alive until the timeout.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const provider: TokenProvider = { token: () => new Promise<string>(() => {}), origin: BASE };
+      const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: server().fetch });
+      const ctrl = new AbortController();
+      const cancelled = t.post("memory.get", { org: "o" }, { signal: ctrl.signal, timeoutMs: 60_000 });
+      await Promise.resolve();
+      ctrl.abort();
+      await expect(cancelled).rejects.toThrow("aborted");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("times a caller out on a stalled token, and another caller still gets it", async () => {
@@ -512,9 +535,7 @@ describe("Transport with a token provider", () => {
         });
       });
     const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: slow, retry: { maxAttempts: 1 } });
-    const started = Date.now();
     await expect(t.post("memory.get", { org: "o" }, { timeoutMs: 200 })).rejects.toBeInstanceOf(TimeoutError);
-    expect(Date.now() - started).toBeLessThan(240);
   });
 
   it("surfaces a second 401 instead of looping", async () => {

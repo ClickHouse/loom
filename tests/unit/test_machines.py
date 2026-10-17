@@ -132,6 +132,22 @@ def test_a_bots_key_gets_an_hour_long_scoped_token(bots) -> None:
     assert claims["exp"] - claims["iat"] == 3600 and "refresh_token" not in r.json()
 
 
+def test_a_slow_bot_lookup_does_not_lengthen_its_token(bots, monkeypatch) -> None:
+    clock = [float(int(time.time()))]
+    get = machines.get
+
+    async def slow_get(name: str) -> machines.Machine | None:
+        clock[0] += 2
+        return await get(name)
+
+    monkeypatch.setattr(machines, "get", slow_get)
+    monkeypatch.setattr(oauth.time, "time", lambda: clock[0])
+    r = _with_key(TestClient(oauth_app()), _assertion(bots["key"]))
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["exp"] - claims["iat"] == machines.TOKEN_TTL
+    assert r.json()["expires_in"] == claims["exp"] - int(clock[0])
+
+
 def test_a_namespace_released_since_the_bot_was_made_grants_it_nothing(bots) -> None:
     c = TestClient(oauth_app())
     bots["active"].discard("docs")
@@ -413,6 +429,26 @@ def test_a_slow_revocation_lookup_does_not_stretch_a_token_past_its_proof(
     r = _exchange(TestClient(oauth_app()), _ci_token(bots, exp=proof_exp))
     claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
     assert claims["exp"] <= proof_exp and r.json()["expires_in"] <= proof_exp - int(clock[0])
+
+
+def test_a_slow_agent_namespace_does_not_lengthen_its_token(bots, monkeypatch) -> None:
+    # Waiting on another replica's claim for the agent's namespace.
+    clock = [float(int(time.time()))]
+    ensure = agents.ensure_namespace
+
+    async def slow_ensure(m: machines.Machine, agent: str) -> str:
+        clock[0] += 10
+        return await ensure(m, agent)
+
+    bots["registered"]["fleet"]["max_token_s"] = 7200
+    monkeypatch.setattr(agents, "ensure_namespace", slow_ensure)
+    monkeypatch.setattr(oauth.time, "time", lambda: clock[0])
+    now = int(clock[0])
+    token = _ci_token(bots, agent_id="a1", iat=now, exp=now + 7200)
+    r = _exchange(TestClient(oauth_app()), token, client_id="fleet")
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["exp"] - claims["iat"] == machines.TOKEN_TTL
+    assert r.json()["expires_in"] == machines.TOKEN_TTL - 10
 
 
 def test_each_agent_gets_its_own_subject_and_namespace(bots) -> None:

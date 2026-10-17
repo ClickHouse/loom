@@ -151,14 +151,15 @@ def test_a_refresh_that_read_before_a_write_does_not_drop_it(monkeypatch, write)
 
 
 def test_no_subject_can_carry_the_cutoff_marker() -> None:
-    from pydantic import ValidationError
+    from fastapi import HTTPException
 
     from server.auth.jwt import mint_token
-    from server.insights.app.admin_models import TokenMintInput
+    from server.identity.app.me_service_accounts import token_name
 
     sneaky = revocation.CUTOFF_PREFIX + "alice"
-    with pytest.raises(ValidationError):
-        TokenMintInput(subject=sneaky, org="acme", namespaces=["a"])
+    # A minted token's subject is `sa:<name>-<hash>`: the name cannot carry the marker.
+    with pytest.raises(HTTPException):
+        token_name(sneaky)
     with pytest.raises(ValueError):
         mint_token(subject=sneaky, org="acme", namespaces=["a"], roles=["writer"])
     with pytest.raises(ValueError):

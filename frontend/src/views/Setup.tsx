@@ -623,7 +623,6 @@ function TokensSection({
       const r = await generateMcpConfig(MINT_CLIENT_PLACEHOLDER, {
         namespace: mcpNamespace || undefined,
         ttl_days: ttlValue,
-        persist: true,
         restricted_namespaces,
       });
       setMcpResult({
