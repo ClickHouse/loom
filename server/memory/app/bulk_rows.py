@@ -116,10 +116,10 @@ class _BulkWriteState:
     # earlier entry wrote, settled after the verdicts (which may drop that row).
     restated_ids: list[str] = field(default_factory=list)
     restatements: list[tuple[int, dict[str, Any]]] = field(default_factory=list)
-    # (restatement's result index, earlier entry's result index, merge target) for a
-    # restatement whose earlier entry merged into a row the batch rewrote in between:
-    # the earlier entry's row lands for it (`land_restated_merges`).
-    restated_landings: list[tuple[int, int, str]] = field(default_factory=list)
+    # (restatement's result index, earlier entry's result index, earlier entry's row,
+    # merge target) for a restatement whose earlier entry merged into a row the batch
+    # rewrote in between: the earlier entry's row lands for it (`land_restated_merges`).
+    restated_landings: list[tuple[int, int, dict[str, Any], str]] = field(default_factory=list)
     # (retired id, the row it retired behind) per same-key retirement the judge decided
     # (`key_supersession.judge_same_key_rows`), for the triple plane's follow step.
     judged_follow_pairs: list[tuple[str, str]] = field(default_factory=list)
@@ -430,7 +430,7 @@ def _replay_restatement(
     if done == "verdict" and target and target in replay.rewritten:
         replay.stale.add(id(row))
         replay.land(row)
-        state.restated_landings.append((res_i, replay.result_of[id(row)], target))
+        state.restated_landings.append((res_i, replay.result_of[id(row)], row, target))
     elif done == "verdict":
         replay.copies.append((res_i, replay.result_of[id(row)], row))
     elif done == PINNED:
@@ -445,8 +445,9 @@ def _replay_restatement(
 def land_restated_merges(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
     """Each restatement whose earlier entry merged into a row rewritten in between
     answers what that row landing says (clear, its version and id), and the earlier
-    entry answers its merge, as serial memory.set calls would."""
-    for res_i, src_i, target in state.restated_landings:
+    entry answers its merge, as serial memory.set calls would. Runs before
+    `copy_restated_verdicts`, so a repeat between the two copies the merge."""
+    for res_i, src_i, row, target in state.restated_landings:
         src, res = state.results[src_i], state.results[res_i]
         res.version, res.memory_id = src.version, src.memory_id
         res.conflict_verdict, res.peers, res.next = src.conflict_verdict, src.peers, src.next
@@ -454,6 +455,8 @@ def land_restated_merges(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
         src.conflict_verdict, src.peers, src.next = "merge", [], ""
         plan.merged.append(src.memory_key)
         plan.reinforce_ids.append(target)
+        # A copy of this merge reinforces the same target.
+        plan.merged_into[id(row)] = target
 
 
 def _drop_built_row(

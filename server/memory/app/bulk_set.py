@@ -278,8 +278,8 @@ def _apply_verdicts(
         stale_rows=stale,
         landed_rows=landed,
     )
-    copy_restated_verdicts(state, plan, copies)
     land_restated_merges(state, plan)
+    copy_restated_verdicts(state, plan, copies)
     state.memory_rows = plan.memory_rows
     state.embedding_rows = plan.embedding_rows
     return plan

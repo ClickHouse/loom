@@ -285,6 +285,26 @@ def test_a_restated_merge_or_rejection_is_listed_with_its_verdict() -> None:
         assert listed == ["k", "k"] and state.skipped_unchanged == 0
 
 
+def test_a_restated_merge_before_its_target_is_rewritten_stays_a_merge() -> None:
+    # Stored: t (T, Berlin). Entries: a=Berlin (merges into T), a=Berlin, t=bicycle,
+    # a=Berlin. Serially the second a merges into T again; only the last a meets the
+    # bicycle and lands, as the first a's row.
+    from server.memory.app.bulk_rows import _bulk_skip_gate
+    from server.memory.app.bulk_set import _apply_verdicts
+
+    state = _stored(t=("T", "berlin"))
+    _entry(state, "a", "A1", "berlin")
+    assert _bulk_skip_gate(NS(memory_key="a"), "berlin", state, {})
+    _entry(state, "t", "T", "bike")
+    assert _bulk_skip_gate(NS(memory_key="a"), "berlin", state, {})
+    plan = _apply_verdicts(state, [], {0: NS(verdict="merge", existing_memory_id="T", peers=[])})
+    got = [(r.conflict_verdict, r.version) for r in state.results]
+    assert got == [("merge", 0), ("merge", 0), ("", 1), ("clear", 1)]
+    assert plan.merged == ["a", "a"]
+    assert plan.reinforce_ids == ["T"] and state.restated_ids == ["T"]
+    assert [x["memory_key"] for x in plan.memory_rows] == ["a", "t"]
+
+
 def test_a_restatement_of_a_landed_entry_counts_once_as_unchanged() -> None:
     from server.memory.app.bulk_rows import _bulk_skip_gate
     from server.memory.app.bulk_set import _apply_verdicts
