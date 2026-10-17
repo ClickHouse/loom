@@ -1186,6 +1186,9 @@ async def end_edges(
     # The open edges first: if a row names the pair meanwhile, the check after opens them
     # again. An edge with a stated later end ("until Dec 2026") ends after that check,
     # only for the pairs it found no row for: opening it again would lose its end.
+    # Known window: a row naming such a pair that lands between that check and this
+    # UPDATE still sees the edge ended here. Checking again and opening it would set
+    # valid_to to NULL and lose the stated end, which is worse, so the window is left.
     opened = sorted(p for p, r in pairs.items() if r["open"])
     if opened:
         await _end_edge_rows(ch, _STILL_OPEN_EDGES_WHERE, params, opened)
