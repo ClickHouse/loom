@@ -181,6 +181,7 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(conflicts, "namespace_conflict_policy", newest_wins)
     # Every pass reads the recheck: a test's flags are judged in the pass it runs.
     monkeypatch.setattr(worker, "RECHECK_IDLE_S", 0.0)
+    monkeypatch.setattr(worker, "_unavailable", None)
     # A test that needs a second org appends it to `orgs`.
     only = _OnlyOrgs(ch, [org])
     for name in ("queued_namespaces", "owed_rows", "unjudged_conflicted_rows"):
@@ -715,7 +716,7 @@ async def test_rows_wait_owed_without_the_key_and_are_judged_once_it_is_set(
         out = await run_pass()
         again = await run_pass()
     assert out["judged"] == again["judged"] == 0 and out["errored"] == 0
-    assert sum("unavailable" in r.message for r in caplog.records) == 2, "once per pass"
+    assert sum("unavailable" in r.message for r in caplog.records) == 1, "once, not per pass"
     assert (await _marks(ch, org))["office_location"] == 1, "still owed"
     # The key is set: the same row is judged.
     monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: llm)

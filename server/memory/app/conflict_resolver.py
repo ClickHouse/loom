@@ -98,6 +98,24 @@ def _plain(stored: str) -> str:
     return value if isinstance(value, str) else stored
 
 
+def _client() -> Any:
+    from server.llm.client import get_llm_client_without_fallback
+
+    return get_llm_client_without_fallback(
+        settings.conflict_resolver_model, reasoning_effort=REASONING_EFFORT
+    )
+
+
+def model_missing() -> str | None:
+    """Why no call can be made, known before any read: no key for the model (the
+    client is the fake stand-in). None when a call can be made."""
+    from server.llm.fake import FakeLLMClient
+
+    if isinstance(_client(), FakeLLMClient):
+        return f"no key for {settings.conflict_resolver_model}"
+    return None
+
+
 async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVerdict], str]:
     """One call over the cluster: ({peer memory_id: verdict}, the model that answered).
     Malformed output is {}. Never answered by the fallback model: the thresholds are
@@ -107,13 +125,10 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
     as it came."""
     import httpx
 
-    from server.llm.client import get_llm_client_without_fallback
     from server.llm.fake import FakeLLMClient
     from server.observability.genai import llm_stage
 
-    llm = get_llm_client_without_fallback(
-        settings.conflict_resolver_model, reasoning_effort=REASONING_EFFORT
-    )
+    llm = _client()
     if isinstance(llm, FakeLLMClient):
         # The stand-in for a missing key: its echo is no judgement. The rows stay owed.
         raise ModelUnavailable(f"no key for {settings.conflict_resolver_model}")

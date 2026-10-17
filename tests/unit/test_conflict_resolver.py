@@ -792,13 +792,17 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
 
     e = NS(owed=[], recheck=[], resolved=[], over=set(), raise_for={}, slow=0.0, stamped=[])
     e.in_flight = e.most_in_flight = 0
-    e.recheck_reads = 0
+    e.recheck_reads = e.queue_reads = 0
+    e.missing = None
     monkeypatch.setattr(worker, "_recheck_after", 0.0)
+    monkeypatch.setattr(worker, "_unavailable", None)
+    monkeypatch.setattr(resolver, "model_missing", lambda: e.missing)
 
     def _ns(r: dict[str, Any]) -> tuple[str, str]:
         return (r["org"], r["namespace"])
 
     async def namespaces(**kw: Any) -> list[tuple[str, str]]:
+        e.queue_reads += 1
         return sorted({_ns(r) for r in e.owed + e.recheck})
 
     async def owed(*, limit: int, capped: Any = (), **kw: Any) -> list[dict[str, Any]]:
@@ -893,6 +897,20 @@ async def test_an_unknown_model_warns_once_and_stops_the_pass(
         out = await pass_env.run()
     assert pass_env.resolved == [] and out["errored"] == 0
     assert sum("unavailable" in r.message for r in caplog.records) == 1
+
+
+async def test_with_no_key_a_pass_reads_nothing_and_warns_once(pass_env: NS, caplog) -> None:
+    pass_env.owed = [_q(memory_key="k1")]
+    pass_env.missing = "no key for gpt-6.1-sol"
+    with caplog.at_level("INFO"):
+        await pass_env.run()
+        await pass_env.run()
+        assert pass_env.queue_reads == 0 and pass_env.resolved == []
+        assert sum("unavailable" in r.message for r in caplog.records) == 1
+        pass_env.missing = None
+        await pass_env.run()
+    assert [k for _, _, k, _ in pass_env.resolved] == ["k1"]
+    assert sum("available again" in r.message for r in caplog.records) == 1
 
 
 async def test_a_pass_judges_its_rows_at_the_configured_concurrency(

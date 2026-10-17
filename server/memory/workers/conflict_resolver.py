@@ -4,17 +4,18 @@ rows are judged at once.
 
 Each pass reads up to `memory_conflict_resolver_batch` marked rows, then up to
 `memory_conflict_resolver_recheck_batch` rows already `conflicted` that no resolver
-judged (flags from the cosine check, or from an older build's judge), so a false flag
-is cleared once. That read scans every conflicted row, so once it comes back short it
-waits `RECHECK_IDLE_S` before the next. Both take rows in turns across namespaces, so
-one namespace's backlog does not hold the others back. The queue leaves out a namespace over its daily
-LLM cost cap and an org with an erasure queued, running or due a retry; their rows
-stay owed. The cap is read again before each call, for a namespace that crosses it
+judged (flags from the cosine check, or from an older build's judge), so a false flag is
+cleared once. That read scans every conflicted row, so once it comes back short it waits
+`RECHECK_IDLE_S` before the next. Both take rows in turns across namespaces, so one
+namespace's backlog does not hold the others back. The queue leaves out a namespace over
+its daily LLM cost cap and an org with an erasure queued, running or due a retry; their
+rows stay owed. The cap is read again before each call, for a namespace that crosses it
 mid-pass. A transient provider error leaves the row owed; a refusal of the row's own
-request stamps it judged and counts it errored, so it does not come back every pass. A row
-is stamped judged only after its actions, so a pass cut short judges it again and
-acting twice changes nothing. If the provider refuses the model or the key, the pass
-logs one warning and stops; nothing else fails.
+request stamps it judged and counts it errored, so it does not come back every pass. A
+row is stamped judged only after its actions, so a pass cut short judges it again and
+acting twice changes nothing. With no key for the model the pass reads nothing; if the
+provider refuses the model or the key, the pass stops. Either logs one warning when it
+starts, not one per pass; nothing else fails.
 Leader-only, like every worker.
 """
 
@@ -41,6 +42,9 @@ NAME = "conflict_resolver"
 # backlog drains a batch per pass; once a read comes back short, the next waits this long.
 RECHECK_IDLE_S = 300.0
 _recheck_after = 0.0  # time.monotonic() before which the recheck is not read
+# Why the model was unavailable at the last pass that knew (None: available). The
+# warning is logged when this changes, not on every pass.
+_unavailable: str | None = None
 
 
 def _identity(r: Mapping[str, Any]) -> tuple[str, ...]:
@@ -134,21 +138,37 @@ async def _resolve_all(p: _Pass, groups: dict[tuple[str, str], list[dict[str, An
     await asyncio.gather(*jobs)
 
 
+def _note_availability(reason: str | None) -> None:
+    """Log the model going away or coming back, once per change."""
+    global _unavailable
+    model = settings.conflict_resolver_model
+    if reason is not None and _unavailable is None:
+        log.warning("%s: model %r is unavailable (%s); rows stay owed", NAME, model, reason)
+    elif reason is None and _unavailable is not None:
+        log.info("%s: model %r is available again", NAME, model)
+    _unavailable = reason
+
+
 async def run_pass() -> dict[str, Any]:
     set_query_tag(f"worker.{NAME}")
     p = _Pass()
     with record_pass(NAME) as rec:
+        missing = resolver.model_missing()
+        if missing is not None:
+            # Known before any read: the queue is not read for rows no call can judge.
+            _note_availability(missing)
+            pass_context.mark_idle()
+            idle: dict[str, Any] = p.counts.as_dict()
+            rec.outcome = idle
+            return idle
         groups = await _queued(p)
         if not groups:
             pass_context.mark_idle()
         await _resolve_all(p, groups)
         if p.unavailable is not None:
-            log.warning(
-                "%s: model %r is unavailable (%s); the rest of the pass is not judged",
-                NAME,
-                settings.conflict_resolver_model,
-                p.unavailable,
-            )
+            _note_availability(str(p.unavailable))
+        elif p.counts.judged:
+            _note_availability(None)
         outcome: dict[str, Any] = p.counts.as_dict()
         rec.outcome = outcome
         if groups:
