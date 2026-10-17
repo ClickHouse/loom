@@ -74,6 +74,10 @@ class ProjectionFailureRetryResult:
 # the triple follow of retired rows, and the mirror of a retirement the re-read after
 # the write could not confirm.
 FOLLOW_ROWS = "triples_follow_rows"
+# A follow owed before its retirement commits (the conflict resolver's): replayed as
+# FOLLOW_ROWS. Its own name, since an older build replays FOLLOW_ROWS without checking
+# that the loser is still retired, and leaves a name it does not know active.
+FOLLOW_OWED = "triples_follow_owed"
 STATUS_MIRROR = "memory_status_mirror"
 # Triples a follow closed but could not re-check for a live row holding them.
 TRIPLES_REOPEN = "triples_reopen"
@@ -308,7 +312,7 @@ async def retry_projection_failure(
             TRIPLES_REPAIR,
         }:
             reason = await _retry_graph_projection(failure, ch=ch)
-        elif failure.projection == FOLLOW_ROWS:
+        elif failure.projection in (FOLLOW_ROWS, FOLLOW_OWED):
             reason = await _retry_follow_rows(failure, ch=ch)
         elif failure.projection == STATUS_MIRROR:
             reason = await _retry_status_mirror(failure, ch=ch)

@@ -643,7 +643,7 @@ async def test_the_follow_is_owed_before_the_supersede_and_settled_after_it(
     late = _mem("m1", content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
     assert await resolver._retire("o", "ns", current, late) is retires
-    assert retire_env.log[0] == ("intent", "triples_follow_rows", [["m1", "m2"]])
+    assert retire_env.log[0] == ("intent", "triples_follow_owed", [["m1", "m2"]])
     assert retire_env.log[1] == "supersede"
     # A follow that failed stays owed to the repair; nothing retired, nothing owed.
     assert (("resolved", ["f1"]) in retire_env.log) is (follow_ok or not retires)

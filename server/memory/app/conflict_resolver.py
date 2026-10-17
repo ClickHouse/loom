@@ -201,13 +201,13 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
     caller has checked that `peer` was stated first.
 
     The follow is queued for the projection repair before the supersede commits
-    (FOLLOW_ROWS; the repair follows a pair only while its loser is retired behind
+    (FOLLOW_OWED; the repair follows a pair only while its loser is retired behind
     its winner, so an intent whose retirement never landed changes nothing), and
     resolved once the follow lands: a crash between the two leaves the fact for the
     repair, not open forever. No intent, no retirement."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
     from server.memory.app.conflicts import apply_refines
-    from server.memory.app.projection_failures import FOLLOW_ROWS, record_projection_failure
+    from server.memory.app.projection_failures import FOLLOW_OWED, record_projection_failure
 
     loser, winner = peer, row
     loser_sha = str(loser.content_sha256 or "")
@@ -216,7 +216,7 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
         org=org,
         namespace=namespace,
         agent=str(winner.agent),
-        projection=FOLLOW_ROWS,
+        projection=FOLLOW_OWED,
         source_operation=f"worker.{CONFLICT_RESOLVER}",
         source_resource_id=f"{CONFLICT_RESOLVER}:{pair[1]}",
         error="conflict_resolver: retirement to follow",

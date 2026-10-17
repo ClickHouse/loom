@@ -830,7 +830,7 @@ async def _follow_intents(ch: Any, org: str, want_active: int) -> list[dict[str,
     for _ in range(50):
         rows = await ch.query_all(
             "SELECT status, payload FROM loom.memory_projection_failures"
-            " WHERE org = {org:String} AND projection = 'triples_follow_rows'"
+            " WHERE org = {org:String} AND projection = 'triples_follow_owed'"
             " SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1",
             params={"org": org},
         )
@@ -862,6 +862,13 @@ async def test_a_retirement_owes_its_follow_until_the_follow_lands(
     assert len(rows) == 1, "one intent, never a second row for the same pair"
     assert rows[0]["status"] == ("active" if follow_fails else "resolved")
     assert json.loads(rows[0]["payload"])["pairs"] == [[ids["office_city"], ids["office_location"]]]
+    if follow_fails:
+        # The repair replays the owed follow once the graph is back.
+        from server.memory.app.projection_failures import FOLLOW_OWED, retry_projection_failures
+
+        monkeypatch.undo()
+        (retry,) = await retry_projection_failures(org=org, projection=FOLLOW_OWED)
+        assert retry.resolved, retry
 
 
 async def test_a_flagged_pair_is_judged_once_from_both_sides(ch, wired, monkeypatch) -> None:
