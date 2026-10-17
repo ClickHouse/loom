@@ -1785,6 +1785,44 @@ async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
     assert (out.resolved, abandoned, called) == (False, ["malformed_payload"], [])
 
 
+@pytest.mark.parametrize(
+    ("projection", "payload"),
+    [
+        ("memory_status_mirror", {}),
+        ("memory_status_mirror", {"memory_ids": []}),
+        ("triples_follow_rows", {}),
+        ("triples_follow_rows", {"pairs": [["only-one-id"]]}),
+        ("triples_follow_rows", {"pairs": [5]}),
+        ("entity_edges_close", {"memory_id": "m1", "content_sha256": "0" * 64, "ended_at": "x"}),
+    ],
+)
+async def test_a_payload_no_retry_can_read_is_abandoned(monkeypatch, projection, payload) -> None:
+    # Raising would leave the failure open, to fail the same way on every pass.
+    from server.memory.app import projection_failures
+
+    abandoned: list[str] = []
+
+    async def mark_abandoned(*, org, failure_id, reason, ch):
+        abandoned.append(reason)
+
+    monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", mark_abandoned)
+    failure = projection_failures.ProjectionFailureRow(
+        failure_id="f1",
+        org="o",
+        namespace="ns",
+        agent="a",
+        projection=projection,
+        source_operation="memory.set",
+        source_resource_id="memory.set:ns",
+        memory_keys=[],
+        error_type="TimeoutError",
+        error_message="late",
+        payload=payload,
+    )
+    out = await projection_failures.retry_projection_failure(failure, ch=_Graph([], set()))
+    assert (out.resolved, out.error, abandoned) == (False, "", ["malformed_payload"])
+
+
 async def test_a_shared_successor_is_written_once_with_each_winners_key(monkeypatch) -> None:
     rows = [
         _pair_row("a0", "user lives in Paris", superseded_by="a1"),

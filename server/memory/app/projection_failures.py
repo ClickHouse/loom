@@ -307,7 +307,7 @@ async def retry_projection_failure(
         elif failure.projection == FOLLOW_ROWS:
             reason = await _retry_follow_rows(failure, ch=ch)
         elif failure.projection == STATUS_MIRROR:
-            await _retry_status_mirror(failure, ch=ch)
+            reason = await _retry_status_mirror(failure, ch=ch)
         elif failure.projection == TRIPLES_REOPEN:
             reason = await _retry_triples_reopen(failure, ch=ch)
         elif failure.projection == TRIPLES_RECONCILE:
@@ -450,16 +450,20 @@ async def _retry_belief_sources(
     )
 
 
-async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> None:
+async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Mirror each row's current head onto recall, whatever it turned out to be: a
     retirement that landed hides the row, one that did not leaves it live, and a
     delete since tombstones it. A row no longer stored at all was erased, and the
-    erasure removed its embeddings with it: nothing is left to mirror."""
+    erasure removed its embeddings with it: nothing is left to mirror. A payload
+    no retry can read returns the reason that abandons it."""
     import server.memory.store as memory_repo
 
-    ids = [str(i) for i in failure.payload.get("memory_ids") or []]
-    if not ids:
-        raise ValueError("memory_status_mirror retry has no memory_ids")
+    try:
+        ids = [str(i) for i in failure.payload["memory_ids"]]
+        if not ids:
+            raise ValueError("no memory_ids")
+    except (KeyError, TypeError, ValueError):
+        return "malformed_payload"
     heads = []
     for mid in ids:
         row = await memory_repo.get_by_id(
@@ -475,19 +479,24 @@ async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> Non
             heads.append(row.model_dump())
     # Strict: a mirror that failed must leave the failure open for the next pass.
     await memory_repo.mirror_status_to_embeddings(heads, ch=ch, strict=True)
+    return ""
 
 
 async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Follow the supersession pairs a write left for later, reading each chain to
     its end. A pair still unread is a cycle or a chain past `REPAIR_CHAIN_HOPS`,
-    which no retry reads: the reason returned abandons the failure."""
+    which no retry reads: the reason returned abandons the failure, as it does for
+    a payload no retry can read."""
     from types import SimpleNamespace
 
     from server.memory.app.entity_projections import REPAIR_CHAIN_HOPS, follow_row_supersessions
 
-    pairs = [(str(o), str(n)) for o, n in failure.payload.get("pairs") or []]
-    if not pairs:
-        raise ValueError("triples_follow_rows retry has no pairs")
+    try:
+        pairs = [(str(o), str(n)) for o, n in failure.payload["pairs"]]
+        if not pairs:
+            raise ValueError("no pairs")
+    except (KeyError, TypeError, ValueError):
+        return "malformed_payload"
     scope = SimpleNamespace(org=failure.org, namespace=failure.namespace, agent=failure.agent)
     async with _recording_restated_repair(failure, ch=ch):
         await _finish_restated_repair(failure, scope, ch=ch)
@@ -540,13 +549,12 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
         return "malformed_payload"
     # When the revision ended the value; a payload recorded before it was known has none.
     ended = failure.payload.get("ended_at")
+    try:
+        ended_at = datetime.fromisoformat(ended) if ended else None
+    except (TypeError, ValueError):
+        return "malformed_payload"
     await close_late_edges(
-        failure.org,
-        failure.namespace,
-        memory_id,
-        content_sha256,
-        ended_at=datetime.fromisoformat(ended) if ended else None,
-        ch=ch,
+        failure.org, failure.namespace, memory_id, content_sha256, ended_at=ended_at, ch=ch
     )
     return ""
 
