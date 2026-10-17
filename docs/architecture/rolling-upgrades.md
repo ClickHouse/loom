@@ -121,10 +121,16 @@ schema. These rules keep that safe. The operator procedure is in
     off after its task row is finished by its retry, which under the key's lease writes
     the created event and the lease row the first one left out. That event takes a fresh
     seq, so cursor readers deliver it, unless the task has events since: then it goes
-    just before the first of them and is history only. A retry that reads an N-1
-    create's task between its row and its event, or a first create that was only stalled
-    past its lease, can log a second created event. The N-1 case ends once N-1 stops
-    serving.
+    just before the first of them and is history only. A first create that was only
+    stalled past its lease, or cancelled while its insert ran on, can still land its own
+    event. Both inserts carry one token, the task's (`insert_event`), so storage keeps
+    whichever lands first. Past the dedup window both can be stored: the backfill is
+    marked `backfilled` in its patch, and N's readers drop it when the task has an
+    earlier created event, so history shows one creation and a cursor delivers at most
+    one. A reader that passed the first one's seq before it landed and reads the
+    backfill after misses the creation, as it misses any event landing behind it. A retry
+    that reads an N-1 create's task between its row and its event logs such a backfill
+    too. N-1's readers do not drop it; that ends once N-1 stops serving.
 11. **A link N adds is not yet complete.** N links each value to the triples and edges
     it stated (`entity_triple_rows`, `entity_edge_rows`); N-1 links only keys, just after
     it writes the row. So a value with no row link still holds by its key link when that

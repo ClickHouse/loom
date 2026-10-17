@@ -18,6 +18,7 @@ Handlers own the state machine; this module owns the statements.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -28,6 +29,7 @@ from typing import Any, cast
 
 from server.core.grant_sql import LIVE_GRANT
 from server.core.repo_base import _CHClient, _default_client
+from server.tasks.domain.cursors import BACKFILLED
 from server.tasks.store.rows import (
     GrantSubjectRow,
     InboxCountRow,
@@ -534,9 +536,58 @@ async def inbox_counts(
 
 async def insert_event(row: TaskEventRow, *, ch: _CHClient | None = None) -> None:
     ch = ch or _default_client()
-    await ch.insert(
-        "loom.task_events", [dict(row)], settings={"async_insert": 0, "wait_for_async_insert": 1}
+    settings: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
+    if row["event"] == "created":
+        # One identity per task's creation: the create's own event and the one its
+        # retry backfills insert under one token, so storage keeps whichever landed
+        # first (docs/architecture/rolling-upgrades.md, rule 10).
+        settings["insert_deduplication_token"] = f"task.created:{row['org']}:{row['task_id']}"
+    await ch.insert("loom.task_events", [dict(row)], settings=settings)
+
+
+def _first_created_only(history: list[TaskEventRow]) -> list[TaskEventRow]:
+    """A task's `history` in seq order, without any created event after its first: past
+    the dedup window, a create's own event and its backfill can both be stored."""
+    out = []
+    created = False
+    for r in history:
+        if r["event"] == "created":
+            if created:
+                continue
+            created = True
+        out.append(r)
+    return out
+
+
+def _backfilled(row: TaskEventRow) -> bool:
+    return row["event"] == "created" and bool(json.loads(row.get("patch") or "{}").get(BACKFILLED))
+
+
+async def _drop_second_creations(
+    org: str, rows: list[TaskEventRow], *, ch: _CHClient
+) -> list[TaskEventRow]:
+    """`rows` without a backfilled created event whose task has an earlier one: a
+    cursor reader that delivered that one must not deliver a second creation."""
+    backfills = [r for r in rows if _backfilled(r)]
+    if not backfills:
+        return rows
+    firsts = await ch.query_all(
+        "SELECT toString(task_id) AS tid, min(seq) AS first_seq FROM loom.task_events "
+        "WHERE org = {org:String} AND inbox IN {inboxes:Array(String)} "
+        "AND event = 'created' AND task_id IN {ids:Array(UUID)} GROUP BY tid "
+        "SETTINGS select_sequential_consistency = 1",
+        params={
+            "org": org,
+            "inboxes": sorted({str(r["inbox"]) for r in backfills}),
+            "ids": sorted({str(r["task_id"]) for r in backfills}),
+        },
     )
+    first = {str(f["tid"]): int(f["first_seq"]) for f in firsts}
+    return [
+        r
+        for r in rows
+        if not (_backfilled(r) and int(r["seq"]) > first.get(str(r["task_id"]), int(r["seq"])))
+    ]
 
 
 async def task_history(
@@ -558,10 +609,8 @@ async def task_history(
     )
     if consistent:
         sql += " SETTINGS select_sequential_consistency = 1"
-    return cast(
-        "list[TaskEventRow]",
-        await ch.query_all(sql, params={"org": org, "tid": task_id, "limit": int(limit)}),
-    )
+    rows = await ch.query_all(sql, params={"org": org, "tid": task_id, "limit": int(limit)})
+    return _first_created_only(cast("list[TaskEventRow]", rows))
 
 
 async def events_since(
@@ -596,14 +645,12 @@ async def events_since(
     if from_subject:
         where.append("from_subject = {subj:String}")
         params["subj"] = from_subject
-    return cast(
-        "list[TaskEventRow]",
-        await ch.query_all(
-            f"SELECT {EVENT_COLS} FROM loom.task_events WHERE {' AND '.join(where)} "
-            "ORDER BY seq LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1",
-            params=params,
-        ),
+    rows = await ch.query_all(
+        f"SELECT {EVENT_COLS} FROM loom.task_events WHERE {' AND '.join(where)} "
+        "ORDER BY seq LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1",
+        params=params,
     )
+    return await _drop_second_creations(org, cast("list[TaskEventRow]", rows), ch=ch)
 
 
 # ---------------------------------------------------------------- webhooks

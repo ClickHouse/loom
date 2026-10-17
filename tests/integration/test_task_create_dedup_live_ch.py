@@ -590,3 +590,113 @@ async def test_this_builds_delivery_after_an_old_builds_reports_its_own_event(
     emitted, _ = await svc.deliver(watch, {"tiers": []})
     # Both events landed, so this delivery reports the one it stored.
     assert emitted and await _ready_events(ch, watch) == 2
+
+
+async def _cancelled_mid_insert(
+    body: dict[str, Any], monkeypatch: pytest.MonkeyPatch, *, past_window: bool = False
+) -> tuple[asyncio.Event, asyncio.Task[None]]:
+    """A create cancelled while ClickHouse still runs the INSERT of its created event:
+    the caller is gone and the key's lease released, the insert lands once the
+    returned event is set. `past_window` lands it under a token of its own, as storage
+    takes it once its dedup window no longer holds the backfill's."""
+    insert, sent = repo.insert_event, asyncio.Event()
+    release = asyncio.Event()
+    landing: list[asyncio.Task[None]] = []
+
+    async def server_side(row: Any) -> None:
+        await release.wait()
+        if past_window:
+            settings = {"async_insert": 0, "insert_deduplication_token": uuid.uuid4().hex}
+            from server.core.ch import get_client
+
+            await get_client().insert("loom.task_events", [dict(row)], settings=settings)
+        else:
+            await insert(row)
+
+    async def in_flight(row: Any, **kw: Any) -> None:
+        if row["event"] != "created" or landing:
+            return await insert(row, **kw)
+        landing.append(asyncio.create_task(server_side(row)))
+        sent.set()
+        await asyncio.Event().wait()  # the caller waits on the answer until cancelled
+
+    monkeypatch.setattr(repo, "insert_event", in_flight)
+    first = asyncio.create_task(transitions.handle_task_create(wire.TaskCreateInput(**body)))
+    await sent.wait()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    return release, landing[0]
+
+
+async def _delivered(org: str, cursor: dict[str, Any] | None) -> list[str]:
+    """The events the webhook notice for inbox `bot` names past `cursor`."""
+    import json
+
+    from server.tasks.workers import webhook_deliver
+
+    bodies: list[bytes] = []
+
+    async def post(transport: Any, url: str, headers: Any, body: bytes) -> int:
+        bodies.append(body)
+        return 200
+
+    inbox = {"org": org, "inbox": "bot", "webhook_url": "https://example.com/hook"}
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(webhook_deliver, "_post", post)
+        m.setattr(webhook_deliver, "_secret_for", lambda row, env: b"secret")
+        m.setattr(webhook_deliver.task_cursors, "LAG_SECONDS", 0)
+        await webhook_deliver._deliver_inbox(
+            None,
+            inbox,
+            cursor,
+            now=datetime.now(UTC),
+            env={},  # type: ignore[arg-type]
+        )
+    return [e["event"] for b in bodies for e in json.loads(b)["events"]]
+
+
+async def _webhook_cursor(ch: Any, org: str) -> dict[str, Any]:
+    (cursor,) = await ch.query_all(
+        f"SELECT {repo.WEBHOOK_CURSOR_COLS} FROM loom.task_webhook_cursor FINAL"
+        " WHERE org = {org:String} SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    return dict(cursor)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("past_window", [False, True])
+async def test_a_create_cancelled_mid_insert_and_retried_logs_one_creation(
+    ch: Any, monkeypatch: pytest.MonkeyPatch, past_window: bool
+) -> None:
+    # The first create is cancelled while its created event's INSERT still runs; its
+    # retry finds the task without the event and backfills one. Then the first insert
+    # lands. History holds one creation, and no cursor reader delivers two.
+    org, body = await _registered("itest-cancel")
+    release, landing = await _cancelled_mid_insert(body, monkeypatch, past_window=past_window)
+    monkeypatch.undo()
+    retry = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    assert not retry.created
+
+    seen = await repo.events_since(org, since_seq=0, lag_s=0, inbox="bot")
+    assert [e["event"] for e in seen] == ["created"]
+    assert await _delivered(org, None) == ["created"]
+    release.set()
+    await landing
+
+    history = await repo.task_history(org, retry.task.task_id, consistent=True)
+    assert [e["event"] for e in history] == ["created"]
+    assert await repo.events_since(org, since_seq=int(seen[-1]["seq"]), lag_s=0) == []
+    assert await _delivered(org, await _webhook_cursor(ch, org)) == []
+    # A reader that saw neither gets one.
+    fresh = await repo.events_since(org, since_seq=0, lag_s=0, inbox="bot")
+    assert [e["event"] for e in fresh] == ["created"]
+    assert await _delivered(org, None) == ["created"]
+    # Within the dedup window storage keeps one row; past it the readers keep the first.
+    (stored,) = await ch.query_all(
+        "SELECT count() AS n FROM loom.task_events WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert stored["n"] == (2 if past_window else 1)
