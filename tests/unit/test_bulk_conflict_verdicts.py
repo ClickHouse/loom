@@ -122,3 +122,19 @@ def test_only_the_version_a_key_keeps_settles_its_verdict() -> None:
         assert len(plan.conflict_marks) + len(plan.refines) == 1
         plan = apply_bulk_verdicts(*rows(), {0: v, 1: NS(verdict="merge", peers=[])})
         assert len(plan.conflict_marks) + len(plan.refines) == 1
+
+
+def test_a_merge_with_a_row_an_earlier_entry_rewrote_lands() -> None:
+    # Row 0 rewrites id0; rows 1 and 2 matched id0's stored bytes, which are gone. A
+    # target rewritten only after the entry still merges, as memory.set in that order would.
+    m, e, ix, r = _rows(3)
+    verdicts = {
+        1: NS(verdict="merge", existing_memory_id="id0", peers=[]),
+        2: NS(verdict="duplicate", duplicate_of_id="id0", peers=[]),
+    }
+    plan = apply_bulk_verdicts(m, e, ix, r, verdicts)
+    assert [x["memory_key"] for x in plan.memory_rows] == ["k0", "k1", "k2"]
+    assert plan.merged == [] and plan.duplicates == [] and plan.reinforce_ids == []
+    assert r[1].conflict_verdict == "clear" and r[1].version == 101
+    late = apply_bulk_verdicts(*_rows(2), {0: NS(verdict="merge", existing_memory_id="id1")})
+    assert late.merged == ["k0"]

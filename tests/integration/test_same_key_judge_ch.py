@@ -3754,6 +3754,80 @@ async def test_a_bulk_that_returns_a_key_to_its_stored_value_ends_on_it(ch, org)
     assert [json.loads(r["value"]) for r in rows] == ["User lives in Berlin."]
 
 
+async def _bulk_in(org: str, session: str, *entries: dict[str, Any]) -> Any:
+    """One memory.bulk_set of `entries` in `session`, its projections drained."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    out = await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id=session,
+            entries=list(entries),
+        )
+    )
+    await after_write.drain()
+    return out
+
+
+async def _live_values(ch: Any, org: str) -> dict[tuple[str, str], tuple[str, int]]:
+    """(session, key) -> (value, pinned) of every live row of the org."""
+    rows = await ch.query_all(
+        "SELECT session_id, memory_key, value, pinned FROM loom.memory FINAL"
+        " WHERE org = {org:String} AND tombstoned_at IS NULL"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    return {
+        (r["session_id"], r["memory_key"]): (json.loads(r["value"]), int(r["pinned"])) for r in rows
+    }
+
+
+async def test_a_bulk_keeps_a_value_it_moves_off_a_key_it_overwrites(ch, org) -> None:
+    # k2 holds Berlin; one bulk moves k2 to the bicycle and states Berlin under k.
+    # k2's Berlin is gone by the time k is written, so k must not dedup or merge into it.
+    await _bulk_in(org, "s1", {"memory_key": "k2", "value": "User lives in Berlin."})
+    out = await _bulk_in(
+        org,
+        "s1",
+        {"memory_key": "k2", "value": "User owns a red bicycle."},
+        {"memory_key": "k", "value": "User lives in Berlin."},
+    )
+    assert out.identity_duplicates == {} and out.merged == []
+    live = await _live_values(ch, org)
+    assert live[("s1", "k2")][0] == "User owns a red bicycle."
+    assert live[("s1", "k")][0] == "User lives in Berlin."
+
+
+@pytest.mark.parametrize("one_bulk", [True, False])
+async def test_a_revision_of_a_live_key_is_not_eaten_by_another_sessions_copy(
+    ch, org, one_bulk: bool
+) -> None:
+    # s0 says Berlin; s1 says Paris, then Berlin again. s1's last word is Berlin, as
+    # memory.set in that order would leave it; s0's copy must not swallow the revision.
+    await _bulk_in(org, "s0", {"memory_key": "k", "value": "User lives in Berlin."})
+    paris = {"memory_key": "k", "value": "User lives in Paris."}
+    berlin = {"memory_key": "k", "value": "User lives in Berlin."}
+    if one_bulk:
+        out = await _bulk_in(org, "s1", paris, berlin)
+    else:
+        await _bulk_in(org, "s1", paris)
+        out = await _bulk_in(org, "s1", berlin)
+    assert out.identity_duplicates == {}
+    assert (await _live_values(ch, org))[("s1", "k")][0] == "User lives in Berlin."
+
+
+async def test_a_new_key_still_dedups_against_another_sessions_copy(ch, org) -> None:
+    await _bulk_in(org, "s0", {"memory_key": "k", "value": "User lives in Berlin."})
+    out = await _bulk_in(org, "s1", {"memory_key": "k", "value": "User lives in Berlin."})
+    assert out.identity_duplicates == {"k": "k"}
+    assert ("s1", "k") not in await _live_values(ch, org)
+
+
 async def test_a_value_its_own_bulk_replaced_retires_no_other_row(ch, org, newest_wins) -> None:
     # k2's Russellville would retire k1's Moscow, but the same bulk then writes k2 again:
     # k2 no longer says anything about the capital, so Moscow stays live and searchable.

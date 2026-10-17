@@ -104,6 +104,8 @@ class _BulkWriteState:
     # to reinforce.
     identity_duplicates: dict[str, str] = field(default_factory=dict)
     identity_dup_ids: list[str] = field(default_factory=list)
+    # Ids of the rows this batch has written a new version of: their stored bytes may be gone.
+    rewritten_ids: set[str] = field(default_factory=set)
     # A byte-identical restatement of the SAME key is the frequency signal: it reinforces the
     # live row instead of vanishing.
     restated_ids: list[str] = field(default_factory=list)
@@ -231,9 +233,13 @@ def _bulk_skip_gate(
     # key. Reinforce the keeper (an `evidence` event the usage fold turns into
     # reinforcement_count), write nothing, and tell the caller which key holds the fact.
     _dup = identity_dupes.get(entry_sha)
-    # The keeper being this key's own row is the unchanged check's to decide, against
-    # what the batch has written to it since.
-    if _dup is not None and _dup[1] != state.existing_ids.get(entry.memory_key):
+    # Dedup only stops a new key from repeating a stored fact: a key that already has a row
+    # here is being revised. A keeper the batch has rewritten may no longer hold the bytes.
+    if (
+        _dup is not None
+        and entry.memory_key not in state.existing_sha
+        and _dup[1] not in state.rewritten_ids
+    ):
         state.identity_duplicates[entry.memory_key] = _dup[0]
         if _dup[1] not in state.identity_dup_ids:
             state.identity_dup_ids.append(_dup[1])
@@ -296,6 +302,7 @@ def _keep_row(state: _BulkWriteState, row: dict[str, Any]) -> None:
     restating it is unchanged and one returning to the stored value is not."""
     state.memory_rows.append(row)
     state.existing_sha[str(row["memory_key"])] = str(row["content_sha256"])
+    state.rewritten_ids.add(str(row["memory_id"]))
 
 
 def _row_id(state: _BulkWriteState, memory_key: str) -> str:

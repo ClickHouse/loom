@@ -145,6 +145,13 @@ def _kept_embeddings(
     return kept
 
 
+def _target_rewritten_before(v: Any, idx: int, first_row: dict[str, int]) -> bool:
+    """A merge or duplicate verdict whose stored peer an earlier row of the batch
+    rewrote."""
+    target = str(getattr(v, "existing_memory_id", "") or getattr(v, "duplicate_of_id", "") or "")
+    return bool(target) and first_row.get(target, idx) < idx
+
+
 def _settling_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) -> set[int]:
     """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
     versions of one row, so only the kept version's verdict may mark or retire
@@ -168,11 +175,18 @@ def apply_bulk_verdicts(
     plan = BulkVerdictPlan()
     drop: set[int] = set()
     dup_idx: set[int] = set()
-    settling = _settling_rows(memory_rows, verdicts)
+    # A verdict against a stored row an earlier entry of the batch rewrote matched bytes
+    # that are gone: memory.set in the same order would find the new value there.
+    first_row: dict[str, int] = {}
+    for i, r in enumerate(memory_rows):
+        first_row.setdefault(str(r.get("memory_id") or ""), i)
+    stale = {i for i, v in verdicts.items() if _target_rewritten_before(v, i, first_row)}
+    settling = _settling_rows(memory_rows, {i: v for i, v in verdicts.items() if i not in stale})
     for idx, v in verdicts.items():
         verdict = getattr(v, "verdict", "clear")
         # A later entry of this key replaced the value judged: nothing to mark or retire.
         replaced = verdict in ("refines", "conflict") and id(memory_rows[idx]) not in settling
+        replaced = replaced or idx in stale
         if replaced:
             verdict = "clear"
         # The per-row verdict memory.set returns, on the bulk result too. No query: the peers
