@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import time
@@ -30,26 +29,10 @@ _SERVICE_ACCOUNT_SUFFIX = re.compile(r"-[0-9a-f]{6}")
 # Claims every token of an issuer carries: alone they tell no workload apart.
 _STANDARD_CLAIMS = frozenset({"iss", "aud", "exp", "iat", "nbf", "jti"})
 
-# How far another replica's clock may run ahead of this one's: a token it
-# issues as of a later second than the cutoff would outlive the revocation.
-_CLOCK_SKEW_S = 5
-
-
-def _from_now_on() -> datetime:
-    """A cutoff past every token issued so far, on any replica: revocation
-    compares whole seconds, and the token's `iat` is another clock's."""
-    return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1 + _CLOCK_SKEW_S)
-
 
 def cutoff_after(seconds: float) -> datetime:
     """A cutoff past every token issued in the next `seconds`, on any replica."""
-    return _from_now_on() + timedelta(seconds=seconds)
-
-
-async def wait_out(cutoff: datetime) -> None:
-    """Return once every replica's clock is past `cutoff`: one running behind
-    this one stamps an earlier `iat`."""
-    await asyncio.sleep(max(0.0, cutoff.timestamp() + _CLOCK_SKEW_S - time.time()))
+    return revocation.from_now_on() + timedelta(seconds=seconds)
 
 
 # ── carrying password accounts over to SSO ────────────────────────────────
@@ -123,7 +106,7 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
         # an adopt stopped between the two is redone whole by the next one.
         if not keep_tokens:
             # Past every token issued so far on any replica, as a bot's cutoff is.
-            cutoff = _from_now_on()
+            cutoff = revocation.from_now_on()
             await revocation.cut_off(owner, issued_before=cutoff, reason="sso adopt", revoked_by=by)
         live = await sso_links.link_live(email, [(org, a["namespace"]) for a in accounts], by)
         if not live:
@@ -143,7 +126,7 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
             },
         )
     if cutoff is not None:  # a sign-in once adopt returns, on any replica, is past every cutoff
-        await wait_out(cutoff)
+        await revocation.wait_out(cutoff)
     return linked
 
 
@@ -466,7 +449,9 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         # The cutoff is taken after the save, so a request that read the old
         # row falls under it; returning once it has passed lets the new key's
         # first token live.
-        await wait_out(await end_tokens(machines.subject(name), by=by, reason="bot replaced"))
+        await revocation.wait_out(
+            await end_tokens(machines.subject(name), by=by, reason="bot replaced")
+        )
     try:
         await audit.emit(
             "auth.machine_created",
@@ -529,7 +514,9 @@ async def disable_bot(name: str, *, by: str) -> bool:
             return False
         await machines.save(bot, by=by, active=False)
     # Waited out, as a replace's is, so a bot made again at once is not refused.
-    await wait_out(await end_tokens(machines.subject(name), by=by, reason="bot disabled"))
+    await revocation.wait_out(
+        await end_tokens(machines.subject(name), by=by, reason="bot disabled")
+    )
     await audit.emit(
         "auth.machine_disabled", org=bot["org"], namespace="-", actor=by, subject={"name": name}
     )
@@ -541,6 +528,6 @@ async def end_tokens(
 ) -> datetime:
     """A bot's or an agent's tokens live an hour; revoked now, not when they
     run out. Returns the cutoff: `cutoff`, or every token issued so far."""
-    cutoff = cutoff or _from_now_on()
+    cutoff = cutoff or revocation.from_now_on()
     await revocation.cut_off(subject, issued_before=cutoff, reason=reason, revoked_by=by)
     return cutoff

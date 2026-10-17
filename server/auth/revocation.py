@@ -30,7 +30,7 @@ import asyncio
 import logging
 import math
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core import readiness
@@ -44,6 +44,22 @@ log = logging.getLogger(__name__)
 # past date and ClickHouse drops the row, so the revocation silently never
 # lands. Every expiry is therefore clamped below that range.
 _LATEST_EXPIRY = datetime(2105, 12, 31)
+
+# How far another replica's clock may run ahead of this one's: a token it
+# issues as of a later second than the cutoff would outlive the revocation.
+CLOCK_SKEW_S = 5
+
+
+def from_now_on() -> datetime:
+    """A cutoff past every token issued so far, on any replica: revocation
+    compares whole seconds, and the token's `iat` is another clock's."""
+    return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1 + CLOCK_SKEW_S)
+
+
+async def wait_out(cutoff: datetime) -> None:
+    """Return once every replica's clock is past `cutoff`: one running behind
+    this one stamps an earlier `iat`."""
+    await asyncio.sleep(max(0.0, cutoff.timestamp() + CLOCK_SKEW_S - time.time()))
 
 
 def revocation_expiry(expires_at: datetime | None) -> datetime:

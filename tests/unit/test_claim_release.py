@@ -82,7 +82,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def wait(cutoff: datetime) -> None:
         waited.append(cutoff)
 
-    monkeypatch.setattr(account_admin, "wait_out", wait)
+    monkeypatch.setattr(revocation, "wait_out", wait)
     state["waited"] = waited
 
     def run(token: str, row: dict[str, Any] | None = _ROW, org: str = "acme") -> tuple[Any, _CH]:
@@ -195,7 +195,7 @@ def test_the_cutoff_is_waited_out_after_the_claim_is_let_go(env: Any, monkeypatc
     monkeypatch.setattr(machines, "naming", naming)
     monkeypatch.setattr(machines, "forget_namespace", forget)
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
-    monkeypatch.setattr(account_admin, "wait_out", wait)
+    monkeypatch.setattr(revocation, "wait_out", wait)
     assert run(_tok(["org_admin"]))[0].released
     assert events == ["claimed", "let go", "waited"]
 
@@ -261,7 +261,7 @@ def test_the_cutoff_covers_tokens_issued_until_the_slowest_release_ends(
     async def slow_forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
         clock[0] = start + timedelta(seconds=grant_claims.WRITES_LAND_S)
         # Minted on a replica ahead by the skew, the second the write lands.
-        issued.append(clock[0] + timedelta(seconds=account_admin._CLOCK_SKEW_S))
+        issued.append(clock[0] + timedelta(seconds=revocation.CLOCK_SKEW_S))
         return ["triage"]
 
     async def cut_off(subject: str, *, issued_before: datetime, **k: Any) -> None:
@@ -269,9 +269,9 @@ def test_the_cutoff_covers_tokens_issued_until_the_slowest_release_ends(
             raise RuntimeError("ClickHouse away")  # nothing after the rewrite may be needed
         written.append(issued_before)
 
-    monkeypatch.setattr(account_admin, "datetime", _Clock)
+    monkeypatch.setattr(revocation, "datetime", _Clock)
     monkeypatch.setattr(machines, "naming", naming)
     monkeypatch.setattr(machines, "forget_namespace", slow_forget)
-    monkeypatch.setattr(account_admin.revocation, "cut_off", cut_off)
+    monkeypatch.setattr(revocation, "cut_off", cut_off)
     assert run(_tok(["org_admin"]))[0].released
     assert written and all(issued[0] < cutoff for cutoff in written)

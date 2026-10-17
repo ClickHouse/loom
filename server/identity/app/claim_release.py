@@ -19,7 +19,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from server.auth import agents, aliases, machines, sso_links
+from server.auth import agents, aliases, machines, revocation, sso_links
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
@@ -106,7 +106,7 @@ async def release_claim(
     if cutoff is not None:
         # Waited out like a bot replace or disable, so an exchange right after
         # is not refused as revoked; outside the claim, which is not held for it.
-        await account_admin.wait_out(cutoff)
+        await revocation.wait_out(cutoff)
     return out
 
 
