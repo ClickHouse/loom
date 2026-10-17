@@ -23,6 +23,7 @@ flag has nothing left to remove."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Mapping
@@ -331,10 +332,15 @@ async def _current(q: Mapping[str, Any]) -> Any:
     return rows.get(key)
 
 
-async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> None:
+async def resolve_row(
+    q: Mapping[str, Any], *, policy: str, counts: Counts, acting: asyncio.Lock | None = None
+) -> None:
     """Judge one queue row and act on its pairs, then stamp it judged. A row whose
     head is no longer the queued write is skipped unstamped: its new write carries
-    its own mark. A provider failure raises, and the row stays owed."""
+    its own mark. A provider failure raises, and the row stays owed.
+
+    Rows judged at the same time share `acting`: it is held from the re-read of a
+    pair to its write, so two rows that judged the same peer act on it once."""
     org, namespace, sha = str(q["org"]), str(q["namespace"]), str(q.get("content_sha256") or "")
     row = await _current(q)
     if row is not None and sha and str(row.content_sha256 or "") != sha:
@@ -354,7 +360,15 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> N
         prefer=frozenset(str(x) for x in row.conflict_with),
     )
     if peers:
-        await _judge_and_act(org, namespace, row, peers, policy=policy, counts=counts)
+        await _judge_and_act(
+            org,
+            namespace,
+            row,
+            peers,
+            policy=policy,
+            counts=counts,
+            acting=acting or asyncio.Lock(),
+        )
     await queue.stamp_judged(q)
 
 
@@ -375,6 +389,7 @@ async def _judge_and_act(
     *,
     policy: str,
     counts: Counts,
+    acting: asyncio.Lock,
 ) -> None:
     new = cr.Note(
         str(row.memory_id), str(row.memory_key), _plain(memory_repo.stored_value_text(row))
@@ -390,21 +405,22 @@ async def _judge_and_act(
         return
     acted: list[dict[str, Any]] = []
     judged = (str(row.memory_id), str(row.content_sha256 or ""))
-    for peer in peers:
-        v = verdicts.get(str(peer["memory_id"]))
-        action = cr.NOTHING if v is None else _action(v, policy)
-        if v is None or action == cr.NOTHING:
-            # Unsure, or a peer the answer left out: the pair stays as it is.
-            counts.skipped_low_confidence += 1
-            continue
-        if await _settle_pair(org, namespace, judged, peer, action, counts):
-            acted.append(
-                {
-                    "peer_id": str(peer["memory_id"]),
-                    "action": action,
-                    "verdict": v.verdict,
-                    "confidence": v.confidence,
-                }
-            )
-    if acted:
-        await _audit(org, namespace, row, acted)
+    async with acting:
+        for peer in peers:
+            v = verdicts.get(str(peer["memory_id"]))
+            action = cr.NOTHING if v is None else _action(v, policy)
+            if v is None or action == cr.NOTHING:
+                # Unsure, or a peer the answer left out: the pair stays as it is.
+                counts.skipped_low_confidence += 1
+                continue
+            if await _settle_pair(org, namespace, judged, peer, action, counts):
+                acted.append(
+                    {
+                        "peer_id": str(peer["memory_id"]),
+                        "action": action,
+                        "verdict": v.verdict,
+                        "confidence": v.confidence,
+                    }
+                )
+        if acted:
+            await _audit(org, namespace, row, acted)

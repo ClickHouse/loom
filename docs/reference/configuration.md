@@ -634,6 +634,7 @@ Source: `server/settings/_memory.py`
 | `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` | `float` | `0.9` | Below this confidence a verdict changes nothing. At or above it a compatible verdict clears the pair's flag, and an update this build does not retire or a contradiction flags the pair for review. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` | `int` | `20` | Marked rows judged per pass, then rows already `conflicted` re-checked per pass. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` | `int` | `10` |  |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` | `int` | `8` | Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | `float` | `60.0` | Seconds between the resolver's passes. |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. |
 | `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` | Bulk-path conflict checks run at once (at least 1). |

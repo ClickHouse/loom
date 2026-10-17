@@ -337,3 +337,81 @@ async def test_a_write_with_a_peer_past_the_floor_is_owed_a_judgement(ch, wired)
         await _set(org, "s2", "car", "The user drives a blue car")
     marks = await _marks(ch, org)
     assert marks["pet_new"] == 1 and marks["car"] is None
+
+
+class _SlowLLM:
+    """Answers `update` for the peer keyed `office_city` and `unrelated` for the rest,
+    after a pause, counting the calls in flight at once."""
+
+    provider, model = "fake", "slow"
+
+    def __init__(self) -> None:
+        self.in_flight = self.most_in_flight = 0
+
+    async def complete(self, system: str, user: str, **kw: Any) -> Any:
+        from types import SimpleNamespace
+
+        self.in_flight += 1
+        self.most_in_flight = max(self.most_in_flight, self.in_flight)
+        await asyncio.sleep(0.3)
+        self.in_flight -= 1
+        entries = [
+            {
+                "peer_id": p,
+                "reason": "scripted",
+                "same_entity": True,
+                "same_attribute": True,
+                "verdict": "update" if key == "office_city" else "unrelated",
+                "confidence": 0.99,
+            }
+            for p, key in re.findall(r"^\[(p\d+)\] \(key ([^,]+),", user, re.M)
+        ]
+        return SimpleNamespace(text=json.dumps({"peers": entries}))
+
+
+async def test_two_rows_judged_at_once_retire_their_shared_peer_once(
+    ch, wired, monkeypatch
+) -> None:
+    """Two owed rows whose clusters both hold the same older row are judged at the
+    same time and both call it stale: it is retired once, behind one of them."""
+    import server.llm.client as llm_client
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    llm = _SlowLLM()
+    monkeypatch.setattr(llm_client, "get_llm_client_for_model", lambda m: llm)
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "office_city", "The office is in Paris")
+        await _set(org, "s2", "office_a", "The office moved to Rome")
+        await _set(org, "s3", "office_b", "The office is in Rome now")
+        await after_write.drain()
+    await _place(ch, org, "s1", "office_city", _vec((20, 1.0)), owed=False)
+    await _place(ch, org, "s2", "office_a", _vec((20, 0.8), (21, 0.6)), owed=True)
+    await _place(ch, org, "s3", "office_b", _vec((20, 0.8), (22, 0.6)), owed=True)
+
+    out = await run_pass()
+    rows = await _rows(ch, org)
+    assert llm.most_in_flight == 2
+    assert rows["office_city"]["status"] == "superseded"
+    assert rows["office_city"]["superseded_by"] in (rows["office_a"]["id"], rows["office_b"]["id"])
+    assert rows["office_a"]["status"] == rows["office_b"]["status"] == "active"
+    assert out["retired"] == 1 and out["skipped_changed"] == 1 and out["errored"] == 0
+    # One record of the retirement, and one versioned write of it.
+    (record,) = await _audit(ch, org, "memory.auto_supersede")
+    assert [e["memory_id"] for e in record["retired"]] == [rows["office_city"]["id"]]
+    versions = await ch.query_all(
+        "SELECT count() AS n FROM loom.memory_versions WHERE org = {org:String}"
+        " AND memory_key = 'office_city' AND status = 'superseded'"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert int(versions[0]["n"]) == 1
+    marks = await _marks(ch, org)
+    assert marks["office_a"] == marks["office_b"] == 2

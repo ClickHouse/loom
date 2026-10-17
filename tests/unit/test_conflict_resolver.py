@@ -4,6 +4,7 @@ tests/integration/test_conflict_resolver_ch.py runs it against ClickHouse."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from types import SimpleNamespace as NS
@@ -508,7 +509,8 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     from server.memory.workers import conflict_resolver as worker
     from server.observability import budget
 
-    e = NS(owed=[], recheck=[], resolved=[], erasing=set(), over=set(), raise_for=set())
+    e = NS(owed=[], recheck=[], resolved=[], erasing=set(), over=set(), raise_for=set(), slow=0.0)
+    e.in_flight = e.most_in_flight = 0
 
     async def owed(*, limit: int, **kw: Any) -> list[dict[str, Any]]:
         return e.owed[:limit]
@@ -519,10 +521,14 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def erasing(org: str, **kw: Any) -> bool:
         return org in e.erasing
 
-    async def over(pairs, **kw):
-        return {p: p in e.over for p in pairs}
+    async def over(org, namespace):
+        return (org, namespace) in e.over
 
-    async def resolve(q, *, policy, counts):
+    async def resolve(q, *, policy, counts, acting):
+        e.in_flight += 1
+        e.most_in_flight = max(e.most_in_flight, e.in_flight)
+        await asyncio.sleep(e.slow)
+        e.in_flight -= 1
         if q["memory_key"] in e.raise_for:
             raise resolver.ModelUnavailable("404 model_not_found")
         e.resolved.append((q["org"], q["namespace"], q["memory_key"], policy))
@@ -534,7 +540,7 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     monkeypatch.setattr(queue, "owed_rows", owed)
     monkeypatch.setattr(queue, "unjudged_conflicted_rows", recheck)
     monkeypatch.setattr(queue, "erasure_underway", erasing)
-    monkeypatch.setattr(budget, "namespaces_over_cap", over)
+    monkeypatch.setattr(budget, "namespace_over_cap", over)
     monkeypatch.setattr(resolver, "resolve_row", resolve)
     monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", policy)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
@@ -566,13 +572,44 @@ async def test_an_erasure_or_a_spent_budget_skips_the_namespace(pass_env: NS) ->
     assert out["skipped_erasure"] == 1 and out["skipped_budget"] == 1
 
 
-async def test_an_unknown_model_warns_once_and_stops_the_pass(pass_env: NS, caplog) -> None:
+async def test_an_unknown_model_warns_once_and_stops_the_pass(
+    pass_env: NS, caplog, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
     pass_env.owed = [_q(memory_key="k1"), _q(memory_key="k2"), _q(memory_key="k3")]
     pass_env.raise_for = {"k1"}
     with caplog.at_level("WARNING"):
         out = await pass_env.run()
     assert pass_env.resolved == [] and out["errored"] == 0
     assert sum("unavailable" in r.message for r in caplog.records) == 1
+
+
+async def test_a_pass_judges_its_rows_at_the_configured_concurrency(
+    pass_env: NS, monkeypatch
+) -> None:
+    pass_env.owed = [_q(memory_key=f"k{i}") for i in range(12)]
+    pass_env.slow = 0.05
+    for limit in (8, 3):
+        monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", limit)
+        pass_env.resolved, pass_env.most_in_flight = [], 0
+        out = await pass_env.run()
+        assert pass_env.most_in_flight == limit and out["judged"] == 12
+
+
+async def test_the_cost_cap_is_read_before_every_call(pass_env: NS, monkeypatch) -> None:
+    # The namespace crosses its cap after the first judgement: the rest wait.
+    from server.observability import budget
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
+
+    async def over(org, namespace):
+        return len(pass_env.resolved) >= 1
+
+    monkeypatch.setattr(budget, "namespace_over_cap", over)
+    pass_env.owed = [_q(memory_key="k1"), _q(memory_key="k2"), _q(memory_key="k3")]
+    out = await pass_env.run()
+    assert [k for _, _, k, _ in pass_env.resolved] == ["k1"]
+    assert out["skipped_budget"] == 2
 
 
 async def test_the_judge_maps_a_404_to_model_unavailable(monkeypatch) -> None:
