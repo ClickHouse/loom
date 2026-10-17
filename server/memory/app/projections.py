@@ -1085,6 +1085,14 @@ _STILL_OPEN_EDGES_WHERE = """org = {org:String} AND namespace = {ns:String}
           AND invalid_at IS NULL AND valid_to IS NULL"""
 
 
+# One edge observation (a row of loom.entity_edges, which has no id of its own) by its
+# columns, so a reopen can name exactly the rows a close ended.
+_EDGE_OBSERVATION = (
+    "(entity_a, entity_b, toUnixTimestamp(last_seen),"
+    " ifNull(toUnixTimestamp(valid_from), 0), co_occur)"
+)
+_EDGE_OBSERVATIONS_PARAM = "{closed:Array(Tuple(String, String, UInt32, UInt32, UInt32))}"
+
 # The migration that started linking rows to edges: a value first written before it
 # was applied has no edge links of its own.
 _EDGE_ROW_LINKS_MIGRATION = "043_entity_edge_rows.sql"
@@ -1156,7 +1164,8 @@ async def end_edges(
     (`entity_edge_memories`). No `invalid_at`: the edge walk never walks a retired edge,
     and the fact did hold until then. One read, and an UPDATE only when it finds an open
     edge to end, then a check for a row written meanwhile (`reopen_held_edges`), then one
-    for the edges with a stated later end of the pairs no row named."""
+    for the edges with a stated later end of the pairs no row named. The UPDATE ends the
+    open edges the read found, by their columns, so the reopen opens only those."""
     if not ends:
         return
     params = {
@@ -1171,7 +1180,8 @@ async def end_edges(
         f"""
         WITH {_HELD_PAIRS_CTES}
         SELECT entity_a, entity_b,
-               countIf(valid_to IS NULL) > 0 AS open, countIf(valid_to IS NOT NULL) > 0 AS later
+               countIf(valid_to IS NOT NULL) > 0 AS later,
+               groupArrayIf({_EDGE_OBSERVATION}, valid_to IS NULL) AS open_rows
         FROM loom.entity_edges
         WHERE {where}
           AND (entity_a, entity_b) NOT IN (SELECT entity_a, entity_b FROM held)
@@ -1186,13 +1196,17 @@ async def end_edges(
     # The open edges first: if a row names the pair meanwhile, the check after opens them
     # again. An edge with a stated later end ("until Dec 2026") ends after that check,
     # only for the pairs it found no row for: opening it again would lose its end.
-    # Known window: a row naming such a pair that lands between that check and this
-    # UPDATE still sees the edge ended here. Checking again and opening it would set
-    # valid_to to NULL and lose the stated end, which is worse, so the window is left.
-    opened = sorted(p for p, r in pairs.items() if r["open"])
-    if opened:
-        await _end_edge_rows(ch, _STILL_OPEN_EDGES_WHERE, params, opened)
-    held = await reopen_held_edges(ch, params=params, ending=sorted(pairs))
+    # Known window: a row naming such a pair that lands between that check and the
+    # stated-end UPDATE below still sees the edge ended. Checking again and opening it
+    # would set valid_to to NULL and lose the stated end, which is worse, so the window
+    # is left. The close ends the open edges the read found, named by their columns, and
+    # the check reopens only those; a pair with only finite edges gets the check alone.
+    closed = sorted(tuple(o) for r in found for o in r["open_rows"])
+    if closed:
+        where = f"{_STILL_OPEN_EDGES_WHERE} AND {_EDGE_OBSERVATION} IN {_EDGE_OBSERVATIONS_PARAM}"
+        opened = sorted({(str(o[0]), str(o[1])) for o in closed})
+        await _end_edge_rows(ch, where, {**params, "closed": closed}, opened)
+    held = await reopen_held_edges(ch, params=params, ending=sorted(pairs), closed=closed)
     later = sorted(p for p, r in pairs.items() if r["later"] and p not in held)
     if later:
         await _end_edge_rows(ch, f"{_OPEN_EDGES_WHERE} AND valid_to IS NOT NULL", params, later)
@@ -1217,13 +1231,18 @@ async def _end_edge_rows(
 
 
 async def reopen_held_edges(
-    ch: Any, *, params: dict[str, Any], ending: list[tuple[str, str]]
+    ch: Any,
+    *,
+    params: dict[str, Any],
+    ending: list[tuple[str, str]],
+    closed: list[tuple[Any, ...]],
 ) -> set[tuple[str, str]]:
-    """Undo `end_edges`'s UPDATE of the open edges (its `params`) for the `ending` pairs
-    a live row names now, and return those pairs. A row written while the close ran may
-    name a pair it ended: every writer lands an edge's row links first, so once the
-    UPDATE is queued they are found here. Mutations run in order, so this one lands
-    after the close."""
+    """Return the `ending` pairs a live row names now, and undo `end_edges`'s UPDATE
+    (its `params`) of the `closed` edge observations of those pairs. A row written while
+    the close ran may name a pair it ended: every writer lands an edge's row links first,
+    so once the UPDATE is queued they are found here. Mutations run in order, so this one
+    lands after the close. Another edge of the pair that already ended at the same second
+    is not one the close ended, and stays ended."""
     held = await ch.query_all(
         f"""
         WITH {_HELD_PAIRS_CTES}
@@ -1232,22 +1251,24 @@ async def reopen_held_edges(
         """,
         params={**params, "pairs": ending},
     )
-    if not held:
-        return set()
+    held_pairs = {(str(r["entity_a"]), str(r["entity_b"])) for r in held}
+    reopen = [o for o in closed if (str(o[0]), str(o[1])) in held_pairs]
+    if not reopen:
+        return held_pairs
     await ch.execute(
         f"""
         ALTER TABLE loom.entity_edges
         UPDATE valid_to = NULL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND (entity_a, entity_b) IN {{held:Array(Tuple(String, String))}}
+          AND {_EDGE_OBSERVATION} IN {_EDGE_OBSERVATIONS_PARAM}
           AND invalid_at IS NULL AND valid_to = {_EDGE_CLOSED_VALID_TO}
         """,
-        params={**params, "held": sorted((str(r["entity_a"]), str(r["entity_b"])) for r in held)},
+        params={**params, "closed": reopen},
     )
     from server.memory.app import graph_write_marks as _graph_marks
 
     _graph_marks.note_write(params["org"], params["ns"])
-    return {(str(r["entity_a"]), str(r["entity_b"])) for r in held}
+    return held_pairs
 
 
 async def open_triples_among(

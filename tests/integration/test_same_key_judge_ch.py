@@ -6197,3 +6197,63 @@ async def test_a_pin_on_a_rejected_bulk_entry_does_not_gate_the_next_value(ch, o
     assert [(json.loads(r["value"]), r["pinned"]) for r in stored] == [
         ("Ship the release notes on Monday.", 0)
     ]
+
+
+class _HolderLandsAfterTheRead:
+    """`ch`, where a row naming user-london lands right after end_edges' first read:
+    a write racing the close."""
+
+    def __init__(self, ch: Any, holder: Callable[[], Any]) -> None:
+        self._ch, self._holder, self._reads = ch, holder, 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ch, name)
+
+    async def query_all(self, *a: Any, **k: Any) -> Any:
+        out = await self._ch.query_all(*a, **k)
+        self._reads += 1
+        if self._reads == 1:
+            await self._holder()
+        return out
+
+
+@pytest.mark.parametrize("with_open_edge", [False, True], ids=["finite-only", "open-too"])
+async def test_a_racing_holder_reopens_only_the_edges_the_close_ended(
+    ch, org, with_open_edge
+) -> None:
+    # An old London edge already ended in the very second this close ends at. A row
+    # naming the pair lands during the close, so what the close ended opens again; the
+    # old edge was not ended by it and keeps its end.
+    from server.memory import store as M
+    from server.memory.app.projections import end_edges
+
+    end = datetime(2026, 6, 1, 12, 0, 0)
+    edge = {"org": org, "namespace": NS, "entity_a": "london", "entity_b": "user"}
+    edges = [
+        {**edge, "valid_from": datetime(2026, 1, 1), "valid_to": end},
+        {**edge, "valid_from": datetime(2026, 5, 1), "valid_to": end + timedelta(days=30)},
+    ]
+    if with_open_edge:
+        edges.append({**edge, "valid_from": datetime(2026, 5, 15), "valid_to": None})
+    await ch.insert("loom.entity_edges", edges)
+    holder = _row(org, "s9", "I live in London", datetime(2026, 5, 20), memory_key="home")
+
+    async def lands() -> None:
+        await M.insert_memory_versions([holder], ch=ch)
+        link = {k: holder[k] for k in ("org", "namespace", "memory_id", "user_id")}
+        sha = holder["content_sha256"]
+        await ch.insert("loom.entity_edge_rows", [{**link, "content_sha256": sha, **edge}])
+
+    racing = _HolderLandsAfterTheRead(ch, lands)
+    await end_edges(racing, org=org, namespace=NS, ends=[("london", "user", end)])
+    await _mutations_done(ch, org)
+    rows = await ch.query_all(
+        "SELECT valid_from, valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " ORDER BY valid_from SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    got = [(r["valid_from"].replace(tzinfo=None), r["valid_to"]) for r in rows]
+    assert got[0] == (datetime(2026, 1, 1), end)
+    assert got[1] == (datetime(2026, 5, 1), end + timedelta(days=30))
+    if with_open_edge:
+        assert got[2] == (datetime(2026, 5, 15), None)
