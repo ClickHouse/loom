@@ -19,9 +19,14 @@
  * `X-Loom-SDK`, `X-Loom-Runtime`, `X-Loom-Retry-Count`); `Retry-After` is
  * parsed as seconds or an HTTP-date; `postWithMeta` returns the response
  * metadata (`CallResult`) alongside the body.
+ *
+ * Instead of a static `apiKey`, a `tokenProvider` (a bot's `MachineLogin`)
+ * hands over the token for each request; a 401 is sent once more with a fresh
+ * one, and the token never goes to an origin other than the provider's.
  */
 
 import {
+  AuthError,
   BackendUnavailable,
   errorFromResponse,
   INVALID_RESPONSE_CODE,
@@ -42,6 +47,7 @@ import {
   redactSecret,
   withLevel,
 } from "./logging.js";
+import type { TokenProvider } from "./machine.js";
 import {
   backoffDelayMs,
   DEFAULT_RETRY_POLICY,
@@ -59,6 +65,8 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 export interface TransportOptions {
   baseUrl: string;
   apiKey?: string;
+  /** A credential fetched per request (a bot's `MachineLogin`); not with `apiKey`. */
+  tokenProvider?: TokenProvider;
   /** Per-call timeout; overridable per request. Default 60 s. */
   timeoutMs?: number;
   /** The retry policy; every field optional, validated by name. */
@@ -137,6 +145,8 @@ export class Transport {
   private readonly hintsSeen = new Set<string>();
   /** The bearer token; a private field, invisible to JSON.stringify / inspect. */
   #apiKey: string | undefined;
+  /** Hands over the bearer token per request, when there is no static key. */
+  #provider: TokenProvider | undefined;
   /** Every non-credential header sent with each request. */
   private readonly headers: Record<string, string>;
   private readonly timeoutMs: number;
@@ -156,6 +166,8 @@ export class Transport {
     // A blank or whitespace key is no key: an exported-but-empty LOOM_API_KEY
     // must not send `Bearer ` and turn a clear 401 into a puzzle.
     this.#apiKey = opts.apiKey?.trim() || undefined;
+    if (this.#apiKey && opts.tokenProvider) throw new LoomError("Transport: pass apiKey or tokenProvider, not both");
+    this.#provider = opts.tokenProvider;
     this.headers = {
       "Content-Type": "application/json",
       Accept: "application/json",
@@ -187,17 +199,21 @@ export class Transport {
 
   /** Whether an `Authorization` header goes out with every request. */
   get hasCredential(): boolean {
-    return this.#apiKey !== undefined;
+    return this.#apiKey !== undefined || this.#provider !== undefined;
   }
 
-  /** Redacted: `…1234`, or `none`. */
+  /** Redacted: `…1234`, the provider's label (`bot:<client id>`), or `none`. */
   get apiKeyHint(): string {
+    if (this.#provider) return this.#provider.label ?? "token provider";
     return this.#apiKey ? redactSecret(this.#apiKey) : "none";
   }
 
-  /** The bearer token's payload (org, namespaces, roles, ns_roles), decoded, not verified; undefined without a JWT. */
+  /**
+   * The bearer token's payload (org, namespaces, roles, ns_roles), decoded, not verified;
+   * undefined without a JWT. A provider's token is the one in hand: none before the first request.
+   */
   tokenClaims(): TokenClaims | undefined {
-    return decodeTokenClaims(this.#apiKey);
+    return decodeTokenClaims(this.#provider ? this.#provider.current?.() : this.#apiKey);
   }
 
   /** What JSON.stringify and inspect show: never the credential. */
@@ -241,6 +257,8 @@ export class Transport {
       deduplicated: spec?.idempotent === true && !spec.readOnly,
       startedAt: this.now(),
       sent: 0,
+      bearer: "",
+      reauthed: false,
     };
     const deadline = this.now() + this.ratelimitMaxWaitMs;
     for (;;) {
@@ -320,6 +338,19 @@ export class Transport {
     }
   }
 
+  /** The provider's token on this attempt's headers; after a 401, a fresh one. */
+  private async authorize(ctx: AttemptContext): Promise<void> {
+    const provider = this.#provider;
+    if (!provider) return;
+    if (provider.origin && new URL(ctx.url).origin !== provider.origin)
+      throw new AuthError(`refusing to send ${provider.label ?? "the provider"}'s token to ${new URL(ctx.url).host}`, {
+        op: ctx.op,
+      });
+    ctx.bearer = await provider.token(ctx.refused);
+    ctx.refused = undefined;
+    ctx.headers.Authorization = `Bearer ${ctx.bearer}`;
+  }
+
   private recordRate(op: string, r: Response): void {
     const limit = Number(r.headers.get("X-RateLimit-Limit") ?? "");
     const remaining = Number(r.headers.get("X-RateLimit-Remaining") ?? "");
@@ -357,6 +388,7 @@ export class Transport {
     for (let attempt = 1; ; attempt++) {
       ctx.sent++;
       headers["X-Loom-Retry-Count"] = String(ctx.sent - 1);
+      if (this.#provider) await this.authorize(ctx);
       this.log.debug(
         `${op} → POST ${url} attempt ${attempt} timeout ${timeoutMs} ms bytes ${payload.length}`,
         redactHeaders(headers),
@@ -395,6 +427,15 @@ export class Transport {
       }
       const { res, text } = ex;
       this.recordRate(op, res);
+      if (res.status === 401 && this.#provider && !ctx.reauthed) {
+        // The token may have been revoked or rotated: once more with a fresh
+        // one. The server refused before dispatch, and this is no policy retry.
+        ctx.reauthed = true;
+        ctx.refused = ctx.bearer;
+        this.log.info(`${op} 401; retrying once with a fresh token (rid=${requestId})`);
+        attempt--;
+        continue;
+      }
       const echoed = res.headers.get("X-Request-Id") ?? requestId;
       const elapsed = this.now() - t0;
       if (res.ok) {
@@ -487,6 +528,12 @@ interface AttemptContext {
   startedAt: number;
   /** HTTP attempts sent so far, across every 429 pacing round. */
   sent: number;
+  /** The provider's token on the last attempt. */
+  bearer: string;
+  /** A 401 has been answered with a fresh token; not again. */
+  reauthed: boolean;
+  /** The token the server just refused, which the next attempt replaces. */
+  refused?: string;
 }
 
 function resolveLogger(sink: Logger | undefined, level: LogLevel | undefined): Logger {

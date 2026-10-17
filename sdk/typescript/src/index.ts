@@ -42,6 +42,8 @@ export {
   redactHeaderValue,
   withLevel,
 } from "./logging.js";
+export type { KeySource, MachineLoginOptions, TokenProvider } from "./machine.js";
+export { MachineLogin, machineLogin } from "./machine.js";
 export type { CursorPage } from "./pagination.js";
 export { collect, paginate } from "./pagination.js";
 export type { RetryOverride, RetryPolicy, RetryTimeouts } from "./retry.js";
