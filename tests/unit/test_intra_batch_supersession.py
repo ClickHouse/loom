@@ -125,3 +125,36 @@ def test_two_facts_of_a_many_valued_attribute_never_pair() -> None:
 def test_two_predicates_of_one_object_never_pair() -> None:
     lives_and_works = ["The user currently lives in London.", "The user currently works in London."]
     assert intra_batch_supersessions(lives_and_works) == []
+
+
+def test_a_key_written_twice_is_never_superseded_by_itself() -> None:
+    """Two entries of one key are two versions of one row, and FINAL keeps the
+    later: stamping the pair would retire the live value's vector and record the
+    row as superseded by itself. A stamp lands on its own version's vector."""
+    from datetime import datetime
+
+    from server.memory.domain.conflicts import stamp_intra_batch_supersessions
+
+    def row(key: str, version: int, value: str) -> dict:
+        return {"memory_id": key, "memory_key": key, "version": version, "value": value}
+
+    rows = [
+        row("cap", 1, "The capital of Soviet Union is Moscow."),
+        row("cap", 2, "The capital of Soviet Union is Russellville."),
+    ]
+    embs = [{"memory_key": "cap", "version": v, "status": "active"} for v in (1, 2)]
+    pairs = intra_batch_supersessions([r["value"] for r in rows])
+    assert pairs == [(0, 1)]
+    assert stamp_intra_batch_supersessions(rows, embs, pairs, datetime(2026, 1, 1)) == []
+    assert [r["status"] for r in rows + embs] == ["active"] * 4
+
+    rows = [
+        row("k1", 1, "The capital of Soviet Union is Moscow."),
+        row("k1", 2, "Alice likes tea."),
+        row("k2", 3, "The capital of Soviet Union is Russellville."),
+    ]
+    embs = [
+        {"memory_key": r["memory_key"], "version": r["version"], "status": "active"} for r in rows
+    ]
+    stamp_intra_batch_supersessions(rows, embs, [(0, 2)], datetime(2026, 1, 1))
+    assert [e["status"] for e in embs] == ["superseded", "active", "active"]

@@ -3686,6 +3686,44 @@ def newest_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(projections._conflicts, "namespace_conflict_policy", _policy)
 
 
+async def test_a_key_revised_inside_one_bulk_keeps_its_live_value_searchable(
+    ch, org, newest_wins
+) -> None:
+    # Moscow then Russellville under one key: the row and its vector both hold the
+    # later value live, and no version names its own row as its successor.
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    out = await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            entries=[
+                {"memory_key": "cap", "value": "The capital of Soviet Union is Moscow."},
+                {"memory_key": "cap", "value": "The capital of Soviet Union is Russellville."},
+            ],
+        )
+    )
+    await after_write.drain()
+    assert await _status(ch, org, {"memory_id": out.written[-1].memory_id}) == "active"
+    (emb,) = await ch.query_all(
+        "SELECT status FROM loom.memory_embeddings FINAL WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert emb["status"] == "active"
+    selfs = await ch.query_all(
+        "SELECT count() AS n FROM loom.memory_versions WHERE org = {org:String}"
+        " AND superseded_by = toString(memory_id) SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert selfs[0]["n"] == 0
+
+
 async def test_a_replayed_repair_never_closes_a_newer_value(
     ch, org, monkeypatch, newest_wins
 ) -> None:

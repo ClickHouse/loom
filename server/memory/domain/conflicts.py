@@ -294,19 +294,24 @@ def stamp_intra_batch_supersessions(
     """Apply `intra_batch_supersessions` pairs to the rows about to be
     inserted: the earlier row of each pair takes status `superseded`, `superseded_by` =
     the later row's id and `invalid_at` = the later row's `valid_at` (else `now`),
-    mirrored on its embedding row by key. Every memory row ends with the same key set —
-    `ch.insert` derives the column list from row 0, and a key present on some rows only
-    fails the whole batch. Returns the (older id, newer id) pairs stamped. Pure."""
+    mirrored on its own version's embedding row. A pair under one key is two versions
+    of one row, which FINAL already settles: it is skipped. Every memory row ends with
+    the same key set — `ch.insert` derives the column list from row 0, and a key present
+    on some rows only fails the whole batch. Returns the (older id, newer id) pairs
+    stamped. Pure."""
     for row in memory_rows:
         row.setdefault("status", "active")
         row.setdefault("superseded_by", "")
         row.setdefault("invalid_at", None)
-    emb_by_key = {str(e.get("memory_key") or ""): e for e in embedding_rows}
+    # By key and version: a key written twice has an embedding row per version.
+    emb_of = {(str(e.get("memory_key") or ""), e.get("version")): e for e in embedding_rows}
     out: list[tuple[str, str]] = []
     for i, j in pairs:
         if not (0 <= i < len(memory_rows) and 0 <= j < len(memory_rows)):
             continue
         older, newer = memory_rows[i], memory_rows[j]
+        if older.get("memory_key") == newer.get("memory_key"):
+            continue
         if str(older.get("status") or "active") == "superseded":
             continue
         inv = newer.get("valid_at")
@@ -314,7 +319,7 @@ def stamp_intra_batch_supersessions(
         older["status"] = "superseded"
         older["superseded_by"] = str(newer.get("memory_id") or "")
         older["invalid_at"] = inv
-        e = emb_by_key.get(str(older.get("memory_key") or ""))
+        e = emb_of.get((str(older.get("memory_key") or ""), older.get("version")))
         if e is not None:
             e["status"] = "superseded"
             if "invalid_at" in e:
