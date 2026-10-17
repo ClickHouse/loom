@@ -252,7 +252,8 @@ def apply_bulk_verdicts(
         if replaced:
             verdict = "clear"
         if idx < len(results):
-            _stamp_result(results[idx], v, str(verdict or ""))
+            # A verdict demoted to clear names no peers, as memory.set's demotion does.
+            _stamp_result(results[idx], None if replaced else v, str(verdict or ""))
         if replaced:
             continue
         _fold_verdict(

@@ -142,7 +142,8 @@ def test_only_the_version_a_key_keeps_settles_its_verdict() -> None:
         plan = apply_bulk_verdicts(m, e, ix, r, {0: v})
         assert not plan.conflict_marks and not plan.refines
         assert not plan.conflicted and not plan.refined
-        assert r[0].conflict_verdict == "clear"
+        # Demoted to clear, it names no peers, as memory.set's demotion does.
+        assert r[0].conflict_verdict == "clear" and r[0].peers == []
         plan = apply_bulk_verdicts(*rows(), {1: v})
         assert len(plan.conflict_marks) + len(plan.refines) == 1
         plan = apply_bulk_verdicts(*rows(), {0: v, 1: NS(verdict="merge", peers=[])})
@@ -157,14 +158,19 @@ def test_a_merge_with_a_row_an_earlier_entry_rewrote_lands() -> None:
     state = _stored(k0=("id0", "s0"))
     for i in range(3):
         _entry(state, f"k{i}", f"id{i}", f"n{i}")
+    id0 = ConflictPeer(
+        memory_id="id0", memory_key="k0", similarity=0.99, pinned=False, canonical=""
+    )
     verdicts = {
-        1: NS(verdict="merge", existing_memory_id="id0", peers=[]),
-        2: NS(verdict="duplicate", duplicate_of_id="id0", peers=[]),
+        1: NS(verdict="merge", existing_memory_id="id0", peers=[id0]),
+        2: NS(verdict="duplicate", duplicate_of_id="id0", peers=[id0]),
     }
     plan = _apply_verdicts(state, [], verdicts)
     assert [x["memory_key"] for x in plan.memory_rows] == ["k0", "k1", "k2"]
     assert plan.merged == [] and plan.duplicates == [] and plan.reinforce_ids == []
     assert state.results[1].conflict_verdict == "clear" and state.results[1].version == 1
+    # The rows judged against are gone: a demoted verdict names none of them.
+    assert state.results[1].peers == [] and state.results[2].peers == []
     state = _stored(k1=("id1", "s1"))
     _entry(state, "k0", "id0", "n0")
     _entry(state, "k1", "id1", "n1")

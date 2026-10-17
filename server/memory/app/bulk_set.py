@@ -279,7 +279,7 @@ def _apply_verdicts(
         stale_rows=replay.stale,
         landed_rows=replay.landed,
     )
-    land_restated_merges(state, plan, replay)
+    land_restated_merges(state, plan, replay, verdicts)
     copy_restated_verdicts(state, plan, replay.copies)
     # `_projected` reads the landings after the insert.
     state.restated_landings = replay.landings
