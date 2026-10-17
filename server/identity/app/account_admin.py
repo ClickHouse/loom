@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Iterable
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -53,9 +54,12 @@ async def _wait_until(cutoff: datetime) -> None:
 # ── carrying password accounts over to SSO ────────────────────────────────
 
 
-async def adopt_plan(domain: str, org: str = "") -> list[dict[str, Any]]:
+async def adopt_plan(domain: str, org: str = "", skip: Iterable[str] = ()) -> list[dict[str, Any]]:
     """Every unlinked password account at `domain`, with why it would be
-    skipped ('' to adopt)."""
+    skipped ('' to adopt). `skip` names emails the operator leaves out, such
+    as a bot's: no person signs in as it, and adopting it would revoke the
+    tokens it runs on."""
+    left_out = {e.strip().lower() for e in skip}
     rows = await sso_links.unlinked_in_domain(domain, org)
     by_email: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
@@ -68,7 +72,9 @@ async def adopt_plan(domain: str, org: str = "") -> list[dict[str, Any]]:
             "namespace": r["namespace"],
             "owner": r["owner_email"],
             "created_at": str(r["created_at"])[:10],
-            "skip": _skip_reason(accounts, email in on_sso),
+            "skip": "left out (--skip)"
+            if email.lower() in left_out
+            else _skip_reason(accounts, email in on_sso),
         }
         for email, accounts in by_email.items()
         for r in accounts

@@ -422,3 +422,27 @@ def test_a_bot_holds_its_namespaces_from_their_check_to_its_save(
     bot = _bot(["triage=writer", "docs=viewer"])
     asyncio.run(account_admin.create_bot(bot, by="ops", replace=replace))
     assert seen == [["docs", "triage"]] * 3 and held == []
+
+
+def test_an_operator_can_leave_a_bots_account_out_of_adoption(monkeypatch) -> None:
+    # A bot's password account at the domain: adopting it would revoke the
+    # service-account tokens it runs on, and no person signs in as it.
+    async def unlinked(domain: str, org: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "contact_email": e,
+                "org": "acme",
+                "namespace": ns,
+                "owner_email": ns,
+                "created_at": "",
+            }
+            for e, ns in (("lee@acme.io", "lee"), ("CI-Bot@acme.io", "ci-bot"))
+        ]
+
+    async def on_sso(emails: list[str]) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(account_admin.sso_links, "unlinked_in_domain", unlinked)
+    monkeypatch.setattr(account_admin.sso_links, "reached_by_sso", on_sso)
+    plan = asyncio.run(account_admin.adopt_plan("acme.io", skip=["ci-bot@acme.io"]))
+    assert {a["namespace"]: a["skip"] for a in plan} == {"lee": "", "ci-bot": "left out (--skip)"}

@@ -33,6 +33,7 @@ def _invalid(e: ValueError) -> HTTPException:
 class AdoptInput(BaseModel):
     domain: str
     org: str = ""
+    skip: list[str] = []  # emails left out, e.g. bots'
     apply: bool = False
     keep_tokens: bool = False
 
@@ -41,7 +42,7 @@ class AdoptInput(BaseModel):
 async def sso_adopt(input: AdoptInput, info: Admin) -> dict[str, Any]:
     """The password accounts at a domain and why any is skipped; with `apply`,
     links the rest (see `loom sso adopt`)."""
-    plan = await account_admin.adopt_plan(input.domain, input.org)
+    plan = await account_admin.adopt_plan(input.domain, input.org, input.skip)
     try:
         linked = (
             await account_admin.adopt(plan, by=_by(info), keep_tokens=input.keep_tokens)

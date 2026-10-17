@@ -19,7 +19,7 @@ from server.identity.app import account_admin, admin_account_routes
 def calls(monkeypatch) -> list[tuple[str, Any]]:
     seen: list[tuple[str, Any]] = []
 
-    async def adopt_plan(domain: str, org: str = "") -> list[dict[str, Any]]:
+    async def adopt_plan(domain: str, org: str = "", skip: Any = ()) -> list[dict[str, Any]]:
         seen.append(("plan", domain))
         return [{"email": "lee@acme.io", "skip": ""}]
 

@@ -74,6 +74,9 @@ account keeps its subject, grants, namespaces and data; no new one is made.
   that includes the service-account and MCP tokens they made from their
   sessions: CI using one of those breaks until it gets a bot of its own (see
   below). `--keep-tokens` keeps them, and with them any tokens a squatter made.
+  A bot that signed up with a password at the domain is in the list too:
+  leave it out with `--skip <its email>` (repeatable), so it keeps the tokens
+  it runs on until it moves to `loom bot`.
 - **Anyone not adopted** is asked, at their first SSO sign-in, for their
   account's Loom password once; it then links. Wrong passwords count against
   the usual sign-in limits.

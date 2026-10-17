@@ -26,6 +26,13 @@ def register_sso_cli(sub: Any) -> None:
     p_adopt.add_argument("--domain", required=True, help="Email domain, e.g. example.com")
     p_adopt.add_argument("--org", default="", help="Only accounts in this org")
     p_adopt.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        metavar="EMAIL",
+        help="Leave this email's accounts out, e.g. a bot's (repeatable)",
+    )
+    p_adopt.add_argument(
         "--keep-tokens",
         action="store_true",
         help="Keep the tokens the accounts already hold (by default they are revoked: "
@@ -55,7 +62,7 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
     from server.identity.app import account_admin
 
     async def _run(ch: Any) -> int:
-        plan = await account_admin.adopt_plan(args.domain, args.org)
+        plan = await account_admin.adopt_plan(args.domain, args.org, args.skip)
         print(f"{len(plan)} password account(s) at {args.domain} not linked to SSO:")
         if plan and not args.keep_tokens:
             print(
