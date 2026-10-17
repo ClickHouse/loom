@@ -99,11 +99,10 @@ _UNEXPIRED = "(expires_at IS NULL OR expires_at > now())"
 
 
 async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
-    """Mark revoked every live token any of `subjects` created, directly or
-    through their tokens, in any org, whose token is dead: for subjects
-    revoked, so their names come free and the Tokens list says so. A token
-    the revocation leaves live (one made after a narrowing's cutoff) stays
-    listed live. A retry finds only what an earlier try left."""
+    """Mark revoked each token any of `subjects` made, directly or through
+    their tokens, whose token the revocations kill, so its name comes free;
+    one made after a cutoff stays live. A retry finds only what an earlier
+    try left."""
     from server.auth import revocation
     from server.auth.delegation import MAX_CHAIN_DEPTH
     from server.core.ch import get_client, own_write_reads
@@ -118,15 +117,18 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
             return
         with own_write_reads():
             rows = await ch.query_all(
-                "SELECT org, name, sa_subject, created_by, revoked_by, "
+                "SELECT org, name, sa_subject, created_by, created_at, revoked_by, "
                 "revoked_at IS NULL AS live FROM loom.service_accounts FINAL "
                 f"WHERE created_by IN {{subs:Array(String)}} AND {_UNEXPIRED}",
                 params={"subs": creators},
             )
         # Read after the list, so it tells whether each token listed is dead.
         revoked = await revocation.cutoffs(creators)
+        # Only those still dead: an operator may have let the creator live since.
         dead |= {
-            str(r["sa_subject"]) for r in rows if not r["live"] and r["revoked_by"] == revoked_by
+            str(r["sa_subject"])
+            for r in rows
+            if not r["live"] and r["revoked_by"] == revoked_by and _is_dead(r, revoked, dead)
         }
         live = [r for r in rows if r["live"]]
         dead |= await _revoke_all(live, creators, revoked, dead, revoked_by)
@@ -137,9 +139,12 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
 
 
 def _is_dead(row: dict[str, Any], revoked: dict[str, int | None], dead: set[str]) -> bool:
-    """Whether the token `row` lists is dead, as the token check finds it: the
-    token that made it is, or its creator is revoked outright or for tokens
-    issued before the row was made."""
+    """Whether the token `row` lists is dead: the token that made it is, or its
+    creator is revoked outright, or narrowed to a cutoff later than the row's
+    `created_at`. Judged by the row's `created_at`, which is never earlier
+    than the chain's oldest `iat`: a token this calls live may still be dead
+    at the gate (a stale replica let an old session make it), never the
+    reverse."""
     creator = str(row["created_by"])
     if creator in dead:
         return True

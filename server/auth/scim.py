@@ -286,10 +286,9 @@ async def _row(uid: str) -> dict[str, Any] | None:
 
 
 async def _revoke_tokens(row: dict[str, Any]) -> None:
-    # Past the leases, as it may claim many token names: the subjects are
-    # revoked already, so their tokens are dead with them meanwhile. This
-    # lists the dead ones so and frees their names; one the revocations let
-    # live (made after a reactivation's or an operator's cutoff) stays live.
+    # Past the leases, as it may claim many token names. It lists revoked the
+    # tokens the revocations kill and frees their names; one made after a
+    # reactivation's or an operator's cutoff stays live.
     await service_accounts.revoke_created_by(row["subjects"], revoked_by=_BY)
 
 

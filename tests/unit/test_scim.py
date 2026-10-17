@@ -454,6 +454,23 @@ async def test_a_repeated_deactivation_leaves_an_operators_narrowing_alone(world
     assert [r["name"] for r in world.table.live_tokens()] == ["after", "after-child"]
 
 
+async def test_a_token_listed_revoked_before_an_operator_lets_it_live_kills_no_child(
+    world,
+) -> None:
+    world.person("lee@example.com", "lee")
+    made = _now()
+    parent = _made_since(world, "parent-bot", "lee", made)
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)  # parent-bot is listed revoked
+    # The operator restores what lee made since a cutoff before parent-bot.
+    del world.outright["lee"]
+    world.narrowed.append(("lee", made - timedelta(seconds=10)))
+    world.lifted["lee"] = "operator"
+    _made_since(world, "child-bot", parent, made + timedelta(seconds=3))
+    await scim.set_active(uid, False)  # the provider sends it again
+    assert [r["name"] for r in world.table.live_tokens()] == ["child-bot"]
+
+
 async def test_a_delete_after_an_operators_narrowing_leaves_the_tokens_made_since(world) -> None:
     uid = await _deactivated_then_narrowed(world)
     await scim.delete(uid)  # a provider deleting the user a while after disabling it
