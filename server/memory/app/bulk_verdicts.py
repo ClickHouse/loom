@@ -44,6 +44,9 @@ class BulkVerdictPlan:
         )
 
 
+# The verdicts that keep an entry's row out of the insert.
+_NOT_LANDING = ("merge", "rejected")
+
 # A restatement dated within this many days of its peer's first date keeps its own date.
 _FIRST_DATE_MAX_GAP_DAYS = 2
 
@@ -181,7 +184,7 @@ def _first_landing_rows(
     dropped here, which can miss a retirement but never makes a wrong one."""
     first: dict[str, int] = {}
     for i, r in enumerate(memory_rows):
-        if getattr(verdicts.get(i), "verdict", "") not in ("merge", "rejected"):
+        if getattr(verdicts.get(i), "verdict", "") not in _NOT_LANDING:
             first.setdefault(str(r.get("memory_id") or ""), i)
     return first
 
@@ -196,7 +199,7 @@ def verdict_dropped_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, 
     return {
         i
         for i, v in verdicts.items()
-        if getattr(v, "verdict", "") in ("merge", "rejected")
+        if getattr(v, "verdict", "") in _NOT_LANDING
         and not _target_rewritten_before(v, i, first_row)
     }
 
@@ -205,7 +208,7 @@ def _settling_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) 
     """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
     versions of one row, so only the kept version's verdict may mark or retire
     peers. A merged or rejected entry writes no row."""
-    dropped = {i for i, v in verdicts.items() if getattr(v, "verdict", "") in ("merge", "rejected")}
+    dropped = {i for i, v in verdicts.items() if getattr(v, "verdict", "") in _NOT_LANDING}
     written = [r for i, r in enumerate(memory_rows) if i not in dropped]
     return {id(r) for r in kept_versions(written).values()}
 
