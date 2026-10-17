@@ -2226,6 +2226,48 @@ async def test_an_update_by_ids_edges_landing_after_the_next_revision_end_with_i
     )
 
 
+async def test_an_overtaken_version_ends_its_edge_though_its_row_holds_another(ch, org) -> None:
+    # A bulk can revise one row twice: asked about both versions while the row holds
+    # the second, the check must still end the first's edge (it asks by value, not by row).
+    from server.memory import store as M
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write
+    from server.memory.app.entity_projections import end_overtaken_edges
+    from server.memory.app.write import handle_memory_set
+
+    out = await handle_memory_set(
+        MemorySetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            memory_key="alice",
+            value="Alice likes London",
+            entities=["alice", "london"],
+        )
+    )
+    await after_write.drain()
+    london = await M.get_by_id(str(out.memory_id), org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    rome = M.build_memory_version_row(
+        london,
+        version=M.next_version(),
+        value=json.dumps("Alice likes Rome"),
+        content_sha256=hashlib.sha256(json.dumps("Alice likes Rome").encode()).hexdigest(),
+        updated_at=naive_utc_now(),
+    )
+    await M.insert_memory_versions([rome], ch=ch)
+    assert "london" in await _walked(org, ["london"], labeled=False, seed="alice")
+    scope = london.model_copy()
+    versions = [
+        (str(london.memory_id), "alice", london.content_sha256),
+        (str(london.memory_id), "alice", rome["content_sha256"]),
+    ]
+    await end_overtaken_edges(scope, versions, op="memory.bulk_set", ch=ch)
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # past the second the edge ended in
+    assert "london" not in await _walked(org, [], labeled=False, seed="alice")
+
+
 async def test_a_bulk_revisions_edges_landing_after_the_next_revision_end_with_it(
     ch, org, monkeypatch
 ) -> None:

@@ -55,7 +55,7 @@ class _GraphCH:
     async def query_all(self, sql, params=None):
         versions = (params or {}).get("versions") or []
         self.asked += versions
-        return [{"id": mid} for mid, _sha in versions] if self.held else []
+        return [{"id": mid, "sha": sha} for mid, sha in versions] if self.held else []
 
     async def query_one(self, sql, params=None):
         return None
@@ -865,7 +865,7 @@ async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypa
     ended = datetime(2026, 3, 1)
     recorded: list[dict] = []
 
-    async def none_held(*a: Any, **k: Any) -> set[str]:
+    async def none_held(*a: Any, **k: Any) -> set[tuple[str, str]]:
         return set()
 
     async def value_ended_at(*a: Any, **k: Any) -> datetime:
@@ -877,7 +877,7 @@ async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypa
     async def record(**k: Any) -> None:
         recorded.append(k["payload"])
 
-    monkeypatch.setattr(entity_projections, "rows_holding", none_held)
+    monkeypatch.setattr(entity_projections, "versions_held", none_held)
     monkeypatch.setattr(entity_projections, "value_ended_at", value_ended_at)
     monkeypatch.setattr(entity_projections, "_end_edges_of", end_fails)
     monkeypatch.setattr(entity_projections, "record_projection_failure", record)

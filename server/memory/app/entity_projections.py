@@ -466,10 +466,10 @@ async def end_overtaken_edges(
     retired one of these `versions` (memory_id, memory_key, content_sha256) before
     they landed, so end its edges at the moment the row stopped holding it. One read
     asks which rows still hold theirs. A failure is recorded for the projection repair."""
-    held: set[str] = set()
+    held: set[tuple[str, str]] = set()
     try:
         holding = [(memory_id, sha) for memory_id, _, sha in versions]
-        held = await rows_holding(
+        held = await versions_held(
             input.org, input.namespace, holding, ch=ch, holder_sql=HOLDS_VALUE_SQL
         )
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
@@ -477,7 +477,7 @@ async def end_overtaken_edges(
             await _record_edges_close(input, memory_id, memory_key, sha, e, op=op, ch=ch)
         return
     for memory_id, memory_key, sha in versions:
-        if memory_id in held:
+        if (memory_id, sha) in held:
             continue
         ended_at = None
         try:
@@ -1365,11 +1365,25 @@ async def rows_holding(
     current value is still that version and that pass `holder_sql`: by default
     GRAPH_HOLDER_SQL (may hold graph facts), or a weaker test such as
     HOLDS_VALUE_SQL (not deleted, retired or 'high')."""
+    held = await versions_held(org, namespace, versions, ch=ch, holder_sql=holder_sql)
+    return {memory_id for memory_id, _ in held}
+
+
+async def versions_held(
+    org: str,
+    namespace: str,
+    versions: list[tuple[str, str]],
+    *,
+    ch: Any,
+    holder_sql: str = GRAPH_HOLDER_SQL,
+) -> set[tuple[str, str]]:
+    """`rows_holding`, answered by version: the pairs still current. A row revised
+    twice in one write is asked about both values and holds only one."""
     if not versions:
         return set()
     found = await ch.query_all(
         f"""
-        SELECT DISTINCT toString(memory_id) AS id
+        SELECT DISTINCT toString(memory_id) AS id, toString(content_sha256) AS sha
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND (memory_id, content_sha256) IN {{versions:Array(Tuple(UUID, String))}}
@@ -1378,7 +1392,7 @@ async def rows_holding(
         """,
         params={"org": org, "ns": namespace, "versions": sorted(set(versions))},
     )
-    return {str(r["id"]) for r in found}
+    return {(str(r["id"]), str(r["sha"])) for r in found}
 
 
 class Holder(NamedTuple):
