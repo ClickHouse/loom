@@ -60,7 +60,8 @@ ROOT_KID = "default"
 # The kid an RS256 deployment's former `default` key is imported under.
 ROOT_RS256_KID = "default-rs256"
 # The kid an HS256 deployment's former `default` key is imported under when it
-# is not LOOM_JWT_SECRET: it verifies the tokens of `default` and never signs.
+# is not LOOM_JWT_SECRET: it verifies the tokens of `default`, and signs as
+# `default` while it is the active kid.
 ROOT_HS256_KID = "default-hs256"
 ALGORITHMS = ("HS256", "RS256")
 _PURPOSE = "signing_key"
@@ -308,8 +309,8 @@ def signing_key() -> SigningKey:
             "LOOM_JWT_SECRET is neither an HMAC secret nor an RSA private key, and no "
             "signing key is active here: run `loom signing-key rotate`"
         )
-    if key.kid == ROOT_RS256_KID and ROOT_KID not in _view.retired:
-        # The kid the earlier RS256 build signed and verifies with.
+    if key.kid in (ROOT_RS256_KID, ROOT_HS256_KID) and ROOT_KID not in _view.retired:
+        # The kid the earlier build signed and verifies with.
         return dataclasses.replace(key, kid=ROOT_KID)
     return key
 
@@ -716,10 +717,11 @@ async def import_keys(
     """Copy a deployment's existing kid → key map in (the former
     LOOM_JWT_SECRETS_JSON): `active` signs from `activate_in_s` from now, the
     others only verify (`VERIFY_ONLY`). A kid the keyring already has is left
-    as it is (a re-run must not bring back a retired key). An HS256 map's
-    `default` that is not the root secret is stored as `ROOT_HS256_KID`, which
-    only verifies (an active `default` goes on signing with the root secret);
-    an RS256 map's as `ROOT_RS256_KID`. Returns the kids imported."""
+    as it is (a re-run must not bring back a retired key). A map's `default`
+    is stored as `ROOT_RS256_KID` (RS256) or, unless it is the root secret,
+    `ROOT_HS256_KID` (HS256): either verifies the tokens of `default`, and
+    signs as `default` while active, so the old build's processes still
+    verify what the new one signs. Returns the kids imported."""
     if active not in keys:
         raise ValueError(f"the active kid {active!r} is not in the map")
     if algorithm not in ALGORITHMS:
@@ -733,9 +735,7 @@ async def import_keys(
         if alias in keys:
             raise ValueError(f"the map holds both {ROOT_KID!r} and {alias!r}")
         keys = {alias if k == ROOT_KID else k: v for k, v in keys.items()}
-        # An HS256 `default` stays signed by the root secret; its former key only verifies.
-        if algorithm == "RS256" and active == ROOT_KID:
-            active = alias
+        active = alias if active == ROOT_KID else active
     await _same_root(ch)
     existing = {str(r["kid"]) for r in await listing(ch=ch)}
     now = await _ch_now(ch)

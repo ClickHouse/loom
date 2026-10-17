@@ -133,9 +133,10 @@ After upgrading:
   loads it first. Then delete the old variables. Rotate with `loom signing-key rotate`
   ([tokens and grants](../guides/tokens-and-grants.md#revoke-and-rotate)).
   - **HS256.** A `default` entry in the map that is not `LOOM_JWT_SECRET` is stored as
-    kid `default-hs256`: it verifies the old tokens of `default` after the root secret
-    and never signs. With `--active default`, `LOOM_JWT_SECRET` signs `default` from
-    then on. Retire `default-hs256` once those tokens are replaced. A deployment that
+    kid `default-hs256`: it verifies the old tokens of `default` after the root secret,
+    and with `--active default` it signs from then on, as kid `default` so the old
+    build's processes still verify what it signs. Rotate, then retire `default-hs256`
+    once its tokens are replaced. A deployment that
     upgraded without it can run the import again with the old variables: kids already in
     the keyring are left as they are.
   - **RS256** (`LOOM_JWT_ALGORITHM=RS256`, a PEM `LOOM_JWT_SECRET` or PEM keys in the

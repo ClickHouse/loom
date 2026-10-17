@@ -5225,7 +5225,7 @@
         },
         {
          "dest": "import",
-         "help": "Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. Under RS256 the map's 'default' is stored as 'default-rs256', which verifies and signs as the old 'default'; under HS256 a 'default' that is not LOOM_JWT_SECRET as 'default-hs256', which only verifies.",
+         "help": "Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. Under RS256 the map's 'default' is stored as 'default-rs256', which verifies and signs as the old 'default'; under HS256 a 'default' that is not LOOM_JWT_SECRET as 'default-hs256', alike.",
          "metavar": "import"
         },
         {

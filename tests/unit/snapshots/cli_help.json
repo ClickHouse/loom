@@ -173,7 +173,7 @@
  ],
  "loom signing-key": [
   "usage: loom signing-key [-h] {rotate,import,retire,record-root,list} ...",
-  "positional arguments: {rotate,import,retire,record-root,list} rotate Add a key; it signs once every process has loaded it. import Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. Under RS256 the map's 'default' is stored as 'default-rs256', which verifies and signs as the old 'default'; under HS256 a 'default' that is not LOOM_JWT_SECRET as 'default-hs256', which only verifies. retire Stop a key (or 'default') verifying tokens. record-root Record this LOOM_JWT_SECRET as the deployment's root secret, after replacing it on purpose (keys sealed under the old one stay unusable). list List the keys.",
+  "positional arguments: {rotate,import,retire,record-root,list} rotate Add a key; it signs once every process has loaded it. import Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. Under RS256 the map's 'default' is stored as 'default-rs256', which verifies and signs as the old 'default'; under HS256 a 'default' that is not LOOM_JWT_SECRET as 'default-hs256', alike. retire Stop a key (or 'default') verifying tokens. record-root Record this LOOM_JWT_SECRET as the deployment's root secret, after replacing it on purpose (keys sealed under the old one stay unusable). list List the keys.",
   "options: -h, --help show this help message and exit"
  ],
  "loom signing-key rotate": [

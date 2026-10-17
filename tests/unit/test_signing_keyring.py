@@ -321,17 +321,19 @@ def test_import_skips_a_default_kid_that_is_the_root_secret() -> None:
     assert done == ["k1"]
 
 
-def test_an_active_former_default_only_verifies() -> None:
-    """The old build's usual map, `{"default": X}` active: the root secret
-    goes on signing `default`, and X verifies what it signed."""
+def test_an_active_former_default_signs_as_default() -> None:
+    """The old build's usual map, `{"default": X}` active: X goes on signing as
+    `default`, so the old build's processes still verify what the new one mints."""
     ch = _CH()
     done = asyncio.run(keyring.import_keys({"default": "i" * 40}, "default", "HS256", ch=ch))
     assert done == ["default-hs256"]
-    assert [r["activate_at"] for r in ch.inserted if r["kid"] != "default"] == [keyring.VERIFY_ONLY]
     ch.rows = [{**r, "retired": False} for r in ch.inserted]
     asyncio.run(keyring.refresh(ch=ch))
-    assert keyring.signing_key().kid == "default"
-    assert keyring.verification_keys("default", "HS256") == [settings.jwt_secret, "i" * 40]
+    token = mint_token("s", "o", ["ns"], ["writer"])
+    assert pyjwt.get_unverified_header(token)["kid"] == "default"
+    claims = pyjwt.decode(token, "i" * 40, algorithms=["HS256"], audience=settings.jwt_audience)
+    assert claims["sub"] == "s"
+    assert verify_token(token).subject == "s"
 
 
 def test_import_refuses_default_beside_default_hs256() -> None:
