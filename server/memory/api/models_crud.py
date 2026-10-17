@@ -165,11 +165,10 @@ class MemoryGetOutput(ProjectedRow):
     # `supersedes` edge on the newer row.
     superseded_by: str = ""
     # The row this one duplicates (status='duplicate'), and the
-    # verdict the row shows on read — `pending` while a deferred judge still
-    # holds it, else derived from `status` (active → clear, conflicted →
-    # conflict, duplicate, superseded).
+    # verdict the row shows on read, derived from `status` (active → clear,
+    # conflicted → conflict, duplicate, superseded).
     duplicate_of: str = ""
-    # pending | clear | conflict | duplicate | superseded, as described above.
+    # clear | conflict | duplicate | superseded, as described above.
     conflict_verdict: str = ""
     # For a `status='duplicate'` row, the memory_key of the
     # canonical that answers for it ("" when that row is no longer active —

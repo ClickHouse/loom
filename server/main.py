@@ -72,8 +72,8 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
 
     await _leader.shutdown(lease, supervisor)
     # The service-side writes still in flight land while what they use is
-    # open: a deferred conflict judge calls the LLM over the shared HTTP
-    # pool and emits its settle row through the event emitter.
+    # open: a write's after-write tasks use the shared HTTP pool and emit
+    # through the event emitter.
     # MCP session runs still being begun land first, so the session-run
     # sweep can close them (boot sits below the transport).
     from server.transport import mcp_runs

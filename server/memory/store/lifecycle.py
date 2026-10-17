@@ -50,9 +50,10 @@ async def write_versions_by_ids(
     overrides on every persisted column carried forward, a fresh `version` unless it
     sets one. `skip` leaves a row as it is; `strong` reads read-your-writes.
     `on_written` / `on_unconfirmed` hear what the re-read confirmed or could not (see
-    Lifecycle in memory-architecture.md). `judged`: the rows land a deferred verdict
-    on the write it judged (`conflicts.judged_write`), and the status mirror copies
-    only that write's vector rows (`mirror_status_to_embeddings(judged=True)`).
+    Lifecycle in memory-architecture.md). `judged`: the rows land a verdict reached
+    after the write (the conflict resolver's) on the write it judged
+    (`conflicts.judged_write`), and the status mirror copies only that write's vector
+    rows (`mirror_status_to_embeddings(judged=True)`).
     Returns the rows written, or confirmed."""
 
     if not memory_ids:

@@ -96,7 +96,7 @@ async def mirror_status_to_embeddings(
     memory write already landed, the mirror is a projection. `strict` raises
     instead, for a caller (the repair) that must not count a failed mirror done.
 
-    `judged` (a deferred verdict, its memory row at the judged version + 1): only
+    `judged` (the resolver's verdict, its memory row at the judged version + 1): only
     vector rows of the memory row's `content_sha256` are copied, at a version
     drawn before a sequential read. Every metadata copy of that vector sits at
     its read + 1, far below, on either side of the mirror; a newer revision's

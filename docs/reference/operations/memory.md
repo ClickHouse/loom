@@ -783,8 +783,8 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `status` | `str \| None` | Lifecycle state from loom.memory.status. |
 | `code` | `list[CodeLink]` | The code this memory is linked to: each link's path, symbol, state (`fresh`, `moved`, `changed`, `unresolved` or `missing`) and the `revise` policy's suggestion. |
 | `superseded_by` | `str` | For a `status='superseded'` row, the memory_id of the row that replaced it ('' otherwise) — the bundle turns it into a `supersedes` edge on the newer row. |
-| `duplicate_of` | `str` | The row this one duplicates (status='duplicate'), and the verdict the row shows on read — `pending` while a deferred judge still holds it, else derived from `status` (active → clear, conflicted → conflict, duplicate, superseded). |
-| `conflict_verdict` | `str` | pending \| clear \| conflict \| duplicate \| superseded, as described above. |
+| `duplicate_of` | `str` | The row this one duplicates (status='duplicate'), and the verdict the row shows on read, derived from `status` (active → clear, conflicted → conflict, duplicate, superseded). |
+| `conflict_verdict` | `str` | clear \| conflict \| duplicate \| superseded, as described above. |
 | `canonical_key` | `str \| None` | For a `status='duplicate'` row, the memory_key of the canonical that answers for it ("" when that row is no longer active — the orphan case `memory.resolve_orphan_duplicates` repairs). |
 | `resolved_from` | `str \| None` | On a `follow: true` read that served a duplicate's canonical, the memory_key the caller asked for. |
 | `tags` | `list[str]` | Surfaced so an in-place tag edit can preserve existing tags/entities rather than clobbering them. |

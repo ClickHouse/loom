@@ -22,9 +22,9 @@ DEFAULT_LOCAL_EMBEDDING_MODEL = "bge-small"
 
 class ModelSettings(BaseModel):
     # --- defaults ---------------------------------------------------------------
-    # The deployment's LLM: memory extraction, the conflict judge, rerank and every
-    # job below left "". Empty takes the resolved provider's default model
-    # (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
+    # The deployment's LLM: memory extraction, rerank and every job below left ""
+    # (the conflict resolver names its own, conflict_resolver_model). Empty takes the
+    # resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
     llm_model: str = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request

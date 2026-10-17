@@ -914,13 +914,13 @@ async def mark_peers_conflicted(
     the hash judged}), a peer is flagged only while it holds that hash and is not
     pinned, at its read version + 1, like the new row under `expected_sha256`.
     With no live peer, or a new row retired or deleted since the verdict, nothing
-    is written, peers included. Writes new RMT version rows, every column carried. With
-    `expected_sha256` (a deferred verdict), only the judged write is flagged
-    (`judged_write`). Returns the verdict that landed: `conflict`; `moved`, and no
-    peer touched, when the new row was not flagged (a newer write replaced it, or it
-    was retired since); `clear` when no peer was live to flag it against. With no
-    live peer, a deferred verdict reads the row and answers `moved` if it would not
-    have been flagged."""
+    is written, peers included. Writes new RMT version rows, every column carried.
+    With `expected_sha256` (a verdict reached after the write: the conflict
+    resolver's), only the judged write is flagged (`judged_write`). Returns the
+    verdict that landed: `conflict`; `moved`, and no peer touched, when the new row
+    was not flagged (a newer write replaced it, or it was retired since); `clear`
+    when no peer was live to flag it against. With no live peer, such a verdict
+    reads the row and answers `moved` if it would not have been flagged."""
     import server.memory.store as memory_repo
 
     def _merged(existing: list[str], additions: list[str]) -> list[str]:
@@ -961,7 +961,8 @@ async def mark_peers_conflicted(
     ]
     # Strong: the row was just written (or revised under its own id), and a stale
     # read would rebuild the version before it at a higher one. A row retired since
-    # (a late verdict, the deferred judge's) is left retired, and so are its peers.
+    # (by a verdict reached since, or the resolver's) is left retired, and so are its
+    # peers.
     judged_skip, version = judged_write(expected_sha256)
 
     def _skip_new(row: Any) -> bool:
@@ -970,8 +971,9 @@ async def mark_peers_conflicted(
     if not live:
         if judged_skip is None:
             return "clear"  # an inline verdict: nothing left to flag
-        # A deferred one says whether it would have flagged the row, by the write's
-        # own rule: a revision since owes its own judge, so this one is moved.
+        # A verdict reached after the write says whether it would have flagged the row,
+        # by the write's own rule: a revision since owes its own judgement, so this one
+        # is moved.
         row = await memory_repo.get_by_id(
             new_memory_id, org=org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
         )
@@ -1028,7 +1030,7 @@ async def mark_peers_conflicted(
 def judged_write(
     sha: str,
 ) -> tuple[Callable[[Any], bool] | None, Callable[[Any], dict[str, Any]]]:
-    """(skip, version) for `write_versions_by_ids` landing a deferred verdict on the
+    """(skip, version) for `write_versions_by_ids` landing a later verdict on the
     write it judged: a row of other content is left alone, and the new version is
     the read's + 1, so a revision committed after the read stays the newest row.
     No-ops without `sha` (an inline verdict, or a row from before 038)."""

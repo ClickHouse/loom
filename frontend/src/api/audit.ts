@@ -55,7 +55,7 @@ export interface AutoResolvedRow {
   session_id: string;
   superseded_by: string;
   superseded_by_key?: string;
-  /** The judge's label (`contradiction` / `elaboration`) on a same-key judgement. */
+  /** The conflict resolver's verdict on the pair (`update`). */
   label?: string;
   /** The re-read after the write could not confirm the retirement took effect. */
   unconfirmed?: boolean;
