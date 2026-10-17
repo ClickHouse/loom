@@ -18,6 +18,9 @@ for (const width of [1400, 375]) {
           width: document.documentElement.scrollWidth - window.innerWidth,
         }));
         expect(doc).toEqual({ height: 0, width: 0 });
+        // Each page titles the document after itself (WCAG 2.4.2).
+        const h1 = (await page.locator("main h1").first().textContent())?.trim();
+        await expect(page).toHaveTitle(`${h1} · Loom`);
         // Click UI draws an icon, a badge and an ellipsis as a <div>: none sits in a <p>.
         const blocksInText = await page.evaluate(() =>
           [...document.querySelectorAll("p div")].map((d) => d.closest("p")?.textContent?.slice(0, 60)),

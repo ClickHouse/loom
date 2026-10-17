@@ -349,6 +349,13 @@ body {
     background: var(--click-field-color-background-active);
     border-color: var(--click-field-color-stroke-active);
   }
+  /* The calendar button inside the field takes focus apart from the field, which then
+     loses its focus border: the button shows the focus ring itself. */
+  input[type="date"]::-webkit-calendar-picker-indicator:focus-visible,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
 }
 
 /* ============================================================

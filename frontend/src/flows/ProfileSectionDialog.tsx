@@ -57,6 +57,9 @@ export function ProfileSectionDialog() {
       onOpenChange={(v) => {
         if (!v) close();
       }}
+      // A read-only view: it opens on itself, not on Edit, whose tooltip would come up with
+      // it and take the first Escape.
+      initialFocus="dialog"
       title={label ?? ""}
       className="w-full max-w-[720px]"
     >

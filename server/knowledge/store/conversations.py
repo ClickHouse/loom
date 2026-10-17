@@ -432,18 +432,23 @@ async def search_substring(
         where.append("run_id = {run_id:String}")
         params["run_id"] = run_id
 
-    # Across agents a turn two agents logged comes back once, collapsed before the limit
-    # so the page holds `limit` turns, on the thread read's key (`TURN`).
-    one_per_turn = f"LIMIT 1 BY namespace, thread_id, {TURN}" if agent in ("*", "-") else ""
+    columns = """org, namespace, agent, thread_id, msg_id, role, content,
+               reasoning, user_id, run_id, metadata, tokens, ts"""
+    source = f"loom.conversations WHERE {' AND '.join(where)}"
+    if agent in ("*", "-"):
+        # Across agents a turn two agents logged comes back once, collapsed before the
+        # limit so the page holds `limit` turns, on the thread read's key (`TURN`) and as
+        # its first copy, the one a thread read shows.
+        source = f"""(
+            SELECT {columns} FROM {source}
+            ORDER BY ts ASC
+            LIMIT 1 BY namespace, thread_id, {TURN}
+        )"""
     rows = await ch.query_all(
         f"""
-        SELECT org, namespace, agent, thread_id, msg_id, role, content,
-               reasoning, user_id, run_id, metadata,
-               tokens, ts
-        FROM loom.conversations
-        WHERE {" AND ".join(where)}
+        SELECT {columns}
+        FROM {source}
         ORDER BY ts DESC
-        {one_per_turn}
         LIMIT {{limit:UInt32}}
         """,
         params=params,

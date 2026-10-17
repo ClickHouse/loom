@@ -514,6 +514,12 @@ async def handle_conversation_search(
     if query_vec is None:
         return await _search_substring_fallback(input, namespaces, skipped)
 
+    # Across agents the shared-turn copies are collapsed after the vector read (its ORDER
+    # BY must stay the bare distance for the vector index), so each namespace is asked for
+    # more rows than the page holds.
+    spans_agents = input.agent in ("*", "-")
+    per_namespace = min(input.top_k * 2, 200) if spans_agents else input.top_k
+
     async def _search_one(ns: str) -> tuple[str, list[ConversationHit]]:
         return ns, await vector_search(
             ConversationVectorQuery(
@@ -522,7 +528,7 @@ async def handle_conversation_search(
                 agent=input.agent,
                 embedding_model=embedder.model_name,
                 query_vec=query_vec,
-                top_k=input.top_k,
+                top_k=per_namespace,
                 thread_id=input.thread_id or None,
                 role=input.role or None,
                 run_id=input.run_id,

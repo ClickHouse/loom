@@ -189,3 +189,15 @@ async def test_a_substring_search_across_agents_collapses_before_its_limit() -> 
     await conversation_repo.search_substring("o", ["ns"], "bot", "deploy", limit=5, ch=ch)
     sql, _ = ch.calls[-1]
     assert "LIMIT 1 BY" not in sql
+
+
+@pytest.mark.asyncio
+async def test_a_substring_hit_names_a_shared_turns_first_copy() -> None:
+    # The thread read keeps a turn's earliest copy; a hit opens that turn, so it names the
+    # same copy: the collapse runs oldest first, the page newest first.
+    ch = StubCH()
+    await conversation_repo.search_substring("o", ["ns"], "*", "deploy", limit=5, ch=ch)
+    sql, _ = ch.calls[-1]
+    inner, _, outer = sql.partition("LIMIT 1 BY")
+    assert "ORDER BY ts ASC" in inner
+    assert "ORDER BY ts DESC" in outer

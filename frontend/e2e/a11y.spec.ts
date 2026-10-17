@@ -525,6 +525,20 @@ test("the focus ring is the focus colour from the first frame", async ({ page })
   expect(ring.outline).toBe(ring.focus);
 });
 
+// The profile section dialog is read-only: it opens on itself, with no tooltip up, and one
+// Escape closes it.
+test("the profile section dialog opens on itself and closes on one Escape", async ({ page }) => {
+  await open(page, "/profile");
+  const section = page.locator("main button.font-mono").first();
+  await section.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toBeFocused();
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+
 // WCAG 2.1.4: the one-key shortcuts can be turned off, and ? then types nothing.
 test("the single-key shortcuts turn off from the help dialog", async ({ page }) => {
   await open(page, "/memories");

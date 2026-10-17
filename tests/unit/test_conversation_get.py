@@ -762,3 +762,85 @@ async def test_threads_reads_dash_as_every_agent(
             ConversationThreadsInput(org="clickhouse", namespace="finance", agent=sentinel)
         )
     assert seen == [None, None]
+
+
+@pytest.mark.asyncio
+async def test_vector_search_across_agents_fills_its_page_with_distinct_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shared-turn copies are collapsed after the vector read, so a search across agents
+    asks for more rows than it returns, and still returns top_k distinct turns."""
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app import conversation_search
+    from server.knowledge.app import conversations as app
+
+    class Embedder:
+        model_name = "test"
+
+        async def embed(self, text):
+            return [0.1, 0.2]
+
+    async def fake_namespaces(org, namespace, scope):
+        return [namespace], []
+
+    asked: list[int] = []
+
+    async def fake_vector(q, **kw):
+        asked.append(q.top_k)
+        same = datetime(2026, 6, 1, 9, 0)
+        hit = conversation_search.ConversationHit
+        rows = [
+            hit(
+                thread_id="t1",
+                msg_id="h1",
+                role="user",
+                content_excerpt="deploy",
+                ts=same,
+                distance=0.1,
+            ),
+            hit(
+                thread_id="t1",
+                msg_id="h1",
+                role="user",
+                content_excerpt="deploy",
+                ts=same,
+                distance=0.1,
+            ),
+            hit(
+                thread_id="t2",
+                msg_id="h2",
+                role="user",
+                content_excerpt="deploy too",
+                ts=same,
+                distance=0.2,
+            ),
+            hit(
+                thread_id="t3",
+                msg_id="h3",
+                role="user",
+                content_excerpt="deploy three",
+                ts=same,
+                distance=0.3,
+            ),
+        ]
+        return rows[: q.top_k]
+
+    monkeypatch.setattr(app, "get_embedder", lambda: Embedder())
+    monkeypatch.setattr(app, "namespaces_to_search", fake_namespaces)
+    monkeypatch.setattr(conversation_search, "vector_search", fake_vector)
+
+    out = await app.handle_conversation_search(
+        ConversationSearchInput(
+            org="clickhouse", namespace="finance", agent="*", query="deploy", top_k=2
+        )
+    )
+    assert asked == [4]
+    assert [h.msg_id for h in out.hits] == ["h1", "h2"]
+
+    asked.clear()
+    await app.handle_conversation_search(
+        ConversationSearchInput(
+            org="clickhouse", namespace="finance", agent="bot", query="deploy", top_k=2
+        )
+    )
+    assert asked == [2]
