@@ -72,9 +72,14 @@ describe("agentTokenScope", () => {
 });
 
 describe("describeTokenScope", () => {
-  it("an agent token says what it writes and that reads follow membership", () => {
-    expect(describeTokenScope({ kind: "mcp", namespaces: ["me"], roles: ["writer"] })).toBe(
+  it("an agent token claiming `*` says reads follow membership", () => {
+    expect(describeTokenScope({ kind: "mcp", namespaces: ["me", "*"], roles: ["writer"] })).toBe(
       "writes me · reads every namespace and repository you belong to",
+    );
+  });
+  it("an agent token for a named namespace reads only that one", () => {
+    expect(describeTokenScope({ kind: "mcp", namespaces: ["me"], roles: ["writer"] })).toBe(
+      "writes me · reads only me",
     );
   });
   it("a wildcard agent token writes anywhere the person can", () => {
@@ -85,9 +90,7 @@ describe("describeTokenScope", () => {
   it("an agent token's further claims are restricted namespaces it reads by name", () => {
     expect(
       describeTokenScope({ kind: "mcp", namespaces: ["me", "code-private", "code-private-26-8"], roles: ["writer"] }),
-    ).toBe(
-      "writes me · reads every namespace and repository you belong to · plus restricted: code-private, code-private-26-8",
-    );
+    ).toBe("writes me · reads only me · plus restricted: code-private, code-private-26-8");
   });
   it("a scoped token reads only what it names", () => {
     expect(describeTokenScope({ kind: "agent", namespaces: ["a", "b"], roles: ["viewer"] })).toBe(

@@ -3,9 +3,10 @@
 //
 // Two token shapes leave that page:
 //  - "For an AI agent" (kind = mcp): ONE home namespace, where the client
-//    writes. Reads are not scoped by that pick: the token is a service account
-//    that inherits its creator's live grants, so it reads every namespace and
-//    repository the person belongs to, now and after they join more.
+//    writes. A token claiming `*` inherits its creator's live grants, so it
+//    reads every namespace and repository the person belongs to, now and after
+//    they join more; one minted for a named namespace reads only that one (and
+//    any restricted namespaces it names).
 //  - "For a script or bot" (scoped): reads exactly the namespaces ticked, in
 //    that order, and nothing else.
 //
@@ -87,11 +88,14 @@ export function describeTokenScope(t: Pick<ServiceAccountEntry, "kind" | "namesp
   const roles = t.roles || [];
   if (t.kind === "mcp") {
     // The first claim is the home namespace; any further ones are restricted
-    // namespaces the token reads by name with a grant of its own.
+    // namespaces the token reads by name with a grant of its own. A `*` claim
+    // reads wherever the person holds a grant (the server's `inherited_grants`);
+    // without one the token reads only what it names (`named_namespaces`).
     const home = ns.length >= 1 && ns[0] !== "*" ? ns[0] : null;
     const extras = ns.slice(1).filter((n) => n !== "*");
     const writes = home ? `writes ${home}` : "writes any namespace you can write";
     const restricted = extras.length ? ` · plus restricted: ${extras.join(", ")}` : "";
+    if (home && !ns.includes("*")) return `${writes} · reads only ${home}${restricted}`;
     return `${writes} · reads every namespace and repository you belong to${restricted}`;
   }
   if (ns.length === 0) return roles.join(", ");

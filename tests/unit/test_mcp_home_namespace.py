@@ -278,6 +278,74 @@ def test_an_unaddressed_write_from_a_qa_only_token_asks_for_a_namespace(
     assert "must name its `namespace`" in asyncio.run(mi._caller_default_context(token))
 
 
+def _primer_text(token: Any) -> str:
+    from server.transport import mcp_primer
+
+    return asyncio.run(mcp_primer._loom_primer_text(token, include_profile=False))
+
+
+def _coding_line(token: Any) -> str:
+    from server.transport import mcp_primer
+
+    return asyncio.run(mcp_primer._coding_workspace_line(token))
+
+
+def _coding_text(token: Any) -> str:
+    from server.transport import mcp_primer
+
+    return asyncio.run(mcp_primer._coding_instructions(token, include_profile=False))
+
+
+@pytest.mark.parametrize(
+    "render",
+    [lambda t: asyncio.run(mi._caller_default_context(t)), _coding_line, _primer_text],
+    ids=["default_context", "coding_workspace_line", "loom_primer_text"],
+)
+def test_no_default_namespace_is_never_rendered_as_an_empty_one(_wired, render) -> None:
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    text = render(_token(("qa-clickhouse",)))
+    assert "namespace" in text
+    for phrase in ("``", "filled in when a call names none", "trust the default"):
+        assert phrase not in text
+
+
+@pytest.mark.parametrize("render", [_primer_text, _coding_text])
+def test_with_no_default_namespace_recall_names_one(_wired, render) -> None:
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    text = render(_token(("qa-clickhouse",)))
+    assert "`loom_search` with a `namespace`" in text
+    assert "`loom_search` once" not in text
+
+
+def test_loom_search_from_a_token_with_no_default_namespace_says_to_name_one(
+    _wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
+    params = {"name": "loom_search", "arguments": {"query": "what did we decide"}}
+    token = _token(("qa-clickhouse",))
+    out = asyncio.run(mcp_call._call_tool(1, params, token, "claude-code"))
+    result = out["result"]
+    assert result["isError"] is True
+    assert result["structuredContent"]["code"] == "VALIDATION_FAILED"
+    assert ["namespace"] in [e["loc"] for e in result["structuredContent"]["errors"]]
+    assert "no default namespace" in result["content"][0]["text"]
+    assert "`loom_search` again with a `namespace`" in result["content"][0]["text"]
+
+    # The retry it asks for validates.
+    op = OPERATIONS_BY_NAME[mcp_call.SEARCH_OP]
+    args: dict[str, Any] = {"query": "what did we decide", "namespace": "qa-clickhouse"}
+
+    async def _retry() -> Any:
+        request_id, _ = await mcp_call._bind_caller_identity(op, args, token, "claude-code")
+        return mcp_call._validated_input(1, op, args, request_id)
+
+    assert not isinstance(asyncio.run(_retry()), dict)
+
+
 def test_a_restricted_namespace_is_off_limits_to_a_token_of_another_org(_wired) -> None:
     # The gate refuses an org-`*` token on a restricted namespace, even named.
     _wired(_SetupTokenCH(saved="secret-team", grants=["secret-team", "alice"]))

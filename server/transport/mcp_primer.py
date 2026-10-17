@@ -244,13 +244,6 @@ async def _loom_primer_text(
     that listing carries."""
     tool = _tool_refs(toolset)
     defaults = await _caller_defaults(auth)
-    if defaults:
-        ns_clause = (
-            f"My default Loom namespace is **`{defaults['namespace']}`** "
-            f"— use it unless I explicitly name another."
-        )
-    else:
-        ns_clause = "Use whatever Loom workspace the tool descriptions declare as default."
 
     # Inline authored profile sections into the primer — "call profile.render
     # at conversation start" nudges don't fire reliably, so bundling the
@@ -292,16 +285,15 @@ async def _loom_primer_text(
         "decisions, family/relationships, work, bills, contracts, "
         "documents I've uploaded, or 'what is X' / 'what do I know "
         "about Y':\n"
-        "   a. Call `loom_search` once. It searches memory, profile, "
+        f"   a. Call {_recall_call(defaults)}. It searches memory, profile, "
         "knowledge, and conversations server-side in one round trip.\n"
         "   b. If it returns nothing relevant, fall through to "
         "native memory / past-conversation context — don't surface "
         "'not in Loom' as a final answer.\n\n"
         + _write_rules(tool)
         + "**5. Defaults.** "
-        + ns_clause
-        + " Don't ask which namespace; "
-        "trust the default.\n\n"
+        + _defaults_clause(defaults)
+        + "\n\n"
         "**6. Native memory.** Use as fallback when Loom returns "
         "nothing, or as primary store for Claude-only ephemeral "
         "scratchpad."
@@ -311,6 +303,30 @@ async def _loom_primer_text(
             else ""
         )
     )
+
+
+def _defaults_clause(defaults: dict[str, str] | None) -> str:
+    """Rule 5: the caller's default namespace, or that the token has none."""
+    if defaults and not defaults["namespace"]:
+        return "This token has no default Loom namespace: name one on every call."
+    if defaults:
+        return (
+            f"My default Loom namespace is **`{defaults['namespace']}`** "
+            "— use it unless I explicitly name another. Don't ask which namespace; "
+            "trust the default."
+        )
+    return (
+        "Use whatever Loom workspace the tool descriptions declare as default. "
+        "Don't ask which namespace; trust the default."
+    )
+
+
+def _recall_call(defaults: dict[str, str] | None) -> str:
+    """The recall call: `loom_search` once, naming a namespace when the token has
+    no default (an unaddressed search is refused)."""
+    if defaults and not defaults["namespace"]:
+        return "`loom_search` with a `namespace`"
+    return "`loom_search` once"
 
 
 INITIALIZE_OP = "mcp.initialize"
@@ -370,6 +386,8 @@ async def _coding_workspace_line(auth: Any) -> str:
     defaults = await _caller_defaults(auth)
     if not defaults:
         return ""
+    if not defaults["namespace"]:
+        return " No default namespace for this token: every call must name its `namespace`."
     return f" Default namespace `{defaults['namespace']}`, filled in when a call names none."
 
 
@@ -400,7 +418,8 @@ async def _coding_instructions(
         )
         profile += "Don't re-fetch — it's been delivered."
     save = tool["memory.set"]
-    memory = "Recall before answering from memory: call `loom_search` once. " + (
+    recall = _recall_call(await _caller_defaults(auth))
+    memory = f"Recall before answering from memory: call {recall}. " + (
         f"On a remember/save intent call {save} with one plain-text claim per readable "
         "key (`<scope>/<kind>/<id>`)."
         if save

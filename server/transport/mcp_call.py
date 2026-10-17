@@ -152,6 +152,32 @@ async def _address_home(arguments: dict[str, Any], auth: Any) -> None:
         )
 
 
+def _search_needs_namespace(
+    op: Operation, arguments: dict[str, Any], defaults: dict[str, Any] | None
+) -> bool:
+    """A `loom_search` naming no namespace from a token with no default one."""
+    if op.name != SEARCH_OP or not defaults:
+        return False
+    return not defaults["namespace"] and not arguments.get("namespace")
+
+
+def _namespace_required(
+    req_id: Any, op: Operation, arguments: dict[str, Any], request_id: str
+) -> dict[str, Any]:
+    """The refusal for `_search_needs_namespace`. The tool's schema has no
+    namespace field, so the generic validation feedback would not say how to fix it."""
+    _emit_mcp_event(
+        op.name, arguments, 0, success=False, error_code="VALIDATION_FAILED", request_id=request_id
+    )
+    msg = (
+        "This token has no default namespace. Call `loom_search` again with a `namespace` argument."
+    )
+    errors = [{"loc": ["namespace"], "msg": "no default namespace", "type": "missing"}]
+    return _ok(
+        req_id, tool_error(msg, {"code": "VALIDATION_FAILED", "op": op.name, "errors": errors})
+    )
+
+
 # History and related name a KEY — a key another client
 # wrote answered `{}` / source_not_found under the caller's own slug.
 _MCP_CROSS_AGENT_READS: frozenset[str] = frozenset(
@@ -206,6 +232,8 @@ async def _call_tool(
     op = tool
 
     request_id, defaults = await _bind_caller_identity(op, arguments, auth, client_name)
+    if _search_needs_namespace(op, arguments, defaults):
+        return _namespace_required(req_id, op, arguments, request_id)
 
     run_caller, stamped_run = _stamp_session_run(op, arguments, defaults, mcp_session_id)
 
