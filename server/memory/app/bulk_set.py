@@ -692,12 +692,23 @@ async def _bulk_settle_verdicts(
             await record_auto_supersessions(
                 org=input.org, namespace=input.namespace, retired=retired, reason=reason
             )
-    from server.memory.store.usage import record_usage_event as _record_usage_event
+    # Merges and identity duplicates reinforce the row that already holds the fact. A
+    # restatement is the same fact said again under the same key: the usage fold turns the
+    # evidence event into memory_embeddings.reinforcement_count, the search-side boost; the
+    # row itself is not rewritten or re-embedded.
+    await _record_evidence(input, plan.reinforce_ids, "auto_reinforce bump")
+    await _record_evidence(input, state.identity_dup_ids, "identity-dedup reinforcement")
+    await _record_evidence(input, _landed_restated_ids(state, plan), "restatement reinforcement")
 
-    for existing_id in plan.reinforce_ids:
+
+async def _record_evidence(input: MemoryBulkSetInput, memory_ids: list[str], what: str) -> None:
+    """One `evidence` usage event per id, each fail-open."""
+    from server.memory.store.usage import record_usage_event
+
+    for memory_id in memory_ids:
         try:
-            await _record_usage_event(
-                memory_id=existing_id,
+            await record_usage_event(
+                memory_id=memory_id,
                 org=input.org,
                 namespace=input.namespace,
                 event_type="evidence",
@@ -705,34 +716,7 @@ async def _bulk_settle_verdicts(
                 agent=input.agent,
             )
         except Exception as e:  # noqa: BLE001 — a usage bump; the write stands
-            log.warning("bulk_set: auto_reinforce bump failed (non-fatal): %s", e)
-    for existing_id in state.identity_dup_ids:
-        try:
-            await _record_usage_event(
-                memory_id=existing_id,
-                org=input.org,
-                namespace=input.namespace,
-                event_type="evidence",
-                event_count=1,
-                agent=input.agent,
-            )
-        except Exception as e:  # noqa: BLE001 — a usage bump; the write stands
-            log.warning("bulk_set: identity-dedup reinforcement failed (non-fatal): %s", e)
-    # The same fact said again under the same key. The usage fold turns the evidence event
-    # into memory_embeddings.reinforcement_count, the search-side boost; the row itself is not
-    # rewritten or re-embedded.
-    for existing_id in _landed_restated_ids(state, plan):
-        try:
-            await _record_usage_event(
-                memory_id=existing_id,
-                org=input.org,
-                namespace=input.namespace,
-                event_type="evidence",
-                event_count=1,
-                agent=input.agent,
-            )
-        except Exception as e:  # noqa: BLE001 — a usage bump; the write stands
-            log.warning("bulk_set: restatement reinforcement failed (non-fatal): %s", e)
+            log.warning("bulk_set: %s failed (non-fatal): %s", what, e)
 
 
 async def _bulk_audit(
