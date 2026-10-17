@@ -168,7 +168,7 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         if was == email:
             if (org, namespace) in await sso_links.linked(email):
                 raise ValueError(f"{org}/{namespace} is linked to {email} already")
-            # A link that wrote the address and stopped before linking it.
+            # Registered under this address, or a link stopped before linking it.
             raise ValueError(f"{org}/{namespace} already names {email}: adopt it instead")
         other = await get_client().query_one(
             "SELECT org, namespace FROM loom.namespaces FINAL "
@@ -245,13 +245,13 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
         carried = await _carry_revoked(plan["revoked"], str(row["owner_email"]), by)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         # Insert-as-replace carrying every other column forward.
+        if was:  # first, so a link stopped part way leaves no link a re-run can't redo
+            await sso_links.unlink(was, [(org, namespace)], by)
         await get_client().insert(
             "loom.namespaces",
             [{**row, "contact_email": email, "updated_at": max(now, row["updated_at"])}],
         )
         await sso_links.link(email, [(org, namespace)], by)
-        if was:  # it named this account; nothing reaches it any more
-            await sso_links.unlink(was, [(org, namespace)], by)
     grant_cache.invalidate(org)  # the person's spellings changed
     await audit.emit(
         "auth.sso_linked",

@@ -27,8 +27,8 @@ log = logging.getLogger(__name__)
 
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
 _MAX_LIFE_S = 86400
-# Renewed halfway through its life or this long before it runs out, whichever
-# is sooner; on a failed renewal the token in hand serves until it runs out,
+# Renewed this long before it runs out (halfway, for a token living under ten
+# minutes); on a failed renewal the token in hand serves until it runs out,
 # and the next try waits this long (with no token in hand too).
 _RENEW_BEFORE_S = 300
 _RETRY_S = 30

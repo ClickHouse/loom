@@ -228,7 +228,8 @@ async def test_link_keeps_a_grant_revoked_under_the_old_address_revoked(ch: Any)
     planned = _sso("link", "--email", work, "--org", org, "--namespace", namespace)
     assert "so revoked for dee too: secret" in planned
     done = _sso("link", "--email", work, "--org", org, "--namespace", namespace, "--apply")
-    assert "revoked for dee too: secret" in done  # what it carried, not what it planned
+    # What it carried, not what it planned (the dry run's "so revoked …" line).
+    assert "\n  revoked for dee too: secret\n" in done and "so revoked" not in done
     with own_write_reads():
         carried = await ch.query_one(
             "SELECT role, revoked_at FROM loom.namespace_grants FINAL WHERE org = {org:String} "

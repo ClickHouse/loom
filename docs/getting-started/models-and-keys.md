@@ -202,8 +202,8 @@ OPENAI_API_KEY=<the key the gateway issued for Loom>
 Off its default, the Anthropic key is also sent as `Authorization: Bearer`, the
 scheme gateways take. A gateway that accepts workload identity (RFC 8693 token
 exchange) needs no key at all: Loom exchanges its workload's OIDC token there,
-renews the answer halfway through its life (or five minutes before it runs out,
-whichever is sooner), and sends it with every call. With no key to infer them
+renews the answer five minutes before it runs out (halfway, for one living
+under ten minutes), and sends it with every call. With no key to infer them
 from, name the provider and the models:
 
 ```bash

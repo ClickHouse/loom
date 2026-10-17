@@ -63,7 +63,7 @@ def test_the_workload_token_is_exchanged_once_and_reused(gw: _Gateway) -> None:
     ]
 
 
-def test_it_is_renewed_halfway_and_the_old_one_serves_while_the_gateway_is_away(
+def test_it_is_renewed_before_its_end_and_the_old_one_serves_while_the_gateway_is_away(
     gw: _Gateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     now = [1000.0]

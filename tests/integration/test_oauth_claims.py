@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 from server.auth import claims, device, oauth
 from server.auth.oauth_store import ClickHouseStore, CodeReplayed, Device, Grant, token_id
+from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.asyncio
 
@@ -37,7 +38,7 @@ def _grant(client_id: str) -> Grant:
         "redirect_uri": "",
         "code_challenge": "",
         "subject": "alice@example.com",
-        "org": "claims-it",
+        "org": unique_org("claims"),
         "namespaces": ["alice"],
         "roles": ["writer"],
         "exp": int(time.time()) + 600,
@@ -53,7 +54,7 @@ def _device(status: str = "pending") -> tuple[Device, str]:
         "id": token_id(secrets.token_urlsafe(32)),
         "client_id": device.DEVICE_CLIENT_ID,
         "subject": "",
-        "org": "",
+        "org": unique_org("claims"),
         "namespaces": [],
         "roles": [],
         "exp": int(time.time()) + 600,
