@@ -171,6 +171,27 @@ describe("an entity on a memory opens in place", () => {
     await waitFor(() => expect(document.activeElement).toBe(within(pop).getByRole("button", { name: "api/quota" })));
   });
 
+  it("reads memory.related once for the memory, however many entity popovers open", async () => {
+    await open();
+    await userEvent.click(chip("rate limiting"));
+    let pop = await screen.findByRole("dialog", { name: "Entity rate limiting" });
+    await within(pop).findByText("Mentioned in 3 memories");
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Entity rate limiting" })).toBeNull());
+    await userEvent.click(chip("public api"));
+    pop = await screen.findByRole("dialog", { name: "Entity public api" });
+    // Filtered for this entity from the same read: api/keys and runbooks/429 share it.
+    await within(pop).findByText("Mentioned in 3 memories");
+    expect(within(pop).getByRole("button", { name: "api/keys" })).toBeInTheDocument();
+    expect(within(pop).queryByRole("button", { name: "api/quota" })).toBeNull();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(chip("rate limiting"));
+    await within(await screen.findByRole("dialog", { name: "Entity rate limiting" })).findByText(
+      "Mentioned in 3 memories",
+    );
+    expect(vi.mocked(memoryRelated).mock.calls.filter((c) => c[2] === 100)).toHaveLength(1);
+  });
+
   it("a mentioned memory swaps the drawer in place", async () => {
     await open();
     await userEvent.click(chip("rate limiting"));

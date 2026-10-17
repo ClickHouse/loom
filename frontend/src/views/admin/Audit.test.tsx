@@ -154,4 +154,22 @@ describe("Audit: older events", () => {
       expect(document.activeElement).toBe(screen.getByText("Created namespace last (org)").closest("tr")),
     );
   });
+
+  // The last page holds only system events, hidden by default: no new row to focus, so the
+  // focus goes to the last row shown rather than falling to the page.
+  it("moves focus to the last row shown when every row of the last page is hidden", async () => {
+    const system: AuditEntry = { ...row("worker", "{}"), event_type: "worker.failed" };
+    vi.mocked(api.listAuditLog)
+      .mockResolvedValueOnce({ rows: [row("alice", '{"namespace":"team","visibility":"org"}')], next_cursor: "c1" })
+      .mockResolvedValueOnce({ rows: [system, system], next_cursor: null });
+    render(<Audit />);
+    await screen.findByText("Created namespace team (org)");
+    const button = screen.getByRole("button", { name: "Load older" });
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Load older" })).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByText("Created namespace team (org)").closest("tr")),
+    );
+  });
 });

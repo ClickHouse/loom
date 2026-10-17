@@ -61,13 +61,15 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
   // Click UI names its arrows after their icons ("chevron-left") and its page field after
   // the number in it; these are the names they read as.
   const nav = useRef<HTMLElement>(null);
+  // Click UI resets them as the page or the size changes.
   useLayoutEffect(() => {
     const el = nav.current;
     if (!el) return;
     el.querySelector('[data-testid="prev-btn"]')?.setAttribute("aria-label", "Previous page");
     el.querySelector('[data-testid="next-btn"]')?.setAttribute("aria-label", "Next page");
     el.querySelector('input[type="number"]')?.setAttribute("aria-label", "Page");
-  });
+    el.querySelector('[data-testid="select-trigger"]')?.setAttribute("aria-label", "Rows per page");
+  }, [page, pageSize, draft, phone]);
   const pages = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : undefined;
   // A page past the end (its last rows deleted) steps back to the last one.
   const pastEnd = pages !== undefined && page > pages - 1;
@@ -75,7 +77,10 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
     if (pastEnd && pages !== undefined) onPage(pages - 1);
   }, [pastEnd, pages, onPage]);
   const lastKnown = pages !== undefined ? page >= pages - 1 : shown < pageSize;
-  if (page === 0 && lastKnown) return null;
+  // With a page size picked, the choice stays reachable while the list is longer than the
+  // smallest page; a list that fits even that has no pager.
+  const sizeChoice = !!onPageSize && !phone && (total ?? shown) > SIZES[0];
+  if (page === 0 && lastKnown && !sizeChoice) return null;
   const start = page * pageSize + 1;
   const end = page * pageSize + shown;
   const span = shown === 0 ? `${start.toLocaleString()}` : `${start.toLocaleString()}–${end.toLocaleString()}`;
@@ -116,8 +121,16 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
         onNextPageClick={() => go(pending.current, { focusList: true })}
         onPageNumberBlur={() => draft !== null && go(draft, { focusList: false })}
         disableNextButton={lastKnown}
-        {...(onPageSize && !phone
-          ? { pageSize, maxRowsPerPageList: SIZES, onPageSizeChange: onPageSize, allowAllRows: false }
+        {...(sizeChoice
+          ? {
+              pageSize,
+              maxRowsPerPageList: SIZES,
+              onPageSizeChange: (n: number) => {
+                onPageSize?.(n);
+                setSaid(`${n} rows per page, page 1`);
+              },
+              allowAllRows: false,
+            }
           : {})}
       />
       <p role="status" className="sr-only">

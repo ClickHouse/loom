@@ -26,7 +26,7 @@ import { IconButton } from "../components/IconButton";
 import { Chip, ListRow, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { Modal } from "../components/ui/Modal";
-import { formatBytesShort, relativeTime, shortDate } from "../lib/format";
+import { formatBytesShort, humanizeError, relativeTime, shortDate } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
@@ -107,6 +107,10 @@ export function Documents() {
     return () => clearTimeout(t);
   }, [tagKey]);
   const shownScope = useRef("");
+  // The tags the rows on screen were read for, and why the last read failed.
+  const [rowsFor, setRowsFor] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
 
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
     scopeRef.current += 1;
@@ -117,7 +121,7 @@ export function Documents() {
       setRows(null);
     }
     setNextCursor(null);
-    const tags = (JSON.parse(serverTags) as string[]).flatMap((t) => [t, t.toLowerCase()]);
+    const tags = JSON.parse(serverTags) as string[];
     listKnowledge(
       { org: identity.org, namespace: identity.namespace },
       {
@@ -129,19 +133,28 @@ export function Documents() {
     )
       .then((r) => {
         if (live()) {
+          setLoadError(null);
           setRows(r.rows || []);
+          setRowsFor(serverTags);
           setNextCursor(r.next_cursor ?? null);
         }
       })
-      .catch(() => {
-        if (live()) setRows([]);
+      .catch((e) => {
+        if (!live()) return;
+        // Said as a failure: an empty list that is really a failed read looked like an
+        // empty library.
+        setLoadError(humanizeError(e));
+        setRows([]);
+        setRowsFor(serverTags);
       });
   };
 
   // A memory write cannot change the document list.
-  useAbortableEffect(load, [identity.org, identity.namespace, serverTags]);
+  useAbortableEffect(load, [identity.org, identity.namespace, serverTags, retry]);
 
-  const readTags = [...new Set((JSON.parse(serverTags) as string[]).flatMap((t) => [t, t.toLowerCase()]))];
+  // The library is empty only when nothing narrowed the read and the read worked.
+  const emptyLibrary = rows !== null && rows.length === 0 && !loadError && serverTags === "[]" && tagKey === serverTags;
+  const readTags = JSON.parse(serverTags) as string[];
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     const scope = scopeRef.current;
@@ -391,7 +404,7 @@ export function Documents() {
         read.
       </p>
 
-      {rows !== null && rows.length > 0 && (
+      {rows !== null && !emptyLibrary && !loadError && (
         <>
           {/* The search, the tags in force, the sort and the count, in the one bar that
               stays at the top as the list scrolls: a tag picked from a row further down is
@@ -540,7 +553,16 @@ export function Documents() {
         </LoadingSkeleton>
       )}
 
-      {rows !== null && rows.length === 0 && (
+      {loadError && (
+        <EmptyState
+          icon="warning"
+          title="Couldn't load the library"
+          description={loadError}
+          action={{ label: "Retry", onClick: () => setRetry((n) => n + 1) }}
+        />
+      )}
+
+      {emptyLibrary && (
         <EmptyState
           icon="document"
           title="Your library is empty"
@@ -549,17 +571,15 @@ export function Documents() {
         />
       )}
 
-      {rows !== null && rows.length > 0 && visibleRows && visibleRows.length === 0 && (
+      {rows !== null && !emptyLibrary && !loadError && rowsFor === serverTags && visibleRows?.length === 0 && (
         <div className="py-12 text-center">
           <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
             <Icon name="search" size="md" aria-hidden="true" />
           </div>
-          <h2>No documents match</h2>
-          <p className="mt-1 text-sm text-text-muted">
-            {rows.length} loaded from this namespace, but none pass the active filters.
-          </p>
+          <h2>Nothing matches {query.trim()}</h2>
+          <p className="mt-1 text-sm text-text-muted">No document in this namespace passes the search and filters.</p>
           <Button type="secondary" htmlType="button" onClick={() => setQuery("")} className="mt-4">
-            Clear search
+            Clear filters
           </Button>
         </div>
       )}
@@ -580,15 +600,16 @@ export function Documents() {
                   onCheckedChange={() => toggleSelected(r.source_uri)}
                   aria-label={`Select ${r.title || r.original_filename || r.source_uri}`}
                   onClick={(e) => e.stopPropagation()}
+                  className="relative z-[1]"
                 />
               }
             >
-              <div className="flex items-start gap-3">
+              <div className="flex flex-wrap items-start gap-3 sm:flex-nowrap">
                 <div className="min-w-0 flex-1">
                   <button
                     type="button"
                     onClick={() => onOpen(r)}
-                    className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer"
+                    className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
                     aria-label={`Preview ${r.title || r.original_filename || r.source_uri}`}
                   >
                     {/* Line 1: the document, its state, how much of it is indexed and when. */}
@@ -625,7 +646,7 @@ export function Documents() {
                     className="mt-2"
                   />
                 </div>
-                <div className="doc-acts">
+                <div className="doc-acts relative z-[1]">
                   {(touch || hotRow === r.source_uri || selected.has(r.source_uri)) && (
                     <>
                       {/* Icon actions: ≥36 px targets, named by aria-label + tooltip.

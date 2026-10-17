@@ -96,7 +96,12 @@ export function ListToolbar({ label, children, count, selection }: ListToolbarPr
                 </MenuTrigger>
                 <Dropdown.Content align="end">
                   {selection.actions.map((a) => (
-                    <Dropdown.Item key={a.label} disabled={a.disabled || a.loading} onSelect={a.onClick}>
+                    <Dropdown.Item
+                      key={a.label}
+                      type={a.danger ? "danger" : "default"}
+                      disabled={a.disabled || a.loading}
+                      onSelect={a.onClick}
+                    >
                       {a.label}
                     </Dropdown.Item>
                   ))}

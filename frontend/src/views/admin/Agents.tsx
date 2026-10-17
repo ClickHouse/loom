@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAbortableEffect } from "../../lib/hooks";
+import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Table } from "@clickhouse/click-ui/Table";
@@ -126,8 +127,10 @@ export function Agents() {
                   { label: <span className="tabular">{r.cost_usd > 0 ? `$${r.cost_usd.toFixed(4)}` : "—"}</span> },
                   {
                     label: (
-                      <span className={`tabular ${stale ? "text-warn" : "text-text-muted"}`}>
-                        {relativeTime(r.last_seen)}
+                      // Not seen for a day: said by a badge, not by the colour of the time alone.
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="tabular text-text-muted">{relativeTime(r.last_seen)}</span>
+                        {stale && <Badge text="Stale" state="warning" size="sm" />}
                       </span>
                     ),
                   },

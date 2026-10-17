@@ -163,5 +163,23 @@ describe("NamespacePicker groups", () => {
     expect(within(dialog).getAllByRole("button", { name: /acme\/repo/ })).toHaveLength(8);
     fireEvent.click(within(dialog).getByRole("button", { name: "Show all 11" }));
     expect(within(dialog).getAllByRole("button", { name: /acme\/repo/ })).toHaveLength(11);
+    // The button it replaced took the focus with it: the first row it showed has it now.
+    expect(within(dialog).getByRole("button", { name: /acme\/repo8 @ main/ })).toHaveFocus();
+  });
+
+  it("folds a group a search opened when its button is pressed, and opens it again", async () => {
+    seed("team");
+    const user = userEvent.setup();
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    await user.type(within(dialog).getByRole("textbox", { name: "Search namespaces" }), "loom");
+    const code = group(dialog, /^Code indexes/);
+    expect(code).toHaveAttribute("aria-expanded", "true");
+    await user.click(code);
+    expect(code).toHaveAttribute("aria-expanded", "false");
+    expect(within(dialog).queryByRole("button", { name: /acme\/loom @ main/ })).toBeNull();
+    await user.click(code);
+    expect(code).toHaveAttribute("aria-expanded", "true");
+    expect(within(dialog).getByRole("button", { name: /acme\/loom @ main/ })).toBeInTheDocument();
   });
 });

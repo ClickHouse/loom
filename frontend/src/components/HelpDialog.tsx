@@ -5,10 +5,12 @@ import { Switch } from "@clickhouse/click-ui/Switch";
 import { setSingleKeyShortcuts, singleKeyShortcutsOn } from "../lib/shortcuts";
 import { isApplePlatform, paletteShortcut } from "../lib/platform";
 
-/** One shortcut: its keys ("g m" is a sequence, "j / ↓" two alternatives) and what it does. */
+/** One shortcut: its keys ("g m" is a sequence, "Ctrl+K" a chord, "j / ↓" two
+ *  alternatives) and what it does. `syntax`: typed into the search, not pressed. */
 interface Shortcut {
   keys: string;
   label: string;
+  syntax?: boolean;
 }
 
 interface Group {
@@ -23,11 +25,11 @@ function groups(): Group[] {
     {
       title: "Global",
       rows: [
-        { keys: paletteShortcut(), label: "Focus the universal search bar" },
+        { keys: isApplePlatform() ? "⌘K" : "Ctrl+K", label: "Focus the universal search bar" },
         { keys: "↑ / ↓", label: "Move through search results" },
         { keys: "Enter", label: "Open the search result" },
-        { keys: "tag:work", label: "Search memories tagged work (partial OK)" },
-        { keys: "namespace:qa", label: "Search for a namespace to jump to" },
+        { keys: "tag:work", label: "Search memories tagged work (partial OK)", syntax: true },
+        { keys: "namespace:qa", label: "Search for a namespace to jump to", syntax: true },
         { keys: "?", label: "Show keyboard shortcuts" },
         { keys: "g m", label: "Go to Memories" },
         { keys: "g l / g k", label: "Go to Library" },
@@ -47,7 +49,7 @@ function groups(): Group[] {
         { keys: "Enter", label: "Open the memory" },
         { keys: "Space", label: "Select or unselect" },
         { keys: "e", label: "Edit the open memory's value" },
-        { keys: isApplePlatform() ? "⌘Enter" : "Ctrl Enter", label: "Save the edit" },
+        { keys: isApplePlatform() ? "⌘Enter" : "Ctrl+Enter", label: "Save the edit" },
         { keys: "Esc", label: "Cancel the edit" },
         { keys: "d", label: "Delete the open memory (asks first)" },
         { keys: "p", label: "Pin or unpin the open memory" },
@@ -107,12 +109,8 @@ export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           {paletteShortcut()}, Escape and the arrows stay on.
         </p>
       </div>
-      <section
-        className="max-h-[60vh] overflow-y-auto space-y-5"
-        aria-label="Keyboard shortcuts"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region must take focus so a keyboard user can scroll it (WCAG 2.1.1)
-        tabIndex={0}
-      >
+      {/* The dialog scrolls; the list is not a second scroll region inside it. */}
+      <section className="space-y-5" aria-label="Keyboard shortcuts">
         {groups().map((g) => (
           <ShortcutGroup key={g.title} group={g} />
         ))}
@@ -129,7 +127,7 @@ function ShortcutGroup({ group }: { group: Group }) {
         {group.rows.map((r) => (
           <Fragment key={`${r.keys}-${r.label}`}>
             <dt className="flex flex-wrap items-center gap-1">
-              <Keys keys={r.keys} />
+              {r.syntax ? <code className="font-mono text-xs">{r.keys}</code> : <Keys keys={r.keys} />}
             </dt>
             <dd className="text-sm text-text">{r.label}</dd>
           </Fragment>
@@ -139,13 +137,21 @@ function ShortcutGroup({ group }: { group: Group }) {
   );
 }
 
-/** One cap per key: "g m" is g then m, "Ctrl K" is Ctrl with K; " / " separates alternatives. */
+/** One cap per key: "g m" is g then m, "Ctrl+K" is Ctrl held with K; " / " separates
+ *  alternatives. */
 function Keys({ keys }: { keys: string }) {
   return keys.split(" / ").map((alt, i) => (
     <Fragment key={alt}>
       {i > 0 && <span className="text-xs text-text-muted">or</span>}
-      {alt.split(" ").map((k) => (
-        <Kbd key={k}>{k}</Kbd>
+      {alt.split(" ").map((step) => (
+        <Fragment key={step}>
+          {step.split("+").map((k, j) => (
+            <Fragment key={k}>
+              {j > 0 && <span className="text-xs text-text-muted">+</span>}
+              <Kbd>{k}</Kbd>
+            </Fragment>
+          ))}
+        </Fragment>
       ))}
     </Fragment>
   ));

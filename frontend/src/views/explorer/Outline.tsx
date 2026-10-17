@@ -166,7 +166,9 @@ export function Outline({
 
   return (
     <div className="explorer-outline mt-3 lg:flex-1 lg:min-h-0 flex flex-col">
-      <p className="text-xs text-text-muted mb-1">{summary}</p>
+      <p className="text-xs text-text-muted mb-1" id="explorer-outline-summary">
+        {summary}
+      </p>
       {/* The keys are listed in the help dialog's Graph group; the tree describes them in one line. */}
       <p className="sr-only" id="explorer-outline-keys">
         Arrow keys move and fold, Enter selects; w walks from a row, p finds a path, e expands, r selects the edge, x
@@ -175,7 +177,7 @@ export function Outline({
       <div
         role="tree"
         aria-label="Walk outline"
-        aria-describedby="explorer-outline-keys"
+        aria-describedby="explorer-outline-summary explorer-outline-keys"
         className="lg:flex-1 min-h-[120px] max-h-[320px] lg:max-h-none overflow-auto rounded-lg border border-border bg-surface text-xs"
       >
         {rows.map((n, i) => {

@@ -307,7 +307,13 @@ export const useStore = create<AppState>((set, get) => ({
   setGateReason: (gateReason) => set({ gateReason }),
   setMyNamespaces: (myNamespaces) => set({ myNamespaces }),
   setWhoami: (whoami) => set({ whoami }),
-  setIdentity: (identity) => set({ identity }),
+  // A memory belongs to its namespace: a switch, from any picker, closes the open one.
+  setIdentity: (identity) =>
+    set((s) =>
+      s.identity && identity && s.identity.namespace !== identity.namespace
+        ? { identity, inspectedMemoryKey: null }
+        : { identity },
+    ),
   setView: (view) => get().navigate(view),
   navigate: (view, opts = {}) => {
     // Mirror the view into the URL first (skipping no-op pushes): the entry being left

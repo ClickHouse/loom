@@ -3085,6 +3085,7 @@ export interface KnowledgeListInput {
   org: string;
   namespace: string;
   tags?: string[];
+  tags_any_case?: boolean;
   uri_prefix?: string[];
   include_superseded?: boolean;
   limit?: number;
@@ -4602,6 +4603,7 @@ export interface MemoryListInput {
   include_proposed?: boolean;
   as_of?: string | null;
   tags?: string[];
+  tags_any_case?: boolean;
   contains?: string | null;
   fields?: string[];
   known_version?: number | string | null;

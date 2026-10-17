@@ -58,6 +58,35 @@ describe("HeaderSearch namespace switch", () => {
     expect(toast).toHaveBeenCalledWith("Switched to team-alerts", "info");
   });
 
+  it("drops the URL keys that name an object of the namespace it left, and keeps the entry's state", async () => {
+    history.replaceState({ loomPlace: { scrollTop: 40 } }, "", "/library?doc=s3%3A%2F%2Fa&view=grid");
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "alerts");
+    await user.click(await screen.findByRole("option", { name: /team-alerts/ }));
+    await waitFor(() => expect(useStore.getState().identity?.namespace).toBe("team-alerts"));
+    expect(location.pathname + location.search).toBe("/library?view=grid");
+    expect(history.state).toMatchObject({ loomPlace: { scrollTop: 40 } });
+  });
+
+  it("drops ?task= on Tasks, ?thread= on Conversations and ?memory= on Memories", async () => {
+    const user = userEvent.setup();
+    for (const [url, want] of [
+      ["/tasks?inbox=bot&task=t-1", "/tasks?inbox=bot"],
+      ["/conversations?thread=th-1", "/conversations"],
+      ["/memories?memory=a%2Fb", "/memories"],
+    ]) {
+      history.replaceState(null, "", url);
+      useStore.setState({ identity: { org: "dev", namespace: "team", agent: "dashboard" } });
+      const { unmount } = render(<HeaderSearch />);
+      await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "alerts");
+      await user.click(await screen.findByRole("option", { name: /team-alerts/ }));
+      await waitFor(() => expect(useStore.getState().identity?.namespace).toBe("team-alerts"));
+      expect(location.pathname + location.search).toBe(want);
+      unmount();
+    }
+  });
+
   it("shows no navigate/open hint strip, and the shortcut as the platform prints it", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);

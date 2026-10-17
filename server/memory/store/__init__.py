@@ -122,6 +122,7 @@ from server.memory.store.reads import (
     list_by_namespace,
     memory_rows_by_identity_keys,
     namespace_version,
+    tag_filter,
 )
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
@@ -245,6 +246,7 @@ __all__ = [
     "MemoryRow",
     "mirror_status_to_embeddings",
     "namespace_version",
+    "tag_filter",
     "normalize_key_prefix",
     "parse_memory_value",
     "read_unentitied_rows",

@@ -560,6 +560,10 @@ class MemoryListInput(_Identity):
     # (`kind:false_positive`, `subsystem:Storages`) is one list call, not a
     # recency page followed by a get per key. Empty = no tag filter.
     tags: list[str] = Field(default_factory=list, max_length=64)
+    # Match `tags` in any case (a browse page's `tag:api` finds rows tagged `API`); off,
+    # exactly, as agents rely on. Hidden from the MCP listing. A build that predates it
+    # ignores it and matches exactly.
+    tags_any_case: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Only rows whose value or key holds this text, any case — the keyword
     # filter of a browse page's search box, which must find every row that
     # names a word (a ranked search returns its top k and misses the rest).

@@ -14,7 +14,8 @@ import {
 import { Chip, ExternalLink, Loading, SectionHeading } from "./ui";
 import { Modal } from "./ui/Modal";
 import { toast } from "./Toast";
-import { absoluteTime, displayAgent, relativeTime, humanizeError } from "../lib/format";
+import { absoluteTime, displayAgent, humanizeError, shortDate } from "../lib/format";
+import { AgentBadge } from "./AgentBadge";
 import { CopyButton } from "./CopyButton";
 import { SessionBriefPanel } from "./SessionBriefPanel";
 import { ScopeBadge } from "./ScopeBadge";
@@ -317,13 +318,13 @@ export function ThreadReplayDialog({
           {threadDetail.agent && (
             <>
               <span>·</span>
-              <span className="font-mono">{displayAgent(threadDetail.agent)}</span>
+              <AgentBadge agent={threadDetail.agent} />
             </>
           )}
           {threadDetail.updated_at && (
             <>
               <span>·</span>
-              <span>updated {relativeTime(threadDetail.updated_at)}</span>
+              <span>updated {shortDate(threadDetail.updated_at)}</span>
             </>
           )}
         </div>
@@ -378,7 +379,7 @@ export function ThreadReplayDialog({
                       <span className="text-xs text-text-muted">· {m.tokens} tok</span>
                     )}
                     <time dateTime={m.ts} className="text-xs text-text-muted ml-auto tabular">
-                      {relativeTime(m.ts)}
+                      {shortDate(m.ts)}
                       <span className="sr-only"> ({absoluteTime(m.ts)})</span>
                     </time>
                   </div>

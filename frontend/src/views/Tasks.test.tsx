@@ -207,6 +207,19 @@ describe("Tasks page", () => {
     expect(listTasks).toHaveBeenCalledTimes(1);
   });
 
+  it("writes ?inbox= and ?task= into the entry without dropping the place it remembers", async () => {
+    const place = { scrollTop: 120, focusKey: "task:urgent", inspected: null, inspectedAgent: "" };
+    window.history.replaceState({ loomPlace: place }, "", "/tasks");
+    seed(admin, [row("admin")]);
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    expect(new URLSearchParams(window.location.search).get("inbox")).toBe("private-bot");
+    expect((window.history.state as Record<string, unknown>).loomPlace).toEqual(place);
+    fireEvent.click(screen.getByRole("row", { name: "Task urgent" }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("task")).toBe("urgent"));
+    expect((window.history.state as Record<string, unknown>).loomPlace).toEqual(place);
+  });
+
   it("the list is a valid grid: rowgroups of rows of gridcells, axe-clean with every group open", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
@@ -273,6 +286,21 @@ describe("Tasks page", () => {
     expect(taskRows()).toEqual(["Task low-late"]);
     await user.click(screen.getByRole("button", { name: "other agents" }));
     expect(taskRows()).toEqual(["Task urgent", "Task running", "Task blocked"]);
+  });
+
+  // Review finding: picking another inbox from the bell while on Tasks changed the URL but
+  // not the page.
+  it("opens the inbox a navigation names while the page is already up", async () => {
+    vi.mocked(listInboxes).mockResolvedValueOnce([INBOX, INBOX2]);
+    vi.mocked(listTasks).mockImplementation(async () => ({ tasks: ROWS, truncated: false }));
+    seed(admin, [row("admin")]);
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    const rail = screen.getByRole("navigation", { name: "Inboxes" });
+    act(() => useStore.getState().navigate("tasks", { query: { inbox: INBOX2.inbox } }));
+    await waitFor(() =>
+      expect(within(rail).getByRole("button", { name: /public-bot/ })).toHaveAttribute("aria-current", "true"),
+    );
   });
 
   it("lists every inbox with its to-do and running counts, and All inboxes reads one task.list per inbox", async () => {

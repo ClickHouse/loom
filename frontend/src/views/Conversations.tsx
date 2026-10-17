@@ -63,7 +63,9 @@ export function Conversations() {
   // Known only once a page after the last full one comes back empty.
   const [threadsTotal, setThreadsTotal] = useState<number | undefined>(undefined);
   const [seenAgents, setSeenAgents] = useState<string[]>([]);
-  const firstThreadRef = useRef<string | null>(null);
+  // The first page's threads: a later page that repeats them came from a build that ignores
+  // `offset`, even if a thread moved to the top between the reads.
+  const firstPageRef = useRef<Set<string>>(new Set());
   // Selected thread for the message-replay dialog. Click a thread
   // card OR a search-hit thread header → the dialog reads the full messages and shows them.
   // `knownAgent`: the agent the opener named, for a replica of the previous release.
@@ -125,8 +127,8 @@ export function Conversations() {
           const rows = r.threads || [];
           // A build that predates `offset` answers the first page again: stay on it and
           // offer no further page rather than show the same threads twice.
-          if (threadPage === 0) firstThreadRef.current = rows[0]?.thread_id ?? null;
-          else if (rows[0] && rows[0].thread_id === firstThreadRef.current) {
+          if (threadPage === 0) firstPageRef.current = new Set(rows.map((t) => t.thread_id));
+          else if (rows.length > 0 && rows.every((t) => firstPageRef.current.has(t.thread_id))) {
             setThreadsPaged(false);
             setThreadPage(0);
             return;
@@ -266,8 +268,8 @@ export function Conversations() {
   const threadsCount =
     hits !== null
       ? `${hits.length} found`
-      : visibleThreads
-        ? `${visibleThreads.length.toLocaleString()} threads`
+      : visibleThreads && visibleThreads.length > 0
+        ? `${(threadPage * THREADS_PAGE + 1).toLocaleString()}–${(threadPage * THREADS_PAGE + visibleThreads.length).toLocaleString()}`
         : undefined;
 
   const renderRecentThreads = (label = "Recent threads") => {

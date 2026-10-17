@@ -265,7 +265,7 @@ export async function listMemories(
     previewChars?: number;
     // Only rows whose value or key holds this text, any case.
     contains?: string;
-    // Only rows carrying any of these tags (the server matches case exactly).
+    // Only rows carrying any of these tags, in any case.
     tags?: string[];
     // Only rows this agent wrote; every agent's rows when unset.
     agent?: string;
@@ -290,7 +290,8 @@ export async function listMemories(
       ...(opts.fields ? { fields: opts.fields } : {}),
       ...(opts.previewChars ? { preview_chars: opts.previewChars } : {}),
       ...(opts.contains ? { contains: opts.contains } : {}),
-      ...(opts.tags?.length ? { tags: opts.tags } : {}),
+      // Tags as typed, matched in any case (a build that predates the flag matches exactly).
+      ...(opts.tags?.length ? { tags: opts.tags, tags_any_case: true } : {}),
     },
     opts.signal,
   );

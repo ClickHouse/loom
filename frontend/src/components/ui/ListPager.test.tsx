@@ -96,3 +96,31 @@ describe("ListPager, typed and edge pages", () => {
     expect(onPage).toHaveBeenCalledWith(1);
   });
 });
+
+// Review findings (round 2): with a page size picked, the choice stays reachable even when
+// one page holds everything; the size select is named for what it sets, and a size change
+// says where the reader now is.
+describe("ListPager, page size", () => {
+  it("keeps the page-size choice when one page holds everything", () => {
+    render(
+      <ListPager
+        label="Memories pages"
+        page={0}
+        pageSize={100}
+        total={60}
+        shown={60}
+        onPage={() => {}}
+        onPageSize={() => {}}
+      />,
+    );
+    expect(screen.getByRole("navigation", { name: "Memories pages" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rows per page" })).toBeInTheDocument();
+  });
+
+  it("hides when the list fits the smallest page", () => {
+    const { container } = render(
+      <ListPager label="x" page={0} pageSize={50} total={12} shown={12} onPage={() => {}} onPageSize={() => {}} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+});

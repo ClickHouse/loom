@@ -89,4 +89,28 @@ describe("Library: filtering by tags", () => {
     await settle();
     expect(shown()).toEqual(["Both", "Specs only"]);
   });
+
+  // Review findings: a tag the server matches nothing for showed "Your library is empty" and
+  // took the search with it; a failed read said the same and offered to add a document.
+  it("a tag that matches nothing keeps the search and offers to clear it", async () => {
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { tags?: string[] }) => ({
+      rows: opts?.tags?.length ? [] : ROWS,
+      next_cursor: null,
+    }));
+    render(<Documents />);
+    await settle();
+    await userEvent.type(screen.getByLabelText("Search library"), "tag:nomatch");
+    expect(await screen.findByText("Nothing matches tag:nomatch")).toBeInTheDocument();
+    expect(screen.queryByText("Your library is empty")).toBeNull();
+    expect(screen.getByLabelText("Search library")).toHaveValue("tag:nomatch");
+  });
+
+  it("a failed read says so and offers to retry, never the empty library", async () => {
+    api.listKnowledge.mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce({ rows: ROWS, next_cursor: null });
+    render(<Documents />);
+    expect(await screen.findByText("Couldn't load the library")).toBeInTheDocument();
+    expect(screen.queryByText("Your library is empty")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Both")).toBeInTheDocument();
+  });
 });

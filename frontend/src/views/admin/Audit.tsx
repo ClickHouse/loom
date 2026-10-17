@@ -255,7 +255,8 @@ export function Audit() {
   };
 
   // The loading button is disabled, which drops focus: once the page lands it goes back to
-  // the button while more remain, else to the first row the page added.
+  // the button while more remain, else to the first row the page added — or, when the page
+  // added none that are shown (all system events), the last row shown, else the table.
   useEffect(() => {
     const at = focusAfterLoad.current;
     if (at === null || loadingOlder) return;
@@ -264,10 +265,11 @@ export function Audit() {
       olderButton.current?.focus();
       return;
     }
-    const row = eventsTable.current?.querySelectorAll<HTMLElement>("tbody tr")[at];
-    if (row) {
-      row.tabIndex = -1;
-      row.focus();
+    const shown = eventsTable.current?.querySelectorAll<HTMLElement>("tbody tr") ?? [];
+    const target = shown[at] ?? shown[shown.length - 1] ?? eventsTable.current;
+    if (target) {
+      target.tabIndex = -1;
+      target.focus();
     }
   });
 

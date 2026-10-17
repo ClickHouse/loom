@@ -20,7 +20,7 @@ import {
   type SearchHit,
 } from "../api";
 import { sharedMine } from "../lib/sharedReads";
-import { useStore, viewHref } from "../lib/state";
+import { setViewParam, useStore, viewHref } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { relativeTime } from "../lib/format";
 import { Kbd, Loading } from "./ui";
@@ -32,6 +32,10 @@ import { paletteShortcut } from "../lib/platform";
 const MEMORY_TOP_K = 8;
 const MEMORY_DEBOUNCE_MS = 200;
 const MEMORY_MIN_CHARS = 2;
+
+/** The URL keys a view opens one object on (state.ts VIEW_QUERY_KEYS): the open task,
+ *  document, thread and memory. */
+const OBJECT_KEYS = ["task", "doc", "thread", "memory"];
 
 interface NsRow {
   namespace: string;
@@ -308,9 +312,14 @@ export function HeaderSearch({
   const documentsShown = matchedDocuments.slice(0, PER_GROUP_CAP);
 
   // A namespace switch keeps the page: the view re-reads under the new namespace, and the
-  // toast says what changed (a switch never also moves the person to another view).
+  // toast says what changed (a switch never also moves the person to another view). The
+  // URL keys that name an object of the namespace left go: it is not in the new one.
   const switchNs = (ns: string) => {
     if (!identity) return;
+    const params = new URLSearchParams(window.location.search);
+    for (const key of OBJECT_KEYS) {
+      if (params.has(key)) setViewParam(key, null, key === "memory" ? { loomInspect: null } : {});
+    }
     setIdentity({ ...identity, namespace: ns });
     setSavedNamespace(ns);
     toast(`Switched to ${ns}`, "info");

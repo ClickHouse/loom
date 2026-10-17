@@ -108,3 +108,35 @@ test.describe("phone", () => {
     await expect(box).toBeChecked();
   });
 });
+
+// Review finding: at 375 px a Library row's body shrank to nothing beside its actions, so
+// titles, descriptions and tag labels vanished.
+test.describe("phone library", () => {
+  test.use({ viewport: { width: 375, height: 800 } });
+  test("a library row keeps its title readable", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 6 });
+    await page.goto("/library");
+    const row = page.locator("[data-doc-row]").first();
+    await expect(row).toBeVisible();
+    const title = row.getByRole("button", { name: /^Preview / });
+    const box = await title.boundingBox();
+    expect(box?.width ?? 0, "the row's body has room").toBeGreaterThan(200);
+  });
+});
+
+// Review finding: the hover-tinted padding of a row opened nothing; the whole row opens it.
+test("a click on a row's padding opens it, on Memories and in the Library", async ({ page }) => {
+  await memories(page);
+  const row = page.locator("[data-card]").first();
+  const box = await row.boundingBox();
+  if (!box) throw new Error("no row");
+  await page.mouse.click(box.x + box.width - 6, box.y + box.height - 4);
+  await expect(page.locator("footer").filter({ has: page.getByRole("button", { name: "Delete" }) })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.goto("/library");
+  const doc = page.locator("[data-doc-row]").first();
+  const d = await doc.boundingBox();
+  if (!d) throw new Error("no document row");
+  await page.mouse.click(d.x + d.width / 2, d.y + d.height - 4);
+  await expect(page.getByRole("dialog")).toBeVisible();
+});

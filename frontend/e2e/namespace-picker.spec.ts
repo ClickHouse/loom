@@ -97,3 +97,23 @@ test("a row reached with Down is scrolled clear of the list's fade", async ({ pa
   expect(gap.below).toBeGreaterThanOrEqual(23);
   expect(gap.above).toBeGreaterThanOrEqual(23);
 });
+
+// Click UI's popover panel is a column flex aligned to the start: the list and the footer
+// are stretched across it, so a row's hover and current fills and the separator span the
+// popover, not the width of the longest name.
+for (const width of [1400, 375]) {
+  test(`the list rows and the footer separator span the popover at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const dialog = await openPicker(page);
+    const panel = await dialog.boundingBox();
+    const current = await dialog.locator(".ns-row[data-current]").boundingBox();
+    const footer = await dialog.locator(".border-t").boundingBox();
+    if (!panel || !current || !footer) throw new Error("picker not drawn");
+    // The same inset either side: the panel's padding, less the 8 px the list bleeds into it.
+    const left = current.x - panel.x;
+    const right = panel.x + panel.width - (current.x + current.width);
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
+    expect(left).toBeLessThan(24);
+    expect(footer.width).toBeCloseTo(current.width, 0);
+  });
+}

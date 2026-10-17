@@ -18,7 +18,7 @@ import {
   type TaskListRow,
   type TaskRow,
 } from "../api/tasks";
-import { useStore, useIdentity } from "../lib/state";
+import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { useVisiblePoll } from "../lib/hooks";
@@ -98,17 +98,6 @@ function readQuery(key: string): string | null {
     return new URLSearchParams(window.location.search).get(key);
   } catch {
     return null;
-  }
-}
-
-function writeQuery(key: string, value: string | null): void {
-  try {
-    const u = new URL(window.location.href);
-    if (value) u.searchParams.set(key, value);
-    else u.searchParams.delete(key);
-    window.history.replaceState(null, "", u.toString());
-  } catch {
-    /* nothing to write into */
   }
 }
 
@@ -245,6 +234,15 @@ export function Tasks() {
     };
   }, [caller, refreshCounts]);
 
+  // A navigation to Tasks while it is up (the bell's inbox) names the inbox in the URL:
+  // open it, when this namespace has it.
+  const navSeq = useStore((s) => s.navSeq);
+  useEffect(() => {
+    if (!inboxes || navSeq === 0) return;
+    const want = readQuery("inbox");
+    if (want && (want === ALL_INBOXES || inboxes.some((i) => i.inbox === want))) setPicked(want);
+  }, [navSeq, inboxes]);
+
   const refresh = useCallback(() => {
     if (!picked || !inboxes) return;
     const seq = ++rowsSeq.current;
@@ -267,7 +265,7 @@ export function Tasks() {
     if (!picked) return;
     setRows(null);
     setRowsError(null);
-    writeQuery("inbox", picked);
+    setViewParam("inbox", picked);
     refresh();
   }, [picked, refresh]);
   useVisiblePoll(refresh, 60_000, !!picked);
@@ -332,7 +330,7 @@ export function Tasks() {
     setFilters(NO_FILTERS);
     setSelectedId(null);
     setOpenRow(null);
-    writeQuery("task", null);
+    setViewParam("task", null);
   };
   const toggleTile = (k: Attention) => setFilters((f) => ({ ...f, attention: f.attention === k ? null : k }));
 
@@ -340,7 +338,7 @@ export function Tasks() {
     setSelectedId(r.task_id);
     setOpenRow(r);
     setReloadKey(0);
-    writeQuery("task", r.task_id);
+    setViewParam("task", r.task_id);
   }, []);
   const closeTask = useCallback(() => {
     // Closing the side panel from inside it hands the focus back to its row (the sheet's
@@ -350,7 +348,7 @@ export function Tasks() {
     if (open && from instanceof Element && from.closest(".tq-panel"))
       document.querySelector<HTMLElement>(`[data-task-id="${open.task_id}"]`)?.focus({ preventScroll: true });
     setOpenRow(null);
-    writeQuery("task", null);
+    setViewParam("task", null);
   }, []);
 
   const afterChange = useCallback(

@@ -55,3 +55,18 @@ describe("Agents: loading", () => {
     expect(screen.getByTestId("agents-table")).not.toHaveAttribute("aria-busy");
   });
 });
+
+describe("Agents: last seen", () => {
+  it("marks a client not seen for a day with a Stale badge, its time in muted text", async () => {
+    const old = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    listConnectedAgents.mockResolvedValueOnce({ rows: [ROW, { ...ROW, agent: "cursor", last_seen: old }] });
+    render(<Agents />);
+    const stale = (await screen.findByText("cursor")).closest("tr") as HTMLElement;
+    const fresh = screen.getByText("claude-code").closest("tr") as HTMLElement;
+    const badge = within(stale).getByText("Stale");
+    expect(badge.closest('[data-testid="ellipsed-badge-content"]')).not.toBeNull();
+    expect(within(stale).getByText("3d ago")).toHaveClass("text-text-muted");
+    expect(stale.querySelector(".text-warn")).toBeNull();
+    expect(within(fresh).queryByText("Stale")).toBeNull();
+  });
+});

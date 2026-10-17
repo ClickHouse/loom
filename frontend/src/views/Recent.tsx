@@ -167,6 +167,8 @@ export function Recent() {
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // Set by a tag chip, so its filter skips the typing delay.
+  const applyNow = useRef(false);
   // Ordered array (not Set) to preserve the server's relevance ranking.
   // Null = no active search.
   const [searchHits, setSearchHits] = useState<string[] | null>(null);
@@ -226,7 +228,10 @@ export function Recent() {
   const activeTags = useMemo(() => new Set(queryTags.map((t) => t.toLowerCase())), [queryTags]);
   // A card's tag adds `tag:<tag>` to the search, or takes it out again, so tags stack the
   // way typed ones do. A tag picked elsewhere in the app (searchByTag) joins the same way.
-  const toggleTag = useCallback((tag: string) => setQuery((q) => toggleQueryToken(q, `tag:${tag}`)), []);
+  const toggleTag = useCallback((tag: string) => {
+    applyNow.current = true;
+    setQuery((q) => toggleQueryToken(q, `tag:${tag}`));
+  }, []);
   useEffect(() => {
     if (!memoryTagFilter) return;
     setQuery((q) =>
@@ -407,9 +412,9 @@ export function Recent() {
       all = all.filter((e) => !e.tombstoned_at);
     }
     if (pinnedOnly) all = all.filter((e) => e.pinned);
-    // The agent chip and the `agent:` / `tag:` query syntax. The parser lowercases what
-    // was typed, so the rows' tags and agents compare lowercased too (humans and agents
-    // both write tags).
+    // The agent chip and the `agent:` / `tag:` query syntax. What was typed keeps its case,
+    // so a typed tag or agent and the rows' compare lowercased (humans and agents both
+    // write tags).
     if (queryAgent) all = all.filter((e) => (e.agent || "").toLowerCase() === queryAgent.toLowerCase());
     else if (agentFilter != null) all = all.filter((e) => (e.agent || "") === agentFilter);
     if (activeTags.size > 0) {
@@ -590,13 +595,15 @@ export function Recent() {
   const typedKey = JSON.stringify({ tags: queryTags, agent: queryAgent ?? "" });
   const [typedFilter, setTypedFilter] = useState(typedKey);
   useEffect(() => {
-    const t = setTimeout(() => setTypedFilter(typedKey), 250);
+    // A tag chip applies at once; typing waits for a pause.
+    const t = setTimeout(() => setTypedFilter(typedKey), applyNow.current ? 0 : 250);
+    applyNow.current = false;
     return () => clearTimeout(t);
   }, [typedKey]);
+  const filterPending = typedKey !== typedFilter;
   const listFilter = useMemo(() => {
     const typed = JSON.parse(typedFilter) as { tags: string[]; agent: string };
-    // A typed agent is matched in any case; agents are written lowercase.
-    return { tags: typed.tags, agent: typed.agent.toLowerCase() || agentFilter || "", pinned: pinnedOnly };
+    return { tags: typed.tags, agent: typed.agent || agentFilter || "", pinned: pinnedOnly };
   }, [typedFilter, agentFilter, pinnedOnly]);
   const listFiltered = listFilter.tags.length > 0 || listFilter.agent !== "" || listFilter.pinned;
   // A new namespace, view or filter starts at its first page, set before the read so the
@@ -611,6 +618,9 @@ export function Recent() {
   // rows on screen (marked busy) until the next ones land, and the search keeps focus.
   const shownScope = useRef("");
   const [refreshing, setRefreshing] = useState(false);
+  // The filter the rows on screen were read for: until a read of the current one lands,
+  // the old rows stay up and "nothing matches" is not said.
+  const [readFor, setReadFor] = useState("");
 
   useAbortableEffect(
     (signal, live) => {
@@ -650,9 +660,10 @@ export function Recent() {
           // Recently-deleted is a bounded 14-day grace set; fetch it in one shot
           // (no live-total pagination, which would be wrong for the deleted view).
           // A filtered list is one read of its newest 1,000 matches, with no pages.
+          const readKey = JSON.stringify(listFilter);
           const lim = showDeleted ? 500 : listFiltered ? 1000 : pageSize;
           const off = showDeleted || listFiltered ? 0 : page * pageSize;
-          const tags = [...new Set(listFilter.tags.flatMap((t) => [t, t.toLowerCase()]))];
+          const tags = listFilter.tags;
           const r = await listMemories(identity, lim, {
             include_tombstoned: showDeleted,
             offset: off,
@@ -664,7 +675,10 @@ export function Recent() {
             previewChars: MEMORIES_PREVIEW_CHARS,
           });
           if (!live()) return;
-          if (isFirst) setRefreshing(false);
+          if (isFirst) {
+            setRefreshing(false);
+            setReadFor(readKey);
+          }
           if (r.unchanged) return;
           knownVersion = r.namespace_version ?? "";
           setTruncated(listFiltered && r.truncated);
@@ -762,7 +776,9 @@ export function Recent() {
     );
   }
 
-  if (entries.length === 0) {
+  // The namespace is empty only when no filter narrowed the read; a filter that matches
+  // nothing keeps the toolbar and says so below.
+  if (entries.length === 0 && !listFiltered && !filterPending) {
     return (
       <PageContainer>
         <PageHeader title="Memories">
@@ -799,6 +815,12 @@ export function Recent() {
   // would hide the relevance ranking. Ranked results go under one heading.
   const searchActive = searchHits != null;
   const filtering = queryTags.length > 0 || !!queryAgent || agentFilter != null || pinnedOnly;
+  // The filters in force, as they read in the toolbar ("tag:api, agent:bot, Pinned").
+  const filterNames = [
+    ...queryTags.map((t) => `tag:${t}`),
+    ...(queryAgent ? [`agent:${queryAgent}`] : agentFilter != null ? [displayAgent(agentFilter)] : []),
+    ...(pinnedOnly ? ["Pinned"] : []),
+  ].join(", ");
   const clearFilters = () => {
     setQuery(rawQuery);
     setPinnedOnly(false);
@@ -1018,7 +1040,9 @@ export function Recent() {
       {/* Filter-zeroed empty state: entries exist but filters are too
           tight. Truly-empty namespace is handled by the EmptyState branch above. */}
       {flatList.length === 0 &&
-        entries.length > 0 &&
+        (entries.length > 0 || listFiltered) &&
+        readFor === JSON.stringify(listFilter) &&
+        !filterPending &&
         (showDeleted ? (
           <div className="py-12 text-center">
             <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
@@ -1037,11 +1061,9 @@ export function Recent() {
             <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
               <Icon name="clock" size="md" aria-hidden="true" />
             </div>
-            <h2>Nothing matches your filters</h2>
+            <h2>Nothing matches {filterNames || "your filters"}</h2>
             <p className="mt-1 text-sm text-text-muted leading-relaxed">
-              {(total || entries.length).toLocaleString()} memor
-              {(total || entries.length) === 1 ? "y is" : "ies are"} in this namespace, but none pass the active
-              filters.
+              No memory in this namespace passes the filters in force.
             </p>
             <Button
               type="secondary"
@@ -1065,7 +1087,7 @@ export function Recent() {
         </p>
       )}
       {/* Where a page change takes the reader: a heading a screen reader announces. */}
-      <h2 id="memories-list-top" tabIndex={-1} className="sr-only">
+      <h2 id="memories-list-top" tabIndex={-1} className="sr-only focus:not-sr-only focus:mb-2 focus:text-sm">
         Memories, page {page + 1}
       </h2>
       <div className="space-y-6" aria-busy={refreshing || undefined}>
@@ -1136,6 +1158,7 @@ export function Recent() {
                         <Button
                           type="empty"
                           htmlType="button"
+                          className="relative z-[1]"
                           onClick={async (ev) => {
                             ev.stopPropagation();
                             // Identity carries only (org, namespace, agent);

@@ -112,6 +112,25 @@ describe("TaskInboxBell", () => {
     expect(new URLSearchParams(window.location.search).get("inbox")).toBe("pool");
   });
 
+  it("opens an inbox as a new entry, leaving the page it left as it was", async () => {
+    seed(viewer, [row("viewer")]);
+    window.history.replaceState({ loomInspect: { key: "a/b", agent: "*" } }, "", "/memories?memory=a%2Fb");
+    const user = userEvent.setup();
+    render(<TaskInboxBell />);
+    await screen.findByText("3");
+    await user.click(screen.getByRole("button", { name: "Tasks waiting for a person, 3" }));
+    await user.click(screen.getByText("pool"));
+    expect(window.location.pathname).toBe("/tasks");
+    expect(window.location.search).toBe("?inbox=pool");
+    // Back: the page left keeps its URL and the state the app keeps in it.
+    await act(async () => {
+      window.history.back();
+      await new Promise((r) => window.addEventListener("popstate", r, { once: true }));
+    });
+    expect(window.location.pathname + window.location.search).toBe("/memories?memory=a%2Fb");
+    expect((window.history.state as Record<string, unknown>).loomInspect).toEqual({ key: "a/b", agent: "*" });
+  });
+
   it("a count read for the namespace it moved off never badges the new one", async () => {
     // team has 5 in triage, other has none; team's task.counts resolves after the switch.
     const triage = [{ inbox: "pool", status: "triage", blocked_on: "", n: 5, oldest: "2026-09-20T01:00:00" }];

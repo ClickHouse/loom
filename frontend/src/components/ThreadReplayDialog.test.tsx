@@ -1,6 +1,7 @@
-import { cleanup, render, screen } from "../test/rtl";
+import { cleanup, render, screen, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationThreadDetail } from "../api";
+import { shortDate } from "../lib/format";
 import { ThreadReplayDialog } from "./ThreadReplayDialog";
 
 // The replay's turns are told apart by a neutral role badge, not by coloured rails; the
@@ -71,5 +72,26 @@ describe("ThreadReplayDialog", () => {
     const hit = document.querySelector<HTMLElement>("[data-highlighted]");
     expect(hit?.textContent).toContain("ran the tests");
     expect(hit?.className).toContain("--click-card-horizontal-default-color-stroke-active");
+  });
+
+  it("names the thread's agent in the neutral agent badge, and dates an old thread by its day", async () => {
+    const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
+    getConversationThread.mockResolvedValue({
+      ...detail,
+      updated_at: old,
+      messages: detail.messages.map((m) => ({ ...m, ts: old })),
+    } as ConversationThreadDetail);
+    render(
+      <ThreadReplayDialog identity={identity} thread={{ thread_id: "t-1", namespace: "ns" }} onClose={() => {}} />,
+    );
+    const meta = (await screen.findByText("3 messages")).parentElement as HTMLElement;
+    const agent = within(meta).getByText("planner");
+    expect(agent.closest('[data-testid="ellipsed-badge-content"]')).not.toBeNull();
+    expect(agent.closest(".font-mono")).toBeNull();
+    expect(meta).toHaveTextContent(`updated ${shortDate(old)}`);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).not.toMatch(/\d+\/\d+\/\d{4}/);
+    const times = [...dialog.querySelectorAll("time")].map((t) => t.firstChild?.textContent);
+    expect(times).toEqual([shortDate(old), shortDate(old), shortDate(old)]);
   });
 });

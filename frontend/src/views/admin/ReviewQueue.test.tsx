@@ -260,4 +260,25 @@ describe("ReviewQueue", () => {
     expect(within(table).getByRole("button", { name: "k/two" })).toBeInTheDocument();
     expect(screen.getByText("1 of 1")).toBeInTheDocument();
   });
+
+  it("keeps a conflict decided while Load more reads out of the queue", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(3);
+    let answer: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
+    vi.mocked(listConflicts).mockImplementation(async (_id, opts) =>
+      opts?.before_version
+        ? new Promise((r) => (answer = r))
+        : { rows: [conflict("k/one"), conflict("k/two")], next_before_version: 7 },
+    );
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    await waitFor(() => expect(within(table).queryByRole("button", { name: "k/one" })).toBeNull(), WAIT);
+    await act(async () => answer({ rows: [conflict("k/three")], next_before_version: null }));
+    await waitFor(() => expect(within(table).getByRole("button", { name: "k/three" })).toBeInTheDocument(), WAIT);
+    expect(within(table).queryByRole("button", { name: "k/one" })).toBeNull();
+    expect(within(table).getByRole("button", { name: "k/two" })).toBeInTheDocument();
+  });
 });

@@ -2627,6 +2627,11 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       if (rowsFor.current !== `${id.org}/${id.namespace}`) {
         rowsFor.current = `${id.org}/${id.namespace}`;
         setRows(null);
+        // Another branch starts at its first page; the read runs again with it.
+        if (offset !== 0) {
+          setOffset(0);
+          return;
+        }
       }
       setRefreshing(true);
       const pr = parseInt(prSettled, 10);

@@ -181,4 +181,45 @@ describe("Memories: filtering by tags", () => {
     expect(vi.mocked(listMemories).mock.calls.at(-1)?.[1]).toBe(1000);
     expect(screen.queryByRole("navigation", { name: "Memories pages" })).toBeNull();
   });
+
+  // Review finding: a filter the server matches nothing for showed the empty-namespace page
+  // and took the toolbar with it, so the filter could not be cleared.
+  it("a filter that matches nothing keeps the toolbar and offers to clear it", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.tags?.length
+        ? { entries: [], total: 0, today: 0, truncated: false }
+        : { entries: [entry("both", ["Alerts", "storage"])], total: 1, today: 1, truncated: false },
+    );
+    await openMemories();
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:nomatch");
+    expect(await screen.findByText("Nothing matches tag:nomatch")).toBeInTheDocument();
+    expect(screen.queryByText("No memories yet")).toBeNull();
+    expect(screen.getByLabelText("Search memories")).toHaveValue("tag:nomatch");
+    await userEvent.click(screen.getAllByRole("button", { name: "Clear filters" }).at(-1)!);
+    expect(await screen.findByText("both")).toBeInTheDocument();
+  });
+
+  // Review finding: the current page was filtered on the client first, so "Nothing matches"
+  // flashed before the server's answer; a tag chip waited out the typing delay.
+  it("keeps the rows up while a filtered read is in flight, and a tag chip asks at once", async () => {
+    let answer: (v: never) => void = () => {};
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.tags?.length
+        ? await new Promise<never>((r) => (answer = r))
+        : {
+            entries: [entry("both", ["Alerts", "storage"]), entry("storage_only", ["storage"])],
+            total: 2,
+            today: 2,
+            truncated: false,
+          },
+    );
+    await openMemories();
+    await userEvent.click(within(card("storage_only")).getByRole("button", { name: "Filter by tag storage" }));
+    await waitFor(() => expect(vi.mocked(listMemories).mock.calls.at(-1)?.[2]).toMatchObject({ tags: ["storage"] }), {
+      timeout: 150,
+    });
+    expect(screen.queryByText(/^Nothing matches/)).toBeNull();
+    answer({ entries: [entry("storage_only", ["storage"])], total: 1, today: 1, truncated: false } as never);
+    expect(await screen.findByText("storage_only")).toBeInTheDocument();
+  });
 });

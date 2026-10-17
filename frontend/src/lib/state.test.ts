@@ -221,6 +221,16 @@ describe("the object a page shows is in its URL", () => {
     expect(window.location.search).toBe("");
   });
 
+  // A memory belongs to its namespace: switching namespace, from any picker, closes it.
+  it("switching namespace closes the open memory", () => {
+    useStore.setState({ inspectedMemoryKey: "api/rate-limit" });
+    useStore.getState().setIdentity({ ...identity, namespace: "other" });
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+    useStore.setState({ inspectedMemoryKey: "api/rate-limit" });
+    useStore.getState().setIdentity({ ...identity, namespace: "other", agent: "x" });
+    expect(useStore.getState().inspectedMemoryKey).toBe("api/rate-limit");
+  });
+
   it("opening a document or a thread from elsewhere pushes its URL", () => {
     setLocation("/memories");
     useStore.getState().openDocument("docs/a.md");

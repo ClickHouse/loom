@@ -46,4 +46,21 @@ describe("opening a tracker source", () => {
     expect(useStore.getState()).toMatchObject({ view: "graph", identity: { namespace: "tracker-clickhouse" } });
     expect(toast).toHaveBeenCalledWith("Switched to tracker-clickhouse", "info");
   });
+
+  it("Back to Repositories lands in the namespace it left, once", async () => {
+    const first = renderHook(() => useRecordActions("dev", async () => {}));
+    act(() => first.result.current.open(ns));
+    first.unmount();
+    await act(async () => {
+      history.back();
+      await new Promise((r) => window.addEventListener("popstate", r, { once: true }));
+    });
+    expect(location.pathname + location.search).toBe("/repositories?repo=loom");
+    // The Repositories page mounts again on the entry it left.
+    renderHook(() => useRecordActions("dev", async () => {}));
+    expect(useStore.getState().identity?.namespace).toBe("code-loom");
+    expect(toast).toHaveBeenLastCalledWith("Switched back to code-loom", "info");
+    // Said once: the entry no longer asks for it, so a later switch made here survives a reload.
+    expect((history.state as Record<string, unknown>).loomNamespaceLeft).toBeUndefined();
+  });
 });

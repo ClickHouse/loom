@@ -75,17 +75,8 @@ export function TaskInboxBell() {
 
   const openInbox = (inbox: string) => {
     setOpen(false);
-    // The Tasks view owns `?inbox=` (state.ts VIEW_QUERY_KEYS), so setting
-    // it before the navigation carries it into the view's URL.
-    try {
-      const u = new URL(window.location.href);
-      u.searchParams.set("inbox", inbox);
-      u.searchParams.delete("task");
-      window.history.replaceState(null, "", u.toString());
-    } catch {
-      /* no URL to carry it in */
-    }
-    useStore.getState().setView("tasks");
+    // A new entry for Tasks on that inbox: the page being left keeps its URL and state.
+    useStore.getState().navigate("tasks", { query: { inbox } });
   };
 
   const tip =

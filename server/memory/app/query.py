@@ -294,6 +294,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
+            tags_any_case=input.tags_any_case,
             contains=input.contains or None,
             order_by="created_at_desc",
             limit=input.limit + 1,
@@ -322,6 +323,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         input.prefix or "",
         input.source_trace or "",
         tuple(tags or ()),
+        bool(input.tags_any_case),
         input.contains or "",
         bool(input.include_tombstoned),
         str(input.as_of or ""),
@@ -339,6 +341,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
+            tags_any_case=input.tags_any_case,
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
             as_of=input.as_of,
@@ -353,6 +356,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
+            tags_any_case=input.tags_any_case,
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
             created_since=_today_start,
@@ -457,8 +461,8 @@ async def _list_by_score(
         where.append("startsWith(memory_key, {p:String})")
         params["p"] = input.prefix
     if tags:
-        where.append("hasAny(tags, {tags:Array(String)})")
-        params["tags"] = tags
+        clause, params["tags"] = memory_repo.tag_filter(tags, any_case=input.tags_any_case)
+        where.append(clause)
     if input.contains:
         where.append(memory_repo.CONTAINS_PREDICATE)
         params["contains"] = input.contains

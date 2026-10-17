@@ -190,7 +190,8 @@ export const MemoryCard = memo(function MemoryCard({
 
   if (embedded) {
     return (
-      <div data-memory-key={entry.memory_key} className="group relative">
+      // Not positioned: the open button's stretch covers the whole row it sits in.
+      <div data-memory-key={entry.memory_key} className="group">
         {body}
       </div>
     );

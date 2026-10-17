@@ -17,9 +17,10 @@
  * disclosure for an admin of a registry source (`canAdminister`). The dialogs load on
  * first open.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { useStore } from "../lib/state";
+import { patchEntry } from "../lib/place";
 import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/format";
 import { listTrackerSources, listMine, setSavedNamespace } from "../api";
@@ -135,6 +136,18 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
   const setIdentity = useStore((s) => s.setIdentity);
   const navigate = useStore((s) => s.navigate);
   const [busy, setBusy] = useState<string | null>(null);
+  // Back from a tracker's Patterns board: the entry Open left names the namespace it was
+  // in (the namespace is not in the URL), and arriving on it switches back, once.
+  useEffect(() => {
+    const left = (history.state as Record<string, unknown> | null)?.loomNamespaceLeft;
+    if (typeof left !== "string") return;
+    patchEntry({ loomNamespaceLeft: undefined });
+    const now = useStore.getState().identity;
+    if (!now || now.namespace === left) return;
+    setIdentity({ ...now, namespace: left });
+    setSavedNamespace(left);
+    toast(`Switched back to ${left}`, "info");
+  }, []);
   const target = (ns: TrackerSourceNamespace): JoinTarget => ({
     org,
     namespace: ns.namespace,
@@ -192,10 +205,11 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
     }
   };
   /** Open = the picker on that tracker namespace and the Graph view in Patterns mode, as
-   *  a new history entry with a way back to Repositories. The namespace switch is said in
-   *  a toast, so the side effect of the jump is never silent. */
+   *  a new history entry with a way back to Repositories (in the namespace it left). The
+   *  namespace switch is said in a toast, so the side effect of the jump is never silent. */
   const open = (ns: TrackerSourceNamespace) => {
     if (!identity) return;
+    patchEntry({ loomNamespaceLeft: identity.namespace });
     setIdentity({ ...identity, namespace: ns.namespace });
     setSavedNamespace(ns.namespace);
     navigate("graph", { query: { mode: "patterns" }, back: "Repositories" });

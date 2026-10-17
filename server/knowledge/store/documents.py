@@ -234,6 +234,7 @@ async def list_with_chunk_counts(
     *,
     include_superseded: bool = False,
     tags: list[str] | None = None,
+    tags_any_case: bool = False,
     uri_prefixes: list[str] | None = None,
     cursor: tuple[datetime, str] | None = None,
     limit: int = 50,
@@ -255,7 +256,11 @@ async def list_with_chunk_counts(
     # FINAL subquery below, not the post-join scope.
     if not include_superseded:
         extra_where += " AND superseded_at IS NULL"
-    if tags:
+    if tags and tags_any_case:
+        # The row's tags and the asked ones compared lowercased (a browse page's filter).
+        extra_where += " AND hasAny(arrayMap(t -> lower(t), tags), {tags:Array(String)})"
+        params["tags"] = [t.lower() for t in tags]
+    elif tags:
         extra_where += " AND hasAny(tags, {tags:Array(String)})"
         params["tags"] = tags
     live_prefixes = [p for p in (uri_prefixes or []) if p]

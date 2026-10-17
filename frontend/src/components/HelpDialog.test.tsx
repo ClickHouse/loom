@@ -41,6 +41,8 @@ describe("HelpDialog", () => {
     const { unmount } = render(<HelpDialog open onOpenChange={() => {}} />);
     const first = screen.getAllByRole("term")[0];
     expect([...first.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["Ctrl", "K"]);
+    // Held together, not one after the other like "g m".
+    expect(first).toHaveTextContent("Ctrl+K");
     unmount();
     vi.stubGlobal("navigator", { ...navigator, platform: "MacIntel" });
     render(<HelpDialog open onOpenChange={() => {}} />);
@@ -61,5 +63,23 @@ describe("HelpDialog", () => {
     expect(singleKeyShortcutsOn()).toBe(false);
     fireEvent.click(toggle);
     expect(singleKeyShortcutsOn()).toBe(true);
+  });
+
+  it("draws search syntax as code, not as keys, and a sequence without a plus", () => {
+    render(<HelpDialog open onOpenChange={() => {}} />);
+    const tag = screen.getByText("tag:work");
+    expect(tag.tagName).toBe("CODE");
+    expect(tag.closest("kbd")).toBeNull();
+    const goMemories = [...document.querySelectorAll("dd")].find((d) => d.textContent === "Go to Memories");
+    const seq = goMemories?.previousElementSibling as HTMLElement;
+    expect([...seq.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["g", "m"]);
+    expect(seq).not.toHaveTextContent("+");
+  });
+
+  it("scrolls with the dialog, not in a second scroll region of its own", () => {
+    render(<HelpDialog open onOpenChange={() => {}} />);
+    const list = screen.getByRole("region", { name: "Keyboard shortcuts" });
+    expect(list.className).not.toMatch(/max-h|overflow/);
+    expect(list).not.toHaveAttribute("tabindex");
   });
 });

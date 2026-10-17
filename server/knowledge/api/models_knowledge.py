@@ -358,6 +358,9 @@ class KnowledgeListInput(BaseModel):
     org: str
     namespace: str
     tags: list[str] = Field(default_factory=list)  # ANY-match filter
+    # Match `tags` in any case (the Library's `tag:specs` finds `Specs`); off, exactly. A
+    # build that predates it ignores it and matches exactly.
+    tags_any_case: bool = False
     # Directory scope: documents whose source_uri starts
     # with one of these prefixes; empty = whole namespace.
     uri_prefix: list[str] = Field(default_factory=list, max_length=8)

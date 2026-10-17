@@ -198,8 +198,12 @@ function ConflictsPanel() {
         { limit: CONFLICT_PAGE, before_version: next },
       );
       if (rowsFor.current !== key) return;
-      const have = new Set(rows.map((c) => c.memory_id));
-      setRows([...rows, ...r.rows.filter((c) => !have.has(c.memory_id))]);
+      // Against the rows as they are now: a conflict decided while this read was out stays gone.
+      setRows((prev) => {
+        if (!prev) return prev;
+        const have = new Set(prev.map((c) => c.memory_id));
+        return [...prev, ...r.rows.filter((c) => !have.has(c.memory_id))];
+      });
       setNext(r.next_before_version);
     } catch (e) {
       toast(`Couldn't load more conflicts: ${humanizeError(e)}`, "error");

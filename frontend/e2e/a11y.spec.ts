@@ -559,6 +559,24 @@ test("the single-key shortcuts turn off from the help dialog", async ({ page }) 
   await expect(help).toBeHidden();
 });
 
+// The help dialog scrolls as one: Click UI's dialog body, never a second region inside it.
+test("the help dialog has one scroll region on a short window, and is axe-clean", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 520 });
+  await open(page, "/memories");
+  await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeVisible();
+  const scrollers = await help.evaluate(
+    (dialog) =>
+      [dialog, ...dialog.querySelectorAll("*")].filter((el) => {
+        const y = getComputedStyle(el).overflowY;
+        return (y === "auto" || y === "scroll") && el.scrollHeight > el.clientHeight + 1;
+      }).length,
+  );
+  expect(scrollers).toBe(1);
+  expect(await violations(page)).toEqual([]);
+});
+
 test("reduced motion stops Click UI's dialog animation", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await open(page, "/memories");

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as RadixPopover from "@radix-ui/react-popover";
@@ -191,6 +191,20 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
     if (onWalkEntity) onWalkEntity(entity);
     else openGraphAt(entity, { from: `memory ${memoryKey}`, focusKey: entityFocusKey(entity) });
   };
+  // The rows sharing an entity with this memory, read once for it: every entity popover
+  // keeps the ones that share its entity. A failed read is asked again on the next open.
+  const mentionsRead = useRef<{ key: string; read: Promise<RelatedMemoryRow[]> } | null>(null);
+  const readMentions = useCallback(() => {
+    const key = `${identity.org}/${identity.namespace}/${memoryKey}`;
+    if (mentionsRead.current?.key !== key) {
+      const read = memoryRelated(identity, memoryKey, MENTION_READ).then((r) => r.results ?? []);
+      read.catch(() => {
+        if (mentionsRead.current?.read === read) mentionsRead.current = null;
+      });
+      mentionsRead.current = { key, read };
+    }
+    return mentionsRead.current.read;
+  }, [identity, memoryKey]);
 
   // Escape: cancels an active edit first; while a field has focus it is
   // left to the field; otherwise it closes the drawer. Radix only delivers
@@ -803,7 +817,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
                           key={en}
                           entity={en}
                           identity={identity}
-                          memoryKey={memoryKey}
+                          readMentions={readMentions}
                           onInspect={inspectInPlace}
                           onWalk={walkEntity}
                         />
@@ -876,7 +890,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
                                   key={en}
                                   entity={en}
                                   identity={identity}
-                                  memoryKey={memoryKey}
+                                  readMentions={readMentions}
                                   onInspect={inspectInPlace}
                                   onWalk={walkEntity}
                                 />
@@ -1698,13 +1712,13 @@ const POPOVER_LIST = 5;
 function EntityChip({
   entity,
   identity,
-  memoryKey,
+  readMentions,
   onInspect,
   onWalk,
 }: {
   entity: string;
   identity: Identity;
-  memoryKey: string;
+  readMentions: () => Promise<RelatedMemoryRow[]>;
   onInspect: (key: string) => void;
   onWalk: (entity: string) => void;
 }) {
@@ -1759,7 +1773,7 @@ function EntityChip({
           <EntitySummary
             entity={entity}
             identity={identity}
-            memoryKey={memoryKey}
+            readMentions={readMentions}
             onInspect={(key) => leave(() => onInspect(key))}
             onWalk={() => leave(() => onWalk(entity))}
           />
@@ -1770,18 +1784,18 @@ function EntityChip({
 }
 
 /** The popover's body: what the entity is and where else it appears. Reads when opened —
- *  `memory.related` (the rows sharing an entity with this memory, kept to the ones sharing
- *  this one) and one hop of `facts.related`. */
+ *  the memory's `memory.related` rows (read once per memory, kept to the ones sharing
+ *  this entity) and one hop of `facts.related`. */
 function EntitySummary({
   entity,
   identity,
-  memoryKey,
+  readMentions,
   onInspect,
   onWalk,
 }: {
   entity: string;
   identity: Identity;
-  memoryKey: string;
+  readMentions: () => Promise<RelatedMemoryRow[]>;
   onInspect: (key: string) => void;
   onWalk: () => void;
 }) {
@@ -1797,10 +1811,9 @@ function EntitySummary({
   useEffect(() => {
     let live = true;
     const want = entity.toLowerCase();
-    memoryRelated(identity, memoryKey, MENTION_READ)
-      .then((r) => {
+    readMentions()
+      .then((rows) => {
         if (!live) return;
-        const rows = r.results ?? [];
         const keys = rows
           .filter((row) => row.shared_entities.some((e) => e.toLowerCase() === want))
           .map((row) => row.memory_key);
@@ -1819,7 +1832,7 @@ function EntitySummary({
     return () => {
       live = false;
     };
-  }, [entity, identity, memoryKey]);
+  }, [entity, identity, readMentions]);
 
   // This memory mentions it too.
   const total = mentions ? mentions.keys.length + 1 : 0;

@@ -75,6 +75,11 @@ function NamespacePickerMenu() {
   const [createOpen, setCreateOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<KindGroup, boolean>>({ code: false, tracker: false });
   const [showAll, setShowAll] = useState<Record<KindGroup, boolean>>({ code: false, tracker: false });
+  // A group someone folded or opened while searching: it overrides the search's own opening
+  // until the search is cleared.
+  const [searchOpen, setSearchOpen] = useState<Partial<Record<KindGroup, boolean>>>({});
+  // The row "Show all" hands the focus to, once it is drawn (the button itself goes away).
+  const [focusNav, setFocusNav] = useState<string | null>(null);
   // The option that holds the list's one tab stop (the last one focused).
   const [active, setActive] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -101,6 +106,7 @@ function NamespacePickerMenu() {
     if (open) {
       setOpenGroups({ code: currentGroup === "code", tracker: currentGroup === "tracker" });
       setShowAll({ code: false, tracker: false });
+      setSearchOpen({});
       setActive(null);
     } else setQuery("");
   }, [open]);
@@ -184,10 +190,11 @@ function NamespacePickerMenu() {
     { title: "Joined", all: joined, rows: sort(joined) },
     { title: "From your token", all: transient, rows: sort(transient) },
   ];
-  // A group is open while a search has matches in it, or once someone opened it.
+  // A group is open while a search has matches in it (unless someone folded it), or once
+  // someone opened it.
   const groups = KIND_GROUPS.map((g) => {
     const rows = sortByName(kinds[g]);
-    const expanded = q ? rows.length > 0 : openGroups[g];
+    const expanded = q ? (searchOpen[g] ?? rows.length > 0) : openGroups[g];
     const shown = expanded ? (showAll[g] ? rows : rows.slice(0, GROUP_CAP)) : [];
     return { g, all: kinds[g], rows, expanded, shown, more: expanded && rows.length > shown.length };
   }).filter((x) => (q ? x.rows.length > 0 : x.all.length > 0));
@@ -205,7 +212,13 @@ function NamespacePickerMenu() {
   const tabStop =
     active && navKeys.includes(active) ? active : navKeys.includes(`ns:${current}`) ? `ns:${current}` : navKeys[0];
   const tabIndexOf = (key: string) => (key === tabStop ? 0 : -1);
-  const [fade, updateFade] = useScrollFade(listRef, [open, known, query, openGroups, showAll, showSystem]);
+  const [fade, updateFade] = useScrollFade(listRef, [open, known, query, openGroups, searchOpen, showAll, showSystem]);
+
+  useLayoutEffect(() => {
+    if (!focusNav) return;
+    listRef.current?.querySelector<HTMLElement>(`[data-nav="${CSS.escape(focusNav)}"]`)?.focus();
+    setFocusNav(null);
+  }, [focusNav]);
 
   const systemHiddenCount = !showSystem
     ? (allRows || []).filter((r) => isSystemShaped(r) && r.namespace !== current).length
@@ -306,7 +319,10 @@ function NamespacePickerMenu() {
           aria-label="Search namespaces"
           ref={inputRef}
           value={query}
-          onChange={(v) => setQuery(v)}
+          onChange={(v) => {
+            setQuery(v);
+            if (!v) setSearchOpen({});
+          }}
           placeholder="Search namespaces…"
           // Down moves into the list, to its tab stop.
           onKeyDown={(e) => {
@@ -323,7 +339,9 @@ function NamespacePickerMenu() {
         {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: the same roving focus; the keys go to the buttons inside */}
         <div
           ref={listRef}
-          className="scroll-fade flex-1 overflow-y-auto -mx-2"
+          // Stretched across the popover: its panel is a column flex that aligns to the start,
+          // and the rows' hover and current fills span the list.
+          className="scroll-fade self-stretch flex-1 overflow-y-auto -mx-2"
           data-fade={fade}
           onScroll={updateFade}
           onKeyDown={onListKey}
@@ -369,7 +387,11 @@ function NamespacePickerMenu() {
               searching={!!q}
               expanded={x.expanded}
               tabIndex={tabIndexOf(`group:${x.g}`)}
-              onToggle={() => setOpenGroups((o) => ({ ...o, [x.g]: !x.expanded }))}
+              onToggle={() =>
+                q
+                  ? setSearchOpen((o) => ({ ...o, [x.g]: !x.expanded }))
+                  : setOpenGroups((o) => ({ ...o, [x.g]: !x.expanded }))
+              }
             >
               {x.shown.map((r) => (
                 <NamespaceRow key={r.namespace} r={r} {...rowProps} kindRow />
@@ -382,7 +404,10 @@ function NamespacePickerMenu() {
                   fillWidth
                   data-nav={`more:${x.g}`}
                   tabIndex={tabIndexOf(`more:${x.g}`)}
-                  onClick={() => setShowAll((m) => ({ ...m, [x.g]: true }))}
+                  onClick={() => {
+                    setShowAll((m) => ({ ...m, [x.g]: true }));
+                    setFocusNav(`ns:${x.rows[x.shown.length].namespace}`);
+                  }}
                 >
                   {`Show all ${x.rows.length}`}
                 </Button>
@@ -391,7 +416,7 @@ function NamespacePickerMenu() {
           ))}
         </div>
 
-        <div className="flex flex-col items-stretch border-t border-border pt-2 -mx-2">
+        <div className="self-stretch flex flex-col items-stretch border-t border-border pt-2 -mx-2">
           {systemHiddenCount > 0 && (
             <Button type="empty" htmlType="button" align="left" onClick={() => setShowSystem(true)}>
               Show {systemHiddenCount} system / bench namespace{systemHiddenCount === 1 ? "" : "s"}
