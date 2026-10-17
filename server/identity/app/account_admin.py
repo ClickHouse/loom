@@ -166,6 +166,9 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
             raise ValueError(f"{org}/{namespace} is not an active password account")
         was = str(row["contact_email"]).lower()
         if was == email:
+            if (org, namespace) in await sso_links.linked(email):
+                raise ValueError(f"{org}/{namespace} is linked to {email} already")
+            # A link that wrote the address and stopped before linking it.
             raise ValueError(f"{org}/{namespace} already names {email}: adopt it instead")
         other = await get_client().query_one(
             "SELECT org, namespace FROM loom.namespaces FINAL "

@@ -1,4 +1,4 @@
-"""`loom sso adopt | unlink | password-link`: carry password accounts over to
+"""`loom sso adopt | link | unlink | password-link`: carry password accounts over to
 single sign-on, and back off it (server/identity/app/account_admin.py)."""
 
 from __future__ import annotations
@@ -57,14 +57,16 @@ def register_sso_cli(sub: Any) -> None:
     p_unlink.add_argument("--email", required=True)
     add_apply_flags(p_unlink, writes="remove the links")
     p_unlink.set_defaults(func=_cmd_unlink)
-    p_link = sso.add_parser(
+    p_password_link = sso.add_parser(
         "password-link",
         help="Print a one-time link (a day) that sets the password of an email's SSO "
         "accounts, for after single sign-on is turned off.",
     )
-    p_link.add_argument("--email", required=True)
-    p_link.add_argument("--org", default="", help="Needed when the email has accounts in several")
-    p_link.set_defaults(func=_cmd_password_link)
+    p_password_link.add_argument("--email", required=True)
+    p_password_link.add_argument(
+        "--org", default="", help="Needed when the email has accounts in several"
+    )
+    p_password_link.set_defaults(func=_cmd_password_link)
 
 
 def _by() -> str:

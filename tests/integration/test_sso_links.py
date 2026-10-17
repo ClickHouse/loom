@@ -15,6 +15,7 @@ import pytest
 
 from server.auth import login, sso_links
 from server.core.ch import get_client, own_write_reads
+from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.asyncio
 
@@ -79,7 +80,7 @@ async def _resolve(email: str) -> Any:
 
 async def test_adopt_makes_the_password_account_the_sso_one(ch: Any) -> None:
     domain = f"adopt-{uuid.uuid4().hex[:6]}.example"
-    org, email = f"sso-it-{uuid.uuid4().hex[:6]}", f"lee@{domain}"
+    org, email = unique_org("sso"), f"lee@{domain}"
     namespace = await _password_account(ch, org, email)
     elsewhere = await _password_account(ch, org, f"lee@other-{domain}")
     assert await _resolve(email) is None  # an unverified address reaches nothing
@@ -103,7 +104,7 @@ async def test_adopting_an_offboarded_subject_keeps_it_offboarded(ch: Any) -> No
     from server.auth import revocation
 
     domain = f"adopt-{uuid.uuid4().hex[:6]}.example"
-    org, email = f"sso-it-{uuid.uuid4().hex[:6]}", f"eve@{domain}"
+    org, email = unique_org("sso"), f"eve@{domain}"
     await _password_account(ch, org, email)
     await revocation.revoke(email, reason="offboarded")
     _sso("adopt", "--domain", domain, "--apply")
@@ -117,7 +118,7 @@ async def test_adopting_an_offboarded_subject_keeps_it_offboarded(ch: Any) -> No
 
 
 async def test_a_link_skips_an_account_released_since_it_was_found(ch: Any) -> None:
-    org, email = f"sso-it-{uuid.uuid4().hex[:6]}", f"lee-{uuid.uuid4().hex[:6]}@example.com"
+    org, email = unique_org("sso"), f"lee-{uuid.uuid4().hex[:6]}@example.com"
     kept, released = (
         await _password_account(ch, org, email),
         await _password_account(ch, org, email),
@@ -136,7 +137,7 @@ async def test_a_link_skips_an_account_released_since_it_was_found(ch: Any) -> N
 
 async def test_link_points_an_account_from_another_address_at_the_provider_one(ch: Any) -> None:
     # Registered with a personal address; the provider knows them by the company one.
-    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    org = unique_org("sso")
     personal, work = f"nik@home-{org}.example", f"nik@corp-{org}.example"
     namespace = await _password_account(ch, org, personal, owner="nik")
     assert await _resolve(work) is None
@@ -149,6 +150,8 @@ async def test_link_points_an_account_from_another_address_at_the_provider_one(c
 
     subject, got_org, namespaces, _ = await _resolve(work)
     assert (subject, got_org, namespaces) == ("nik", org, [namespace])  # same subject, same data
+    again = _sso_refused("link", "--email", work, "--org", org, "--namespace", namespace)
+    assert again.returncode == 2 and "linked to" in again.stderr  # a re-run says so
     with own_write_reads():
         revoked = await ch.query_one(
             "SELECT count() AS n FROM loom.revoked_tokens WHERE jti LIKE {s:String}",
@@ -167,7 +170,7 @@ async def test_link_points_an_account_from_another_address_at_the_provider_one(c
 async def test_link_refuses_an_address_that_still_holds_grants(ch: Any) -> None:
     # Granted to the old address by name, they would reach no one once it is
     # untied, or whoever registers it next.
-    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    org = unique_org("sso")
     personal = f"kim@home-{org}.example"
     namespace = await _password_account(ch, org, personal, owner="kim")
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
@@ -217,20 +220,15 @@ async def _grant(
 async def test_link_keeps_a_grant_revoked_under_the_old_address_revoked(ch: Any) -> None:
     # The revoked row caps the person's tokens on `secret` through the address;
     # untied, it would cap nothing and the token's claim would stand again.
-    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    org = unique_org("sso")
     personal = f"dee@home-{org}.example"
     namespace = await _password_account(ch, org, personal, owner="dee")
     await _grant(ch, org, "secret", "Dee@Home-" + personal.split("@home-")[1], revoked=True)
-    _sso(
-        "link",
-        "--email",
-        f"dee@corp-{org}.example",
-        "--org",
-        org,
-        "--namespace",
-        namespace,
-        "--apply",
-    )
+    work = f"dee@corp-{org}.example"
+    planned = _sso("link", "--email", work, "--org", org, "--namespace", namespace)
+    assert "so revoked for dee too: secret" in planned
+    done = _sso("link", "--email", work, "--org", org, "--namespace", namespace, "--apply")
+    assert "revoked for dee too: secret" in done  # what it carried, not what it planned
     with own_write_reads():
         carried = await ch.query_one(
             "SELECT role, revoked_at FROM loom.namespace_grants FINAL WHERE org = {org:String} "
@@ -241,7 +239,7 @@ async def test_link_keeps_a_grant_revoked_under_the_old_address_revoked(ch: Any)
 
 
 async def test_link_finds_an_old_address_grant_whatever_its_case(ch: Any) -> None:
-    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    org = unique_org("sso")
     personal = f"bo@home-{org}.example"
     namespace = await _password_account(ch, org, personal, owner="bo")
     await _grant(ch, org, "team", personal.upper(), revoked=False)
@@ -254,7 +252,7 @@ async def test_link_finds_an_old_address_grant_whatever_its_case(ch: Any) -> Non
 async def test_link_leaves_the_subjects_own_live_grant_alone(ch: Any) -> None:
     # The address's revoked row never capped the subject's own live grant (the
     # highest live rank across the person's spellings wins), so nothing is carried.
-    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    org = unique_org("sso")
     personal = f"em@home-{org}.example"
     namespace = await _password_account(ch, org, personal, owner="em")
     await _grant(ch, org, "team", "em", revoked=False)
@@ -279,7 +277,7 @@ async def test_link_leaves_the_subjects_own_live_grant_alone(ch: Any) -> None:
 
 
 async def test_link_refuses_while_the_old_address_asks_to_join(ch: Any) -> None:
-    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    org = unique_org("sso")
     personal = f"jo@home-{org}.example"
     namespace = await _password_account(ch, org, personal, owner="jo")
     await _grant(ch, org, "team", personal, revoked=False, status="pending")

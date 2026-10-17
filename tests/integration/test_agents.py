@@ -12,6 +12,7 @@ import pytest
 
 from server.auth import agents, machines
 from server.core.ch import get_client, own_write_reads
+from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.asyncio
 
@@ -27,7 +28,7 @@ async def ch() -> Any:
 def _trust() -> machines.Machine:
     return {
         "name": f"fleet{uuid.uuid4().hex[:6]}",
-        "org": f"agents-it-{uuid.uuid4().hex[:6]}",
+        "org": unique_org("agents"),
         "ns_roles": [],
         "public_keys": "",
         "issuer": "https://issuer.example",
@@ -67,7 +68,7 @@ async def test_a_namespace_someone_else_made_is_not_reached(ch: Any) -> None:
 
 
 async def test_a_released_namespace_is_dropped_from_the_bots_naming_it(ch: Any) -> None:
-    org, name = f"agents-it-{uuid.uuid4().hex[:6]}", f"bot{uuid.uuid4().hex[:6]}"
+    org, name = unique_org("agents"), f"bot{uuid.uuid4().hex[:6]}"
     bot: machines.Machine = {
         **_trust(),
         "name": name,
@@ -114,11 +115,12 @@ async def test_two_overlapping_trusts_registered_at_once_save_one(ch: Any) -> No
     from server.identity.app import account_admin
 
     issuer, tenant = f"https://issuer-{uuid.uuid4().hex[:6]}.example", uuid.uuid4().hex[:6]
+    org = unique_org("agents")
 
     def trust(name: str) -> machines.Machine:
         return account_admin.bot_from(
             name=name,
-            org=f"agents-it-{tenant}",
+            org=org,
             namespace_roles=[],
             issuer=issuer,
             audience="loom",
