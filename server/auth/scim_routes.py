@@ -14,15 +14,17 @@ import hmac
 import json
 import logging
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 
 from server.auth import scim
 from server.core.ch import set_query_tag
+from server.core.errors import BackendUnavailableError
 from server.settings import settings
 
 SCIM_JSON = "application/scim+json"
@@ -57,15 +59,11 @@ async def _authorized(request: Request) -> None:
         raise ScimError(401, "a valid SCIM bearer token is required")
 
 
-router = APIRouter(prefix="/scim/v2", dependencies=[Depends(_authorized)])
-
-
 def _answer(body: dict[str, Any], status: int = 200, **headers: str) -> JSONResponse:
     return JSONResponse(body, status_code=status, media_type=SCIM_JSON, headers=headers or None)
 
 
-def _error_response(_request: Request, exc: Exception) -> JSONResponse:
-    e = exc if isinstance(exc, ScimError) else ScimError(503, "this user is being changed; retry")
+def _error_response(e: ScimError) -> JSONResponse:
     body: dict[str, Any] = {"schemas": [_ERROR_SCHEMA], "status": str(e.status)}
     if e.scim_type:
         body["scimType"] = e.scim_type
@@ -74,6 +72,29 @@ def _error_response(_request: Request, exc: Exception) -> JSONResponse:
     if e.status == 503:
         headers["Retry-After"] = "5"
     return _answer(body, e.status, **headers)
+
+
+class _ScimRoute(APIRoute):
+    """Answers every error of these routes, their bearer check included, as
+    RFC 7644 does, leaving the rest of the server's error format alone."""
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def run(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except ScimError as e:
+                return _error_response(e)
+            except scim.Busy:
+                return _error_response(ScimError(503, "this user is being changed; retry"))
+            except BackendUnavailableError:
+                return _error_response(ScimError(503, "the store is unavailable; retry"))
+
+        return run
+
+
+router = APIRouter(prefix="/scim/v2", dependencies=[Depends(_authorized)], route_class=_ScimRoute)
 
 
 # ── parsing ───────────────────────────────────────────────────────────────
@@ -434,6 +455,8 @@ async def _deactivating_anyway(uid: str, active: bool | None) -> AsyncIterator[N
     a 400, so dropping its `active: false` would leave them active."""
     try:
         yield
+    except scim.Busy:
+        raise  # the deactivation itself may be what waited: a retry would wait again
     except Exception:  # re-raised: a refused or failed request must still deactivate
         if active is False:
             await scim.set_active(uid, False)
@@ -479,6 +502,4 @@ def require_scim_token_length(token: str) -> None:
 def attach(app: Any) -> None:
     if not settings.scim_token:
         return
-    app.add_exception_handler(ScimError, _error_response)
-    app.add_exception_handler(scim.Busy, _error_response)  # answered as a 503
     app.include_router(router)

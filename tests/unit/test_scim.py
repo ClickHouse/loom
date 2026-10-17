@@ -969,3 +969,47 @@ def test_a_whole_entry_write_must_be_an_object(client: TestClient, world) -> Non
     uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
     r = _patch(client, uid, {"op": "replace", "path": 'emails[type eq "work"]', "value": "b@x.com"})
     assert r.status_code == 400 and r.json()["scimType"] == "invalidValue"
+
+
+async def test_an_account_made_while_deactivating_is_revoked_too(world, monkeypatch) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    write = scim._write
+
+    async def sign_in_meanwhile(row: dict[str, Any]) -> None:
+        # A first sign-in's JIT lands after the accounts were read, before the row says inactive.
+        if not row["active"] and "u-lee" not in world.accounts["lee@example.com"]:
+            world.person("lee@example.com", "lee", "u-lee")
+        await write(row)
+
+    monkeypatch.setattr(scim, "_write", sign_in_meanwhile)
+    row = await scim.set_active(uid, False)
+    assert row is not None and row["subjects"] == ["lee", "u-lee"]
+    assert world.outright == {"lee": scim.DEACTIVATED, "u-lee": scim.DEACTIVATED}
+    assert world.events == ["auth.scim_deactivated"]  # one transition, audited once
+
+
+def test_a_busy_deactivation_is_not_tried_twice(client: TestClient, world, monkeypatch) -> None:
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    calls: list[Any] = []
+
+    async def busy(*a: Any, **k: Any) -> None:
+        calls.append(k)
+        raise scim.Busy
+
+    monkeypatch.setattr(scim, "update", busy)
+    r = _patch(client, uid, {"op": "replace", "path": "active", "value": False})
+    assert r.status_code == 503 and len(calls) == 1
+
+
+def test_a_store_outage_answers_a_scim_503(client: TestClient, monkeypatch) -> None:
+    from server.core.errors import BackendUnavailableError
+
+    async def away(*_a: Any, **_k: Any) -> None:
+        raise BackendUnavailableError("ClickHouse could not be reached")
+
+    monkeypatch.setattr(scim, "get", away)
+    r = client.get("/scim/v2/Users/x")
+    assert r.status_code == 503 and r.headers["retry-after"] == "5"
+    assert r.headers["content-type"].startswith("application/scim+json")
+    assert r.json()["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:Error"]

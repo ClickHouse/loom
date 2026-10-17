@@ -288,6 +288,10 @@ async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict
             await _write(new)
     # The snapshot re-read each revocation would make, once and past the leases.
     await revocation.refresh()
+    if not active and set(await _subjects(row["email"])) - set(new["subjects"]):
+        # An account made before the row said inactive (a first sign-in's JIT):
+        # revoke it too, with the sessions and tokens it made meanwhile.
+        new = await _set_active(new, False)
     if cutoff is not None:  # wait out the cutoff's second, a token issued in it falls before it
         await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
     if active != was_active:
