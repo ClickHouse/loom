@@ -83,6 +83,7 @@ def operation_rows() -> list[dict[str, Any]]:
     return [
         {"name": op.name, **{k: ops[op.name][k] for k in OPERATION_ROW_FIELDS}}
         for op in ALL_OPERATIONS
+        if op.available  # a feature that is off lists none of its ops
     ]
 
 

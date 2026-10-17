@@ -57,3 +57,10 @@ def test_a_journal_output_key_is_absent_while_off(off: None) -> None:
     out = fm.drop_inactive_output(MemorySetOutput, body)
     assert not {"commit_seq", "read_token", "left_out", "past_only"} & set(out)
     assert out["memory_id"] == "m"
+
+
+def test_the_operation_catalogue_lists_no_journal_op_while_off(off: None) -> None:
+    from server.operations.capabilities import operation_rows
+
+    names = {r["name"] for r in operation_rows()}
+    assert "memory.set" in names and "memory.amend" not in names
