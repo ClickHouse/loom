@@ -778,6 +778,15 @@ async def _forget_plan(
     return facts, forget_keys, keep
 
 
+def _refused_entries(results: list[Any]) -> list[dict[str, str]]:
+    """The key and verdict of each bulk_set result a refusal wrote no row for."""
+    return [
+        {"memory_key": r.memory_key, "verdict": r.conflict_verdict}
+        for r in results
+        if r.conflict_verdict in REFUSED
+    ]
+
+
 async def _step_bulk_write(
     state: WorkflowState,
     config: dict[str, Any],
@@ -972,11 +981,7 @@ async def _step_bulk_write(
     # for a refused entry (blacklisted, pinned or locked key): it produced no row, and
     # neither evidence nor chunks may attach to the stored one through it.
     state.written = [r.model_dump() for r in bulk_out.written if r.conflict_verdict not in REFUSED]
-    state.refused = [
-        {"memory_key": r.memory_key, "verdict": r.conflict_verdict}
-        for r in bulk_out.written
-        if r.conflict_verdict in REFUSED
-    ]
+    state.refused = _refused_entries(bulk_out.written)
     for _phase, _ms in (getattr(bulk_out, "stage_ms", None) or {}).items():
         state.stage_ms[f"bulk.{_phase}"] = float(_ms)
     return state
