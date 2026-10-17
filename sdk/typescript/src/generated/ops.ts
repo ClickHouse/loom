@@ -2619,6 +2619,7 @@ export interface FactsListInput {
   include_sources?: boolean;
   include_source_status?: boolean;
   min_co_occur?: number;
+  as_of?: string | null;
   valid_as_of?: string | null;
   known_as_of?: string | null;
   provenance?: Array<"extracted" | "inferred" | "facet"> | null;
@@ -2654,6 +2655,7 @@ export interface FactsPathInput {
   max_hops?: number;
   top_k_per_hop?: number;
   min_co_occur?: number;
+  as_of?: string | null;
   valid_as_of?: string | null;
   known_as_of?: string | null;
   relations?: string[];
@@ -2685,6 +2687,7 @@ export interface FactsRelatedInput {
   namespace: string;
   entity: string;
   top_k?: number;
+  as_of?: string | null;
   valid_as_of?: string | null;
   known_as_of?: string | null;
 }
@@ -2708,6 +2711,7 @@ export interface FactsTraverseInput {
   top_k_per_hop?: number;
   min_co_occur?: number;
   max_nodes?: number;
+  as_of?: string | null;
   valid_as_of?: string | null;
   known_as_of?: string | null;
   relations?: string[];
@@ -3562,6 +3566,8 @@ export interface MemoryAskInput {
   summary_cap?: number | null;
   rrf_adaptive_lexical?: boolean | null;
   personalization?: "full" | "none";
+  as_of?: string | null;
+  as_of_basis?: "valid_time" | "knowledge_time";
   include_superseded?: boolean;
   precedents?: boolean | null;
   llm_cache?: boolean | null;
@@ -4414,6 +4420,7 @@ export interface MemoryGetInput {
   memory_key: string;
   if_version?: number | null;
   include_recall_breakdown?: boolean;
+  as_of?: string | null;
   fields?: string[];
   follow?: boolean;
 }
@@ -4425,6 +4432,7 @@ export interface MemoryGetByIdInput {
   validity_policy?: "compat" | "strict";
   org: string;
   memory_id: string;
+  as_of?: string | null;
 }
 
 export interface MemoryGetByIdOutput {
@@ -4738,6 +4746,7 @@ export interface MemoryListInput {
   include_duplicates?: boolean;
   include_superseded?: boolean;
   include_proposed?: boolean;
+  as_of?: string | null;
   tags?: string[];
   contains?: string | null;
   fields?: string[];
@@ -5267,6 +5276,7 @@ export interface MemoryRecordQueryInput {
   schema_name: string;
   filters?: Record<string, string>;
   predicates?: RecordPredicate[];
+  as_of?: string | null;
   valid_as_of?: string | null;
   known_as_of?: string | null;
   limit?: number;
@@ -5310,7 +5320,7 @@ export interface MemoryRecordWriteOutput {
 export interface MemoryRedactInput {
   org: string;
   memory_id: string;
-  version?: number;
+  version: number;
   assertion_id?: string;
   reason?: string;
   redacted_by?: string;
@@ -5494,6 +5504,8 @@ export interface MemorySearchInput {
   rerank?: string;
   retrieval_budget?: "fast" | "standard" | "deep";
   hyde?: boolean;
+  as_of?: string | null;
+  as_of_basis?: "valid_time" | "knowledge_time";
 }
 
 export interface MemorySearchOutput {
@@ -5623,6 +5635,8 @@ export interface MemorySearchTraceInput {
   rerank?: string;
   retrieval_budget?: "fast" | "standard" | "deep";
   hyde?: boolean;
+  as_of?: string | null;
+  as_of_basis?: "valid_time" | "knowledge_time";
 }
 
 export interface SearchTraceHit {
@@ -6630,9 +6644,12 @@ export interface NamespaceRollbackInput {
 export interface NamespaceRollbackOutput {
   dry_run: boolean;
   as_of: string; // date-time
+  version_at?: number;
   reinstate: number;
   remove: number;
   left_out?: number;
+  skipped_no_head?: number;
+  skipped_already_gone?: number;
   truncated?: boolean;
   sample?: Array<Record<string, unknown>>;
   applied_at?: string | null;

@@ -12,6 +12,9 @@ from functools import cache
 from pathlib import Path
 
 SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "schema.sql"
+# The dump with the bi-temporal journal on (its migration applied): the objects only
+# it has are read from here.
+TEMPORAL_SCHEMA = SCHEMA.with_name("schema_temporal.sql")
 
 
 @cache
@@ -19,11 +22,24 @@ def schema_text() -> str:
     return SCHEMA.read_text()
 
 
-def ddl(name: str) -> str:
-    """The CREATE statement of `loom.<name>`, through its closing `;`."""
-    text = schema_text()
-    start = text.index(f"-- loom.{name}\n")
-    return text[start : text.index(";\n", start) + 1]
+@cache
+def temporal_schema_text() -> str:
+    return TEMPORAL_SCHEMA.read_text()
+
+
+def ddl(name: str, *, temporal: bool = False) -> str:
+    """The CREATE statement of `loom.<name>`, through its closing `;`: from the
+    default dump, or the journal's for an object only it has (`temporal` reads the
+    journal's dump first)."""
+    for text in (
+        (temporal_schema_text(), schema_text())
+        if temporal
+        else (schema_text(), temporal_schema_text())
+    ):
+        if f"-- loom.{name}\n" in text:
+            start = text.index(f"-- loom.{name}\n")
+            return text[start : text.index(";\n", start) + 1]
+    raise ValueError(f"loom.{name} is in neither schema dump")
 
 
 _OBJECT = re.compile(r"^CREATE (TABLE|MATERIALIZED VIEW) IF NOT EXISTS loom\.(\w+)", re.M)
@@ -32,11 +48,12 @@ _COLUMN = re.compile(r"^    `(\w+)` (.+?),?$")
 
 @cache
 def _kinds() -> dict[str, str]:
-    return {name: kind for kind, name in _OBJECT.findall(schema_text())}
+    both = schema_text() + temporal_schema_text()
+    return {name: kind for kind, name in _OBJECT.findall(both)}
 
 
 def objects() -> set[str]:
-    """Every `loom.*` table and materialized view the dump declares."""
+    """Every `loom.*` table and materialized view either dump declares."""
     return set(_kinds())
 
 
@@ -48,11 +65,11 @@ def views() -> set[str]:
     return {n for n, kind in _kinds().items() if kind != "TABLE"}
 
 
-def columns(name: str, *, materialized: bool = True) -> dict[str, str]:
+def columns(name: str, *, materialized: bool = True, temporal: bool = False) -> dict[str, str]:
     """`{column: type and modifiers}` of `loom.<name>` in declaration order.
     `materialized=False` leaves out MATERIALIZED columns, which no writer
-    carries."""
-    block = re.split(r"\n(?:ENGINE =|AS )", ddl(name), maxsplit=1)[0]
+    carries; `temporal` reads the table as the journal's migration leaves it."""
+    block = re.split(r"\n(?:ENGINE =|AS )", ddl(name, temporal=temporal), maxsplit=1)[0]
     out: dict[str, str] = {}
     for line in block.splitlines():
         m = _COLUMN.match(line)

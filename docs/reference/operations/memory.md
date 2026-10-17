@@ -172,6 +172,8 @@ Ask a question and get a grounded answer synthesized from the caller's recalled 
 | `summary_cap` | `int \| None` | `None` | Digest rows admitted to the synthesis window; None = the deployment setting, 0 = unbounded. |
 | `rrf_adaptive_lexical` | `bool \| None` | `None` | Forwarded to memory.search only when pinned. |
 | `personalization` | `Literal['full', 'none']` | `'full'` | Same semantics as memory.search.personalization; the retrieval leg of an ask runs with it so the answer can be compared with and without priors. |
+| `as_of` | `datetime \| None` | `None` | As-of temporal anchor. |
+| `as_of_basis` | `Literal['valid_time', 'knowledge_time']` | `'valid_time'` | Which time axis `as_of` replays: "valid_time" (default) = state true as of the anchor; "knowledge_time" = only what loom had learned by the anchor (created_at cutoff, incremental-ingest knowledge-cutoff semantics). |
 | `include_superseded` | `bool` | `False` | Forwarded to the retrieval leg; the retired rows then stay in the synthesis window, each line labelled `[superseded <date>; replaced by <key>]`, so the answer can say what a value was before and what replaced it. |
 | `precedents` | `bool \| None` | `None` | Precedent reuse: serve the earlier synthesized answer to this question+shape when the synthesis window is byte-identical (same keys, same content hashes) to the one it was written from; no LLM call. |
 | `llm_cache` | `bool \| None` | `None` | Exact-prompt LLM response cache: every synthesis-path call is read from loom.llm_response_cache by the sha256 of its full prompt before the provider is called. |
@@ -809,6 +811,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `memory_key` | `str` | required | The key to read: tried under this identity, then the same user's row under any agent. |
 | `if_version` | `int \| None` | `None` | Version precondition: the version the caller already holds. |
 | `include_recall_breakdown` | `bool` | `False` | Opt-in per-agent recall breakdown; off by default to keep get cheap. |
+| `as_of` | `datetime \| None` | `None` | As-of replay filter: restrict to rows with coalesce(valid_at, created_at) <= as_of. |
 | `fields` | `list[str]` | *(computed)* | A whitelist of output field names (`value`, `tags`, `status`, `memory_type`, `recall_count`, `created_at`, …). |
 | `follow` | `bool` | `False` | Serve the live canonical a `status='duplicate'` row points to (its `duplicate_of`, same org and namespace, up to three hops) instead of the exact row; the response then carries `resolved_from` = the key asked for and `canonical_key` = the… |
 
@@ -874,6 +877,7 @@ Fetch a memory by its UUID (not memory_key).
 | `validity_policy` | `Literal['compat', 'strict']` | `'compat'` | `compat` admits an assertion with an unknown or inferred validity bound and discloses it; `strict` excludes it. |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `memory_id` | `str` | required | UUID returned by memory.set |
+| `as_of` | `datetime \| None` | `None` | As-of replay filter — see MemoryGetInput.as_of. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1138,6 +1142,7 @@ List memory keys under this identity, optionally filtered.
 | `include_duplicates` | `bool` | `False` | `status='duplicate'` rows are skipped (their canonical is in the same scan) unless asked for. |
 | `include_superseded` | `bool` | `False` | `status='superseded'` rows (a later write replaced them) are skipped unless asked for; a served entry carries its `status`. |
 | `include_proposed` | `bool` | `False` | `status='proposed'` rows (facts on trial) are skipped unless asked for; `memory.proposals` lists them with their graded counts. |
+| `as_of` | `datetime \| None` | `None` | see MemoryGetInput.as_of |
 | `tags` | `list[str]` | *(computed)* | Hard OR-filter on the row's tags — the same `hasAny(tags, …)` predicate memory.search applies — so a tagged subset (`kind:false_positive`, `subsystem:Storages`) is one list call, not a recency page followed by a get per key. |
 | `contains` | `str \| None` | `None` | Only rows whose value or key holds this text, any case — the keyword filter of a browse page's search box, which must find every row that names a word (a ranked search returns its top k and misses the rest). |
 | `fields` | `list[str]` | *(computed)* | Whitelist of entry field names; every entry carries only those plus `memory_key`. |
@@ -1586,7 +1591,8 @@ Typed records of one schema by field filters and predicates, as of a time.
 | `schema_name` | `str` | required | The schema whose active records are read. |
 | `filters` | `dict[str, str]` | *(computed)* | Field name → exact string value (state `value`); all must match. |
 | `predicates` | `list[RecordPredicate]` | *(computed)* | Typed comparisons or state checks, AND-composed with `filters`. |
-| `valid_as_of` | `datetime \| None` | `None` | Only records whose `[valid_at, valid_to)` interval covers this instant; None = no bound (or K, under `known_as_of`). |
+| `as_of` | `datetime \| None` | `None` | Only records whose `[valid_at, valid_to)` interval covers this instant; None = no bound (or K, under `known_as_of`). |
+| `valid_as_of` | `datetime \| None` | `None` |  |
 | `known_as_of` | `datetime \| None` | `None` | Knowledge time: query the record revisions recorded at or before K, each matched against its own fields (field states other than value / absent are not versioned, so a `unknown` or `rejected` state predicate matches none). |
 | `limit` | `int` | `100` | At most this many records (1–1000), most recently updated first. |
 
@@ -1635,7 +1641,7 @@ Scrub the value of a historical memory row, preserving its audit entry.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `memory_id` | `str` | required | The id every version of the memory shares; `version` or `assertion_id` picks what to scrub. |
-| `version` | `int` | `0` | The historical row's version (from memory.set / memory.history): scrubs that row and every retired journal assertion that held its value. 0 = none. |
+| `version` | `int` | required | The historical row's version (from memory.set / memory.history): scrubs that row and every retired journal assertion that held its value. |
 | `assertion_id` | `str` | `''` | A retired journal assertion (from memory.intervals), for text only the journal holds — a memory.amend or a correction's segment. |
 | `reason` | `str` | `''` | short justification recorded in the audit log |
 | `redacted_by` | `str` | `''` | actor for the audit row (caller-supplied) |
@@ -1843,6 +1849,8 @@ Semantic search over the agent's own memory.
 | `rerank` | `str` | `''` | Per-request reranker override. |
 | `retrieval_budget` | `Literal['fast', 'standard', 'deep']` | `'standard'` | Cost posture. "standard" stages cheap recall first, spending expensive LLM/graph/rerank legs only when the planner or fallback gates justify them. "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall. |
 | `hyde` | `bool` | `True` | HyDE: embed an LLM-generated hypothetical answer instead of the raw query to close the question/stored-phrasing vocabulary gap. |
+| `as_of` | `datetime \| None` | `None` | As-of replay filter (coalesce(valid_at, created_at) <= as_of), denormalized onto memory_embeddings so vector_search applies it without joining loom.memory. |
+| `as_of_basis` | `Literal['valid_time', 'knowledge_time']` | `'valid_time'` | Which time axis `as_of` replays: "valid_time" (default; what was true as of then) or "knowledge_time" (what loom had learned by then — created_at only, ignoring valid_at; the incremental-ingest knowledge cutoff). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1974,6 +1982,8 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 | `rerank` | `str` | `''` | Per-request reranker override. |
 | `retrieval_budget` | `Literal['fast', 'standard', 'deep']` | `'standard'` | Cost posture. "standard" stages cheap recall first, spending expensive LLM/graph/rerank legs only when the planner or fallback gates justify them. "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall. |
 | `hyde` | `bool` | `True` | HyDE: embed an LLM-generated hypothetical answer instead of the raw query to close the question/stored-phrasing vocabulary gap. |
+| `as_of` | `datetime \| None` | `None` | As-of replay filter (coalesce(valid_at, created_at) <= as_of), denormalized onto memory_embeddings so vector_search applies it without joining loom.memory. |
+| `as_of_basis` | `Literal['valid_time', 'knowledge_time']` | `'valid_time'` | Which time axis `as_of` replays: "valid_time" (default; what was true as of then) or "knowledge_time" (what loom had learned by then — created_at only, ignoring valid_at; the incremental-ingest knowledge cutoff). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

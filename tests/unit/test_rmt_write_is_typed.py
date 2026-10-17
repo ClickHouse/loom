@@ -91,7 +91,7 @@ def _schema_columns(table: str) -> list[str]:
 def test_memory_persisted_cols_equal_the_schema_and_the_versions_mirror() -> None:
     memory = _schema_columns("loom.memory")
     versions = _schema_columns("loom.memory_versions")
-    assert len(memory) == 62
+    assert len(memory) == 61
     assert set(mr.MEMORY_PERSISTED_COLS) == set(memory), set(mr.MEMORY_PERSISTED_COLS) ^ set(memory)
     assert set(versions) == set(memory), set(versions) ^ set(memory)
     assert len(set(mr.MEMORY_PERSISTED_COLS)) == len(mr.MEMORY_PERSISTED_COLS)
@@ -112,7 +112,12 @@ _BUILDER_NAMES = {
 }
 # The one raw loom.memory insert: the checked funnel's own insert-and-fence task
 # (`insert_memory_versions` checks the rows, then runs it).
-_MEMORY_FUNNEL = ("server/memory/store/inserts.py", "_insert_then_fence")
+# The funnel inserts directly with the journal off, and through its fenced insert
+# with it on.
+_MEMORY_FUNNELS = {
+    ("server/memory/store/inserts.py", "insert_memory_versions"),
+    ("server/memory/store/inserts.py", "_insert_then_fence"),
+}
 
 
 def _names_in(node: ast.AST) -> set[str]:
@@ -185,8 +190,8 @@ def _insert_sites() -> list[tuple[str, str, str, bool]]:
 def test_every_loom_memory_write_goes_through_the_checked_funnel() -> None:
     sites = _insert_sites()
     raw = {(f, fn) for f, fn, table, _ in sites if table == "loom.memory"}
-    assert _MEMORY_FUNNEL in raw, sites
-    outside = sorted(raw - {_MEMORY_FUNNEL})
+    assert _MEMORY_FUNNELS <= raw, sites
+    outside = sorted(raw - _MEMORY_FUNNELS)
     assert not outside, (
         "raw loom.memory inserts outside store/inserts.insert_memory_versions; route them "
         f"through it (it checks every row carries MEMORY_PERSISTED_COLS): {outside}"

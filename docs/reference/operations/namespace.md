@@ -383,9 +383,12 @@ Return a namespace's memories to what they were at `as_of`.
 | --- | --- | --- |
 | `dry_run` | `bool` | Echoes the request: true when nothing was written. |
 | `as_of` | `datetime` | The instant rolled back to, as UTC. |
+| `version_at` | `int` | Without the journal: `as_of` as an epoch-nanosecond version, the highest version a key may keep. |
 | `reinstate` | `int` | Keys that serve again what they served at as_of (planned, or committed). |
 | `remove` | `int` | Keys that served nothing at as_of, retracted (planned, or committed). |
 | `left_out` | `int` | Keys left as they are: a value they served then is one today's rules refuse (blacklisted, redacted), or, applied, a lock in force refused the change. |
+| `skipped_no_head` | `int` | Without the journal: keys with history at as_of but no live row (hard-deleted), left alone, and keys created after as_of that are already tombstoned. |
+| `skipped_already_gone` | `int` |  |
 | `truncated` | `bool` | More keys differ than max_keys; call again (or narrow memory_keys). |
 | `sample` | `list[dict[str, Any]]` | Up to 20 keys (`memory_key`, `agent`, `user_id`, `session_id`, `action`, the values served `then` and `now`). |
 | `applied_at` | `datetime \| None` | When the rollback was written; None on a dry run or when no key differed. |

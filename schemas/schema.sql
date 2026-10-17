@@ -16,12 +16,12 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 158 tables + 18 materialized views.
+-- Counts: 153 tables + 17 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 
 -- ======================================================================
--- Tables (158)
+-- Tables (153)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
@@ -1458,8 +1458,6 @@ CREATE TABLE IF NOT EXISTS loom.entity_edges
     `valid_from` Nullable(DateTime) DEFAULT NULL,
     `valid_to` Nullable(DateTime) DEFAULT NULL,
     `invalid_at` Nullable(DateTime) DEFAULT NULL,
-    `recorded_at` DateTime DEFAULT toDateTime(0),
-    `closed_at` Nullable(DateTime) DEFAULT NULL,
     INDEX idx_valid_from_minmax valid_from TYPE minmax GRANULARITY 8,
     INDEX idx_valid_to_minmax valid_to TYPE minmax GRANULARITY 8,
     INDEX idx_invalid_at_minmax invalid_at TYPE minmax GRANULARITY 8
@@ -1528,8 +1526,6 @@ CREATE TABLE IF NOT EXISTS loom.entity_triples
     `valid_from` Nullable(DateTime) DEFAULT NULL,
     `valid_to` Nullable(DateTime) DEFAULT NULL,
     `invalid_at` Nullable(DateTime) DEFAULT NULL,
-    `recorded_at` DateTime DEFAULT toDateTime(0),
-    `closed_at` Nullable(DateTime) DEFAULT NULL,
     INDEX idx_valid_from_minmax valid_from TYPE minmax GRANULARITY 8,
     INDEX idx_valid_to_minmax valid_to TYPE minmax GRANULARITY 8,
     INDEX idx_invalid_at_minmax invalid_at TYPE minmax GRANULARITY 8
@@ -1835,7 +1831,6 @@ CREATE TABLE IF NOT EXISTS loom.memory
     `sensitivity` LowCardinality(String) DEFAULT '',
     `value_preview` String MATERIALIZED substring(value, 1, 2048),
     `value_len` UInt32 MATERIALIZED length(value),
-    `journal_version` UInt64 DEFAULT 0,
     INDEX type_skip memory_type TYPE set(8) GRANULARITY 4,
     INDEX pinned_skip pinned TYPE set(2) GRANULARITY 4,
     INDEX entities_skip entities TYPE bloom_filter(0.01) GRANULARITY 4,
@@ -2197,12 +2192,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_exposures
     `top_k` UInt16 DEFAULT 0,
     `returned_keys` Array(String),
     `returned_count` UInt16 DEFAULT 0,
-    `below_floor_count` UInt16 DEFAULT 0,
-    `returned_ids` Array(String) DEFAULT [],
-    `returned_sha256` Array(String) DEFAULT [],
-    `cutoff_seq` UInt64 DEFAULT 0,
-    `valid_as_of` Nullable(DateTime64(6, 'UTC')) DEFAULT NULL,
-    `known_as_of` Nullable(DateTime64(6, 'UTC')) DEFAULT NULL
+    `below_floor_count` UInt16 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
@@ -2415,144 +2405,6 @@ ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
--- loom.memory_temporal_assertions
-CREATE TABLE IF NOT EXISTS loom.memory_temporal_assertions
-(
-    `org` LowCardinality(String),
-    `namespace` LowCardinality(String),
-    `scope` LowCardinality(String) DEFAULT 'private',
-    `agent` LowCardinality(String),
-    `user_id` String,
-    `session_id` String,
-    `memory_key` String,
-    `memory_id` UUID,
-    `assertion_id` UUID,
-    `parent_assertion_id` Nullable(UUID),
-    `origin_assertion_id` UUID,
-    `born_seq` UInt64,
-    `born_at` DateTime64(6, 'UTC'),
-    `retired_seq` Nullable(UInt64),
-    `retired_at` Nullable(DateTime64(6, 'UTC')),
-    `projected_seq` UInt64,
-    `source_version` UInt64 DEFAULT 0,
-    `memory_type` LowCardinality(String),
-    `value` String,
-    `value_sha256` FixedString(64),
-    `embed_input_sha256` FixedString(64),
-    `temporal_kind` LowCardinality(String) DEFAULT 'state',
-    `validity_basis` LowCardinality(String) DEFAULT 'unknown',
-    `valid_from` Nullable(DateTime64(6, 'UTC')),
-    `valid_to` Nullable(DateTime64(6, 'UTC')),
-    `valid_text` String DEFAULT '',
-    `valid_precision` LowCardinality(String) DEFAULT '',
-    `valid_tz` LowCardinality(String) DEFAULT '',
-    `modality` LowCardinality(String) DEFAULT 'asserted',
-    `status` LowCardinality(String) DEFAULT 'active',
-    `confidence` Float32 DEFAULT 1.,
-    `expires_at` Nullable(DateTime64(6, 'UTC')),
-    `pinned` UInt8 DEFAULT 0,
-    `lock_mode` LowCardinality(String) DEFAULT '',
-    `lock_until` Nullable(DateTime64(6, 'UTC')) DEFAULT NULL,
-    `lock_reason` String DEFAULT '',
-    `locked_by` String DEFAULT '',
-    `locked_at` Nullable(DateTime64(6, 'UTC')) DEFAULT NULL,
-    `verified_by` String DEFAULT '',
-    `verified_at` Nullable(DateTime64(6, 'UTC')),
-    `verified_sha256` String DEFAULT '',
-    `grounding` LowCardinality(String) DEFAULT '',
-    `source_class` LowCardinality(String) DEFAULT '',
-    `actor` String DEFAULT '',
-    `sensitivity` LowCardinality(String) DEFAULT '',
-    `qualifiers` Map(String, String),
-    `tags` Array(String),
-    `entities` Array(String),
-    `evidence_ids` Array(String),
-    `derived_from` Array(String),
-    INDEX memory_id_bf memory_id TYPE bloom_filter(0.01) GRANULARITY 4,
-    INDEX born_minmax born_seq TYPE minmax GRANULARITY 1,
-    INDEX retired_minmax retired_seq TYPE minmax GRANULARITY 1,
-    INDEX valid_from_minmax valid_from TYPE minmax GRANULARITY 4,
-    INDEX valid_to_minmax valid_to TYPE minmax GRANULARITY 4
-)
-ENGINE = ReplacingMergeTree(projected_seq)
-PARTITION BY (org)
-ORDER BY (org, namespace, agent, user_id, session_id, memory_key, assertion_id)
-SETTINGS index_granularity = 256, non_replicated_deduplication_window = 1000;
-
--- loom.memory_temporal_commits
-CREATE TABLE IF NOT EXISTS loom.memory_temporal_commits
-(
-    `org` LowCardinality(String),
-    `namespace` LowCardinality(String),
-    `scope` LowCardinality(String) DEFAULT 'private',
-    `agent` LowCardinality(String),
-    `user_id` String,
-    `session_id` String,
-    `memory_key` String,
-    `memory_id` UUID,
-    `commit_seq` UInt64,
-    `commit_id` UUID,
-    `parent_commit_id` Nullable(UUID),
-    `publisher_id` String,
-    `recorded_at` DateTime64(6, 'UTC'),
-    `request_id` String DEFAULT '',
-    `idempotency_key` String DEFAULT '',
-    `request_sha256` String DEFAULT '',
-    `request_slot` Int32 DEFAULT -1,
-    `request_outcomes` String DEFAULT '',
-    `operation` LowCardinality(String),
-    `change_kind` LowCardinality(String),
-    `payload_schema` UInt16,
-    `payload_sha256` FixedString(64),
-    `actor` String DEFAULT '',
-    `source_class` LowCardinality(String) DEFAULT '',
-    `source_resource_id` String DEFAULT '',
-    `erasure_generation` UInt64 DEFAULT 0,
-    `retired_assertion_ids` Array(UUID),
-    `assertions` String,
-    `inserted_at` DateTime64(6, 'UTC') DEFAULT now64(6),
-    `retain_until` Nullable(DateTime64(6, 'UTC')),
-    `row_version` UInt64 DEFAULT 0,
-    `restated_assertion_id` Nullable(UUID) DEFAULT NULL,
-    INDEX key_bf memory_key TYPE bloom_filter(0.01) GRANULARITY 4,
-    INDEX idem_bf idempotency_key TYPE bloom_filter(0.01) GRANULARITY 4,
-    INDEX memory_id_bf memory_id TYPE bloom_filter(0.01) GRANULARITY 4,
-    INDEX recorded_minmax recorded_at TYPE minmax GRANULARITY 1
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM(recorded_at)
-ORDER BY (org, namespace, commit_seq, commit_id)
-SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
-
--- loom.memory_temporal_vectors
-CREATE TABLE IF NOT EXISTS loom.memory_temporal_vectors
-(
-    `org` LowCardinality(String),
-    `namespace` LowCardinality(String),
-    `embedding_model` LowCardinality(String),
-    `embed_input_sha256` FixedString(64),
-    `embedding_dim` UInt16,
-    `embedding` Array(BFloat16) CODEC(NONE),
-    `created_at` DateTime DEFAULT now()
-)
-ENGINE = ReplacingMergeTree(created_at)
-ORDER BY (org, namespace, embedding_model, embed_input_sha256)
-SETTINGS index_granularity = 256, non_replicated_deduplication_window = 1000;
-
--- loom.memory_temporal_watermarks
-CREATE TABLE IF NOT EXISTS loom.memory_temporal_watermarks
-(
-    `org` LowCardinality(String),
-    `namespace` LowCardinality(String),
-    `projection` LowCardinality(String),
-    `applied_seq` UInt64,
-    `recorded_at` Nullable(DateTime64(6, 'UTC')) DEFAULT NULL,
-    `updated_at` DateTime64(6, 'UTC') DEFAULT now64(6)
-)
-ENGINE = ReplacingMergeTree(applied_seq)
-ORDER BY (org, namespace, projection)
-SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
-
 -- loom.memory_term_freq
 CREATE TABLE IF NOT EXISTS loom.memory_term_freq
 (
@@ -2674,7 +2526,6 @@ CREATE TABLE IF NOT EXISTS loom.memory_versions
     `sensitivity` LowCardinality(String) DEFAULT '',
     `value_preview` String MATERIALIZED substring(value, 1, 2048),
     `value_len` UInt32 MATERIALIZED length(value),
-    `journal_version` UInt64 DEFAULT 0,
     INDEX memory_id_skip memory_id TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree
@@ -3408,31 +3259,6 @@ PARTITION BY (org, namespace)
 ORDER BY (org, namespace, memory_key)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
--- loom.shared_versions
-CREATE TABLE IF NOT EXISTS loom.shared_versions
-(
-    `org` LowCardinality(String),
-    `namespace` LowCardinality(String),
-    `memory_key` String,
-    `value` String,
-    `memory_type` LowCardinality(String),
-    `confidence` Float32,
-    `promoted_from` Array(String),
-    `promotion_event` UUID,
-    `promoted_from_candidate_id` Nullable(UUID) DEFAULT NULL,
-    `promoted_by` String,
-    `rationale` String DEFAULT '',
-    `promoted_at` DateTime DEFAULT now(),
-    `reversible_until` DateTime,
-    `superseded_by` Nullable(String),
-    `tombstoned_at` Nullable(DateTime),
-    `version` UInt64
-)
-ENGINE = ReplacingMergeTree
-PARTITION BY (org, namespace)
-ORDER BY (org, namespace, memory_key, version)
-SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
-
 -- loom.signing_keys
 CREATE TABLE IF NOT EXISTS loom.signing_keys
 (
@@ -3704,7 +3530,7 @@ ORDER BY (org, namespace, agent, user_id, session_id, run_id, block_key)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- ======================================================================
--- Materialized views (18)
+-- Materialized views (17)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_refresh
@@ -4214,8 +4040,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_versions_mv TO loom.memory_ve
     `locked_by` String,
     `locked_at` Nullable(DateTime),
     `on_expire` LowCardinality(String),
-    `expire_reason` String,
-    `journal_version` UInt64
+    `expire_reason` String
 )
 AS SELECT
     org,
@@ -4278,8 +4103,7 @@ AS SELECT
     locked_by,
     locked_at,
     on_expire,
-    expire_reason,
-    journal_version
+    expire_reason
 FROM loom.memory;
 
 -- loom.session_brief_revisions_mv
@@ -4326,45 +4150,6 @@ AS SELECT
     tombstoned_at,
     version
 FROM loom.session_briefs;
-
--- loom.shared_versions_mv
-CREATE MATERIALIZED VIEW IF NOT EXISTS loom.shared_versions_mv TO loom.shared_versions
-(
-    `org` LowCardinality(String),
-    `namespace` LowCardinality(String),
-    `memory_key` String,
-    `value` String,
-    `memory_type` LowCardinality(String),
-    `confidence` Float32,
-    `promoted_from` Array(String),
-    `promotion_event` UUID,
-    `promoted_from_candidate_id` Nullable(UUID),
-    `promoted_by` String,
-    `rationale` String,
-    `promoted_at` DateTime,
-    `reversible_until` DateTime,
-    `superseded_by` Nullable(String),
-    `tombstoned_at` Nullable(DateTime),
-    `version` UInt64
-)
-AS SELECT
-    org,
-    namespace,
-    memory_key,
-    value,
-    memory_type,
-    confidence,
-    promoted_from,
-    promotion_event,
-    promoted_from_candidate_id,
-    promoted_by,
-    rationale,
-    promoted_at,
-    reversible_until,
-    superseded_by,
-    tombstoned_at,
-    version
-FROM loom.shared;
 
 -- loom.subject_last_seen_refresh
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom.subject_last_seen_refresh

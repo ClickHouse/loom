@@ -104,7 +104,7 @@ async def test_server_now_is_utc_whatever_the_driver_returns() -> None:
 
 
 async def test_head_and_counters_read_an_empty_journal_as_zero() -> None:
-    assert await t.head("o", "n", ch=_CH(one=None)) == (0, None, 0)
+    assert await t.head("o", "n", ch=_CH(one=None)) == (0, None, 0, 0)
     assert await t.landed_late("o", "n", ["c"], ch=_CH(one={"late": 1})) is True
     assert await t.landed_late("o", "n", ["c"], ch=_CH(one=None)) is False
     assert await t.watermark("o", "n", ch=_CH(one=None)) == 0

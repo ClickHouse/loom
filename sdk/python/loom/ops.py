@@ -8307,6 +8307,7 @@ class FactsListInput(TypedDict, total=False):
     include_sources: NotRequired[bool]
     include_source_status: NotRequired[bool]
     min_co_occur: NotRequired[int]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
     provenance: NotRequired[Optional[list[Literal["extracted", "inferred", "facet"]]]]
@@ -8324,6 +8325,7 @@ class FactsListBody(TypedDict, total=False):
     include_sources: NotRequired[bool]
     include_source_status: NotRequired[bool]
     min_co_occur: NotRequired[int]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
     provenance: NotRequired[Optional[list[Literal["extracted", "inferred", "facet"]]]]
@@ -8361,6 +8363,7 @@ class FactsPathInput(TypedDict, total=False):
     max_hops: NotRequired[int]
     top_k_per_hop: NotRequired[int]
     min_co_occur: NotRequired[int]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
     relations: NotRequired[list[str]]
@@ -8377,6 +8380,7 @@ class FactsPathBody(TypedDict, total=False):
     max_hops: NotRequired[int]
     top_k_per_hop: NotRequired[int]
     min_co_occur: NotRequired[int]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
     relations: NotRequired[list[str]]
@@ -8408,6 +8412,7 @@ class FactsRelatedInput(TypedDict, total=False):
     namespace: Required[str]
     entity: Required[str]
     top_k: NotRequired[int]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
 
@@ -8417,6 +8422,7 @@ class FactsRelatedBody(TypedDict, total=False):
     namespace: NotRequired[str]
     entity: Required[str]
     top_k: NotRequired[int]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
 
@@ -8442,6 +8448,7 @@ class FactsTraverseInput(TypedDict, total=False):
     top_k_per_hop: NotRequired[int]
     min_co_occur: NotRequired[int]
     max_nodes: NotRequired[int]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
     relations: NotRequired[list[str]]
@@ -8461,6 +8468,7 @@ class FactsTraverseBody(TypedDict, total=False):
     top_k_per_hop: NotRequired[int]
     min_co_occur: NotRequired[int]
     max_nodes: NotRequired[int]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
     relations: NotRequired[list[str]]
@@ -9719,6 +9727,8 @@ class MemoryAskInput(TypedDict, total=False):
     summary_cap: NotRequired[Optional[int]]
     rrf_adaptive_lexical: NotRequired[Optional[bool]]
     personalization: NotRequired[Literal["full", "none"]]
+    as_of: NotRequired[Optional[str]]
+    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
     include_superseded: NotRequired[bool]
     precedents: NotRequired[Optional[bool]]
     llm_cache: NotRequired[Optional[bool]]
@@ -9794,6 +9804,8 @@ class MemoryAskBody(TypedDict, total=False):
     summary_cap: NotRequired[Optional[int]]
     rrf_adaptive_lexical: NotRequired[Optional[bool]]
     personalization: NotRequired[Literal["full", "none"]]
+    as_of: NotRequired[Optional[str]]
+    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
     include_superseded: NotRequired[bool]
     precedents: NotRequired[Optional[bool]]
     llm_cache: NotRequired[Optional[bool]]
@@ -10927,6 +10939,7 @@ class MemoryGetInput(TypedDict, total=False):
     memory_key: Required[str]
     if_version: NotRequired[Optional[int]]
     include_recall_breakdown: NotRequired[bool]
+    as_of: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
     follow: NotRequired[bool]
 
@@ -10945,6 +10958,7 @@ class MemoryGetBody(TypedDict, total=False):
     memory_key: Required[str]
     if_version: NotRequired[Optional[int]]
     include_recall_breakdown: NotRequired[bool]
+    as_of: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
     follow: NotRequired[bool]
 
@@ -10956,6 +10970,7 @@ class MemoryGetByIdInput(TypedDict, total=False):
     validity_policy: NotRequired[Literal["compat", "strict"]]
     org: Required[str]
     memory_id: Required[str]
+    as_of: NotRequired[Optional[str]]
 
 
 class MemoryGetByIdBody(TypedDict, total=False):
@@ -10965,6 +10980,7 @@ class MemoryGetByIdBody(TypedDict, total=False):
     validity_policy: NotRequired[Literal["compat", "strict"]]
     org: NotRequired[str]
     memory_id: Required[str]
+    as_of: NotRequired[Optional[str]]
 
 
 class MemoryGetByIdOutput(TypedDict, total=False):
@@ -11390,6 +11406,7 @@ class MemoryListInput(TypedDict, total=False):
     include_duplicates: NotRequired[bool]
     include_superseded: NotRequired[bool]
     include_proposed: NotRequired[bool]
+    as_of: NotRequired[Optional[str]]
     tags: NotRequired[list[str]]
     contains: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
@@ -11422,6 +11439,7 @@ class MemoryListBody(TypedDict, total=False):
     include_duplicates: NotRequired[bool]
     include_superseded: NotRequired[bool]
     include_proposed: NotRequired[bool]
+    as_of: NotRequired[Optional[str]]
     tags: NotRequired[list[str]]
     contains: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
@@ -12176,6 +12194,7 @@ class MemoryRecordQueryInput(TypedDict, total=False):
     schema_name: Required[str]
     filters: NotRequired[dict[str, str]]
     predicates: NotRequired[list["RecordPredicate"]]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
     limit: NotRequired[int]
@@ -12198,6 +12217,7 @@ class MemoryRecordQueryBody(TypedDict, total=False):
     schema_name: Required[str]
     filters: NotRequired[dict[str, str]]
     predicates: NotRequired[list["RecordPredicate"]]
+    as_of: NotRequired[Optional[str]]
     valid_as_of: NotRequired[Optional[str]]
     known_as_of: NotRequired[Optional[str]]
     limit: NotRequired[int]
@@ -12257,7 +12277,7 @@ class MemoryRedactInput(TypedDict, total=False):
 
     org: Required[str]
     memory_id: Required[str]
-    version: NotRequired[int]
+    version: Required[int]
     assertion_id: NotRequired[str]
     reason: NotRequired[str]
     redacted_by: NotRequired[str]
@@ -12268,7 +12288,7 @@ class MemoryRedactBody(TypedDict, total=False):
 
     org: NotRequired[str]
     memory_id: Required[str]
-    version: NotRequired[int]
+    version: Required[int]
     assertion_id: NotRequired[str]
     reason: NotRequired[str]
     redacted_by: NotRequired[str]
@@ -12521,6 +12541,8 @@ class MemorySearchInput(TypedDict, total=False):
     rerank: NotRequired[str]
     retrieval_budget: NotRequired[Literal["fast", "standard", "deep"]]
     hyde: NotRequired[bool]
+    as_of: NotRequired[Optional[str]]
+    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
 
 
 class MemorySearchBody(TypedDict, total=False):
@@ -12611,6 +12633,8 @@ class MemorySearchBody(TypedDict, total=False):
     rerank: NotRequired[str]
     retrieval_budget: NotRequired[Literal["fast", "standard", "deep"]]
     hyde: NotRequired[bool]
+    as_of: NotRequired[Optional[str]]
+    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
 
 
 class MemorySearchOutput(TypedDict, total=False):
@@ -12755,6 +12779,8 @@ class MemorySearchTraceInput(TypedDict, total=False):
     rerank: NotRequired[str]
     retrieval_budget: NotRequired[Literal["fast", "standard", "deep"]]
     hyde: NotRequired[bool]
+    as_of: NotRequired[Optional[str]]
+    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
 
 
 class MemorySearchTraceBody(TypedDict, total=False):
@@ -12845,6 +12871,8 @@ class MemorySearchTraceBody(TypedDict, total=False):
     rerank: NotRequired[str]
     retrieval_budget: NotRequired[Literal["fast", "standard", "deep"]]
     hyde: NotRequired[bool]
+    as_of: NotRequired[Optional[str]]
+    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
 
 
 class MemorySearchTraceOutput(TypedDict, total=False):
@@ -14287,9 +14315,12 @@ class NamespaceRollbackBody(TypedDict, total=False):
 class NamespaceRollbackOutput(TypedDict, total=False):
     dry_run: Required[bool]
     as_of: Required[str]  # date-time as ISO-8601 text
+    version_at: NotRequired[int]
     reinstate: Required[int]
     remove: Required[int]
     left_out: NotRequired[int]
+    skipped_no_head: NotRequired[int]
+    skipped_already_gone: NotRequired[int]
     truncated: NotRequired[bool]
     sample: NotRequired[list[dict[str, Any]]]
     applied_at: NotRequired[Optional[str]]
