@@ -86,11 +86,16 @@ account keeps its subject, grants, namespaces and data; no new one is made.
   `loom sso link --email <their provider address> --org <org> --namespace <ns>`
   shows the account, and `--apply` makes that address its contact and links
   it, so their next SSO sign-in lands on it with its subject, grants, data and
-  tokens (none are revoked). It needs SSO on, as adopt does: the old address
-  stops signing in with the account's password, and its old links go. It
-  refuses an address another account already names (a JIT account made at an
-  earlier sign-in is released first), and an old address that still holds
-  grants of its own: grant them to the account's subject and revoke them first.
+  tokens (none are revoked). It needs SSO on, as adopt does: with self-signup
+  closed, nobody can register the freed address and inherit what it named.
+  The old address's links go, and a grant once revoked under it is carried to
+  the account's subject, revoked, so it goes on capping the person's tokens.
+  It refuses an old address that still holds live grants of its own (grant
+  them to the account's subject and revoke them first), and an address another
+  account already names. When that is a JIT account an earlier SSO sign-in
+  made, `loom claim-release` it first: its memories stay behind in it (carry
+  them over with `namespace.snapshot` and `namespace.restore`), and grants made
+  to it must be made again.
 - `loom sso unlink --email <email> --apply` takes a link back. Sessions already
   open are not ended; revoke them with `loom revoke-token --subject`.
 - Someone who says a password account naming their address is not theirs goes

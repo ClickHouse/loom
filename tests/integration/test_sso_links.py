@@ -190,3 +190,59 @@ async def test_link_refuses_an_address_that_still_holds_grants(ch: Any) -> None:
     )
     assert refused.returncode == 2 and "team (writer)" in refused.stderr
     assert await _resolve(f"kim@corp-{org}.example") is None
+
+
+async def _grant(ch: Any, org: str, namespace: str, subject: str, *, revoked: bool) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    await ch.insert(
+        "loom.namespace_grants",
+        [
+            {
+                "org": org,
+                "namespace": namespace,
+                "subject": subject,
+                "role": "writer",
+                "granted_at": now,
+                "granted_by": "ops",
+                "revoked_at": now if revoked else None,
+                "version": 1,
+            }
+        ],
+    )
+
+
+async def test_link_keeps_a_grant_revoked_under_the_old_address_revoked(ch: Any) -> None:
+    # The revoked row caps the person's tokens on `secret` through the address;
+    # untied, it would cap nothing and the token's claim would stand again.
+    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    personal = f"dee@home-{org}.example"
+    namespace = await _password_account(ch, org, personal, owner="dee")
+    await _grant(ch, org, "secret", "Dee@Home-" + personal.split("@home-")[1], revoked=True)
+    _sso(
+        "link",
+        "--email",
+        f"dee@corp-{org}.example",
+        "--org",
+        org,
+        "--namespace",
+        namespace,
+        "--apply",
+    )
+    with own_write_reads():
+        carried = await ch.query_one(
+            "SELECT role, revoked_at FROM loom.namespace_grants FINAL WHERE org = {org:String} "
+            "AND namespace = 'secret' AND subject = 'dee'",
+            params={"org": org},
+        )
+    assert carried is not None and carried["revoked_at"] is not None
+
+
+async def test_link_finds_an_old_address_grant_whatever_its_case(ch: Any) -> None:
+    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    personal = f"bo@home-{org}.example"
+    namespace = await _password_account(ch, org, personal, owner="bo")
+    await _grant(ch, org, "team", personal.upper(), revoked=False)
+    refused = _sso_refused(
+        "link", "--email", f"bo@corp-{org}.example", "--org", org, "--namespace", namespace
+    )
+    assert refused.returncode == 2 and "team (writer)" in refused.stderr

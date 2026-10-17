@@ -105,6 +105,7 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
 
 
 def _cmd_link(args: argparse.Namespace) -> int:
+    from server.core.errors import LoomServerError
     from server.identity.app import account_admin
 
     async def _run(ch: Any) -> int:
@@ -118,7 +119,7 @@ def _cmd_link(args: argparse.Namespace) -> int:
             if args.dry_run:
                 return 0
             await account_admin.link_account(args.email, args.org, args.namespace, by=_by())
-        except ValueError as e:
+        except (ValueError, LoomServerError) as e:  # refused, or a claim busy: nothing written
             print(f"  ✗ {e}", file=sys.stderr)
             return 2
         print("linked: their next SSO sign-in lands on this account")

@@ -144,11 +144,19 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
 
 
 async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
-    """What `link_account` would change: the account row and the address it
-    names now. Raises ValueError when it cannot take `email`."""
+    """What `link_account` would change: the account row, the address it names
+    now, and the revoked grants that address carries. Raises ValueError when it
+    cannot take `email`."""
     from server.core.ch import get_client, own_write_reads
     from server.identity.store import namespaces
 
+    if settings.oauth_login_provider != "oidc":
+        # SSO on closes self-signup: nobody can register the freed address and
+        # inherit what it still names.
+        raise ValueError(
+            "turn SSO on first (LOOM_OAUTH_LOGIN_PROVIDER=oidc), then link with the "
+            "servers' settings: where they run, or through /v1/admin/sso.link"
+        )
     email = email.strip().lower()
     if "@" not in email:
         raise ValueError(f"{email!r} is not an email address")
@@ -166,48 +174,56 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         )
         if other is not None:
             # Two accounts naming the address: its sign-in would reach neither.
-            taken = f"{other['org']}/{other['namespace']}"
-            raise ValueError(f"{email} is already {taken}'s; release that one first")
+            taken = f"--org {other['org']} --namespace {other['namespace']}"
+            raise ValueError(
+                f"{email} is already {other['org']}/{other['namespace']}'s (an earlier SSO "
+                f"sign-in made it?): `loom claim-release {taken}` first; its memories stay "
+                "behind in it, and grants made to it must be made again"
+            )
         grants = await get_client().query_all(
-            "SELECT namespace, role FROM loom.namespace_grants FINAL WHERE org = {org:String} "
-            "AND subject = {was:String} AND revoked_at IS NULL",
+            "SELECT * FROM loom.namespace_grants FINAL WHERE org = {org:String} "
+            "AND lower(subject) = {was:String}",
             params={"org": org, "was": was},
         )
-    if was and grants:
-        # Granted to the address by name, they would reach no one, or whoever
-        # registers it next.
-        named = ", ".join(f"{g['namespace']} ({g['role']})" for g in grants)
+    live = [g for g in grants if g["revoked_at"] is None]
+    if was and live:
+        # Granted to the address by name, they would reach no one once it is untied.
+        named = ", ".join(f"{g['namespace']} ({g['role']})" for g in live)
         raise ValueError(
             f"{was} holds grants of its own: {named}; grant them to "
             f"{row['owner_email']} and revoke them first"
         )
-    return {"row": row, "was": was}
+    revoked = [g for g in grants if g["revoked_at"] is not None] if was else []
+    return {"row": row, "was": was, "revoked": revoked}
 
 
 async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
     """Let SSO sign-ins with `email` reach the password account (org, namespace)
     registered under another address (a personal one, a `+tag`): its contact
     becomes `email` and it is linked, so the person keeps its subject, grants,
-    namespaces and tokens. The operator vouches that `email` is theirs. Only
-    once SSO is on, as adopt: before, the old address would still sign in by
-    password, and nobody could register it while it still names grants. Held
-    as self-signup and JIT hold an address, so neither makes a second account
-    for it meanwhile. Returns the address it had."""
+    namespaces and tokens. The operator vouches that `email` is theirs. A grant
+    revoked under the old address stops capping the person's tokens once the
+    address is untied, so each is carried to the subject, revoked. Holds the
+    address as JIT holds it, so no SSO sign-in makes a second account for it
+    meanwhile. Returns the address it had."""
     from server.auth.self_signup import CLAIM_TTL_S, email_claim
     from server.core import grant_cache, leases
     from server.core.ch import get_client
+    from server.core.errors import GrantBusyError
 
-    if settings.oauth_login_provider != "oidc":
-        raise ValueError("turn SSO on first (LOOM_OAUTH_LOGIN_PROVIDER=oidc), then link")
     email = email.strip().lower()
     async with (
         account_change(org, namespace),
-        leases.holding(email_claim(org, email), ttl_s=CLAIM_TTL_S, wait_s=10.0) as held,
+        leases.holding(
+            email_claim(settings.oidc_jit_org, email), ttl_s=CLAIM_TTL_S, wait_s=10.0
+        ) as held,
     ):
         if not held:
-            raise ValueError(f"a sign-in for {email} is running; try again")
+            raise GrantBusyError(f"a sign-in for {email} is running; retry shortly")
         plan = await link_plan(email, org, namespace)
         row, was = plan["row"], str(plan["was"])
+        for g in plan["revoked"]:
+            await _carry_revoked(g, str(row["owner_email"]))
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         # Insert-as-replace carrying every other column forward.
         await get_client().insert(
@@ -226,6 +242,24 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
         subject={"email": email, "was": was, "by": by, "subject": row["owner_email"]},
     )
     return was
+
+
+async def _carry_revoked(grant: dict[str, Any], owner: str) -> None:
+    """The subject's own revoked row on the grant's namespace, unless it has a
+    row there already: it caps the person's tokens as the address's did."""
+    from server.auth.grant_claims import grant_change
+    from server.core.ch import get_client
+    from server.identity.store import grants
+
+    org, ns = grant["org"], grant["namespace"]
+    async with grant_change(org, ns, owner):
+        mine = await get_client().query_one(
+            "SELECT 1 AS x FROM loom.namespace_grants FINAL WHERE org = {org:String} "
+            "AND namespace = {ns:String} AND subject = {owner:String} LIMIT 1",
+            params={"org": org, "ns": ns, "owner": owner},
+        )
+        if mine is None:
+            await grants.insert_row({**grant, "subject": owner, "version": time.time_ns()})
 
 
 async def unlink(email: str, org: str = "", *, by: str) -> list[tuple[str, str]]:
