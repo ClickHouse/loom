@@ -627,6 +627,22 @@ async def _record_intra_batch_retirements(
     )
 
 
+def _landed_restated_ids(state: _BulkWriteState, plan: BulkVerdictPlan) -> list[str]:
+    """The rows the batch's restatements reinforce. A new key whose first entry merged
+    wrote no row: its restatement reinforces the row it merged into. One dropped another
+    way (a pinned rejection) has no row to reinforce."""
+    landed = set(state.existing_ids.values())
+    landed.update(str(r.get("memory_id") or "") for r in state.memory_rows)
+    key_of_new = {mid: key for key, mid in state.new_ids.items()}
+    out: list[str] = []
+    for rid in state.restated_ids:
+        if rid not in landed:
+            rid = plan.merged_into.get(key_of_new.get(rid, ""), "")
+        if rid:
+            out.append(rid)
+    return out
+
+
 async def _bulk_settle_verdicts(
     ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
 ) -> None:
@@ -706,7 +722,7 @@ async def _bulk_settle_verdicts(
     # The same fact said again under the same key. The usage fold turns the evidence event
     # into memory_embeddings.reinforcement_count, the search-side boost; the row itself is not
     # rewritten or re-embedded.
-    for existing_id in state.restated_ids:
+    for existing_id in _landed_restated_ids(state, plan):
         try:
             await _record_usage_event(
                 memory_id=existing_id,

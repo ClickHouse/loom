@@ -573,6 +573,33 @@ async def test_a_bulk_mark_with_no_live_peer_left_answers_clear(monkeypatch) -> 
     assert state.results[0].conflict_verdict == "clear" and plan.conflicted == []
 
 
+async def test_a_restatement_of_a_merged_new_key_reinforces_the_merge_target(
+    monkeypatch,
+) -> None:
+    # Entry 0 creates key k (minted id n1) and merges into the stored row "old", so no n1
+    # row lands; entry 1 says k's value again. Its evidence goes to "old", never to n1.
+    from server.memory.app import bulk_set
+    from server.memory.app.bulk_rows import _BulkWriteState
+    from server.memory.app.bulk_verdicts import BulkVerdictPlan
+    from server.memory.store import usage
+
+    reinforced: list[str] = []
+
+    async def record(**kw):
+        reinforced.append(kw["memory_id"])
+
+    monkeypatch.setattr(usage, "record_usage_event", record)
+    state = _BulkWriteState()
+    state.new_ids = {"k": "n1"}
+    state.existing_ids = {"live": "e1"}
+    state.restated_ids = ["n1", "e1"]
+    plan = BulkVerdictPlan()
+    plan.merged, plan.reinforce_ids = ["k"], ["old"]
+    plan.merged_into = {"k": "old"}
+    await bulk_set._bulk_settle_verdicts(None, _Input(), state, plan)
+    assert sorted(reinforced) == ["e1", "old", "old"]
+
+
 def _peer(mid: str, key: str = "user_city") -> Any:
     from server.memory.domain.conflicts import ConflictPeer
 
