@@ -13,7 +13,7 @@ import {
   TOKEN_EXCHANGE,
   type TokenProvider,
 } from "./machine.js";
-import { Transport } from "./transport.js";
+import { type FetchLike, Transport } from "./transport.js";
 
 const BASE = "http://loom.test";
 const PUBLIC_ENDPOINT = "https://loom.example/oauth/token";
@@ -496,6 +496,25 @@ describe("Transport with a token provider", () => {
     release("shared");
     expect(await patient).toEqual({ ok: true });
     expect(v1(srv).map(auth)).toEqual(["Bearer shared"]);
+  });
+
+  it("bounds one attempt, token wait and response together, by timeoutMs", async () => {
+    const provider: TokenProvider = {
+      token: () => new Promise<string>((r) => setTimeout(() => r("t"), 100)),
+      origin: BASE,
+    };
+    const slow: FetchLike = (_url, init) =>
+      new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response("{}", { status: 200 })), 150);
+        init.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        });
+      });
+    const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: slow, retry: { maxAttempts: 1 } });
+    const started = Date.now();
+    await expect(t.post("memory.get", { org: "o" }, { timeoutMs: 200 })).rejects.toBeInstanceOf(TimeoutError);
+    expect(Date.now() - started).toBeLessThan(240);
   });
 
   it("surfaces a second 401 instead of looping", async () => {

@@ -70,7 +70,7 @@ export interface TransportOptions {
   apiKey?: string;
   /** A credential fetched per request (a bot's `MachineLogin`); not with `apiKey`. */
   tokenProvider?: TokenProvider;
-  /** Per-call timeout, on each attempt's wait for the token and for the response; overridable per request. Default 60 s. */
+  /** Per-call timeout, on each attempt: the wait for the token and then for the response; overridable per request. Default 60 s. */
   timeoutMs?: number;
   /** The retry policy; every field optional, validated by name. */
   retry?: RetryOverride;
@@ -409,14 +409,17 @@ export class Transport {
       if (!ctx.resending) ctx.sent++;
       ctx.resending = false;
       headers["X-Loom-Retry-Count"] = String(ctx.sent - 1);
+      const asked = Date.now();
       if (this.#provider) await this.authorize(ctx, timeoutMs);
+      // What the token wait left of this attempt's timeout.
+      const responseMs = Math.max(0, timeoutMs - (Date.now() - asked));
       this.log.debug(
         `${op} → ${method} ${url} attempt ${attempt} timeout ${timeoutMs} ms bytes ${payload?.length ?? 0}`,
         redactHeaders(headers),
       );
       throwIfAborted(ctx);
       const t0 = this.now();
-      const ex = await this.exchange(ctx, timeoutMs);
+      const ex = await this.exchange(ctx, responseMs);
       if ("failed" in ex) {
         const e = ex.error;
         if (isAbort(e)) {
