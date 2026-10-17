@@ -3835,6 +3835,7 @@ export interface BulkSetResult {
   conflict_verdict?: string;
   peers?: MemorySetPeer[];
   next?: string;
+  pinned_blocker_id?: string;
   superseded_by?: string;
   retired?: string[];
 }

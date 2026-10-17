@@ -10068,6 +10068,7 @@ class BulkSetResult(TypedDict, total=False):
     conflict_verdict: NotRequired[str]
     peers: NotRequired[list["MemorySetPeer"]]
     next: NotRequired[str]
+    pinned_blocker_id: NotRequired[str]
     superseded_by: NotRequired[str]
     retired: NotRequired[list[str]]
 
