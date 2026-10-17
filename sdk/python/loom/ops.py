@@ -7671,6 +7671,7 @@ class ConversationThreadsInput(TypedDict, total=False):
     agent: NotRequired[str]
     window_days: NotRequired[int]
     limit: NotRequired[int]
+    offset: NotRequired[int]
     fields: NotRequired[Optional[list[str]]]
 
 
@@ -7680,6 +7681,7 @@ class ConversationThreadsBody(TypedDict, total=False):
     agent: NotRequired[str]
     window_days: NotRequired[int]
     limit: NotRequired[int]
+    offset: NotRequired[int]
     fields: NotRequired[Optional[list[str]]]
 
 

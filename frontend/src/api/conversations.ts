@@ -131,7 +131,7 @@ export async function listConversationMessages(
  *  landing surface so users with no query have somewhere to click. */
 export async function listConversationThreads(
   id: Pick<Identity, "org" | "namespace">,
-  opts: { agent?: string; window_days?: number; limit?: number; fields?: string[] } & RequestOpts = {},
+  opts: { agent?: string; window_days?: number; limit?: number; offset?: number; fields?: string[] } & RequestOpts = {},
 ): Promise<{ threads: ConversationThreadSummary[] }> {
   return post(
     "/v1/conversation.threads",
@@ -141,6 +141,7 @@ export async function listConversationThreads(
       agent: opts.agent ?? "*",
       window_days: opts.window_days ?? 30,
       limit: opts.limit ?? 20,
+      ...(opts.offset ? { offset: opts.offset } : {}),
       ...(opts.fields ? { fields: opts.fields } : {}),
     },
     opts.signal,

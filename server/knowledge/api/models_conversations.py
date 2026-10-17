@@ -287,6 +287,10 @@ class ConversationThreadsInput(BaseModel):
     window_days: int = Field(default=30, ge=1, le=365)
     # At most this many threads (1-200).
     limit: int = Field(default=30, ge=1, le=200)
+    # Skip this many threads of the most-recent-first list: the next page starts at the
+    # previous page's offset plus its length. A build that predates it answers the first
+    # page again, which a caller tells apart by thread_id.
+    offset: int = Field(default=0, ge=0)
     # The output fields the caller reads (a whitelist
     # resolved against the row model; an unknown name is a 422); unset, every
     # field. Every list operation is projectable.

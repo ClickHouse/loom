@@ -2231,6 +2231,7 @@ export interface ConversationThreadsInput {
   agent?: string;
   window_days?: number;
   limit?: number;
+  offset?: number;
   fields?: string[] | null;
 }
 
