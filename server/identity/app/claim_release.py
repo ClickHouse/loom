@@ -163,10 +163,17 @@ async def _release(
     # The contact email and password are cleared with the owner, so the old
     # credential dies with the claim.
     # Their tokens end first: the row and the bots below are what names them,
-    # so a release stopped after rewriting them could not find them again.
-    bots = await machines.naming(org, namespace, ch=ch)
-    cutoffs: list[datetime] = []
-    await _end_tokens(_token_subjects(existing, bots), actor_subject, cutoffs)
+    # so a release stopped after rewriting them could not find them again. The
+    # cutoff is past the claim's deadline, so it also covers a token issued
+    # while those rewrites are still landing.
+    from server.auth.grant_claims import WRITES_LAND_S
+
+    subjects = _token_subjects(existing, await machines.naming(org, namespace, ch=ch))
+    cutoff = account_admin.cutoff_after(WRITES_LAND_S) if subjects else None
+    for subject in subjects:
+        await account_admin.end_tokens(
+            subject, by=actor_subject, reason="namespace released", cutoff=cutoff
+        )
     row = dict(existing)
     row["released_aliases"] = kept_aliases(existing)
     row["owner_email"] = ""
@@ -177,23 +184,9 @@ async def _release(
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     await ch.insert("loom.namespaces", [row])
     await sso_links.forget_account(org, namespace, actor_subject, ch=ch)
-    bots = await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
+    await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
     # The claim cap reads which accounts tie a person's spellings from this table.
     grant_cache.invalidate(org)
-    # Again, now the row and bots no longer name it: a bot token minted during
-    # the first cutoffs is older than these.
-    subjects = _token_subjects(existing, bots)
-    written = len(cutoffs)
-    try:
-        await _end_tokens(subjects, actor_subject, cutoffs)
-    except Exception as e:  # noqa: BLE001 — a retry finds nothing to redo; the cutoffs written stand
-        log.warning(
-            "claim_release: %s released, but the second token cutoff failed (%s); "
-            "revoke by hand with `loom revoke-token --subject` for: %s",
-            namespace,
-            e,
-            ", ".join(subjects[len(cutoffs) - written :]) or "-",
-        )
 
     log.info(
         "claim_release: %s released by %s (was owned by %r, %d grants revoked)",
@@ -209,7 +202,7 @@ async def _release(
         previous_owner=previous_owner,
         grants_revoked=grants_count,
     )
-    return out, max(cutoffs, default=None)
+    return out, cutoff
 
 
 def _token_subjects(row: dict[str, Any], bots: list[str]) -> list[str]:
@@ -222,13 +215,6 @@ def _token_subjects(row: dict[str, Any], bots: list[str]) -> list[str]:
         if trust != str(t) and owner.startswith(agents.subject(trust, "")):
             subjects.append(owner)  # the agent's own namespace: its owner is the agent
     return [s for s in subjects if s]
-
-
-async def _end_tokens(subjects: list[str], by: str, cutoffs: list[datetime]) -> None:
-    """End the tokens of `subjects` now, adding each cutoff to `cutoffs` as it
-    lands, so a failure part way still leaves the ones written to wait out."""
-    for subject in subjects:
-        cutoffs.append(await account_admin.end_tokens(subject, by=by, reason="namespace released"))
 
 
 async def _may_release(info: AuthInfo, org: str, namespace: str) -> bool:

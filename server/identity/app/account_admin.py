@@ -41,6 +41,11 @@ def _from_now_on() -> datetime:
     return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1 + _CLOCK_SKEW_S)
 
 
+def cutoff_after(seconds: float) -> datetime:
+    """A cutoff past every token issued in the next `seconds`, on any replica."""
+    return _from_now_on() + timedelta(seconds=seconds)
+
+
 async def wait_out(cutoff: datetime) -> None:
     """Return once every replica's clock is past `cutoff`: one running behind
     this one stamps an earlier `iat`."""
@@ -530,9 +535,11 @@ async def disable_bot(name: str, *, by: str) -> bool:
     return True
 
 
-async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
+async def end_tokens(
+    subject: str, *, by: str, reason: str, cutoff: datetime | None = None
+) -> datetime:
     """A bot's or an agent's tokens live an hour; revoked now, not when they
-    run out. Returns the cutoff."""
-    cutoff = _from_now_on()
+    run out. Returns the cutoff: `cutoff`, or every token issued so far."""
+    cutoff = cutoff or _from_now_on()
     await revocation.cut_off(subject, issued_before=cutoff, reason=reason, revoked_by=by)
     return cutoff
