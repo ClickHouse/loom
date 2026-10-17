@@ -65,8 +65,7 @@ def build_row(
     receipt: Receipt | None = None,
 ) -> dict[str, Any]:
     """Pure builder for one ledger row; unit-tested without ClickHouse."""
-    receipt = receipt or Receipt()
-    row = {
+    row: dict[str, Any] = {
         "ts": naive_utc_now(),
         "org": org,
         "namespace": namespace,
@@ -86,14 +85,15 @@ def build_row(
         "below_floor_count": int(below_floor or 0),
     }
     if temporal_on():
-        # The receipt columns exist only once the journal's migration is applied.
-        row.update(
-            returned_ids=list(receipt.ids),
-            returned_sha256=list(receipt.sha256),
-            cutoff_seq=int(receipt.cutoff_seq),
-            valid_as_of=receipt.valid_as_of,
-            known_as_of=receipt.known_as_of,
-        )
+        # The journal's columns: without it they do not exist.
+        receipt = receipt or Receipt()
+        row |= {
+            "returned_ids": list(receipt.ids),
+            "returned_sha256": list(receipt.sha256),
+            "cutoff_seq": int(receipt.cutoff_seq),
+            "valid_as_of": receipt.valid_as_of,
+            "known_as_of": receipt.known_as_of,
+        }
     return row
 
 

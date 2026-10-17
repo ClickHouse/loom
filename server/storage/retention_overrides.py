@@ -23,6 +23,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.feature_modes import temporal_on
+
 log = logging.getLogger(__name__)
 
 
@@ -67,26 +69,6 @@ TARGETS: tuple[RetentionTarget, ...] = (
         # caller expires_at wins; operator N-day backstops rows without one
         "coalesce(expires_at, created_at + INTERVAL {days} DAY)",
     ),
-    # The bi-temporal journal holds every value loom.memory held and follows its
-    # rule, so a namespace's retention covers its history. An assertion expires as
-    # its row would; a commit outlives every assertion it added, so the journal
-    # stays a superset of the projection. Vectors go with their last assertion
-    # (the projection worker's orphan sweep).
-    RetentionTarget(
-        "loom.memory_temporal_assertions",
-        "toDateTime(born_at)",
-        lambda s: s.retention_memory_days,
-        lambda s: s.tiering_memory_warm_days,
-        "toDateTime(coalesce(expires_at, born_at + INTERVAL {days} DAY))",
-    ),
-    RetentionTarget(
-        "loom.memory_temporal_commits",
-        "toDateTime(recorded_at)",
-        lambda s: s.retention_memory_days,
-        lambda s: s.tiering_memory_warm_days,
-        "greatest(toDateTime(recorded_at) + INTERVAL {days} DAY, "
-        "toDateTime(ifNull(retain_until, recorded_at)))",
-    ),
     RetentionTarget(
         "loom.memory_embeddings",
         "created_at",
@@ -112,6 +94,34 @@ TARGETS: tuple[RetentionTarget, ...] = (
         lambda s: s.tiering_documents_warm_days,
     ),
 )
+
+# The bi-temporal journal holds every value loom.memory held and follows its rule,
+# so a namespace's retention covers its history. An assertion expires as its row
+# would; a commit outlives every assertion it added, so the journal stays a superset
+# of the projection. Vectors go with their last assertion (the projection worker's
+# orphan sweep). Managed only with the journal on: without it the tables are not there.
+JOURNAL_TARGETS: tuple[RetentionTarget, ...] = (
+    RetentionTarget(
+        "loom.memory_temporal_assertions",
+        "toDateTime(born_at)",
+        lambda s: s.retention_memory_days,
+        lambda s: s.tiering_memory_warm_days,
+        "toDateTime(coalesce(expires_at, born_at + INTERVAL {days} DAY))",
+    ),
+    RetentionTarget(
+        "loom.memory_temporal_commits",
+        "toDateTime(recorded_at)",
+        lambda s: s.retention_memory_days,
+        lambda s: s.tiering_memory_warm_days,
+        "greatest(toDateTime(recorded_at) + INTERVAL {days} DAY, "
+        "toDateTime(ifNull(retain_until, recorded_at)))",
+    ),
+)
+
+
+def managed_targets() -> tuple[RetentionTarget, ...]:
+    """The tables this process manages: TARGETS, and the journal's when it is on."""
+    return TARGETS + (JOURNAL_TARGETS if temporal_on() else ())
 
 
 def _split_table(table: str) -> tuple[str, str]:
@@ -261,7 +271,7 @@ def compute_alters(
     warm_volume = _warm_volume_name(settings_obj)
     out: list[tuple[RetentionTarget, str, dict[str, Any]]] = []
 
-    for target in TARGETS:
+    for target in managed_targets():
         r_days = max(0, target.retention_days(settings_obj) or 0)
         t_days = max(0, target.warm_days(settings_obj) or 0)
 
@@ -436,6 +446,7 @@ async def apply(
 
 
 __all__ = [
+    "JOURNAL_TARGETS",
     "MATERIALIZE_OFF",
     "TARGETS",
     "RetentionTarget",
@@ -443,5 +454,6 @@ __all__ = [
     "apply",
     "compute_alters",
     "current_ttl_matches",
+    "managed_targets",
     "unfinished_mutations",
 ]

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.core.feature_modes import temporal_on
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
@@ -38,6 +39,37 @@ from server.memory.api.models_temporal import (
 log = logging.getLogger(__name__)
 
 
+async def _quarantine_in_place(
+    ch: Any, org: str, ns: str, agent: str, uid: str, key: str, reason: str
+) -> None:
+    """`_quarantine_by_identity` without the journal: the status flipped in place on
+    both tables."""
+    params = {
+        "org": org,
+        "ns": ns,
+        "agent": agent,
+        "uid": uid,
+        "key": key,
+        "reason": reason or "",
+    }
+    where = (
+        "org = {org:String} AND namespace = {ns:String} "
+        "AND agent = {agent:String} AND user_id = {uid:String} "
+        "AND memory_key = {key:String} AND tombstoned_at IS NULL"
+    )
+    for table, columns in (
+        ("loom.memory", "status = 'rejected', rejection_reason = {reason:String}"),
+        ("loom.memory_embeddings", "status = 'rejected'"),
+    ):
+        try:
+            await ch.execute(f"UPDATE {table} SET {columns} WHERE {where}", params=params)
+        except Exception:  # noqa: BLE001 — lightweight UPDATE unsupported falls back to a mutation
+            await ch.execute(
+                f"ALTER TABLE {table} UPDATE {columns} WHERE {where} SETTINGS mutations_sync = 0",
+                params=params,
+            )
+
+
 async def _quarantine_by_identity(
     ch: Any, org: str, ns: str, agent: str, uid: str, key: str, reason: str
 ) -> None:
@@ -46,6 +78,10 @@ async def _quarantine_by_identity(
     negative-outcome escalation. A new version through the one loom.memory funnel,
     so the journal retracts exactly the rows rejected."""
     import server.memory.store as memory_repo
+
+    if not temporal_on():
+        await _quarantine_in_place(ch, org, ns, agent, uid, key, reason)
+        return
 
     rows = await ch.query_all(
         "SELECT toString(memory_id) AS memory_id FROM loom.memory FINAL "

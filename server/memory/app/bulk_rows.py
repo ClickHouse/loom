@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 
 from server.core.datetimes import parse_iso_dt
+from server.core.feature_modes import temporal_on
 from server.core.hashing import sha256_value as _content_sha256
 from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
@@ -43,9 +44,9 @@ def _with_sensitivity_tag(tags: list[str], level: str) -> list[str]:
     """Append `sensitivity:<level>` to a batch row's tags so the label reaches the embeddings
     table the ranking reads. Never raises."""
     try:
-        from server.memory.domain.sensitivity import relabel
+        from server.memory.domain.sensitivity import with_level_label
 
-        return relabel(tags, level)
+        return with_level_label(tags, level, in_place=temporal_on())
     except Exception:  # noqa: BLE001 — a label must not fail a write
         return list(tags)
 
@@ -409,11 +410,13 @@ async def _bulk_build_rows(
         entry_tags = list(entry.tags or [])
         entry_anchor_dt = parse_iso_dt(entry.temporal_anchor)
         entry_entities = resolved_entity_list(entry.entities or [], entity_resolution)
-        # The row's final tags (attribute and level labels): the embedding row takes the
-        # same, so ranking reads the label the memory row holds.
-        entry_tags = _with_sensitivity_tag(
+        row_tags = _with_sensitivity_tag(
             _with_attribute_tags(entry_tags, serialized_value, input.namespace), entry_sensitivity
         )
+        if temporal_on():
+            # The row's final tags (attribute and level labels): the embedding row takes
+            # the same, so ranking reads the label the memory row holds.
+            entry_tags = row_tags
         state.entry_metas.append((entry, serialized_value, entry_tags, entry_entities, expires_at))
         memory_row = {
             "org": input.org,
@@ -451,7 +454,7 @@ async def _bulk_build_rows(
             "char_limit": entry.char_limit,
             "pinned": 1 if entry.pinned else 0,
             # Protected-attribute label rides the row's tags.
-            "tags": entry_tags,
+            "tags": row_tags,
             "entities": entry_entities,
             # Code-native facets. Carried on every row: ch.insert
             # derives columns from rows[0].keys(), and under RMT FINAL an omitted

@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.errors import TemporalUnavailableError, ValidationError
+from server.core.feature_modes import temporal_on
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
@@ -550,7 +551,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     from server.memory.store import temporal as temporal_store
     from server.memory.store.redaction import REDACTED_VALUE
 
-    if bool(input.version) == bool(input.assertion_id):
+    if temporal_on() and bool(input.version) == bool(input.assertion_id):
         raise ValidationError("memory.redact takes one of version or assertion_id")
     target = await memory_repo.find_history_target(input.org, input.memory_id)
     if target is None:
@@ -576,6 +577,8 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         strong=True,  # ... and so must its latest version
         scope=WHOLE_NAMESPACE,
     )
+    if not temporal_on():
+        return await _redact_version_row(input, target, head)
     if head is not None:
         # Scrubbing a historical value of a locked key is a deletion of its
         # evidence: both lock modes refuse it, by either address.
@@ -650,6 +653,62 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
                 await memory_repo.redact_row(
                     input.org, input.memory_id, v, when=now, reason_blob=reason_blob
                 )
+    # A redacted value may already be quoted in a cached answer (7-day TTL) or a precedent
+    # (30 days); both carry the keys of the window they rendered, so the text leaves with the
+    # row it quoted. A failure here is reported, not swallowed: an ADMIN scrub that left the
+    # quote in place is not a completed redaction.
+    cache_rows = await memory_repo.delete_llm_response_cache_by_key(input.org, target.memory_key)
+    precedent_rows = await memory_repo.delete_ask_precedents_by_key(input.org, target.memory_key)
+    return MemoryRedactOutput(
+        redacted=True,
+        redacted_at=now,
+        cache_rows_deleted=cache_rows,
+        precedent_rows_deleted=precedent_rows,
+    )
+
+
+async def _redact_version_row(
+    input: MemoryRedactInput, target: Any, head: MemoryRow | None
+) -> MemoryRedactOutput:
+    """memory.redact without the journal: the one historical row `version` names,
+    and the key's derived copies."""
+    import server.memory.store as memory_repo
+
+    # All versions of a memory share one memory_id, so "is this the live head"
+    # is a VERSION comparison, not a memory_id one. Refuse only when the caller
+    # targets the head's version — scrubbing that would destroy live data.
+    if head is not None and head.version == input.version:
+        return MemoryRedactOutput(redacted=False, refused_head=True)
+    if head is not None:
+        # Scrubbing a historical version of a locked key is a deletion of its
+        # evidence: both lock modes refuse it.
+        from server.memory.domain import lock as _lock
+
+        _lock.assert_unlocked(head, "delete", op="memory.redact")
+
+    now = naive_utc_now()
+    reason_blob = (input.reason or "")[:512]
+    by_blob = (input.redacted_by or "")[:128]
+    await memory_repo.redact_row(
+        input.org,
+        input.memory_id,
+        input.version,
+        when=now,
+        reason_blob=f"{reason_blob}|{by_blob}",
+    )
+    # The key's embedding and chunk rows are per key, not per version: scrub every
+    # one whose text is not the live head's (all of them once the key is deleted).
+    scrubs = await memory_repo.key_derivative_scrubs(
+        input.org,
+        target.namespace,
+        target.agent,
+        target.user_id,
+        target.session_id,
+        target.memory_key,
+        head_live=head is not None,
+        live_link_inputs=await _live_link_inputs(input.org, head),
+    )
+    await memory_repo.run_scrubs(scrubs, apply=True)
     # A redacted value may already be quoted in a cached answer (7-day TTL) or a precedent
     # (30 days); both carry the keys of the window they rendered, so the text leaves with the
     # row it quoted. A failure here is reported, not swallowed: an ADMIN scrub that left the

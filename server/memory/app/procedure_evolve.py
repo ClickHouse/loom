@@ -179,6 +179,7 @@ async def _rmw_procedure(
     from fastapi import HTTPException
 
     from server.core.errors import PreconditionFailedError
+    from server.core.feature_modes import temporal_on
     from server.memory.app.write import handle_memory_set
 
     last: Exception | None = None
@@ -209,6 +210,8 @@ async def _rmw_procedure(
             )
             return int(result.version), new_value
         except PreconditionFailedError as e:  # the journal's: a newer value holds now
+            if not temporal_on():
+                raise
             last = e
             await asyncio.sleep(0.25 * (attempt + 1))
         except HTTPException as e:
@@ -219,6 +222,10 @@ async def _rmw_procedure(
                 raise
             last = e
             await asyncio.sleep(0.25 * (attempt + 1))
+    if not temporal_on():
+        raise RuntimeError(
+            f"procedure {memory_key!r} write lost to contention after {attempts} attempts"
+        ) from last
     raise PreconditionFailedError(
         f"procedure {memory_key!r} write lost to contention after {attempts} attempts; retry"
     ) from last

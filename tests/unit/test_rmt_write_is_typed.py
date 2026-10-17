@@ -218,6 +218,10 @@ _EMBEDDING_ALLOW: dict[tuple[str, str], str] = {
         "_BulkWriteState.embedding_rows; this inserts the ones whose version row the "
         "journal kept (kept_embedding_rows copies each whole, with the kept expiry)"
     ),
+    ("server/memory/app/bulk_set.py", "_bulk_insert"): (
+        "bulk_set's embed phase builds each row with build_embedding_row into "
+        "_BulkWriteState.embedding_rows; without the journal this phase only inserts them"
+    ),
 }
 
 

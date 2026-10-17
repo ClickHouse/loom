@@ -64,15 +64,23 @@ def insert_dedup_token(
     return h.hexdigest()
 
 
-def dedup_settings(token: str, base: dict[str, Any] | None) -> dict[str, Any]:
+# Tables whose writer names its batch's token itself (one batch across processes):
+# the bi-temporal journal's commits. Every other insert gets the drawn token.
+CALLER_TOKEN_TABLES = frozenset({"loom.memory_temporal_commits"})
+
+
+def dedup_settings(token: str, base: dict[str, Any] | None, *, table: str = "") -> dict[str, Any]:
     """`base` plus the token and the dedup switch of its insert mode: the
     synchronous path deduplicates through `insert_deduplicate`, the async
     buffer through `async_insert_deduplicate`. With a token the check is by
     token only, never by content, so the reason the async switch is otherwise
     off (byte-identical event rows in one flush window) does not apply. A token
-    the caller set itself (one batch across processes) is kept."""
+    the caller set itself is kept only for a table in `CALLER_TOKEN_TABLES`."""
     out = dict(base or {})
-    out.setdefault("insert_deduplication_token", token)
+    if table in CALLER_TOKEN_TABLES:
+        out.setdefault("insert_deduplication_token", token)
+    else:
+        out["insert_deduplication_token"] = token
     if out.get("async_insert") == 1:
         out["async_insert_deduplicate"] = 1
     else:

@@ -10,6 +10,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from server.core.feature_modes import temporal_on
+
 RebuildAction = Literal["reembed", "invalidate_cache", "derive_prefix", "preserve_history"]
 
 
@@ -19,6 +21,8 @@ class EmbeddingSurface:
     column: str
     action: RebuildAction
 
+
+_TEMPORAL_VECTORS = EmbeddingSurface("memory_temporal_vectors", "embedding", "invalidate_cache")
 
 # This inventory is checked against the canonical schema and the live database.
 # Two vectors in one row (memory text and key) are deliberately separate entries.
@@ -42,7 +46,8 @@ EMBEDDING_SURFACES = (
     # Keyed by model like the cache, and holding no text to re-embed: emptied, then
     # the temporal projection worker fills the new model's vectors for recent
     # assertions; older ones rank lexically and say so, as after a model change.
-    EmbeddingSurface("memory_temporal_vectors", "embedding", "invalidate_cache"),
+    # Only with the journal on: without it the table is not there.
+    *((_TEMPORAL_VECTORS,) if temporal_on() else ()),
     EmbeddingSurface("qa_item_embeddings", "embedding", "reembed"),
     EmbeddingSurface("query_nodes", "embedding", "reembed"),
     EmbeddingSurface("session_summaries", "summary_embedding", "reembed"),
@@ -113,6 +118,9 @@ def rebuild_surfaces(columns: Iterable[Mapping[str, str]]) -> tuple[EmbeddingSur
     actual = {
         (row["table"], row["name"]) for row in columns if _VECTOR_TYPE.search(row["type"])
     } - NON_VECTOR_ARRAYS
+    if _TEMPORAL_VECTORS not in EMBEDDING_SURFACES:
+        # Left by an earlier period with the journal on; nothing reads it while it is off.
+        actual.discard((_TEMPORAL_VECTORS.table, _TEMPORAL_VECTORS.column))
     expected = {(surface.table, surface.column) for surface in EMBEDDING_SURFACES}
     if actual != expected:
         unknown = ", ".join(f"{table}.{column}" for table, column in sorted(actual - expected))

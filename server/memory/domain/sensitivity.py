@@ -240,6 +240,15 @@ def relabel(tags: Iterable[str], level: str | None) -> list[str]:
     return [*kept, *sensitivity_tags(level, kept)]
 
 
+def with_level_label(tags: Iterable[str], level: str | None, *, in_place: bool) -> list[str]:
+    """`tags` labelled for `level`: `relabel` when `in_place` (the journal's rule),
+    else the label appended unless it is there (a lower level's stays too)."""
+    if in_place:
+        return relabel(tags, level)
+    tags = list(tags)
+    return [*tags, *sensitivity_tags(level, tags)]
+
+
 @dataclass(frozen=True)
 class Classified:
     """What a value write stores for its text: the tier, that tier's retention window

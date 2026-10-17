@@ -423,6 +423,9 @@ async def test_bulk_insert_decides_a_keys_vectors_by_the_row_that_wins(
 async def test_a_row_the_journal_left_out_touches_no_vector(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", True)  # only the journal leaves out
     # A moved-on retry or late evidence: the key's current vectors are someone
     # else's, so nothing is retired, fenced or indexed for it.
     import server.memory.store as memory_repo

@@ -15,6 +15,7 @@ from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.errors import LoomServerError, ValidationError
+from server.core.feature_modes import temporal_on
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.core.vectors import codes_state
@@ -200,7 +201,8 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     unmapped 4xx is a `rejected` refusal, and anything else — including the
     non-HTTPException failures a ClickHouse outage actually raises — is `error`.
     """
-    _check_applies_now(input)
+    if temporal_on():
+        _check_applies_now(input)
     if input.change_kind == "transition" and input.valid_at is None:
         # The row states the bound the journal records for the new state.
         input = input.model_copy(update={"valid_at": input.effective_at})
@@ -220,10 +222,12 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     except (HTTPException, LoomServerError) as e:
         # A guard for a new write refused it: a retry of a set this request's client
         # key already committed is answered from that commit instead.
-        if 400 <= e.status_code < 500 and (replayed := await _durable_replay(input)) is not None:
+        on = temporal_on()
+        if on and 400 <= e.status_code < 500 and (replayed := await _durable_replay(input)):
             return replayed
         if isinstance(e, LoomServerError):
-            ok_4xx = 400 <= e.status_code < 500
+            # Without the journal it is an infrastructure-shaped failure, as before.
+            ok_4xx = on and 400 <= e.status_code < 500
             _count_write(input.namespace, "rejected" if ok_4xx else _WRITE_OUTCOME_UNMAPPED)
             raise
         code = e.detail.get("code", "") if isinstance(e.detail, dict) else ""
@@ -406,6 +410,76 @@ async def _set_expiry(
     return expires_at
 
 
+def _classify_value(
+    input: MemorySetInput, value: str, level: str, expires_at: Any, on_expire: str
+) -> tuple[MemorySetInput, Any, str]:
+    """What tier `level` stores with the value (`classify_value`): the input with its
+    tags, the expiry and the post-action."""
+    from server.memory.domain.sensitivity import classify_value
+
+    classified = classify_value(
+        value,
+        level=level,
+        tags=input.tags or [],
+        expires_at=expires_at,
+        on_expire=on_expire,
+        now=datetime.now(UTC),
+        settings=settings,
+    )
+    if classified.windowed:
+        state_also("expires_at")  # the sensitive window is the server's own
+    if classified.tags != list(input.tags or []):
+        input = input.model_copy(update={"tags": classified.tags})
+    try:
+        from server.observability.metrics import record_attribute_tagged
+
+        for _t in classified.attribute_tags:
+            record_attribute_tagged(namespace=input.namespace, attribute=_t.split(":", 1)[1])
+    except Exception:  # noqa: BLE001 — metrics never fail a write
+        pass
+    return input, classified.expires_at, classified.on_expire
+
+
+def _classify_value_classic(
+    input: MemorySetInput, value: str, level: str, expires_at: Any, on_expire: str
+) -> tuple[MemorySetInput, Any, str]:
+    """`_classify_value` without the journal: the level label is appended to the
+    tags, never put in place of another level's."""
+    # A sensitive row carries its retention window: the caller's or the type's expiry stays
+    # when shorter; on_expire defaults to the sensitive post-action when the caller set none.
+    from server.memory.domain.sensitive_retention import sensitive_retention
+
+    expires_at, sens_on_expire, _windowed = sensitive_retention(
+        sensitivity=level,
+        expires_at=expires_at,
+        on_expire=on_expire,
+        now=datetime.now(UTC),
+        settings=settings,
+    )
+    # Protected-attribute label: a tag, never a refusal.
+    from server.memory.domain.sensitivity import attribute_tags
+
+    _attr_tags = attribute_tags(value, input.tags or [])
+    if _attr_tags:
+        input = input.model_copy(update={"tags": [*(input.tags or []), *_attr_tags]})
+    # The sensitivity tier rides the tags too: the embeddings table has no sensitivity
+    # column, and the ranking demotes labelled rows on questions that did not ask for a
+    # contact detail.
+    from server.memory.domain.sensitivity import sensitivity_tags
+
+    _sens_tags = sensitivity_tags(level, input.tags or [])
+    if _sens_tags:
+        input = input.model_copy(update={"tags": [*(input.tags or []), *_sens_tags]})
+        try:
+            from server.observability.metrics import record_attribute_tagged
+
+            for _t in _attr_tags:
+                record_attribute_tagged(namespace=input.namespace, attribute=_t.split(":", 1)[1])
+        except Exception:  # noqa: BLE001 — metrics never fail a write
+            pass
+    return input, expires_at, sens_on_expire
+
+
 async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
     """Phase 4 of memory.set: serialize the value and gate it before any write.
 
@@ -464,31 +538,16 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
     # retention window (the caller's or the type's expiry stays when shorter), its
     # post-action, the protected-attribute tags and the level label the embeddings
     # table reads (it has no sensitivity column).
-    from server.memory.domain.sensitivity import classify_value, resolve_sensitivity
+    from server.memory.domain.sensitivity import resolve_sensitivity
 
     effective_sensitivity = resolve_sensitivity(getattr(input, "sensitivity", ""), serialized_value)
-    classified = classify_value(
-        serialized_value,
-        level=effective_sensitivity,
-        tags=input.tags or [],
-        expires_at=expires_at,
-        on_expire=input.on_expire
-        or ((getattr(existing, "on_expire", "") or "") if existing is not None else ""),
-        now=datetime.now(UTC),
-        settings=settings,
+    on_expire = input.on_expire or (
+        (getattr(existing, "on_expire", "") or "") if existing is not None else ""
     )
-    expires_at, _sens_on_expire = classified.expires_at, classified.on_expire
-    if classified.windowed:
-        state_also("expires_at")  # the sensitive window is the server's own
-    if classified.tags != list(input.tags or []):
-        input = input.model_copy(update={"tags": classified.tags})
-    try:
-        from server.observability.metrics import record_attribute_tagged
-
-        for _t in classified.attribute_tags:
-            record_attribute_tagged(namespace=input.namespace, attribute=_t.split(":", 1)[1])
-    except Exception:  # noqa: BLE001 — metrics never fail a write
-        pass
+    classify = _classify_value if temporal_on() else _classify_value_classic
+    input, expires_at, _sens_on_expire = classify(
+        input, serialized_value, effective_sensitivity, expires_at, on_expire
+    )
     w.input = input
     w.serialized_value = serialized_value
     w.new_sha = new_sha
@@ -714,7 +773,7 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     # anything is embedded.
     _restated, _pin_refusal = _guard_existing_row(existing, input, retyped_from)
     if _pin_refusal is not None:
-        return await _durable_replay(input) or _pin_refusal
+        return (await _durable_replay(input) if temporal_on() else None) or _pin_refusal
 
     expires_at = await _set_expiry(input, existing, _cfg_task, resolved_memory_type)
 

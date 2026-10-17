@@ -19,6 +19,7 @@ from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_author, assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.feature_modes import temporal_on
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_narrowed, request_scope
@@ -45,6 +46,7 @@ from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
+from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 from server.settings import settings
 
@@ -577,7 +579,7 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
         )
     why: dict[str, str] = {}
     with write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)):
-        kept = await memory_repo.rewrite_heads(
+        kept = await _rewrite(
             [existing],
             lambda _h: {"updated_at": memory_repo.written_now(), "pinned": False},
             ch=ch,
@@ -633,7 +635,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
             existing = None  # the wide form ignores user_id; another user's row is not ours
     if existing is None:
         # A plan only the journal holds is still the key's: retract it.
-        journal_only = await _delete_journal_only(input)
+        journal_only = await _delete_journal_only(input) if temporal_on() else None
         if journal_only is not None:
             return journal_only
         # Idempotent: deleting a non-existent row is a no-op — and says so.
@@ -650,7 +652,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # before.
     why: dict[str, str] = {}
     with traced("ch.insert.memory.tombstone", table="loom.memory"):
-        kept = await memory_repo.rewrite_heads(
+        kept = await _rewrite(
             [existing],
             lambda _h: {
                 "updated_at": memory_repo.written_now(),
@@ -792,6 +794,22 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
                     "destructive UI-dropdown accidents."
                 ),
             },
+        )
+
+    if not temporal_on():
+        # No journal to retract from: tombstone the scope in place.
+        counts = await memory_repo.bulk_tombstone_scope(
+            org=input.org,
+            namespace=input.namespace,
+            user_id=input.user_id,
+            agent=input.agent,
+        )
+        locked_skipped = int(counts.pop("locked_skipped", 0) or 0)
+        return MemoryClearOutput(
+            cleared_at=naive_utc_now(),
+            rows_affected=counts,
+            total=sum(counts.values()),
+            locked_skipped=locked_skipped,
         )
 
     from server.memory.domain import lock as _lock
@@ -984,10 +1002,10 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
 
     new_expires_at = None
     if not input.clear_expiry:
-        # To the second, as the row keeps it: the answer says what was written.
-        new_expires_at = (datetime.now(UTC) + timedelta(seconds=input.ttl_seconds or 0)).replace(
-            microsecond=0
-        )
+        new_expires_at = datetime.now(UTC) + timedelta(seconds=input.ttl_seconds or 0)
+        if temporal_on():
+            # To the second, as the row keeps it: the answer says what was written.
+            new_expires_at = new_expires_at.replace(microsecond=0)
     naive_expiry = new_expires_at.replace(tzinfo=None) if new_expires_at else None
     overrides: dict[str, Any] = {"expires_at": new_expires_at}
     if input.on_expire:
@@ -1012,7 +1030,7 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
         # Mirror every persisted column; only the touch deltas override. A key
         # another write keeps changing is not touched.
         with write_intent(WriteIntent(existing=True)):
-            kept = await memory_repo.rewrite_heads(
+            kept = await _rewrite(
                 heads, lambda _h: dict(overrides), ch=ch, skip=_locked_since, reasons=left_out
             )
         versions = {str(r["memory_key"]): int(r["version"]) for r in kept}
@@ -1137,6 +1155,30 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
             getattr(row, "verified_by", ""), getattr(row, "verified_sha256", ""), sha
         ),
     )
+
+
+async def _rewrite(
+    heads: Any,
+    update: Any,
+    *,
+    ch: Any,
+    skip: Any = None,
+    reasons: dict[str, str] | None = None,
+) -> list[Any]:
+    """`rewrite_heads`; without the journal, each head's version row built and
+    inserted as it is (every one kept)."""
+    import server.memory.store as memory_repo
+
+    if temporal_on():
+        return await memory_repo.rewrite_heads(heads, update, ch=ch, skip=skip, reasons=reasons)
+    rows = [
+        memory_repo.build_memory_version_row(h, **{"version": next_version(), **update(h)})
+        for h in heads
+        if skip is None or not skip(h)
+    ]
+    if rows:
+        await insert_memory_versions(rows, ch=ch)
+    return rows
 
 
 def _receipt_of(out: MemoryGetOutput) -> Any:

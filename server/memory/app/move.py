@@ -20,6 +20,7 @@ from fastapi import HTTPException
 import server.memory.store as memory_repo
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.feature_modes import temporal_on
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
@@ -75,16 +76,17 @@ async def _load_source(input: MemoryMoveInput) -> MemoryRow:
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    # The source's current row may lag the journal (a plan come due): bring it in
-    # line first, so the move copies what holds now.
-    from server.memory.app.temporal_projection import reconcile_identities
+    if temporal_on():
+        # The source's current row may lag the journal (a plan come due): bring it in
+        # line first, so the move copies what holds now.
+        from server.memory.app.temporal_projection import reconcile_identities
 
-    await reconcile_identities(
-        input.org,
-        input.namespace,
-        [(input.agent, input.user_id, input.session_id, input.from_key)],
-    )
-    await _refuse_pending_plans(input)
+        await reconcile_identities(
+            input.org,
+            input.namespace,
+            [(input.agent, input.user_id, input.session_id, input.from_key)],
+        )
+        await _refuse_pending_plans(input)
     # fresh: a move right after the set that wrote the key must see it.
     source = await memory_repo.get_by_key(
         identity, input.from_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
@@ -166,7 +168,7 @@ async def _refuse_pending_plans(input: Any) -> None:
         )
 
 
-async def _redirect_source(source: MemoryRow, dest_id: str, to_key: str, ch: Any) -> None:
+async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any, to_key: str = "") -> None:
     """The redirect: a new version of the SOURCE row with `status='duplicate'` and
     `duplicate_of` = the destination, every other column carried forward (the builder + the
     typed insert). The search mirror is re-emitted with the same status so the dense leg's own
@@ -181,10 +183,14 @@ async def _redirect_source(source: MemoryRow, dest_id: str, to_key: str, ch: Any
         duplicate_of=dest_id,
         updated_at=now,
     )
-    with write_intent(WriteIntent(memory_key=source.memory_key, redirect=True)):
-        kept = await memory_repo.insert_over_heads(
-            [(row, frozenset({"status", "duplicate_of", "updated_at"}))], ch=ch
-        )
+    if temporal_on():
+        with write_intent(WriteIntent(memory_key=source.memory_key, redirect=True)):
+            kept = await memory_repo.insert_over_heads(
+                [(row, frozenset({"status", "duplicate_of", "updated_at"}))], ch=ch
+            )
+    else:
+        await memory_repo.insert_memory_versions([row], ch=ch)
+        kept = [row]
     if not kept:
         # A plan landed on the source since `_refuse_pending_plans` (the publisher
         # re-checks under its lock), or the row changed: the destination is written,
@@ -279,7 +285,7 @@ async def handle_memory_move(input: MemoryMoveInput) -> MemoryMoveOutput:
     set_out = await write_mod.handle_memory_set(set_input)
     dest_id = await _destination_id(set_out, set_input)
     if input.keep_redirect:
-        await _redirect_source(source, dest_id, input.to_key, get_client())
+        await _redirect_source(source, dest_id, get_client(), to_key=input.to_key)
     else:
         await _tombstone_source(source)
     return MemoryMoveOutput(

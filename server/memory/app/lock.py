@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, to_naive_utc
+from server.core.feature_modes import temporal_on
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lock import (
     MemoryLockInput,
@@ -30,6 +31,8 @@ from server.memory.api.models_lock import (
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.temporal_capture import WriteIntent, write_intent
+from server.memory.store.inserts import insert_memory_versions
+from server.memory.store.rows import next_version
 
 if TYPE_CHECKING:
     from server.memory.store import MemoryRow
@@ -72,8 +75,9 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
         until = now + timedelta(seconds=input.ttl_seconds)
     else:
         until = to_naive_utc(input.until)
-    # To the second, as the row and the journal keep it: the answer says what holds.
-    until = until.replace(microsecond=0) if until is not None else None
+    if until is not None and temporal_on():
+        # To the second, as the row and the journal keep it: the answer says what holds.
+        until = until.replace(microsecond=0)
     if until is not None and until <= now:
         raise HTTPException(
             status_code=422,
@@ -98,7 +102,7 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
     with write_intent(
         WriteIntent(memory_key=existing.memory_key, existing=True, tighten_lock=True)
     ):
-        kept = await memory_repo.rewrite_heads([existing], _locked, ch=get_client(), reasons=why)
+        kept = await _rewrite([existing], _locked, ch=get_client(), reasons=why)
     if not kept:
         raise memory_repo.not_written(existing.memory_key, "lock", why)
     row = kept[0]
@@ -154,7 +158,7 @@ async def handle_memory_unlock(input: MemoryUnlockInput) -> MemoryUnlockOutput:
         )
     why: dict[str, str] = {}
     with write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)):
-        kept = await memory_repo.rewrite_heads(
+        kept = await _rewrite(
             [existing],
             lambda _h: {
                 "updated_at": memory_repo.written_now(),
@@ -177,3 +181,27 @@ async def handle_memory_unlock(input: MemoryUnlockInput) -> MemoryUnlockOutput:
         previous_mode=previous or (getattr(existing, "lock_mode", "") or ""),
         unlocked_by=_actor(input.unlocked_by),
     )
+
+
+async def _rewrite(
+    heads: Any,
+    update: Any,
+    *,
+    ch: Any,
+    skip: Any = None,
+    reasons: dict[str, str] | None = None,
+) -> list[Any]:
+    """`rewrite_heads`; without the journal, each head's version row built and
+    inserted as it is (every one kept)."""
+    import server.memory.store as memory_repo
+
+    if temporal_on():
+        return await memory_repo.rewrite_heads(heads, update, ch=ch, skip=skip, reasons=reasons)
+    rows = [
+        memory_repo.build_memory_version_row(h, **{"version": next_version(), **update(h)})
+        for h in heads
+        if skip is None or not skip(h)
+    ]
+    if rows:
+        await insert_memory_versions(rows, ch=ch)
+    return rows

@@ -38,6 +38,8 @@ class _RecCH:
     async def query_all(self, sql, params=None):
         if "startsWith(t.name, '_provider_rebuild_')" in sql:
             return []
+        if "concat('loom.', name) IN" in sql:  # the journal's tables (migration 039) exist
+            return [{"t": t} for t in (params or {})["ts"]]
         return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
 
 
@@ -256,8 +258,14 @@ def test_redact_by_key_statements_are_org_scoped_has_lookups() -> None:
     assert "has(arrayConcat(window_keys, cited_keys), {key:String})" in ch.commands[0][0]
 
 
-async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(monkeypatch) -> None:
+@pytest.mark.parametrize("journal", [False, True])
+async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(
+    monkeypatch, journal
+) -> None:
     from server.memory.app import curation as cur
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", journal)
 
     target = {
         "namespace": "n",
@@ -360,7 +368,10 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     out = await cur.handle_memory_redact(inp)
     assert out.redacted is True and out.cache_rows_deleted == 2 and out.precedent_rows_deleted == 1
     assert redacted == [("o", inp.memory_id, 7)]
-    assert held == ["lock", "check", "unlock"]  # no commit can land between check and scrub
+    if journal:  # no commit can land between check and scrub
+        assert held == ["lock", "check", "unlock"]
+    else:  # no journal to check: the named row is scrubbed
+        assert held == []
     # The key's derived rows are scrubbed too; the head is live, so its text stays.
     assert scrubbed == [("o", "n", "a", "u", "s", "user_employer", True, "head-inputs")]
     assert deleted == [

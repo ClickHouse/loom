@@ -31,6 +31,7 @@ from server.erasure.store.predicates import (
 )
 from server.erasure.store.provider_copies import copy_residue
 from server.erasure.store.steps_memory import SESSION_OUTCOME_TABLES, TERM_AGGREGATE_TABLES
+from server.erasure.store.steps_temporal import present_tables
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 
 log = logging.getLogger(__name__)
@@ -53,6 +54,9 @@ class Substrate:
     # The namespace-scope predicate for a table with no namespace column,
     # counted org-wide ("1"); None → the namespace predicate.
     ns_pred: str | None = None
+    # A table that exists only once its migration ran (the journal's): counted
+    # when it is there, skipped when it never was.
+    optional: bool = False
 
     def counted_in(self, scope_type: str) -> bool:
         return scope_type == "namespace" or self.user_pred is not None
@@ -146,6 +150,7 @@ _CENSUS: tuple[Substrate, ...] = (
         "memory_temporal.delete",
         "memory_temporal.delete",
         final=False,
+        optional=True,
     ),
     Substrate(
         "loom.memory_temporal_assertions",
@@ -153,8 +158,11 @@ _CENSUS: tuple[Substrate, ...] = (
         UID,
         "memory_temporal.delete",
         "memory_temporal.delete",
+        optional=True,
     ),
-    Substrate("loom.memory_temporal_vectors", "1", None, "memory_temporal.delete", None),
+    Substrate(
+        "loom.memory_temporal_vectors", "1", None, "memory_temporal.delete", None, optional=True
+    ),
     Substrate("loom.entity_summaries", LIVE, UID, "summaries.tombstone", "summaries.tombstone"),
     Substrate("loom.memory_records", LIVE, UID, "records.tombstone", "records.tombstone"),
     Substrate("loom.memory_record_versions", "1", UID, "records.tombstone", "records.tombstone"),
@@ -640,8 +648,12 @@ async def residue_census(
     # A purge leaves nothing behind, so its census counts every row, not the
     # live ones.
     purge = purge_mode()
+    optional = [s.table for s in _CENSUS if s.optional]
+    present = await present_tables(optional, ch) if optional else set()
     for sub in _CENSUS:
         table, live = sub.table, sub.live
+        if sub.optional and table not in present:
+            continue
         if scope_type != "namespace":
             pred = sub.user_pred
         else:

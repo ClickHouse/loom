@@ -35,6 +35,8 @@ class _CH:
     async def query_all(self, sql: str, params: dict[str, Any] | None = None):
         if "startsWith(t.name, '_provider_rebuild_')" in sql:
             return []
+        if "concat('loom.', name) IN" in sql:  # the journal's tables (migration 039) exist
+            return [{"t": t} for t in (params or {})["ts"]]
         self.polls.append((" ".join(sql.split()), dict(params or {})))
         return (
             self.poll_rows.pop(0)

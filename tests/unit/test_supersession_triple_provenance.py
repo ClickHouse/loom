@@ -76,7 +76,6 @@ async def test_the_successor_triple_carries_the_predecessor_provenance(
         confidence=0.9,
         adapter_name="row-supersession",
         last_seen=row["last_seen"],
-        recorded_at=row["recorded_at"],
     )
     assert isinstance(row["last_seen"], datetime)
     assert row == canonical

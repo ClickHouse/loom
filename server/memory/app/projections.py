@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.feature_modes import temporal_on
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app import conflicts as _conflicts
 
@@ -185,7 +186,7 @@ async def write_entity_edges(
                         # is never born superseded; _repair_contradictory_edges
                         # stamps it on the OLDER pair. NULL = current.
                         "invalid_at": None,
-                        "recorded_at": _recorded_now(),
+                        **_recorded(),
                     }
                 )
                 edge_memories.append(
@@ -261,7 +262,7 @@ def entity_triple_row(
         "valid_from": valid_from,
         "valid_to": valid_to,
         "invalid_at": None,
-        "recorded_at": recorded_at or _recorded_now(),
+        **_recorded(recorded_at),
     }
 
 
@@ -502,9 +503,7 @@ async def close_triples(
             continue
         keys = [_GRAPH_KEY_SEP.join((s, r, o)) for s, r, o, _, _ in group]
         idx = f"indexOf({{keys:Array(String)}}, {_TRIPLE_KEY_EXPR})"
-        set_cols = (
-            f"valid_to = arrayElement({{valid_tos:Array(DateTime)}}, {idx}), closed_at = now()"
-        )
+        set_cols = f"valid_to = arrayElement({{valid_tos:Array(DateTime)}}, {idx}){_closed()}"
         params: dict[str, Any] = {
             "org": org,
             "ns": namespace,
@@ -793,7 +792,7 @@ async def _repair_contradictory_edges(
         keys = [_edge_key(a, b, vf) for a, b, vf, _, _ in group]
         idx = f"indexOf({{keys:Array(String)}}, {_EDGE_KEY_EXPR})"
         own_valid_to = f"arrayElement({{valid_tos:Array(DateTime)}}, {idx})"
-        set_cols = f"valid_to = {own_valid_to}, closed_at = now()"
+        set_cols = f"valid_to = {own_valid_to}{_closed()}"
         params: dict[str, Any] = {
             "org": input.org,
             "ns": input.namespace,
@@ -897,3 +896,14 @@ def _recorded_now() -> datetime:
     """When loom recorded a graph row: aware UTC, since the driver reads a naive
     datetime as the host's local time and would shift every knowledge-time read."""
     return datetime.now(UTC)
+
+
+def _recorded(at: datetime | None = None) -> dict[str, Any]:
+    """A graph row's knowledge-time column: the journal's, absent without it (the
+    column does not exist then)."""
+    return {"recorded_at": at or _recorded_now()} if temporal_on() else {}
+
+
+def _closed() -> str:
+    """The SET clause that stamps when a graph row was closed, with the journal on."""
+    return ", closed_at = now()" if temporal_on() else ""

@@ -92,6 +92,7 @@ from server.memory.store.inserts import (
     kept_embedding_rows,
 )
 from server.memory.store.lifecycle import (
+    bulk_tombstone_scope,
     consolidated_dependents_of,
     delete_procedure_runs_by_key,
     downgrade_consolidated_dependents,
@@ -187,6 +188,7 @@ __all__ = [
     "build_memory_version_row",
     "build_revision_row",
     "build_session_summary_row",
+    "bulk_tombstone_scope",
     "live_unlocked_identities",
     "locked_in_scope",
     "canonical_rows_by_ids",

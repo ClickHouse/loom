@@ -626,7 +626,7 @@ async def _site_demote(ch, mp):
 async def _site_move(ch, mp):
     from server.memory.app import move
 
-    await move._redirect_source(_memory_row(), "dest", "k2", ch)
+    await move._redirect_source(_memory_row(), "dest", ch, to_key="k2")
 
 
 async def _site_dedup_collapse(ch, mp):

@@ -46,10 +46,12 @@ class _StubCH:
         return [{"memory_id": "mid-1"}]
 
 
-async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
+@pytest.mark.parametrize("journal", [False, True])
+async def test_negative_escalation_quarantines_at_threshold(monkeypatch, journal):
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
+    monkeypatch.setattr(settings, "memory_temporal_enabled", journal)
     ch = _StubCH(
         [
             {"n": 3},  # rejection count reaches threshold
@@ -78,8 +80,15 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
         )
     )
     assert out.quarantined is True
-    # Quarantine writes a rejected version (the funnel mirrors it onto the embedding row).
-    assert [(ids, u["status"]) for ids, u in written] == [(["mid-1"], "rejected")]
+    if journal:
+        # Quarantine writes a rejected version (the funnel mirrors it onto the embedding row).
+        assert [(ids, u["status"]) for ids, u in written] == [(["mid-1"], "rejected")]
+        return
+    # Without the journal it flips status in place on BOTH the memory and its embedding row.
+    assert not written
+    joined = " ".join(sql for sql, _ in ch.executes)
+    assert "loom.memory" in joined and "rejected" in joined
+    assert "loom.memory_embeddings" in joined
 
 
 async def test_negative_below_threshold_does_not_quarantine(monkeypatch):

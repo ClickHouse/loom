@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from server.insights.app import provider_rebuild_page as page
+from server.insights.domain.provider_rebuild import INVALIDATE_TABLES
 from server.insights.store.provider_staging import SourceSchema, StagingNames
 
 
@@ -80,7 +81,7 @@ async def test_full_page_does_not_prematurely_finish_table(plan):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("table", ["embedding_cache", "memory_temporal_vectors"])
+@pytest.mark.parametrize("table", sorted(INVALIDATE_TABLES))
 async def test_cache_uses_invalidation_without_embedding_or_row_copy(plan, monkeypatch, table):
     args, read, embed, write = plan
     args = (StagingNames(args[0].job_id, table), *args[1:])

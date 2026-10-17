@@ -18,8 +18,12 @@ def _row(mode: str = "", until: datetime | None = None) -> Any:
 
 @pytest.fixture
 def clear(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """The scope's live rows, the tombstones written and the locked count."""
+    """The scope's live rows, the tombstones written and the locked count, with the
+    journal on (`test_memory_clear_in_place` has the clear without it)."""
     from server.memory import store as memory_repo
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
     from server.memory.app import temporal_projection
     from server.memory.app import temporal_publisher as publisher
     from server.memory.store import temporal as temporal_store

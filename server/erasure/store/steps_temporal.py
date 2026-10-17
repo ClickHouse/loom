@@ -42,6 +42,26 @@ _TEMPORAL_TABLES = (
 _WATERMARKS = f"{_NS} AND projection != 'published'"
 
 
+# The tables migration 039 creates, which exist only once the journal was turned on.
+JOURNAL_TABLES = (
+    *_TEMPORAL_TABLES,
+    "loom.memory_temporal_watermarks",
+    "loom.shared_versions",
+)
+
+
+async def present_tables(tables: Sequence[str], ch: _CHClient | None = None) -> set[str]:
+    """Which of `tables` the database has. A journal table is erased whenever it
+    exists, flag on or off: it holds what an earlier period with the journal on
+    recorded, and one that was never created has nothing to erase."""
+    rows = await (ch or _default_client()).query_all(
+        "SELECT concat('loom.', name) AS t FROM system.tables "
+        "WHERE database = 'loom' AND concat('loom.', name) IN {ts:Array(String)}",
+        params={"ts": list(tables)},
+    )
+    return {str(r["t"]) for r in rows}
+
+
 async def _delete(table: str, where: str, params: dict[str, Any], ch: _CHClient | None) -> int:
     return await count_then_mutate(
         table,
@@ -62,9 +82,13 @@ async def delete_temporal_by_namespace(
     projects and is reconciled inline rather than waiting on a gap; the `erased`
     row keeps that head, below which no missing sequence can still land."""
     params: dict[str, Any] = {"org": org, "ns": namespace}
+    have = await present_tables(JOURNAL_TABLES, ch)
     n = 0
     for t in _TEMPORAL_TABLES:
-        n += await _delete(t, _NS, params, ch)
+        if t in have:
+            n += await _delete(t, _NS, params, ch)
+    if "loom.memory_temporal_watermarks" not in have:
+        return n
     n += await _delete("loom.memory_temporal_watermarks", _WATERMARKS, params, ch)
     nss = [namespace] if isinstance(namespace, str) else list(namespace)
     await (ch or _default_client()).execute(
@@ -81,14 +105,20 @@ async def delete_temporal_by_namespace(
 async def delete_temporal_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """A user's journal commits, assertions and vectors, in that order."""
     params: dict[str, Any] = {"org": org, "uid": user_id}
-    rows = await (ch or _default_client()).query_all(
-        "SELECT DISTINCT namespace, toString(embed_input_sha256) AS sha "
-        f"FROM loom.memory_temporal_assertions WHERE {_UID}",
-        params=params,
-    )
+    have = await present_tables(JOURNAL_TABLES, ch)
+    rows: list[dict[str, Any]] = []
+    if "loom.memory_temporal_assertions" in have:
+        rows = await (ch or _default_client()).query_all(
+            "SELECT DISTINCT namespace, toString(embed_input_sha256) AS sha "
+            f"FROM loom.memory_temporal_assertions WHERE {_UID}",
+            params=params,
+        )
     n = 0
     for t in ("loom.memory_temporal_commits", "loom.memory_temporal_assertions"):
-        n += await _delete(t, _UID, params, ch)
+        if t in have:
+            n += await _delete(t, _UID, params, ch)
+    if "loom.memory_temporal_vectors" not in have:
+        return n
     pairs = [(str(r["namespace"]), str(r["sha"])) for r in rows]
     for i in range(0, len(pairs), _PAIRS_PER_DELETE):
         chunk = pairs[i : i + _PAIRS_PER_DELETE]
@@ -102,6 +132,8 @@ async def delete_history_mirrors_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
     """The shared-memory version mirror."""
+    if "loom.shared_versions" not in await present_tables(JOURNAL_TABLES, ch):
+        return 0
     return await _delete("loom.shared_versions", _NS, {"org": org, "ns": namespace}, ch)
 
 
@@ -109,5 +141,7 @@ async def delete_history_mirrors_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
     """The shared versions promoted from the user's rows."""
+    if "loom.shared_versions" not in await present_tables(JOURNAL_TABLES, ch):
+        return 0
     params: dict[str, Any] = {"org": org, "uid": user_id}
     return await _delete("loom.shared_versions", _PROMOTED_FROM_USER, params, ch)

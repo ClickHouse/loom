@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
+from server.core.feature_modes import temporal_on
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
@@ -298,6 +299,19 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     state.embedding_rows = [
         r for r in state.embedding_rows if str(r.get("memory_key")) not in retire
     ]
+    if not temporal_on():
+        # No journal to leave a row out: the two core writes are independent rows of two
+        # tables, each a ~260 ms committed insert on ClickHouse Cloud, so they are gathered.
+        await asyncio.gather(
+            memory_repo.insert_memory_versions(state.memory_rows, ch=ch),
+            memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
+        )
+        await memory_repo.index_late_rows(state.embedding_rows, ch=ch)
+        await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
+        fences = _high_winners(state, set(_winners(state)))
+        if fences:
+            await fence_high(fences, ch=ch)
+        return
     # Each is a ~260 ms committed insert on ClickHouse Cloud, so the embedding rows
     # go with the version rows, once the journal accepted them (as `memory.set`).
     # A row it left out (a moved-on retry, late evidence) touches no vector.
@@ -749,7 +763,8 @@ async def handle_memory_bulk_set(
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
     state = _BulkWriteState()
-    await _bulk_retried(input, state)
+    if temporal_on():
+        await _bulk_retried(input, state)
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)
@@ -774,7 +789,8 @@ async def handle_memory_bulk_set(
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
     for name, key in state.replayed_lists:
         getattr(plan, name).append(key)
-    state.request_outcomes = _request_outcomes(input, state, plan)
+    if temporal_on():
+        state.request_outcomes = _request_outcomes(input, state, plan)
 
     await _bulk_insert(ch, state)
     _answer_retried(state)

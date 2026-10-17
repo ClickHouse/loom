@@ -37,9 +37,11 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.core.feature_modes import temporal_on
 from server.core.hashing import sha256_value as _sha
 from server.memory.domain import lock as _lock
 from server.memory.domain.temporal_capture import WriteIntent, write_intent
+from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
 
@@ -212,8 +214,9 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                     "expired_at": row.expires_at,
                 }
             )
+        if cfg.dry_run or not temporal_on():
+            _count(res, action)  # with the journal on, counted once it kept the row
         if cfg.dry_run:
-            _count(res, action)
             continue
         # One version for the memory row and its vector retire, so a late copy of an
         # older read (read + 1) stays below the retire.
@@ -232,10 +235,14 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
         try:
             # Each row sets only what its expiry sets, and holds only while the key is
             # still expired: a key touched since is left out, not swept.
-            with write_intent(WriteIntent(conditional=True)):
-                kept_rows = await memory_repo.insert_over_heads(
-                    list(zip(version_rows, sets, strict=True)), ch=ch
-                )
+            if temporal_on():
+                with write_intent(WriteIntent(conditional=True)):
+                    kept_rows = await memory_repo.insert_over_heads(
+                        list(zip(version_rows, sets, strict=True)), ch=ch
+                    )
+            else:
+                await insert_memory_versions(version_rows, ch=ch)
+                kept_rows = version_rows
             await _keep(kept_rows)
         except Exception as e:  # the pass records a failure; the rows expire next pass
             log.exception("memory_expiry_sweep: version insert failed")
@@ -248,8 +255,9 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             return res
         # A row the journal left out (a key locked since, a later write) changed nothing.
         mirrors = [m for m in mirrors if _ident(m[1]) in kept]
-        for action, _row, _v in mirrors:
-            _count(res, action)
+        if temporal_on():  # without it each was counted as it was planned
+            for action, _row, _v in mirrors:
+                _count(res, action)
         try:
             await _mirror_embeddings_batch(mirrors, cfg=cfg)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative

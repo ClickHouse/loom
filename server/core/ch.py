@@ -1220,7 +1220,9 @@ class CHClient:
         # driver's own retry after a peer close — names the same batch
         # and ClickHouse keeps one copy.
         settings = dedup_settings(
-            insert_dedup_token(table, list(rows[0].keys()), rows, uuid.uuid4().hex), settings
+            insert_dedup_token(table, list(rows[0].keys()), rows, uuid.uuid4().hex),
+            settings,
+            table=table,
         )
 
         async def _q() -> None:

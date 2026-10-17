@@ -13,6 +13,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.errors import PreconditionFailedError
+from server.core.feature_modes import temporal_on
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.temporal_capture import declare_fields, left_out_reasons, row_key
@@ -133,6 +134,10 @@ async def insert_over_heads(
 
     if not rows:
         return kept
+    if not temporal_on():
+        # No journal to leave a row out: every row is inserted as built.
+        await insert_memory_versions([r for r, _ in rows], ch=ch or _default_client())
+        return [r for r, _ in rows]
     declared = {row_key(r): fields - _STAMPS for r, fields in rows}
     with declare_fields(declared), left_out_reasons() as why:
         await insert_memory_versions(
@@ -331,6 +336,79 @@ async def downgrade_consolidated_dependents(
                 ch=ch,
             )
     return len(to_tomb), len(to_down)
+
+
+async def bulk_tombstone_scope(
+    *,
+    org: str,
+    namespace: str,
+    user_id: str | None = None,
+    agent: str | None = None,
+    ch: _CHClient | None = None,
+) -> dict[str, int]:
+    """`memory.clear`: bulk-tombstone every live memory row matching
+    (org, namespace, user_id?, agent?), plus the loom.memory_embeddings rows.
+
+    The handler enforces that at least one of `user_id` / `agent` is set; the
+    repo runs the query as-given (a scope-less call would clear the whole
+    namespace — that's `erasure.request_namespace`'s job).
+
+    Returns {table_name: rows_tombstoned}.
+    """
+    ch = ch or _default_client()
+
+    where = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
+    params: dict[str, Any] = {"org": org, "ns": namespace}
+    if user_id is not None:
+        where.append("user_id = {uid:String}")
+        params["uid"] = user_id
+    if agent is not None:
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    scope_sql = " AND ".join(where)
+    # Locked rows survive a clear: the memory table filters
+    # on the lock in force; memory_embeddings has no lock columns, so it
+    # excludes the locked keys by subquery. What was left behind is reported
+    # under the `locked_skipped` key (the handler lifts it out of the
+    # per-table counts).
+    from server.memory.domain.lock import locked_predicate, unlocked_predicate
+
+    locked_row = await ch.query_one(
+        f"SELECT count() AS n FROM loom.memory FINAL WHERE {scope_sql} AND {locked_predicate()}",
+        params=params,
+    )
+    locked_n = int((locked_row or {}).get("n", 0) or 0)
+    where_by_table = {
+        "loom.memory": f"{scope_sql} AND {unlocked_predicate()}",
+        "loom.memory_embeddings": scope_sql,
+    }
+    if locked_n:
+        where_by_table["loom.memory_embeddings"] = (
+            f"{scope_sql} AND memory_key NOT IN (SELECT memory_key FROM loom.memory FINAL "
+            f"WHERE {scope_sql} AND {locked_predicate()})"
+        )
+    counts: dict[str, int] = {}
+    for table in ("loom.memory", "loom.memory_embeddings"):
+        where_sql = where_by_table[table]
+        count_row = await ch.query_one(
+            f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
+            params=params,
+        )
+        n = int((count_row or {}).get("n", 0) or 0)
+        counts[table] = n
+        if n == 0:
+            continue
+        await ch.execute(
+            f"""
+            ALTER TABLE {table}
+            UPDATE tombstoned_at = now()
+            WHERE {where_sql}
+            SETTINGS mutations_sync = 2
+            """,
+            params=params,
+        )
+    counts["locked_skipped"] = locked_n
+    return counts
 
 
 async def live_unlocked_identities(

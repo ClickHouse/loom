@@ -31,6 +31,8 @@ class _StubCH:
     async def query_all(self, sql, params=None):
         if "startsWith(t.name, '_provider_rebuild_')" in sql:
             return []
+        if "concat('loom.', name) IN" in sql:  # the journal's tables (migration 039) exist
+            return [{"t": t} for t in (params or {})["ts"]]
         return [
             {
                 "mutation_id": "mutation_1.txt",

@@ -36,6 +36,7 @@ class _TraceCH:
 
     def __init__(self, trace: dict[str, list[tuple[str, str]]]) -> None:
         self.trace = trace
+        self.journal = True  # whether migration 039 created the journal's tables
 
     async def query_one(self, sql: str, params: Any = None, **kw: Any) -> Any:
         if "system.tables" in sql:
@@ -43,6 +44,8 @@ class _TraceCH:
         return {"n": 1} if "count()" in sql else None
 
     async def query_all(self, sql: str, params: Any = None, **kw: Any) -> list[dict[str, Any]]:
+        if "FROM system.tables" in sql:
+            return [{"t": t} for t in (params or {}).get("ts", [])] if self.journal else []
         if "system.mutations" in sql:
             if "is_done = 0" in sql:
                 return []
@@ -114,6 +117,7 @@ def run(monkeypatch: pytest.MonkeyPatch) -> Any:
         return [(name, tuple(trace.get(name, ()))) for name in order]
 
     _run.last = last  # type: ignore[attr-defined]
+    _run.ch = ch  # type: ignore[attr-defined]
     return _run
 
 
@@ -424,6 +428,21 @@ async def test_namespace_purge_saga_trace(run: Any, external: bool) -> None:
     lightweight DELETE, the narrow ones by an ALTER DELETE. Same steps."""
     got = await run("namespace_list", _ns_list(purge=True, external=external))
     assert got == _with_tail(NS_PURGE_TRACE, NS_BACKENDS if external else [])
+
+
+@pytest.mark.parametrize(("scope_type", "scope_value"), [("user_id", "alice"), ("namespace", "a")])
+async def test_a_journal_that_never_existed_has_nothing_to_erase(
+    run: Any, scope_type: str, scope_value: str
+) -> None:
+    """With the journal never turned on, migration 039 never ran: its steps issue
+    nothing, and every other step runs as before."""
+    run.ch.journal = False
+    got = dict(await run(scope_type, scope_value))
+    assert got["memory_temporal.delete"] == () and got["history_mirrors.delete"] == ()
+    want = dict(_with_tail(USER_TRACE, USER_BACKENDS) if scope_type == "user_id" else NS_TRACE)
+    del want["memory_temporal.delete"], want["history_mirrors.delete"]
+    del got["memory_temporal.delete"], got["history_mirrors.delete"]
+    assert {k: v for k, v in got.items() if k in want} == want
 
 
 @pytest.mark.parametrize(("scope_type", "scope_value"), [("user_id", "alice"), ("namespace", "a")])
