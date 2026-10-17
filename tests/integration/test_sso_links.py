@@ -192,7 +192,9 @@ async def test_link_refuses_an_address_that_still_holds_grants(ch: Any) -> None:
     assert await _resolve(f"kim@corp-{org}.example") is None
 
 
-async def _grant(ch: Any, org: str, namespace: str, subject: str, *, revoked: bool) -> None:
+async def _grant(
+    ch: Any, org: str, namespace: str, subject: str, *, revoked: bool, status: str = "active"
+) -> None:
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     await ch.insert(
         "loom.namespace_grants",
@@ -205,6 +207,7 @@ async def _grant(ch: Any, org: str, namespace: str, subject: str, *, revoked: bo
                 "granted_at": now,
                 "granted_by": "ops",
                 "revoked_at": now if revoked else None,
+                "status": status,
                 "version": 1,
             }
         ],
@@ -273,3 +276,14 @@ async def test_link_leaves_the_subjects_own_live_grant_alone(ch: Any) -> None:
             params={"org": org},
         )
     assert [r["revoked_at"] for r in mine] == [None]
+
+
+async def test_link_refuses_while_the_old_address_asks_to_join(ch: Any) -> None:
+    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    personal = f"jo@home-{org}.example"
+    namespace = await _password_account(ch, org, personal, owner="jo")
+    await _grant(ch, org, "team", personal, revoked=False, status="pending")
+    refused = _sso_refused(
+        "link", "--email", f"jo@corp-{org}.example", "--org", org, "--namespace", namespace
+    )
+    assert refused.returncode == 2 and "asked to join team" in refused.stderr

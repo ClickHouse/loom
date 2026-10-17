@@ -188,7 +188,10 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
     pending = [g for g in grants if g["revoked_at"] is None and g["status"] == "pending"]
     if was and pending:
         named = ", ".join(g["namespace"] for g in pending)
-        raise ValueError(f"{was} asked to join {named}; approve or reject that first")
+        raise ValueError(
+            f"{was} asked to join {named}: reject the request (or grant "
+            f"{row['owner_email']} there and then reject it) first"
+        )
     live = [g for g in grants if g["revoked_at"] is None]
     if was and live:
         # Granted to the address by name, they would reach no one once it is untied.
@@ -198,10 +201,20 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
             f"{row['owner_email']} and revoke them first"
         )
     revoked = [g for g in grants if g["revoked_at"] is not None] if was else []
+    if revoked:
+        with own_write_reads():
+            own = await get_client().query_all(
+                "SELECT DISTINCT namespace FROM loom.namespace_grants FINAL "
+                "WHERE org = {org:String} AND lower(subject) = lower({owner:String})",
+                params={"org": org, "owner": str(row["owner_email"])},
+            )
+        # Where the subject has a row of its own it caps its tokens already.
+        mine = {r["namespace"] for r in own}
+        revoked = [g for g in revoked if g["namespace"] not in mine]
     return {"row": row, "was": was, "revoked": revoked}
 
 
-async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
+async def link_account(email: str, org: str, namespace: str, *, by: str) -> tuple[str, list[str]]:
     """Let SSO sign-ins with `email` reach the password account (org, namespace)
     registered under another address (a personal one, a `+tag`): its contact
     becomes `email` and it is linked, so the person keeps its subject, grants,
@@ -209,7 +222,7 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
     revoked under the old address stops capping the person's tokens once the
     address is untied, so each is carried to the subject, revoked. Holds the
     address as JIT holds it, so no SSO sign-in makes a second account for it
-    meanwhile. Returns the address it had."""
+    meanwhile. Returns the address it had and the namespaces carried."""
     from server.auth.self_signup import CLAIM_TTL_S, email_claim
     from server.core import grant_cache, leases
     from server.core.ch import get_client
@@ -250,13 +263,14 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
             "carried_revoked": carried,
         },
     )
-    return was
+    return was, carried
 
 
 async def _carry_revoked(revoked: list[dict[str, Any]], owner: str, by: str) -> list[str]:
     """The subject's own revoked row on each namespace an address's revoked row
-    named, unless the subject has a row there already: it caps the person's
-    tokens as the address's did. Returns the namespaces carried."""
+    named, unless the subject has a row there already (checked again under the
+    grant claims): it caps the person's tokens as the address's did. Returns
+    the namespaces carried."""
     from server.auth.grant_claims import grant_change
     from server.core.ch import get_client
     from server.identity.store import grants

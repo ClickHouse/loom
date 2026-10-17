@@ -81,12 +81,16 @@ class LinkInput(_Input):
 async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
     """Point one password account at the address its owner signs in with (see `loom sso link`)."""
     try:
-        was = await account_admin.link_account(
+        was, carried = await account_admin.link_account(
             input.email, input.org, input.namespace, by=_by(info)
         )
     except ValueError as e:
         raise _invalid(e) from None
-    return {"linked": {"org": input.org, "namespace": input.namespace}, "was": was}
+    return {
+        "linked": {"org": input.org, "namespace": input.namespace},
+        "was": was,
+        "carried_revoked": carried,
+    }
 
 
 @router.post("/v1/admin/sso.unlink")

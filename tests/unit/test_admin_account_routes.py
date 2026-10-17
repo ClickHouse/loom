@@ -64,11 +64,13 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
             }
         ]
 
-    async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
+    async def link_account(
+        email: str, org: str, namespace: str, *, by: str
+    ) -> tuple[str, list[str]]:
         seen.append(("link", (email, org, namespace)))
         if email == "taken@acme.io":
             raise ValueError("taken@acme.io is already acme/lee's; release that one first")
-        return "lee@home.example"
+        return "lee@home.example", ["secret"]
 
     for name, fake in [
         ("link_account", link_account),
@@ -253,6 +255,10 @@ def test_a_link_points_one_account_at_the_providers_address(calls) -> None:
     c = _client()
     body = {"email": "lee@acme.io", "org": "acme", "namespace": "lee"}
     out = c.post("/v1/admin/sso.link", json=body).json()
-    assert out == {"linked": {"org": "acme", "namespace": "lee"}, "was": "lee@home.example"}
+    assert out == {
+        "linked": {"org": "acme", "namespace": "lee"},
+        "was": "lee@home.example",
+        "carried_revoked": ["secret"],
+    }
     refused = c.post("/v1/admin/sso.link", json={**body, "email": "taken@acme.io"})
     assert refused.status_code == 422 and "release that one first" in refused.text
