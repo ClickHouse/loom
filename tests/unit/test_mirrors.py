@@ -450,9 +450,9 @@ def test_gc_runs_when_due_and_not_again_until_the_interval(monkeypatch, tmp_path
     subprocess.run(["git", "init", "-q", "--bare", str(git_dir)], check=True)
     monkeypatch.setattr(settings, "code_mirror_gc_margin_gb", 0.0)
     monkeypatch.setattr(settings, "code_mirror_gc_interval_h", 168.0)
-    asyncio.run(mirrors._gc_if_due(str(git_dir)))
+    asyncio.run(mirrors.gc_if_due(str(git_dir)))
     first = (git_dir / mirrors._GC_MARK).stat().st_mtime
-    asyncio.run(mirrors._gc_if_due(str(git_dir)))
+    asyncio.run(mirrors.gc_if_due(str(git_dir)))
     assert (git_dir / mirrors._GC_MARK).stat().st_mtime == first
 
 
@@ -465,7 +465,7 @@ def test_gc_without_room_waits_an_interval_instead_of_retrying_each_round(
     subprocess.run(["git", "init", "-q", "--bare", str(git_dir)], check=True)
     monkeypatch.setattr(settings, "code_mirror_gc_margin_gb", 1e9)
     monkeypatch.setattr(settings, "code_mirror_gc_interval_h", 168.0)
-    asyncio.run(mirrors._gc_if_due(str(git_dir)))
+    asyncio.run(mirrors.gc_if_due(str(git_dir)))
     assert mirrors._mark_age_s(str(git_dir), mirrors._GC_MARK) < 60
 
 

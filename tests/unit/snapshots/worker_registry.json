@@ -337,13 +337,13 @@
    }
   },
   {
-   "deadline_seconds()": 900.0,
+   "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 300,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 5400.0,
    "name": "code_scip_delta",
    "owned_tables": [],
    "pass_callable": {
@@ -351,13 +351,13 @@
    }
   },
   {
-   "deadline_seconds()": 900.0,
+   "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 600,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 5400.0,
    "name": "code_scip_ts_delta",
    "owned_tables": [],
    "pass_callable": {
@@ -365,13 +365,13 @@
    }
   },
   {
-   "deadline_seconds()": 900.0,
+   "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 600,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 5400.0,
    "name": "code_scip_py_delta",
    "owned_tables": [],
    "pass_callable": {
@@ -379,17 +379,45 @@
    }
   },
   {
-   "deadline_seconds()": 7200.0,
+   "deadline_seconds()": 9000.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 900,
-   "max_pass_seconds": 7200.0,
+   "max_pass_seconds": 9000.0,
    "name": "code_scip_go_delta",
    "owned_tables": [],
    "pass_callable": {
     "id": "server.code.workers.scip_go_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 50400.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 900,
+   "max_pass_seconds": 50400.0,
+   "name": "code_scip_full",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_full:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800,
+   "max_pass_seconds": null,
+   "name": "code_crossref",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.crossref:run_pass"
    }
   },
   {
@@ -886,13 +914,13 @@
    }
   },
   {
-   "deadline_seconds()": 900.0,
+   "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 300,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 5400.0,
    "name": "code_scip_delta",
    "owned_tables": [],
    "pass_callable": {
@@ -900,13 +928,13 @@
    }
   },
   {
-   "deadline_seconds()": 900.0,
+   "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 600,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 5400.0,
    "name": "code_scip_ts_delta",
    "owned_tables": [],
    "pass_callable": {
@@ -914,13 +942,13 @@
    }
   },
   {
-   "deadline_seconds()": 900.0,
+   "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 600,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 5400.0,
    "name": "code_scip_py_delta",
    "owned_tables": [],
    "pass_callable": {
@@ -928,17 +956,45 @@
    }
   },
   {
-   "deadline_seconds()": 7200.0,
+   "deadline_seconds()": 9000.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 900,
-   "max_pass_seconds": 7200.0,
+   "max_pass_seconds": 9000.0,
    "name": "code_scip_go_delta",
    "owned_tables": [],
    "pass_callable": {
     "id": "server.code.workers.scip_go_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 50400.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 900,
+   "max_pass_seconds": 50400.0,
+   "name": "code_scip_full",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_full:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800,
+   "max_pass_seconds": null,
+   "name": "code_crossref",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.crossref:run_pass"
    }
   },
   {
@@ -1391,13 +1447,13 @@
    }
   },
   {
-   "deadline_seconds()": 900.0,
+   "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 300,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 5400.0,
    "name": "code_scip_delta",
    "owned_tables": [],
    "pass_callable": {
@@ -1405,13 +1461,13 @@
    }
   },
   {
-   "deadline_seconds()": 900.0,
+   "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 600,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 5400.0,
    "name": "code_scip_ts_delta",
    "owned_tables": [],
    "pass_callable": {
@@ -1419,13 +1475,13 @@
    }
   },
   {
-   "deadline_seconds()": 900.0,
+   "deadline_seconds()": 5400.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 600,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 5400.0,
    "name": "code_scip_py_delta",
    "owned_tables": [],
    "pass_callable": {
@@ -1433,17 +1489,45 @@
    }
   },
   {
-   "deadline_seconds()": 7200.0,
+   "deadline_seconds()": 9000.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 900,
-   "max_pass_seconds": 7200.0,
+   "max_pass_seconds": 9000.0,
    "name": "code_scip_go_delta",
    "owned_tables": [],
    "pass_callable": {
     "id": "server.code.workers.scip_go_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 50400.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 900,
+   "max_pass_seconds": 50400.0,
+   "name": "code_scip_full",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_full:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800,
+   "max_pass_seconds": null,
+   "name": "code_crossref",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.crossref:run_pass"
    }
   },
   {

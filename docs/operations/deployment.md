@@ -723,7 +723,7 @@ Envoy, a cloud load balancer's target group or nginx Plus.
 | Liveness  | `/v1/health/live`  | After startup only. No ClickHouse call, so a ClickHouse outage does not restart healthy replicas. |
 | Readiness | `/v1/health/ready` | Every 5 s. 503 lists the failing checks; `/v1/health` shows the same list under `readiness`.      |
 
-Kubernetes (the container's probes):
+Kubernetes (the container's probes; the [Helm chart](./kubernetes.md) sets them):
 
 ```yaml
 startupProbe:

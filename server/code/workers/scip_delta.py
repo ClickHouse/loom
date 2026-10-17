@@ -1,4 +1,4 @@
-"""Per-merge compiler-tier freshness: scip-clang deltas on the server host.
+"""Per-merge compiler-tier freshness: scip-clang deltas.
 
 The fast (tree-sitter) tier is per-merge fresh via code_ingest; this worker
 closes the gap for the compiler-exact tier. Each pass compares the branch
@@ -16,7 +16,8 @@ JSON delta, the format the apply path already speaks.
 
 Batching is inherent: one pass covers every merge since `scip_commit`, so
 burst-hours coalesce into one scip-clang run. The worker is enabled by default;
-entries without the configured checkout or binary skip cleanly.
+an entry skips cleanly while the binary is missing or before code_scip_full has
+seeded `scip_commit`.
 """
 
 from __future__ import annotations
@@ -34,6 +35,8 @@ from server.code.app.index.compiler_tier import (
     checkout_fetch_args,
     compiler_target,
     git,
+    harness_failure,
+    resolve_binary,
     resolve_checkout,
     run_harness,
     run_tier,
@@ -41,6 +44,7 @@ from server.code.app.index.compiler_tier import (
 from server.code.app.index.entry_lock import check_held
 from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
+from server.code.app.index.scip_full import work_dir
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -82,7 +86,7 @@ def _resolve_paths(cfg: RepoConfig) -> tuple[Path, str, Path, str | None]:
     checkout, bare, missing = resolve_checkout(cfg, PRODUCER)
     if missing:
         return checkout, "", bare, missing
-    scip_clang = Path(settings.code_scip_clang_path)
+    scip_clang = resolve_binary(settings.code_scip_clang_path)
     if not scip_clang.exists():
         return checkout, "", bare, f"scip-clang missing at {scip_clang}"
     return checkout, str(scip_clang.resolve()), bare, None
@@ -92,6 +96,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
     target = await compiler_target(repo, cfg)
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK)
     if not target or not scip_commit:
+        # code_scip_full seeds scip_commit with the entry's first full index
         result.skipped.append(f"{cfg.namespace}: watermarks not seeded")
         return
     if target == scip_commit:
@@ -114,7 +119,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
     await git(checkout, "checkout", "--force", target)
     await git(checkout, "submodule", "update", "--init", "--recursive", "--quiet", network=True)
 
-    with tempfile.TemporaryDirectory(prefix="scip_delta_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="scip_delta_", dir=work_dir()) as tmp:
         delta_path = Path(tmp) / "delta.json"
         returncode, out = await run_harness(
             _HARNESS,
@@ -128,6 +133,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
                 "DELTA_OUT": str(delta_path),
                 "SCIP_CLANG": scip_clang_abs,
                 "MAX_TUS": str(settings.code_scip_delta_max_tus),
+                **({"JOBS": str(jobs)} if (jobs := settings.code_scip_clang_jobs) else {}),
                 "HOME": str(Path.home()),
             },
             out_dir=Path(tmp),
@@ -135,7 +141,8 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             readonly=tool_mounts(Path(scip_clang_abs)),
         )
         if returncode != 0:
-            raise RuntimeError(f"harness exit {returncode}: {out[-2000:]}")
+            # base unknown clears scip_commit: code_scip_full re-indexes the entry
+            raise harness_failure(returncode, out[-2000:])
 
         if not await asyncio.to_thread(delta_path.exists):
             # harness legitimately exits 0 with no delta when no C++ TU changed

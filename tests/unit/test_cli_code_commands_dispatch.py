@@ -66,3 +66,16 @@ def test_scip_lock_path_prints_the_entry_lock_file(
     args = _parser().parse_args(["code", "scip-lock-path", *ID])
     assert args.func(args) == 0
     assert capsys.readouterr().out.strip() == str(entry_lock_path("o", "code-x").resolve())
+
+
+def test_entry_lock_runs_its_command_under_its_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    ran: list[str] = []
+
+    def _run(name: str, coro: Any) -> int:
+        ran.append(name)
+        coro.close()
+        return 0
+
+    monkeypatch.setattr(code_cli, "_run", _run)
+    args = _parser().parse_args(["code", "entry-lock", *ID, "--", "true"])
+    assert args.func(args) == 0 and ran == ["entry-lock"]

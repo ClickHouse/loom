@@ -293,6 +293,34 @@ jobs:
       - name: shfmt
         run: git ls-files '*.sh' ':!tests/fixtures' | xargs shfmt -d
 
+  helm:
+    name: helm chart (lint, kubeconform)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install helm v3.16.2 and kubeconform v0.6.7
+        run: |
+          curl -sSfL -o /tmp/helm.tgz https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz
+          echo "9318379b847e333460d33d291d4c088156299a26cd93d570a7f5d0c36e50b5bb  /tmp/helm.tgz" | sha256sum -c -
+          tar -xzf /tmp/helm.tgz -C /tmp && sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
+          curl -sSfL -o /tmp/kubeconform.tgz https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          echo "95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73  /tmp/kubeconform.tgz" | sha256sum -c -
+          tar -xzf /tmp/kubeconform.tgz -C /tmp && sudo install /tmp/kubeconform /usr/local/bin/kubeconform
+      - name: lint and validate every overlay
+        run: |
+          set -euo pipefail
+          chart=deploy/helm/loom
+          secret=$(openssl rand -hex 32)
+          # Every optional object on, so each template renders at least once.
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci)
+          for overlay in values-eks.yaml values-kind.yaml; do
+            args=(-f "$chart/$overlay" --set secrets.jwtSecret="$secret")
+            helm lint --strict "$chart" "${args[@]}"
+            helm template loom "$chart" "${args[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
+            helm template loom "$chart" "${args[@]}" "${all[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
+          done
+
   agent-plugins:
     name: coding-agent plugins (node --test)
     runs-on: ubuntu-latest

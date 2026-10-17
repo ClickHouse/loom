@@ -114,6 +114,9 @@ class _Worker:
     # WorkerSpec.max_pass_seconds: pinned here, or float() of a settings field.
     max_pass_seconds: float | None = None
     max_pass_setting: str | None = None
+    # Seconds added to `max_pass_setting`: a harness timeout leaves the steps
+    # around the harness (fetch, submodules, apply) no time of their own.
+    max_pass_headroom: float = 0.0
     # WorkerSpec.max_pass_seconds from this module attribute.
     max_pass_attr: str | None = None
     # WorkerSpec.first_pass_due from this module attribute.
@@ -131,7 +134,7 @@ def _spec_for(row: _Worker) -> WorkerSpec:
     interval = _interval_of(row, mod)
     max_pass = row.max_pass_seconds
     if row.max_pass_setting is not None:
-        max_pass = float(getattr(settings, row.max_pass_setting))
+        max_pass = float(getattr(settings, row.max_pass_setting)) + row.max_pass_headroom
     if row.max_pass_attr is not None:
         max_pass = float(getattr(mod, row.max_pass_attr))
     return WorkerSpec(
@@ -147,6 +150,9 @@ def _spec_for(row: _Worker) -> WorkerSpec:
         ),
     )
 
+
+# What a compiler tier's pass gets beyond its harness timeout.
+_TIER_HEADROOM_S = 1800.0
 
 # Every background worker, in the order the supervisor boots them. Whether a
 # row runs by default is its setting's default (docs/reference/workers.md).
@@ -311,34 +317,59 @@ _WORKERS: tuple[_Worker, ...] = (
         "code_scip_apply_interval_seconds",
     ),
     # The per-merge compiler tiers: scip-clang, scip-typescript, scip-python
-    # and scip-go.
+    # and scip-go. Each pass runs under its harness timeout plus headroom, not
+    # the four-interval default: a window over a large tree (and a fresh pod's
+    # first configure or install) takes far longer than the interval, and an
+    # entry's harness timeout must fire before the pass is cancelled mid-apply.
     _Worker(
         "code_scip_delta",
         "server.code.workers.scip_delta",
         "code_scip_delta_enabled",
         "code_scip_delta_interval_seconds",
+        max_pass_setting="code_scip_delta_timeout_seconds",
+        max_pass_headroom=_TIER_HEADROOM_S,
     ),
     _Worker(
         "code_scip_ts_delta",
         "server.code.workers.scip_ts_delta",
         "code_scip_ts_delta_enabled",
         "code_scip_ts_delta_interval_seconds",
+        max_pass_setting="code_scip_ts_delta_timeout_seconds",
+        max_pass_headroom=_TIER_HEADROOM_S,
     ),
     _Worker(
         "code_scip_py_delta",
         "server.code.workers.scip_py_delta",
         "code_scip_py_delta_enabled",
         "code_scip_py_delta_interval_seconds",
+        max_pass_setting="code_scip_py_delta_timeout_seconds",
+        max_pass_headroom=_TIER_HEADROOM_S,
     ),
     _Worker(
         "code_scip_go_delta",
         "server.code.workers.scip_go_delta",
         "code_scip_go_delta_enabled",
         "code_scip_go_delta_interval_seconds",
-        # A first pass over a Go monorepo builds every module (~40 min for
-        # 234), far past the 900 s the interval implies: the pass runs under
-        # the worker's own timeout.
         max_pass_setting="code_scip_go_delta_timeout_seconds",
+        max_pass_headroom=_TIER_HEADROOM_S,
+    ),
+    # The C++ tier's full re-index (seeds and heals scip_commit) and the
+    # SQL <-> C++ crossref.
+    _Worker(
+        "code_scip_full",
+        "server.code.workers.scip_full",
+        "code_scip_full_enabled",
+        "code_scip_full_interval_seconds",
+        max_pass_setting="code_scip_full_timeout_seconds",
+        # the checkout move (fetch, checkout, submodules) may take 4 h with its
+        # retries, then the apply and the repack
+        max_pass_headroom=6 * 3600.0,
+    ),
+    _Worker(
+        "code_crossref",
+        "server.code.workers.crossref",
+        "code_crossref_enabled",
+        "code_crossref_interval_seconds",
     ),
     _Worker(
         "code_pr_history",

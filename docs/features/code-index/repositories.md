@@ -102,12 +102,12 @@ or SQL.
 `compiler_candidates` is inferred from build manifests. A candidate without a watermark
 appears in `quality_warnings` with the workers to enable:
 
-| Candidate             | Preflight in the worker environment                                                                                                                              | Worker                                                   |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| C/C++                 | `scip-clang --version`; compile database/build setup is available                                                                                                | host `deploy/cron/scip-delta.sh`, then `code_scip_apply` |
-| TypeScript/JavaScript | Indexer and package managers included in Docker; native servers run `sh scripts/install-code-toolchains.sh`. Repository dependencies are prepared automatically. | `code_scip_ts_delta`                                     |
-| Go                    | `scip-go --version`; `go env` succeeds for every module                                                                                                          | `code_scip_go_delta`                                     |
-| Python                | `scip-python --version`; project imports resolve in its environment                                                                                              | `code_scip_py_delta`, then `code_scip_apply`             |
+| Candidate             | Preflight in the worker environment                                                                                                                              | Worker                                       |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| C/C++                 | `scip-clang --version` (in the amd64 image); the repository's CMake configures with clang 21                                                                     | `code_scip_full`, then `code_scip_delta`     |
+| TypeScript/JavaScript | Indexer and package managers included in Docker; native servers run `sh scripts/install-code-toolchains.sh`. Repository dependencies are prepared automatically. | `code_scip_ts_delta`                         |
+| Go                    | `scip-go --version`; `go env` succeeds for every module                                                                                                          | `code_scip_go_delta`                         |
+| Python                | `scip-python --version`; project imports resolve in its environment                                                                                              | `code_scip_py_delta`, then `code_scip_apply` |
 
 The fast tier remains usable when compiler preflight fails. `code.index_status` and the
 Health tab expose worker errors, per-language coverage, unresolved edges, embedding

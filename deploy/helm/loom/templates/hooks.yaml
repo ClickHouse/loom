@@ -1,0 +1,132 @@
+{{- /* Hook Jobs run before the release's Secret changes, so each carries its
+revision's env itself: a hook Secret for the chart-managed keys, the config
+inline. */}}
+{{- define "loom.hookJob" -}}
+{{- $ := .root -}}
+{{- $name := include "loom.suffixed" (dict "root" $ "suffix" .name) -}}
+{{- if not $.Values.secrets.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+  annotations:
+    helm.sh/hook: {{ .hook }}
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+type: Opaque
+stringData:
+  LOOM_JWT_SECRET: {{ $.Values.secrets.jwtSecret | quote }}
+  {{- with $.Values.secrets.jwtSecretPrevious }}
+  LOOM_JWT_SECRET_PREVIOUS: {{ . | quote }}
+  {{- end }}
+  {{- if $.Values.devClickhouse.enabled }}
+  LOOM_CH_PASSWORD: {{ $.Values.devClickhouse.password | quote }}
+  {{- else if $.Values.secrets.clickhousePassword }}
+  LOOM_CH_PASSWORD: {{ $.Values.secrets.clickhousePassword | quote }}
+  {{- end }}
+  {{- range $k, $v := $.Values.secrets.extra }}
+  {{ $k }}: {{ $v | toString | quote }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ .name }}
+  annotations:
+    helm.sh/hook: {{ .hook }}
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .backoffLimit }}
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "loom.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ .name }}
+    spec:
+      restartPolicy: Never
+      {{- include "loom.podCommon" (dict "root" $ "leads" false) | nindent 6 }}
+      containers:
+        - name: {{ .name }}
+          image: {{ include "loom.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: [sh, -c, {{ .command | quote }}]
+          envFrom:
+            - secretRef:
+                name: {{ ternary $.Values.secrets.existingSecret $name (ne $.Values.secrets.existingSecret "") }}
+            {{- with $.Values.envFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            {{- range $k, $v := fromYaml (include "loom.config" $) }}
+            - name: {{ $k }}
+              value: {{ $v | toString | quote }}
+            {{- end }}
+            # Its participant proof names the pod, so a hook pod lost mid-run is
+            # retired like any other (provider_process.pod_gone).
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: LOOM_INSTANCE_LABEL
+              value: k8s:{{ .name }}
+            {{- with $.Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /app/var
+            {{- with $.Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ $.Values.tmpSizeLimit }}
+        - name: cache
+          emptyDir:
+            sizeLimit: 1Gi
+        {{- with $.Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- end }}
+
+{{- if include "loom.publishing" . }}
+{{- /* Before the rollout: check a reseal can run (so a failing Job publishes
+nothing), take a new LOOM_JWT_SECRET as the keyring's root, and make this env
+the deployment's. Pods on the old configuration answer 503 from then on; the
+rollout replaces them with pods that match. */}}
+{{ include "loom.hookJob" (dict "root" . "name" "publish" "hook" "pre-upgrade" "backoffLimit" 2
+  "command" "{ [ -z \"$LOOM_JWT_SECRET_PREVIOUS\" ] || loom secrets reseal --dry-run; } && loom signing-key record-root && loom deployment publish --yes") }}
+---
+{{- end }}
+{{- if and .Values.secrets.existingSecret .Values.secrets.jwtSecretPrevious }}
+{{- fail "with secrets.existingSecret, put LOOM_JWT_SECRET_PREVIOUS in that Secret, not secrets.jwtSecretPrevious" }}
+{{- end }}
+{{- /* After the rollout, outside the outage: while LOOM_JWT_SECRET_PREVIOUS is
+set (here or in the existing Secret), seal again under the new root what the
+old one sealed; the new pods open it through the previous root meanwhile. On
+every upgrade, so one whose publish timed out is resealed by the next; with
+nothing left it writes nothing. */}}
+{{ include "loom.hookJob" (dict "root" . "name" "reseal" "hook" "post-upgrade" "backoffLimit" 2
+  "command" "[ -z \"$LOOM_JWT_SECRET_PREVIOUS\" ] || loom secrets reseal") }}
+---
+{{- /* A rollback re-applies this revision's env and Secret. Refuse one whose
+root secret or embedding space is not the published one: its pods would never
+be ready, and every pod that restarts would read the old Secret. */}}
+{{ include "loom.hookJob" (dict "root" . "name" "rollback-check" "hook" "pre-rollback" "backoffLimit" 0
+  "command" "loom deployment publish --check") }}

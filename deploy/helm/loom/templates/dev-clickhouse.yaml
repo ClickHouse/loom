@@ -1,0 +1,119 @@
+{{- if .Values.devClickhouse.enabled }}
+{{- $name := include "loom.chHost" . }}
+{{- /* Single-node ClickHouse with embedded Keeper for test clusters: the
+keeper and MergeTree defaults of deploy/clickhouse-config. No lemmatizer, so
+the migrations skip the NLP columns. */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+data:
+  keeper.xml: |
+    <clickhouse>
+      <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+        <raft_configuration>
+          <server><id>1</id><hostname>localhost</hostname><port>9234</port></server>
+        </raft_configuration>
+      </keeper_server>
+      <zookeeper>
+        <node><host>localhost</host><port>9181</port></node>
+      </zookeeper>
+      <keeper_map_path_prefix>/keeper_map_tables</keeper_map_path_prefix>
+    </clickhouse>
+  merge_tree_settings.xml: |
+    <clickhouse>
+      <merge_tree>
+        <enable_block_number_column>1</enable_block_number_column>
+        <enable_block_offset_column>1</enable_block_offset_column>
+        <non_replicated_deduplication_window>1000</non_replicated_deduplication_window>
+      </merge_tree>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+spec:
+  ports:
+    - name: http
+      port: 8123
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+spec:
+  replicas: 1
+  serviceName: {{ $name }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ .Values.devClickhouse | toJson | sha256sum }}
+    spec:
+      containers:
+        - name: clickhouse
+          image: {{ .Values.devClickhouse.image }}
+          env:
+            - name: CLICKHOUSE_USER
+              value: loom
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "loom.secretName" . }}
+                  key: LOOM_CH_PASSWORD
+            - name: CLICKHOUSE_DB
+              value: loom
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 8123
+          readinessProbe:
+            httpGet: { path: /ping, port: http }
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/keeper.xml
+              subPath: keeper.xml
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/merge_tree_settings.xml
+              subPath: merge_tree_settings.xml
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: {{ .Values.devClickhouse.storage }}
+{{- end }}

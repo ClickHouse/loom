@@ -240,10 +240,10 @@ def test_loom_deployment_publish_names_what_changes_and_wants_yes(
     theirs = dc.snapshot(_settings(embedding_model="text-embedding-3-large"))
     ch = _Ch(theirs)
     monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(ch)))
-    assert cli._cmd_publish(argparse.Namespace(yes=False)) == 2
+    assert cli._cmd_publish(argparse.Namespace(yes=False, check=False)) == 2
     assert ch.stored == theirs
     assert "LOOM_EMBEDDING_MODEL" in capsys.readouterr().out
-    assert cli._cmd_publish(argparse.Namespace(yes=True)) == 0
+    assert cli._cmd_publish(argparse.Namespace(yes=True, check=False)) == 0
     assert ch.stored == dc.snapshot(settings)
     assert ch.inserted[-1]["published_by"].startswith("cli:")
 
@@ -261,11 +261,11 @@ def test_loom_deployment_publish_fails_when_the_write_fails(
             raise ConnectionError("insert refused")
 
     monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(_Refused())))
-    assert cli._cmd_publish(argparse.Namespace(yes=True)) == 1
+    assert cli._cmd_publish(argparse.Namespace(yes=True, check=False)) == 1
     assert "insert refused" in capsys.readouterr().err
     ch = _Ch(dc.snapshot(settings))
     monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(ch)))
-    assert cli._cmd_publish(argparse.Namespace(yes=True)) == 0
+    assert cli._cmd_publish(argparse.Namespace(yes=True, check=False)) == 0
     assert "already published" in capsys.readouterr().out and ch.inserted == []
 
 
@@ -388,3 +388,24 @@ def test_the_public_endpoint_keeps_what_names_the_space(url: str, public: str) -
     s = settings.model_copy(update={"embedding_base_url": url})
     assert dc.snapshot(s)["embedding_base_url"] == public
     assert embedding_space.public_identity(s.model_dump())[3] == public
+
+
+@pytest.mark.usefixtures("deployment")
+def test_loom_deployment_publish_check_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--check is the pre-rollback gate: exit 2 on drift, 0 on a match, and
+    never a write, so a rolled-back env cannot become the published one."""
+    import argparse
+
+    from server.cli import deployment as cli
+
+    theirs = dc.snapshot(_settings(embedding_model="text-embedding-3-large"))
+    ch = _Ch(theirs)
+    monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(ch)))
+    assert cli._cmd_publish(argparse.Namespace(yes=True, check=True)) == 2
+    assert "LOOM_EMBEDDING_MODEL" in capsys.readouterr().out and ch.inserted == []
+    ch = _Ch(dc.snapshot(settings))
+    monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(ch)))
+    assert cli._cmd_publish(argparse.Namespace(yes=False, check=True)) == 0
+    assert ch.inserted == []

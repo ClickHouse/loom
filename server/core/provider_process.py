@@ -5,9 +5,11 @@ so `system.processes` says whether a participant that stopped heartbeating
 still has a query running.
 """
 
+import asyncio
 import os
 import re
 import socket
+from pathlib import Path
 from uuid import UUID, uuid4
 
 _identity: tuple[int, UUID] | None = None
@@ -32,7 +34,8 @@ def client_name() -> str:
 
 
 # host name | kernel boot id | container | pid namespace | pid | process start
-# (clock ticks after boot)
+# (clock ticks after boot) | Kubernetes namespace and pod name (POD_NAMESPACE,
+# POD_NAME: the host name is the pod name cut to 63 characters; '' elsewhere)
 _proof: tuple[int, str] | None = None
 # Docker mounts /etc/hostname from its container's directory; a Kubernetes container
 # mounts its termination log from the pod's, under the container's name.
@@ -83,6 +86,8 @@ def host_proof() -> str:
                     pidns,
                     str(os.getpid()),
                     _start_ticks("self"),
+                    os.environ.get("POD_NAMESPACE", ""),
+                    os.environ.get("POD_NAME", ""),
                 )
             )
         except (OSError, IndexError):
@@ -99,9 +104,9 @@ def proves_stopped(proof: str) -> bool:
     process of the old one). Two containers that share a host name never prove
     each other stopped; a process that cannot be inspected is not proven stopped."""
     parts = proof.split("|")
-    if len(parts) != 6:
+    if len(parts) not in (6, 7, 8):
         return False
-    host, boot, container, pidns, pid, start = parts
+    host, boot, container, pidns, pid, start = parts[:6]
     try:
         my_boot, my_pidns = _boot_and_pidns()
     except OSError:
@@ -122,3 +127,47 @@ def proves_stopped(proof: str) -> bool:
         return _start_ticks(pid) != start
     except (OSError, IndexError):
         return False
+
+
+_SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+_POD_CONTAINER = re.compile(r"^([0-9a-f-]{36})/")
+
+
+async def pod_gone(proof: str, *, timeout_s: float = 5.0) -> bool:
+    """Whether Kubernetes says the pod `proof` names is gone: no pod of that name
+    in its namespace, one with another UID, or this one in phase Failed or
+    Succeeded (an evicted pod keeps its object; a pod that restarts its
+    containers reaches those phases only once every one stopped for good). The
+    kubelet removes a pod's object once its containers stopped (or an operator
+    force-deleted it), so each is positive evidence a lost pod's process ended.
+    Asked only of this pod's own namespace, with its service-account token;
+    False wherever the API or the proof does not say."""
+    parts = proof.split("|")
+    found = _POD_CONTAINER.match(parts[2]) if len(parts) == 8 else None
+    namespace = os.environ.get("POD_NAMESPACE", "")
+    if not found or not namespace or parts[6] != namespace or not parts[7]:
+        return False
+    host = os.environ.get("KUBERNETES_SERVICE_HOST", "")
+    port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+    try:
+        token = (await asyncio.to_thread(Path(f"{_SA}/token").read_text, "ascii")).strip()
+    except OSError:
+        return False
+    if not host or not token:
+        return False
+    import httpx
+
+    url = f"https://{host}:{port}/api/v1/namespaces/{namespace}/pods/{parts[7]}"
+    try:
+        async with httpx.AsyncClient(verify=f"{_SA}/ca.crt", timeout=timeout_s) as client:
+            r = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+    except (httpx.HTTPError, OSError):
+        return False
+    if r.status_code == 404:
+        return True
+    if r.status_code != 200:
+        return False
+    pod = r.json()
+    if str(pod.get("metadata", {}).get("uid", "")) != found.group(1):
+        return True
+    return str(pod.get("status", {}).get("phase", "")) in ("Failed", "Succeeded")

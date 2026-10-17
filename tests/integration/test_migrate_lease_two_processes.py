@@ -2,7 +2,7 @@
 `server.core.schema.migrate.main` runs that start together — no shared file lock, as two
 containers of one colour — apply a NON-idempotent migration once.
 
-One applier, one waiter, one ledger row: the throwaway migration creates a
+One applier, one ledger row: the throwaway migration creates a
 table and inserts one row into it; a double apply would leave two rows. The
 CI job applied every repo migration before the tests run. Either lock
 passes: the KeeperMap key where the server has a Keeper, the lease table
@@ -67,14 +67,14 @@ def test_two_concurrent_runs_apply_a_non_idempotent_migration_once(ch_client, tm
         outs = [Path(log).read_text() for log in logs]
         assert [p.exitcode for p in procs] == [0, 0], outs
 
-        # One applier, one waiter.
+        # One applier; the other applied nothing. It waited on the lock (and
+        # re-read the ledger under it), or, started after the applier had
+        # finished, found nothing pending: the barrier releases both, the
+        # imports and connects that follow are not timed.
         appliers = [o for o in outs if f"→ {name}" in o and f"✓ {name}" in o]
-        waiters = [o for o in outs if "applied by another process while this one waited" in o]
-        assert len(appliers) == 1 and len(waiters) == 1, outs
-        # The waiter may have seen the holder, or held the lock itself after the
-        # applier finished and found the ledger complete: both are the property —
-        # one applier, one process that applied nothing.
-        assert "migration lock held as" in waiters[0], waiters[0]
+        others = [o for o in outs if o not in appliers]
+        assert len(appliers) == 1 and len(others) == 1, outs
+        assert "no pending migrations" in others[0], others[0]
 
         # The non-idempotent statement ran once.
         rows = ch_client.query(f"SELECT count() FROM {table}").result_rows

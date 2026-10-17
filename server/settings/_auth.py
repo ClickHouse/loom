@@ -123,6 +123,12 @@ class AuthSettings(BaseModel):
     # with: a deployment with auth on refuses to start with it, except the
     # `make dev` stack (`loom doctor` warns everywhere else).
     jwt_secret: str = DEV_JWT_SECRET
+    # The root secret LOOM_JWT_SECRET replaced, while a rotation is under way:
+    # credentials and signing keys sealed under it still open (tokens it signed
+    # as kid `default` do not verify: a leaked root mints nothing). `loom
+    # secrets reseal` rewrites the stored ones under the new root; then remove
+    # this. "" = none.
+    jwt_secret_previous: str = ""
     # Seconds between re-reads of loom.signing_keys in every process (at least
     # 1); `loom signing-key rotate` waits out two of the slowest process's.
     jwt_keyring_refresh_seconds: float = Field(default=30.0, ge=1.0)

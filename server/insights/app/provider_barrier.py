@@ -21,7 +21,7 @@ from uuid import UUID
 from server.core.background import drain_task_sets, flush_registered_buffers
 from server.core.ch import query_tag
 from server.core.model_work_gate import get_model_work_gate
-from server.core.provider_process import host_proof, process_identity, proves_stopped
+from server.core.provider_process import host_proof, pod_gone, process_identity, proves_stopped
 from server.insights.store.provider_participants import (
     OWN_VERSION_SQL,
     SEQUENTIAL,
@@ -362,8 +362,9 @@ def stale_participants() -> tuple[dict[str, str], ...] | None:
 
 
 async def sweep_stopped(*, now: float | None = None) -> None:
-    """Remember the participants that block a reconfiguration (none is retired
-    here: only its process or an operator can say it stopped). The workers
+    """Retire the expired participants with no query left whose Kubernetes pod is
+    gone (`pod_gone`), and remember the rest that block a reconfiguration (only
+    their process, Kubernetes or an operator can say they stopped). The workers
     leader's job."""
     global _STALE, _last_sweep, _last_prune
     t = monotonic() if now is None else now
@@ -384,5 +385,11 @@ async def sweep_stopped(*, now: float | None = None) -> None:
             stale.append({**entry, "reason": "no_heartbeat"})
         elif row.get("expired"):
             running = await running_queries(participant) != 0
+            if not running and await pod_gone(str(row.get("host_proof") or "")):
+                await record_participant(
+                    UUID(participant), UUID(int=0), "retired", after=int(row["version"])
+                )
+                log.info("provider participant %s retired: Kubernetes deleted its pod", participant)
+                continue
             stale.append({**entry, "reason": "queries_running" if running else "heartbeat_expired"})
     _STALE = tuple(stale)
