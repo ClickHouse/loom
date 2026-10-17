@@ -177,3 +177,26 @@ async def test_a_repeat_on_a_read_only_row_never_changes_its_expiry(monkeypatch)
         else:
             assert state.memory_rows == [] and state.skipped_locked == ["k"]
             assert state.results[0].conflict_verdict == "locked"
+
+
+async def test_a_repeat_keeps_the_expiry_of_the_batch_row_it_repeats(monkeypatch) -> None:
+    # Serially, the second memory.set meets the value the first one wrote: the same bytes
+    # keep that row's expiry, and other bytes start with none, whatever the stored row had.
+    from server.core.datetimes import to_naive_utc
+
+    ten_days = (NOW + timedelta(days=10)).replace(tzinfo=None, microsecond=0)
+    ttl_row = {"memory_key": "k", "value": "C", "ttl_seconds": 600}
+    for stored, entries, want in (
+        (
+            None,
+            [ttl_row, {"memory_key": "k", "value": "C", "pinned": True}],
+            NOW + timedelta(seconds=600),
+        ),
+        (
+            _stored("A", expires_at=ten_days),
+            [{"memory_key": "k", "value": "C"}, {"memory_key": "k", "value": "A"}],
+            None,
+        ),
+    ):
+        state = await _build(monkeypatch, stored, *entries)
+        assert to_naive_utc(state.memory_rows[-1]["expires_at"]) == to_naive_utc(want)
