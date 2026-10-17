@@ -18,13 +18,15 @@ grant under either spelling is a grant to that person and nobody else.
 Service-account subjects (`sa:` prefix) and wildcards have no aliases.
 
 Reads are cached for `TTL_S` per (org, subject): the auth context, the
-login widening and the restricted gate each ask once per request.
+login widening and the restricted gate each ask once per request. A change
+to a row's spellings calls `invalidate`.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from typing import Any
 
 log = logging.getLogger("loom.auth.aliases")
@@ -79,6 +81,15 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
     return out
 
 
+def invalidate(org: str, subjects: Iterable[str]) -> None:
+    """Drop the cached reads of `org` that asked about, or found, one of
+    `subjects`: a row naming them changed."""
+    lowered = {s.lower() for s in subjects if s}
+    for key, (_, spellings) in list(_CACHE.items()):
+        if key[0] == org and lowered & {s.lower() for s in (key[1], *spellings)}:
+            del _CACHE[key]
+
+
 async def canonical_subject(org: str, subject: str, *, ch: object | None = None) -> str:
     """The login handle for a human spelling (the row's `owner_email`), so a
     new grant is written under the one subject every read folds onto; the
@@ -121,4 +132,4 @@ def fold_by_alias(
     return groups
 
 
-__all__ = ["TTL_S", "canonical_subject", "fold_by_alias", "subject_aliases"]
+__all__ = ["TTL_S", "canonical_subject", "fold_by_alias", "invalidate", "subject_aliases"]

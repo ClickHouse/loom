@@ -13,7 +13,7 @@ from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from server.auth import machines, revocation, sso_links
+from server.auth import aliases, machines, revocation, sso_links
 from server.auth.grant_claims import account_change, bot_change, trusts_change
 from server.core.naming import SSO_NAMESPACE_PREFIX
 from server.observability import audit
@@ -257,6 +257,7 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
         )
         await sso_links.link(email, [(org, namespace)], by)
     grant_cache.invalidate(org)  # the person's spellings changed
+    aliases.invalidate(org, [str(row["owner_email"]), was, email])
     await audit.emit(
         "auth.sso_linked",
         org=org,

@@ -19,7 +19,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from server.auth import agents, machines, sso_links
+from server.auth import agents, aliases, machines, sso_links
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
@@ -187,6 +187,7 @@ async def _release(
     await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
     # The claim cap reads which accounts tie a person's spellings from this table.
     grant_cache.invalidate(org)
+    aliases.invalidate(org, [previous_owner, str(existing.get("contact_email") or "")])
 
     log.info(
         "claim_release: %s released by %s (was owned by %r, %d grants revoked)",
