@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
@@ -160,7 +161,7 @@ async def _project_set_entities_fail_open(
     memory_id: str,
     wait_visible: bool = False,
     ents: list[str] | None = None,
-    content_sha256: str = "",
+    content_sha256: str,
 ) -> None:
     """Deterministic LLM-free entity-graph projection for a committed
     `memory.set`. A point write carries no `entities` column, so without
@@ -168,8 +169,8 @@ async def _project_set_entities_fail_open(
     entity_extractor worker re-extracts it. Fail-open: any error logs a
     warning and the write still succeeds. `wait_visible` (the projection
     beside the response) returns only once its edges are readable. `ents`: the
-    entities the caller already extracted. `content_sha256`: the value projected, for
-    a projection that may land after a revision of the row.
+    entities the caller already extracted. `content_sha256`: the value projected, so
+    a projection landing after a revision of the row leaves no edge.
     """
     try:
         from server.memory.app.extract.handler import project_memory_set_entities
@@ -271,14 +272,12 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
                 [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))], ch=ch
             )
     if memory_row.get("sensitivity") != "high":  # a high row's text stays out of the graph
-        # A revision closes what it dropped next and answers: its edges flush first, as
-        # in `_set_post_insert`. A first write has nothing to close and does not wait,
-        # so it cannot check its edges against a revision either.
-        await _project_set_entities_fail_open(
-            input,
-            memory_id=memory_id,
-            wait_visible=had_existing_row,
-            content_sha256=new_sha if had_existing_row else "",
+        # Fenced on its value as `_set_post_insert` projects it: a revision awaits it,
+        # a first write leaves it running beside the response.
+        await asyncio.gather(
+            *_entity_projection_tail(
+                input, memory_id=memory_id, content_sha256=new_sha, revised=had_existing_row
+            )
         )
     await project_stated_relations(
         memory_row,
@@ -825,7 +824,6 @@ async def _set_post_insert(
     tail of every set (5–6 s when inserts are slow). A revision (`revised`) awaits it with
     the tail: the close of what it dropped runs next, and keeps an edge open only for a
     value whose edge links are in."""
-    from server.memory.app import after_write
     from server.memory.app.key_supersession import supersede_same_key_rows
     from server.observability import audit as _audit_mod
     from server.observability.otel import traced
@@ -857,45 +855,47 @@ async def _set_post_insert(
         except Exception as e:  # noqa: BLE001 — the audit row never fails the write
             log.warning("memory.set: audit emit failed (non-fatal): %s", e)
 
-    tail = [_supersession(), _audit()]
-    from server.memory.app.entity_projections import set_entities_for_projection
-
-    # A write with fewer than two entities projects no edge: no task, no mark.
-    ents = set_entities_for_projection(input, input.value)
-    if len(ents) >= 2 and revised:
-        # Its edges flushed before the close runs and before the write answers, so a walk
-        # on any replica reads them and a failed flush is reported, not dropped. Another
-        # revision may close this value before they land: the hash lets them end with it.
-        tail.append(
-            _project_set_entities_fail_open(
-                input,
-                memory_id=memory_id,
-                wait_visible=True,
-                ents=ents,
-                content_sha256=content_sha256,
-            )
-        )
-    elif len(ents) >= 2:
-        from server.memory.app import graph_write_marks
-
-        # Nothing waits on this task but a read of the same namespace (`after_write.settle`),
-        # so its edges wait for their flush: once it is done, they are readable.
-        task = after_write.schedule(
-            _project_set_entities_fail_open(
-                input,
-                memory_id=memory_id,
-                wait_visible=True,
-                ents=ents,
-                content_sha256=content_sha256,
-            ),
-            name="loom-set-entities",
-            scope=(input.org, input.namespace),
-        )
-        # In flight for every process before this write answers: a walk on another
-        # process waits for these edges.
-        tail.append(graph_write_marks.track(input.org, input.namespace, task))
+    tail = [
+        _supersession(),
+        _audit(),
+        *_entity_projection_tail(
+            input, memory_id=memory_id, content_sha256=content_sha256, revised=revised
+        ),
+    ]
     with traced("memory.set.post_insert", concurrent=len(tail)):
         await asyncio.gather(*tail)
+
+
+def _entity_projection_tail(
+    input: MemorySetInput, *, memory_id: str, content_sha256: str, revised: bool
+) -> list[Awaitable[Any]]:
+    """The entity-graph projection of a committed point write, as what its tail awaits.
+
+    Every one is fenced on the value it projects (`content_sha256`): it writes only
+    while the row still holds that value, and ends its edges if a revision overtook
+    them. A write with fewer than two entities projects no edge: no task, no mark."""
+    from server.memory.app import after_write, graph_write_marks
+    from server.memory.app.entity_projections import set_entities_for_projection
+
+    ents = set_entities_for_projection(input, input.value)
+    if len(ents) < 2:
+        return []
+    projection = _project_set_entities_fail_open(
+        input, memory_id=memory_id, wait_visible=True, ents=ents, content_sha256=content_sha256
+    )
+    if revised:
+        # Its edges flushed before the close runs and before the write answers, so a walk
+        # on any replica reads them and a failed flush is reported, not dropped.
+        return [projection]
+    # A first write does not wait. Nothing waits on this task but a read of the same
+    # namespace (`after_write.settle`), so its edges wait for their flush: once it is
+    # done, they are readable and the fence can see them.
+    task = after_write.schedule(
+        projection, name="loom-set-entities", scope=(input.org, input.namespace)
+    )
+    # In flight for every process before this write answers: a walk on another
+    # process waits for these edges.
+    return [graph_write_marks.track(input.org, input.namespace, task)]
 
 
 def _merged_into_key(existing: Any, input: Any) -> str:

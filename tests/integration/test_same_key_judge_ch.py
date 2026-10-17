@@ -2252,6 +2252,79 @@ async def test_a_projection_landing_after_a_revision_leaves_no_edge(
     assert "jazz" in walked and "london" not in walked
 
 
+# Episodic and profile rows are not embedded: their write takes the plain insert path.
+@pytest.mark.parametrize("memory_type", ["semantic", "episodic", "profile"])
+async def test_a_first_write_paused_past_a_conditional_revision_leaves_no_fact(
+    ch, org, monkeypatch, memory_type
+) -> None:
+    # London's first write stops before its edges; a conditional revision to jazz
+    # completes; then London resumes. Its edges and its stated relation must not walk.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, entity_projections
+    from server.memory.app.write import handle_memory_set
+
+    write_edges, release, held = entity_projections.write_entity_edges, asyncio.Event(), []
+
+    async def _london_held(input: Any, *args: Any, **kw: Any) -> Any:
+        if "London" in str(input.entries[0].value):
+            held.append(True)
+            await release.wait()
+        return await write_edges(input, *args, **kw)
+
+    monkeypatch.setattr(entity_projections, "write_entity_edges", _london_held)
+
+    def _set(value: str, relations: list[Any], **extra: Any) -> Any:
+        return handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                memory_key="alice",
+                memory_type=memory_type,
+                value=value,
+                relations=relations,
+                **extra,
+            )
+        )
+
+    london = asyncio.create_task(
+        _set(
+            "Alice lives in London", [("alice", "live_in", "london")], entities=["alice", "london"]
+        )
+    )
+    for _ in range(100):
+        if held:
+            break
+        await asyncio.sleep(0.05)
+    assert held
+    (row,) = await ch.query_all(
+        "SELECT toString(content_sha256) AS sha FROM loom.memory FINAL"
+        " WHERE org = {org:String} AND memory_key = 'alice'"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    jazz = await _set(
+        "Alice likes jazz", [], entities=["alice", "jazz"], if_match_sha256=row["sha"]
+    )
+    release.set()
+    await london
+    await after_write.drain()
+    await _mutations_done(ch, org)
+    (stored,) = await ch.query_all(
+        "SELECT toString(content_sha256) AS sha FROM loom.memory FINAL"
+        " WHERE org = {org:String} AND memory_key = 'alice'"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert stored["sha"] == jazz.content_sha256
+    assert await _walked(org, [], labeled=True, seed="alice") == []
+    walked = await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "jazz" in w and "london" not in w
+    )
+    assert "jazz" in walked and "london" not in walked
+
+
 async def _london_ends_with_the_next_revision(
     ch: Any,
     org: str,
@@ -2835,14 +2908,14 @@ async def test_a_first_write_still_holding_its_value_projects_its_edge(ch, org, 
     assert int(rows[0]["n"]) > 0
 
 
-async def test_a_plain_first_write_projects_its_edge_without_asking_again(
+async def test_a_plain_first_write_projects_its_edge_fenced_on_its_value(
     ch, org, monkeypatch
 ) -> None:
-    # A profile row takes the plain insert path; a first write's edges do not wait
-    # for their flush, so asking afterwards whether the row still holds the value
-    # could not see them. It projects its edge and asks nothing.
+    # A profile row takes the plain insert path. Its first write's edges land beside
+    # the response, flushed, and fenced as a semantic row's are: written only once the
+    # row is asked whether it still holds the value.
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import entity_projections
+    from server.memory.app import after_write, entity_projections
     from server.memory.app.write import handle_memory_set
 
     rows_holding, asked = entity_projections.rows_holding, []
@@ -2863,6 +2936,7 @@ async def test_a_plain_first_write_projects_its_edge_without_asking_again(
             value="Alice met Bob in Paris",
         )
     )
+    await after_write.drain()
     rows = await ch.query_all(
         "SELECT count() AS n FROM loom.entity_edge_rows "
         "WHERE org = {org:String} AND memory_id = {id:UUID} "
@@ -2870,7 +2944,7 @@ async def test_a_plain_first_write_projects_its_edge_without_asking_again(
         params={"org": org, "id": str(out.memory_id)},
     )
     assert int(rows[0]["n"]) > 0
-    assert asked == []
+    assert asked
 
 
 async def test_an_undo_keeps_its_edge_open_past_another_relations_end(ch, org) -> None:

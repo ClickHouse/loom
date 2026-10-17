@@ -144,21 +144,20 @@ async def test_a_revision_waits_for_its_entity_projection(post_insert) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("revised", [True, False])
-async def test_a_plain_revision_waits_for_its_edges_to_flush(monkeypatch, revised) -> None:
-    # A type that is not embedded writes through the plain insert. A revision closes
-    # what it dropped right after, and answers: its new edges must be readable by then.
+async def test_a_plain_insert_projects_its_edges_as_an_embedded_write_does(
+    post_insert, monkeypatch, revised
+) -> None:
+    # A type that is not embedded writes through the plain insert. Its edges are flushed
+    # and fenced on its value as `_set_post_insert` writes them: a revision awaits them
+    # (it closes what it dropped right after), a first write leaves them beside the response.
     import server.memory.store as memory_repo
     from server.memory.api.models_crud import MemorySetInput
 
-    seen: dict[str, Any] = {}
-
-    async def _project(inp: Any, **kw: Any) -> None:
-        seen.update(kw)
+    seen, gate = post_insert
 
     async def _nothing(*_: Any, **__: Any) -> None:
         return None
 
-    monkeypatch.setattr(set_commit, "_project_set_entities_fail_open", _project)
     monkeypatch.setattr(set_commit, "insert_memory_versions", _nothing)
     monkeypatch.setattr(set_commit, "project_stated_relations", _nothing)
     monkeypatch.setattr(memory_repo, "tombstone_vectors_of", _nothing)
@@ -170,12 +169,19 @@ async def test_a_plain_revision_waits_for_its_edges_to_flush(monkeypatch, revise
         retyped_from="",
         existing=None,
         expires_at=None,
+        new_sha="sha",
         memory_row={"version": 2},
         memory_id="m1",
         had_existing_row=revised,
     )
-    await set_commit._set_plain_insert(w, object())
-    assert seen["wait_visible"] is revised
+    if revised:
+        gate.set()
+    await asyncio.wait_for(set_commit._set_plain_insert(w, object()), timeout=1.0)
+    assert seen["scheduled"] == ([] if revised else ["loom-set-entities"])
+    gate.set()
+    await after_write.drain(timeout_s=1.0)
+    assert seen["project_kw"]["wait_visible"] is True
+    assert seen["project_kw"]["content_sha256"] == "sha"
 
 
 @pytest.mark.asyncio
@@ -400,8 +406,23 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
 
     monkeypatch.setattr(entity_projections, "set_entities_for_projection", _mined)
     monkeypatch.setattr(entity_projections, "write_entity_edges", _edges)
+
+    async def _held(*_: Any, **__: Any) -> set[str]:
+        return {"m"}
+
+    async def _no_overtaken(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(entity_projections, "rows_holding", _held)
+    monkeypatch.setattr(entity_projections, "end_overtaken_edges", _no_overtaken)
     n = await entity_projections.project_memory_set_entities(
-        _set_input(), memory_key="k", value="v", ch=object(), ents=["alice", "bob"]
+        _set_input(),
+        memory_key="k",
+        value="v",
+        ch=object(),
+        ents=["alice", "bob"],
+        memory_id="m",
+        content_sha256="sha",
     )
     assert n == 2 and written == [["alice", "bob"]]
 

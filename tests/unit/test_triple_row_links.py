@@ -167,6 +167,41 @@ async def test_a_point_write_reconciles_only_a_row_it_revised(monkeypatch) -> No
     assert reconciled == [["m1"]]
 
 
+@pytest.mark.parametrize(
+    ("held", "written", "reconciled"),
+    [([False], False, False), ([True, False], True, True), ([True, True], True, False)],
+    ids=["revised-before", "revised-while-writing", "still-held"],
+)
+async def test_a_first_write_states_relations_only_while_its_row_holds_the_value(
+    monkeypatch, held, written, reconciled
+) -> None:
+    # The fence its edges have: a first write another write revised first states
+    # nothing; one revised while it wrote closes what it wrote, as a revision would.
+    from server.memory.app import entity_projections as ep
+
+    answers, seen, closed = list(held), [], []
+
+    async def holding(org, namespace, versions, *, ch, holder_sql):
+        assert versions == [("m1", "sha")]
+        return {"m1"} if answers.pop(0) else set()
+
+    async def write(row, value, relations, *, op, ch):
+        seen.append(relations)
+
+    async def reconcile(input, ids, *, reopen, op, ch):
+        closed.append(ids)
+
+    monkeypatch.setattr(ep, "rows_holding", holding)
+    monkeypatch.setattr(ep, "_write_stated_relations", write)
+    monkeypatch.setattr(ep, "reconcile_row_facts", reconcile)
+    row = {"org": "o", "namespace": "n", "agent": "a", "memory_id": "m1", "status": "active"}
+    row["content_sha256"] = "sha"
+    await ep.project_stated_relations(
+        row, "I live in Rome", [("user", "live_in", "rome")], revised=False, op="o", ch=None
+    )
+    assert bool(seen) is written and bool(closed) is reconciled and answers == []
+
+
 async def test_a_merge_states_its_relations_without_reconciling_the_row(monkeypatch) -> None:
     # A merge leaves the row's value as it was: it dropped no fact, so the reads a
     # reconcile costs are skipped.

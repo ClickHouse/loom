@@ -376,9 +376,9 @@ async def project_memory_set_entities(
     value: Any,
     ch: Any = None,
     wait_visible: bool = False,
-    memory_id: str = "",
+    memory_id: str,
     ents: list[str] | None = None,
-    content_sha256: str = "",
+    content_sha256: str,
 ) -> int:
     """Fail-open entity projection for a single `memory.set`.
 
@@ -386,13 +386,12 @@ async def project_memory_set_entities(
     for the same pairing / cap / window / insert path as the bulk write.
     Returns the count of distinct candidates projected (0 when <2).
     `wait_visible` is for the projection that runs beside the response: its
-    edges are readable once it returns. With `memory_id`, the edges are linked
-    to that row and its value (`entity_edge_rows`). `ents`: the caller's own
-    `set_entities_for_projection(input, value)`, not mined again. With
-    `content_sha256` (any projection whose edges are flushed before it returns: a
-    revision's, or a first write's beside the response), it writes only while the row
-    still holds that value, and ends its edges if the row changed meanwhile
-    (`end_overtaken_edges`).
+    edges are readable once it returns. The edges are linked to the row `memory_id`
+    and its value `content_sha256` (`entity_edge_rows`). `ents`: the caller's own
+    `set_entities_for_projection(input, value)`, not mined again. The projection is
+    fenced on that value: it writes only while the row still holds it, and ends its
+    edges if the row changed meanwhile (`end_overtaken_edges`), which can find them
+    only once they are flushed (`wait_visible`).
     """
     from server.observability.otel import traced
 
@@ -424,7 +423,7 @@ async def project_memory_set_entities(
     result = _BulkSetResult(memory_key=memory_key, version=0, memory_id=memory_id)
     ch = ch or get_client()
     # A revision that ran first closed what it dropped already: this value is not current.
-    if content_sha256 and not await rows_holding(
+    if not await rows_holding(
         input.org, input.namespace, [(memory_id, content_sha256)], ch=ch, holder_sql=HOLDS_VALUE_SQL
     ):
         return 0
@@ -432,9 +431,8 @@ async def project_memory_set_entities(
         await write_entity_edges(bulk_like, [result], ch=ch, wait_visible=wait_visible)
     # Revised or retired while the edges were written: its close may have run before
     # they landed, so end the ones no live row names.
-    if content_sha256:
-        version = (memory_id, memory_key, content_sha256)
-        await end_overtaken_edges(input, [version], op="memory.set", ch=ch)
+    version = (memory_id, memory_key, content_sha256)
+    await end_overtaken_edges(input, [version], op="memory.set", ch=ch)
     return len(ents)
 
 
@@ -624,13 +622,31 @@ async def project_stated_relations(
     facts are stated again once it is established. Then, for a row `revised`
     (it held a value before this write), the facts it held are reconciled with its
     new value (`close_dropped_facts`). It runs after the same-key supersession, which
-    reads no triples: point writes run no row follow. Fail-open: a failed write is
-    recorded for the projection repair to replay."""
+    reads no triples: point writes run no row follow. A first write is fenced on the
+    value it states (`row`'s `content_sha256`), as its edges are: it states nothing once
+    another write revised or retired the row, and is reconciled as a revision if that
+    happened while it wrote. Fail-open: a failed write is recorded for the projection
+    repair to replay."""
     if relations and holds_graph_facts(row):
-        await _write_stated_relations(row, value, relations, op=op, ch=ch)
+        # A revision closes what it dropped itself, after these land.
+        if revised or await _holds_its_value(row, ch=ch):
+            await _write_stated_relations(row, value, relations, op=op, ch=ch)
+            # Overtaken while they were written: the revision's close may have run
+            # before they landed, so close them as a revision would.
+            if not revised and not await _holds_its_value(row, ch=ch):
+                revised = True
     if revised:
         scope = SimpleNamespace(org=row["org"], namespace=row["namespace"], agent=row["agent"])
         await reconcile_row_facts(scope, [str(row["memory_id"])], reopen=False, op=op, ch=ch)
+
+
+async def _holds_its_value(row: Mapping[str, Any], *, ch: Any) -> bool:
+    """Whether the stored row still holds `row`'s value (`HOLDS_VALUE_SQL`)."""
+    version = [(str(row["memory_id"]), str(row["content_sha256"]))]
+    held = await rows_holding(
+        row["org"], row["namespace"], version, ch=ch, holder_sql=HOLDS_VALUE_SQL
+    )
+    return bool(held)
 
 
 def holds_graph_facts(row: Mapping[str, Any]) -> bool:
