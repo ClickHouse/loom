@@ -417,11 +417,13 @@ def _normalise(lowered: str) -> str:
     # ("ü", "u" + "¨"), and compatibility forms ("ＴＯＫＹＯ", the ligature "ﬁ").
     # NFKC can turn a lower-case form into an upper-case letter ("ℌ" is "H").
     text = unicodedata.normalize("NFKC", lowered).lower()
+    # The possessive goes after lower() ("'S" is "'s" only then) and before the NFC
+    # below: a mark after it ("x's" + "¨") then joins the letter before it.
+    text = text.replace("'s", "").replace("’s", "")
     # "İ".lower() is "i" and a dot above: keep the "i" a user types for "istanbul".
     # NFC again, so a mark after the dot joins the "i" ("í"), and a mark lowering
     # left apart joins its letter.
     text = unicodedata.normalize("NFC", _DOTTED_I_RE.sub("i", text))
-    text = text.replace("'s", "").replace("’s", "")
     text = _PUNCT_RE.sub(_marks_kept, text)
     text = _settle(_lead(_SPACE_RE.sub(" ", text)))
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text

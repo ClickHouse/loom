@@ -149,6 +149,17 @@ def test_a_prefix_article_removal_exposes_is_taken_too(raw: str, canonical: str)
     assert canonical_entity_text(canonical) == canonical
 
 
+@pytest.mark.parametrize(
+    "raw",
+    # A mark after a possessive: once the "'s" goes, the mark must join the letter
+    # before it in the same pass, an upper-case "'S" included.
+    ["x's\u0308y", "e'S\u0308e", "\u0130\u0307\u0307\u2019S\u0308", "1\u0386\u0307's\u0e38"],
+)
+def test_a_mark_after_a_possessive_is_a_fixed_point(raw: str) -> None:
+    once = canonical_entity_text(raw)
+    assert canonical_entity_text(once) == once
+
+
 def test_canonical_text_is_a_fixed_point_for_any_mix_of_its_edge_pieces() -> None:
     import random
 
