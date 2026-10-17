@@ -110,6 +110,13 @@ schema. These rules keep that safe. The operator procedure is in
     link is no older than the value and no row of the key links the fact, and a close N
     runs keeps what an N-1 row states. A key that rows of both builds link to one fact
     reads as N's: there an N-1 row can lose that fact until it is stated again.
+12. **A request field N adds is ignored by N-1** until N-1 stops serving: it answers the
+    call as if the field were not sent, naming it in `ignored_args`. So `memory.restore`'s
+    preconditions `if_superseded_by` and `only_if_superseded` (the dashboard's Undo sends
+    them) do not hold on an N-1 replica, which restores a deleted row or one retired
+    behind another memory, and the `relations` of `memory.set` and
+    `memory.update_by_id` are dropped there, so that write graphs none of the facts it
+    names.
 
 ## What checks them
 
