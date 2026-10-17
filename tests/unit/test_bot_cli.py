@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from server.cli import bots
+from server.core.errors import GrantBusyError
 from server.identity.app import account_admin
 
 
@@ -38,7 +39,12 @@ def _offline(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("error", "kept"), [(ValueError("bot exists"), False), (RuntimeError("CH away"), True)]
+    ("error", "kept"),
+    [
+        (ValueError("bot exists"), False),
+        (GrantBusyError("a namespace is changing"), False),  # its claim not had: nothing saved
+        (RuntimeError("CH away"), True),
+    ],
 )
 def test_the_key_goes_only_with_a_refused_bot(monkeypatch, tmp_path, error, kept) -> None:
     async def create_bot(bot: Any, *, by: str, replace: bool) -> None:

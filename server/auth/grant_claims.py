@@ -6,6 +6,10 @@ landed in between: an approval read at writer could undo a promotion to admin,
 or a revoke. Each such op holds `grant_change` for that key from its read to its
 write, as a lease (`server.core.leases`) every replica sees, with or without a
 Keeper.
+
+Claims nest in one order: account claims first (several sorted by org and
+namespace), then admins or trusts, then a bot or a grant. Taken the other way
+round, two changes wait each other out and both answer 503.
 """
 
 from __future__ import annotations

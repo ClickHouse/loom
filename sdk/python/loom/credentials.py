@@ -381,7 +381,8 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
     marked = bool(entry.get("marked"))
     if marked and 400 <= r.status_code < 500 and _SESSIONS_HEADER not in r.headers:
         raise BackendUnavailable(
-            f"{entry['server']} answered from a build that predates this session; retry"
+            f"{entry['server']} answered from a build that predates this session; retry, "
+            "or run `loom login` if it persists"
         )
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)

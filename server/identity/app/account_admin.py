@@ -247,20 +247,18 @@ def bot_from(
 
 
 async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
-    from server.core.ch import own_write_reads
     from server.identity.store import namespaces
 
     name, org = bot["name"], bot["org"]
     if await revocation.revoked_outright(machines.subject(name)):
         raise ValueError(f"{machines.subject(name)} is revoked outright; it could never sign in")
     async with AsyncExitStack() as held:
-        # Each namespace held from its check to the save, in release's order
-        # (account, then bot): a release finishing between them would leave
-        # the bot naming a namespace it had dropped from every bot.
+        # Each namespace held from its check to the save (in grant_claims'
+        # order): a release finishing between them would leave the bot naming
+        # a namespace it had dropped from every bot.
         for ns in sorted({ns for ns, _ in bot["ns_roles"]}):
             await held.enter_async_context(account_change(org, ns))
-        with own_write_reads():  # "register it, then the bot" must not read a replica behind
-            missing = [ns for ns, _ in bot["ns_roles"] if not await namespaces.is_active(org, ns)]
+        missing = [ns for ns, _ in bot["ns_roles"] if not await namespaces.is_active(org, ns)]
         if missing:
             raise ValueError(f"no namespace {', '.join(missing)} in org {org!r}; register it first")
         if bot["issuer"]:  # its checks against the other trusts and its save, at once
