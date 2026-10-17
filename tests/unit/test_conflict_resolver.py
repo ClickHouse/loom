@@ -765,27 +765,21 @@ def test_the_resolver_client_never_falls_back_to_another_model(monkeypatch) -> N
 # --- the switch and the write-time mark --------------------------------------------------------
 
 
-def test_unset_the_resolver_follows_its_models_provider_and_key(monkeypatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    fake = Settings(_env_file=None, llm_provider="fake", conflict_resolver_model="fake-judge")
-    assert fake.memory_conflict_resolver_enabled is False
+def test_unset_the_resolver_follows_its_models_provider(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     # A stack pinned to the fake provider stays free, whatever keys the shell holds.
     assert Settings(_env_file=None, llm_provider="fake").memory_conflict_resolver_enabled is False
-    monkeypatch.delenv("OPENAI_API_KEY")
-    # gpt-6.1-sol without OPENAI_API_KEY would be judged by the fake stand-in: off.
-    assert Settings(_env_file=None, llm_provider="openai").memory_conflict_resolver_enabled is False
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    fake_judge = Settings(_env_file=None, llm_provider="openai", conflict_resolver_model="fake-j")
+    assert fake_judge.memory_conflict_resolver_enabled is False
     assert Settings(_env_file=None, llm_provider="openai").memory_conflict_resolver_enabled is True
-    # The resolver's own model decides, not the default provider.
-    claude = Settings(_env_file=None, llm_provider="openai", conflict_resolver_model="claude-x")
-    assert claude.memory_conflict_resolver_enabled is False
+    # Without the key it stays on: writes are marked and wait for it.
+    monkeypatch.delenv("OPENAI_API_KEY")
+    assert Settings(_env_file=None, llm_provider="openai").memory_conflict_resolver_enabled is True
     off = Settings(_env_file=None, llm_provider="openai", memory_conflict_resolver_enabled=False)
     assert off.memory_conflict_resolver_enabled is False
 
 
-def test_a_resolver_off_for_a_missing_key_warns_once_at_boot(monkeypatch, caplog) -> None:
+def test_a_resolver_without_its_key_warns_once_at_boot(monkeypatch, caplog) -> None:
     import server.llm.client as llm_client
     import server.settings as settings_mod
 
@@ -793,12 +787,12 @@ def test_a_resolver_off_for_a_missing_key_warns_once_at_boot(monkeypatch, caplog
     monkeypatch.setattr(settings_mod, "settings", Settings(_env_file=None, llm_provider="openai"))
     with caplog.at_level("WARNING"):
         llm_client.log_conflict_resolver_resolution()
-    assert [r.message for r in caplog.records if "conflict resolver off" in r.message]
+    assert [r.message for r in caplog.records if "judged once the key is set" in r.message]
     caplog.clear()
-    monkeypatch.setattr(settings_mod, "settings", Settings(_env_file=None, llm_provider="fake"))
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
     with caplog.at_level("WARNING"):
         llm_client.log_conflict_resolver_resolution()
-    assert caplog.records == [], "off because the provider is fake: nothing to say"
+    assert caplog.records == []
 
 
 async def test_the_judge_refuses_the_fake_stand_in_for_a_missing_key(monkeypatch) -> None:

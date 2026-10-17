@@ -678,3 +678,29 @@ async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, m
         params={"org": org},
     )
     assert {r["session_id"]: r["mark"] for r in rows} == {"s1": None, "s2": 1}
+
+
+async def test_rows_wait_owed_without_the_key_and_are_judged_once_it_is_set(
+    ch, wired, monkeypatch, caplog
+) -> None:
+    import server.llm.client as llm_client
+    from server.llm.fake import FakeLLMClient
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 54)
+    # No key: the client is the fake stand-in.
+    monkeypatch.setattr(
+        llm_client, "get_llm_client_without_fallback", lambda m, **kw: FakeLLMClient(model=m)
+    )
+    with caplog.at_level("WARNING"):
+        out = await run_pass()
+        again = await run_pass()
+    assert out["judged"] == again["judged"] == 0 and out["errored"] == 0
+    assert sum("unavailable" in r.message for r in caplog.records) == 2, "once per pass"
+    assert (await _marks(ch, org))["office_location"] == 1, "still owed"
+    # The key is set: the same row is judged.
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: llm)
+    await run_pass()
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    assert (await _marks(ch, org))["office_location"] == 2

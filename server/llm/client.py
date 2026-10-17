@@ -85,23 +85,18 @@ def _key_absent(provider: str) -> bool:
 
 
 def log_conflict_resolver_resolution() -> None:
-    """One boot WARN when the conflict resolver resolved off only because its
-    model's key is missing: writes are then marked and never judged."""
+    """One boot WARN when the conflict resolver is on but its model's key is missing:
+    writes are marked and wait, unjudged, for the key."""
     import logging
 
     from server.settings import settings
 
     provider = settings.conflict_resolver_provider()
-    if (
-        "memory_conflict_resolver_enabled" in settings.env_fields_set()
-        or settings.memory_conflict_resolver_enabled
-        or "fake" in (provider, settings.llm_provider)
-    ):
+    if not settings.memory_conflict_resolver_enabled or not provider_key_missing(provider):
         return
     logging.getLogger(__name__).warning(
-        "conflict resolver off: its model %s runs on %s and %s is not set. Set the key, "
-        "or LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=true when the key is saved in the "
-        "dashboard",
+        "conflict resolver: its model %s runs on %s and %s is not set; writes are marked "
+        "and judged once the key is set",
         settings.conflict_resolver_model,
         provider,
         KEY_ENV_BY_PROVIDER.get(provider, "its key"),

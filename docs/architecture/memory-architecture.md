@@ -245,12 +245,11 @@ actions, verdicts and confidences, never the text.
 
 **Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written
 version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged.
-`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` resolves at load: on when the provider of
-`LOOM_CONFLICT_RESOLVER_MODEL` is a real one and its key is set, and `LOOM_LLM_PROVIDER` is
-not `fake`; else off, with one boot warning when only the key is missing. An explicit
-value wins. A key saved only in the dashboard is installed after
-load, so it needs an explicit `true`. The judge never takes the fake client that stands
-in for a missing key: the pass stops and the rows stay owed.
+`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` resolves at load: off when `LOOM_LLM_PROVIDER` or
+the provider of `LOOM_CONFLICT_RESOLVER_MODEL` is `fake`, else on; an explicit value wins.
+Without the model's key (one boot warning), writes are still marked, and the judge never
+takes the fake client that stands in for the key: each pass warns once and leaves the
+rows owed, so they are judged once the key is set, in the environment or the dashboard.
 
 ## `memory.bulk_set` and `memory.set_from_messages`
 

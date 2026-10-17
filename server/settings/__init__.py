@@ -73,15 +73,14 @@ class Settings(
 
     @model_validator(mode="after")
     def _resolve_conflict_resolver(self) -> Settings:
-        """Unset, the conflict resolver runs when the LLM provider is not `fake`, its
-        model's provider is a real one, and that provider's key is set; an explicit
-        value is never overridden."""
-        from server.core.provider_keys import provider_key
-
+        """Unset, the conflict resolver is on unless the LLM provider or its model's
+        provider is `fake`; an explicit value is never overridden. A missing key does
+        not turn it off: writes are still marked, and the worker judges them once the
+        key is there."""
         if "memory_conflict_resolver_enabled" not in self.model_fields_set:
-            provider = self.conflict_resolver_provider()
-            self.memory_conflict_resolver_enabled = (
-                self.llm_provider != "fake" and provider != "fake" and bool(provider_key(provider))
+            self.memory_conflict_resolver_enabled = "fake" not in (
+                self.llm_provider,
+                self.conflict_resolver_provider(),
             )
             self._inferred_fields |= {"memory_conflict_resolver_enabled"}
         return self
