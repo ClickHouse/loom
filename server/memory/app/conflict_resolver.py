@@ -154,9 +154,7 @@ def _eligible(row: Any) -> bool:
 def _holds(row: Any, namespace: str, sha: str) -> bool:
     """Whether a re-read row is still the eligible write that was judged."""
     return (
-        _eligible(row)
-        and str(row.namespace) == namespace
-        and str(row.content_sha256 or "") == sha
+        _eligible(row) and str(row.namespace) == namespace and str(row.content_sha256 or "") == sha
     )
 
 
@@ -269,6 +267,7 @@ async def _flag(org: str, row: Any, peer: Any) -> bool:
         new_memory_id=str(row.memory_id),
         peer_ids=[str(peer.memory_id)],
         expected_sha256=str(row.content_sha256 or ""),
+        peer_sha256={str(peer.memory_id): str(peer.content_sha256 or "")},
     )
     return landed == "conflict"
 

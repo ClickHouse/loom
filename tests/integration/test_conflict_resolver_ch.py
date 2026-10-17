@@ -756,3 +756,30 @@ async def test_a_row_relabelled_high_after_it_was_read_never_reaches_the_model(
     out = await run_pass()
     assert llm.calls == [] and out["judged"] == 0
     assert (await _rows(ch, org))["office_city"]["status"] == "active"
+
+
+@pytest.mark.parametrize("change", ["revised", "pinned"])
+async def test_a_flag_never_lands_on_a_peer_changed_after_it_was_judged(
+    ch, wired, change: str
+) -> None:
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.app.update import handle_memory_update_by_id
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 60)
+    ids = {k: r["id"] for k, r in (await _rows(ch, org)).items()}
+    row = await resolver._head(org, ids["office_location"])
+    judged_peer = await resolver._head(org, ids["office_city"])
+    if change == "revised":
+        await handle_memory_update_by_id(
+            MemoryUpdateByIdInput(org=org, memory_id=ids["office_city"], value="Paris, 3rd floor")
+        )
+    else:
+        await _set(org, "s1", "office_city", "The office is in Paris", pinned=True)
+    assert await resolver._flag(org, row, judged_peer) is False
+    after = await _rows(ch, org)
+    assert (
+        after["office_city"]["status"] == "active" and after["office_city"]["conflict_with"] == []
+    )
+    assert after["office_location"]["conflict_with"] == []

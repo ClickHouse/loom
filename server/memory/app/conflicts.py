@@ -907,11 +907,14 @@ async def mark_peers_conflicted(
     new_memory_id: str,
     peer_ids: list[str],
     expected_sha256: str = "",
+    peer_sha256: dict[str, str] | None = None,
 ) -> str:
     """Cross-link the new row with its peers still live (or on trial) and flag
-    them `conflicted`; a proposal keeps its status. With no live peer, or a new
-    row retired or deleted since the verdict, nothing is written, peers
-    included. Writes new RMT version rows, every column carried. With
+    them `conflicted`; a proposal keeps its status. With `peer_sha256` ({peer id:
+    the hash judged}), a peer is flagged only while it holds that hash and is not
+    pinned, at its read version + 1, like the new row under `expected_sha256`.
+    With no live peer, or a new row retired or deleted since the verdict, nothing
+    is written, peers included. Writes new RMT version rows, every column carried. With
     `expected_sha256` (a deferred verdict), only the judged write is flagged
     (`judged_write`). Returns the verdict that landed: `conflict`; `moved`, and no
     peer touched, when the new row was not flagged (a newer write replaced it, or it
@@ -941,10 +944,20 @@ async def mark_peers_conflicted(
             for p in peer_ids
         )
     )
+
+    def _peer_moved(row: Any) -> bool:
+        """A peer the judgement no longer covers: retired, or revised or pinned since."""
+        if row.status not in _MARKABLE:
+            return True
+        if peer_sha256 is None:
+            return False
+        judged = peer_sha256.get(str(row.memory_id), "")
+        return bool(row.pinned) or str(row.content_sha256 or "") != judged
+
     live = [
         p
         for p, row in zip(peer_ids, peers, strict=True)
-        if row is not None and row.status in _MARKABLE
+        if row is not None and not _peer_moved(row)
     ]
     # Strong: the row was just written (or revised under its own id), and a stale
     # read would rebuild the version before it at a higher one. A row retired since
@@ -1000,10 +1013,14 @@ async def mark_peers_conflicted(
         lambda row: {
             "status": "proposed" if row.status == "proposed" else "conflicted",
             "conflict_with": _merged(row.conflict_with, [new_memory_id]),
+            # A judged peer lands above the row read, never above a later revision.
+            **({"version": int(row.version) + 1} if peer_sha256 is not None else {}),
         },
-        # Retired between the read above and this write: left as it is.
-        skip=lambda row: row.status not in _MARKABLE,
+        # Retired (or, judged, revised or pinned) between the read above and this
+        # write: left as it is.
+        skip=_peer_moved,
         strong=True,
+        judged=peer_sha256 is not None,
     )
     return "conflict"
 
