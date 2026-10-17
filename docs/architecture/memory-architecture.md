@@ -442,13 +442,14 @@ the value that named it, so the revised or retired rows count too, and a revisio
 new value still names both keeps its edge. No row text is read: a row whose entities
 came from extraction or resolution ("NYC" is `new york city`) keeps it as well. A row
 whose current value has no edge link keeps the edge while its key is linked to the pair
-(`entity_edge_memories`) and that link counts, by the same rule as triples. A row
-naming the pair while the close runs lands its links before its edges, and the close
-checks again after its UPDATE and opens the pair again when one is found: the UPDATE
-stamps the rows it ends with the close's own id (`closed_by`), and only those open
-again, so an edge row alike in every other column that ended before stays ended. The
-edge keeps
-no `invalid_at`, so a walk at an earlier time still finds it.
+(`entity_edge_memories`) and that link counts, by the same rule as triples. A row naming
+the pair while the close runs lands its links before its edges, and the close checks
+again after its UPDATE and opens the pair again when one is found: the UPDATE stamps the
+rows it ends with the close's own id (`closed_by`), and only those open again, so an
+edge row alike in every other column that ended before stays ended. The close also ends
+an edge row that landed after its read when no row holds the pair, at
+`greatest(end, valid_from)`. The edge keeps no `invalid_at`: a walk at an earlier time
+still finds it.
 
 A revision writes its new value's edges before that close: `memory.set` waits for its
 entity projection when it revises a row (a first write projects beside the response).
