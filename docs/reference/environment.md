@@ -116,7 +116,7 @@ See [Python SDK](./python-sdk.md) and [TypeScript SDK](./typescript-sdk.md).
 
 The redeploy procedure and its preflight are in
 [Deployment](../operations/deployment.md) and [Upgrades](../operations/upgrades.md);
-the compiler-tier cron jobs in
+the compiler-tier workers in
 [Code index operations](../operations/code-index-operations.md); ClickStack in
 [ClickStack](../features/integrations/clickstack.md).
 
