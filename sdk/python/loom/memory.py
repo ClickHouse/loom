@@ -603,7 +603,7 @@ class MemoryClient:
         `as_of` replays valid time (not transaction time): the row that was
         true at that real-world moment, filtered by
         `coalesce(valid_at, created_at) <= as_of`. With the server's bi-temporal
-        journal on (LOOM_MEMORY_TEMPORAL_ENABLED), `valid_as_of` / `known_as_of`
+        journal on (LOOM_MEMORY_BITEMPORAL_ENABLED), `valid_as_of` / `known_as_of`
         take its place: the assertions that applied at valid time V as Loom had
         recorded them at knowledge time K (either alone fills the other: K = now,
         or V = K), and the response carries `temporal` (the cutoff) and

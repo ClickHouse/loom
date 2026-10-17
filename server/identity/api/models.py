@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from server.core.feature_modes import CLASSIC, TEMPORAL
+from server.core.feature_modes import BITEMPORAL, CLASSIC
 from server.memory.domain.code_change import CodeChangePolicy
 from server.memory.domain.proposal_policy import ProposalPolicy
 from server.memory.domain.rerank_names import RerankName
@@ -689,7 +689,7 @@ class NamespaceRollbackOutput(BaseModel):
     remove: int
     # Keys left as they are: a value they served then is one today's rules refuse
     # (blacklisted, redacted), or, applied, a lock in force refused the change.
-    left_out: int = Field(default=0, json_schema_extra=TEMPORAL)
+    left_out: int = Field(default=0, json_schema_extra=BITEMPORAL)
     # Without the journal: keys with history at as_of but no live row (hard-deleted),
     # left alone, and keys created after as_of that are already tombstoned.
     skipped_no_head: int = Field(default=0, json_schema_extra=CLASSIC)
@@ -702,10 +702,10 @@ class NamespaceRollbackOutput(BaseModel):
     # When the rollback was written; None on a dry run or when no key differed.
     applied_at: datetime | None = None
     # Read-your-write token for the rollback's commits (pass it to a later read).
-    read_token: str = Field(default="", json_schema_extra=TEMPORAL)
+    read_token: str = Field(default="", json_schema_extra=BITEMPORAL)
     # The commits landed but some current rows were not rewritten yet; the
     # reconciler brings them in line (reads with `read_token` already see them).
-    current_rows_pending: bool = Field(default=False, json_schema_extra=TEMPORAL)
+    current_rows_pending: bool = Field(default=False, json_schema_extra=BITEMPORAL)
 
 
 # ------------------------------------------------------------------

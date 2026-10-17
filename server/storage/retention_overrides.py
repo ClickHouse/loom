@@ -23,7 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ JOURNAL_TARGETS: tuple[RetentionTarget, ...] = (
 
 def managed_targets() -> tuple[RetentionTarget, ...]:
     """The tables this process manages: TARGETS, and the journal's when it is on."""
-    return TARGETS + (JOURNAL_TARGETS if temporal_on() else ())
+    return TARGETS + (JOURNAL_TARGETS if bitemporal_on() else ())
 
 
 def _split_table(table: str) -> tuple[str, str]:

@@ -435,7 +435,7 @@ async def test_a_row_left_out_in_one_namespace_is_not_mirrored_from_another(
 ) -> None:
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)  # only the journal leaves out
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)  # only the journal leaves out
     rows = [
         _row(namespace="ns1"),
         _row(namespace="ns2", memory_id="33333333-3333-3333-3333-333333333333"),

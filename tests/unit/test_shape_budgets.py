@@ -78,8 +78,9 @@ async def test_operations_rows_are_the_catalogue_entries_in_registry_order():
     from server.main import list_operations
 
     rows = await list_operations()
-    assert [r["name"] for r in rows] == [op.name for op in ALL_OPERATIONS]
-    for row, op in zip(rows, ALL_OPERATIONS, strict=True):
+    served = [op for op in ALL_OPERATIONS if op.available]  # a feature off lists none of its ops
+    assert [r["name"] for r in rows] == [op.name for op in served]
+    for row, op in zip(rows, served, strict=True):
         assert row == {
             "name": op.name,
             "path": op.http_path,

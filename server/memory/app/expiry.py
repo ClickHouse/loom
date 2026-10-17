@@ -37,7 +37,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.hashing import sha256_value as _sha
 from server.memory.domain import lock as _lock
 from server.memory.domain.temporal_capture import WriteIntent, write_intent
@@ -214,7 +214,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                     "expired_at": row.expires_at,
                 }
             )
-        if cfg.dry_run or not temporal_on():
+        if cfg.dry_run or not bitemporal_on():
             _count(res, action)  # with the journal on, counted once it kept the row
         if cfg.dry_run:
             continue
@@ -235,7 +235,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
         try:
             # Each row sets only what its expiry sets, and holds only while the key is
             # still expired: a key touched since is left out, not swept.
-            if temporal_on():
+            if bitemporal_on():
                 with write_intent(WriteIntent(conditional=True)):
                     kept_rows = await memory_repo.insert_over_heads(
                         list(zip(version_rows, sets, strict=True)), ch=ch
@@ -255,7 +255,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             return res
         # A row the journal left out (a key locked since, a later write) changed nothing.
         mirrors = [m for m in mirrors if _ident(m[1]) in kept]
-        if temporal_on():  # without it each was counted as it was planned
+        if bitemporal_on():  # without it each was counted as it was planned
             for action, _row, _v in mirrors:
                 _count(res, action)
         try:

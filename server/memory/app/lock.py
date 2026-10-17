@@ -20,7 +20,7 @@ from fastapi import HTTPException
 from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, to_naive_utc
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lock import (
     MemoryLockInput,
@@ -75,7 +75,7 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
         until = now + timedelta(seconds=input.ttl_seconds)
     else:
         until = to_naive_utc(input.until)
-    if until is not None and temporal_on():
+    if until is not None and bitemporal_on():
         # To the second, as the row and the journal keep it: the answer says what holds.
         until = until.replace(microsecond=0)
     if until is not None and until <= now:
@@ -195,7 +195,7 @@ async def _rewrite(
     inserted as it is (every one kept)."""
     import server.memory.store as memory_repo
 
-    if temporal_on():
+    if bitemporal_on():
         return await memory_repo.rewrite_heads(heads, update, ch=ch, skip=skip, reasons=reasons)
     rows = [
         memory_repo.build_memory_version_row(h, **{"version": next_version(), **update(h)})

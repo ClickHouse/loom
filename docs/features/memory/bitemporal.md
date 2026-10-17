@@ -5,7 +5,7 @@ journaled before its row is written, and a read can ask what applied at a valid 
 as Loom had recorded it at a knowledge time K. Without it, Loom keeps current-state
 memory, a per-key version history (`memory.history`) and single-axis point-in-time
 reads (`as_of`). It is turned on per deployment with
-`LOOM_MEMORY_TEMPORAL_ENABLED=true`. The design is in
+`LOOM_MEMORY_BITEMPORAL_ENABLED=true`. The design is in
 [bi-temporal memory architecture](../../architecture/bitemporal-memory.md).
 
 ## What it adds
@@ -68,12 +68,12 @@ that is off. How a client sees an ignored field is in
 [unknown and removed fields](../../reference/http-api.md#unknown-and-removed-fields).
 
 Migration `schemas/migrations/039_bitemporal_memory.sql` carries
-`-- requires-setting: memory_temporal_enabled`: with the setting off, `loom migrate`
+`-- requires-setting: memory_bitemporal_enabled`: with the setting off, `loom migrate`
 neither applies it nor reports it pending, so the schema is exactly `schemas/schema.sql`.
 
 ## Turning it on
 
-1. Set `LOOM_MEMORY_TEMPORAL_ENABLED=true` on every process of the deployment: every
+1. Set `LOOM_MEMORY_BITEMPORAL_ENABLED=true` on every process of the deployment: every
    server replica and every worker. A deployment with the setting mixed behaves like a
    rolling upgrade (the journal's sweep adopts the writes of the processes that are
    off), but turn it on everywhere.
@@ -94,7 +94,7 @@ What existing data gets:
 
 ## Turning it off
 
-Set `LOOM_MEMORY_TEMPORAL_ENABLED=false` on every process and restart. No migration is
+Set `LOOM_MEMORY_BITEMPORAL_ENABLED=false` on every process and restart. No migration is
 reverted: the journal tables stay. The journal's operations and fields disappear from
 the wire, and reads and `namespace.rollback` behave as in the default. Writes made while
 it is off are not journaled; when it is turned on again, the journal adopts them the way

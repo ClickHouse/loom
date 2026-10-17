@@ -1,5 +1,5 @@
--- requires-setting: memory_temporal_enabled
--- Applied only while LOOM_MEMORY_TEMPORAL_ENABLED is on (dormant otherwise: neither
+-- requires-setting: memory_bitemporal_enabled
+-- Applied only while LOOM_MEMORY_BITEMPORAL_ENABLED is on (dormant otherwise: neither
 -- applied nor pending); turned on later, the next migrate applies it.
 --
 -- Bi-temporal memory: "which assertions applied at valid time V, according to

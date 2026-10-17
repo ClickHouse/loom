@@ -394,7 +394,7 @@ def _update_sensitivity(
     """(the revised row's sensitivity, its tags with the `sensitivity:` tag): the
     level memory.set would give the new value (autodetected when the setting is on),
     never below the row's own label."""
-    from server.core.feature_modes import temporal_on
+    from server.core.feature_modes import bitemporal_on
     from server.memory.domain.sensitivity import (
         max_sensitivity,
         resolve_sensitivity,
@@ -404,7 +404,7 @@ def _update_sensitivity(
     level = max_sensitivity(
         [getattr(existing, "sensitivity", ""), resolve_sensitivity("", serialized_value)]
     )
-    return level, with_level_label(tags, level, in_place=temporal_on())
+    return level, with_level_label(tags, level, in_place=bitemporal_on())
 
 
 def _revised_fields(input: Any, existing: MemoryRow) -> tuple[Any, str, str, list[str], list[str]]:

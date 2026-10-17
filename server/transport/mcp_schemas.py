@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 
 
 @functools.cache
@@ -32,9 +32,9 @@ def model_schema(model: type[BaseModel]) -> dict[str, Any]:
 
 
 def _without_inactive(schema: Any) -> Any:
-    """The schema without the properties of the side of `memory_temporal_enabled`
+    """The schema without the properties of the side of `memory_bitemporal_enabled`
     that is off (their `loom_mode`, from `feature_modes`)."""
-    off = "classic" if temporal_on() else "temporal"
+    off = "classic" if bitemporal_on() else "bitemporal"
     if isinstance(schema, dict):
         props = schema.get("properties")
         if isinstance(props, dict):

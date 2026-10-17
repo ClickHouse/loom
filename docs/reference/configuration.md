@@ -919,13 +919,13 @@ Source: `server/settings/_memory_temporal.py`
 
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `LOOM_MEMORY_TEMPORAL_ENABLED` | `bool` | `False` | The bi-temporal journal, on or off. Off (the default): no migration of the feature is applied, nothing journals, and every path behaves as it did before the journal (current-state memory, `as_of` replay, the version-row rollback). On: migration 039 applies at the next migrate, every memory write is journaled first, and valid_as_of / known_as_of reads, memory.amend and the journal's namespace.rollback serve. Keys written while it was off are seeded on their next write: their history before that is not known. |
-| `LOOM_MEMORY_TEMPORAL_LOCK_WAIT_S` | `float` | `10.0` | Seconds a write waits for its namespace's publisher lock before failing. |
-| `LOOM_MEMORY_TEMPORAL_INSERT_RETRIES` | `int` | `3` | Times a journal insert with an uncertain result is reconciled and retried (same commit id, sequence and payload) before the write fails. |
-| `LOOM_MEMORY_TEMPORAL_READ_WAIT_MS` | `int` | `2000` | Milliseconds a read holding a `read_token` waits for the projection to cover its sequence before answering `projection_not_ready`. |
-| `LOOM_MEMORY_TEMPORAL_MAX_TAIL` | `int` | `5000` | Journal tail a reader reduces itself when the projection lags its cutoff; above it the read answers `projection_not_ready` instead. |
-| `LOOM_MEMORY_TEMPORAL_PROJECTION_WORKER_ENABLED` | `bool` | `True` | Replays journal commits the projection missed and fills historical-search vectors. |
-| `LOOM_MEMORY_TEMPORAL_PROJECTION_WORKER_INTERVAL_SECONDS` | `int` | `30` | Seconds between passes of the temporal projection worker. |
+| `LOOM_MEMORY_BITEMPORAL_ENABLED` | `bool` | `False` | The bi-temporal journal, on or off. Off (the default): no migration of the feature is applied, nothing journals, and every path behaves as it did before the journal (current-state memory, `as_of` replay, the version-row rollback). On: migration 039 applies at the next migrate, every memory write is journaled first, and valid_as_of / known_as_of reads, memory.amend and the journal's namespace.rollback serve. Keys written while it was off are seeded on their next write: their history before that is not known. |
+| `LOOM_MEMORY_BITEMPORAL_LOCK_WAIT_S` | `float` | `10.0` | Seconds a write waits for its namespace's publisher lock before failing. |
+| `LOOM_MEMORY_BITEMPORAL_INSERT_RETRIES` | `int` | `3` | Times a journal insert with an uncertain result is reconciled and retried (same commit id, sequence and payload) before the write fails. |
+| `LOOM_MEMORY_BITEMPORAL_READ_WAIT_MS` | `int` | `2000` | Milliseconds a read holding a `read_token` waits for the projection to cover its sequence before answering `projection_not_ready`. |
+| `LOOM_MEMORY_BITEMPORAL_MAX_TAIL` | `int` | `5000` | Journal tail a reader reduces itself when the projection lags its cutoff; above it the read answers `projection_not_ready` instead. |
+| `LOOM_MEMORY_BITEMPORAL_PROJECTION_WORKER_ENABLED` | `bool` | `True` | Replays journal commits the projection missed and fills historical-search vectors. |
+| `LOOM_MEMORY_BITEMPORAL_PROJECTION_WORKER_INTERVAL_SECONDS` | `int` | `30` | Seconds between passes of the temporal projection worker. |
 
 ## Model
 

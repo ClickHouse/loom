@@ -1,4 +1,4 @@
-"""With `memory_temporal_enabled` off the write paths write what they wrote before
+"""With `memory_bitemporal_enabled` off the write paths write what they wrote before
 the journal existed: no journal-only columns (migration 039 never ran), and the
 sensitivity label appended rather than put in place of another."""
 
@@ -23,11 +23,11 @@ _JOURNAL_LEDGER_COLS = {
 def test_the_level_label_is_appended_without_the_journal(
     journal: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.core.feature_modes import temporal_on
+    from server.core.feature_modes import bitemporal_on
     from server.memory.domain.sensitivity import with_level_label
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", journal)
-    got = with_level_label(["x", "sensitivity:medium"], "high", in_place=temporal_on())
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", journal)
+    got = with_level_label(["x", "sensitivity:medium"], "high", in_place=bitemporal_on())
     if journal:
         assert got == ["x", "sensitivity:high"]
     else:
@@ -40,7 +40,7 @@ def test_the_exposure_row_carries_the_receipt_columns_only_with_the_journal(
 ) -> None:
     from server.memory.app.exposure_ledger import build_row
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", journal)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", journal)
     row = build_row(operation="memory.get", org="o", namespace="n", keys=["k"])
     assert (_JOURNAL_LEDGER_COLS <= set(row)) is journal
     assert journal or not (_JOURNAL_LEDGER_COLS & set(row))
@@ -52,7 +52,7 @@ def test_graph_rows_carry_knowledge_time_only_with_the_journal(
 ) -> None:
     from server.memory.app import projections
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", journal)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", journal)
     row = projections.entity_triple_row(
         "o",
         "n",

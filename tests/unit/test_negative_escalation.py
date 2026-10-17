@@ -51,7 +51,7 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch, journal
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
-    monkeypatch.setattr(settings, "memory_temporal_enabled", journal)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", journal)
     ch = _StubCH(
         [
             {"n": 3},  # rejection count reaches threshold

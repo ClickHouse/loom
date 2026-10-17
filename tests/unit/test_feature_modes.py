@@ -16,7 +16,7 @@ from server.settings import settings
 
 @pytest.fixture
 def off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", False)
 
 
 def test_a_journal_op_does_not_exist_while_the_journal_is_off(off: None) -> None:
@@ -45,7 +45,7 @@ def test_a_journal_input_is_reset_and_named_while_off(off: None) -> None:
 
 
 def test_the_replaced_input_is_the_ignored_one_while_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
     args = {"org": "o", "namespace": "n", "agent": "a", "memory_key": "k"}
     inp = MemoryGetInput.model_validate({**args, "as_of": "2026-01-02T00:00:00Z"})
     assert fm.strip_inactive_input(inp) == ["as_of"] and inp.as_of is None
@@ -75,13 +75,13 @@ def test_a_dormant_migration_is_neither_this_builds_schema_nor_expected(
     from server.core.schema import status
 
     instances.schema_version.cache_clear()
-    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", False)
     off = instances.schema_version()
     instances.schema_version.cache_clear()
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
     assert instances.schema_version() == off + 1  # the journal's migration is the last
     instances.schema_version.cache_clear()
-    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", False)
 
     async def ledger(**_k: object) -> dict[str, object]:
         status._cache["ledger"] = frozenset(applied)

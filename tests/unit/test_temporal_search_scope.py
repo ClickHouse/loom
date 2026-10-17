@@ -16,7 +16,7 @@ from server.settings import settings
 
 @pytest.fixture(autouse=True)
 def _journal_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from server.core.feature_modes import CLASSIC, TEMPORAL
+from server.core.feature_modes import BITEMPORAL, CLASSIC
 
 _MAX_LIMIT = 500
 _DEFAULT_LIMIT = 50
@@ -52,11 +52,11 @@ class FactsListInput(BaseModel):
     # Only triples whose (valid_from, valid_to) interval contains this timestamp.
     # The valid-time cutoff before the journal (the same filter as `valid_as_of`).
     as_of: datetime | None = Field(default=None, json_schema_extra=CLASSIC)
-    valid_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
+    valid_as_of: datetime | None = Field(default=None, json_schema_extra=BITEMPORAL)
     # Knowledge time: read the graph as loom had recorded it at K (edges
     # recorded by K, closes recorded after K not yet applied). With no
     # `valid_as_of`, the world is read at K too. None = as recorded now.
-    known_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
+    known_as_of: datetime | None = Field(default=None, json_schema_extra=BITEMPORAL)
     # Provenance tiers to keep: any of "extracted", "inferred",
     # "facet". None = every tier. Older rows carry ''
     # and are read as inferred.
@@ -109,11 +109,11 @@ class FactsRelatedInput(BaseModel):
     # Only edges valid at this time; `None` keeps the edges still valid now.
     # The valid-time cutoff before the journal (the same filter as `valid_as_of`).
     as_of: datetime | None = Field(default=None, json_schema_extra=CLASSIC)
-    valid_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
+    valid_as_of: datetime | None = Field(default=None, json_schema_extra=BITEMPORAL)
     # Knowledge time: read the graph as loom had recorded it at K (edges
     # recorded by K, closes recorded after K not yet applied). With no
     # `valid_as_of`, the world is read at K too. None = as recorded now.
-    known_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
+    known_as_of: datetime | None = Field(default=None, json_schema_extra=BITEMPORAL)
 
 
 class _RelatedEntity(BaseModel):
@@ -162,11 +162,11 @@ class FactsTraverseInput(BaseModel):
     # Only edges valid at this time; `None` keeps the edges still valid now.
     # The valid-time cutoff before the journal (the same filter as `valid_as_of`).
     as_of: datetime | None = Field(default=None, json_schema_extra=CLASSIC)
-    valid_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
+    valid_as_of: datetime | None = Field(default=None, json_schema_extra=BITEMPORAL)
     # Knowledge time: read the graph as loom had recorded it at K (edges
     # recorded by K, closes recorded after K not yet applied). With no
     # `valid_as_of`, the world is read at K too. None = as recorded now.
-    known_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
+    known_as_of: datetime | None = Field(default=None, json_schema_extra=BITEMPORAL)
     # Walk the TYPED graph (loom.entity_triples: subject -relation-> object,
     # with provenance in entity_triple_memories) instead of the co-occurrence
     # table. `relations` restricts the walk to those labels (canonical,
@@ -278,11 +278,11 @@ class FactsPathInput(BaseModel):
     # Only edges valid at this time; `None` keeps the edges still valid now.
     # The valid-time cutoff before the journal (the same filter as `valid_as_of`).
     as_of: datetime | None = Field(default=None, json_schema_extra=CLASSIC)
-    valid_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
+    valid_as_of: datetime | None = Field(default=None, json_schema_extra=BITEMPORAL)
     # Knowledge time: read the graph as loom had recorded it at K (edges
     # recorded by K, closes recorded after K not yet applied). With no
     # `valid_as_of`, the world is read at K too. None = as recorded now.
-    known_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
+    known_as_of: datetime | None = Field(default=None, json_schema_extra=BITEMPORAL)
     # Typed graph (loom.entity_triples) instead of co-occurrence: `relations`
     # restricts to those labels, `labeled=True` walks every typed edge. Each
     # returned edge then carries `relation` and `direction` ("out" = entity_a

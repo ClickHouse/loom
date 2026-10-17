@@ -13,7 +13,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.errors import PreconditionFailedError
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.temporal_capture import declare_fields, left_out_reasons, row_key
@@ -134,7 +134,7 @@ async def insert_over_heads(
 
     if not rows:
         return kept
-    if not temporal_on():
+    if not bitemporal_on():
         # No journal to leave a row out: every row is inserted as built.
         await insert_memory_versions([r for r, _ in rows], ch=ch or _default_client())
         return [r for r, _ in rows]

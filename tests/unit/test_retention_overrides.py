@@ -212,7 +212,7 @@ def test_compute_alters_per_namespace_applies_to_all_tables(
     """One namespace override produces one ALTER per managed table —
     retention is uniform across tables for a namespace, by design. The
     journal's tables are managed only with it on (without it they do not exist)."""
-    monkeypatch.setattr(settings, "memory_temporal_enabled", journal)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", journal)
     out = retention_overrides.compute_alters(
         _FakeSettings(),
         namespace_overrides=[
@@ -272,7 +272,7 @@ async def test_apply_per_namespace_emits_alters_for_all_tables(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One namespace override → one ALTER per managed table (9 with the journal on)."""
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
     ch = StubCH()
     n = await retention_overrides.apply(
         _FakeSettings(),
@@ -503,7 +503,7 @@ async def test_mutation_queue_read_failure_is_fail_open() -> None:
 def test_the_journal_keeps_what_loom_memory_keeps(monkeypatch: pytest.MonkeyPatch) -> None:
     """A caller's expires_at outlives the backstop on an assertion as on its row,
     and a commit outlives every assertion it added."""
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
     alters = {
         t.table: sql
         for t, sql, _ in retention_overrides.compute_alters(_FakeSettings(retention_memory_days=30))
@@ -524,7 +524,7 @@ def test_every_managed_table_reads_its_own_retention_and_tiering_settings(
     those tables only."""
     from server.settings import Settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
     journal = [t.table for t in retention_overrides.JOURNAL_TARGETS]
     assert retention_overrides.compute_alters(Settings()) == []
     for target in retention_overrides.TARGETS:

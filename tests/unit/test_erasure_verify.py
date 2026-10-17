@@ -20,7 +20,7 @@ def _journal_on(monkeypatch: pytest.MonkeyPatch) -> None:
     """The journal-on contract; `_journal_off` holds main's."""
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
 
 
 class _StubCH:

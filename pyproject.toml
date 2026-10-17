@@ -179,7 +179,7 @@ markers = [
   "copy_head_check: a unit test that runs the post-copy head re-check (off by default in unit)",
   "temporal_journal: a unit test that runs the bi-temporal journal on memory inserts (off by default in unit)",
   "claim_cap: a unit test that runs the namespace gate's claim cap (off by default in unit)",
-  "journal: an integration test that needs the bi-temporal journal on (LOOM_MEMORY_TEMPORAL_ENABLED=true)",
+  "journal: an integration test that needs the bi-temporal journal on (LOOM_MEMORY_BITEMPORAL_ENABLED=true)",
   "no_journal: an integration test of what the journal replaces; runs with it off (the default)",
 ]
 

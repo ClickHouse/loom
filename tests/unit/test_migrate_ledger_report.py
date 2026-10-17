@@ -392,7 +392,7 @@ def test_a_migration_whose_setting_is_off_is_dormant_until_it_is_turned_on(
     base.write_text("CREATE TABLE IF NOT EXISTS loom.a (x UInt8) ENGINE = Memory;\n")
     gated = tmp_path / "002_feature.sql"
     gated.write_text(
-        "-- requires-setting: memory_temporal_enabled\n"
+        "-- requires-setting: memory_bitemporal_enabled\n"
         "CREATE TABLE IF NOT EXISTS loom.b (x UInt8) ENGINE = Memory;\n"
     )
     later = tmp_path / "003_later.sql"
@@ -400,15 +400,15 @@ def test_a_migration_whose_setting_is_off_is_dormant_until_it_is_turned_on(
     files = [base, gated, later]
     applied = {base.name: _sha(base.read_text()), later.name: _sha(later.read_text())}
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", False)
     off = _migrate.ledger_report(applied, files)
     assert off.pending == () and off.dormant == (gated.name,) and off.clean
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
     on = _migrate.ledger_report(applied, files)
     assert on.pending == (gated.name,) and on.dormant == ()
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", False)
     applied[gated.name] = _sha(gated.read_text())
     again = _migrate.ledger_report(applied, files)
     assert again.pending == () and again.dormant == () and again.clean

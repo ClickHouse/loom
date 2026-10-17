@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ def build_row(
         "returned_count": len(keys),
         "below_floor_count": int(below_floor or 0),
     }
-    if temporal_on():
+    if bitemporal_on():
         # The journal's columns: without it they do not exist.
         receipt = receipt or Receipt()
         row |= {

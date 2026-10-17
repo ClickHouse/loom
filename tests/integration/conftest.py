@@ -7,7 +7,7 @@ cycles); `destructive` stops merges, runs OPTIMIZE or deletes whole scopes;
 drives a failure and the path back from it.
 
 Modes: the server runs with the bi-temporal journal off (the default) or on
-(LOOM_MEMORY_TEMPORAL_ENABLED=true, set for the server and this suite alike). A
+(LOOM_MEMORY_BITEMPORAL_ENABLED=true, set for the server and this suite alike). A
 test marked `journal` runs only with it on; one marked `no_journal` (what the
 journal replaces: single-axis `as_of`, the version-row rollback) only with it
 off; an unmarked test runs in both.
@@ -62,7 +62,7 @@ _REQUEST_LOG_DEPTH = 25
 
 def journal_on() -> bool:
     """The suite's mode: the server under test runs with the same setting."""
-    return os.environ.get("LOOM_MEMORY_TEMPORAL_ENABLED", "").strip().lower() in {"1", "true"}
+    return os.environ.get("LOOM_MEMORY_BITEMPORAL_ENABLED", "").strip().lower() in {"1", "true"}
 
 
 # Fixtures whose use puts a test in a tier, so the tier cannot drift from the
@@ -83,7 +83,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     on = journal_on()
     for item in items:
         if "journal" in item.keywords and not on:
-            item.add_marker(pytest.mark.skip(reason="needs LOOM_MEMORY_TEMPORAL_ENABLED=true"))
+            item.add_marker(pytest.mark.skip(reason="needs LOOM_MEMORY_BITEMPORAL_ENABLED=true"))
         if "no_journal" in item.keywords and on:
             item.add_marker(pytest.mark.skip(reason="what the journal replaces; it is on"))
         for fixture, tier in _TIER_BY_FIXTURE.items():

@@ -248,13 +248,13 @@ jobs:
       # schema. Turned on, the next migrate applies it, out of order, on top.
       - name: Turning the bi-temporal journal on applies its migration
         env:
-          LOOM_MEMORY_TEMPORAL_ENABLED: "true"
+          LOOM_MEMORY_BITEMPORAL_ENABLED: "true"
         run: |
           python -m server.core.schema.migrate
           python -m server.core.schema.migrate --dry-run --strict
       - name: Verify schemas/schema_temporal.sql matches the journal-on replay
         env:
-          LOOM_MEMORY_TEMPORAL_ENABLED: "true"
+          LOOM_MEMORY_BITEMPORAL_ENABLED: "true"
         run: make schema-check
 
   ts-typecheck:
@@ -379,7 +379,7 @@ jobs:
     # ~1,200 tests take ~28 min on a hosted runner; the bound leaves headroom, not slack.
     timeout-minutes: 35
     env:
-      LOOM_MEMORY_TEMPORAL_ENABLED: ${{ matrix.journal }}
+      LOOM_MEMORY_BITEMPORAL_ENABLED: ${{ matrix.journal }}
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost
       LOOM_CH_PORT: "8123"
@@ -523,7 +523,7 @@ jobs:
     timeout-minutes: 30
     env:
       # Both builds run in this mode; on, N applies the journal's dormant migration.
-      LOOM_MEMORY_TEMPORAL_ENABLED: ${{ matrix.journal }}
+      LOOM_MEMORY_BITEMPORAL_ENABLED: ${{ matrix.journal }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
@@ -79,7 +79,7 @@ async def _quarantine_by_identity(
     so the journal retracts exactly the rows rejected."""
     import server.memory.store as memory_repo
 
-    if not temporal_on():
+    if not bitemporal_on():
         await _quarantine_in_place(ch, org, ns, agent, uid, key, reason)
         return
 

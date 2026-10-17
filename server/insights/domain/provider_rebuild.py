@@ -10,7 +10,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 
 RebuildAction = Literal["reembed", "invalidate_cache", "derive_prefix", "preserve_history"]
 
@@ -47,7 +47,7 @@ EMBEDDING_SURFACES = (
     # the temporal projection worker fills the new model's vectors for recent
     # assertions; older ones rank lexically and say so, as after a model change.
     # Only with the journal on: without it the table is not there.
-    *((_TEMPORAL_VECTORS,) if temporal_on() else ()),
+    *((_TEMPORAL_VECTORS,) if bitemporal_on() else ()),
     EmbeddingSurface("qa_item_embeddings", "embedding", "reembed"),
     EmbeddingSurface("query_nodes", "embedding", "reembed"),
     EmbeddingSurface("session_summaries", "summary_embedding", "reembed"),

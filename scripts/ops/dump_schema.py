@@ -35,17 +35,17 @@ from scripts.codegen.common import ROOT, GeneratedFile
 
 DATABASE = "loom"  # every migration addresses loom.<table>, whatever LOOM_CH_DATABASE says
 TARGET = GeneratedFile(ROOT / "schemas" / "schema.sql", "make schema-dump")
-# The dump with the bi-temporal journal on (LOOM_MEMORY_TEMPORAL_ENABLED=true): its
+# The dump with the bi-temporal journal on (LOOM_MEMORY_BITEMPORAL_ENABLED=true): its
 # migration is dormant otherwise, so the default dump never holds its objects.
 TEMPORAL_TARGET = GeneratedFile(
-    ROOT / "schemas" / "schema_temporal.sql", "LOOM_MEMORY_TEMPORAL_ENABLED=true make schema-dump"
+    ROOT / "schemas" / "schema_temporal.sql", "LOOM_MEMORY_BITEMPORAL_ENABLED=true make schema-dump"
 )
 
 
 def _target_for_mode() -> GeneratedFile:
     from server.settings import settings
 
-    return TEMPORAL_TARGET if settings.memory_temporal_enabled else TARGET
+    return TEMPORAL_TARGET if settings.memory_bitemporal_enabled else TARGET
 
 
 DIFF_LINES = 40
@@ -97,7 +97,7 @@ def add_if_not_exists(ddl: str) -> str:
 
 def header(tables: int, views: int, name: str = "schema.sql") -> str:
     mode = (
-        "\n-- with the bi-temporal journal on (LOOM_MEMORY_TEMPORAL_ENABLED=true; its\n"
+        "\n-- with the bi-temporal journal on (LOOM_MEMORY_BITEMPORAL_ENABLED=true; its\n"
         "-- migration is dormant otherwise)"
         if name == "schema_temporal.sql"
         else ""

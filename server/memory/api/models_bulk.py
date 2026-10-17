@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from server.core.feature_modes import TEMPORAL
+from server.core.feature_modes import BITEMPORAL
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.api.models_crud import MemoryGetOutput
 from server.operations.base import MCP_HIDDEN
@@ -306,7 +306,7 @@ class _BulkSetResult(BaseModel):
     peers: list[MemorySetPeer] = Field(default_factory=list)
     next: str = ""
     # Why the entry wrote nothing (version 0): memory.set's `left_out` reasons.
-    left_out: str = Field(default="", json_schema_extra=TEMPORAL)
+    left_out: str = Field(default="", json_schema_extra=BITEMPORAL)
 
 
 class MemoryBulkSetOutput(BaseModel):

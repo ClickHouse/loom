@@ -122,7 +122,7 @@ class Operation:
     # hold (`search.query` is the `loom_search` tool).
     mcp_tool: str = ""
     # Whether the deployment serves the op now (a feature it belongs to may be off,
-    # `feature_modes.temporal_on`); None = always. Off, the op answers as one that
+    # `feature_modes.bitemporal_on`); None = always. Off, the op answers as one that
     # does not exist and no listing names it.
     enabled: Callable[[], bool] | None = None
 

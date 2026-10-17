@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 
 from server.core.datetimes import parse_iso_dt
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.hashing import sha256_value as _content_sha256
 from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
@@ -46,7 +46,7 @@ def _with_sensitivity_tag(tags: list[str], level: str) -> list[str]:
     try:
         from server.memory.domain.sensitivity import with_level_label
 
-        return with_level_label(tags, level, in_place=temporal_on())
+        return with_level_label(tags, level, in_place=bitemporal_on())
     except Exception:  # noqa: BLE001 — a label must not fail a write
         return list(tags)
 
@@ -413,7 +413,7 @@ async def _bulk_build_rows(
         row_tags = _with_sensitivity_tag(
             _with_attribute_tags(entry_tags, serialized_value, input.namespace), entry_sensitivity
         )
-        if temporal_on():
+        if bitemporal_on():
             # The row's final tags (attribute and level labels): the embedding row takes
             # the same, so ranking reads the label the memory row holds.
             entry_tags = row_tags

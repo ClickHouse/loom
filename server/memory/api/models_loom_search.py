@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
-from server.core.feature_modes import TEMPORAL
+from server.core.feature_modes import BITEMPORAL
 from server.memory.api.models_common import TemporalArgs
 
 
@@ -85,7 +85,7 @@ class SearchOutput(BaseModel):
     # On a bi-temporal search: what each plane could answer for (V, K). `bitemporal`
     # planes answered from their history; `not_historical` planes returned nothing
     # rather than today's state.
-    temporal_coverage: dict[str, str] | None = Field(default=None, json_schema_extra=TEMPORAL)
+    temporal_coverage: dict[str, str] | None = Field(default=None, json_schema_extra=BITEMPORAL)
     # The caller's namespaces no leg read because the fan-out stops at
     # `memory_search_fanout_max_namespaces`; address one by name to search it.
     namespaces_skipped: list[str] = Field(default_factory=list)

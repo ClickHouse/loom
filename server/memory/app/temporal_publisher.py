@@ -73,7 +73,7 @@ PUBLISHER_ID = default_holder()
 # Per namespace lease name: the in-process queue in front of the deployment lease
 # (one entry per namespace this process has written).
 _local_locks: dict[str, asyncio.Lock] = {}
-_locks = KeyWriteLocks(wait_s=settings.memory_temporal_lock_wait_s, ttl_s=60)
+_locks = KeyWriteLocks(wait_s=settings.memory_bitemporal_lock_wait_s, ttl_s=60)
 _receipts: ContextVar[list[Receipt] | None] = ContextVar("loom_temporal_receipts", default=None)
 # Set while the erasure fence takes rows back out: those rows are not fenced again.
 _undoing: ContextVar[bool] = ContextVar("loom_temporal_undoing", default=False)
@@ -1789,7 +1789,7 @@ async def _insert_commits(org: str, ns: str, commits: list[dict[str, Any]], ch: 
     mid-insert) withdraws this batch's rows, which no caller was told of."""
     ids = [c["commit_id"] for c in commits]
     want = {c["commit_id"]: c["payload_sha256"] for c in commits}
-    for attempt in range(settings.memory_temporal_insert_retries + 1):
+    for attempt in range(settings.memory_bitemporal_insert_retries + 1):
         try:
             await store.insert_commits(commits, ch=ch)
             break

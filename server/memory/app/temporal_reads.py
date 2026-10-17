@@ -170,11 +170,11 @@ async def cutoff(
 ) -> Cut:
     """Fix the namespace cutoff: never above the stable prefix, so an allocation
     still in doubt can't change an answer once it lands. A `read_token` for this
-    namespace waits (within `memory_temporal_read_wait_ms`) until the cut covers it;
+    namespace waits (within `memory_bitemporal_read_wait_ms`) until the cut covers it;
     one the cut can't cover is a gap."""
     cut = Cut(namespace=namespace, axes=axes, policy=policy)
     want = decode_token(read_token).get(namespace, 0) if read_token else 0
-    deadline = time.monotonic() + settings.memory_temporal_read_wait_ms / 1000
+    deadline = time.monotonic() + settings.memory_bitemporal_read_wait_ms / 1000
     cut.erased = await erased(org, namespace)
     stable = 0
     erased_head = await store.watermark(org, namespace, "erased")
@@ -206,7 +206,7 @@ async def cutoff(
     if await store.rows_before_journal(org, namespace, cut.first_at):
         cut.gaps.append("history_before_journal")
     cut.watermark = await store.watermark(org, namespace)
-    if cut.seq > cut.watermark and cut.seq - cut.watermark > settings.memory_temporal_max_tail:
+    if cut.seq > cut.watermark and cut.seq - cut.watermark > settings.memory_bitemporal_max_tail:
         cut.gaps.append("projection_not_ready")
     return cut
 

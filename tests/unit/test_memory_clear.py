@@ -23,7 +23,7 @@ def clear(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     from server.memory import store as memory_repo
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
     from server.memory.app import temporal_projection
     from server.memory.app import temporal_publisher as publisher
     from server.memory.store import temporal as temporal_store

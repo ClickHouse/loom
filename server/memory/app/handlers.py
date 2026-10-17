@@ -19,7 +19,7 @@ from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_author, assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_narrowed, request_scope
@@ -635,7 +635,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
             existing = None  # the wide form ignores user_id; another user's row is not ours
     if existing is None:
         # A plan only the journal holds is still the key's: retract it.
-        journal_only = await _delete_journal_only(input) if temporal_on() else None
+        journal_only = await _delete_journal_only(input) if bitemporal_on() else None
         if journal_only is not None:
             return journal_only
         # Idempotent: deleting a non-existent row is a no-op — and says so.
@@ -796,7 +796,7 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
             },
         )
 
-    if not temporal_on():
+    if not bitemporal_on():
         # No journal to retract from: tombstone the scope in place.
         counts = await memory_repo.bulk_tombstone_scope(
             org=input.org,
@@ -1003,7 +1003,7 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
     new_expires_at = None
     if not input.clear_expiry:
         new_expires_at = datetime.now(UTC) + timedelta(seconds=input.ttl_seconds or 0)
-        if temporal_on():
+        if bitemporal_on():
             # To the second, as the row keeps it: the answer says what was written.
             new_expires_at = new_expires_at.replace(microsecond=0)
     naive_expiry = new_expires_at.replace(tzinfo=None) if new_expires_at else None
@@ -1169,7 +1169,7 @@ async def _rewrite(
     inserted as it is (every one kept)."""
     import server.memory.store as memory_repo
 
-    if temporal_on():
+    if bitemporal_on():
         return await memory_repo.rewrite_heads(heads, update, ch=ch, skip=skip, reasons=reasons)
     rows = [
         memory_repo.build_memory_version_row(h, **{"version": next_version(), **update(h)})

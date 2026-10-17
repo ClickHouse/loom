@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app import conflicts as _conflicts
 
@@ -901,9 +901,9 @@ def _recorded_now() -> datetime:
 def _recorded(at: datetime | None = None) -> dict[str, Any]:
     """A graph row's knowledge-time column: the journal's, absent without it (the
     column does not exist then)."""
-    return {"recorded_at": at or _recorded_now()} if temporal_on() else {}
+    return {"recorded_at": at or _recorded_now()} if bitemporal_on() else {}
 
 
 def _closed() -> str:
     """The SET clause that stamps when a graph row was closed, with the journal on."""
-    return ", closed_at = now()" if temporal_on() else ""
+    return ", closed_at = now()" if bitemporal_on() else ""

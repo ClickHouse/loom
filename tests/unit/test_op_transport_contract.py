@@ -60,7 +60,7 @@ def _every_feature_on(monkeypatch: pytest.MonkeyPatch) -> None:
     (the journal's ops) is served here."""
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
 
 
 ORG = "acme"

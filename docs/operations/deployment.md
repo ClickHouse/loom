@@ -463,11 +463,11 @@ Over the cost cap, LLM-backed workers skip the namespace; `memory.ask` and
 
 ### Turning on bi-temporal memory
 
-The bi-temporal journal (`LOOM_MEMORY_TEMPORAL_ENABLED`) is off by default: it costs
+The bi-temporal journal (`LOOM_MEMORY_BITEMPORAL_ENABLED`) is off by default: it costs
 write latency and storage on every memory write
 ([bi-temporal memory](../features/memory/bitemporal.md#why-it-is-off-by-default)).
 
-1. Set `LOOM_MEMORY_TEMPORAL_ENABLED=true` on every replica and the workers process.
+1. Set `LOOM_MEMORY_BITEMPORAL_ENABLED=true` on every replica and the workers process.
 2. Run `loom migrate` (or let the boot migration run): migration 039, dormant until now,
    applies.
 3. Restart the processes.

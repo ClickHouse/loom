@@ -223,7 +223,7 @@ def _journal_on(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests are the journal's: the feature is on."""
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
 
 
 _VERSIONS = itertools.count(1_000)
@@ -292,7 +292,7 @@ def test_an_uncertain_insert_that_landed_is_reconciled_not_republished(journal: 
 
 
 def test_an_insert_that_never_lands_fails_the_write(journal: Journal, monkeypatch) -> None:
-    monkeypatch.setattr(pub.settings, "memory_temporal_insert_retries", 1)
+    monkeypatch.setattr(pub.settings, "memory_bitemporal_insert_retries", 1)
     journal.fail_inserts = 5
     with pytest.raises(TemporalUnavailableError):
         run(pub.publish_rows([mrow('"A"')]))

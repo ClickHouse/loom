@@ -20,7 +20,7 @@ from fastapi import HTTPException
 import server.memory.store as memory_repo
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
@@ -76,7 +76,7 @@ async def _load_source(input: MemoryMoveInput) -> MemoryRow:
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    if temporal_on():
+    if bitemporal_on():
         # The source's current row may lag the journal (a plan come due): bring it in
         # line first, so the move copies what holds now.
         from server.memory.app.temporal_projection import reconcile_identities
@@ -183,7 +183,7 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any, to_key: str
         duplicate_of=dest_id,
         updated_at=now,
     )
-    if temporal_on():
+    if bitemporal_on():
         with write_intent(WriteIntent(memory_key=source.memory_key, redirect=True)):
             kept = await memory_repo.insert_over_heads(
                 [(row, frozenset({"status", "duplicate_of", "updated_at"}))], ch=ch

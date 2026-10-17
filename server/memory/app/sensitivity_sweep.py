@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.app.high_fence import fence_high, tombstone_chunks_of
 from server.memory.domain.sensitivity import HIGH, MEDIUM, detect_sensitivity, with_level_label
@@ -220,7 +220,7 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
     out: list[dict[str, Any]] = []
     for r in rows:
         tags = list(r.get("tags") or [])
-        relabelled = with_level_label(tags, c.level, in_place=temporal_on())
+        relabelled = with_level_label(tags, c.level, in_place=bitemporal_on())
         if relabelled == tags:
             continue
         out.append(
@@ -255,7 +255,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                 tags = list(getattr(existing, "tags", None) or [])
                 return {
                     "sensitivity": _c.level,
-                    "tags": with_level_label(tags, _c.level, in_place=temporal_on()),
+                    "tags": with_level_label(tags, _c.level, in_place=bitemporal_on()),
                     "updated_at": now,
                     "version": _v,
                 }

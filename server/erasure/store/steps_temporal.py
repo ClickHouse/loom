@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import count_then_mutate
 
@@ -58,14 +58,14 @@ async def journal_present() -> bool:
     makes no query for it."""
     from server.core.schema.status import feature_migrated
 
-    return temporal_on() or await feature_migrated("memory_temporal_enabled")
+    return bitemporal_on() or await feature_migrated("memory_bitemporal_enabled")
 
 
 def journal_known() -> bool:
     """`journal_present` without a read: the flag, or the ledger as last cached."""
     from server.core.schema.status import feature_migrated_cached
 
-    return temporal_on() or feature_migrated_cached("memory_temporal_enabled")
+    return bitemporal_on() or feature_migrated_cached("memory_bitemporal_enabled")
 
 
 async def present_tables(tables: Sequence[str], ch: _CHClient | None = None) -> set[str]:

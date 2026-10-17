@@ -1,6 +1,6 @@
-"""Wire fields that belong to one side of `memory_temporal_enabled`.
+"""Wire fields that belong to one side of `memory_bitemporal_enabled`.
 
-A field marked `TEMPORAL` exists only for the bi-temporal journal; one marked
+A field marked `BITEMPORAL` exists only for the bi-temporal journal; one marked
 `CLASSIC` is the field the journal replaces (single-axis `as_of`, the version-row
 rollback's counters). The transports treat a field of the inactive side as one
 the op does not have: an input is reset to its default and named in
@@ -17,12 +17,12 @@ from pydantic import BaseModel
 
 from server.settings import settings
 
-TEMPORAL: dict[str, Any] = {"loom_mode": "temporal"}
+BITEMPORAL: dict[str, Any] = {"loom_mode": "bitemporal"}
 CLASSIC: dict[str, Any] = {"loom_mode": "classic"}
 
 
-def temporal_on() -> bool:
-    return settings.memory_temporal_enabled
+def bitemporal_on() -> bool:
+    return settings.memory_bitemporal_enabled
 
 
 def _mode(info: Any) -> str | None:
@@ -32,7 +32,7 @@ def _mode(info: Any) -> str | None:
 
 def inactive_fields(model: type[BaseModel]) -> frozenset[str]:
     """The model's fields (by name and alias) of the side that is off now."""
-    off = "classic" if temporal_on() else "temporal"
+    off = "classic" if bitemporal_on() else "bitemporal"
     names: set[str] = set()
     for name, info in model.model_fields.items():
         if _mode(info) == off:

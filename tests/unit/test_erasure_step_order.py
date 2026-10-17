@@ -32,7 +32,7 @@ def _journal_on(monkeypatch: pytest.MonkeyPatch) -> None:
     """The journal-on contract; `_journal_off` holds main's."""
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)
 
 
 _STEP: contextvars.ContextVar[str] = contextvars.ContextVar("step", default="")
@@ -448,10 +448,10 @@ async def test_a_journal_turned_off_after_it_ran_is_still_erased(
     from server.core.schema import status
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", False)
 
     async def migrated(field: str, mig_dir: Any = None) -> bool:
-        return field == "memory_temporal_enabled"
+        return field == "memory_bitemporal_enabled"
 
     monkeypatch.setattr(status, "feature_migrated", migrated)
     monkeypatch.setattr(status, "feature_migrated_cached", lambda f, d=None: True)

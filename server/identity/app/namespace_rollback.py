@@ -1,6 +1,6 @@
 """namespace.rollback — return a namespace's memories to what they were at an instant.
 
-With the journal on (`memory_temporal_enabled`), planned and applied in the bi-temporal
+With the journal on (`memory_bitemporal_enabled`), planned and applied in the bi-temporal
 journal (`server.memory.app.namespace_rollback`):
 every key whose served claims as known at `as_of` differ from what it serves now gets
 one commit that serves again what it served then, spans, plans and kinds as they were;
@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 
 from server.core.ch import get_client
 from server.core.errors import ValidationError
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.identity.api.models import (
     NamespaceRollbackInput,
     NamespaceRollbackOutput,
@@ -57,7 +57,7 @@ async def handle_namespace_rollback(
     as_of = input.as_of if input.as_of.tzinfo else input.as_of.replace(tzinfo=UTC)
     if as_of > now:
         raise ValidationError("as_of is in the future; a rollback targets a past instant")
-    if not temporal_on():
+    if not bitemporal_on():
         return await _rollback_rows(input, as_of, now)
     plan = await memory_rollback.plan(
         input.org, input.namespace, as_of, memory_keys=input.memory_keys, limit=input.max_keys

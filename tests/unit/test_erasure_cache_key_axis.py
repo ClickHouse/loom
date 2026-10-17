@@ -265,7 +265,7 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(
     from server.memory.app import curation as cur
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", journal)
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", journal)
 
     target = {
         "namespace": "n",

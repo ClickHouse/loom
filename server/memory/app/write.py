@@ -15,7 +15,7 @@ from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.errors import LoomServerError, ValidationError
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.core.vectors import codes_state
@@ -201,7 +201,7 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     unmapped 4xx is a `rejected` refusal, and anything else — including the
     non-HTTPException failures a ClickHouse outage actually raises — is `error`.
     """
-    if temporal_on():
+    if bitemporal_on():
         _check_applies_now(input)
     if input.change_kind == "transition" and input.valid_at is None:
         # The row states the bound the journal records for the new state.
@@ -222,7 +222,7 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     except (HTTPException, LoomServerError) as e:
         # A guard for a new write refused it: a retry of a set this request's client
         # key already committed is answered from that commit instead.
-        on = temporal_on()
+        on = bitemporal_on()
         if on and 400 <= e.status_code < 500 and (replayed := await _durable_replay(input)):
             return replayed
         if isinstance(e, LoomServerError):
@@ -544,7 +544,7 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
     on_expire = input.on_expire or (
         (getattr(existing, "on_expire", "") or "") if existing is not None else ""
     )
-    classify = _classify_value if temporal_on() else _classify_value_classic
+    classify = _classify_value if bitemporal_on() else _classify_value_classic
     input, expires_at, _sens_on_expire = classify(
         input, serialized_value, effective_sensitivity, expires_at, on_expire
     )
@@ -773,7 +773,7 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     # anything is embedded.
     _restated, _pin_refusal = _guard_existing_row(existing, input, retyped_from)
     if _pin_refusal is not None:
-        return (await _durable_replay(input) if temporal_on() else None) or _pin_refusal
+        return (await _durable_replay(input) if bitemporal_on() else None) or _pin_refusal
 
     expires_at = await _set_expiry(input, existing, _cfg_task, resolved_memory_type)
 

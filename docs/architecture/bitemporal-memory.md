@@ -1,7 +1,7 @@
 # Bi-temporal memory
 
 **Status: opt-in, off by default.** Everything on this page applies only with
-`LOOM_MEMORY_TEMPORAL_ENABLED=true`; why it is off, how to turn it on and off, and what
+`LOOM_MEMORY_BITEMPORAL_ENABLED=true`; why it is off, how to turn it on and off, and what
 changes on the wire are in [bi-temporal memory](../features/memory/bitemporal.md). Until
 it is enabled, migration `039_bitemporal_memory.sql` is dormant (neither applied nor
 reported pending) and the schema is `schemas/schema.sql`; `schemas/schema_temporal.sql`
@@ -228,7 +228,7 @@ Operational limits of this release:
   (measured on ClickHouse 26.9 with a Keeper: ~10 statements and the Keeper lease
   per commit, ~120 ms under the lock), parallel across namespaces. A write that
   marks k conflict peers or restates commits k more. A write that waits past
-  `memory_temporal_lock_wait_s` for its namespace's lock answers 503 "busy"
+  `memory_bitemporal_lock_wait_s` for its namespace's lock answers 503 "busy"
   (retryable): a single hot key under dozens of concurrent writers sees it.
 - A redaction holds the namespace lock through its scrubs; writes to that
   namespace wait (and see "busy" past the lock wait). Under a Keeper lease the
@@ -254,7 +254,7 @@ C < retired_seq)`, then the valid-time test. Content and tag filters run after
 - `memory_temporal_watermarks` holds the highest contiguously applied sequence.
   The publisher applies the projection inline. If that fails, the watermark stays
   put; readers reduce the journal tail themselves (up to
-  `LOOM_MEMORY_TEMPORAL_MAX_TAIL`), and the `memory_temporal_projection` worker
+  `LOOM_MEMORY_BITEMPORAL_MAX_TAIL`), and the `memory_temporal_projection` worker
   replays it without skipping a gap.
 - `memory_temporal_vectors` holds historical-search vectors keyed by model and
   the sha256 of the exact embed text (memory.set's: a procedural value's

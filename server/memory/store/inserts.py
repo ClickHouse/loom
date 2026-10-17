@@ -131,7 +131,7 @@ async def insert_memory_versions(
     if not rows:
         return 0
     check_memory_rows(rows)
-    if not settings.memory_temporal_enabled:
+    if not settings.memory_bitemporal_enabled:
         # No journal: the row and its embedding writes land together, as they did
         # before the journal existed.
         db = ch or _default_client()

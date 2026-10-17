@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.errors import TemporalUnavailableError, ValidationError
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
@@ -551,7 +551,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     from server.memory.store import temporal as temporal_store
     from server.memory.store.redaction import REDACTED_VALUE
 
-    if temporal_on() and bool(input.version) == bool(input.assertion_id):
+    if bitemporal_on() and bool(input.version) == bool(input.assertion_id):
         raise ValidationError("memory.redact takes one of version or assertion_id")
     target = await memory_repo.find_history_target(input.org, input.memory_id)
     if target is None:
@@ -577,7 +577,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         strong=True,  # ... and so must its latest version
         scope=WHOLE_NAMESPACE,
     )
-    if not temporal_on():
+    if not bitemporal_on():
         return await _redact_version_row(input, target, head)
     if head is not None:
         # Scrubbing a historical value of a locked key is a deletion of its

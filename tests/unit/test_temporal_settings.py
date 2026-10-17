@@ -51,9 +51,9 @@ def _cutoff_store(monkeypatch, *, head: int, watermark: int) -> None:
 def test_a_tail_past_memory_temporal_max_tail_is_not_ready(monkeypatch) -> None:
     _cutoff_store(monkeypatch, head=10, watermark=2)
     axes = Axes(valid=datetime.now(UTC), known=None)
-    monkeypatch.setattr(settings, "memory_temporal_max_tail", 100)
+    monkeypatch.setattr(settings, "memory_bitemporal_max_tail", 100)
     assert "projection_not_ready" not in _run(temporal_reads.cutoff("o", "n", axes)).gaps
-    monkeypatch.setattr(settings, "memory_temporal_max_tail", 5)
+    monkeypatch.setattr(settings, "memory_bitemporal_max_tail", 5)
     assert "projection_not_ready" in _run(temporal_reads.cutoff("o", "n", axes)).gaps
 
 
@@ -61,7 +61,7 @@ def test_a_token_ahead_of_the_head_waits_memory_temporal_read_wait_ms(monkeypatc
     from server.memory.domain.temporal_reads import encode_token
 
     _cutoff_store(monkeypatch, head=3, watermark=3)
-    monkeypatch.setattr(settings, "memory_temporal_read_wait_ms", 120)
+    monkeypatch.setattr(settings, "memory_bitemporal_read_wait_ms", 120)
     axes = Axes(valid=datetime.now(UTC), known=None)
     t0 = datetime.now(UTC)
     cut = _run(temporal_reads.cutoff("o", "n", axes, read_token=encode_token({"n": 9})))
@@ -72,12 +72,12 @@ def test_a_token_ahead_of_the_head_waits_memory_temporal_read_wait_ms(monkeypatc
 def test_memory_temporal_lock_wait_s_bounds_the_publisher_lock() -> None:
     from server.memory.app import temporal_publisher
 
-    assert temporal_publisher._locks._wait_s == settings.memory_temporal_lock_wait_s
+    assert temporal_publisher._locks._wait_s == settings.memory_bitemporal_lock_wait_s
 
 
 def test_the_projection_worker_row() -> None:
     from server.workers.registry import _WORKERS
 
     (row,) = [w for w in _WORKERS if w.name == "memory_temporal_projection"]
-    assert row.enabled == "memory_temporal_projection_worker_enabled"
-    assert row.interval == "memory_temporal_projection_worker_interval_seconds"
+    assert row.enabled == "memory_bitemporal_projection_worker_enabled"
+    assert row.interval == "memory_bitemporal_projection_worker_interval_seconds"

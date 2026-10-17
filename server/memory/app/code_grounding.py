@@ -23,7 +23,7 @@ import re
 from typing import Any
 
 from server.code.domain.anchor import local_name
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.memory.domain.temporal_reads import reference_time
 from server.memory.store.code_links import LinkRow
 
@@ -692,7 +692,7 @@ async def apply_code_grounding(
     target = await _authorized_code_target(search_input, settings)
     if not target[1]:
         return synth_pool
-    if temporal_on() and search_input.temporal_requested():
+    if bitemporal_on() and search_input.temporal_requested():
         # A historical ask keeps only the PR gate (it honours the reference time):
         # enrichment, PR facts and the staleness note read today's code index.
         if not settings.memory_ask_pr_temporal_gate:

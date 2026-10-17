@@ -28,7 +28,7 @@ See [audit](features/observability/audit.md).
 Revise (`memory.update_by_id`), Contract (`memory.delete`), Reinforce (`memory.pin`),
 Refuse (`blacklist.add`). See [how a write is judged](concepts/memory.md#how-a-write-is-judged).
 
-**Bi-temporal memory** — the opt-in commit journal (`LOOM_MEMORY_TEMPORAL_ENABLED`,
+**Bi-temporal memory** — the opt-in commit journal (`LOOM_MEMORY_BITEMPORAL_ENABLED`,
 off by default) that records every memory write, so a read can ask what applied at a
 valid time as Loom had recorded it at a knowledge time (`valid_as_of`, `known_as_of`).
 See [bi-temporal memory](features/memory/bitemporal.md).

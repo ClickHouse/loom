@@ -425,7 +425,7 @@ async def test_a_row_the_journal_left_out_touches_no_vector(
 ) -> None:
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_temporal_enabled", True)  # only the journal leaves out
+    monkeypatch.setattr(settings, "memory_bitemporal_enabled", True)  # only the journal leaves out
     # A moved-on retry or late evidence: the key's current vectors are someone
     # else's, so nothing is retired, fenced or indexed for it.
     import server.memory.store as memory_repo

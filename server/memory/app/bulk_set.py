@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
-from server.core.feature_modes import temporal_on
+from server.core.feature_modes import bitemporal_on
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
@@ -299,7 +299,7 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     state.embedding_rows = [
         r for r in state.embedding_rows if str(r.get("memory_key")) not in retire
     ]
-    if not temporal_on():
+    if not bitemporal_on():
         # No journal to leave a row out: the two core writes are independent rows of two
         # tables, each a ~260 ms committed insert on ClickHouse Cloud, so they are gathered.
         await asyncio.gather(
@@ -763,7 +763,7 @@ async def handle_memory_bulk_set(
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
     state = _BulkWriteState()
-    if temporal_on():
+    if bitemporal_on():
         await _bulk_retried(input, state)
     await _bulk_existing_lookup(ch, input, state)
 
@@ -789,7 +789,7 @@ async def handle_memory_bulk_set(
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
     for name, key in state.replayed_lists:
         getattr(plan, name).append(key)
-    if temporal_on():
+    if bitemporal_on():
         state.request_outcomes = _request_outcomes(input, state, plan)
 
     await _bulk_insert(ch, state)

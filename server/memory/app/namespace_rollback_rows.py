@@ -1,4 +1,4 @@
-"""The memory side of namespace.rollback with the journal off (`memory_temporal_enabled`;
+"""The memory side of namespace.rollback with the journal off (`memory_bitemporal_enabled`;
 on, `namespace_rollback` plans it in the journal): the version-history reads the plan is made from,
 and the writes that apply it (reinstated heads re-emitted through the version-row builder,
 removed keys tombstoned, one stub embedding row per touched key for the embedding worker)."""

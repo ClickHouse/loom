@@ -12,7 +12,7 @@ from pydantic import (
     model_validator,
 )
 
-from server.core.feature_modes import CLASSIC, TEMPORAL
+from server.core.feature_modes import BITEMPORAL, CLASSIC
 from server.memory.api.models_common import TemporalArgs, TemporalCutoff, _Identity
 from server.memory.api.models_search import _MemorySearchHit
 
@@ -277,7 +277,7 @@ class MemoryAskOutput(BaseModel):
     answer: str = ""
     # A historical ask (valid_as_of / known_as_of): the cutoff each namespace's
     # evidence was read at, and what it could not cover. Empty otherwise.
-    temporal: list[TemporalCutoff] = Field(default_factory=list, json_schema_extra=TEMPORAL)
+    temporal: list[TemporalCutoff] = Field(default_factory=list, json_schema_extra=BITEMPORAL)
     # "record": answered from an exact record (the GitHub-items index or the
     # tracker) instead of LLM synthesis.
     # "precedent": the earlier synthesized answer to this question+shape,

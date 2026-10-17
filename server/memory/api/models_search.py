@@ -12,7 +12,7 @@ from pydantic import (
     model_serializer,
 )
 
-from server.core.feature_modes import CLASSIC, TEMPORAL
+from server.core.feature_modes import BITEMPORAL, CLASSIC
 from server.memory.api.models_common import MemoryType, TemporalArgs, TemporalCutoff, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.rerank_names import RerankName
@@ -651,8 +651,8 @@ class _MemorySearchHit(BaseModel):
     resolved_from: str | None = None
     # On a bi-temporal search: the assertion this hit cites (a revision, not
     # only a key) and the sha256 of its value; "" otherwise.
-    assertion_id: str = Field(default="", json_schema_extra=TEMPORAL)
-    value_sha256: str = Field(default="", json_schema_extra=TEMPORAL)
+    assertion_id: str = Field(default="", json_schema_extra=BITEMPORAL)
+    value_sha256: str = Field(default="", json_schema_extra=BITEMPORAL)
 
 
 class MemorySearchOutput(BaseModel):
@@ -672,7 +672,7 @@ class MemorySearchOutput(BaseModel):
     results: list[_MemorySearchHit]
     # On a bi-temporal search (`valid_as_of` / `known_as_of` / `read_token`): one
     # cutoff per namespace searched — sequences are not a cross-namespace snapshot.
-    temporal: list[TemporalCutoff] = Field(default_factory=list, json_schema_extra=TEMPORAL)
+    temporal: list[TemporalCutoff] = Field(default_factory=list, json_schema_extra=BITEMPORAL)
     # render="reader" only: the results as one prompt block ("[date] [key]
     # (type) excerpt", ordered as memory.ask would read them) and the
     # synthesizer's instructions, so an external reader scores what the ask

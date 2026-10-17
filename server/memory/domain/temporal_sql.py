@@ -23,7 +23,7 @@ knowledge_time — "what loom KNEW at T". Record axis: written by T and not yet
   no stamp (an older supersession) is excluded — unknown retirement time is
   treated conservatively.
 
-`as_of` is the replay with the bi-temporal journal off (`memory_temporal_enabled`);
+`as_of` is the replay with the bi-temporal journal off (`memory_bitemporal_enabled`);
 with it on, a point-in-time read of memory goes through the journal
 (server/memory/app/temporal_reads.py), and the graph and records planes use the
 `valid_as_of` / `known_as_of` interval tests at the end of this module.

@@ -284,9 +284,9 @@ _WORKERS: tuple[_Worker, ...] = (
     _Worker(
         "memory_temporal_projection",
         "server.memory.workers.temporal_projection",
-        "memory_temporal_projection_worker_enabled",
-        "memory_temporal_projection_worker_interval_seconds",
-        also_requires="memory_temporal_enabled",
+        "memory_bitemporal_projection_worker_enabled",
+        "memory_bitemporal_projection_worker_interval_seconds",
+        also_requires="memory_bitemporal_enabled",
     ),
     _Worker(
         "observe_extract",
