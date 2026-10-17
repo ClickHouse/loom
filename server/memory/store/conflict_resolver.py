@@ -247,9 +247,35 @@ async def cluster_peers(
     return kept
 
 
+async def asserted_versions(
+    org: str, namespace: str, rows: list[tuple[str, str]], *, ch: _CHClient | None = None
+) -> dict[str, int]:
+    """{memory_id: the smallest version of its history rows holding `sha`} for each
+    (memory_id, sha) in `rows`: when the row's current value was first asserted, in
+    wall-clock ns. A metadata copy (touch, pin, tags) keeps the hash, so it does not
+    move it. An id the history does not hold is left out."""
+    if not rows:
+        return {}
+    ch = ch or _default_client()
+    found = await ch.query_all(
+        """
+        SELECT toString(memory_id) AS memory_id, min(version) AS asserted
+        FROM loom.memory_versions
+        PREWHERE org = {org:String} AND namespace = {ns:String}
+        WHERE (toString(memory_id), toString(content_sha256))
+              IN {rows:Array(Tuple(String, String))}
+        GROUP BY memory_id
+        SETTINGS select_sequential_consistency = 1
+        """,
+        {"org": org, "ns": namespace, "rows": [(str(i), str(h)) for i, h in rows]},
+    )
+    return {str(r["memory_id"]): int(r["asserted"]) for r in found}
+
+
 __all__ = [
     "JUDGED_MARK",
     "OWED_MARK",
+    "asserted_versions",
     "cluster_peers",
     "owed_rows",
     "queued_namespaces",

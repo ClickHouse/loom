@@ -273,6 +273,12 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.stamped.append(q["memory_key"])
         return 1
 
+    # When each row's value was first asserted (ns): the peer a moment before the row.
+    e.asserted = {"m1": 2_000, "m2": 1_000}
+
+    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> dict[str, int]:
+        return {i: e.asserted[i] for i, _ in rows if i in e.asserted}
+
     async def head(org: str, mid: str) -> Any:
         return e.heads.get(mid)
 
@@ -288,6 +294,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     monkeypatch.setattr(queue, "cluster_peers", cluster)
     monkeypatch.setattr(resolver, "judge", judge)
     monkeypatch.setattr(queue, "stamp_judged", stamp)
+    monkeypatch.setattr(queue, "asserted_versions", asserted)
     monkeypatch.setattr(resolver, "_head", head)
     monkeypatch.setattr(resolver, "_act", act)
     monkeypatch.setattr(resolver, "_audit", audit)
@@ -309,12 +316,12 @@ async def test_a_confident_update_under_newest_wins_retires_and_stamps(row_env: 
     assert row_env.audit_model == "gpt-6.1-sol-2026-09-01"
 
 
-@pytest.mark.parametrize("peer_at", [datetime(2026, 1, 2), datetime(2026, 1, 3)])
-async def test_an_update_whose_peer_was_not_stated_first_is_flagged(
-    row_env: NS, peer_at: datetime
+@pytest.mark.parametrize("peer_at", [2_000, 3_000])
+async def test_an_update_whose_peer_was_not_asserted_first_is_flagged(
+    row_env: NS, peer_at: int
 ) -> None:
-    # The same second as the judged row, or later: the order is not proven, so no retire.
-    row_env.heads["m2"].created_at = row_env.heads["m2"].updated_at = peer_at
+    # Asserted at the same ns as the judged row, or later: no order, so no retire.
+    row_env.asserted["m2"] = peer_at
     counts = await _resolve()
     assert row_env.acted == [(cr.FLAG, "m1", "m2")]
     assert counts.flagged == 1 and counts.retired == 0
@@ -506,6 +513,29 @@ async def test_a_retirement_behind_the_newer_row_of_the_pair(monkeypatch) -> Non
     assert followed == [("m1", "m2")]
 
 
+async def test_the_order_is_finer_than_the_second_and_ignores_metadata_writes(
+    monkeypatch,
+) -> None:
+    # Both written in one second; the peer's value 5 ms earlier. A later touch of the
+    # peer moved its version and updated_at, not when its value was first asserted.
+    second = datetime(2026, 1, 2)
+    row = _mem("m1", version=1_767_312_000_010_000_000, created_at=second, updated_at=second)
+    touched = datetime(2026, 1, 3)
+    peer = _mem("m2", version=1_767_398_400_000_000_001, created_at=second, updated_at=touched)
+
+    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> dict[str, int]:
+        return {"m1": 1_767_312_000_010_000_000, "m2": 1_767_312_000_005_000_000}
+
+    monkeypatch.setattr(queue, "asserted_versions", asserted)
+    order = await resolver._assertion_order("o", "ns", [row, peer])
+    assert order["m2"] < order["m1"]
+    # An explicit valid_at earlier than the assertion moves the row back.
+    peer.valid_at = datetime(2020, 1, 1)
+    row.valid_at = datetime(2019, 1, 1)
+    order = await resolver._assertion_order("o", "ns", [row, peer])
+    assert order["m1"] < order["m2"]
+
+
 async def test_a_recheck_of_the_older_side_of_a_flag_judges_the_newer_as_new(
     monkeypatch,
 ) -> None:
@@ -527,7 +557,11 @@ async def test_a_recheck_of_the_older_side_of_a_flag_judges_the_newer_as_new(
     async def head(org: str, mid: str) -> Any:
         return newer
 
+    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> dict[str, int]:
+        return {"m1": 1_000, "m2": 2_000}
+
     monkeypatch.setattr(resolver, "_head", head)
+    monkeypatch.setattr(queue, "asserted_versions", asserted)
     new, rest = await resolver._newest_as_new("o", older, peers)
     assert new is newer
     assert [p["memory_id"] for p in rest] == ["m1", "m3"]

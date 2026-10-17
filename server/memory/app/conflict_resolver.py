@@ -25,10 +25,12 @@ flag has nothing left to remove."""
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 import logging
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -84,11 +86,6 @@ def _plain(stored: str) -> str:
     except (TypeError, ValueError):
         return stored
     return value if isinstance(value, str) else stored
-
-
-def _row_dict(row: Any) -> dict[str, Any]:
-    """The fields `statement_rank` orders a `MemoryRow` by."""
-    return {f: getattr(row, f, None) for f in ("memory_id", "valid_at", "created_at", "updated_at")}
 
 
 async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVerdict], str]:
@@ -158,16 +155,28 @@ def _conflict_peer(row: Any) -> ConflictPeer:
     )
 
 
-def _stated_at(r: Any) -> tuple[Any, ...]:
-    """When a row (a `MemoryRow` or a peer dict) was stated, by valid and write time.
-    The rank's last tie-break, the memory_id, is arbitrary and is left out."""
-    from server.memory.app.key_supersession import statement_rank
-
-    return statement_rank(r if isinstance(r, Mapping) else _row_dict(r))[:2]
+def _field(r: Any, name: str) -> Any:
+    return r.get(name) if isinstance(r, Mapping) else getattr(r, name, None)
 
 
-def _stated_before(a: Any, b: Any) -> bool:
-    return _stated_at(a) < _stated_at(b)
+async def _assertion_order(org: str, namespace: str, rows: list[Any]) -> dict[str, tuple[int, int]]:
+    """{memory_id: (when its statement holds, when its value was first asserted)}, in
+    wall-clock ns, for rows (`MemoryRow`s or peer dicts). Finer than the second, and
+    a metadata write (touch, pin, tags) keeps the hash, so it does not move a row. An
+    explicit valid_at earlier than the assertion moves it back: the fact held then."""
+    keys = [(str(_field(r, "memory_id")), str(_field(r, "content_sha256") or "")) for r in rows]
+    first = await queue.asserted_versions(org, namespace, keys)
+    out: dict[str, tuple[int, int]] = {}
+    for r in rows:
+        mid = str(_field(r, "memory_id"))
+        # A row the history does not hold: its current version.
+        asserted = first.get(mid, int(_field(r, "version") or 0))
+        holds = asserted
+        valid = _field(r, "valid_at")
+        if isinstance(valid, datetime):
+            holds = min(holds, calendar.timegm(valid.utctimetuple()) * 1_000_000_000)
+        out[mid] = (holds, asserted)
+    return out
 
 
 async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
@@ -324,9 +333,12 @@ async def _settle_pair(
         str(head.memory_id) in row.conflict_with or str(row.memory_id) in head.conflict_with
     ):
         return None  # nothing flagged between them: nothing to clear
-    if action == cr.RETIRE and not _stated_before(head, row):
-        # "update" says the judged row is newer; the times do not show it. A person decides.
-        action = cr.FLAG
+    if action == cr.RETIRE:
+        order = await _assertion_order(org, namespace, [row, head])
+        if not order[str(head.memory_id)] < order[str(row.memory_id)]:
+            # "update" says the judged row is newer; the order does not show it. A person
+            # decides.
+            action = cr.FLAG
     if not await _act(action, org, namespace, row, head):
         return None
     setattr(counts, _COUNTED[action], getattr(counts, _COUNTED[action]) + 1)
@@ -415,11 +427,14 @@ async def _newest_as_new(
     """The judge reads NEW as the later statement. A re-checked row is often the older
     side of its flag, so when a flagged peer was stated later, the latest such peer
     is NEW and the row is judged as one of its peers."""
-    flagged = {str(x) for x in row.conflict_with}
-    later = [p for p in peers if str(p["memory_id"]) in flagged and _stated_before(row, p)]
+    flagged = [p for p in peers if str(p["memory_id"]) in {str(x) for x in row.conflict_with}]
+    if not flagged:
+        return row, peers
+    order = await _assertion_order(org, str(row.namespace), [row, *flagged])
+    later = [p for p in flagged if order[str(row.memory_id)] < order[str(p["memory_id"])]]
     if not later:
         return row, peers
-    top = max(later, key=_stated_at)
+    top = max(later, key=lambda p: order[str(p["memory_id"])])
     new = await _head(org, str(top["memory_id"]))
     if not _holds(new, str(row.namespace), str(top["content_sha256"])):
         return row, peers  # changed since the cluster read: judged as queued

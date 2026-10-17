@@ -528,8 +528,8 @@ async def test_a_deleted_namespace_is_not_judged_until_it_is_registered_again(
     assert (await _marks(ch, org))["office_location"] == 2
 
 
-async def _pair(ch: Any, org: str, old: str, new: str, axis: int) -> None:
-    """An older row and, a second later, a newer owed one close to it."""
+async def _pair(ch: Any, org: str, old: str, new: str, axis: int, *, gap: bool = True) -> None:
+    """An older row and, a second later (or at once), a newer owed one close to it."""
     from server.memory.app import after_write, conflicts
     from server.memory.domain.conflicts import ConflictResult
 
@@ -539,7 +539,8 @@ async def _pair(ch: Any, org: str, old: str, new: str, axis: int) -> None:
     with pytest.MonkeyPatch.context() as m:
         m.setattr(conflicts, "check_on_commit", clear)
         await _set(org, "s1", old, "The office is in Paris")
-        await _later()
+        if gap:
+            await _later()
         await _set(org, "s2", new, "The office moved to Rome")
         await after_write.drain()
     await _place(ch, org, "s1", old, _vec((axis, 1.0)), owed=False)
@@ -704,3 +705,28 @@ async def test_rows_wait_owed_without_the_key_and_are_judged_once_it_is_set(
     await run_pass()
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
     assert (await _marks(ch, org))["office_location"] == 2
+
+
+async def test_rows_written_in_one_second_retire_by_the_order_their_values_were_asserted(
+    ch, wired
+) -> None:
+    """No gap between the writes, and the older row's tags are rewritten after the newer
+    one was written (a new version and updated_at, the same hash): it still retires."""
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app.update import handle_memory_update_by_id
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 56, gap=False)
+    before = await _rows(ch, org)
+    await _later()
+    await handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org=org, memory_id=before["office_city"]["id"], tags=["office"])
+    )
+    # The revision re-embeds the row: put its vector back where the test placed it.
+    await _place(ch, org, "s1", "office_city", _vec((56, 1.0)), owed=False)
+    out = await run_pass()
+    after = await _rows(ch, org)
+    assert after["office_city"]["version"] > before["office_city"]["version"]
+    assert after["office_city"]["status"] == "superseded", out
+    assert after["office_location"]["status"] == "active"

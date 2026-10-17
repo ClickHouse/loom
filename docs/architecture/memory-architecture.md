@@ -206,9 +206,11 @@ precision was 0.98 to 1.00 at 0.95, and clear precision 0.96 to 0.98 at 0.90; th
 answer leaves out, or an answer that cannot be parsed, changes nothing.
 
 **Acting.** An update says the judged row (NEW) makes the peer stale, so only the peer
-retires, and only when it was stated strictly first by `key_supersession.statement_rank`'s
-times (valid time, then write time, to the second; the id tie-break is ignored). A pair
-stated in the same second, or a peer stated later, is flagged for review instead. A
+retires, and only when it was asserted strictly first: each row is ordered by the
+smallest `loom.memory_versions` version (wall-clock ns) holding its current content hash,
+so the order is finer than the second and a metadata write (touch, pin, tags) does not
+move it; an explicit `valid_at` earlier than that moves it back. Equal keys, or a peer
+asserted later, flag the pair for review instead. A
 re-checked row is often the older side of its flag, so when a flagged peer was stated
 later, the latest such peer is presented as NEW and the row as its peer. A retirement goes through `apply_refines`: the older row is superseded behind the
 newer, a `supersedes` edge records why, one `memory.auto_supersede` record names it
