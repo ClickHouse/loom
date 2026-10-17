@@ -224,7 +224,8 @@ actions, verdicts and confidences, never the text.
 **Invariants.**
 
 - Both rows are re-read read-your-writes before any action, and acted on only while both
-  are live and still hold the content judged. A row revised meanwhile is left to its new
+  are live, unexpired, with `valid_to` open, and still hold the content judged; the queued
+  row is held to the same rule before its call. A row revised meanwhile is left to its new
   mark; the flag and clear writes land at the read version + 1, so a later revision stays
   newest.
 - A pinned row is never retired, flagged or cleared; a lock that refuses retirement holds.

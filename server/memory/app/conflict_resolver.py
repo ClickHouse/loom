@@ -35,6 +35,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import server.memory.store as memory_repo
+from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain import conflict_resolution as cr
 from server.memory.domain.conflicts import ConflictPeer
@@ -131,12 +132,28 @@ async def _head(org: str, memory_id: str) -> Any:
     )
 
 
-def _holds(row: Any, namespace: str, sha: str) -> bool:
-    """Whether a re-read row is still the live write that was judged."""
+def _eligible(row: Any) -> bool:
+    """Whether a row may be judged or acted on: live, not deleted, not expired, and
+    its fact not ended (the rule `_PEER_ROWS_SQL` applies to peers)."""
+    now = naive_utc_now()
+
+    def ended(t: Any) -> bool:
+        return t is not None and to_naive_utc(t) <= now
+
     return (
         row is not None
-        and str(row.namespace) == namespace
         and str(row.status) in _LIVE
+        and row.tombstoned_at is None
+        and not ended(row.expires_at)
+        and not ended(row.valid_to)
+    )
+
+
+def _holds(row: Any, namespace: str, sha: str) -> bool:
+    """Whether a re-read row is still the eligible write that was judged."""
+    return (
+        _eligible(row)
+        and str(row.namespace) == namespace
         and str(row.content_sha256 or "") == sha
     )
 
@@ -394,7 +411,7 @@ async def resolve_row(
     if row is not None and sha and str(row.content_sha256 or "") != sha:
         counts.skipped_changed += 1
         return
-    if row is None or row.status not in _LIVE or policy == "append_only":
+    if not _eligible(row) or policy == "append_only":
         await queue.stamp_judged(q)
         return
     if row.pinned:

@@ -228,6 +228,11 @@ def _mem(mid: str = "m1", **kw: Any) -> Any:
         valid_at=None,
         created_at=datetime(2026, 1, 2),
         updated_at=datetime(2026, 1, 2),
+        tombstoned_at=None,
+        expires_at=None,
+        valid_to=None,
+        sensitivity="",
+        version=0,
     )
     return NS(**(base | kw))
 
@@ -398,6 +403,28 @@ async def test_a_row_gone_or_under_append_only_is_stamped_without_a_call(row_env
     row_env.mem.status = "active"
     await _resolve(policy="append_only")
     assert row_env.llm_calls == 0 and row_env.stamped == ["office_city", "office_city"]
+
+
+@pytest.mark.parametrize("field", ["expires_at", "valid_to"])
+async def test_an_expired_or_ended_queued_row_is_stamped_without_a_call(
+    row_env: NS, field: str
+) -> None:
+    setattr(row_env.mem, field, datetime(2020, 1, 1))
+    await _resolve()
+    assert row_env.llm_calls == 0 and row_env.stamped == ["office_city"]
+
+
+@pytest.mark.parametrize("who", ["m1", "m2"])
+async def test_a_pair_is_not_acted_on_once_either_row_has_expired(row_env: NS, who: str) -> None:
+    # Judged while live; expired by the time the pair is re-read: neither row moves.
+    import copy
+
+    expired = copy.copy(row_env.heads[who])
+    expired.expires_at = datetime(2020, 1, 1)
+    row_env.heads[who] = expired
+    counts = await _resolve()
+    assert row_env.llm_calls == 1 and row_env.acted == []
+    assert counts.skipped_changed == 1 and counts.retired == 0
 
 
 async def test_the_recheck_clears_a_false_flag_and_judges_the_flagged_peer(row_env: NS) -> None:
