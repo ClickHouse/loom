@@ -105,6 +105,29 @@ def test_a_dot_is_inside_a_word_unless_every_part_is_one_letter(
 
 
 @pytest.mark.parametrize(
+    ("raw", "canonical"),
+    [
+        ("दिल्ली", "दिल्ली"),
+        ("กรุงเทพ", "กรุงเทพ"),
+        # Typed as one composed letter or as a letter and its mark: one node.
+        ("Zu\u0308rich", "zürich"),
+        ("Zürich", "zürich"),
+        # "İ".lower() is "i" and a dot above, which nobody types.
+        ("İstanbul", "istanbul"),
+        ("Istanbul", "istanbul"),
+        # Latin and ASCII are as they were.
+        ("The Straße", "straße"),
+        ("Café-Bar!", "café-bar"),
+        ("node.js", "node.js"),
+        ("Alice's   API responses", "alice api response"),
+    ],
+)
+def test_the_canonical_form_keeps_combining_marks(raw: str, canonical: str) -> None:
+    assert canonical_entity_text(raw) == canonical
+    assert canonical_entity_text(canonical) == canonical
+
+
+@pytest.mark.parametrize(
     ("text", "names"),
     [
         ("Иван lives in Москва", ["иван", "москва"]),
@@ -112,8 +135,12 @@ def test_a_dot_is_inside_a_word_unless_every_part_is_one_letter(
         ("田中 lives in 東京", ["田中", "東京"]),
         ("김민준 lives in 서울", ["김민준", "서울"]),
         ("I live in Zürich", ["zürich"]),
-        # Each word reaches the normaliser whole, vowel signs and all.
-        ("मैं नई दिल्ली में रहता हूँ", [canonical_entity_text("दिल्ली")]),
+        # Each word stays whole, vowel signs and all.
+        ("मैं नई दिल्ली में रहता हूँ", ["दिल्ली"]),
+        ("मैं दिल्ली में रहता हूँ", ["दिल्ली", "रहता"]),
+        ("ฉันอยู่ กรุงเทพ", ["กรุงเทพ"]),
+        ("I live in İstanbul", ["istanbul"]),
+        ("I live in Zu\u0308rich", ["zürich"]),
         # A run of unspaced text is not a name.
         ("東京に住んでいます", []),
         ("Lives in Αθήνας", ["αθήνας"]),
@@ -129,7 +156,8 @@ def test_a_name_in_any_script_is_an_entity(text: str, names: list[str]) -> None:
     assert all(n in ents for n in names), ents
     assert "rich" not in ents
     assert "東京に住んでいます" not in ents
-    assert canonical_entity_text("दिल") not in ents  # the start of दिल्ली
+    # No fragment of a word whose vowel signs became spaces.
+    assert not {"द ल ल", "रहत", "ฉ นอย", "กร งเทพ", "i stanbul", "zu rich"} & set(ents)
     assert not {"next", "socket", "config", "yaml"} & set(ents)
 
 

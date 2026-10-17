@@ -9,6 +9,7 @@ repairs that close an older single-valued fact.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -394,9 +395,19 @@ def is_lexical_junk_entity(text: str) -> bool:
     return len(words) > 1 and all(w in _LEXICAL_JUNK or len(w) < 3 for w in words)
 
 
+def _marks_kept(run: re.Match[str]) -> str:
+    """A run of punctuation as spaces, but for its combining marks: the vowel signs of
+    Hindi or Thai are part of their word ("दिल्ली", "กรุงเทพ")."""
+    return "".join(c if unicodedata.category(c).startswith("M") else " " for c in run.group())
+
+
 def _normalise(lowered: str) -> str:
-    text = lowered.replace("'s", "").replace("’s", "")
-    text = _PUNCT_RE.sub(" ", text)
+    # One form for a letter typed composed or as a letter and its mark ("ü", "u" + "¨").
+    text = unicodedata.normalize("NFC", lowered)
+    # "İ".lower() is "i" and a dot above: keep the "i" a user types for "istanbul".
+    text = text.replace("i\u0307", "i")
+    text = text.replace("'s", "").replace("’s", "")
+    text = _PUNCT_RE.sub(_marks_kept, text)
     text = _settle(_lead(_SPACE_RE.sub(" ", text)))
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
 
