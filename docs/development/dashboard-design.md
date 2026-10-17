@@ -60,7 +60,7 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - `vite.config.ts` aliases Click UI's flag, logo and payment-mark maps to an empty module (`src/lib/emptyAssetMap.ts`): Click UI's `Icon` imports them whole to resolve any name, and the dashboard draws only interface icons. Click UI ships ~95 kB gz of script this way instead of ~325 kB.
 - `vite.config.ts` puts the Click UI modules the shell imports statically in one `clickui` chunk (~64 kB gz) that every page loads; Rollup splits the rest (Select and its sortable list, Table, Pagination) into the lazy views that use them. `npm run budget` fails when the boot scripts pass 198 kB gz.
 - Click UI's `Badge` measures its text on every render. A long list of them memoises its rows and passes them stable callbacks, as `MemoryCard` does, or one change re-measures every row.
-- `src/lib/clickUiFixes.ts` names what Click UI 0.13's Select leaves unnamed in its option list: the filter field, its clear button and the dialog that holds them.
+- `src/lib/clickUiFixes.ts` names what Click UI 0.13's Select leaves unnamed in its option list: the filter field, its clear button and the dialog that holds them. It also keeps keyboard focus through a Button's `loading` state, which Click UI implements as `disabled` and so drops focus to the page: the button pressed takes focus back when it is enabled again, and a dialog it opened returns focus to it (`ui/Modal`).
 
 ## Follow a Click UI release
 

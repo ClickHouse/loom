@@ -14,6 +14,7 @@ import {
   setConversationLogging,
   listMemories,
   type ConversationHit,
+  type ConversationMessage,
   type ConversationThreadSummary,
   type ConversationThreadDetail,
   type MemoryListEntry,
@@ -62,6 +63,12 @@ function linkify(text: string) {
       <span key={i}>{p}</span>
     ),
   );
+}
+
+// A turn's element id: a msg_id is unique per agent only, and a thread read across
+// agents can hold two agents' turns under one id.
+function turnId(m: ConversationMessage): string {
+  return `msg-${m.agent ?? ""}-${m.msg_id}`;
 }
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -248,7 +255,10 @@ export function Conversations() {
   useEffect(() => {
     if (!highlightMsgId || !threadDetail) return;
     const t = setTimeout(
-      () => document.getElementById(`msg-${highlightMsgId}`)?.scrollIntoView({ block: "center", behavior: "smooth" }),
+      () =>
+        document
+          .querySelector(`[data-msg-id="${CSS.escape(highlightMsgId)}"]`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" }),
       60,
     );
     return () => clearTimeout(t);
@@ -372,6 +382,13 @@ export function Conversations() {
     clearPendingConversationThread();
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
 
+  const focusTurn = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusTurn.current) return;
+    document.getElementById(focusTurn.current)?.focus();
+    focusTurn.current = null;
+  }, [threadDetail]);
+
   const loadMoreMessages = async () => {
     const reads = threadReads.current;
     if (!reads || !openThread || !threadDetail || !moreCursor || loadingMore) return;
@@ -401,6 +418,8 @@ export function Conversations() {
         return { ...prev, messages: [...prev.messages, ...r.rows] };
       });
       setMoreCursor(r.next_cursor);
+      // The last page removes Load more; its focus moves to the first turn it brought.
+      if (!r.next_cursor && r.rows.length > 0) focusTurn.current = turnId(r.rows[0]);
     } catch (e) {
       if (signal.aborted) return;
       toast(`Load more failed: ${humanizeError(e)}`, "error");
@@ -705,8 +724,10 @@ export function Conversations() {
                 const highlighted = m.msg_id === highlightMsgId;
                 return (
                   <div
-                    key={m.msg_id}
-                    id={`msg-${m.msg_id}`}
+                    key={turnId(m)}
+                    id={turnId(m)}
+                    data-msg-id={m.msg_id}
+                    tabIndex={-1}
                     className={`rounded-lg px-3 py-2 ${meta.rail} ${meta.card} ${highlighted ? "ring-2 ring-accent" : ""}`}
                   >
                     <div className="flex items-center gap-2 mb-1">

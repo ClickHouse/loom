@@ -506,7 +506,7 @@ async def test_any_agent_names_an_append_only_threads_latest_writer(
 
 
 @pytest.mark.asyncio
-async def test_only_star_is_a_wildcard_on_get(
+async def test_dash_reads_every_agent_as_star_does(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.knowledge.api.models_conversations import ConversationGetInput
@@ -529,7 +529,8 @@ async def test_only_star_is_a_wildcard_on_get(
     await handle_conversation_get(
         ConversationGetInput(org="clickhouse", namespace="finance", agent="-", thread_id="t-1")
     )
-    assert read_as == ["-", "-"]
+    # One meaning for the sentinels on every conversation op, search included.
+    assert read_as == [None, None]
 
 
 @pytest.mark.asyncio

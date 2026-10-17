@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { labelSelectSearch } from "./clickUiFixes";
+import { fireEvent } from "@testing-library/react";
+import { keepFocusThroughLoading, labelSelectSearch, lastPressed } from "./clickUiFixes";
 
 describe("labelSelectSearch", () => {
   let stop = () => {};
@@ -26,5 +27,43 @@ describe("labelSelectSearch", () => {
     document.querySelector('[role="dialog"]')?.append(clear);
     await new Promise((r) => setTimeout(r, 0));
     expect(clear).toHaveAttribute("aria-label", "Clear filter");
+  });
+});
+
+describe("keepFocusThroughLoading", () => {
+  let stop = () => {};
+  afterEach(() => {
+    stop();
+    document.body.innerHTML = "";
+  });
+
+  it("refocuses the pressed button once its loading state ends", async () => {
+    stop = keepFocusThroughLoading();
+    document.body.innerHTML = `<button type="button">Run audit</button><button type="button">Other</button>`;
+    const run = document.querySelector("button") as HTMLButtonElement;
+    run.focus();
+    fireEvent.keyDown(run, { key: "Enter" });
+    expect(lastPressed()).toBe(run);
+    // Click UI disables a loading button, which drops its focus to the body.
+    run.disabled = true;
+    run.blur();
+    await new Promise((r) => setTimeout(r, 0));
+    run.disabled = false;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(run).toHaveFocus();
+  });
+
+  it("leaves focus alone when the user has moved on", async () => {
+    stop = keepFocusThroughLoading();
+    document.body.innerHTML = `<button type="button">Run audit</button><input aria-label="Search" />`;
+    const run = document.querySelector("button") as HTMLButtonElement;
+    fireEvent.pointerDown(run);
+    run.disabled = true;
+    const search = document.querySelector("input") as HTMLInputElement;
+    search.focus();
+    await new Promise((r) => setTimeout(r, 0));
+    run.disabled = false;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(search).toHaveFocus();
   });
 });

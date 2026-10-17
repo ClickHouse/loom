@@ -246,6 +246,20 @@ test.describe("open overlays", () => {
     await expect(generate).toBeFocused();
   });
 
+  test("a button that loads in place keeps focus through its loading state", async ({ page }) => {
+    await open(page, "/memories");
+    // Click UI disables a loading button, which drops its focus; it takes it back after.
+    await page.route("**/v1/namespace.audit", async (route) => {
+      await new Promise((r) => setTimeout(r, 300));
+      await route.fulfill({ status: 503, json: { detail: "audit unavailable", code: "UNAVAILABLE" } });
+    });
+    const run = page.getByRole("button", { name: "Run audit" });
+    await run.focus();
+    await page.keyboard.press("Enter");
+    await expect(run).toBeEnabled();
+    await expect(run).toBeFocused();
+  });
+
   test("an open Select list", async ({ page }) => {
     await open(page, "/settings");
     await page.getByRole("button", { name: /Home namespace/ }).click();

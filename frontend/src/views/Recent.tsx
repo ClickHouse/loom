@@ -440,20 +440,28 @@ export function Recent() {
   // Keyboard nav, active when no inspector is open and not typing. j / k move the focus
   // itself from card to card, as on Tasks: Enter opens the focused card (its button), Space
   // selects it (MemoryCard's onToggle), and the inspector returns focus to it on close.
-  const moveFocus = (step: number) => {
+  const onList = () => {
+    const el = document.activeElement;
+    return !el || el === document.body || !!el.closest("[data-card]");
+  };
+  const moveFocus = (step: number): true => {
     const cards = [...document.querySelectorAll<HTMLElement>("[data-memory-open]")];
     const here = document.activeElement?.closest("[data-card]")?.querySelector<HTMLElement>("[data-memory-open]");
     const at = here ? cards.indexOf(here) : -1;
     const next = cards[at < 0 ? 0 : Math.max(0, Math.min(cards.length - 1, at + step))];
     next?.scrollIntoView?.({ block: "nearest" });
     next?.focus({ preventScroll: true });
+    return true;
   };
   useKeyboard(
     {
       j: () => moveFocus(1),
       k: () => moveFocus(-1),
-      ArrowDown: () => moveFocus(1),
-      ArrowUp: () => moveFocus(-1),
+      // The arrows move through the list only from a card or the page itself: on any
+      // other control they are that control's (a menu trigger opens its menu), and
+      // elsewhere they scroll.
+      ArrowDown: () => onList() && moveFocus(1),
+      ArrowUp: () => onList() && moveFocus(-1),
       Escape: () => setSelected(new Set()),
     },
     !inspectedKey && flatList.length > 0,

@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ComponentPropsWithoutRef, type ReactNode 
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Dialog } from "@clickhouse/click-ui/Dialog";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { lastPressed } from "../../lib/clickUiFixes";
 
 /**
  * Modal — the one dialog: Click UI's Dialog (title, description, padding, focus trap,
@@ -58,26 +59,6 @@ function focusBodyOrDialog(e: Event) {
   (first ?? content).focus();
 }
 
-// The control the user last pressed, by pointer or by Enter/Space. A dialog opened while
-// focus is on the body returns focus there: Click UI's Button disables itself while
-// `loading`, which drops its focus, and Safari's click never focuses a button at all.
-const PRESSABLE = "button, a[href], [role='button'], [role='menuitem'], [role='tab']";
-let lastPressed: HTMLElement | null = null;
-function notePress(e: Event) {
-  const target = e.target instanceof Element ? e.target.closest<HTMLElement>(PRESSABLE) : null;
-  if (target) lastPressed = target;
-}
-if (typeof document !== "undefined") {
-  document.addEventListener("pointerdown", notePress, true);
-  document.addEventListener(
-    "keydown",
-    (e) => {
-      if (e.key === "Enter" || e.key === " ") notePress(e);
-    },
-    true,
-  );
-}
-
 export function Modal({
   open,
   onOpenChange,
@@ -95,7 +76,8 @@ export function Modal({
   useLayoutEffect(() => {
     if (!open) return;
     const active = document.activeElement;
-    opener.current = active instanceof HTMLElement && active !== document.body ? active : lastPressed;
+    // On the body (a loading button lost it, or Safari never focused it): the control pressed.
+    opener.current = active instanceof HTMLElement && active !== document.body ? active : lastPressed();
   }, [open]);
   const returnFocus = (e: Event) => {
     onCloseAutoFocus?.(e);

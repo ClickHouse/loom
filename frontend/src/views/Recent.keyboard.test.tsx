@@ -121,4 +121,24 @@ describe("Memories keyboard", () => {
     expect(screen.getByRole("checkbox", { name: "Select one/key" })).toBeChecked();
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
   });
+
+  it("leaves the arrow keys to a focused control outside the list", async () => {
+    render(<Page />);
+    await screen.findByText("one/key");
+    const add = screen.getByRole("button", { name: "Add memory" });
+    add.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    // A menu trigger opens its menu on ArrowDown; the list must not take focus from it.
+    expect(add).toHaveFocus();
+  });
+
+  it("skips a key a focused widget already handled", async () => {
+    render(<Page />);
+    await screen.findByText("one/key");
+    openButton("one/key").focus();
+    const handled = new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true });
+    handled.preventDefault();
+    document.activeElement?.dispatchEvent(handled);
+    expect(openButton("one/key")).toHaveFocus();
+  });
 });

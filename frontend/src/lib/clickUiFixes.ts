@@ -27,3 +27,45 @@ export function labelSelectSearch(root: HTMLElement = document.body): () => void
   observer.observe(root, { childList: true, subtree: true });
   return () => observer.disconnect();
 }
+
+// Click UI 0.13's Button sets `disabled` while `loading`, and a focused button that is
+// disabled drops its focus to the body: a keyboard user who presses "Run audit" is sent
+// back to the top of the page. Two corrections share one record of the control the user
+// last pressed (by pointer, or Enter/Space): a dialog that click opens returns focus
+// there (ui/Modal), and a button that loads in place takes focus back when it is enabled
+// again, if focus is still on the body. Delete once Click UI keeps a loading button
+// focusable.
+const PRESSABLE = "button, a[href], [role='button'], [role='menuitem'], [role='tab']";
+let pressed: HTMLElement | null = null;
+
+function notePress(e: Event): void {
+  const target = e.target instanceof Element ? e.target.closest<HTMLElement>(PRESSABLE) : null;
+  if (target) pressed = target;
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("pointerdown", notePress, true);
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Enter" || e.key === " ") notePress(e);
+    },
+    true,
+  );
+}
+
+/** The control the user last pressed, by pointer or by Enter/Space. */
+export function lastPressed(): HTMLElement | null {
+  return pressed;
+}
+
+export function keepFocusThroughLoading(root: HTMLElement = document.body): () => void {
+  const observer = new MutationObserver((records) => {
+    for (const { target } of records) {
+      const lost = document.activeElement === null || document.activeElement === document.body;
+      if (target === pressed && target instanceof HTMLButtonElement && !target.disabled && lost) target.focus();
+    }
+  });
+  observer.observe(root, { attributes: true, attributeFilter: ["disabled"], subtree: true });
+  return () => observer.disconnect();
+}

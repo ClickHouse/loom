@@ -317,6 +317,48 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(listConversationMessages.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
   });
 
+  it("keeps two agents' turns that share an id apart", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-d", "Title D")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    const now = new Date().toISOString();
+    getConversationThread.mockResolvedValue({
+      ...detail("thread-d", "Title D"),
+      msg_count: 2,
+      messages: [
+        { msg_id: "1", agent: "planner", role: "user", content: "plan it", ts: now },
+        { msg_id: "1", agent: "deployer", role: "user", content: "ship it", ts: now },
+      ],
+    });
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title D"));
+    await screen.findByText("ship it");
+    const ids = [...document.querySelectorAll("[data-msg-id]")].map((el) => el.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("moves focus to the first new turn when Load more brings the last page", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2, next_cursor: "c-1" });
+    listMemories.mockResolvedValue(noMemories);
+    const now = new Date().toISOString();
+    listConversationMessages.mockResolvedValue({
+      rows: [{ msg_id: "y-2", agent: "claude-code", role: "user", content: "second turn", ts: now }],
+      next_cursor: null,
+    });
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title Y"));
+    const more = await screen.findByRole("button", { name: /Load more/ });
+    more.focus();
+    fireEvent.click(more);
+    const turn = (await screen.findByText("second turn")).closest("[data-msg-id]");
+    await waitFor(() => expect(turn).toHaveFocus());
+  });
+
   it("ignores '/' pressed inside the thread dialog", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
