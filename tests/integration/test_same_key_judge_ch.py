@@ -853,6 +853,60 @@ async def test_a_verdict_on_a_value_the_same_bulk_replaced_settles_nothing(
     assert await _status(ch, org, {"memory_id": paris.memory_id}) == "active"
 
 
+async def test_a_refine_of_a_row_a_stale_merge_rewrote_retires_nothing(
+    ch, org, monkeypatch
+) -> None:
+    # Stored: A is Berlin, B is Jupiter. One bulk rewrites A, writes Berlin to B (a merge
+    # into A, whose Berlin the first entry replaced, so it lands) and elaborates Jupiter
+    # under C. C's refine was judged against B's old Jupiter: B now says Berlin, and
+    # retiring it would lose the fact.
+    from types import SimpleNamespace
+
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, bulk_set
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.conflicts import ConflictPeer, ConflictResult
+
+    ids = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
+    a = await handle_memory_set(MemorySetInput(**ids, memory_key="a", value="Berlin"))
+    b = await handle_memory_set(MemorySetInput(**ids, memory_key="b", value="Jupiter"))
+    await after_write.drain()
+    jupiter = ConflictPeer(
+        memory_id=b.memory_id,
+        memory_key="b",
+        similarity=0.9,
+        pinned=False,
+        canonical="jupiter",
+        agent="bot",
+        user_id=USER,
+        session_id="s1",
+        value="Jupiter",
+    )
+    judged = {
+        1: SimpleNamespace(verdict="merge", existing_memory_id=a.memory_id, peers=[]),
+        2: ConflictResult(verdict="refines", peers=[jupiter], refined_peers=[jupiter]),
+    }
+
+    async def verdicts(*args: Any, **kw: Any) -> dict[int, Any]:
+        return judged
+
+    monkeypatch.setattr(bulk_set, "_bulk_conflict_verdicts", verdicts)
+    await bulk_set.handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            **ids,
+            entries=[
+                {"memory_key": "a", "value": "A red bicycle"},
+                {"memory_key": "b", "value": "Berlin"},
+                {"memory_key": "c", "value": "Jupiter, the largest planet"},
+            ],
+        )
+    )
+    await after_write.drain()
+    assert await _status(ch, org, {"memory_id": b.memory_id}) == "active"
+    assert (await _live_values(ch, org))[("s1", "b")] == ("Berlin", 0)
+
+
 @pytest.mark.parametrize(
     "extra",
     [{}, {"valid_at": datetime(2019, 1, 1), "valid_to": datetime(2020, 1, 1)}],
