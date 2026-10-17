@@ -1475,6 +1475,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_edges
     `valid_to` Nullable(DateTime) DEFAULT NULL,
     `invalid_at` Nullable(DateTime) DEFAULT NULL,
     `restore_id` String DEFAULT '',
+    `closed_by` String DEFAULT '',
     INDEX idx_valid_from_minmax valid_from TYPE minmax GRANULARITY 8,
     INDEX idx_valid_to_minmax valid_to TYPE minmax GRANULARITY 8,
     INDEX idx_invalid_at_minmax invalid_at TYPE minmax GRANULARITY 8

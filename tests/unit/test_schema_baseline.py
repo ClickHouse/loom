@@ -101,6 +101,7 @@ def test_the_journal_files() -> None:
         "041_entity_triple_seen_at.sql",
         "042_graph_restore_id.sql",
         "043_entity_edge_rows.sql",
+        "044_entity_edge_close_id.sql",
     ]
 
 

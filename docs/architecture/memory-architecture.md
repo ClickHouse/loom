@@ -444,7 +444,10 @@ came from extraction or resolution ("NYC" is `new york city`) keeps it as well. 
 whose current value has no edge link keeps the edge while its key is linked to the pair
 (`entity_edge_memories`) and that link counts, by the same rule as triples. A row
 naming the pair while the close runs lands its links before its edges, and the close
-checks again after its UPDATE and opens the pair again when one is found. The edge keeps
+checks again after its UPDATE and opens the pair again when one is found: the UPDATE
+stamps the rows it ends with the close's own id (`closed_by`), and only those open
+again, so an edge row alike in every other column that ended before stays ended. The
+edge keeps
 no `invalid_at`, so a walk at an earlier time still finds it.
 
 A revision writes its new value's edges before that close: `memory.set` waits for its
