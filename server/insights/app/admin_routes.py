@@ -819,6 +819,16 @@ async def admin_token_mint(
     info = await require_org_admin(request)
     refuse_foreign_org(info, input.org, "mint a token for")
     creator = info.subject if info is not None else "local"
+    body = await request.json()
+    if input.name is None and "subject" in body:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "`subject` is retired: pass `name` (the token gets its own `sa:` "
+                "subject); `loom mint-token` mints for a given subject",
+            },
+        )
     name = tokens.token_name(input.name)
     for role in input.roles:
         delegable_role(role)
@@ -866,7 +876,7 @@ async def admin_token_mint(
     if info is not None:
         await _audit_mint(info, input, delegated, sa_subject, jti)
     # Retired: the token's subject is its own, and it is always a service account.
-    ignored = sorted({"subject", "is_service_account"} & set(await request.json()))
+    ignored = sorted({"subject", "is_service_account"} & set(body))
     return TokenMintOutput.model_validate(
         {
             "token": minted,

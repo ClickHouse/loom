@@ -126,7 +126,7 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
         (
             "POST",
             "/v1/me/setup/mcp_config",
-            {"client": "my-client", "namespace": "support"},
+            {"client": "my-client", "persist": True, "namespace": "support"},
         ),
         ("POST", "/v1/me/set-default-namespace", {"namespace": "support"}),
         ("GET", "/v1/admin/workers.status", None),

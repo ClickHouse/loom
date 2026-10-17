@@ -326,3 +326,28 @@ def test_a_session_mints_what_was_asked_and_an_expiring_token_never_forever(clie
     body.update(name="expiring", ttl_seconds=0)
     r = client.post("/v1/admin/token.mint", json=body, headers=_bearer(["org_admin"]))
     assert r.status_code == 403
+
+
+def test_a_mint_without_a_name_says_which_field_to_send(client) -> None:
+    body = {"subject": "alice", "org": ORG, "namespaces": ["clickgap-public"]}
+    r = client.post("/v1/admin/token.mint", json=body, headers=_bearer(["org_admin"]))
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"] == {
+        "code": "VALIDATION_FAILED",
+        "message": "`subject` is retired: pass `name` (the token gets its own `sa:` subject); "
+        "`loom mint-token` mints for a given subject",
+    }
+    del body["subject"]
+    r = client.post("/v1/admin/token.mint", json=body, headers=_bearer(["org_admin"]))
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"] == {
+        "code": "VALIDATION_FAILED",
+        "message": "name required, 1-64 chars",
+    }
+    assert client.saved == []
+
+
+def test_a_name_holding_a_nul_is_a_422(client) -> None:
+    r = _mint(client, _bearer(["org_admin"]), ["clickgap-public"], name="ci\x00bot")
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "VALIDATION_FAILED"
+    assert client.saved == []

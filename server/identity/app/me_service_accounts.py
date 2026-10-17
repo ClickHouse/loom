@@ -139,6 +139,11 @@ def token_name(raw: object) -> str:
                 "message": "name required, 1-64 chars",
             },
         )
+    if "\x00" in name:  # a JWT claim cannot carry it
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a NUL character"},
+        )
     if name.startswith(AGENT_NAME_PREFIX):  # self-signup's, written without this check
         raise HTTPException(
             status_code=422,
@@ -169,9 +174,17 @@ def new_token_subject(org: str, name: str, creator: str) -> str:
 
 
 async def save_token(
-    name: str, sa_subject: str, delegated: Delegated, *, created_by: str, now: datetime
+    name: str,
+    sa_subject: str,
+    delegated: Delegated,
+    *,
+    created_by: str,
+    now: datetime,
+    kind: str = "service_account",
+    client: str = "",
 ) -> None:
-    """List the token in its owner's token list (`loom.service_accounts`)."""
+    """List the token in its owner's token list (`loom.service_accounts`).
+    `kind` is "mcp" for a Setup-page token, with the MCP client it was made for."""
     from server.core.ch import get_client
 
     ns_roles = delegated.ns_roles or {}
@@ -195,6 +208,11 @@ async def save_token(
                 "revoked_at": None,
                 "revoked_by": "",
                 "version": time.time_ns(),
+                "kind": kind,
+                "client": client,
+                # The token's `creator` claim does the inheriting now; the
+                # flag stays true so the Tokens list reads the same.
+                "inherit_creator_grants": True,
             }
         ],
     )

@@ -101,7 +101,8 @@ class TokenMintInput(BaseModel):
     `not_credited (no_consumer)`. `namespaces` may be omitted when `ns_roles` names them."""
 
     # Its name in the caller's token list; the token's subject is `sa:<name>-<hash>`.
-    name: str = Field(min_length=1, max_length=64)
+    # Required: the handler answers a missing one, naming the retired `subject`.
+    name: str | None = Field(None, max_length=64)
     org: str
     namespaces: list[str] = Field(default_factory=list)
     roles: list[str] = Field(default_factory=lambda: ["writer"])

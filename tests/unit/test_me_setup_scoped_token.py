@@ -6,6 +6,7 @@ saved to the caller's token list."""
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -129,3 +130,31 @@ async def test_a_ttl_outside_ten_years_is_a_422(
     with pytest.raises(HTTPException) as err:
         await _setup(monkeypatch, _caller(), {"ttl_days": ttl_days})
     assert err.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_the_saved_row_is_an_mcp_row_in_the_token_list(
+    monkeypatch: pytest.MonkeyPatch, grants: dict
+) -> None:
+    out = await _setup(monkeypatch, _caller(), {"ttl_days": 30})
+    [row] = saved
+    sa_hash = out["sa_subject"].removeprefix("sa:cursor-")
+    assert len(sa_hash) == 6 and row["name"].startswith("Cursor · ")
+    assert row["name"].endswith(f" · {sa_hash}")
+    assert row["expires_at"] == row["created_at"] + timedelta(days=30)
+    assert row["version"] > 0
+    volatile = {"name", "created_at", "expires_at", "version"}
+    assert {k: v for k, v in row.items() if k not in volatile} == {
+        "org": "o",
+        "sa_subject": out["sa_subject"],
+        "namespaces": ["*"],
+        "roles": ["admin"],
+        "ns_roles": "{}",  # the column default, which the row left it to before
+        "ttl_days": 30,
+        "created_by": "alice",
+        "revoked_at": None,
+        "revoked_by": "",
+        "kind": "mcp",
+        "client": "cursor",
+        "inherit_creator_grants": True,
+    }

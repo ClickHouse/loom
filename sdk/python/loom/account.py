@@ -59,7 +59,9 @@ class AccountClient:
         """A fresh token and the config block to paste into an MCP client
         (one of the Setup tab's client keys), saved to your token list, where
         you revoke it. `ttl_days`: None for 90 days, 0 for never."""
-        body: dict[str, Any] = {"client": client}
+        # The previous server build reads a missing `persist` as false; drop it once that
+        # build is gone.
+        body: dict[str, Any] = {"client": client, "persist": True}
         if namespace is not None:
             body["namespace"] = namespace
         if restricted_namespaces is not None:

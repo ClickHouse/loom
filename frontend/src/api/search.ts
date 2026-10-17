@@ -175,7 +175,8 @@ export async function generateMcpConfig(
   client: McpClient,
   opts: { namespace?: string; ttl_days?: number | null; restricted_namespaces?: string[] } = {},
 ): Promise<McpConfigResponse> {
-  const body: Record<string, unknown> = { client };
+  // The previous server build reads a missing `persist` as false; drop it once that build is gone.
+  const body: Record<string, unknown> = { client, persist: true };
   if (opts.namespace) body["namespace"] = opts.namespace;
   // Restricted namespaces the token reads by name, each with a direct grant of its own
   // that is revoked with the token.

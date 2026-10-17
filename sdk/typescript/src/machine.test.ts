@@ -454,7 +454,13 @@ describe("Transport with a token provider", () => {
 
   it("asks the provider for nothing once the caller has cancelled", async () => {
     let asked = 0;
-    const provider: TokenProvider = { token: async () => (asked++, "t"), origin: BASE };
+    const provider: TokenProvider = {
+      token: async () => {
+        asked++;
+        return "t";
+      },
+      origin: BASE,
+    };
     const srv = server();
     const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: srv.fetch });
     const ctrl = new AbortController();
