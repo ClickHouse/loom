@@ -18,9 +18,12 @@ for (const width of [1400, 375]) {
           width: document.documentElement.scrollWidth - window.innerWidth,
         }));
         expect(doc).toEqual({ height: 0, width: 0 });
-        // Each page titles the document after itself (WCAG 2.4.2).
+        // Each page titles the document after itself (WCAG 2.4.2), naming its tab when a
+        // page has several, so no two routes share a title.
         const h1 = (await page.locator("main h1").first().textContent())?.trim();
-        await expect(page).toHaveTitle(`${h1} · Loom`);
+        const current = page.locator("main [aria-current='page']");
+        const tab = (await current.count()) > 0 ? (await current.first().textContent())?.trim() : undefined;
+        await expect(page).toHaveTitle(tab && tab !== h1 ? `${tab} · ${h1} · Loom` : `${h1} · Loom`);
         // Click UI draws an icon, a badge and an ellipsis as a <div>: none sits in a <p>.
         const blocksInText = await page.evaluate(() =>
           [...document.querySelectorAll("p div")].map((d) => d.closest("p")?.textContent?.slice(0, 60)),

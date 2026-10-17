@@ -7,21 +7,24 @@ import { useEffect, type ReactNode } from "react";
  */
 export interface PageHeaderProps {
   title: string;
+  /** The tab this route shows, when one page has several (Memories: Recall), so the
+   *  document title names the route. */
+  tab?: string;
   /** Beside the title: the scope badge, a status badge, a filter that belongs to it. */
   children?: ReactNode;
   /** The page's actions, at the end of the row. */
   actions?: ReactNode;
 }
 
-export function PageHeader({ title, children, actions }: PageHeaderProps) {
+export function PageHeader({ title, tab, children, actions }: PageHeaderProps) {
   // Each page titles the document after itself (WCAG 2.4.2), so a screen reader announces
   // the page a navigation reaches.
   useEffect(() => {
-    document.title = `${title} · Loom`;
+    document.title = tab ? `${tab} · ${title} · Loom` : `${title} · Loom`;
     return () => {
       document.title = "Loom";
     };
-  }, [title]);
+  }, [title, tab]);
   return (
     <div data-page-header="" className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
       <h1>{title}</h1>

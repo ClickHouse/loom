@@ -12,4 +12,9 @@ describe("PageHeader", () => {
     unmount();
     expect(document.title).toBe("Loom");
   });
+
+  it("names the tab first when one page has several", () => {
+    render(<PageHeader title="Memories" tab="Recall" />);
+    expect(document.title).toBe("Recall · Memories · Loom");
+  });
 });

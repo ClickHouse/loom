@@ -347,8 +347,7 @@ export function Conversations() {
         // A replica of the previous release reads "*" as a literal agent; the thread
         // list's agent still opens the thread there. Drop with the next release.
         if (!d.found && opts.knownAgent && !signal.aborted) {
-          const agent = opts.knownAgent;
-          d = await read(agent);
+          d = await read(opts.knownAgent);
         }
         if (signal.aborted) return;
         setThreadDetail(d);

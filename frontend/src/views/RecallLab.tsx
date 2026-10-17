@@ -370,7 +370,7 @@ export function RecallLab() {
   return (
     <PageContainer>
       <div className="mb-4">
-        <PageHeader title="Memories">
+        <PageHeader title="Memories" tab="Recall">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </PageHeader>
         <MemoryTabs active="recall" />

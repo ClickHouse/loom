@@ -279,7 +279,7 @@ export function CountBadge({ count, state }: { count: number; state: "neutral" |
       size="sm"
       state={state}
       aria-hidden="true"
-      className="absolute -top-1 -right-1 pointer-events-none"
+      className="absolute -top-2 -right-2 pointer-events-none"
     />
   );
 }

@@ -88,12 +88,10 @@
   --tracking-caption: 0.02em;
 
   /* Spacing rhythm: the 4 px grid Tailwind multiplies, plus the named
-     steps the primitives use (`p-pane`, `gap-row`, `px-gutter`). */
+     steps the primitives use (`p-pane`, `gap-x-inline`). */
   --spacing: 4px;
   --spacing-inline: 6px; /* between a label and its value or count */
-  --spacing-row: 8px; /* between rows in a list or a meta grid */
   --spacing-pane: 12px; /* padding inside a pane or panel */
-  --spacing-gutter: 24px; /* page side gutter */
 
   /* Hit target under a coarse pointer: every primitive and
      Explorer control reaches this on touch — the Tailwind `pointer-coarse:`
@@ -138,7 +136,6 @@
     var(--click-button-basic-color-primary-background-default) 5%,
     transparent
   ); /* muted text holds 4.6:1 on it */
-  --color-accent-strong: var(--click-button-basic-color-primary-background-hover);
   --color-on-accent: var(--click-button-basic-color-primary-text-default);
 
   /* Semantic — the Click UI badge text colours as corrected below (success-800,

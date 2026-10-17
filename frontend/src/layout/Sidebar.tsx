@@ -17,8 +17,7 @@ import { hasOrgAdminClaim, isNamespaceAdmin } from "../lib/role";
 import { roleOnNamespace } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { isMemoryNamespace } from "../lib/namespace";
-// Loom mark inlined so currentColor inherits from the sidebar's text
-// color and the icon stays visible on both light and dark themes.
+// Loom mark inlined so currentColor inherits from the sidebar's text color.
 function LoomMark({ size = 32 }: { size?: number }) {
   return (
     <svg
