@@ -244,7 +244,18 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         audits=[],
         llm_calls=0,
     )
-    e.heads = {"m1": e.mem, "m2": _mem("m2", session_id="s2", content_sha256="sha-m2")}
+    # The peer was stated a day before the judged row.
+    day_before = datetime(2026, 1, 1)
+    e.heads = {
+        "m1": e.mem,
+        "m2": _mem(
+            "m2",
+            session_id="s2",
+            content_sha256="sha-m2",
+            created_at=day_before,
+            updated_at=day_before,
+        ),
+    }
 
     async def current(q: Any) -> Any:
         return e.mem
@@ -294,6 +305,18 @@ async def test_a_confident_update_under_newest_wins_retires_and_stamps(row_env: 
     assert counts.judged == 1 and row_env.stamped == ["office_city"]
     assert row_env.audits[0][0]["action"] == cr.RETIRE
     assert row_env.notes[0].value == "Office is in Paris", "the prompt shows text, not JSON"
+
+
+@pytest.mark.parametrize("peer_at", [datetime(2026, 1, 2), datetime(2026, 1, 3)])
+async def test_an_update_whose_peer_was_not_stated_first_is_flagged(
+    row_env: NS, peer_at: datetime
+) -> None:
+    # The same second as the judged row, or later: the order is not proven, so no retire.
+    row_env.heads["m2"].created_at = row_env.heads["m2"].updated_at = peer_at
+    counts = await _resolve()
+    assert row_env.acted == [(cr.FLAG, "m1", "m2")]
+    assert counts.flagged == 1 and counts.retired == 0
+    assert row_env.audits[0][0]["action"] == cr.FLAG
 
 
 @pytest.mark.parametrize(
@@ -468,10 +491,10 @@ async def test_a_retirement_behind_the_newer_row_of_the_pair(monkeypatch) -> Non
     monkeypatch.setattr(conflicts, "apply_refines", refines)
     monkeypatch.setattr(auto_resolution, "record_auto_supersessions", record)
     monkeypatch.setattr(resolver, "_follow", follow)
-    # The marked row is the OLDER statement (an old session ingested late): it retires.
+    # The peer, an older statement, retires behind the judged row.
     late = _mem("m1", valid_at=datetime(2024, 1, 1), content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
-    assert await resolver._retire("o", "ns", late, current) is True
+    assert await resolver._retire("o", "ns", current, late) is True
     assert seen["new_memory_id"] == "m2" and seen["expected_sha256"] == "sha-cur"
     assert [p.memory_id for p in seen["refined_peers"]] == ["m1"]
     assert seen["skip_peer"](NS(content_sha256="sha-late")) is False
@@ -481,24 +504,34 @@ async def test_a_retirement_behind_the_newer_row_of_the_pair(monkeypatch) -> Non
     assert followed == [("m1", "m2")]
 
 
-@pytest.mark.parametrize("peer_id", ["m0", "m9"])
-async def test_two_rows_written_in_the_same_second_retire_the_peer(monkeypatch, peer_id) -> None:
-    # The times tie to the second; the memory_id must not decide, whichever way it sorts.
-    from server.memory.app import auto_resolution, conflicts
+async def test_a_recheck_of_the_older_side_of_a_flag_judges_the_newer_as_new(
+    monkeypatch,
+) -> None:
+    day_before = datetime(2026, 1, 1)
+    older = _mem(
+        "m1",
+        status="conflicted",
+        conflict_with=["m2"],
+        created_at=day_before,
+        updated_at=day_before,
+    )
+    newer = _mem("m2", content_sha256="sha-m2", value_text='"Office is in Rome"')
+    peers = [
+        _peer_row("m2", "s2", "office_city", "Rome")
+        | {"similarity": 0.9, "created_at": newer.created_at, "updated_at": newer.updated_at},
+        _peer_row("m3", "s3", "office_city", "Lyon") | {"similarity": 0.7},
+    ]
 
-    seen: dict[str, Any] = {}
+    async def head(org: str, mid: str) -> Any:
+        return newer
 
-    async def refines(**kw: Any) -> int:
-        seen.update(kw)
-        return 0
-
-    monkeypatch.setattr(conflicts, "apply_refines", refines)
-    monkeypatch.setattr(auto_resolution, "record_auto_supersessions", lambda **kw: None)
-    judged = _mem("m5", session_id="s2", content_sha256="sha-judged")
-    peer = _mem(peer_id, content_sha256="sha-peer")
-    await resolver._retire("o", "ns", judged, peer)
-    assert seen["new_memory_id"] == "m5"
-    assert [p.memory_id for p in seen["refined_peers"]] == [peer_id]
+    monkeypatch.setattr(resolver, "_head", head)
+    new, rest = await resolver._newest_as_new("o", older, peers)
+    assert new is newer
+    assert [p["memory_id"] for p in rest] == ["m1", "m3"]
+    assert rest[0]["content_sha256"] == "sha-new" and rest[0]["similarity"] == 0.9
+    # The newer side, or a row with no later flagged peer, is judged as queued.
+    assert await resolver._newest_as_new("o", newer, peers[1:]) == (newer, peers[1:])
 
 
 # --- the pass ---------------------------------------------------------------------------------

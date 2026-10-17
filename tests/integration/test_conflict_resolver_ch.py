@@ -183,6 +183,11 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
     return org, llm
 
 
+async def _later() -> None:
+    """Rows are stated to the second; the next write is a second later than the last."""
+    await asyncio.sleep(1.1)
+
+
 async def _seed(ch: Any, org: str, monkeypatch: pytest.MonkeyPatch) -> None:
     from server.memory.app import after_write, conflicts
     from server.memory.domain.conflicts import ConflictResult
@@ -195,12 +200,13 @@ async def _seed(ch: Any, org: str, monkeypatch: pytest.MonkeyPatch) -> None:
         m.setattr(conflicts, "check_on_commit", clear)
         office = ("office", "located_in", "paris")
         await _set(org, "s1", "office_city", "The office is in Paris", relations=[office])
-        await _set(org, "s2", "office_location", "The office moved to Rome")
         await _set(org, "s1", "lead_name", "The team lead is Ana")
-        await _set(org, "s2", "standup_lead", "Ana runs the Monday standup")
         await _set(org, "s1", "budget_now", "The budget is ten thousand")
-        await _set(org, "s2", "budget_next", "Next year's budget is twelve thousand")
         await _set(org, "s1", "deploy_day", "Deploys go out on Fridays", pinned=True)
+        await _later()
+        await _set(org, "s2", "office_location", "The office moved to Rome")
+        await _set(org, "s2", "standup_lead", "Ana runs the Monday standup")
+        await _set(org, "s2", "budget_next", "Next year's budget is twelve thousand")
         await _set(org, "s2", "deploy_day_now", "Deploys go out on Thursdays")
         await after_write.drain()
     await _place(ch, org, "s1", "office_city", _vec((0, 1.0)), owed=False)
@@ -389,6 +395,7 @@ async def test_two_rows_judged_at_once_retire_their_shared_peer_once(
     with monkeypatch.context() as m:
         m.setattr(conflicts, "check_on_commit", clear)
         await _set(org, "s1", "office_city", "The office is in Paris")
+        await _later()
         await _set(org, "s2", "office_a", "The office moved to Rome")
         await _set(org, "s3", "office_b", "The office is in Rome now")
         await after_write.drain()
@@ -442,6 +449,7 @@ async def test_a_namespace_with_one_owed_row_is_served_beside_a_bulk_import(
     with monkeypatch.context() as m:
         m.setattr(conflicts, "check_on_commit", clear)
         await _set(org, "s1", "office_city", "The office is in Paris")
+        await _later()
         await _set(org, "s2", "office_location", "The office moved to Rome")
         await after_write.drain()
     await _place(ch, org, "s1", "office_city", _vec((30, 1.0)), owed=False)
@@ -499,6 +507,7 @@ async def test_a_deleted_namespace_is_not_judged_until_it_is_registered_again(
     with monkeypatch.context() as m:
         m.setattr(conflicts, "check_on_commit", clear)
         await _set(org, "s1", "office_city", "The office is in Paris")
+        await _later()
         await _set(org, "s2", "office_location", "The office moved to Rome")
         await after_write.drain()
     await _place(ch, org, "s1", "office_city", _vec((40, 1.0)), owed=False)

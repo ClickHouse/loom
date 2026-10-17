@@ -128,7 +128,8 @@ real), a leader-only worker judges each write that has a live peer of its type a
 `LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`). Per pair:
 
 - an update it is sure of (confidence 0.95 or more) under `newest_wins` retires the older
-  row, recorded for Undo (reason `conflict_resolver`);
+  row, recorded for Undo (reason `conflict_resolver`), when the older row was stated at
+  least a second before the newer; two rows stated in the same second are flagged instead;
 - any other update, and a contradiction, at 0.90 or more flags both rows for review;
 - a compatible pair (elaboration, restatement, related, unrelated) at 0.90 or more has its
   flag cleared;

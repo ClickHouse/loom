@@ -192,7 +192,7 @@ key, `key <key>` or its id. The model is `LOOM_CONFLICT_RESOLVER_MODEL`.
 | ---------------------------------------------------------------- | ------------ | -------------------------------------- |
 | `update` or `contradiction` with a different entity or attribute | any          | read as `related`                      |
 | any                                                              | below 0.90   | nothing                                |
-| `update`, namespace `newest_wins`                                | 0.95 or more | retire the older row                   |
+| `update`, namespace `newest_wins`                                | 0.95 or more | retire the peer if stated first        |
 | `update` (0.90 to 0.95, or any other policy), `contradiction`    | 0.90 or more | flag both rows `conflicted` for review |
 | `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair          |
 
@@ -202,9 +202,12 @@ precision was 0.98 to 1.00 at 0.95, and clear precision 0.96 to 0.98 at 0.90; th
 0.90 to 0.95 band was only 80% right, so an update there goes to review. A peer the
 answer leaves out, or an answer that cannot be parsed, changes nothing.
 
-**Acting.** Which row of an update pair is older follows `key_supersession.statement_rank`
-(below), by its times only: when both rows were stated in the same second, the judged row
-is the newer, as the judge read it, and the peer retires. A retirement goes through `apply_refines`: the older row is superseded behind the
+**Acting.** An update says the judged row (NEW) makes the peer stale, so only the peer
+retires, and only when it was stated strictly first by `key_supersession.statement_rank`'s
+times (valid time, then write time, to the second; the id tie-break is ignored). A pair
+stated in the same second, or a peer stated later, is flagged for review instead. A
+re-checked row is often the older side of its flag, so when a flagged peer was stated
+later, the latest such peer is presented as NEW and the row as its peer. A retirement goes through `apply_refines`: the older row is superseded behind the
 newer, a `supersedes` edge records why, one `memory.auto_supersede` record names it
 (reason `conflict_resolver`, so `memory.restore` undoes it), and the triple plane follows
 (`follow_row_supersessions`, left for the repair on failure). A flag is

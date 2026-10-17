@@ -6,7 +6,8 @@ resolver floor, or when it was flagged `conflicted` (`store.conflict_resolver`).
 The leader's worker (`memory.workers.conflict_resolver`) hands each marked row
 here. The verdicts are folded by `domain.conflict_resolution.action_for`:
 
-- retire: the older row of the pair is superseded through `apply_refines`, with its
+- retire: the peer is superseded behind the judged row through `apply_refines`, only
+  when the peer was stated strictly first (else the pair is flagged), with its
   `memory.auto_supersede` record (reason `conflict_resolver`, so `memory.restore`
   undoes it) and the triple plane following the retirement;
 - flag: both rows go to the review queue (`conflicted`, `conflict_with`);
@@ -136,17 +137,25 @@ def _conflict_peer(row: Any) -> ConflictPeer:
     )
 
 
-async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
-    """Supersede the older of the pair behind the newer, recorded and followed.
-    `row` is the judged row: the judge read it as the newer one, so it wins when
-    both were stated in the same second."""
-    from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
-    from server.memory.app.conflicts import apply_refines
+def _stated_at(r: Any) -> tuple[Any, ...]:
+    """When a row (a `MemoryRow` or a peer dict) was stated, by valid and write time.
+    The rank's last tie-break, the memory_id, is arbitrary and is left out."""
     from server.memory.app.key_supersession import statement_rank
 
-    # Only the times: the rank's last tie-break is the random memory_id.
-    row_older = statement_rank(_row_dict(row))[:2] < statement_rank(_row_dict(peer))[:2]
-    loser, winner = (row, peer) if row_older else (peer, row)
+    return statement_rank(r if isinstance(r, Mapping) else _row_dict(r))[:2]
+
+
+def _stated_before(a: Any, b: Any) -> bool:
+    return _stated_at(a) < _stated_at(b)
+
+
+async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
+    """Supersede `peer` behind the judged row `row`, recorded and followed. The
+    caller has checked that `peer` was stated first."""
+    from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
+    from server.memory.app.conflicts import apply_refines
+
+    loser, winner = peer, row
     loser_sha = str(loser.content_sha256 or "")
     into: dict[str, list[dict[str, Any]]] = {}
     await apply_refines(
@@ -277,26 +286,30 @@ async def _settle_pair(
     peer: Mapping[str, Any],
     action: str,
     counts: Counts,
-) -> bool:
-    """Act on one pair after re-reading both rows; True when something changed."""
+) -> str | None:
+    """Act on one pair after re-reading both rows; the action taken when something
+    changed, else None."""
     row_id, row_sha = judged
     row, head = await _head(org, row_id), await _head(org, str(peer["memory_id"]))
     if not (
         _holds(row, namespace, row_sha) and _holds(head, namespace, str(peer["content_sha256"]))
     ):
         counts.skipped_changed += 1
-        return False
+        return None
     if row.pinned or head.pinned:
         counts.skipped_pinned += 1
-        return False
+        return None
     if action == cr.CLEAR and not (
         str(head.memory_id) in row.conflict_with or str(row.memory_id) in head.conflict_with
     ):
-        return False  # nothing flagged between them: nothing to clear
-    changed = await _act(action, org, namespace, row, head)
-    if changed:
-        setattr(counts, _COUNTED[action], getattr(counts, _COUNTED[action]) + 1)
-    return changed
+        return None  # nothing flagged between them: nothing to clear
+    if action == cr.RETIRE and not _stated_before(head, row):
+        # "update" says the judged row is newer; the times do not show it. A person decides.
+        action = cr.FLAG
+    if not await _act(action, org, namespace, row, head):
+        return None
+    setattr(counts, _COUNTED[action], getattr(counts, _COUNTED[action]) + 1)
+    return action
 
 
 async def _audit(org: str, namespace: str, row: Any, acted: list[dict[str, Any]]) -> None:
@@ -360,6 +373,7 @@ async def resolve_row(
         prefer=frozenset(str(x) for x in row.conflict_with),
     )
     if peers:
+        row, peers = await _newest_as_new(org, row, peers)
         await _judge_and_act(
             org,
             namespace,
@@ -370,6 +384,30 @@ async def resolve_row(
             acting=acting or asyncio.Lock(),
         )
     await queue.stamp_judged(q)
+
+
+async def _newest_as_new(
+    org: str, row: Any, peers: list[dict[str, Any]]
+) -> tuple[Any, list[dict[str, Any]]]:
+    """The judge reads NEW as the later statement. A re-checked row is often the older
+    side of its flag, so when a flagged peer was stated later, the latest such peer
+    is NEW and the row is judged as one of its peers."""
+    flagged = {str(x) for x in row.conflict_with}
+    later = [p for p in peers if str(p["memory_id"]) in flagged and _stated_before(row, p)]
+    if not later:
+        return row, peers
+    top = max(later, key=_stated_at)
+    new = await _head(org, str(top["memory_id"]))
+    if not _holds(new, str(row.namespace), str(top["content_sha256"])):
+        return row, peers  # changed since the cluster read: judged as queued
+    as_peer = {
+        "memory_id": str(row.memory_id),
+        "memory_key": str(row.memory_key),
+        "value": memory_repo.stored_value_text(row),
+        "content_sha256": str(row.content_sha256 or ""),
+        "similarity": top["similarity"],
+    }
+    return new, [as_peer, *(p for p in peers if p is not top)]
 
 
 def _action(v: cr.PeerVerdict, policy: str) -> str:
@@ -413,11 +451,12 @@ async def _judge_and_act(
                 # Unsure, or a peer the answer left out: the pair stays as it is.
                 counts.skipped_low_confidence += 1
                 continue
-            if await _settle_pair(org, namespace, judged, peer, action, counts):
+            taken = await _settle_pair(org, namespace, judged, peer, action, counts)
+            if taken is not None:
                 acted.append(
                     {
                         "peer_id": str(peer["memory_id"]),
-                        "action": action,
+                        "action": taken,
                         "verdict": v.verdict,
                         "confidence": v.confidence,
                     }
