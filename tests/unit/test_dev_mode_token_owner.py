@@ -5,6 +5,7 @@ revoked from it, whether or not a bearer is sent."""
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -155,3 +156,77 @@ def test_a_bearers_setup_page_token_is_its_own_and_revoked_by_it(client: TestCli
     assert _listed(client, _alice())[name]["created_by"] == "alice"
     assert _listed(client, {}) == {}
     _revoke_and_check(client, _alice(), name)
+
+
+def _create(client: TestClient, headers: dict[str, str], **body: Any) -> Any:
+    return client.post(
+        "/v1/me/service_accounts.create", json={"name": "agent", **body}, headers=headers
+    )
+
+
+def test_a_bearer_names_the_owner_but_does_not_cap_the_token(client: TestClient) -> None:
+    # Alice's bearer lives 300 s and holds `home` only; with auth off it names
+    # the owner and nothing else. (A per-namespace token never names "*".)
+    r = _create(client, _alice(), namespaces=["home", "team"], ttl_days=90)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["org"] == "acme"
+    assert out["namespaces"] == ["home", "team"]
+    lifetime = datetime.fromisoformat(out["expires_at"]) - datetime.fromisoformat(out["created_at"])
+    assert lifetime == timedelta(days=90)
+    assert _listed(client, _alice())["agent"]["created_by"] == "alice"
+
+
+def test_an_unavailable_revocation_list_answers_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth import bearer
+    from server.auth import jwt as jwt_mod
+
+    def _unavailable(token: str) -> Any:
+        raise jwt_mod.RevocationUnavailable("revocation list not loaded")
+
+    monkeypatch.setattr(jwt_mod, "verify_token", _unavailable)
+    monkeypatch.setattr(bearer, "verify_token", _unavailable)
+    r = _create(client, _alice(), namespaces=["home"])
+    assert r.status_code == 503, r.text
+    assert r.headers["Retry-After"] == "5"
+    assert r.json()["detail"]["code"] == "AUTH_UNAVAILABLE"
+
+
+def test_a_bearer_cannot_mint_into_another_org(client: TestClient) -> None:
+    body = {"name": "ci-bot", "org": "default", "namespaces": ["home"], "roles": ["viewer"]}
+    r = client.post("/v1/admin/token.mint", json=body, headers=_alice())
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
+
+
+def test_the_retired_subject_does_not_name_the_owner(client: TestClient) -> None:
+    body = {
+        "name": "ci-bot",
+        "org": "acme",
+        "subject": "bob",
+        "namespaces": ["home"],
+        "roles": ["viewer"],
+    }
+    r = client.post("/v1/admin/token.mint", json=body)
+    assert r.status_code == 200, r.text
+    assert "subject" in r.json()["ignored_args"]
+    rows = client.get("/v1/me/service_accounts", params={"org": "acme"}).json()["rows"]
+    assert [(row["name"], row["created_by"]) for row in rows] == [("ci-bot", "dev")]
+
+
+def test_auth_on_still_delegates_from_the_bearer(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "identity_provider", "")
+    assert settings.auth_actually_required()
+    r = _create(client, _alice(), namespaces=["home"], ttl_days=90)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    lifetime = datetime.fromisoformat(out["expires_at"]) - datetime.fromisoformat(out["created_at"])
+    assert lifetime <= timedelta(seconds=300)
+    body = {"name": "ci-bot", "org": "acme", "namespaces": ["home"], "roles": ["viewer"]}
+    assert client.post("/v1/admin/token.mint", json=body, headers=_alice()).status_code == 403
+    assert client.post("/v1/admin/token.mint", json=body).status_code == 401

@@ -45,7 +45,12 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
     assert body["client"] == "claude-desktop"
     assert body["subject"] == "alice"
     assert body["org"] == "clickhouse"
-    assert body["namespace"] == "personal-alice"
+    # With auth off the bearer only names the owner (the token is not delegated
+    # from it), so no namespace of its labels the write target.
+    auth_on = (
+        await _post(control_plane_url, None, {"client": "claude-desktop"})
+    ).status_code == 401
+    assert body["namespace"] == ("personal-alice" if auth_on else "default")
     assert body["mcp_url"].endswith("/mcp")
     assert body["config_key"] == "mcpServers"
     # `namespace` in the response is the write target; reads

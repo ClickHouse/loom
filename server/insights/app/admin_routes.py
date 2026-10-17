@@ -819,8 +819,14 @@ async def admin_token_mint(
     info = await require_org_admin(request)
     refuse_foreign_org(info, input.org, "mint a token for")
     body = await request.json()
-    # Auth off: the owner the token list reads, so the token is listed and revocable.
-    creator = info.subject if info is not None else tokens.dev_caller(request, body)[0]
+    if info is not None:
+        creator = info.subject
+    else:
+        # Auth off: a valid bearer names the owner, in its own org; else "dev".
+        # The token list reads the same owner, so the token is listed and revocable.
+        bearer = tokens.dev_bearer(request)
+        refuse_foreign_org(bearer, input.org, "mint a token for")
+        creator = bearer.subject if bearer is not None else "dev"
     if input.name is None and "subject" in body:
         raise HTTPException(
             status_code=422,

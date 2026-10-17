@@ -221,13 +221,16 @@ async def save_token(
 
 def dev_bearer(request: Request) -> AuthInfo | None:
     """With auth off, the principal of a valid bearer the request sends; None
-    for no bearer or one that does not verify, which auth off ignores."""
-    from server.auth.bearer import bearer_token
-    from server.auth.jwt import TokenError, verify_token
+    for no bearer or one that does not verify, which auth off ignores. 503 while
+    a bearer cannot be checked yet, as `verify_bearer` answers."""
+    from server.auth.bearer import auth_unavailable, bearer_token
+    from server.auth.jwt import AuthUnavailable, TokenError, verify_token
 
     try:
         token = bearer_token(request.headers.get("Authorization"))
         return None if token is None else verify_token(token)
+    except AuthUnavailable as e:
+        raise auth_unavailable(e) from e
     except TokenError:
         return None
 
@@ -244,11 +247,9 @@ def dev_caller(request: Request, params: Mapping[str, object]) -> tuple[str, str
 
 
 def dev_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
-    """The parent a token is delegated from in dev mode (auth off): a valid
-    bearer, else a flat writer for `dev_caller`, issued now."""
-    info = dev_bearer(request)
-    if info is not None:
-        return info
+    """The parent a token is delegated from in dev mode (auth off): a flat
+    writer for `dev_caller`, issued now. A bearer only names the owner; its
+    scope and lifetime do not cap the token, as with token.mint."""
     subject, org = dev_caller(request, payload)
     return AuthInfo(
         subject=subject,
