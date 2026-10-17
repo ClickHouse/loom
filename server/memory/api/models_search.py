@@ -12,6 +12,7 @@ from pydantic import (
     model_serializer,
 )
 
+from server.core.feature_modes import CLASSIC, TEMPORAL
 from server.memory.api.models_common import MemoryType, TemporalArgs, TemporalCutoff, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.rerank_names import RerankName
@@ -420,6 +421,17 @@ class MemorySearchInput(TemporalArgs):
     # on deep/quality calls or a weak-result fallback. An explicit True opts in;
     # hyde=False forces vector-only.
     hyde: bool = True
+    # As-of replay filter (coalesce(valid_at, created_at) <= as_of), denormalized
+    # onto memory_embeddings so vector_search applies it without joining loom.memory.
+    # Without the journal only; with it, `valid_as_of` / `known_as_of`.
+    as_of: datetime | None = Field(default=None, json_schema_extra=CLASSIC)
+    # Which time axis `as_of` replays: "valid_time" (default; what was true as of
+    # then) or "knowledge_time" (what loom had learned by then — created_at only,
+    # ignoring valid_at; the incremental-ingest knowledge cutoff). No effect when
+    # as_of is unset.
+    as_of_basis: Literal["valid_time", "knowledge_time"] = Field(
+        default="valid_time", json_schema_extra=CLASSIC
+    )
     # Internal: 1 inside a pass memory.search re-entered itself (the iterative retry, a
     # read-your-writes re-read after the first pass); such a pass never re-enters again.
     _pass_depth: int = 0
@@ -639,8 +651,8 @@ class _MemorySearchHit(BaseModel):
     resolved_from: str | None = None
     # On a bi-temporal search: the assertion this hit cites (a revision, not
     # only a key) and the sha256 of its value; "" otherwise.
-    assertion_id: str = ""
-    value_sha256: str = ""
+    assertion_id: str = Field(default="", json_schema_extra=TEMPORAL)
+    value_sha256: str = Field(default="", json_schema_extra=TEMPORAL)
 
 
 class MemorySearchOutput(BaseModel):
@@ -660,7 +672,7 @@ class MemorySearchOutput(BaseModel):
     results: list[_MemorySearchHit]
     # On a bi-temporal search (`valid_as_of` / `known_as_of` / `read_token`): one
     # cutoff per namespace searched — sequences are not a cross-namespace snapshot.
-    temporal: list[TemporalCutoff] = Field(default_factory=list)
+    temporal: list[TemporalCutoff] = Field(default_factory=list, json_schema_extra=TEMPORAL)
     # render="reader" only: the results as one prompt block ("[date] [key]
     # (type) excerpt", ordered as memory.ask would read them) and the
     # synthesizer's instructions, so an external reader scores what the ask

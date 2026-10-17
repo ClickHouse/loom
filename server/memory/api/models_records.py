@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from server.core.feature_modes import CLASSIC, TEMPORAL
+
 SchemaFieldType = Literal["string", "number", "integer", "boolean"]
 
 
@@ -222,11 +224,13 @@ class MemoryRecordQueryInput(BaseModel):
     predicates: list[RecordPredicate] = Field(default_factory=list)
     # Only records whose `[valid_at, valid_to)` interval covers this instant; None = no bound
     # (or K, under `known_as_of`).
-    valid_as_of: datetime | None = None
+    # The valid-time cutoff before the journal (the same filter as `valid_as_of`).
+    as_of: datetime | None = Field(default=None, json_schema_extra=CLASSIC)
+    valid_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
     # Knowledge time: query the record revisions recorded at or before K, each matched
     # against its own fields (field states other than value / absent are not
     # versioned, so a `unknown` or `rejected` state predicate matches none). None = now.
-    known_as_of: datetime | None = None
+    known_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
     # At most this many records (1–1000), most recently updated first.
     limit: int = Field(default=100, ge=1, le=1000)
 

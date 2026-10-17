@@ -13,6 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from server.core.feature_modes import temporal_on
+
 
 @functools.cache
 def _generated_schema(model: type[BaseModel]) -> dict[str, Any]:
@@ -25,7 +27,30 @@ def model_schema(model: type[BaseModel]) -> dict[str, Any]:
     would be ~85% of a tools/list build (~38 ms for the core listing, ~106 ms
     for `all`, on the event loop, per request); an op model does not change
     after import."""
-    return copy.deepcopy(_generated_schema(model))
+    schema: dict[str, Any] = _without_inactive(copy.deepcopy(_generated_schema(model)))
+    return schema
+
+
+def _without_inactive(schema: Any) -> Any:
+    """The schema without the properties of the side of `memory_temporal_enabled`
+    that is off (their `loom_mode`, from `feature_modes`)."""
+    off = "classic" if temporal_on() else "temporal"
+    if isinstance(schema, dict):
+        props = schema.get("properties")
+        if isinstance(props, dict):
+            gone = [
+                k for k, v in props.items() if isinstance(v, dict) and v.get("loom_mode") == off
+            ]
+            for k in gone:
+                del props[k]
+            if gone and isinstance(schema.get("required"), list):
+                schema["required"] = [r for r in schema["required"] if r not in gone]
+        for v in schema.values():
+            _without_inactive(v)
+    elif isinstance(schema, list):
+        for v in schema:
+            _without_inactive(v)
+    return schema
 
 
 def _walk_schema(schema: Any, leaf: Callable[[dict[str, Any]], dict[str, Any] | None]) -> Any:

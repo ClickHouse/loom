@@ -25,6 +25,7 @@ from server.memory.api.models_common import (
     TemporalCutoff,
     _Identity,
 )
+from server.core.feature_modes import CLASSIC, TEMPORAL, temporal_on
 from server.memory.domain.code_change import CodeState
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
@@ -42,6 +43,9 @@ class MemoryGetInput(_Identity, TemporalArgs):
     if_version: int | None = None
     # Opt-in per-agent recall breakdown; off by default to keep get cheap.
     include_recall_breakdown: bool = False
+    # As-of replay filter: restrict to rows with coalesce(valid_at, created_at) <= as_of.
+    # None = current row. Without the journal only; with it, `valid_as_of`.
+    as_of: datetime | None = Field(default=None, json_schema_extra=CLASSIC)
     # A whitelist of output field names (`value`, `tags`,
     # `status`, `memory_type`, `recall_count`, `created_at`, …). The response
     # carries only those plus `found` / `unchanged`; an unknown name is a 422.
@@ -218,12 +222,12 @@ class MemoryGetOutput(ProjectedRow):
     sensitivity: str = ""
     # Set on a bi-temporal read (`valid_as_of` / `known_as_of` / `read_token`):
     # the cutoff it answered from and its coverage.
-    temporal: TemporalCutoff | None = None
+    temporal: TemporalCutoff | None = Field(default=None, json_schema_extra=TEMPORAL)
     # On a bi-temporal read: every assertion of the key that applies at V (more
     # than one when sources disagree, see `disputed`).
-    assertions: list[TemporalAssertion] = Field(default_factory=list)
+    assertions: list[TemporalAssertion] = Field(default_factory=list, json_schema_extra=TEMPORAL)
     # True when more than one value applies at V under the same qualifiers.
-    disputed: bool = False
+    disputed: bool = Field(default=False, json_schema_extra=TEMPORAL)
 
 
 class MemorySetInput(_Identity):
@@ -318,25 +322,33 @@ class MemorySetInput(_Identity):
     # `[valid_at, valid_to)`, a span that includes now, and the supported segments
     # around it are kept. memory.set writes what applies now; a future transition
     # or a correction of another span is a memory.amend (422 here).
-    change_kind: Literal["", "transition", "correct"] = ""
+    change_kind: Literal["", "transition", "correct"] = Field(
+        default="", json_schema_extra=TEMPORAL
+    )
     # When a `transition` takes effect.
-    effective_at: datetime | None = None
+    effective_at: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
     # state | event | snapshot | rule: an event or snapshot never becomes an
     # open-ended state. '' keeps the key's (state for a new key).
-    temporal_kind: Literal["", "state", "event", "snapshot", "rule"] = ""
+    temporal_kind: Literal["", "state", "event", "snapshot", "rule"] = Field(
+        default="", json_schema_extra=TEMPORAL
+    )
     # asserted | observed | planned | hypothetical | quoted | disputed. '' keeps the key's.
     modality: Literal[
         "", "asserted", "observed", "planned", "hypothetical", "quoted", "disputed"
-    ] = ""
+    ] = Field(default="", json_schema_extra=TEMPORAL)
     # The validity date as the source wrote it ("last spring"), its precision and zone.
-    valid_text: str = Field(default="", max_length=256)
-    valid_precision: Literal["", "instant", "day", "month", "year", "approximate"] = ""
-    valid_tz: str = Field(default="", max_length=64)
+    valid_text: str = Field(default="", max_length=256, json_schema_extra=TEMPORAL)
+    valid_precision: Literal["", "instant", "day", "month", "year", "approximate"] = Field(
+        default="", json_schema_extra=TEMPORAL
+    )
+    valid_tz: str = Field(default="", max_length=64, json_schema_extra=TEMPORAL)
     # Qualifiers that keep two claims of one key apart (role, project, …).
-    qualifiers: dict[str, str] = Field(default_factory=dict, max_length=16)
+    qualifiers: dict[str, str] = Field(
+        default_factory=dict, max_length=16, json_schema_extra=TEMPORAL
+    )
     # The assertion id the writer read (memory.intervals / a temporal memory.get);
     # 409 when the key no longer serves it.
-    expected_revision: str = ""
+    expected_revision: str = Field(default="", json_schema_extra=TEMPORAL)
 
     def write_intent(self) -> Any:
         """The temporal intent this write declares, or None for a plain write."""
@@ -382,12 +394,12 @@ class MemorySetOutput(BaseModel):
     # while the key's current value (and the row `memory.get` reads) is unchanged.
     # `version` / `content_sha256` are then the journal's, not the current row's,
     # and what the write set on the row (pin, tags) applies to that assertion only.
-    past_only: bool = False
+    past_only: bool = Field(default=False, json_schema_extra=TEMPORAL)
     # Why the write changed nothing (`noop` is then true): `superseded` (a write to
     # the key drawn later committed first), `locked` (the key's lock in force refuses
     # the change), `restated` (nothing new, and the value is not what applies now).
     # "" when it was written.
-    left_out: str = ""
+    left_out: str = Field(default="", json_schema_extra=TEMPORAL)
     # Set when this write was tagged status='duplicate': memory_id of the
     # canonical semantically-identical row. Empty for non-duplicate writes.
     duplicate_of: str = ""
@@ -441,8 +453,8 @@ class MemorySetOutput(BaseModel):
     # The temporal journal commit this write published (0 / "" when the
     # namespace keeps no journal or the write changed no assertion), and the
     # token a read passes as `read_token` to see it.
-    commit_seq: int = 0
-    read_token: str = ""
+    commit_seq: int = Field(default=0, json_schema_extra=TEMPORAL)
+    read_token: str = Field(default="", json_schema_extra=TEMPORAL)
 
 
 class MemoryDeleteInput(_Identity):
@@ -493,13 +505,13 @@ class MemoryDeleteOutput(BaseModel):
     dependents_downgraded: int = 0
     # Why a found memory was not removed: memory.set's `left_out` reasons (version is
     # then 0). "" when it was removed, or not found.
-    left_out: str = ""
+    left_out: str = Field(default="", json_schema_extra=TEMPORAL)
     # The journal commit of the retraction, and its read token ("" when none).
-    commit_seq: int = 0
-    read_token: str = ""
+    commit_seq: int = Field(default=0, json_schema_extra=TEMPORAL)
+    read_token: str = Field(default="", json_schema_extra=TEMPORAL)
     # A key only the journal held got a current row meanwhile, not yet rewritten: the
     # reconciler brings it in line.
-    current_rows_pending: bool = False
+    current_rows_pending: bool = Field(default=False, json_schema_extra=TEMPORAL)
 
 
 class MemoryRestoreInput(_Identity):
@@ -553,7 +565,7 @@ class MemoryClearOutput(BaseModel):
     locked_skipped: int = 0
     # A key only the journal held got a current row while the clear ran, and that row
     # is not yet rewritten: the reconciler brings it in line.
-    current_rows_pending: bool = False
+    current_rows_pending: bool = Field(default=False, json_schema_extra=TEMPORAL)
 
 
 class MemoryTouchInput(_Identity):
@@ -592,7 +604,7 @@ class MemoryTouchResult(BaseModel):
     expires_at: datetime | None = None
     # Why an existing key was not touched: memory.set's `left_out` reasons. "" when
     # touched or not found.
-    left_out: str = ""
+    left_out: str = Field(default="", json_schema_extra=TEMPORAL)
 
 
 class MemoryTouchOutput(BaseModel):
@@ -607,7 +619,7 @@ class MemoryTouchOutput(BaseModel):
     # With `memory_keys`, how many keys were touched; 0 for one key.
     touched_count: int = 0
     # Single key: why it was not touched (see MemoryTouchResult.left_out).
-    left_out: str = ""
+    left_out: str = Field(default="", json_schema_extra=TEMPORAL)
 
 
 class MemoryListInput(_Identity, TemporalArgs):
@@ -656,6 +668,9 @@ class MemoryListInput(_Identity, TemporalArgs):
     # `status='proposed'` rows (facts on trial) are skipped
     # unless asked for; `memory.proposals` lists them with their graded counts.
     include_proposed: bool = False
+    as_of: datetime | None = Field(
+        default=None, json_schema_extra=CLASSIC
+    )  # see MemoryGetInput.as_of
     # Hard OR-filter on the row's tags — the same
     # `hasAny(tags, …)` predicate memory.search applies — so a tagged subset
     # (`kind:false_positive`, `subsystem:Storages`) is one list call, not a
@@ -747,7 +762,7 @@ class MemoryListOutput(BaseModel):
     # A sentence naming those hidden rows and the flag that lists them; '' otherwise.
     hidden_hint: str = ""
     # On a bi-temporal list: the cutoff it answered from.
-    temporal: TemporalCutoff | None = None
+    temporal: TemporalCutoff | None = Field(default=None, json_schema_extra=TEMPORAL)
 
 
 # ============================================================
@@ -758,6 +773,8 @@ class MemoryListOutput(BaseModel):
 class MemoryGetByIdInput(TemporalArgs):
     org: str
     memory_id: str  # UUID returned by memory.set
+    # As-of replay filter — see MemoryGetInput.as_of.
+    as_of: datetime | None = Field(default=None, json_schema_extra=CLASSIC)
 
 
 class MemoryGetByIdOutput(BaseModel):
@@ -833,9 +850,9 @@ class MemoryGetByIdOutput(BaseModel):
     expire_reason: str = ""
     # On a bi-temporal read: the cutoff, the assertions that apply at V and
     # whether they disagree (see MemoryGetOutput).
-    temporal: TemporalCutoff | None = None
-    assertions: list[TemporalAssertion] = Field(default_factory=list)
-    disputed: bool = False
+    temporal: TemporalCutoff | None = Field(default=None, json_schema_extra=TEMPORAL)
+    assertions: list[TemporalAssertion] = Field(default_factory=list, json_schema_extra=TEMPORAL)
+    disputed: bool = Field(default=False, json_schema_extra=TEMPORAL)
 
 
 class MemoryUpdateByIdInput(BaseModel):
@@ -876,11 +893,11 @@ class MemoryUpdateByIdOutput(BaseModel):
     # row's memory_id (mirrors MemorySetOutput.duplicate_of).
     duplicate_of: str = ""
     # The journal commit of the revision, and its read token ("" when none).
-    commit_seq: int = 0
-    read_token: str = ""
+    commit_seq: int = Field(default=0, json_schema_extra=TEMPORAL)
+    read_token: str = Field(default="", json_schema_extra=TEMPORAL)
     # Why a found memory was not updated: memory.set's `left_out` reasons. "" when
     # it was updated, or not found.
-    left_out: str = ""
+    left_out: str = Field(default="", json_schema_extra=TEMPORAL)
 
 
 class MemoryUpdateInput(BaseModel):
@@ -984,14 +1001,22 @@ class MemoryRedactInput(BaseModel):
     # what to scrub.
     memory_id: str
     # The historical row's version (from memory.set / memory.history): scrubs that
-    # row and every retired journal assertion that held its value. 0 = none.
-    version: int = 0
+    # row and every retired journal assertion that held its value. Required without
+    # the journal; with it, 0 (or absent) = none, and `assertion_id` picks instead.
+    version: int
     # A retired journal assertion (from memory.intervals), for text only the journal
     # holds — a memory.amend or a correction's segment. Scrubs every retired
     # assertion of the memory that held its value.
-    assertion_id: str = ""
+    assertion_id: str = Field(default="", json_schema_extra=TEMPORAL)
     reason: str = ""  # short justification recorded in the audit log
     redacted_by: str = ""  # actor for the audit row (caller-supplied)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _version_optional_with_the_journal(cls, data: Any) -> Any:
+        if temporal_on() and isinstance(data, dict) and "version" not in data:
+            return {**data, "version": 0}
+        return data
 
 
 class MemoryRedactOutput(BaseModel):

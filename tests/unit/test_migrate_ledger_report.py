@@ -379,3 +379,36 @@ def test_target_below_a_baseline_never_strands_it(tmp_path, monkeypatch, capsys)
     rc = _main(monkeypatch, ch, tmp_path, "--target", "0", "--dry-run", "--strict")
     out = capsys.readouterr().out
     assert rc == 0 and "✗" not in out and "⚠" not in out
+
+
+def test_a_migration_whose_setting_is_off_is_dormant_until_it_is_turned_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Off: neither applied nor pending. On: pending (out of order is fine). Applied,
+    # then turned off: still known to the ledger, never ledger-only.
+    from server.settings import settings
+
+    base = tmp_path / "001_base.sql"
+    base.write_text("CREATE TABLE IF NOT EXISTS loom.a (x UInt8) ENGINE = Memory;\n")
+    gated = tmp_path / "002_feature.sql"
+    gated.write_text(
+        "-- requires-setting: memory_temporal_enabled\n"
+        "CREATE TABLE IF NOT EXISTS loom.b (x UInt8) ENGINE = Memory;\n"
+    )
+    later = tmp_path / "003_later.sql"
+    later.write_text("CREATE TABLE IF NOT EXISTS loom.c (x UInt8) ENGINE = Memory;\n")
+    files = [base, gated, later]
+    applied = {base.name: _sha(base.read_text()), later.name: _sha(later.read_text())}
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+    off = _migrate.ledger_report(applied, files)
+    assert off.pending == () and off.dormant == (gated.name,) and off.clean
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    on = _migrate.ledger_report(applied, files)
+    assert on.pending == (gated.name,) and on.dormant == ()
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+    applied[gated.name] = _sha(gated.read_text())
+    again = _migrate.ledger_report(applied, files)
+    assert again.pending == () and again.dormant == () and again.clean

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
+from server.core.feature_modes import strip_inactive_input
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.operations.base import Operation
@@ -590,6 +591,7 @@ def _validated_input(
         )
         schedule_code_trace_validation_failure(op.name, arguments, errors)
         return _ok(req_id, tool_error(*feedback(op, arguments, errors)))
+    strip_inactive_input(input_obj)  # a field of the side that is off is not read
     return input_obj
 
 

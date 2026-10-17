@@ -25,6 +25,8 @@ from typing import Any
 
 from pydantic import AliasChoices, AliasPath, BaseModel
 
+from server.core.feature_modes import drop_inactive_output, inactive_fields
+
 # Keys the transports read off the raw arguments themselves (consumer,
 # traffic class, explain for the MCP lean shape, and the idempotency key MCP
 # pops before validation). Never "ignored".
@@ -147,11 +149,14 @@ def did_you_mean(model: type[BaseModel], keys: list[str]) -> dict[str, str]:
 
 def ignored_block(op: Any, args: Any) -> dict[str, Any]:
     """``{ignored_args, did_you_mean?}`` for a response, or ``{}``."""
-    keys = unknown_args(op.input_model, args)
+    unknown = unknown_args(op.input_model, args)
+    # A field of the side that is off is reported as main reports a key it lacks.
+    off = inactive_fields(op.input_model) if isinstance(args, dict) else frozenset()
+    keys = sorted({*unknown, *(k for k in args if k in off)}) if off else unknown
     if not keys:
         return {}
     block: dict[str, Any] = {"ignored_args": keys}
-    guesses = did_you_mean(op.input_model, keys)
+    guesses = did_you_mean(op.input_model, unknown)
     if guesses:
         block["did_you_mean"] = guesses
     return block
@@ -224,6 +229,7 @@ def response_body(op: Any, args: Any, result: Any) -> Any:
     from server.transport.epoch_nulls import scrub
 
     body = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+    body = drop_inactive_output(op.output_model, body)
     body = scrub(op.output_model, body)  # a zero date is "never"
     block = ignored_block(op, args)
     if block:

@@ -102,6 +102,17 @@ def classify_ledger(
     )
 
 
+_REQUIRES = re.compile(r"^--\s*requires-setting:\s*([a-z_][a-z0-9_]*)\s*$", re.MULTILINE)
+
+
+def required_setting(sql: str) -> str | None:
+    """The setting a migration needs on (`-- requires-setting: <field>` in its leading
+    comments): while it is off the file is dormant, neither applied nor pending."""
+    head = "\n".join(line for line in sql.splitlines()[:5] if line.startswith("--"))
+    m = _REQUIRES.search(head)
+    return m.group(1) if m else None
+
+
 def without_comments(sql: str) -> str:
     """`sql` without its full-line `--` comments."""
     return "\n".join(line for line in sql.splitlines() if not line.strip().startswith("--"))

@@ -12,6 +12,7 @@ from typing import Any, cast
 from server.core.errors import PreconditionFailedError
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.store.rows import MEMORY_PERSISTED_COLS
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +131,19 @@ async def insert_memory_versions(
     if not rows:
         return 0
     check_memory_rows(rows)
+    if not settings.memory_temporal_enabled:
+        # No journal: the row and its embedding writes land together, as they did
+        # before the journal existed.
+        db = ch or _default_client()
+        await asyncio.gather(
+            db.insert(
+                "loom.memory",
+                [dict(r) for r in rows],
+                settings={"async_insert": 0, "wait_for_async_insert": 1},
+            ),
+            *(f(rows) for f in alongside),
+        )
+        return len(rows)
     # A cancelled request must leave neither a commit without its row nor rows
     # unfenced: the journal hook, the insert and the after-insert fence finish
     # together in their own task whatever happens to the caller.

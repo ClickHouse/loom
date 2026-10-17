@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from server.core.feature_modes import TEMPORAL
 from server.core.naming import SENTINEL
 from server.operations.base import MCP_HIDDEN
 
@@ -146,18 +147,18 @@ class TemporalArgs(BaseModel):
     every K: a historical read never authorizes an action today."""
 
     # World time V; None = now, or K when only `known_as_of` is given.
-    valid_as_of: datetime | None = None
+    valid_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
     # Knowledge time K: answer from the journal as committed at K; None = now. A
     # future K is a 422.
-    known_as_of: datetime | None = None
+    known_as_of: datetime | None = Field(default=None, json_schema_extra=TEMPORAL)
     # A write's `read_token`: the read waits (within budget) until the journal
     # cutoff covers that write, and answers `projection_not_ready` otherwise.
     # Not in the MCP listing.
-    read_token: str = Field(default="", json_schema_extra=MCP_HIDDEN)
+    read_token: str = Field(default="", json_schema_extra={**MCP_HIDDEN, **TEMPORAL})
     # `compat` admits an assertion with an unknown or inferred validity bound and
     # discloses it; `strict` excludes it. Not in the MCP listing.
     validity_policy: Literal["compat", "strict"] = Field(
-        default="compat", json_schema_extra=MCP_HIDDEN
+        default="compat", json_schema_extra={**MCP_HIDDEN, **TEMPORAL}
     )
 
     def temporal_requested(self) -> bool:

@@ -50,6 +50,7 @@ from server.core.schema import table_rebuild
 from server.core.schema.journal import (
     baseline_map,
     classify_ledger,
+    required_setting,
     sorted_migrations,
     split_statements,
     through_target,
@@ -374,6 +375,9 @@ class LedgerReport:
     superseded: tuple[str, ...] = ()
     stranded: tuple[str, ...] = ()
     renamed: tuple[tuple[str, str], ...] = ()
+    # Files whose required setting is off (`journal.required_setting`): not applied,
+    # not pending, still known to the ledger once a past run applied them.
+    dormant: tuple[str, ...] = ()
 
     @property
     def clean(self) -> bool:
@@ -382,6 +386,14 @@ class LedgerReport:
 
 def _unnumbered(name: str) -> str:
     return re.sub(r"^\d+_", "", name)
+
+
+def _dormant(f: Path) -> bool:
+    """A migration whose required setting is off on this process."""
+    from server.settings import settings as _s
+
+    name = required_setting(f.read_text())
+    return name is not None and not bool(_s.model_dump()[name])
 
 
 def ledger_report(applied: dict[str, str], files: list[Path]) -> LedgerReport:
@@ -403,8 +415,10 @@ def ledger_report(applied: dict[str, str], files: list[Path]) -> LedgerReport:
         if applied.get(old) and (applied[old], _unnumbered(old)) in by_key
     )
     gone = {old for old, _new in renamed}
+    dormant = tuple(f.name for f in files if f.name not in applied and _dormant(f))
     return LedgerReport(
-        pending=classes.pending + classes.baselined,
+        pending=tuple(n for n in classes.pending + classes.baselined if n not in dormant),
+        dormant=dormant,
         ledger_only=tuple(n for n in classes.ledger_only if n not in gone),
         renamed=renamed,
         drift=drift,
@@ -961,7 +975,9 @@ def main(argv: list[str] | None = None, *, check_server: bool = True) -> int:
 
     # The ledger is classified against every file; the target limits only what runs.
     runnable = files if args.target is None else through_target(files, args.target)
-    to_apply = [f for f in runnable if f.name not in applied]
+    to_apply = [f for f in runnable if f.name not in applied and f.name not in report.dormant]
+    for name in report.dormant:
+        print(f"  · {name}: dormant (its setting is off); applied once it is turned on")
     if not to_apply:
         print(f"  ✓ no pending migrations ({len(applied)} already applied)")
         return 0 if (report.clean or not args.strict or not args.dry_run) else 1

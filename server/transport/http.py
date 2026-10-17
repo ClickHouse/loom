@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 
+from server.core.feature_modes import strip_inactive_input
 from server.auth.bearer import verify_bearer_header
 from server.auth.jwt import AuthInfo
 from server.code.app.common import (
@@ -312,6 +313,7 @@ def _validate_payload(op: Operation, request_id: str, raw_body: Any) -> Any:
                 "errors": errors,
             },
         ) from e
+    strip_inactive_input(payload)  # a field of the side that is off is not read
     return payload
 
 

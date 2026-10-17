@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from server.core.feature_modes import CLASSIC, TEMPORAL
 from server.memory.domain.code_change import CodeChangePolicy
 from server.memory.domain.proposal_policy import ProposalPolicy
 from server.memory.domain.rerank_names import RerankName
@@ -679,13 +680,20 @@ class NamespaceRollbackOutput(BaseModel):
     dry_run: bool
     # The instant rolled back to, as UTC.
     as_of: datetime
+    # Without the journal: `as_of` as an epoch-nanosecond version, the highest
+    # version a key may keep.
+    version_at: int = Field(default=0, json_schema_extra=CLASSIC)
     # Keys that serve again what they served at as_of (planned, or committed).
     reinstate: int
     # Keys that served nothing at as_of, retracted (planned, or committed).
     remove: int
     # Keys left as they are: a value they served then is one today's rules refuse
     # (blacklisted, redacted), or, applied, a lock in force refused the change.
-    left_out: int = 0
+    left_out: int = Field(default=0, json_schema_extra=TEMPORAL)
+    # Without the journal: keys with history at as_of but no live row (hard-deleted),
+    # left alone, and keys created after as_of that are already tombstoned.
+    skipped_no_head: int = Field(default=0, json_schema_extra=CLASSIC)
+    skipped_already_gone: int = Field(default=0, json_schema_extra=CLASSIC)
     # More keys differ than max_keys; call again (or narrow memory_keys).
     truncated: bool = False
     # Up to 20 keys (`memory_key`, `agent`, `user_id`, `session_id`, `action`, the
@@ -694,10 +702,10 @@ class NamespaceRollbackOutput(BaseModel):
     # When the rollback was written; None on a dry run or when no key differed.
     applied_at: datetime | None = None
     # Read-your-write token for the rollback's commits (pass it to a later read).
-    read_token: str = ""
+    read_token: str = Field(default="", json_schema_extra=TEMPORAL)
     # The commits landed but some current rows were not rewritten yet; the
     # reconciler brings them in line (reads with `read_token` already see them).
-    current_rows_pending: bool = False
+    current_rows_pending: bool = Field(default=False, json_schema_extra=TEMPORAL)
 
 
 # ------------------------------------------------------------------

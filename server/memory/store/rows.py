@@ -147,9 +147,6 @@ class MemoryRow(BaseModel):
     # '' / 'tombstone' | 'demote' | 'anonymize'. Applied by the expiry sweep.
     on_expire: str = ""
     expire_reason: str = ""
-    # The version this build wrote the row at (the insert funnel stamps it); one that
-    # differs is a write by a build that does not journal (`temporal_publisher.foreign`).
-    journal_version: int = 0
     # Code-native facets: file paths the fact references + code concepts
     # (functions / symbols / libraries / error tokens).
     files: list[str] = Field(default_factory=list)
@@ -266,7 +263,6 @@ MEMORY_PERSISTED_COLS: tuple[str, ...] = (
     "locked_at",
     "on_expire",
     "expire_reason",
-    "journal_version",
 )
 
 
@@ -476,7 +472,6 @@ FIRST_VERSION_DEFAULTS: dict[str, Any] = {
     "locked_at": None,
     "on_expire": "",
     "expire_reason": "",
-    "journal_version": 0,
 }
 
 
@@ -786,7 +781,6 @@ def _hydrate(row: dict[str, Any]) -> MemoryRow:
         locked_at=row.get("locked_at"),
         on_expire=row.get("on_expire", "") or "",
         expire_reason=row.get("expire_reason", "") or "",
-        journal_version=int(row.get("journal_version") or 0),
     )
 
 

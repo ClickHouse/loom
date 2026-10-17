@@ -1,3 +1,7 @@
+-- requires-setting: memory_temporal_enabled
+-- Applied only while LOOM_MEMORY_TEMPORAL_ENABLED is on (dormant otherwise: neither
+-- applied nor pending); turned on later, the next migrate applies it.
+--
 -- Bi-temporal memory: "which assertions applied at valid time V, according to
 -- what loom had recorded at knowledge time K".
 --

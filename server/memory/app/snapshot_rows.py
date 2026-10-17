@@ -22,10 +22,7 @@ def persisted_columns() -> tuple[str, ...]:
 
 
 SNAPSHOT_COLUMNS: tuple[str, ...] = tuple(
-    # journal_version is the writing build's stamp, set again on the restore's insert.
-    c
-    for c in persisted_columns()
-    if c not in ("org", "namespace", "memory_id", "journal_version")
+    c for c in persisted_columns() if c not in ("org", "namespace", "memory_id")
 )
 SNAPSHOT_SELECT = ",\n            ".join(
     (

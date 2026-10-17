@@ -3,6 +3,7 @@ the memory keys it cites."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import (
@@ -11,6 +12,7 @@ from pydantic import (
     model_validator,
 )
 
+from server.core.feature_modes import CLASSIC, TEMPORAL
 from server.memory.api.models_common import TemporalArgs, TemporalCutoff, _Identity
 from server.memory.api.models_search import _MemorySearchHit
 
@@ -124,6 +126,24 @@ class MemoryAskInput(_Identity, TemporalArgs):
     # Same semantics as memory.search.personalization; the retrieval leg of an
     # ask runs with it so the answer can be compared with and without priors.
     personalization: Literal["full", "none"] = "full"
+    # As-of temporal anchor. When set, retrieval is replay-filtered to memories
+    # known by then (coalesce(valid_at, created_at) <= as_of, the same filter
+    # memory.search applies) AND synthesis treats `as_of` as "now" — it reports
+    # the state as of that instant and does not assert events dated after it.
+    # This is what a time-anchored question needs ("status of PR X as of the
+    # 3rd", reproducing a past decision) and it stops a corpus that already
+    # holds later facts from leaking them into an answer about an earlier time.
+    # Unset (the default) = answer from everything known. Without the journal only;
+    # with it, `valid_as_of` / `known_as_of`.
+    as_of: datetime | None = Field(default=None, json_schema_extra=CLASSIC)
+    # Which time axis `as_of` replays: "valid_time" (default) = state true as of
+    # the anchor; "knowledge_time" = only what loom had learned by the anchor
+    # (created_at cutoff, incremental-ingest knowledge-cutoff semantics). Use knowledge_time
+    # for "what did we know at T" — it never grounds on a fact recorded later,
+    # even one backdated to an earlier valid_at.
+    as_of_basis: Literal["valid_time", "knowledge_time"] = Field(
+        default="valid_time", json_schema_extra=CLASSIC
+    )
     # Forwarded to the retrieval leg; the retired rows then
     # stay in the synthesis window, each line labelled `[superseded <date>;
     # replaced by <key>]`, so the answer can say what a value was before and
@@ -257,7 +277,7 @@ class MemoryAskOutput(BaseModel):
     answer: str = ""
     # A historical ask (valid_as_of / known_as_of): the cutoff each namespace's
     # evidence was read at, and what it could not cover. Empty otherwise.
-    temporal: list[TemporalCutoff] = Field(default_factory=list)
+    temporal: list[TemporalCutoff] = Field(default_factory=list, json_schema_extra=TEMPORAL)
     # "record": answered from an exact record (the GitHub-items index or the
     # tracker) instead of LLM synthesis.
     # "precedent": the earlier synthesized answer to this question+shape,
