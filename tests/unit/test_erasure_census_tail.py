@@ -857,6 +857,52 @@ async def test_completed_since_deletes_only_orphan_row_links(monkeypatch) -> Non
     assert deleted == [("o", "namespace", ["lme-1"])]
 
 
+async def test_completed_since_takes_only_completed_sagas(monkeypatch, capsys) -> None:
+    # A failed saga is the no-flag mode's: --completed-since must not resume it too.
+    from datetime import datetime
+
+    from server.cli import hygiene
+
+    failed = _ledger_row(id="f1")
+    done = _ledger_row(id="c1", steps_completed=["verify.residue"], failure_reason="")
+
+    async def fake_failed(*, org=None, ch=None):
+        return [failed]
+
+    async def fake_completed(*, since, org=None, ch=None):
+        return [done]
+
+    async def fake_orphans(org, st, sv, *, ch=None):
+        return {"loom.entity_triple_rows": 0, "loom.entity_edge_rows": 0}
+
+    async def no_saga(**k):
+        raise AssertionError("no saga runs: the failed one is not taken")
+
+    async def fake_counts(*, ch=None):
+        return {"orphan_entity_vectors": 0, "orphan_graph_namespaces": 0}
+
+    monkeypatch.setattr(erasure_ledger, "list_failed_requests", fake_failed)
+    monkeypatch.setattr(erasure_ledger, "list_completed_requests", fake_completed)
+    monkeypatch.setattr(graph_steps, "count_orphan_row_links", fake_orphans)
+    monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
+    monkeypatch.setattr(h, "run_saga", no_saga)
+    args = argparse.Namespace(
+        org="o",
+        id=None,
+        resume=True,
+        skip_external=False,
+        orphan_graph=False,
+        erase=False,
+        batch=200,
+        show=20,
+        requester="t",
+        completed_since=datetime(2026, 10, 17, 8, 0),
+    )
+    assert await hygiene._re_verify_run(object(), args) == 0
+    out = capsys.readouterr().out
+    assert "c1" in out and "f1" not in out
+
+
 def test_an_orphan_row_link_is_one_whose_memory_has_no_live_row() -> None:
     where, params = graph_steps._orphan_row_links("namespace", ["a", "b"])
     assert where.startswith("namespace IN {ns:Array(String)} AND memory_id NOT IN (")

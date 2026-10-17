@@ -453,8 +453,8 @@ async def _gc_run(
 
 
 def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
-    """Re-verify the sagas the ledger holds as `failed`, and with `--completed-since`
-    the `completed` ones verified since then (after a rollout, rule 14 of
+    """Re-verify the sagas the ledger holds as `failed`, or with `--completed-since`
+    instead the `completed` ones verified since then (after a rollout, rule 14 of
     docs/architecture/rolling-upgrades.md).
 
     Read-only by default: for every such saga, print the last step-named
@@ -565,23 +565,23 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
     from server.erasure.store import mutations as erasure_mutations
 
     rc = 0
-    rows = await erasure_ledger.list_failed_requests(org=args.org or None, ch=ch)
-    label = "failed saga(s)"
-    completed: set[str] = set()
-    if args.completed_since:
-        more = await erasure_ledger.list_completed_requests(
+    # --completed-since takes the completed sagas instead of the failed ones.
+    completed = bool(args.completed_since)
+    if completed:
+        rows = await erasure_ledger.list_completed_requests(
             since=args.completed_since, org=args.org or None, ch=ch
         )
-        completed = {str(r["id"]) for r in more}
-        rows += more
-        label = f"saga(s) failed, or completed since {args.completed_since}"
+        label = f"saga(s) completed since {args.completed_since}"
+    else:
+        rows = await erasure_ledger.list_failed_requests(org=args.org or None, ch=ch)
+        label = "failed saga(s)"
     wanted = set(args.id or ())
     if wanted:
         rows = [r for r in rows if str(r["id"]) in wanted]
     if not args.orphan_graph or rows or wanted:
         print(f"{len(rows)} {label}" + (f" in org {args.org!r}" if args.org else ""))
     for row in rows:
-        if str(row["id"]) in completed:
+        if completed:
             rc = max(rc, await _re_verify_completed(ch, row, resume=bool(args.resume)))
             continue
         scope_type, scope_value, purge, _external = _re_verify_scope(row)
@@ -795,8 +795,9 @@ def _add_namespace_hygiene_parsers(sub: Any) -> None:
         "--completed-since",
         type=_utc_instant,
         metavar="ISO_TIMESTAMP",
-        help="Also re-verify completed sagas whose census ran at or after this time (UTC "
-        "unless it names an offset): after a rollout, the erasures the previous build ran. "
+        help="Re-verify the completed sagas whose census ran at or after this time, not "
+        "the failed ones (UTC unless it names an offset): after a rollout, the erasures "
+        "the previous build ran. "
         "Only their orphan row links are counted (entity_triple_rows and entity_edge_rows "
         "rows whose memory has no live row); --resume deletes them",
     )

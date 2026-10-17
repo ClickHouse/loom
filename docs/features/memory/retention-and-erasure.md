@@ -155,8 +155,9 @@ After 5 attempts the worker marks the request `failed` for good and writes an
 `erasure.abandoned` audit row, with `failure_reason` and `steps_completed`. A person must
 then escalate. `loom erasure-re-verify` re-checks terminal sagas; `--resume` re-runs
 failed ones from their checkpoint (`--skip-external` for a `namespace_list` saga whose
-external step keeps failing). `--completed-since <ISO timestamp>` re-checks completed
-sagas verified since then too, for the erasures a previous build ran during an upgrade
+external step keeps failing). `--completed-since <ISO timestamp>` re-checks the completed
+sagas verified since then instead of the failed ones, for the erasures a previous build
+ran during an upgrade; with `--resume` it deletes only their orphan row links
 ([maintenance](../../operations/maintenance.md#erasure)). See
 [troubleshooting](../../operations/troubleshooting.md).
 
