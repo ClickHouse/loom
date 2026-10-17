@@ -222,8 +222,10 @@ re-checked row is often the older side of its flag, so when a flagged peer was s
 later, the latest such peer is presented as NEW and the row as its peer. A retirement goes through `apply_refines`: the older row is superseded behind the
 newer, a `supersedes` edge records why, one `memory.auto_supersede` record names it
 (reason `conflict_resolver`, so `memory.restore` undoes it), and the triple plane follows
-(`follow_row_supersessions`). The follow is owed before the supersede commits: one
-committed `triples_follow_rows` projection-failure row holds the pair and is resolved once
+(`follow_row_supersessions`). A flag the newer row held against the retired one is
+removed as a clear removes it, and the audit row's pair says `flag_cleared`, so the
+winner does not stay on the review queue against a retired row. The follow is owed before the supersede commits: one
+committed `triples_follow_owed` projection-failure row holds the pair and is resolved once
 the follow lands, so a failure or a crash in between leaves it for the projection repair,
 which follows a pair only while its loser is retired behind its winner. The acting of a
 judged row (its pairs, records, follows and audit row) is shielded from cancellation. A flag is
@@ -246,6 +248,9 @@ actions, verdicts and confidences, never the text.
 - A pass judges `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` (8) rows at once. The re-read
   and the action of each judged row run under one lock per pass, so when two rows judged
   at once both call the same peer stale, the second re-reads it retired and leaves it.
+  Inside it, the peer's key write lock is held from the re-read to the write, as a
+  conditional revision holds it from its read to its insert, so a retirement never lands
+  over a revision; no writer takes the pass lock, so the two cannot deadlock.
 - The queue reads leave out a namespace over its daily LLM cost cap
   (`observability.budget`) and an org with an erasure queued, running or failed and due a
   retry (an abandoned saga does not count), so their rows stay owed without taking places

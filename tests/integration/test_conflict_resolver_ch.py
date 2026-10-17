@@ -972,3 +972,31 @@ async def test_a_retirement_waits_for_a_conditional_revision_of_the_peer(ch, wir
     after = (await _rows(ch, org))["office_city"]
     assert after["status"] == "active" and after["version"] > peer["version"]
     assert out["retired"] == 0 and out["skipped_changed"] == 1
+
+
+async def test_a_retirement_clears_the_winners_flag_against_the_retired_row(ch, wired) -> None:
+    """The write path flagged the pair; the resolver retires the older row. The winner
+    is active again, with no flag left, and the audit row says the flag went."""
+    from server.memory.app import conflicts
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 74)
+    rows = await _rows(ch, org)
+    landed = await conflicts.mark_peers_conflicted(
+        org=org, new_memory_id=rows["office_location"]["id"], peer_ids=[rows["office_city"]["id"]]
+    )
+    assert landed == "conflict"
+    out = await run_pass()
+    after = await _rows(ch, org)
+    assert out["retired"] == 1 and after["office_city"]["status"] == "superseded"
+    winner = after["office_location"]
+    assert (winner["status"], winner["conflict_with"]) == ("active", [])
+    status = await ch.query_all(
+        "SELECT status FROM loom.memory_embeddings FINAL WHERE org = {org:String}"
+        " AND memory_key = 'office_location' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert [r["status"] for r in status] == ["active"]
+    (acted,) = await _audit(ch, org, "memory.conflict_resolver")
+    assert [(p["action"], p.get("flag_cleared")) for p in acted["pairs"]] == [("retire", True)]

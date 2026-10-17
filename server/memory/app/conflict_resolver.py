@@ -9,7 +9,8 @@ here. The verdicts are folded by `domain.conflict_resolution.action_for`:
 - retire: the peer is superseded behind the judged row through `apply_refines`, only
   when the peer was stated strictly first (else the pair is flagged), with its
   `memory.auto_supersede` record (reason `conflict_resolver`, so `memory.restore`
-  undoes it) and the triple plane following the retirement;
+  undoes it), the triple plane following the retirement, and the judged row's
+  flag against the peer removed;
 - flag: both rows go to the review queue (`conflicted`, `conflict_with`);
 - clear: a flag between the pair is removed, both rows stay live;
 - nothing: below the confidence floor, a peer the answer did not name, or an answer
@@ -366,9 +367,9 @@ async def _settle_pair(
     peer: Mapping[str, Any],
     action: str,
     counts: Counts,
-) -> str | None:
-    """Act on one pair after re-reading both rows; the action taken when something
-    changed, else None.
+) -> dict[str, Any] | None:
+    """Act on one pair after re-reading both rows; what was done ({"action": ...}, for
+    the audit row) when something changed, else None.
 
     Under the peer's key write lock: a conditional revision holds it from its read to
     its insert, and a retirement written in between would land over that revision.
@@ -393,7 +394,7 @@ async def _settle_locked_pair(
     peer: Mapping[str, Any],
     action: str,
     counts: Counts,
-) -> str | None:
+) -> dict[str, Any] | None:
     row_id, row_sha = judged
     row, head = await _head(org, row_id), await _head(org, str(peer["memory_id"]))
     if not (
@@ -417,7 +418,12 @@ async def _settle_locked_pair(
     if not await _act(action, org, namespace, row, head):
         return None
     setattr(counts, _COUNTED[action], getattr(counts, _COUNTED[action]) + 1)
-    return action
+    taken: dict[str, Any] = {"action": action}
+    if action == cr.RETIRE and str(head.memory_id) in row.conflict_with:
+        # The pair is settled: the winner's flag against the row it retired goes too,
+        # or it stays on the review queue, stamped and never re-checked.
+        taken["flag_cleared"] = await _unlink(org, row, str(head.memory_id))
+    return taken
 
 
 async def _audit(
@@ -607,7 +613,7 @@ async def _act_on_verdicts(
                 acted.append(
                     {
                         "peer_id": str(peer["memory_id"]),
-                        "action": taken,
+                        **taken,
                         "verdict": v.verdict,
                         "confidence": v.confidence,
                     }
