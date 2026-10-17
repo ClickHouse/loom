@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from server.auth.delegation import delegate
 from server.auth.jwt import AuthInfo
+from server.auth.self_signup import AGENT_NAME_PREFIX
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, token_grants
@@ -79,7 +80,6 @@ def _requested_roles(payload: dict[str, object]) -> dict[str, str | None]:
     # Parse ordered entries (order = read priority). Each is a bare string or
     # {namespace, role?}. Duplicate namespaces collapse to first occurrence so
     # priority stays stable; the last-seen role wins for that namespace.
-    ordered_ns: list[str] = []
     requested_role: dict[str, str | None] = {}
     for entry in raw_namespaces:
         if isinstance(entry, dict):
@@ -99,10 +99,8 @@ def _requested_roles(payload: dict[str, object]) -> dict[str, str | None]:
                     "message": f"role for {ns} must be viewer | writer | admin",
                 },
             )
-        if ns not in requested_role:
-            ordered_ns.append(ns)
         requested_role[ns] = r
-    if not ordered_ns:
+    if not requested_role:
         raise HTTPException(
             status_code=422,
             detail={
@@ -113,19 +111,19 @@ def _requested_roles(payload: dict[str, object]) -> dict[str, str | None]:
     return requested_role
 
 
-async def _name_taken(org: str, name: str) -> bool:
-    """Whether a token not yet revoked or expired holds `name`: a new row
-    would replace its row, leaving it live and listed nowhere."""
-    from server.core.ch import get_client, own_write_reads
+async def _name_holder(org: str, name: str) -> str | None:
+    """Who made the token, not yet revoked or expired, that holds `name` in
+    `org`; None when it is free. A new row would replace its row, leaving it
+    live and listed nowhere. Read under the name's claim, as of every write."""
+    from server.core.ch import get_client
 
-    with own_write_reads():
-        row = await get_client().query_one(
-            "SELECT 1 AS x FROM loom.service_accounts FINAL WHERE org = {org:String} "
-            "AND name = {name:String} AND revoked_at IS NULL "
-            "AND (expires_at IS NULL OR expires_at > now()) LIMIT 1",
-            params={"org": org, "name": name},
-        )
-    return row is not None
+    row = await get_client().query_one(
+        "SELECT created_by FROM loom.service_accounts FINAL WHERE org = {org:String} "
+        "AND name = {name:String} AND revoked_at IS NULL "
+        "AND (expires_at IS NULL OR expires_at > now()) LIMIT 1",
+        params={"org": org, "name": name},
+    )
+    return str(row["created_by"]) if row is not None else None
 
 
 def dev_parent(payload: dict[str, object]) -> AuthInfo:
@@ -188,25 +186,34 @@ async def me_service_accounts_create(
             },
         )
 
+    if name.startswith(AGENT_NAME_PREFIX):  # self-signup's, written without this check
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": f"names starting {AGENT_NAME_PREFIX!r} are agents'",
+            },
+        )
     requested_role = _requested_roles(payload)
+    ttl_seconds = parse_ttl_days(payload.get("ttl_days"))
 
     from server.auth.grant_claims import service_account_change
 
     async with service_account_change(org, name):
-        if await _name_taken(org, name):
+        holder = await _name_holder(org, name)
+        if holder is not None:
+            # Names are one per org; whose token holds one is not the caller's to learn.
+            mine = f"your token {name!r} is live" if holder == subject else "that name is in use"
             raise HTTPException(
                 status_code=409,
-                detail={
-                    "code": "CONFLICT",
-                    "message": f"a live token is already named {name!r}; choose another name",
-                },
+                detail={"code": "TOKEN_NAME_TAKEN", "message": f"{mine}; choose another name"},
             )
         delegated = await delegate(
             parent,
             org=org,
             requested=requested_role,
             scoped=True,
-            ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
+            ttl_seconds=ttl_seconds,
             is_service_account=True,
             recorded=True,
         )

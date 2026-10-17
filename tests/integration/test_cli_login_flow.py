@@ -488,6 +488,15 @@ def test_service_accounts_and_account_views_need_no_dashboard(
         json={"name": "ci-bot", "namespaces": [ns]},
     )
     assert again.status_code == 409, again.text
+    assert again.json()["detail"]["code"] == "TOKEN_NAME_TAKEN"
+    assert "your token 'ci-bot' is live" in again.json()["detail"]["message"]
+    # An agent's own rows are named `agent · <name>`; a person's token cannot be.
+    agentlike = httpx.post(
+        f"{base}/v1/me/service_accounts.create",
+        headers={"Authorization": f"Bearer {session['access_token']}"},
+        json={"name": "agent · fleet", "namespaces": [ns]},
+    )
+    assert agentlike.status_code == 422, agentlike.text
     # A revoked one's name is free again.
     assert _loom(
         home,

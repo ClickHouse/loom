@@ -609,7 +609,7 @@ function untilAborted<T>(work: T | Promise<T>, ctx: AttemptContext): Promise<T> 
   });
 }
 
-/** Rejects the call once the caller's signal has fired. */
+/** Throws once the caller's signal has fired. */
 function throwIfAborted(ctx: AttemptContext, cause?: unknown): void {
   if (!ctx.opts.signal?.aborted) return;
   const requestId = ctx.headers["X-Request-Id"] ?? "";

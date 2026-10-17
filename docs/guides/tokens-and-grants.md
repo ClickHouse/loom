@@ -277,6 +277,9 @@ what was asked for, cut to what the caller's token allows and to the caller's li
   expires cannot make one that never does), except from a sign-in session's hour-long token
   (`loom login`, dashboard SSO): a child saved to the person's service-account list lasts
   what was asked, one listed nowhere at most 30 days and never for ever;
+- a name, for a saved one: unique in its org while its token lives (`409
+TOKEN_NAME_TAKEN`, which does not say whose it is), free again once the token is revoked
+  or has expired; names starting `agent · ` are agents' own;
 - `parents` (every ancestor's token id), `parent_subjects` (every ancestor's `sub`),
   `parent_iats` (every ancestor's `iat`) and `creator` (the person at the root).
 

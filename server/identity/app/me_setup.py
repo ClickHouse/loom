@@ -322,6 +322,10 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         config_key: str,         # "mcpServers" (most clients) or "servers" (VS Code)
         config: dict,            # the JSON block to merge into the client's config file
         token: str,              # the minted JWT
+        persisted: bool,         # saved to the token list, as `sa_subject`
+        sa_subject: str,
+        expires_at: str | null,  # ISO-8601; null: never expires
+        …                        # and the namespace, scope and URL it reads
       }
     """
     parent = _setup_parent(request, payload)

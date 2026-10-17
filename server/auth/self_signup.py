@@ -323,6 +323,9 @@ def _claimable_namespace(name: str) -> str:
 # ============================================================
 
 AGENT_NAMESPACE_PREFIX = "agent-"
+# An agent's own token row (`loom.service_accounts`) is named this plus the
+# agent's name; a person's token cannot take such a name.
+AGENT_NAME_PREFIX = "agent · "
 AGENT_SIGNUPS_PER_HOUR = 5
 # Humans behind one office NAT share an address; agents rarely do.
 HUMAN_SIGNUPS_PER_HOUR = 20
@@ -543,7 +546,7 @@ async def _provision_agent(
         [
             {
                 "org": org,
-                "name": f"agent · {input.name.strip()}",
+                "name": f"{AGENT_NAME_PREFIX}{input.name.strip()}",
                 "sa_subject": sa_subject,
                 "namespaces": [namespace],
                 "roles": ["writer"],

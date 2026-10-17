@@ -321,10 +321,6 @@ Raised in `server/memory/app/handlers.py`.
 
 Raised in `server/knowledge/app/conversations.py`.
 
-#### `CONFLICT`
-
-Raised in `server/identity/app/me_service_accounts.py`.
-
 #### `CONSTRAINT_VIOLATION`
 
 Raised in `server/memory/domain/record_values.py`.
@@ -692,6 +688,10 @@ Raised in `server/code/app/member_writes.py`.
 #### `TIMELINE_REQUIRES_FILTER`
 
 Raised in `server/memory/app/curation.py`.
+
+#### `TOKEN_NAME_TAKEN`
+
+Raised in `server/identity/app/me_service_accounts.py`.
 
 #### `UNKNOWN_ARGUMENT`
 

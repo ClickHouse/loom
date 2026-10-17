@@ -443,6 +443,15 @@ describe("Transport with a token provider", () => {
     expect(v1(srv).map(count)).toEqual(["0", "0"]);
   });
 
+  it("takes a provider that answers a plain string, with or without a signal", async () => {
+    const provider: TokenProvider = { token: () => "plain", origin: BASE };
+    const srv = server();
+    const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: srv.fetch });
+    await t.post("memory.get", { org: "o" });
+    await t.post("memory.get", { org: "o" }, { signal: new AbortController().signal });
+    expect(v1(srv).map(auth)).toEqual(["Bearer plain", "Bearer plain"]);
+  });
+
   it("asks the provider for nothing once the caller has cancelled", async () => {
     let asked = 0;
     const provider: TokenProvider = { token: async () => (asked++, "t"), origin: BASE };

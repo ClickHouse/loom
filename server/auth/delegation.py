@@ -180,8 +180,8 @@ def _child_ttl(parent: AuthInfo, ttl_seconds: int | None, *, recorded: bool) -> 
         raise _refuse("the parent token has expired")
     if never:
         raise _refuse(
-            "a token that expires cannot make one that never does; sign in with SSO "
-            "or `loom login` to make one"
+            "a token that expires cannot make one that never does; only a sign-in "
+            "session (SSO or `loom login`) can"
         )
     return min(ttl, left)
 

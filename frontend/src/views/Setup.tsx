@@ -813,7 +813,7 @@ function TokensSection({
                   </Field>
                   <Field
                     label="Expires in (days)"
-                    hint="Blank = 90 days. 0 = never expires (when signed in with SSO). Max 3650."
+                    hint="Blank = 90 days. 0 = never expires (needs an SSO or `loom login` session). Max 3650, less if your own sign-in expires sooner."
                   >
                     <input
                       type="text"
@@ -1022,7 +1022,7 @@ function TokensSection({
 
                   <Field
                     label="Expires in (days)"
-                    hint="Blank = 90 days. 0 = never expires (when signed in with SSO). Max 3650."
+                    hint="Blank = 90 days. 0 = never expires (needs an SSO or `loom login` session). Max 3650, less if your own sign-in expires sooner."
                   >
                     <input
                       type="text"

@@ -23,7 +23,7 @@ import { envVar } from "./runtime.js";
 /** A credential fetched per request, e.g. a bot's renewing token. */
 export interface TokenProvider {
   /** The token to send; a fresh one when `refused` is the token the server just answered 401 to. */
-  token(refused?: string): Promise<string>;
+  token(refused?: string): string | Promise<string>;
   /** The token in hand, without fetching; undefined before the first. */
   current?(): string | undefined;
   /** How logs and `toJSON` name the credential, e.g. `bot:<client id>`. */
