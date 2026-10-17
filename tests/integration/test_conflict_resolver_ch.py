@@ -783,3 +783,42 @@ async def test_a_flag_never_lands_on_a_peer_changed_after_it_was_judged(
         after["office_city"]["status"] == "active" and after["office_city"]["conflict_with"] == []
     )
     assert after["office_location"]["conflict_with"] == []
+
+
+async def test_closer_rows_of_another_type_do_not_hide_a_peer(ch, wired) -> None:
+    """40 preference vectors sit nearer the queued row than its 0.8 semantic peer."""
+    from server.memory.store.embeddings import (
+        _copy_row,
+        insert_embedding_rows,
+        live_embedding_rows_for_key,
+    )
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 62)
+    (row,) = await live_embedding_rows_for_key(
+        ch,
+        org=org,
+        namespace=NS,
+        agent="bot",
+        user_id=USER,
+        session_id="s2",
+        memory_key="office_location",
+    )
+    closer = [
+        _copy_row(
+            row,
+            {
+                "memory_type": "preference",
+                "memory_key": f"pref{i}",
+                "session_id": "s9",
+                "embedding": _vec((62, 0.8), (63, 0.6), (64 + i, 0.01)),
+                "conflict_checked_at": None,
+            },
+        )
+        for i in range(40)
+    ]
+    await insert_embedding_rows(closer, ch=ch)
+    await run_pass()
+    assert "office_location" in llm.calls
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"

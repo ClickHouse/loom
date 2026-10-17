@@ -173,6 +173,11 @@ def _nearest_sql() -> str:
           AND scope = 'private'
           AND tombstoned_at IS NULL
           AND status IN ('active', 'conflicted')
+          -- What would drop a candidate later is applied here, before the LIMIT, so
+          -- closer rows of another type (or expired ones) cannot take every place.
+          AND memory_type = {mt:String}
+          AND (expires_at IS NULL OR expires_at > now())
+          AND (valid_to IS NULL OR valid_to > now())
           AND embedding_dim = {dim:UInt16}
           AND embedding.size0 = {dim:UInt16}
         ORDER BY dist ASC
@@ -200,6 +205,24 @@ _PEER_ROWS_SQL = """
         """
 
 
+# The row's flagged peers, by id, with their distance: they join the cluster whatever
+# the vector cutoff or the floor.
+_FLAGGED_SQL = """
+        SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
+               e.memory_key AS memory_key,
+               cosineDistance(e.embedding, {emb:Array(Float32)}) AS dist
+        FROM loom.memory_embeddings AS e FINAL
+        WHERE e.org = {org:String} AND e.namespace = {ns:String}
+          AND (e.agent, e.user_id, e.session_id, e.memory_key) IN (
+              SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL
+              WHERE org = {org:String} AND namespace = {ns:String}
+                AND toString(memory_id) IN {flagged:Array(String)})
+          AND e.scope = 'private' AND e.tombstoned_at IS NULL
+          AND e.embedding_dim = {dim:UInt16} AND e.embedding.size0 = {dim:UInt16}
+        SETTINGS select_sequential_consistency = 1
+        """
+
+
 def _ident(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
     return (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"]))
 
@@ -214,7 +237,8 @@ async def cluster_peers(
 ) -> list[dict[str, Any]]:
     """Up to `limit` live peers of the queue row `row`: its memory_type, its subject,
     cosine >= `floor`, nearest first, each with `similarity`. Peers named in `prefer`
-    (the row's current flags) take places first, so a re-check judges them."""
+    (the row's current flags) are read by id, whatever the cutoff and the floor, and
+    take places first, so a re-check judges them."""
     ch = ch or _default_client()
     emb = [float(x) for x in (row.get("embedding") or [])]
     if not emb:
@@ -232,6 +256,10 @@ async def cluster_peers(
         "lim": 4 * max(int(limit), 1),
     }
     near = [c for c in await ch.query_all(_nearest_sql(), params=params) if 1 - c["dist"] >= floor]
+    if prefer:
+        flagged = await ch.query_all(_FLAGGED_SQL, params={**params, "flagged": sorted(prefer)})
+        seen = {_ident(c) for c in near}
+        near += [c for c in flagged if _ident(c) not in seen]
     if not near:
         return []
     rows = await ch.query_all(_PEER_ROWS_SQL, params={**params, "ids": [_ident(c) for c in near]})

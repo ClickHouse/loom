@@ -144,11 +144,18 @@ def test_a_peer_the_answer_leaves_out_has_no_verdict_and_prose_is_ignored() -> N
 
 
 class _ClusterCH:
-    def __init__(self, near: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
-        self.near, self.rows, self.calls = near, rows, []
+    def __init__(
+        self,
+        near: list[dict[str, Any]],
+        rows: list[dict[str, Any]],
+        flagged: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.near, self.rows, self.flagged, self.calls = near, rows, flagged or [], []
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         self.calls.append((sql, params))
+        if "flagged:Array" in sql:
+            return self.flagged
         return self.near if "cosineDistance" in sql else self.rows
 
 
@@ -218,8 +225,22 @@ async def test_the_cluster_keeps_the_floor_the_cap_and_the_rows_flags() -> None:
     assert "NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})" in sql
     assert "user_id = {u:String} AND (user_id != '-' OR agent = {a:String})" in sql
     assert params["org"] == "o" and params["ns"] == "ns" and params["lim"] == 12
-    rows_sql, _ = ch.calls[1]
+    # The type and the expiry are applied before the vector LIMIT, not after it.
+    assert "memory_type = {mt:String}" in sql and "expires_at > now()" in sql
+    assert "valid_to > now()" in sql
+    rows_sql, _ = ch.calls[-1]
     assert "sensitivity != 'high'" in rows_sql and "memory_type = {mt:String}" in rows_sql
+
+
+async def test_a_flagged_peer_joins_the_cluster_whatever_the_cutoff() -> None:
+    # m20 is outside the nearest vectors and below the floor, but the row is flagged with it.
+    near = [_near("s1", "k1", 0.10)]
+    rows = [_peer_row("m1", "s1", "k1", "v"), _peer_row("m20", "s20", "k20", "v")]
+    ch = _ClusterCH(near, rows, flagged=[_near("s20", "k20", 0.50)])
+    peers = await queue.cluster_peers(_q(), floor=0.6, limit=3, prefer=frozenset({"m20"}), ch=ch)
+    assert [p["memory_id"] for p in peers] == ["m1", "m20"]
+    flagged_sql, params = ch.calls[1]
+    assert "flagged:Array" in flagged_sql and params["flagged"] == ["m20"]
 
 
 # --- one row --------------------------------------------------------------------------------
