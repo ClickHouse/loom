@@ -185,6 +185,10 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
             "AND lower(subject) = {was:String}",
             params={"org": org, "was": was},
         )
+    pending = [g for g in grants if g["revoked_at"] is None and g["status"] == "pending"]
+    if was and pending:
+        named = ", ".join(g["namespace"] for g in pending)
+        raise ValueError(f"{was} asked to join {named}; approve or reject that first")
     live = [g for g in grants if g["revoked_at"] is None]
     if was and live:
         # Granted to the address by name, they would reach no one once it is untied.
@@ -222,8 +226,7 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
             raise GrantBusyError(f"a sign-in for {email} is running; retry shortly")
         plan = await link_plan(email, org, namespace)
         row, was = plan["row"], str(plan["was"])
-        for g in plan["revoked"]:
-            await _carry_revoked(g, str(row["owner_email"]))
+        carried = await _carry_revoked(plan["revoked"], str(row["owner_email"]), by)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         # Insert-as-replace carrying every other column forward.
         await get_client().insert(
@@ -239,27 +242,55 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
         org=org,
         namespace=namespace,
         actor=by,
-        subject={"email": email, "was": was, "by": by, "subject": row["owner_email"]},
+        subject={
+            "email": email,
+            "was": was,
+            "by": by,
+            "subject": row["owner_email"],
+            "carried_revoked": carried,
+        },
     )
     return was
 
 
-async def _carry_revoked(grant: dict[str, Any], owner: str) -> None:
-    """The subject's own revoked row on the grant's namespace, unless it has a
-    row there already: it caps the person's tokens as the address's did."""
+async def _carry_revoked(revoked: list[dict[str, Any]], owner: str, by: str) -> list[str]:
+    """The subject's own revoked row on each namespace an address's revoked row
+    named, unless the subject has a row there already: it caps the person's
+    tokens as the address's did. Returns the namespaces carried."""
     from server.auth.grant_claims import grant_change
     from server.core.ch import get_client
     from server.identity.store import grants
 
-    org, ns = grant["org"], grant["namespace"]
-    async with grant_change(org, ns, owner):
-        mine = await get_client().query_one(
-            "SELECT 1 AS x FROM loom.namespace_grants FINAL WHERE org = {org:String} "
-            "AND namespace = {ns:String} AND subject = {owner:String} LIMIT 1",
-            params={"org": org, "ns": ns, "owner": owner},
+    if not revoked:
+        return []
+    org = revoked[0]["org"]
+    names = sorted({g["namespace"] for g in revoked})
+    async with AsyncExitStack() as held:
+        for ns in names:  # sorted, as grant claims nest
+            await held.enter_async_context(grant_change(org, ns, owner))
+        rows = await get_client().query_all(
+            "SELECT namespace FROM loom.namespace_grants FINAL WHERE org = {org:String} "
+            "AND namespace IN {names:Array(String)} AND lower(subject) = lower({owner:String})",
+            params={"org": org, "names": names, "owner": owner},
         )
-        if mine is None:
-            await grants.insert_row({**grant, "subject": owner, "version": time.time_ns()})
+        has = {r["namespace"] for r in rows}
+        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+        carried = {g["namespace"]: g for g in revoked if g["namespace"] not in has}
+        await grants.insert_rows(
+            [
+                {
+                    **g,
+                    "subject": owner,
+                    # Written by the link, not by whoever granted the address.
+                    "granted_by": by,
+                    "granted_at": now,
+                    "revoked_at": now,
+                    "version": time.time_ns() + n,
+                }
+                for n, g in enumerate(carried.values())
+            ]
+        )
+    return sorted(carried)
 
 
 async def unlink(email: str, org: str = "", *, by: str) -> list[tuple[str, str]]:

@@ -246,3 +246,30 @@ async def test_link_finds_an_old_address_grant_whatever_its_case(ch: Any) -> Non
         "link", "--email", f"bo@corp-{org}.example", "--org", org, "--namespace", namespace
     )
     assert refused.returncode == 2 and "team (writer)" in refused.stderr
+
+
+async def test_link_leaves_the_subjects_own_live_grant_alone(ch: Any) -> None:
+    # The address's revoked row never capped the subject's own live grant (the
+    # highest live rank across the person's spellings wins), so nothing is carried.
+    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    personal = f"em@home-{org}.example"
+    namespace = await _password_account(ch, org, personal, owner="em")
+    await _grant(ch, org, "team", "em", revoked=False)
+    await _grant(ch, org, "team", personal, revoked=True)
+    _sso(
+        "link",
+        "--email",
+        f"em@corp-{org}.example",
+        "--org",
+        org,
+        "--namespace",
+        namespace,
+        "--apply",
+    )
+    with own_write_reads():
+        mine = await ch.query_all(
+            "SELECT revoked_at FROM loom.namespace_grants FINAL WHERE org = {org:String} "
+            "AND namespace = 'team' AND lower(subject) = 'em'",
+            params={"org": org},
+        )
+    assert [r["revoked_at"] for r in mine] == [None]

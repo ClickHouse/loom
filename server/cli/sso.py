@@ -116,10 +116,13 @@ def _cmd_link(args: argparse.Namespace) -> int:
                 f"{args.org}/{args.namespace} (owner {row['owner_email']}, email "
                 f"{plan['was'] or '-'}) would sign in as {args.email.strip().lower()}"
             )
+            if plan["revoked"]:
+                names = ", ".join(sorted({g["namespace"] for g in plan["revoked"]}))
+                print(f"  grants revoked under {plan['was']} stay revoked for it: {names}")
             if args.dry_run:
                 return 0
             await account_admin.link_account(args.email, args.org, args.namespace, by=_by())
-        except (ValueError, LoomServerError) as e:  # refused, or a claim busy: nothing written
+        except (ValueError, LoomServerError) as e:  # refused or busy: run it again
             print(f"  ✗ {e}", file=sys.stderr)
             return 2
         print("linked: their next SSO sign-in lands on this account")
