@@ -279,6 +279,53 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(document.querySelectorAll("#msg-same")).toHaveLength(1);
   });
 
+  // While a replica of the previous release still serves, it reads "*" as a literal agent.
+  it("opens a memory's source thread under the memory's agent where '*' finds nothing", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread
+      .mockResolvedValueOnce({ ...detail("thread-s", ""), found: false, msg_count: 0, messages: [] })
+      .mockResolvedValueOnce(detail("thread-s", "Title S"));
+    listMemories.mockResolvedValue(noMemories);
+    useStore.setState({ pendingConversationThread: { threadId: "thread-s", agent: "claude-code" } });
+
+    render(<Conversations />);
+    expect(await screen.findByText("body of thread-s")).toBeInTheDocument();
+    expect(getConversationThread.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
+  });
+
+  it("says a thread read by its agent is cut short when no page cursor came back", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread
+      .mockResolvedValueOnce({ ...detail("thread-y", ""), found: false, msg_count: 0, messages: [] })
+      .mockResolvedValueOnce({ ...detail("thread-y", "Title Y"), msg_count: 260 });
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title Y"));
+    expect(await screen.findByText("Showing 1 of 260 turns.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Load more/ })).toBeNull();
+  });
+
+  it("pages under the listed agent when a '*' page comes back empty", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2, next_cursor: "c-1" });
+    listMemories.mockResolvedValue(noMemories);
+    const now = new Date().toISOString();
+    listConversationMessages.mockResolvedValueOnce({ rows: [], next_cursor: null }).mockResolvedValueOnce({
+      rows: [{ msg_id: "y-2", role: "user", content: "second turn", ts: now }],
+      next_cursor: null,
+    });
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title Y"));
+    fireEvent.click(await screen.findByRole("button", { name: /Load more/ }));
+    expect(await screen.findByText("second turn")).toBeInTheDocument();
+    expect(listConversationMessages.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
+  });
+
   it("ignores '/' pressed inside the thread dialog", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });

@@ -170,7 +170,13 @@ export function Conversations() {
   const [threadsRetry, setThreadsRetry] = useState(0);
   // Selected thread for the message-replay dialog. Click a thread
   // card OR a search-hit thread header → fetch full messages → show.
-  const [openThread, setOpenThread] = useState<{ thread_id: string; agent: string; namespace: string } | null>(null);
+  // `knownAgent`: the agent the opener named, for a replica of the previous release.
+  const [openThread, setOpenThread] = useState<{
+    thread_id: string;
+    agent: string;
+    namespace: string;
+    knownAgent?: string;
+  } | null>(null);
   const [threadDetail, setThreadDetail] = useState<ConversationThreadDetail | null>(null);
   const [threadLoading, setThreadLoading] = useState(false);
   // Durable memories this thread produced (via source_trace=conversation:<id>).
@@ -320,7 +326,7 @@ export function Conversations() {
       const namespace = opts.namespace || identity.namespace;
       const targetMsgId = opts.msgId;
       // "*" reads every agent's turns in the thread, however it was opened.
-      setOpenThread({ thread_id, agent: "*", namespace });
+      setOpenThread({ thread_id, agent: "*", namespace, knownAgent: opts.knownAgent });
       setThreadDetail(null);
       setMoreCursor(null);
       setLoadingMore(false);
@@ -374,7 +380,8 @@ export function Conversations() {
   // Deep-link from a memory's "View source conversation" → open that thread.
   useEffect(() => {
     if (!pendingConversationThread) return;
-    void openThreadDialog(pendingConversationThread);
+    const { threadId, agent } = pendingConversationThread;
+    void openThreadDialog(threadId, { knownAgent: agent || undefined });
     clearPendingConversationThread();
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
 
@@ -382,14 +389,22 @@ export function Conversations() {
     const reads = threadReads.current;
     if (!reads || !openThread || !threadDetail || !moreCursor || loadingMore) return;
     const { signal } = reads;
-    const { thread_id, agent, namespace } = openThread;
+    const { thread_id, agent, namespace, knownAgent } = openThread;
     setLoadingMore(true);
     try {
-      const r = await listConversationMessages({ org: identity.org, namespace }, agent, thread_id, {
-        cursor: moreCursor,
-        limit: 200,
-        signal,
-      });
+      const page = (as: string) =>
+        listConversationMessages({ org: identity.org, namespace }, as, thread_id, {
+          cursor: moreCursor,
+          limit: 200,
+          signal,
+        });
+      let r = await page(agent);
+      // A replica of the previous release answers "*" with no rows; the opener's agent
+      // still pages there. Drop with the next release.
+      if (r.rows.length === 0 && agent === "*" && knownAgent && !signal.aborted) {
+        r = await page(knownAgent);
+        setOpenThread((t) => t && { ...t, agent: knownAgent });
+      }
       if (signal.aborted) return;
       // Merge into the detail as it is now, and only if it is still this thread's. New
       // rows append (server returns chronological order; we render in-place).
@@ -728,6 +743,12 @@ export function Conversations() {
                     {`Load more (${threadDetail.msg_count - threadDetail.messages.length} remaining)`}
                   </Button>
                 </div>
+              )}
+              {/* No cursor though turns remain: a replica of the previous release read it. */}
+              {!moreCursor && threadDetail.msg_count > threadDetail.messages.length && (
+                <p className="pt-3 text-center text-xs text-text-muted">
+                  {`Showing ${threadDetail.messages.length} of ${threadDetail.msg_count} turns.`}
+                </p>
               )}
             </div>
           )}

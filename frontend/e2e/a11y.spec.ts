@@ -1,36 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
-import { installApi } from "./fixtures";
+import { installApi, ROUTES } from "./fixtures";
 
 // axe-core on the rendered dashboard: every route at desktop and phone width, and the shell's
 // dialog and menu open. WCAG 2.0–2.2 A and AA rules; any violation fails, with its rule,
 // impact and the first nodes it hit. Contrast is only measurable here, not in jsdom.
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8");
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
-
-const ROUTES = [
-  "/memories",
-  "/recall",
-  "/settings",
-  "/repositories",
-  "/flow",
-  "/library",
-  "/conversations",
-  "/graph",
-  "/spaces",
-  "/profile",
-  "/runs",
-  "/tasks",
-  "/admin/review_queue",
-  "/admin/health",
-  "/admin/guardrails",
-  "/admin/policies",
-  "/admin/activity",
-  "/admin/usage",
-  "/admin/agents",
-  "/admin/users",
-];
 
 interface Violation {
   id: string;

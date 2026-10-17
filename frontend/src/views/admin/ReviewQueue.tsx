@@ -92,8 +92,9 @@ export function ReviewQueue() {
         Memory disputes needing a human decision — your agent flip-flopped on a fact, or the extractor wants to promote
         one. Most users never see anything here; that's a feature.
       </p>
-      <Tabs value={tab} onValueChange={setTab}>
-        {(hasLearnings || hasExceptions) && (
+      {/* Tabs only when there is something to switch to: one panel is the page itself. */}
+      {hasLearnings || hasExceptions ? (
+        <Tabs value={tab} onValueChange={setTab}>
           <Tabs.TriggersList className="mb-5" aria-label="Review queue">
             <TabTrigger value="conflicts" icon="warning">
               Conflicts
@@ -109,21 +110,23 @@ export function ReviewQueue() {
               </TabTrigger>
             )}
           </Tabs.TriggersList>
-        )}
-        <Tabs.Content value="conflicts">
-          <ConflictsPanel />
-        </Tabs.Content>
-        {hasLearnings && (
-          <Tabs.Content value="learnings">
-            <LearningsPanel initialPending={probedLearnings} />
+          <Tabs.Content value="conflicts">
+            <ConflictsPanel />
           </Tabs.Content>
-        )}
-        {hasExceptions && (
-          <Tabs.Content value="exceptions">
-            <AllowlistPanel initial={probedExceptions} />
-          </Tabs.Content>
-        )}
-      </Tabs>
+          {hasLearnings && (
+            <Tabs.Content value="learnings">
+              <LearningsPanel initialPending={probedLearnings} />
+            </Tabs.Content>
+          )}
+          {hasExceptions && (
+            <Tabs.Content value="exceptions">
+              <AllowlistPanel initial={probedExceptions} />
+            </Tabs.Content>
+          )}
+        </Tabs>
+      ) : (
+        <ConflictsPanel />
+      )}
     </PageContainer>
   );
 }

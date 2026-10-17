@@ -125,6 +125,8 @@ describe("ReviewQueue", () => {
     seed("ns-b");
     await screen.findByText("No conflicts", {}, WAIT);
     expect(screen.queryByRole("tab")).toBeNull();
+    // A lone Conflicts panel is the page, not a tab panel with no tabs.
+    expect(screen.queryByRole("tabpanel")).toBeNull();
   });
 
   it("names the icon-only remove button on an exception", async () => {

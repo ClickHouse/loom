@@ -454,7 +454,8 @@ async def list_thread(
 
     `after`: `(ts, msg_id)` of the previous page's last row — returns
     only messages strictly after it. `run_id`: restrict to one agent run.
-    `agent=None`: every agent's messages in the thread.
+    `agent=None`: every agent's messages in the thread, a turn two agents both
+    logged once.
     `order`: `asc` (oldest first, the default) or `desc` (newest first —
     the thread's tail; `after` is an ascending cursor and is not combined
     with it).
@@ -494,6 +495,9 @@ async def list_thread(
         where.append("run_id = {run_id:String}")
         params["run_id"] = run_id
 
+    # Two agents logging the same turn store it under one content-hashed msg_id; a read
+    # across agents returns it once, as its first writer (by the page's order) logged it.
+    one_per_turn = "LIMIT 1 BY msg_id" if agent is None else ""
     rows = await ch.query_all(
         f"""
         SELECT org, namespace, agent, thread_id, msg_id, role, content,
@@ -502,6 +506,7 @@ async def list_thread(
         FROM loom.conversations
         WHERE {" AND ".join(where)}
         ORDER BY ts {direction}, msg_id {direction}
+        {one_per_turn}
         LIMIT {{limit:UInt32}}
         """,
         params=params,

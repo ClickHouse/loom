@@ -428,7 +428,9 @@ export default function App() {
         <div className="flex-1 flex flex-col min-w-0">
           <ReloadBar />
           <Header />
-          <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto" ref={mainRef}>
+          {/* `relative`: a visually hidden (absolute) label inside a scrolled row is placed
+              against main, so it can never stretch the page past the viewport. */}
+          <main id="main" tabIndex={-1} className="relative flex-1 overflow-y-auto" ref={mainRef}>
             <ProblemsBanner />
             <PendingRequestBanner />
             {/* Keyed by view so each navigation replays the fade-in. `h-full`

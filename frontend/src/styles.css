@@ -292,6 +292,21 @@ body {
 /* Loom's own classes sit in the components layer, so a utility on the same
    element still applies. */
 @layer components {
+  /* Click UI's dialog close (its CrossButton, which the package does not export),
+     drawn by ui/Modal. */
+  .dialog-close {
+    display: inline-flex;
+    padding: var(--click-button-iconButton-sm-space-y) var(--click-button-iconButton-sm-space-x);
+    border: 0;
+    border-radius: var(--click-button-iconButton-radii-all);
+    background: var(--click-button-iconButton-color-primary-background-default);
+    color: inherit;
+    cursor: pointer;
+  }
+  .dialog-close:hover {
+    background: var(--click-button-iconButton-color-primary-background-hover);
+  }
+
   /* Click UI's navigation title: 12 px medium, sentence case, muted. It labels a group
      inside a list, menu or rail; a panel or card title is Click UI's Title (SectionHeading). */
   .section-label {

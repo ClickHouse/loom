@@ -68,3 +68,16 @@ async def test_a_thread_counts_each_turn_once() -> None:
     await conversation_repo.count_thread_msgs("o", "ns", None, "t-1", ch=ch)
     sql, _ = ch.calls[-1]
     assert "uniqExact(msg_id)" in sql
+
+
+@pytest.mark.asyncio
+async def test_a_thread_read_across_agents_returns_a_shared_turn_once() -> None:
+    ch = StubCH()
+    await conversation_repo.list_thread("o", "ns", None, "t-1", ch=ch)
+    sql, _ = ch.calls[-1]
+    assert "LIMIT 1 BY msg_id" in sql
+
+    # One agent never logs a msg_id twice (conversation.append checks), so its read needs no collapse.
+    await conversation_repo.list_thread("o", "ns", "bot", "t-1", ch=ch)
+    sql, _ = ch.calls[-1]
+    assert "LIMIT 1 BY" not in sql

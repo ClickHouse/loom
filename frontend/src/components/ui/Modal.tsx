@@ -1,14 +1,15 @@
 import { useLayoutEffect, useRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Dialog } from "@clickhouse/click-ui/Dialog";
-import { IconButton } from "../IconButton";
+import { Icon } from "@clickhouse/click-ui/Icon";
 
 /**
  * Modal — the one dialog: Click UI's Dialog (title, description, padding, focus trap,
  * Escape) with a close button, a layered overlay and focus returned to the opener. Click
- * UI's own `showClose` button is named after its icon ("cross"), its overlay has no
- * z-index, and Radix returns focus only to a `Dialog.Trigger`, which a dialog opened from
- * state has none of. Actions go in a `ModalFooter`: secondary first, the primary last.
+ * UI's own `showClose` button is named after its icon ("cross"), so Modal draws the same
+ * button named "Close"; Click UI's overlay has no z-index, and Radix returns focus only
+ * to a `Dialog.Trigger`, which a dialog opened from state has none of. Actions go in a
+ * `ModalFooter`: secondary first, the primary last.
  */
 type ContentProps = ComponentPropsWithoutRef<typeof Dialog.Content>;
 
@@ -37,8 +38,8 @@ const LAYER = { dialog: "z-50", confirm: "z-[60]" } as const;
 
 // Opening focuses the first field or action in the body, as Radix would, or the dialog
 // itself when the body has none yet (its fields render after a read, or it holds only
-// links, which Radix skips too). Never the close button: its tooltip would open over the
-// title.
+// links, which Radix skips too). Never the close button, which would leave a reader
+// starting on "Close" rather than in the content.
 const BODY_FOCUSABLE = "input, select, textarea, button:not([data-modal-close]), [tabindex]:not([tabindex='-1'])";
 
 function focusDialog(e: Event) {
@@ -94,14 +95,14 @@ export function Modal({
         onCloseAutoFocus={returnFocus}
         {...handlers}
       >
-        {/* First in the DOM, as it is drawn in the header, so Tab follows what is seen. */}
-        <RadixDialog.Close asChild>
-          <IconButton
-            icon="cross"
-            label="Close"
-            className="absolute top-[var(--click-dialog-space-y)] right-[var(--click-dialog-space-x)]"
-            data-modal-close=""
-          />
+        {/* First in the DOM, as it is drawn in the header, so Tab follows what is seen.
+            Click UI's own close: a large cross with no tooltip, so one Escape closes. */}
+        <RadixDialog.Close
+          aria-label="Close"
+          className="dialog-close absolute top-[var(--click-dialog-space-y)] right-[var(--click-dialog-space-x)]"
+          data-modal-close=""
+        >
+          <Icon name="cross" size="lg" aria-hidden="true" />
         </RadixDialog.Close>
         {children}
       </Dialog.Content>

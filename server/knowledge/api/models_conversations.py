@@ -167,8 +167,9 @@ class ConversationGetInput(BaseModel):
 
     org: str
     namespace: str
-    # "*" reads every agent's turns in the thread, for a caller that has only its id;
-    # any other value, "-" included, reads that one agent's.
+    # "*" reads every agent's turns in the thread (a turn two agents both logged once),
+    # for a caller that has only its id; any other value, "-" included, reads that
+    # one agent's.
     agent: str
     # The thread to fetch.
     thread_id: str
@@ -216,8 +217,9 @@ class ConversationGetOutput(BaseModel):
 class ConversationListInput(BaseModel):
     org: str
     namespace: str
-    # "*" reads every agent's turns in the thread, for a caller that has only its id;
-    # any other value, "-" included, reads that one agent's.
+    # "*" reads every agent's turns in the thread (a turn two agents both logged once),
+    # for a caller that has only its id; any other value, "-" included, reads that
+    # one agent's.
     agent: str
     # The thread to page through, oldest message first.
     thread_id: str

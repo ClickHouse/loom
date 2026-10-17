@@ -1299,3 +1299,27 @@ function taskCountsFixture(namespace: string): Record<string, unknown>[] {
     { inbox: TASK_INBOX, status: "blocked", blocked_on: "sender", n: 1, oldest: "2026-09-20T03:00:00" },
   ];
 }
+
+/** Every dashboard route, for the specs that sweep them all. */
+export const ROUTES = [
+  "/memories",
+  "/recall",
+  "/settings",
+  "/repositories",
+  "/flow",
+  "/library",
+  "/conversations",
+  "/graph",
+  "/spaces",
+  "/profile",
+  "/runs",
+  "/tasks",
+  "/admin/review_queue",
+  "/admin/health",
+  "/admin/guardrails",
+  "/admin/policies",
+  "/admin/activity",
+  "/admin/usage",
+  "/admin/agents",
+  "/admin/users",
+];
