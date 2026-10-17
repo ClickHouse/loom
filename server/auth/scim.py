@@ -180,13 +180,16 @@ async def update(
             return None
         keep = bool(row["active"]) if active is None else active
         changes = _entry(email_entry)
+        asked = active is True
         if not user_name or normalized(user_name) == row["user_name"]:
-            new, cutoff = await _set_active(row, keep, **changes)
+            new, cutoff = await _set_active(row, keep, asked=asked, **changes)
         else:
             async with _held(_name_lease(user_name)):
                 await _refuse_taken(user_name, uid)
                 renamed = normalized(user_name)
-                new, cutoff = await _set_active(row, keep, user_name=renamed, **changes)
+                new, cutoff = await _set_active(
+                    row, keep, asked=asked, user_name=renamed, **changes
+                )
     await _wait_out(cutoff)
     return new
 
@@ -273,17 +276,20 @@ async def _wait_out(cutoff: datetime | None) -> None:
 
 
 async def _set_active(
-    row: dict[str, Any], active: bool, **changes: Any
+    row: dict[str, Any], active: bool, *, asked: bool = False, **changes: Any
 ) -> tuple[dict[str, Any], datetime | None]:
     """The row as written, and a reactivation's cutoff for the caller to wait
-    out once it lets its leases go."""
+    out once it lets its leases go. `asked`: the request set `active: true`."""
     was_active = bool(row["active"])
     new = {**row, **changes, "active": int(active)}
     unwritten = "version" not in row
     if active and was_active:  # no revocation to make or lift: no subject lease
         if new != row or unwritten:
             await _write(new)
-        return new, None
+        # A provider retrying a reactivation that timed out waits out what is
+        # left of the first try's cutoff; other no-op requests skip the read.
+        cutoff = await _lifted_before(row["subjects"]) if asked and row["subjects"] else None
+        return new, cutoff
     found = {} if active else await _subjects(row["email"])
     known = set(row["subjects"])
     cutoff = None

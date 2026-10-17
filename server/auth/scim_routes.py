@@ -76,9 +76,10 @@ def _error_response(e: ScimError) -> JSONResponse:
 
 class _ScimRoute(APIRoute):
     """Answers, as RFC 7644 errors, what these routes and their bearer check
-    raise: a SCIM refusal, a busy user, and any of Loom's own errors (a 5xx as a
-    retryable 503). Unknown paths and methods under /scim/v2 reach `unknown`
-    below. The rest of the server's error format is left alone."""
+    raise: a SCIM refusal, a busy user, any of Loom's own errors (a 5xx as a
+    retryable 503) and anything else (a store error) as a 503. Unknown paths
+    and methods under /scim/v2 reach `unknown` below. The rest of the server's
+    error format is left alone."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         handler = super().get_route_handler()
@@ -94,6 +95,9 @@ class _ScimRoute(APIRoute):
                 if e.status_code >= 500:  # the store, overloaded or timed out: retryable
                     return _error_response(ScimError(503, f"{e.code.lower()}; retry"))
                 return _error_response(ScimError(e.status_code, str(e) or e.code.lower()))
+            except Exception:  # logged: a provider needs a SCIM error to retry on
+                log.exception("scim: %s %s failed", request.method, request.url.path)
+                return _error_response(ScimError(503, "the request failed; retry"))
 
         return run
 

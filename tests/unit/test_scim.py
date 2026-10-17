@@ -399,6 +399,27 @@ async def test_a_retried_reactivation_still_waits_out_the_first_ones_cutoff(
     assert waited == [cutoff]
 
 
+async def test_a_reactivation_retried_after_a_timeout_waits_out_the_rest(
+    world, monkeypatch
+) -> None:
+    # The provider gave up during the first one's wait; the row is already active.
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    await scim.set_active(uid, True)
+    await scim.set_active(uid, True)
+    first, retry = world.waits
+    assert 0 < retry <= first
+
+    await scim.update(uid, user_name="lee@example.com")  # no `active`: nothing read or waited
+    assert len(world.waits) == 2
+
+    later = time.time() + 60
+    monkeypatch.setattr(revocation, "time", SimpleNamespace(time=lambda: later))
+    await scim.set_active(uid, True)  # a late retry answers at once
+    assert world.waits[-1] == 0
+
+
 async def test_a_reactivation_waits_once_its_leases_are_let_go(world, monkeypatch) -> None:
     # Held through the wait, a deactivation sent meanwhile would wait on the
     # lease past `_LEASE_WAIT_S` and answer busy.
@@ -1051,9 +1072,8 @@ def test_a_failed_request_still_deactivates(client: TestClient, world, monkeypat
         raise RuntimeError("a bug")
 
     monkeypatch.setattr(scim_routes, "patched_names", broken)
-    with pytest.raises(RuntimeError):
-        _patch(client, uid, {"op": "replace", "path": "active", "value": False})
-    assert world.outright == {"lee": scim.DEACTIVATED}
+    r = _patch(client, uid, {"op": "replace", "path": "active", "value": False})
+    assert r.status_code == 503 and world.outright == {"lee": scim.DEACTIVATED}
 
 
 def test_a_whole_entry_write_must_be_an_object(client: TestClient, world) -> None:
@@ -1104,6 +1124,21 @@ def test_a_store_outage_answers_a_scim_503(client: TestClient, monkeypatch) -> N
     assert r.status_code == 503 and r.headers["retry-after"] == "5"
     assert r.headers["content-type"].startswith("application/scim+json")
     assert r.json()["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:Error"]
+
+
+def test_an_unexpected_error_answers_a_scim_503(client: TestClient, monkeypatch) -> None:
+    async def broken(*_a: Any, **_k: Any) -> None:
+        raise Exception("Code: 241. Memory limit exceeded")
+
+    monkeypatch.setattr(scim, "get", broken)
+    r = client.get("/scim/v2/Users/x")
+    assert r.status_code == 503 and r.headers["retry-after"] == "5"
+    assert r.headers["content-type"].startswith("application/scim+json")
+    assert r.json() == {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+        "status": "503",
+        "detail": "the request failed; retry",
+    }
 
 
 async def test_the_transition_is_audited_even_when_the_re_read_fails(world, monkeypatch) -> None:
