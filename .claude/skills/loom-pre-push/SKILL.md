@@ -21,7 +21,7 @@ git status --short          # untracked files are part of the change too
 
 ```bash
 make format                 # rewrites; commit the result
-make lint                   # ruff, function-length + secret gates, every generator --check
+make lint                   # ruff, function-length + secret gates, every generator --check, Biome a11y on frontend/src
 make typecheck              # mypy --strict on the SDK + the server ratchet
 make test-unit              # tests/unit (random order in CI) + bench
 ```

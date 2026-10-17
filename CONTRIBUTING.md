@@ -83,7 +83,7 @@ docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --p
 
 ```bash
 make format        # ruff, Biome, Prettier, Taplo, shfmt (CI: make format-check)
-make lint          # ruff, the function-length and secret gates, generated files current
+make lint          # ruff, the function-length and secret gates, generated files current, Biome's dashboard accessibility rules
 make typecheck     # mypy --strict on the SDK + the server's mypy ratchet
 make test-unit     # pytest tests/unit and pytest bench (no ClickHouse needed)
 
