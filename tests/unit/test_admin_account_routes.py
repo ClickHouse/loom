@@ -233,3 +233,10 @@ def test_an_adoption_whose_skip_cannot_hold_applies_nothing(calls, body: dict[st
     r = _client().post("/v1/admin/sso.adopt", json=body)
     assert r.status_code == 422
     assert "adopt" not in [name for name, _ in calls]
+
+
+def test_an_unlink_with_a_misspelled_org_is_refused(calls) -> None:
+    # Dropped, `orgs` would leave org empty and unlink the email in every org.
+    r = _client().post("/v1/admin/sso.unlink", json={"email": "lee@acme.io", "orgs": "acme"})
+    assert r.status_code == 422
+    assert calls == []

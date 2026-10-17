@@ -415,8 +415,8 @@ def test_a_restart_begins_each_sign_in_where_it_began() -> None:
 def test_no_email_resolves_to_nobody_whatever_rows_have_none(
     monkeypatch: pytest.MonkeyPatch, email: str
 ) -> None:
-    # Agents' and bots' rows name no email and hold no password: an empty
-    # email must never be looked up, or it would land on one of them.
+    # Agents' and bots' rows name no email: an empty one must never be looked
+    # up, or it would land on one of them.
     import asyncio
 
     from server.identity.app import password_link

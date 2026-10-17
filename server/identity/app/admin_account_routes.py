@@ -30,10 +30,13 @@ def _invalid(e: ValueError) -> HTTPException:
     return HTTPException(status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)})
 
 
-class AdoptInput(BaseModel):
-    # A misspelled `skip` would adopt the bot it meant to leave out.
+class _Input(BaseModel):
+    # A misspelled field is refused, not dropped: a lost `skip` adopts the bot
+    # it meant to leave out, a lost `org` unlinks an email in every org.
     model_config = ConfigDict(extra="forbid")
 
+
+class AdoptInput(_Input):
     domain: str
     org: str = ""
     skip: list[str] = []  # emails left out, e.g. bots'
@@ -63,7 +66,7 @@ async def sso_adopt(input: AdoptInput, info: Admin) -> dict[str, Any]:
     }
 
 
-class EmailInput(BaseModel):
+class EmailInput(_Input):
     email: str
     org: str = ""
 
@@ -85,7 +88,7 @@ async def sso_password_link(input: EmailInput, info: Admin, request: Request) ->
     return {"url": url, "namespaces": namespaces}
 
 
-class BotInput(BaseModel):
+class BotInput(_Input):
     name: str
     org: str
     namespace_roles: list[str]
@@ -169,7 +172,7 @@ async def bots_list() -> dict[str, Any]:
     }
 
 
-class NameInput(BaseModel):
+class NameInput(_Input):
     name: str
 
 

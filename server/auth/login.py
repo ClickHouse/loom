@@ -307,7 +307,7 @@ async def resolve_identity_for_email(
     at the IdP. None when nothing matches.
     """
     ident = email.strip().lower()
-    if not ident:  # an agent's or a bot's row names no email and has no password
+    if not ident:  # rows with no email (agents', bots') are nobody's to sign in as
         return None
     ch = get_client()
     rows = await ch.query_all(
