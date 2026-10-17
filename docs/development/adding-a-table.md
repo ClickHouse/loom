@@ -40,7 +40,7 @@ When you add a column to one of these tables:
 
 `tests/unit/test_memory_write_path_mirror.py` and `tests/unit/test_embedding_mirror_carry.py` check the secondary write paths.
 
-**The history mirror.** `loom.memory_versions` is an append-only twin of `loom.memory`, filled by the `memory_versions_mv` materialized view. `memory.history` and `memory.redact` read it, because merges drop superseded rows from the `ReplacingMergeTree`. Add a new `loom.memory` column to `loom.memory_versions` and to the view's `SELECT` **in the same migration**. `tests/unit/test_memory_versions_schema.py` compares both column lists in `schema.sql` with `MEMORY_PERSISTED_COLS`.
+**The history mirror.** `loom.memory_versions` is an append-only twin of `loom.memory`, filled by the `memory_versions_mv` materialized view. `memory.history`, `memory.redact` and `namespace.rollback` (with [bi-temporal memory](../features/memory/bitemporal.md) off) read it, because merges drop superseded rows from the `ReplacingMergeTree`. Add a new `loom.memory` column to `loom.memory_versions` and to the view's `SELECT` **in the same migration**. `tests/unit/test_memory_versions_schema.py` compares both column lists in `schema.sql` with `MEMORY_PERSISTED_COLS`.
 
 Any new write path sets the server-stamped `actor` and `source_class` (`server.memory.domain.provenance`), never values from the request body.
 

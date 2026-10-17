@@ -13,6 +13,12 @@ This page holds the rules for writing a migration. How a deployment applies them
   (a CI step and the deploy preflight) fails on either. A file renamed with its text
   unchanged is not ledger-only: its SHA-256 names it, and it is recorded under the new
   name without running again.
+- A file whose leading comments carry `-- requires-setting: <field>` is dormant while
+  that setting is off: neither applied nor reported pending. It applies at the first
+  migrate after the setting is turned on. `039_bitemporal_memory.sql` is one
+  (`memory_temporal_enabled`, [bi-temporal memory](../features/memory/bitemporal.md));
+  `schemas/schema.sql` is the dump without it and `schemas/schema_temporal.sql` the dump
+  with it.
 - Every file addresses `loom.<table>`, so the schema always lives in a database named
   `loom` whatever `LOOM_CH_DATABASE` says.
 

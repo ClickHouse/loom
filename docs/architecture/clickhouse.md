@@ -282,10 +282,12 @@ merge that lag themselves.
 
 Merges discard superseded `memory` rows, so the RMT table is not a history.
 `memory_versions_mv` copies every inserted `memory` row into `memory_versions`, which keeps
-each version. `memory.history`, `memory.redact` and the usage fold
-read it (`namespace.rollback` reads the bi-temporal journal); the erasure saga deletes from it. A new `memory` column goes into
+each version. `memory.history`, `memory.redact`, `namespace.rollback` and the usage fold
+read it; the erasure saga deletes from it. A new `memory` column goes into
 `memory_versions` and the view's `SELECT` in the same migration;
-`tests/unit/test_memory_versions_schema.py` compares the column lists.
+`tests/unit/test_memory_versions_schema.py` compares the column lists. With
+[bi-temporal memory](../features/memory/bitemporal.md) on, `namespace.rollback` reads the
+journal (`memory_temporal_commits`) instead.
 
 ## Materialized views
 
@@ -403,11 +405,13 @@ with `purge=true` and runner state.
   only the row mask: rows vanish from every read at once and bytes leave at the next merge.
   Narrow tables keep `ALTER TABLE … DELETE`. The
   saga polls each mutation by an embedded tag, and a residue census checks the result.
-- **The temporal journal is append-only** except in three places. `memory.redact` rewrites the
-  text of every retired assertion that held the redacted value in `memory_temporal_assertions`
-  and in its commits' payloads (hashes stay). A publisher that lost a sequence race deletes its
-  own unacknowledged commits. The integrity repair (the next write, or the projection worker)
-  deletes the later-landed commits at a sequence that still holds two payloads.
+- **The temporal journal is append-only** (present only with
+  [bi-temporal memory](../features/memory/bitemporal.md) on) except in three places.
+  `memory.redact` rewrites the text of every retired assertion that held the redacted
+  value in `memory_temporal_assertions` and in its commits' payloads (hashes stay). A
+  publisher that lost a sequence race deletes its own unacknowledged commits. The
+  integrity repair (the next write, or the projection worker) deletes the later-landed
+  commits at a sequence that still holds two payloads.
 - **Remaining `ALTER … UPDATE/DELETE` call sites** are listed in
   `tests/unit/test_clickhouse_mutation_inventory.py`, which fails on a new one until it is
   classified there.

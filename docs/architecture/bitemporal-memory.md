@@ -1,6 +1,13 @@
 # Bi-temporal memory
 
-Loom answers two time questions about a memory: which assertions applied at a
+**Status: opt-in, off by default.** Everything on this page applies only with
+`LOOM_MEMORY_TEMPORAL_ENABLED=true`; why it is off, how to turn it on and off, and what
+changes on the wire are in [bi-temporal memory](../features/memory/bitemporal.md). Until
+it is enabled, migration `039_bitemporal_memory.sql` is dormant (neither applied nor
+reported pending) and the schema is `schemas/schema.sql`; `schemas/schema_temporal.sql`
+is the schema with the journal on.
+
+With the journal on, Loom answers two time questions about a memory: which assertions applied at a
 **valid time** V (when something was true in the world), and what Loom had
 **recorded** by a **knowledge time** K. A correction, a delete or a merge never
 rewrites what Loom believed earlier. Temporal consistency does not establish

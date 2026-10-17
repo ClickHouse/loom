@@ -19,7 +19,7 @@ person can attest that a row is true. How the version mirror works is in
 | `memory.lineage`     | viewer | The promotion trail of a shared memory: who promoted it, from which rows, through which review.           |
 | `memory.verify`      | writer | Attest that a row is true as the signed-in person or service account, or revoke the attestation.          |
 | `memory.redact`      | admin  | Scrub the value of one historical version, keeping the row and its audit entry.                           |
-| `namespace.rollback` | admin  | Return a namespace's memories to what they were at a point in time, in the journal.                       |
+| `namespace.rollback` | admin  | Return every memory head in a namespace to its version at a point in time.                                |
 | `namespace.snapshot` | admin  | Export a namespace's curated state as a JSON payload.                                                     |
 | `namespace.restore`  | viewer | Import a snapshot into a fresh namespace, or an existing one the caller administers.                      |
 
@@ -31,8 +31,8 @@ operations reference under [memory](../../reference/operations.md#memory) and
 
 `loom.memory` holds current state and is read with `FINAL`, so a merge keeps only the
 newest version of each row. `loom.memory_versions` is an append-only mirror filled by a
-materialized view on every insert; it is the history that `memory.history` and
-`memory.redact` read.
+materialized view on every insert; it is the history that `memory.history`,
+`memory.redact` and `namespace.rollback` read.
 
 A history row carries `version` (the write's nanosecond epoch), `written_at`, `value`,
 `confidence`, `pinned`, `expires_at`, `tombstoned_at`, `redacted_at`,
@@ -49,9 +49,11 @@ async with Agent(org="acme", namespace="support", agent="auditor") as agent:
 ```
 
 A tombstone is a version too, so a delete shows in history and `memory.restore` can
-revive the key within 14 days. For point-in-time reads, use `valid_as_of` /
-`known_as_of` on `memory.get`, `memory.search` and `memory.ask`, and `memory.intervals`
-for a key's timeline ([validity time](./writing.md#validity-time-valid_at-and-valid_to)).
+revive the key within 14 days. For point-in-time reads of current state, use `as_of` on
+`memory.get`, `memory.search` and `memory.ask`
+([validity time](./writing.md#validity-time-valid_at-and-valid_to)). With
+[bi-temporal memory](./bitemporal.md) on, use `valid_as_of` / `known_as_of` instead, and
+`memory.intervals` for a key's timeline; `memory.history` still reads the mirror.
 
 ## Who wrote it: actor and source class
 
@@ -154,21 +156,15 @@ To remove a person's data everywhere, use [erasure](./retention-and-erasure.md#e
 
 ## Rolling a namespace back: `namespace.rollback`
 
-`namespace.rollback(as_of)` works in the bi-temporal journal. Each key whose claims, as
-known at `as_of`, differ from what it serves now gets one commit. The commit serves the
-earlier claims again exactly as they were: a dated span keeps its span, a plan keeps its
-date, and a snapshot stays a snapshot. A key that served nothing at `as_of` is retracted
-instead. The current rows and search follow those commits. History is kept: a read with
-`known_as_of` before the rollback still answers what was known then, and a later
-rollback can undo this one.
+`namespace.rollback(as_of)` re-inserts, for each key, the highest version at or before
+`as_of` as the new head, and tombstones keys created after it. The rollback is itself new
+versions, so it can be undone the same way.
 
-- Dry run by default, reporting `reinstate`, `remove` and `sample` (each key's values
-  `then` and `now`); `dry_run=false` applies it.
-- A key whose lock in force refuses the change, or whose earlier value a blacklist now
-  refuses, is left as it is (`left_out`). So is a key written before the journal existed
-  and first journaled after `as_of`: what it held then was never recorded.
+- Dry run by default, reporting `reinstate`, `remove` and `sample`; `dry_run=false`
+  applies it.
 - `memory_keys` (up to 500) restricts it; `max_keys` (default 5,000) bounds one call and
   `truncated` says to call again.
+- The `embedding_worker` re-embeds reinstated heads.
 - An `as_of` older than the namespace's history, or in the future, is refused.
 
 ```bash
@@ -177,6 +173,24 @@ curl -sX POST http://localhost:7777/v1/namespace.rollback \
   -d '{"org":"dev","namespace":"local","as_of":"<YYYY-MM-DD>T09:00:00Z"}' \
   | jq '{reinstate, remove, truncated, sample}'
 ```
+
+### With bi-temporal memory on
+
+With [bi-temporal memory](./bitemporal.md) on, `namespace.rollback` works in the journal
+instead of the version mirror. Each key whose claims, as known at `as_of`, differ from
+what it serves now gets one commit. The commit serves the earlier claims again exactly as
+they were: a dated span keeps its span, a plan keeps its date, and a snapshot stays a
+snapshot. A key that served nothing at `as_of` is retracted instead. The current rows and
+search follow those commits. History is kept: a read with `known_as_of` before the
+rollback still answers what was known then, and a later rollback can undo this one.
+
+- `sample` carries each key's values `then` and `now`; `version_at`, `skipped_no_head`
+  and `skipped_already_gone` are absent, and `read_token` and `current_rows_pending` are
+  added.
+- A key whose lock in force refuses the change, or whose earlier value a blacklist now
+  refuses, is left as it is (`left_out`). So is a key written before the journal was
+  turned on and first journaled after `as_of`: what it held then was never recorded.
+- A rollback never restores a redacted or erased value: the journal no longer serves it.
 
 ## Snapshots: `namespace.snapshot` and `namespace.restore`
 
@@ -206,8 +220,11 @@ checkpoints chain the log. See [audit](../observability/audit.md).
   scrubbed either way.
 - **History is only as complete as the mirror.** A column added to `loom.memory` must be
   added to `loom.memory_versions` and its view in the same migration.
+- **Validity is valid-time only.** `knowledge_time` replays `created_at` against the
+  retirement (`invalid_at`) and deletion (`tombstoned_at`) stamps; there is no separate
+  transaction-time table (unless [bi-temporal memory](./bitemporal.md) is on).
 - **`thread_exists=false` is not an error.**
-- **A rollback never restores a redacted or erased value**: the journal no longer serves it.
+- **A rollback does not restore hard-deleted keys** (`skipped_no_head`).
 
 ## Related
 

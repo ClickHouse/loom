@@ -28,6 +28,11 @@ See [audit](features/observability/audit.md).
 Revise (`memory.update_by_id`), Contract (`memory.delete`), Reinforce (`memory.pin`),
 Refuse (`blacklist.add`). See [how a write is judged](concepts/memory.md#how-a-write-is-judged).
 
+**Bi-temporal memory** — the opt-in commit journal (`LOOM_MEMORY_TEMPORAL_ENABLED`,
+off by default) that records every memory write, so a read can ask what applied at a
+valid time as Loom had recorded it at a knowledge time (`valid_as_of`, `known_as_of`).
+See [bi-temporal memory](features/memory/bitemporal.md).
+
 **Blacklist** — registered substrings or regexes that refuse matching writes
 (`422 BLACKLISTED`); `sweep=true` also tombstones existing matches.
 
@@ -105,6 +110,10 @@ See [tasks and decisions](features/tasks-and-decisions.md).
 **Knowledge document** — a document added with `knowledge.add`, chunked and embedded for
 retrieval. Distinct from a memory: it is reference material, not a belief.
 See [knowledge documents](features/knowledge.md).
+
+**Knowledge time** — when Loom recorded a fact, as opposed to when it was true. Read
+with `known_as_of` when [bi-temporal memory](features/memory/bitemporal.md) is on; by
+default `as_of_basis="knowledge_time"` replays it from the row stamps.
 
 **Learning** — a candidate for promotion to the shared layer, waiting in
 `loom.learnings_queue` for a person to review it (`learnings.list`, `learnings.review`).
@@ -206,7 +215,9 @@ See [tracker](features/tracker/overview.md).
 and never changes it itself.
 
 **Valid time** — `valid_at` / `valid_to` on memories (`valid_from` / `valid_to` on
-entity edges): when a fact was true in the world. Loom records valid time only; it is not bi-temporal.
+entity edges): when a fact was true in the world. By default Loom records valid time
+only; with [bi-temporal memory](features/memory/bitemporal.md) on, the journal also
+records knowledge time.
 
 **Version** — the monotonically increasing column a `ReplacingMergeTree` keeps the
 highest of; every write of a memory (including a delete) is a new version.

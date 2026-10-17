@@ -93,6 +93,7 @@ client sees one the server no longer reads.
   [conflicts and refusal](features/memory/conflicts-and-refusal.md) ·
   [extraction](features/memory/extraction.md) ·
   [history and provenance](features/memory/history-and-provenance.md) ·
+  [bi-temporal memory (opt-in)](features/memory/bitemporal.md) ·
   [retention and erasure](features/memory/retention-and-erasure.md) ·
   [procedures and learnings](features/memory/procedures-and-learnings.md) ·
   [working memory and profiles](features/memory/working-memory-and-profiles.md)
