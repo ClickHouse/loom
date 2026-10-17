@@ -81,3 +81,19 @@ async def test_a_thread_read_across_agents_returns_a_shared_turn_once() -> None:
     await conversation_repo.list_thread("o", "ns", "bot", "t-1", ch=ch)
     sql, _ = ch.calls[-1]
     assert "LIMIT 1 BY" not in sql
+
+
+@pytest.mark.asyncio
+async def test_a_paged_read_across_agents_collapses_before_the_cursor() -> None:
+    """A second agent's copy of a turn is stamped later; collapsing inside the page would let
+    it through the cursor onto the next page, so the collapse runs before the cursor."""
+    from datetime import datetime
+
+    ch = StubCH()
+    await conversation_repo.list_thread(
+        "o", "ns", None, "t-1", after=(datetime(2026, 6, 1, 9, 0), "m1"), ch=ch
+    )
+    sql, _ = ch.calls[-1]
+    inner, _, outer = sql.partition("LIMIT 1 BY msg_id")
+    assert "(ts, msg_id) >" not in inner
+    assert "(ts, msg_id) >" in outer

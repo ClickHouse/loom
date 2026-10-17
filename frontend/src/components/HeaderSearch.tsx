@@ -754,8 +754,10 @@ function MoreLink({
 /** A result row bleeds into the popover's padding so its hover fill spans the width. */
 const ROW_BLEED = "block text-left -mx-2 w-[calc(100%+1rem)] px-2 rounded-sm cursor-pointer";
 
+// Focus stays in the field (aria-activedescendant), so the active option's ring is the
+// only focus indicator: Click UI's outline blue, inset, over the menu tint.
 function rowClass(isActive: boolean): string {
-  return `${ROW_BLEED} py-2 no-underline hover:no-underline text-text ${isActive ? "bg-surface-2" : "hover:bg-surface-2"}`;
+  return `${ROW_BLEED} py-2 no-underline hover:no-underline text-text ${isActive ? "bg-surface-2 ring-2 ring-inset ring-focus" : "hover:bg-surface-2"}`;
 }
 
 /** The query syntax, under the empty box's options. */

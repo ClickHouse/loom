@@ -477,9 +477,10 @@ async def list_thread(
     if agent is not None:
         where.append("agent = {agent:String}")
         params["agent"] = agent
+    page_where: list[str] = []
     if after is not None:
         ts_after, msg_after = after
-        where.append(
+        page_where.append(
             "(ts, msg_id) > (toDateTime64({ts:String}, 3, 'UTC'), {mid:String})",
         )
         # A basic-mode `toDateTime64` reads `YYYY-MM-DD hh:mm:ss.fff`; the
@@ -495,18 +496,24 @@ async def list_thread(
         where.append("run_id = {run_id:String}")
         params["run_id"] = run_id
 
-    # Two agents logging the same turn store it under one content-hashed msg_id; a read
-    # across agents returns it once, as its first writer (by the page's order) logged it.
-    one_per_turn = "LIMIT 1 BY msg_id" if agent is None else ""
+    columns = """org, namespace, agent, thread_id, msg_id, role, content,
+               reasoning, user_id, run_id, metadata, tokens, ts"""
+    source = f"loom.conversations WHERE {' AND '.join(where)}"
+    if agent is None:
+        # Two agents logging the same turn store it under one content-hashed msg_id. A
+        # read across agents keeps each turn's first copy before it pages, so a later
+        # copy never slips past the cursor onto the next page.
+        source = f"""(
+            SELECT {columns} FROM {source}
+            ORDER BY ts ASC, msg_id ASC
+            LIMIT 1 BY msg_id
+        )"""
     rows = await ch.query_all(
         f"""
-        SELECT org, namespace, agent, thread_id, msg_id, role, content,
-               reasoning, user_id, run_id, metadata,
-               tokens, ts
-        FROM loom.conversations
-        WHERE {" AND ".join(where)}
+        SELECT {columns}
+        FROM {source}
+        {"WHERE " + " AND ".join(page_where) if page_where else ""}
         ORDER BY ts {direction}, msg_id {direction}
-        {one_per_turn}
         LIMIT {{limit:UInt32}}
         """,
         params=params,

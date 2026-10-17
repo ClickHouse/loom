@@ -103,6 +103,19 @@ test.describe("open overlays", () => {
       "aria-activedescendant",
       (await listbox.getByRole("option").first().getAttribute("id")) ?? "",
     );
+    // Focus stays in the field, so the active option draws the focus ring itself.
+    const ring = await listbox
+      .getByRole("option")
+      .first()
+      .evaluate((el) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--color-focus)";
+        document.body.append(probe);
+        const focus = getComputedStyle(probe).color;
+        probe.remove();
+        return { shadow: getComputedStyle(el).boxShadow, focus };
+      });
+    expect(ring.shadow).toContain(ring.focus);
 
     await page.keyboard.press("Tab");
     await expect(listbox).toBeHidden();
@@ -175,6 +188,39 @@ test.describe("open overlays", () => {
     await page.getByRole("button", { name: /^(Read|Checked) by/ }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     expect(await violations(page)).toEqual([]);
+  });
+
+  test("the token dialog returns focus to Generate token", async ({ page }) => {
+    await open(page, "/settings");
+    // A slow mint: Click UI disables the loading button, which drops its focus first.
+    await page.route("**/v1/me/setup/mcp_config", async (route) => {
+      await new Promise((r) => setTimeout(r, 300));
+      await route.fulfill({
+        json: {
+          client: "claude-code",
+          config_path: { darwin: "~/.claude.json", linux: "~/.claude.json", win32: "%USERPROFILE%\\.claude.json" },
+          config_key: "mcpServers",
+          config: {},
+          token: "eyJhbGciOiJFUzI1NiJ9.e30.sig",
+          subject: "dev",
+          org: "dev",
+          namespace: "dev",
+          namespace_scope: "single",
+          read_scope: "inherited_grants",
+          restricted_namespaces: [],
+          mcp_url: "http://127.0.0.1/mcp",
+          persisted: true,
+          sa_subject: "sa:claude-code-test",
+        },
+      });
+    });
+    const generate = page.getByRole("button", { name: "Generate token" });
+    await generate.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog", { name: "Token generated" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect(generate).toBeFocused();
   });
 
   test("an open Select list", async ({ page }) => {

@@ -58,6 +58,16 @@ function focusBodyOrDialog(e: Event) {
   (first ?? content).focus();
 }
 
+// The element focus was last on, outside the body. Click UI's Button disables itself
+// while `loading`, which drops its focus to the body; a dialog its click opens returns
+// focus there instead.
+let lastFocused: HTMLElement | null = null;
+if (typeof document !== "undefined") {
+  document.addEventListener("focusin", (e) => {
+    if (e.target instanceof HTMLElement && e.target !== document.body) lastFocused = e.target;
+  });
+}
+
 export function Modal({
   open,
   onOpenChange,
@@ -73,7 +83,9 @@ export function Modal({
   // Taken before Radix moves focus into the dialog (its focus effect is a passive one).
   const opener = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
-    if (open && document.activeElement instanceof HTMLElement) opener.current = document.activeElement;
+    if (!open) return;
+    const active = document.activeElement;
+    opener.current = active instanceof HTMLElement && active !== document.body ? active : lastFocused;
   }, [open]);
   const returnFocus = (e: Event) => {
     onCloseAutoFocus?.(e);

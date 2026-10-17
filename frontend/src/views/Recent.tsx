@@ -97,6 +97,8 @@ function detailToEntry(key: string, d: MemoryDetail): MemoryListEntry {
   };
 }
 
+const DELETED_TOGGLE = "memories-deleted-toggle";
+
 export function Recent() {
   const identity = useIdentity();
   // Viewers see the page read-only — the write CTAs are disabled with the reason, not
@@ -136,6 +138,14 @@ export function Recent() {
   const [pinnedOnly, setPinnedOnly] = useState(false);
   // Surfaces tombstoned rows + a Restore action in the 14-day grace window.
   const [showDeleted, setShowDeleted] = useState(false);
+  // The list reloads behind the loading skeleton, which unmounts the toolbar; the toggle
+  // takes focus back once the rows are in.
+  const refocusToggle = useRef(false);
+  useEffect(() => {
+    if (entries === null || !refocusToggle.current) return;
+    refocusToggle.current = false;
+    document.getElementById(DELETED_TOGGLE)?.focus();
+  }, [entries]);
   // Tag filter from the global store — set by clicking a tag chip in the
   // Inspector, shown as a dismissable chip at the top of the list.
   const memoryTagFilter = useStore((s) => s.memoryTagFilter);
@@ -768,8 +778,17 @@ export function Recent() {
                 : "Show memories deleted in the last 14 days; restore from this view"
             }
           >
-            <Button type="secondary" htmlType="button" onClick={() => setShowDeleted((v) => !v)}>
-              {showDeleted ? "Back to live" : "Recently deleted"}
+            <Button
+              id={DELETED_TOGGLE}
+              type="secondary"
+              htmlType="button"
+              aria-pressed={showDeleted}
+              onClick={() => {
+                refocusToggle.current = true;
+                setShowDeleted((v) => !v);
+              }}
+            >
+              Recently deleted
             </Button>
           </Tip>
           <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
