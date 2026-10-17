@@ -92,7 +92,8 @@ checkout.
    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 14). The command
    deletes only orphan row links: rows of `entity_triple_rows` and `entity_edge_rows`
    in each erasure's scope whose memory has no live row and no row written since the
-   erasure's census. Without `--resume` it counts them and exits 1 if any are left. Data written after the erasure stays.
+   erasure's census. Without `--resume` it counts them and exits 1 if any are left.
+   Data written after the erasure stays.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
