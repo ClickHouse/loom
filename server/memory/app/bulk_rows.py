@@ -236,10 +236,10 @@ def _bulk_skip_gate(
     # rewrite+re-embed+re-project. Caller still gets a result row
     # (version 0) so the response shape is unchanged.
     # Repeating a value an earlier entry wrote is unchanged only if that entry lands:
-    # `settle_batch_rows` gives it the earlier entry's outcome after the verdicts.
+    # `settle_batch_rows` gives it the earlier entry's outcome, and counts it, after the
+    # verdicts.
     batch_row = state.batch_rows.get(entry.memory_key)
     if batch_row is not None and batch_row["content_sha256"] == entry_sha:
-        state.skipped_unchanged += 1
         state.restatements.append((len(state.results), batch_row))
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
         return True
@@ -364,12 +364,11 @@ def settle_batch_rows(
             done = outcome[id(row)]
             if done == "verdict":
                 copies.append((res_i, result_of[id(row)], row))
-                state.skipped_unchanged -= 1
             elif done == PINNED:
                 res.conflict_verdict = PINNED
                 state.skipped_pinned.append(key)
-                state.skipped_unchanged -= 1
             else:
+                state.skipped_unchanged += 1
                 _note_restatement(state, str(row["memory_id"]))
             continue
         result_of[id(row)] = res_i

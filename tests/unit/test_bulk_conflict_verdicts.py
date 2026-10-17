@@ -283,3 +283,14 @@ def test_a_restated_merge_or_rejection_is_listed_with_its_verdict() -> None:
         assert [r.conflict_verdict for r in state.results] == [verdict] * 2
         listed = plan.merged if verdict == "merge" else plan.rejected_pinned
         assert listed == ["k", "k"] and state.skipped_unchanged == 0
+
+
+def test_a_restatement_of_a_landed_entry_counts_once_as_unchanged() -> None:
+    from server.memory.app.bulk_rows import _bulk_skip_gate
+    from server.memory.app.bulk_set import _apply_verdicts
+
+    state = _stored()
+    _entry(state, "k", "id1", "s1")
+    assert _bulk_skip_gate(NS(memory_key="k"), "s1", state, {})
+    _apply_verdicts(state, [], {})
+    assert state.skipped_unchanged == 1 and state.restated_ids == ["id1"]
