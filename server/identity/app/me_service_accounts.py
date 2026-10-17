@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Mapping
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -218,11 +219,18 @@ async def save_token(
     )
 
 
+def dev_subject(params: Mapping[str, object]) -> str:
+    """The caller in dev mode (auth off): the request's `subject`, else "dev".
+    Every route that saves, lists or revokes a token reads it, so a token
+    minted with auth off is in the list it is revoked from."""
+    return str(params.get("subject") or "dev")
+
+
 def dev_parent(payload: dict[str, object]) -> AuthInfo:
     """The parent a token is delegated from in dev mode (no auth, no bearer): a
     flat writer for the body's subject and org, issued now."""
     return AuthInfo(
-        subject=str(payload.get("subject") or "dev"),
+        subject=dev_subject(payload),
         org=str(payload.get("org") or "default"),
         namespaces=("*",),
         roles=(Role.WRITER,),
@@ -314,7 +322,7 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
     if settings.auth_actually_required():
         subject, org = me_callers.require_authed_caller(request)
     else:
-        subject = request.query_params.get("subject", "dev")
+        subject = dev_subject(request.query_params)
         org = request.query_params.get("org", "default")
 
     subs = await me_callers.subject_aliases_of(org, subject)
@@ -410,7 +418,7 @@ async def me_service_accounts_revoke(
     if settings.auth_actually_required():
         subject, org = me_callers.require_authed_caller(request)
     else:
-        subject = str(payload.get("subject") or "dev")
+        subject = dev_subject(payload)
         org = str(payload.get("org") or "default")
 
     name = str(payload.get("name") or "").strip()
