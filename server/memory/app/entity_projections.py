@@ -291,6 +291,9 @@ _SET_ENTITY_STOPWORDS = frozenset(
 _SET_ENTITY_PROPER_RE = re.compile(r"\b[A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*)*")
 # Longer than a name in wide characters: a run of unspaced text ("東京に住んでいます").
 _SET_ENTITY_MAX_WIDE_LEN = 6
+# Longer than a name in Chinese characters alone: a sentence ("我住在北京"). A Chinese
+# name is two to four ("北京", "毛泽东", "乌鲁木齐").
+_SET_ENTITY_MAX_HAN_LEN = 4
 # The polite endings of a Korean verb: "살아요" (live), "입니다" (am).
 _KOREAN_VERB_ENDINGS = ("요", "니다")
 # Korean particles that end no common name or noun: "서울에" (in Seoul), "저는" (I).
@@ -308,6 +311,11 @@ def _has_final_consonant(syllable: str) -> bool:
     """A Hangul syllable ending in a consonant: "좋", "었", "한" (not "바", "나").
     Each syllable's code counts up in steps of 28 final-consonant slots, slot 0 none."""
     return _is_hangul(syllable) and (ord(syllable) - 0xAC00) % 28 != 0
+
+
+def _is_han(char: str) -> bool:
+    """A Chinese character (also used in Japanese and Korean): "北", "東"."""
+    return "\u3400" <= char <= "\u9fff" or "\uf900" <= char <= "\ufaff"
 
 
 def _korean_plain_verb(word: str) -> bool:
@@ -331,13 +339,16 @@ def _korean_stem(word: str) -> str:
 
 def _not_a_name(word: str) -> bool:
     """Shorter than a thing's name: "is", "at", "of", "3pm". Wide characters (CJK,
-    Hangul) write a name in two: "東京", "서울". A word with hiragana is grammar
+    Hangul) write a name in two: "東京", "서울", and five Chinese characters alone are
+    a sentence ("我住在北京"). A word with hiragana is grammar
     ("です", "こんにちは"), as is a Korean verb ("살아요", "좋다") or a one-syllable
     word and its particle ("저는", "집에")."""
     if not word[0].isalpha():
         return True
     if all(unicodedata.east_asian_width(c) in ("W", "F") for c in word):
         if len(word) < 2 or len(word) > _SET_ENTITY_MAX_WIDE_LEN:
+            return True
+        if len(word) > _SET_ENTITY_MAX_HAN_LEN and all(_is_han(c) for c in word):
             return True
         has_hiragana = any("\u3040" <= c <= "\u309f" for c in word)
         korean_verb = word.endswith(_KOREAN_VERB_ENDINGS) or _korean_plain_verb(word)

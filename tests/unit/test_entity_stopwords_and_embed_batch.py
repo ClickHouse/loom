@@ -161,6 +161,16 @@ def test_a_name_in_any_script_is_an_entity(text: str, names: list[str]) -> None:
     assert not {"next", "socket", "config", "yaml"} & set(ents)
 
 
+@pytest.mark.parametrize("text", ["我住在北京", "北京是首都", "我们明天去上海"])
+def test_a_spaceless_chinese_sentence_is_not_one_entity(text: str) -> None:
+    assert text not in _candidate_entities_from_value(text)
+
+
+@pytest.mark.parametrize("name", ["东京", "毛泽东", "乌鲁木齐"])
+def test_a_chinese_name_of_up_to_four_characters_is_an_entity(name: str) -> None:
+    assert name in _candidate_entities_from_value(f"We met in {name} today")
+
+
 # --- batched embedding order --------------------------------------------------
 
 
