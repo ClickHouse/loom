@@ -15,7 +15,9 @@ import {
   listAutoResolved,
   listUnsuperseded,
   restoreMemory,
+  getMemoryById,
   autoResolveReasonText,
+  type MemoryById,
   type AutoResolvedRow,
   type ConflictRow,
   type AllowlistRow,
@@ -276,7 +278,7 @@ function ConflictsPanel() {
             pinned={current.pinned}
             createdAt={current.created_at}
           />
-          <Side label="B · conflicting peer" memKey={current.memory_key} value={null} version={null} peerId={peerId} />
+          <PeerSide rows={rows} peerId={peerId} />
         </div>
         <TextAreaField
           label="Reason for the decision"
@@ -742,6 +744,43 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
         </Panel>
       ))}
     </div>
+  );
+}
+
+/** The peer a conflict names by id: its own key and value, from the queue when the peer
+ *  is conflicted there too, else read by id. Until then (or when the id reads nothing)
+ *  the card names the peer by its id only. */
+function PeerSide({ rows, peerId }: { rows: ConflictRow[]; peerId?: string }) {
+  const identity = useIdentity();
+  const listed = peerId ? rows.find((r) => r.memory_id === peerId) : undefined;
+  const [fetched, setFetched] = useState<{ id: string; row: MemoryById | null } | null>(null);
+  useAbortableEffect(
+    (signal, live) => {
+      if (!peerId || listed) return;
+      getMemoryById(identity.org, peerId, { signal })
+        .then((r) => {
+          if (live()) setFetched({ id: peerId, row: r.found ? r : null });
+        })
+        .catch(() => {
+          if (live()) setFetched({ id: peerId, row: null });
+        });
+    },
+    [identity.org, peerId, !!listed],
+  );
+  const read = fetched && fetched.id === peerId ? fetched.row : null;
+  const peer = listed ?? read;
+  if (!peer) {
+    return <Side label="B · conflicting peer" memKey="—" value={null} version={null} peerId={peerId} />;
+  }
+  return (
+    <Side
+      label="B · conflicting peer"
+      memKey={peer.memory_key}
+      value={peer.value}
+      version={peer.version}
+      pinned={peer.pinned}
+      createdAt={peer.created_at ?? undefined}
+    />
   );
 }
 

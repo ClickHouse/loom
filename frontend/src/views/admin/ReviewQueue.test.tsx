@@ -26,6 +26,7 @@ vi.mock("../../api", async (importOriginal) => {
     listAutoResolved: vi.fn(),
     listUnsuperseded: vi.fn(),
     restoreMemory: vi.fn(),
+    getMemoryById: vi.fn(),
   };
 });
 // The page's yes/no probe is shared with the sidebar and lives in api/audit.
@@ -35,6 +36,7 @@ vi.mock("../../api/audit", async (importOriginal) => ({
 }));
 import { hasAutoResolved } from "../../api/audit";
 import {
+  getMemoryById,
   listAllowlist,
   listAutoResolved,
   listConflicts,
@@ -142,6 +144,17 @@ describe("ReviewQueue", () => {
     resetNamespaceRoleCache();
     invalidateShared();
     vi.mocked(listUnsuperseded).mockResolvedValue(new Map());
+    vi.mocked(getMemoryById).mockReset();
+    vi.mocked(getMemoryById).mockResolvedValue({
+      found: false,
+      memory_id: "",
+      namespace: "",
+      memory_key: "",
+      value: null,
+      version: null,
+      pinned: false,
+      created_at: null,
+    });
     // Like the real one: the newest record of the same read.
     vi.mocked(hasAutoResolved).mockImplementation(
       async (id) => (await listAutoResolved(id, { limit: 1 })).rows.length > 0,
@@ -213,6 +226,55 @@ describe("ReviewQueue", () => {
     await screen.findByRole("tab", { name: /Learnings/ }, WAIT);
     expect(screen.getByRole("tabpanel", { name: /Conflicts/ })).toHaveTextContent("value of a/key");
     expect(vi.mocked(listConflicts)).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the peer's own key and value, not the conflict's", async () => {
+    const a = { ...conflict("lesson_a"), conflict_with: ["id-lesson_b"] };
+    // The peer is conflicted too, so the queue already holds it: no read by id.
+    const b = { ...conflict("lesson_b"), conflict_with: ["id-lesson_a"] };
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [a, b], next_before_version: null });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    const peer = (await screen.findByText("B · conflicting peer", {}, WAIT)).parentElement as HTMLElement;
+    const self = screen.getByText("A · this memory").parentElement as HTMLElement;
+    expect(self.textContent).toContain("lesson_a");
+    expect(self.textContent).toContain("value of lesson_a");
+    expect(peer.textContent).toContain("lesson_b");
+    expect(peer.textContent).toContain("value of lesson_b");
+    expect(peer.textContent).not.toContain("lesson_a");
+    expect(getMemoryById).not.toHaveBeenCalled();
+  });
+
+  it("reads a peer the queue does not hold by its id", async () => {
+    const a = { ...conflict("lesson_a"), conflict_with: ["id-elsewhere"] };
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [a], next_before_version: null });
+    vi.mocked(getMemoryById).mockResolvedValue({
+      found: true,
+      memory_id: "id-elsewhere",
+      namespace: "ns-a",
+      memory_key: "lesson_other",
+      value: "the other value",
+      version: 3,
+      pinned: false,
+      created_at: "2026-09-21T00:00:00Z",
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    const peer = (await screen.findByText("B · conflicting peer", {}, WAIT)).parentElement as HTMLElement;
+    await waitFor(() => expect(peer.textContent).toContain("the other value"), WAIT);
+    expect(peer.textContent).toContain("lesson_other");
+    expect(peer.textContent).not.toContain("lesson_a");
+    expect(getMemoryById).toHaveBeenCalledWith(ORG, "id-elsewhere", expect.anything());
+  });
+
+  it("names a peer that reads nothing by its id only", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("lesson_a")], next_before_version: null });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    const peer = (await screen.findByText("B · conflicting peer", {}, WAIT)).parentElement as HTMLElement;
+    await waitFor(() => expect(getMemoryById).toHaveBeenCalled(), WAIT);
+    expect(peer.textContent).toContain("peer-0000000");
+    expect(peer.textContent).not.toContain("lesson_a");
   });
 
   it("names the icon-only remove button on an exception", async () => {
