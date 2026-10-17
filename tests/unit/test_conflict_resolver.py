@@ -210,7 +210,7 @@ async def test_two_sessions_that_share_a_key_each_get_their_own_row_and_vector()
         ("m3", "Lyon", 0.9),
         ("m2", "Paris", 0.7),
     ]
-    _, params = ch.calls[1]
+    _, params = ch.calls[-1]
     assert params["ids"] == [("a", "u", "s3", "office_city"), ("a", "u", "s2", "office_city")]
 
 

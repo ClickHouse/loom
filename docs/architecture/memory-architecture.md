@@ -179,8 +179,10 @@ the same key written by another session is a peer; the row's own identity is not
 join their rows by the full identity, never by key alone, since keys repeat across
 sessions. The type, liveness and expiry are applied in the vector read itself, before
 its limit, so closer rows of another type cannot take every place. The row's current
-flags are read by id, whatever the cutoff and the floor, and take places first. A `sensitivity='high'` row is never
-a peer, so its value never reaches the LLM. The label is outside the content hash, so the
+flags (by id) and the rows of its key in other sessions are read whatever the cutoff and
+the floor, and take places first: a row owed because another session holds its key is
+judged against that row. Both stay inside the subject, since a cosine flag can name
+another user's row. A `sensitivity='high'` row is never a peer, so its value never reaches the LLM. The label is outside the content hash, so the
 judged row is re-read strongly and the cluster's labels checked again right before the
 prompt is built: a row relabelled `high` since it was read is not sent.
 

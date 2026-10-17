@@ -635,8 +635,9 @@ async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, m
     from server.embedding import get_embedder
     from server.memory.api.models_crud import MemoryUpdateByIdInput
     from server.memory.app import after_write, conflicts, set_commit, update
+    from server.memory.workers.conflict_resolver import run_pass
 
-    org, _ = wired
+    org, llm = wired
 
     async def auto(org: str, namespace: str, ch: Any = None) -> str:
         return "auto_reinforce"
@@ -681,6 +682,17 @@ async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, m
         params={"org": org},
     )
     assert {r["session_id"]: r["mark"] for r in rows} == {"s1": None, "s2": 1}
+    # The pass judges s2's row against s1's, though they sit far below the floor.
+    prompts: list[str] = []
+    real = llm.complete
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        prompts.append(user)
+        return await real(system, user, **kw)
+
+    monkeypatch.setattr(llm, "complete", complete)
+    await run_pass()
+    assert llm.calls == ["office"] and "office: Paris" in prompts[0]
 
 
 async def test_rows_wait_owed_without_the_key_and_are_judged_once_it_is_set(
