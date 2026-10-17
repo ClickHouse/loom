@@ -357,7 +357,9 @@ What Loom does with each request:
   subject another deactivated or deleted user still reaches (two addresses
   reaching one account): it is lifted with the last of them, and Loom logs a
   warning for each one it leaves. A reactivation answers after about 6 s, once
-  every replica's clock is past its cutoff.
+  every replica's clock is past its cutoff. A provider whose request times out
+  during that wait and retries gets an answer at once (the row is already
+  active), so give its SCIM requests a timeout above about 10 s.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
   reactivates them.

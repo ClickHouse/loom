@@ -293,10 +293,14 @@ async def _set_active(
         else:
             new["subjects"] = sorted(known | set(found))
             # Going inactive (or retrying a try that stopped short of writing the
-            # row) revokes them all; once inactive, only accounts found since, so
-            # one an operator narrowed stays narrowed.
-            first = was_active or unwritten
-            for subject in new["subjects"] if first else sorted(set(found) - known):
+            # row) revokes them all; once inactive, only accounts found since and
+            # those a reactivation that failed to write the row narrowed, so one an
+            # operator narrowed stays narrowed.
+            if was_active or unwritten:
+                subjects = new["subjects"]
+            else:
+                subjects = sorted((set(found) - known) | await _lifted(sorted(known)))
+            for subject in subjects:
                 await _revoke(new["id"], subject, set(found.values()))
         if new != row or unwritten:  # a change, or a user not yet written
             await _write(new)
@@ -413,12 +417,26 @@ async def _lifted_before(subjects: list[str]) -> datetime | None:
             SELECT max(issued_before) AS cutoff FROM loom.revoked_tokens FINAL
             WHERE jti IN {s:Array(String)} AND reason = {r:String} AND expires_at > now()
             """,
-            params={"s": subjects, "r": f"{DEACTIVATED}, lifted"},  # as `narrow` writes it
+            params={"s": subjects, "r": revocation.lifted_reason(DEACTIVATED)},
         )
     cutoff = None if row is None else row["cutoff"]
     if cutoff is not None and cutoff.tzinfo is None:
         cutoff = cutoff.replace(tzinfo=UTC)
     return cutoff
+
+
+async def _lifted(subjects: list[str]) -> set[str]:
+    """Those of `subjects` a reactivation narrowed (not an operator)."""
+    with own_write_reads():
+        rows = await get_client().query_all(
+            """
+            SELECT jti FROM loom.revoked_tokens FINAL
+            WHERE jti IN {s:Array(String)} AND reason = {r:String}
+              AND issued_before IS NOT NULL AND expires_at > now()
+            """,
+            params={"s": subjects, "r": revocation.lifted_reason(DEACTIVATED)},
+        )
+    return {r["jti"] for r in rows}
 
 
 async def _held_by_another_inactive(uid: str, subject: str) -> bool:

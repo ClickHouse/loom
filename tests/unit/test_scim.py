@@ -141,11 +141,13 @@ class _Table:
         accounts: dict[str, list[str]],
         elsewhere: dict[str, list[str]],
         narrowed: list[tuple[str, datetime]],
+        lifted: dict[str, str],
     ) -> None:
         self.rows: list[dict[str, Any]] = []
         self.accounts = accounts
         self.elsewhere = elsewhere
         self.narrowed = narrowed
+        self.lifted = lifted
         self.fail_insert = False
 
     def newest(self, uid: str) -> dict[str, Any] | None:
@@ -158,7 +160,7 @@ class _Table:
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         if "loom.revoked_tokens" in sql:
-            cutoffs = [c for s, c in self.narrowed if s in params["s"]]
+            cutoffs = [c for s, c in self.narrowed if s in self._lifted_with(params)]
             return {"cutoff": max(cutoffs, default=None)}
         if "count()" in sql:
             return {"n": len(self.live())}
@@ -176,7 +178,12 @@ class _Table:
             return {"x": 1} if row and not row["active"] else None
         return row
 
+    def _lifted_with(self, params: dict[str, Any]) -> list[str]:
+        return [s for s in params["s"] if self.lifted.get(s) == params["r"]]
+
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if "loom.revoked_tokens" in sql:
+            return [{"jti": s} for s in self._lifted_with(params)]
         if "loom.namespace_grants" in sql:
             return [{"org": o} for o in self.elsewhere.get(params["s"], [])]
         if "loom.namespaces" in sql:
@@ -199,7 +206,8 @@ class _World:
         self.elsewhere: dict[str, list[str]] = {}  # subject -> other orgs it is in
         self.outright: dict[str, str] = {}  # subject -> reason
         self.narrowed: list[tuple[str, datetime]] = []
-        self.table = _Table(self.accounts, self.elsewhere, self.narrowed)
+        self.lifted: dict[str, str] = {}  # subject -> reason its narrowing was written with
+        self.table = _Table(self.accounts, self.elsewhere, self.narrowed, self.lifted)
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.fail_revoke = False
         self.leases: list[str] = []
@@ -217,6 +225,7 @@ class _World:
             if self.fail_revoke:
                 raise RuntimeError("ClickHouse is away")
             self.outright[subject] = reason
+            self.lifted.pop(subject, None)  # replaced under FINAL
             return {}
 
         async def narrow(
@@ -226,6 +235,7 @@ class _World:
                 return False
             del self.outright[key]
             self.narrowed.append((key, issued_before))
+            self.lifted[key] = revocation.lifted_reason(reason)
             return True
 
         async def emit(event: str, **kw: Any) -> str:
@@ -424,6 +434,20 @@ async def test_an_operator_revocation_survives_deactivate_and_reactivate(world) 
     await scim.set_active(uid, False)
     await scim.set_active(uid, True)
     assert world.outright == {"lee": "offboarded"} and world.narrowed == []
+
+
+async def test_a_deactivation_after_a_failed_reactivation_revokes_outright_again(world) -> None:
+    world.person("lee@example.com", "lee", "lee-ops")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    world.table.fail_insert = True
+    with pytest.raises(RuntimeError):  # narrowed, then the row's write failed
+        await scim.set_active(uid, True)
+    world.table.fail_insert = False
+    world.lifted["lee-ops"] = "offboarded"  # an operator narrowed this one their own way
+    await scim.set_active(uid, False)  # the row still says inactive
+    assert world.outright == {"lee": scim.DEACTIVATED}
+    assert world.lifted == {"lee-ops": "offboarded"}
 
 
 async def test_an_email_with_no_account_is_refused_by_email(world) -> None:

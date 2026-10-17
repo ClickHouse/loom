@@ -343,6 +343,11 @@ async def has_outright_row(jti: str) -> bool:
     return row is not None
 
 
+def lifted_reason(reason: str) -> str:
+    """The reason `narrow` writes on a revocation it narrows from `reason`."""
+    return f"{reason}, lifted"
+
+
 async def narrow(
     key: str, *, reason: str, issued_before: datetime, revoked_by: str, reread: bool = True
 ) -> bool:
@@ -363,7 +368,7 @@ async def narrow(
         )
     if row is None or row["issued_before"] is not None or row["reason"] != reason:
         return False
-    lifted = f"{reason}, lifted"
+    lifted = lifted_reason(reason)
     await revoke(
         key, issued_before=issued_before, reason=lifted, revoked_by=revoked_by, reread=reread
     )
