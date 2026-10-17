@@ -297,30 +297,31 @@ function DeferredHeaderSearch({ autoFocus }: { autoFocus: boolean }) {
       if (idle !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idle);
     };
   }, [ready]);
+  // The real box takes the focus only if the placeholder still holds it when it arrives: a
+  // keyboard user who tabbed on while it loaded keeps the focus where they put it.
   const placeholder = (
-    <SearchPlaceholder
-      draft={draft}
-      focus={wantFocus}
-      view={view}
-      onDraft={(v) => {
-        setDraft(v);
+    <div
+      onFocusCapture={() => {
         setWantFocus(true);
         setReady(true);
       }}
-    />
-  );
-  if (!ready) {
-    return (
-      <div
-        onFocusCapture={() => {
+      onBlurCapture={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setWantFocus(false);
+      }}
+    >
+      <SearchPlaceholder
+        draft={draft}
+        focus={wantFocus}
+        view={view}
+        onDraft={(v) => {
+          setDraft(v);
           setWantFocus(true);
           setReady(true);
         }}
-      >
-        {placeholder}
-      </div>
-    );
-  }
+      />
+    </div>
+  );
+  if (!ready) return placeholder;
   return (
     <Suspense fallback={placeholder}>
       <HeaderSearch autoFocus={autoFocus || wantFocus} initialQuery={draft} />

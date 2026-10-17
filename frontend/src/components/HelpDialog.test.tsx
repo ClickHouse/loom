@@ -18,6 +18,10 @@ describe("HelpDialog", () => {
     render(<HelpDialog open onOpenChange={() => {}} />);
     const toggle = screen.getByRole("switch", { name: "Single-key shortcuts" });
     expect(toggle).toBeChecked();
+    // Its description names every key it turns off: the global ones, the Tasks keys and the
+    // memory drawer's.
+    expect(toggle).toHaveAccessibleDescription(/Tasks/);
+    expect(toggle).toHaveAccessibleDescription(/e, d and p/);
     fireEvent.click(toggle);
     expect(toggle).not.toBeChecked();
     expect(singleKeyShortcutsOn()).toBe(false);

@@ -86,6 +86,22 @@ describe("HeaderSearch", () => {
     expect(screen.getByText("Syntax")).toBeInTheDocument();
   });
 
+  it("closes the panel when focus leaves the field for another control", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <HeaderSearch />
+        <button type="button">New</button>
+      </>,
+    );
+    await user.tab();
+    expect(await screen.findByText("Syntax")).toBeInTheDocument();
+    // A combobox's popup closes when focus leaves the combobox (WAI-ARIA), however fast.
+    await user.tab();
+    expect(screen.getByRole("button", { name: "New" })).toHaveFocus();
+    await waitFor(() => expect(screen.queryByText("Syntax")).toBeNull());
+  });
+
   it("moves through the empty box's recent memories and profile with the arrow keys", async () => {
     catalog.recent = [
       { memory_key: "notes/one", agent: "a" },

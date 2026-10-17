@@ -588,12 +588,12 @@ async def recent_threads(
     if agent:
         agent_clause = " AND agent = {agent:String}"
         params["agent"] = agent
-    return await ch.query_all(
+    rows = await ch.query_all(
         f"""
         SELECT
             thread_id,
             argMax(agent, ts)                                AS last_agent,
-            uniqExact({TURN})                                AS msg_count,
+            count()                                          AS msg_count,
             min(ts)                                          AS first_seen,
             max(ts)                                          AS last_seen,
             argMax(toString(role), ts)                       AS last_role,
@@ -610,6 +610,27 @@ async def recent_threads(
         """,
         params=params,
     )
+    if not rows:
+        return rows
+    # The count an opened thread shows (one per turn, however many agents logged it), for
+    # the page's threads only: an exact distinct count over the whole window would hold
+    # every turn's key in memory to rank threads it then drops.
+    counted = await ch.query_all(
+        f"""
+        SELECT thread_id, uniqExact({TURN}) AS n
+        FROM loom.conversations
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND thread_id IN {{tids:Array(String)}}
+          AND ts > now() - toIntervalDay({{wd:UInt32}})
+          AND tombstoned_at IS NULL
+          {agent_clause}
+        GROUP BY thread_id
+        """,
+        params={**params, "tids": [r["thread_id"] for r in rows]},
+    )
+    turns = {r["thread_id"]: r["n"] for r in counted}
+    return [{**r, "msg_count": turns.get(r["thread_id"], r["msg_count"])} for r in rows]
 
 
 async def thread_titles(

@@ -1,10 +1,11 @@
-import { cleanup, render, screen, waitFor } from "../test/rtl";
+import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryDetail, MemoryListEntry } from "../api";
 import { useStore } from "../lib/state";
 import { MemoryInspector } from "../components/MemoryInspector";
 import { Recent } from "./Recent";
+import { setSingleKeyShortcuts } from "../lib/shortcuts";
 
 // j / k move the real focus from card to card, so Enter opens the focused card and
 // closing the inspector puts focus back on it.
@@ -140,5 +141,27 @@ describe("Memories keyboard", () => {
     handled.preventDefault();
     document.activeElement?.dispatchEvent(handled);
     expect(openButton("one/key")).toHaveFocus();
+  });
+
+  it("drops the drawer's one-key shortcuts while single-key shortcuts are off", async () => {
+    render(<Page />);
+    await screen.findByText("one/key");
+    await userEvent.keyboard("j{Enter}");
+    const drawer = await screen.findByRole("dialog");
+    await within(drawer).findAllByText("value of one/key");
+
+    setSingleKeyShortcuts(false);
+    try {
+      drawer.focus();
+      await userEvent.keyboard("e");
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
+    } finally {
+      setSingleKeyShortcuts(true);
+    }
+    // On again: e opens the editor.
+    drawer.focus();
+    await userEvent.keyboard("e");
+    expect(await screen.findByRole("button", { name: "Save new version" })).toBeInTheDocument();
   });
 });

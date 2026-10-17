@@ -103,10 +103,30 @@ async def test_a_paged_read_across_agents_collapses_before_the_cursor() -> None:
 
 @pytest.mark.asyncio
 async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
-    ch = StubCH()
-    await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, ch=ch)
-    sql, _ = ch.calls[-1]
-    assert "uniqExact(msg_id, cityHash64(content))" in sql
+    """The list ranks a namespace's threads with plain aggregates (an exact distinct count
+    over the whole window holds every turn's key in memory), then counts distinct turns
+    for the threads it returns only."""
+    ch = StubCH(
+        [
+            [{"thread_id": "t-1", "msg_count": 5}, {"thread_id": "t-2", "msg_count": 2}],
+            [{"thread_id": "t-1", "n": 4}],
+        ]
+    )
+    rows = await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, ch=ch)
+    ranked, counted = ch.calls[0][0], ch.calls[1][0]
+    assert "uniqExact" not in ranked
+    assert "uniqExact(msg_id, cityHash64(content))" in counted
+    assert "thread_id IN {tids:Array(String)}" in counted
+    assert ch.calls[1][1]["tids"] == ["t-1", "t-2"]
+    # A thread the count answers for takes its distinct count; one it does not keeps its own.
+    assert [(r["thread_id"], r["msg_count"]) for r in rows] == [("t-1", 4), ("t-2", 2)]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_thread_list_asks_no_count() -> None:
+    ch = StubCH([[]])
+    assert await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, ch=ch) == []
+    assert len(ch.calls) == 1
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
-// Single-key shortcuts (?, /, g then a letter, j, k and the Tasks keys) can be turned off
-// in the help dialog (WCAG 2.1.4): speech input types letters that would otherwise fire
-// them. A per-browser preference; Escape, the arrows and ⌘K are not character keys and
-// stay on.
+// Single-key shortcuts (?, /, g then a letter, j, k, the Tasks keys, the memory drawer's
+// e/d/p and the graph outline's letters) can be turned off in the help dialog (WCAG
+// 2.1.4): speech input types letters that would otherwise fire them. A per-browser
+// preference; Escape, the arrows and ⌘K are not character keys and stay on.
 const KEY = "loom_single_key_shortcuts_v1";
 
 export function singleKeyShortcutsOn(): boolean {

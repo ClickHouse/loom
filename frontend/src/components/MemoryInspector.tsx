@@ -52,6 +52,7 @@ import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { historyChange, previousVersion } from "../lib/historyChange";
 import { MenuTrigger } from "./ui/Menu";
+import { shortcutOff } from "../lib/shortcuts";
 
 type SectionId = "history" | "related" | "provenance" | "lineage";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
@@ -220,7 +221,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
       onSaveEdit();
       return;
     }
-    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (typing || e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e.nativeEvent)) return;
     if (e.key === "e" && !editing) {
       e.preventDefault();
       onStartEdit();

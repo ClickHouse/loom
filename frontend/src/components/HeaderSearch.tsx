@@ -440,6 +440,18 @@ export function HeaderSearch({
               setOpen(true);
             }}
             onFocus={() => setOpen(true)}
+            // A combobox's popup closes when focus leaves for another control. Radix's
+            // outside-focus check can miss a Tab that lands while the panel is still
+            // mounting, which left it open (and its focus guards in the tab order).
+            onBlur={(e) => {
+              const to = e.relatedTarget;
+              if (
+                to instanceof Element &&
+                !anchorRef.current?.contains(to) &&
+                !to.closest("[data-header-search-panel]")
+              )
+                setOpen(false);
+            }}
             // After Escape or a pick the field keeps focus, so only a click reopens it.
             onClick={() => setOpen(true)}
             onKeyDown={onInputKeyDown}
@@ -468,6 +480,7 @@ export function HeaderSearch({
       <Popover.Content
         align="start"
         aria-label="Search results"
+        data-header-search-panel=""
         onOpenAutoFocus={(e) => e.preventDefault()}
         onInteractOutside={keepOpenFromAnchor}
         className="w-(--radix-popover-trigger-width) max-h-[70vh] overflow-y-auto"

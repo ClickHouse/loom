@@ -4,6 +4,7 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../../components/IconButton";
 import { Kbd } from "../../components/ui";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
+import { shortcutOff } from "../../lib/shortcuts";
 
 /**
  * Outline — the walk as a tree a keyboard can read. One row per drawn node in tree order,
@@ -97,6 +98,8 @@ export function Outline({
     const kids = children.get(n.entity) || [];
     const hasKids = kids.length > 0 || (visible.hiddenUnder.get(n.entity) || 0) > 0;
     const isCollapsed = collapsed.has(n.entity);
+    // The tree's letter keys (w, p, e, r, x) follow the single-key shortcut switch too.
+    if (shortcutOff(e.nativeEvent)) return;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();

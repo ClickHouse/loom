@@ -1,6 +1,6 @@
 import { Kbd } from "./ui";
 import { Modal } from "./ui/Modal";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Switch } from "@clickhouse/click-ui/Switch";
 import { setSingleKeyShortcuts, singleKeyShortcutsOn } from "../lib/shortcuts";
 
@@ -49,6 +49,7 @@ const SEARCH: Shortcut[] = [
 
 export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [singleKeys, setSingleKeys] = useState(singleKeyShortcutsOn);
+  const describedBy = useId();
   return (
     <Modal open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts" className="max-w-[520px] w-full">
       <div className="mb-4 space-y-1">
@@ -61,10 +62,12 @@ export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           label="Single-key shortcuts"
           orientation="horizontal"
           dir="start"
+          aria-describedby={describedBy}
         />
-        <p className="text-xs text-text-muted">
-          The one-key shortcuts below (?, /, g then a letter, j, k). Turn them off if speech input or a stray key sets
-          them off; ⌘K, Escape and the arrows stay on.
+        <p id={describedBy} className="text-xs text-text-muted">
+          Every one-key shortcut: ?, /, g then a letter, j and k; the Tasks keys (a, s, c, x, d); the memory drawer's e,
+          d and p; and the graph outline's letters. Turn them off if speech input or a stray key sets them off; ⌘K,
+          Escape and the arrows stay on.
         </p>
       </div>
       <section

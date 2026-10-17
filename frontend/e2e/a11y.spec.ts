@@ -342,6 +342,45 @@ test.describe("open overlays", () => {
   });
 });
 
+// The header search loads late; a keyboard user who tabs through its placeholder before it
+// arrives keeps the focus where they put it (WCAG 3.2.1).
+for (const gap of [200, 600]) {
+  test(`the late header search leaves focus where Tab put it (${gap} ms)`, async ({ page }) => {
+    await installApi(page, { memoryRows: 8 });
+    await page.route(/HeaderSearch-.*\.js$/, async (route) => {
+      await new Promise((r) => setTimeout(r, 1500));
+      await route.continue();
+    });
+    await page.goto("/memories");
+    await expect(page.locator("main h1").first()).toBeVisible();
+    await page.getByRole("button", { name: /^Namespace:/ }).focus();
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(gap);
+    await page.keyboard.press("Tab");
+    const there = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80));
+    await page.waitForTimeout(2500);
+    expect(await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80))).toBe(there);
+    await expect(page.getByRole("listbox", { name: "Search results" })).toHaveCount(0);
+  });
+}
+
+// A fast Tab walk through the header search leaves its panel closed and no Radix focus
+// guards (invisible, ringless tab stops) behind.
+test("a fast Tab walk through header search leaves nothing open behind it", async ({ page }) => {
+  await installApi(page);
+  for (let walk = 0; walk < 6; walk++) {
+    await page.goto("/admin/usage");
+    await expect(page.locator("main h1").first()).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(400);
+    await page.locator("body").click({ position: { x: 1, y: 1 } });
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    for (let i = 0; i < 30; i++) await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => document.querySelectorAll("[data-radix-focus-guard]").length)).toBe(0);
+    await expect(page.getByRole("dialog", { name: "Search results" })).toHaveCount(0);
+  }
+});
+
 // WCAG 2.1.4: the one-key shortcuts can be turned off, and ? then types nothing.
 test("the single-key shortcuts turn off from the help dialog", async ({ page }) => {
   await open(page, "/memories");
