@@ -538,22 +538,31 @@ def _re_verify_input(row: Mapping[str, Any], *, skip_external: bool) -> Any:
 async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool) -> int:
     """A completed saga gets no second run: everything in its scope now may have
     been written after it finished. Only the row links an older build's erasure
-    did not know, and whose memory has no live row, are counted (and with
+    did not know, and whose memory has no live row and no row written since the
+    census, are counted (and with
     `resume`, deleted). 1 while any are left, else 0."""
     from server.erasure.store import steps_graph
 
     org = str(row["org"])
     scope_type, scope_value, _purge, _external = _re_verify_scope(row)
+    # Memories written since the census are not the saga's, even soft-deleted.
+    cut = row["verified_at"]
     print(f"  {row['id']} {org}/{row['scope_type']} completed")
-    orphans = await steps_graph.count_orphan_row_links(org, scope_type, scope_value, ch=ch)
+    orphans = await steps_graph.count_orphan_row_links(
+        org, scope_type, scope_value, verified_at=cut, ch=ch
+    )
     found = {t.split(".", 1)[-1]: n for t, n in orphans.items() if n}
     print(f"    orphan row links: {sum(found.values())} {json.dumps(found, sort_keys=True)}")
     if not found:
         return 0
     if not resume:
         return 1
-    deleted = await steps_graph.delete_orphan_row_links(org, scope_type, scope_value, ch=ch)
-    left = await steps_graph.count_orphan_row_links(org, scope_type, scope_value, ch=ch)
+    deleted = await steps_graph.delete_orphan_row_links(
+        org, scope_type, scope_value, verified_at=cut, ch=ch
+    )
+    left = await steps_graph.count_orphan_row_links(
+        org, scope_type, scope_value, verified_at=cut, ch=ch
+    )
     print(f"    deleted {deleted}; left {sum(left.values())}")
     return 1 if any(left.values()) else 0
 

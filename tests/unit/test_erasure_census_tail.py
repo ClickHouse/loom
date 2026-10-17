@@ -795,9 +795,10 @@ async def test_completed_since_deletes_only_orphan_row_links(monkeypatch) -> Non
 
     since = datetime(2026, 10, 17, 8, 0)
     done = ["memory.tombstone", "graph_links.delete", "verify.residue"]
-    left = _ledger_row(id="c1", steps_completed=done, failure_reason="")
+    left = _ledger_row(id="c1", steps_completed=done, failure_reason="", verified_at=since)
     clean = _ledger_row(
         id="c2",
+        verified_at=since,
         scope_value='{"namespaces": ["lme-2"], "purge": true, "external": true}',
         steps_completed=done,
         failure_reason="",
@@ -812,11 +813,12 @@ async def test_completed_since_deletes_only_orphan_row_links(monkeypatch) -> Non
         asked.append((since, org))
         return [left, clean]
 
-    async def fake_orphans(org, st, sv, *, ch=None):
+    async def fake_orphans(org, st, sv, *, verified_at, ch=None):
         n = 2 if sv == ["lme-1"] and not deleted else 0
         return {"loom.entity_triple_rows": n, "loom.entity_edge_rows": 0}
 
-    async def fake_delete(org, st, sv, *, ch=None):
+    async def fake_delete(org, st, sv, *, verified_at, ch=None):
+        assert verified_at == since  # the saga's own census time is the cut
         deleted.append((org, st, sv))
         return 2
 
@@ -864,7 +866,9 @@ async def test_completed_since_takes_only_completed_sagas(monkeypatch, capsys) -
     from server.cli import hygiene
 
     failed = _ledger_row(id="f1")
-    done = _ledger_row(id="c1", steps_completed=["verify.residue"], failure_reason="")
+    done = _ledger_row(
+        id="c1", steps_completed=["verify.residue"], failure_reason="", verified_at=_now()
+    )
 
     async def fake_failed(*, org=None, ch=None):
         return [failed]
@@ -872,7 +876,7 @@ async def test_completed_since_takes_only_completed_sagas(monkeypatch, capsys) -
     async def fake_completed(*, since, org=None, ch=None):
         return [done]
 
-    async def fake_orphans(org, st, sv, *, ch=None):
+    async def fake_orphans(org, st, sv, *, verified_at, ch=None):
         return {"loom.entity_triple_rows": 0, "loom.entity_edge_rows": 0}
 
     async def no_saga(**k):
@@ -903,14 +907,21 @@ async def test_completed_since_takes_only_completed_sagas(monkeypatch, capsys) -
     assert "c1" in out and "f1" not in out
 
 
-def test_an_orphan_row_link_is_one_whose_memory_has_no_live_row() -> None:
-    where, params = graph_steps._orphan_row_links("namespace", ["a", "b"])
+def test_an_orphan_row_link_is_one_whose_memory_has_no_live_row_and_no_later_one() -> None:
+    from datetime import datetime
+
+    cut = datetime(2026, 10, 17, 8, 0)
+    where, params = graph_steps._orphan_row_links("namespace", ["a", "b"], cut)
     assert where.startswith("namespace IN {ns:Array(String)} AND memory_id NOT IN (")
     assert "FROM loom.memory FINAL" in where and "tombstoned_at IS NULL" in where
-    assert params == {"ns": ["a", "b"]}
-    where, params = graph_steps._orphan_row_links("user_id", "u1")
+    # A memory with any row written since the census keeps its link, tombstoned or not.
+    assert "AND memory_id NOT IN (SELECT memory_id FROM loom.memory WHERE " in where
+    assert "updated_at >= {verified_at:DateTime}" in where
+    assert params == {"ns": ["a", "b"], "verified_at": cut}
+    where, params = graph_steps._orphan_row_links("user_id", "u1", cut)
     assert where.startswith("user_id = {uid:String} AND memory_id NOT IN (")
-    assert params == {"uid": "u1"}
+    assert "updated_at >= {verified_at:DateTime}" in where
+    assert params == {"uid": "u1", "verified_at": cut}
 
 
 async def test_list_completed_requests_takes_sagas_verified_since() -> None:

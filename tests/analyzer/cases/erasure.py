@@ -83,8 +83,9 @@ async def _census_and_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     scope_type = "user_id" if c["scope"] == "user_id" else "namespace"
     await erasure_census.residue_census(ORG, scope_type, scope_value, ch=ch)
-    await steps_graph.count_orphan_row_links(ORG, scope_type, scope_value, ch=ch)
-    await steps_graph.delete_orphan_row_links(ORG, scope_type, scope_value, ch=ch)
+    cut = datetime(2026, 1, 1)
+    await steps_graph.count_orphan_row_links(ORG, scope_type, scope_value, verified_at=cut, ch=ch)
+    await steps_graph.delete_orphan_row_links(ORG, scope_type, scope_value, verified_at=cut, ch=ch)
     await erasure_ledger.list_failed_requests(org=ORG, ch=ch)
     await erasure_ledger.list_failed_requests(ch=ch)
     await erasure_ledger.list_completed_requests(since=datetime(2026, 1, 1), org=ORG, ch=ch)

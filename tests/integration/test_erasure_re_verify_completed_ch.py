@@ -70,6 +70,22 @@ async def _live_memory(ch: Any, org: str, key: str) -> int:
     return int(row["n"])
 
 
+def _memory_row(org: str, key: str, memory_id: str, **over: Any) -> dict[str, Any]:
+    row = {
+        "org": org,
+        "namespace": NS,
+        "agent": "a",
+        "user_id": "u1",
+        "session_id": "-",
+        "memory_key": key,
+        "memory_type": "semantic",
+        "value": "user lives in rome",
+        "version": 1,
+        "memory_id": memory_id,
+    }
+    return {**row, **over}
+
+
 async def _completed_saga(org: str, now: datetime) -> str:
     """A namespace saga, completed with every step checkpointed and a clean census."""
     from server.erasure.api.erasure import ErasureRequestInput
@@ -126,23 +142,7 @@ async def test_only_orphan_row_links_go_and_later_writes_stay(ch: Any) -> None:
     await ch.insert("loom.entity_triple_rows", [_triple_row(org, orphan_id)])
     edge = {k: v for k, v in _triple_row(org, orphan_id).items() if k in _EDGE_KEYS}
     await ch.insert("loom.entity_edge_rows", [{**edge, "entity_a": "rome", "entity_b": "user"}])
-    await ch.insert(
-        "loom.memory",
-        [
-            {
-                "org": org,
-                "namespace": NS,
-                "agent": "a",
-                "user_id": "u1",
-                "session_id": "-",
-                "memory_key": "later",
-                "memory_type": "semantic",
-                "value": "user lives in rome",
-                "version": 1,
-                "memory_id": later_id,
-            }
-        ],
-    )
+    await ch.insert("loom.memory", [_memory_row(org, "later", later_id)])
     await ch.insert("loom.entity_triple_rows", [_triple_row(org, later_id)])
     assert await _triple_rows(ch, org) == {orphan_id, later_id}
     assert await _edge_rows(ch, org) == 1
@@ -166,3 +166,35 @@ async def test_only_orphan_row_links_go_and_later_writes_stay(ch: Any) -> None:
     # A saga verified before the cut is not taken.
     args.completed_since = now + timedelta(minutes=1)
     assert await hygiene._re_verify_run(ch, args) == 0
+
+
+async def test_a_later_memory_soft_deleted_keeps_its_link(ch: Any) -> None:
+    # memory.delete tombstones a row that can still be restored. One written after
+    # the erasure finished is not the saga's, so its link is not an orphan. A memory
+    # the saga itself tombstoned has no row since the census, so its link goes.
+    from server.cli import hygiene
+
+    org = unique_org("re-verify")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    erasure_id = await _completed_saga(org, now)
+    erased_id = str(uuid.uuid4())
+    before = now - timedelta(hours=1)
+    await ch.insert(
+        "loom.memory",
+        [_memory_row(org, "erased", erased_id, updated_at=before, tombstoned_at=now)],
+    )
+    later_id = str(uuid.uuid4())
+    await ch.insert("loom.memory", [_memory_row(org, "later", later_id)])
+    await ch.insert(
+        "loom.memory",
+        [_memory_row(org, "later", later_id, version=2, status="tombstoned", tombstoned_at=now)],
+    )
+    await ch.insert(
+        "loom.entity_triple_rows", [_triple_row(org, erased_id), _triple_row(org, later_id)]
+    )
+    assert await _live_memory(ch, org, "later") == 0
+
+    args = _args(org, erasure_id, now - timedelta(minutes=1))
+    args.resume = True
+    assert await hygiene._re_verify_run(ch, args) == 0
+    assert await _triple_rows(ch, org) == {later_id}

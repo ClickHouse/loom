@@ -132,7 +132,8 @@ completed sagas whose census ran at or after that time instead of the failed one
 unless the timestamp names an offset): after a rollout, the erasures the previous build
 ran. For those it counts, and with `--resume` deletes, only the orphan row links in the
 saga's scope (rows of `entity_triple_rows` and `entity_edge_rows` whose memory has no
-live row); it runs no saga step again, so data written after the erasure stays. If a
+live row and no row written since the saga's census); it runs no saga step again, so
+data written after the erasure stays, even once `memory.delete` has tombstoned it. If a
 saga cannot be recovered, issue the same `erasure.request` again; the operation is
 idempotent.
 
