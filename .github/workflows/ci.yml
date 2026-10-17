@@ -244,6 +244,18 @@ jobs:
         run: python -m server.core.schema.migrate --dry-run --strict
       - name: Verify schemas/schema.sql matches what migrations produce
         run: make schema-check
+      # Off by default, the journal's migration is dormant: the replay above is main's
+      # schema. Turned on, the next migrate applies it, out of order, on top.
+      - name: Turning the bi-temporal journal on applies its migration
+        env:
+          LOOM_MEMORY_TEMPORAL_ENABLED: "true"
+        run: |
+          python -m server.core.schema.migrate
+          python -m server.core.schema.migrate --dry-run --strict
+      - name: Verify schemas/schema_temporal.sql matches the journal-on replay
+        env:
+          LOOM_MEMORY_TEMPORAL_ENABLED: "true"
+        run: make schema-check
 
   ts-typecheck:
     name: tsc (frontend)

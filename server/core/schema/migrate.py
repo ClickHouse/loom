@@ -451,6 +451,8 @@ def print_ledger_report(report: LedgerReport, *, applied_count: int, file_count:
         f"checksum drift: {len(report.drift)}"
         + (f" · superseded by a baseline: {len(report.superseded)}" if report.superseded else "")
     )
+    for name in report.dormant:
+        print(f"  · {name}: dormant (its setting is off); applied once it is turned on")
     for name in report.baselined:
         print(f"  · {name}: a baseline this ledger already covers — recorded without running")
     for old, new in report.renamed:
@@ -976,8 +978,6 @@ def main(argv: list[str] | None = None, *, check_server: bool = True) -> int:
     # The ledger is classified against every file; the target limits only what runs.
     runnable = files if args.target is None else through_target(files, args.target)
     to_apply = [f for f in runnable if f.name not in applied and f.name not in report.dormant]
-    for name in report.dormant:
-        print(f"  · {name}: dormant (its setting is off); applied once it is turned on")
     if not to_apply:
         print(f"  ✓ no pending migrations ({len(applied)} already applied)")
         return 0 if (report.clean or not args.strict or not args.dry_run) else 1
