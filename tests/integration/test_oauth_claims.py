@@ -32,6 +32,14 @@ async def store() -> Any:
     await ch.disconnect()
 
 
+async def _delete(table: str, where_key: str, value: str) -> None:
+    from server.core.ch import get_client
+
+    await get_client().execute(
+        f"DELETE FROM {table} WHERE {where_key} = {{v:String}}", {"v": value}
+    )
+
+
 def _grant(client_id: str) -> Grant:
     return {
         "client_id": client_id,
@@ -54,7 +62,7 @@ def _device(status: str = "pending") -> tuple[Device, str]:
         "id": token_id(secrets.token_urlsafe(32)),
         "client_id": device.DEVICE_CLIENT_ID,
         "subject": "",
-        "org": unique_org("claims"),
+        "org": "",  # set at approval, as in production
         "namespaces": [],
         "roles": [],
         "exp": int(time.time()) + 600,
@@ -271,8 +279,11 @@ async def test_an_owed_revocation_counts_in_every_process(store: Any) -> None:
 
     family = uuid.uuid4().hex
     await store.owe_revocation(family, "logout")
-    await revocation.refresh()  # what every process loads, at boot and on its cadence
-    assert revocation.is_revoked(family)
+    try:
+        await revocation.refresh()  # what every process loads, at boot and on its cadence
+        assert revocation.is_revoked(family)
+    finally:  # an owed row has no org for the session purge to find
+        await _delete("loom.oauth_state", "record_type = 'revocation_owed' AND id", family)
 
 
 async def test_a_session_another_process_ended_reads_as_ended(
@@ -283,8 +294,11 @@ async def test_a_session_another_process_ended_reads_as_ended(
     family = uuid.uuid4().hex
     assert not await revocation.revoked_outright(family)
     await revocation.revoke(family, reason="logout", revoked_by="claims-it")
-    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())  # this process lags
-    assert await revocation.revoked_outright(family)
+    try:
+        monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())  # this process lags
+        assert await revocation.revoked_outright(family)
+    finally:  # revoked_tokens has no org column for the session purge to match
+        await _delete("loom.revoked_tokens", "jti", family)
 
 
 async def test_the_sweep_worker_drops_keys_once_their_credential_expired(store: Any) -> None:
