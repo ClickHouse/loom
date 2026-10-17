@@ -860,17 +860,20 @@ async def _retry_graph_projection(
     # and so does a result recorded before results named their row: it has no id to check.
     kept: dict[str, Any] = {}
     if not failure.payload.get(TRIPLES_INSERTED_AT):
-        from server.memory.app.entity_projections import rows_holding
+        from server.memory.app.entity_projections import versions_held
 
         pairs = list(zip(bulk_input.entries, bulk_results, strict=True))
-        held = await rows_holding(
+        # By value: one bulk can revise a row twice, and only its last value is held.
+        held = await versions_held(
             failure.org,
             failure.namespace,
             [(r.memory_id, value_sha256(e)) for e, r in pairs if r.memory_id],
             ch=ch,
             holder_sql=HOLDS_VALUE_SQL,
         )
-        pairs = [(e, r) for e, r in pairs if not r.memory_id or r.memory_id in held]
+        pairs = [
+            (e, r) for e, r in pairs if not r.memory_id or (r.memory_id, value_sha256(e)) in held
+        ]
         if not pairs:
             return ""
         bulk_input = bulk_input.model_copy(update={"entries": [e for e, _r in pairs]})

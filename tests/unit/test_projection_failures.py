@@ -496,14 +496,14 @@ async def test_a_failed_replay_keeps_only_the_entries_it_wrote(monkeypatch) -> N
     failure.payload["results"].append({"memory_key": "k2", "version": 1, "memory_id": other})
 
     async def holding(org, namespace, pairs, *, ch, holder_sql):
-        return {_ROW_ID}
+        return {(mid, sha) for mid, sha in pairs if mid == _ROW_ID}
 
     made = IntervalRepair("alice", "works_with", "carol", "bob", datetime(2026, 10, 1, 9))
 
     async def fails(*a, **k):
         raise TriplesRepairFailed(datetime(2026, 10, 1, 9), RuntimeError("retire down"), [made])
 
-    monkeypatch.setattr(entity_projections, "rows_holding", holding)
+    monkeypatch.setattr(entity_projections, "versions_held", holding)
     monkeypatch.setattr(projections, "write_entity_triples", fails)
     ch = _FailureRowCH(failure)
     assert not (await retry_projection_failure(failure, ch=ch)).resolved

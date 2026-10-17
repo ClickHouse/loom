@@ -707,6 +707,61 @@ async def test_a_bulk_write_links_its_triple_to_the_row_it_stored(ch, org) -> No
     assert links == [{**stored[0], "object": "paris"}]
 
 
+async def test_a_replayed_bulk_edge_projection_skips_a_value_the_same_bulk_replaced(
+    ch, org, monkeypatch
+) -> None:
+    # One bulk revises a row twice and its edge insert fails: the replay asks by value,
+    # so the row holding Rome does not bring back London's edge.
+    from server.core import ch as ch_mod
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+    from server.memory.app.projection_failures import retry_projection_failure
+    from server.memory.app.write import handle_memory_set
+
+    def _entry(city: str) -> dict[str, Any]:
+        return {
+            "memory_key": "alice",
+            "value": f"Alice likes {city}",
+            "entities": ["alice", city.lower()],
+        }
+
+    await handle_memory_set(
+        MemorySetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", **_entry("Paris")
+        )
+    )
+    await after_write.drain()
+    client = ch_mod.get_client()
+    insert = client.insert
+
+    async def edges_fail(table: str, rows: Any, **kw: Any) -> Any:
+        if table == "loom.entity_edges":
+            raise ConnectionError("transient")
+        return await insert(table, rows, **kw)
+
+    monkeypatch.setattr(client, "insert", edges_fail)
+    await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            entries=[_entry("London"), _entry("Rome")],
+        )
+    )
+    await after_write.drain()
+    monkeypatch.setattr(client, "insert", insert)
+    failure = await _recorded_reconcile(ch, org, "entity_edges")
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # past the second an edge ended in
+    walked = await _walked(org, ["rome"], labeled=False, seed="alice", until=lambda w: "rome" in w)
+    assert "rome" in walked and "london" not in walked
+
+
 @pytest.mark.parametrize(
     "extra",
     [{}, {"valid_at": datetime(2019, 1, 1), "valid_to": datetime(2020, 1, 1)}],

@@ -275,7 +275,8 @@ async def test_two_racing_first_watches_post_one_event(
     first, second = await asyncio.gather(
         h.handle_code_coverage_watch(_watch(b)), h.handle_code_coverage_watch(_watch(b))
     )
-    assert (first.emitted, second.emitted) == (True, False)
+    # Either may take the lease first; exactly one emits.
+    assert sorted([first.emitted, second.emitted]) == [False, True]
     assert len(fake.events) == 1
 
 
