@@ -241,7 +241,7 @@ class FakeRepo:
     async def insert_event(self, row):
         self.events.append(dict(row))
 
-    async def task_history(self, org, task_id, *, limit=500):
+    async def task_history(self, org, task_id, *, limit=500, consistent=False):
         return [e for e in self.events if e["org"] == org and e["task_id"] == str(task_id)][:limit]
 
     async def events_since(
@@ -498,6 +498,51 @@ async def test_a_retried_create_writes_a_lease_row_only_for_an_unclaimed_task(
     fake.leases.rows.pop(tid)
     await _post(fake, idempotency_key="k1")
     assert tid not in fake.leases.rows
+
+
+@pytest.mark.asyncio
+async def test_a_retried_create_writes_the_created_event_a_cut_off_create_left_out(
+    fake: FakeRepo,
+) -> None:
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1")
+    tid = a.task.task_id
+    first = fake.events.pop()
+    assert first["event"] == "created"
+    # A create cut off after its task row: the retry logs the created event it missed,
+    # as the create would have, and only once.
+    await _post(fake, idempotency_key="k1")
+    await _post(fake, idempotency_key="k1")
+    events = [e for e in fake.events if e["task_id"] == tid]
+    assert [e["event"] for e in events] == ["created"]
+    keep = ("seq", "from_status", "to_status", "actor", "agent", "from_subject", "fence")
+    assert {k: events[0][k] for k in keep} == {k: first[k] for k in keep}
+    # A claimed task is not a create's to finish.
+    fake.events.clear()
+    fake.tasks[tid].update(status="in_progress", fence=1)
+    await _post(fake, idempotency_key="k1")
+    assert fake.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_backfilled_created_event_lands_before_the_events_logged_since(
+    fake: FakeRepo,
+) -> None:
+    # The triaged task was accepted before the retry came: the created event it gets
+    # lands the task in triage, ahead of the accept.
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1", title="new kind")
+    assert a.task.status == "triage"
+    fake.events.clear()
+    await transitions.handle_task_accept(
+        wire.TaskAcceptInput(**_caller("private", "private-bot"), task_id=a.task.task_id)
+    )
+    await _post(fake, idempotency_key="k1")
+    events = sorted(fake.events, key=lambda e: e["seq"])
+    assert [(e["event"], e["from_status"], e["to_status"]) for e in events] == [
+        ("created", "", "triage"),
+        ("accepted", "triage", "todo"),
+    ]
 
 
 @pytest.mark.asyncio

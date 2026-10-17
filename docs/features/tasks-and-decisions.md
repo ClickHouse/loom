@@ -144,7 +144,8 @@ async with Agent(org="acme", namespace="public", agent="public-bot", api_key=PUB
 ```
 
 Two creates with one `idempotency_key` store one task, even when they race: they run one at a time under a
-lease on the key, each answers with the task, and only the one that stored it says `created=true`. A create
+lease on the key, each answers with the task, and only the one that stored it says `created=true`. A retry of
+a create that was cut off after storing its task writes the `created` event and lease row it left out. A create
 that waits more than 10 s for another with its key answers 409 `PRECONDITION_FAILED`, and 503 when the lease
 store (Keeper) does not answer; retry either.
 

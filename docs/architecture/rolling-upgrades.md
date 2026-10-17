@@ -111,8 +111,11 @@ schema. These rules keep that safe. The operator procedure is in
     dedup token over every insert's, so the key's token drops neither build's row for
     the other. A create of each build racing on one key can store two tasks, and two
     deliveries two ready events, as two replicas of the previous build already can.
-    Each task is whole (its event and its lease row) and claimable. This ends once N-1
-    stops serving.
+    Each task is whole (its event and its lease row) and claimable: a create of N cut
+    off after its task row is finished by its retry, which under the key's lease writes
+    the created event and the lease row the first one left out. A retry that reads an
+    N-1 create's task between its row and its event can log a second created event.
+    This ends once N-1 stops serving.
 11. **A link N adds is not yet complete.** N links each value to the triples and edges
     it stated (`entity_triple_rows`, `entity_edge_rows`); N-1 links only keys, just after
     it writes the row. So a value with no row link still holds by its key link when that

@@ -110,16 +110,42 @@ async def _prior_task(prior: TaskRow) -> TaskCreateOutput:
     """The answer to a create whose key already holds the task `prior`.
 
     The first create may have been cut off (the key's lease timed out) after its task
-    row and before its lease row; without one the task can never be claimed. Writing
-    it again is a no-op when it is there. Only a task never claimed can be in that
-    state: a claimed one finishing drops its lease before it records the end, and must
-    not get it back."""
+    row and before its created event or its lease row; without a lease row the task can
+    never be claimed. The retry writes what is missing: writing the lease row again is a
+    no-op when it is there. Only a task never claimed can be in that state: a claimed
+    one finishing drops its lease before it records the end, and must not get it back."""
     if prior["status"] in ("todo", "triage") and int(prior["fence"]) == 0:
+        await _backfill_created_event(prior)
         backend = await repo.lease_backend()
         await backend.ensure_row(
             str(prior["task_id"]), prior["org"], prior["inbox"], int(prior["fence"])
         )
     return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
+
+
+async def _backfill_created_event(prior: TaskRow) -> None:
+    """Log the created event a cut-off create left out. The retry holds the key's lease,
+    so no other create of this build reads and writes it at the same time."""
+    events = await repo.task_history(prior["org"], str(prior["task_id"]), consistent=True)
+    if any(e["event"] == "created" for e in events):
+        return
+    if events:
+        # The task was accepted or edited since: it landed in the status the first of
+        # those events left, and its created event goes just before that one.
+        landed, seq = str(events[0]["from_status"]), int(events[0]["seq"]) - 1
+    else:
+        landed, seq = str(prior["status"]), int(prior["version"])
+    agent = str(prior["from_agent"])
+    await _log_transition(
+        cast(TaskRow, {**prior, "status": ""}),
+        cast(TaskRow, {**prior, "status": landed}),
+        seq,
+        event="created",
+        actor=_actor(f"process:{agent}"),
+        agent=agent,
+        # The mode follows from where it landed; whether a policy decided is not kept.
+        patch={"kind": prior["kind"], "mode": "auto" if landed == "todo" else "triage"},
+    )
 
 
 @asynccontextmanager

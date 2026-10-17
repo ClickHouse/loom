@@ -539,18 +539,27 @@ async def insert_event(row: TaskEventRow, *, ch: _CHClient | None = None) -> Non
 
 
 async def task_history(
-    org: str, task_id: str, *, limit: int = 500, ch: _CHClient | None = None
+    org: str,
+    task_id: str,
+    *,
+    limit: int = 500,
+    consistent: bool = False,
+    ch: _CHClient | None = None,
 ) -> list[TaskEventRow]:
+    """The task's events in order. `consistent` reads every acknowledged insert, for a
+    caller that writes an event only when the read finds none."""
     if not is_uuid(task_id):
         return []
     ch = ch or _default_client()
+    sql = (
+        f"SELECT {EVENT_COLS} FROM loom.task_events "
+        "WHERE org = {org:String} AND task_id = {tid:UUID} ORDER BY seq LIMIT {limit:UInt32}"
+    )
+    if consistent:
+        sql += " SETTINGS select_sequential_consistency = 1"
     return cast(
         "list[TaskEventRow]",
-        await ch.query_all(
-            f"SELECT {EVENT_COLS} FROM loom.task_events "
-            "WHERE org = {org:String} AND task_id = {tid:UUID} ORDER BY seq LIMIT {limit:UInt32}",
-            params={"org": org, "tid": task_id, "limit": int(limit)},
-        ),
+        await ch.query_all(sql, params={"org": org, "tid": task_id, "limit": int(limit)}),
     )
 
 

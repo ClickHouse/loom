@@ -92,11 +92,11 @@ async def test_a_create_that_raced_on_its_key_answers_with_the_stored_task(
 
 
 @pytest.mark.asyncio
-async def test_a_retry_of_a_create_cut_off_after_its_insert_gets_the_lease_row(
+async def test_a_retry_of_a_create_cut_off_after_its_insert_gets_its_event_and_lease_row(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The key's lease timed the first create out after its task row landed and before
-    # its lease row: the retry finds the task and must leave it claimable.
+    # its created event and lease row: the retry finds the task and must leave it whole.
     org = f"itest-cutoff-{uuid.uuid4().hex[:8]}"
     ident = {"org": org, "namespace": "private", "agent": "admin"}
     await inboxes.handle_inbox_register(
@@ -130,6 +130,9 @@ async def test_a_retry_of_a_create_cut_off_after_its_insert_gets_the_lease_row(
         params={"tid": retry.task.task_id},
     )
     assert [(r["task_id"], int(r["fence"])) for r in leases] == [(retry.task.task_id, 0)]
+    # One created event, and a second retry writes no other.
+    await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    assert await _claimable(ch, org, retry.task.task_id)
 
 
 async def _erase_tasks(ch: Any, org: str, namespace: str) -> None:
