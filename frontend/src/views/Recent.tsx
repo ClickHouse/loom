@@ -879,7 +879,7 @@ export function Recent() {
       {/* Search and the filters in force, in one bar that stays at the top as the list
           scrolls: a filter picked from a card further down is seen to apply. Press / to
           focus the search. */}
-      <div role="search" aria-label="Search and filters" className="sticky top-0 z-[2] -mx-2 mb-3 bg-bg px-2 py-2">
+      <search aria-label="Search and filters" className="sticky top-0 z-[2] -mx-2 mb-3 bg-bg px-2 py-2">
         <SearchField
           ref={searchInputRef}
           value={query}
@@ -945,7 +945,7 @@ export function Recent() {
             </Button>
           </div>
         )}
-      </div>
+      </search>
 
       {(entries.some((e) => e.pinned) || agentsInList.length > 1 || showDeleted) && (
         <div className="mb-5 flex flex-wrap items-center gap-1">

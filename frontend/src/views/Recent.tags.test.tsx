@@ -97,7 +97,7 @@ describe("Memories: filtering by tags", () => {
     await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag: storage" }));
     expect(shown()).toEqual(["both"]);
 
-    const toolbar = screen.getByRole("search", { name: "Search and filters" });
+    const toolbar = screen.getByLabelText("Search and filters");
     expect(within(toolbar).getByText("tag:Alerts")).toBeInTheDocument();
     expect(within(toolbar).getByText("tag:storage")).toBeInTheDocument();
     expect(screen.getByLabelText("Search memories")).toHaveValue("tag:Alerts tag:storage");
@@ -112,7 +112,7 @@ describe("Memories: filtering by tags", () => {
     await openMemories();
     await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag: Alerts" }));
     await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag: storage" }));
-    const toolbar = screen.getByRole("search", { name: "Search and filters" });
+    const toolbar = screen.getByLabelText("Search and filters");
 
     await userEvent.click(within(toolbar).getByRole("button", { name: "Remove tag:Alerts" }));
     expect(shown()).toEqual(["both", "storage_only"]);
