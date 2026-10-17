@@ -149,6 +149,16 @@ class FakeRepo:
     async def insert_task_version(self, row):
         self.tasks[str(row["task_id"])] = dict(row)
 
+    async def insert_created_task(self, row):
+        # Storage dedups the key's create token: a second task under the key is dropped.
+        prior = await self.fetch_task_by_idempotency_key(
+            row["org"], row["inbox"], row["idempotency_key"]
+        )
+        if prior is not None:
+            return prior
+        await self.insert_task_version(row)
+        return dict(row)
+
     async def list_tasks(
         self,
         org,

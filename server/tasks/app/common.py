@@ -326,11 +326,14 @@ async def _record(
     reason: str = "",
     note: str = "",
     patch: dict[str, Any] | None = None,
+    keyed_create: bool = False,
     **changes: Any,
 ) -> tuple[TaskRow, int]:
     """Apply ``changes`` as a new version row and log the transition. Returns
     the new row and the event's ``seq``. Wakes the inbox's pulls and the
-    poster's updates cursor."""
+    poster's updates cursor. ``keyed_create``: a create with an idempotency key,
+    which answers the task the key holds (`repo.insert_created_task`) and logs
+    nothing when that is another one."""
     from_status = str(task.get("status") or "")
     # The server's clock, so every replica stamps one event order (the cursor).
     seq = await repo.server_version(int(task.get("version") or 0))
@@ -343,7 +346,12 @@ async def _record(
         # move back to the happy path: resume, unblock, accept), so the board
         # can filter by it; a note or heartbeat leaves the row's reason alone.
         row["reason"] = reason
-    await repo.insert_task_version(row)
+    if keyed_create:
+        stored = await repo.insert_created_task(row)
+        if str(stored["task_id"]) != row["task_id"]:
+            return stored, int(stored["version"])
+    else:
+        await repo.insert_task_version(row)
     await repo.insert_event(
         {
             "org": row["org"],

@@ -341,13 +341,36 @@ async def fetch_task_by_idempotency_key(
     )
 
 
-async def insert_task_version(row: TaskRow, *, ch: _CHClient | None = None) -> None:
+async def insert_task_version(
+    row: TaskRow, *, dedup_token: str = "", ch: _CHClient | None = None
+) -> None:
     """One new version row. Every persisted column rides along (the RMT rule
-    in CLAUDE.md)."""
+    in CLAUDE.md); storage drops a second insert with the same ``dedup_token``."""
     ch = ch or _default_client()
-    await ch.insert(
-        "loom.tasks", [dict(row)], settings={"async_insert": 0, "wait_for_async_insert": 1}
-    )
+    settings: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
+    if dedup_token:
+        settings["insert_deduplication_token"] = dedup_token
+    await ch.insert("loom.tasks", [dict(row)], settings=settings)
+
+
+async def insert_created_task(row: TaskRow, *, ch: _CHClient | None = None) -> TaskRow:
+    """Insert a new task that has an idempotency key, and answer the task the key
+    holds: this one, or one the previous build stored first.
+
+    The previous build takes no lease on the key and relies on the insert's dedup
+    token, so this one inserts under the same token, and storage drops whichever of
+    the two inserts comes second. The token stays until no build without the lease
+    serves (docs/architecture/rolling-upgrades.md). An erased task's token can outlive
+    it and drop this insert too: with no task under the key, the row goes in again
+    under a fresh token."""
+    org, inbox, key = row["org"], row["inbox"], row["idempotency_key"]
+    token = f"task.create:{org}:{inbox}:{key}"
+    await insert_task_version(row, dedup_token=token, ch=ch)
+    stored = await fetch_task_by_idempotency_key(org, inbox, key, ch=ch)
+    if stored is not None:
+        return stored
+    await insert_task_version(row, dedup_token=f"{token}:{uuid.uuid4().hex}", ch=ch)
+    return row
 
 
 async def list_tasks(

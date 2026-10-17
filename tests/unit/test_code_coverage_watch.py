@@ -89,6 +89,7 @@ class Fake:
 
     async def insert_ready_event(self, row):
         self.events.append(dict(row))
+        return True
 
     async def fetch_inbox(self, org, inbox):
         return self.inboxes.get((org, inbox))

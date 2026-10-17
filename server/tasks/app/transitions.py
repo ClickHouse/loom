@@ -100,20 +100,24 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
                 input.org, input.inbox, input.idempotency_key
             )
             if prior is not None:
-                # The first create may have been cut off (the key's lease timed out)
-                # after its task row and before its lease row; without one the task can
-                # never be claimed. Writing it again is a no-op when it is there. Only a
-                # task never claimed can be in that state: a claimed one finishing drops
-                # its lease before it records the end, and must not get it back.
-                if prior["status"] in ("todo", "triage") and int(prior["fence"]) == 0:
-                    backend = await repo.lease_backend()
-                    await backend.ensure_row(
-                        str(prior["task_id"]), prior["org"], prior["inbox"], int(prior["fence"])
-                    )
-                return TaskCreateOutput(
-                    task=_payload(prior), created=False, seq=int(prior["version"])
-                )
+                return await _prior_task(prior)
         return await _create(input, inbox, subject)
+
+
+async def _prior_task(prior: TaskRow) -> TaskCreateOutput:
+    """The answer to a create whose key already holds the task `prior`.
+
+    The first create may have been cut off (the key's lease timed out) after its task
+    row and before its lease row; without one the task can never be claimed. Writing
+    it again is a no-op when it is there. Only a task never claimed can be in that
+    state: a claimed one finishing drops its lease before it records the end, and must
+    not get it back."""
+    if prior["status"] in ("todo", "triage") and int(prior["fence"]) == 0:
+        backend = await repo.lease_backend()
+        await backend.ensure_row(
+            str(prior["task_id"]), prior["org"], prior["inbox"], int(prior["fence"])
+        )
+    return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
 
 
 @asynccontextmanager
@@ -189,8 +193,11 @@ async def _create(input: TaskCreateInput, inbox: InboxRow, subject: str) -> Task
         actor=_actor(f"process:{input.agent}"),
         agent=input.agent,
         patch={"kind": input.kind, "mode": mode, "policy": bool(policy)},
+        keyed_create=bool(input.idempotency_key),
         status=status,
     )
+    if row["task_id"] != task_id:
+        return await _prior_task(row)  # the previous build stored the key's task first
     backend = await repo.lease_backend()
     await backend.ensure_row(task_id, input.org, input.inbox, 0)
     nxt = _triage_note(inbox, input.agent, policy) if status == "triage" else ""

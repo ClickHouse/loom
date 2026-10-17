@@ -97,6 +97,13 @@ schema. These rules keep that safe. The operator procedure is in
    holds from this build onward: a build before 033 serves its dashboard from `/me`
    and publishes no bundle, so the upgrade from it needs a colour swap or a sticky load
    balancer for the dashboard ([upgrades](../operations/upgrades.md)).
+10. **A new exclusion keeps the old one until N-1 is gone.** `task.create` with an
+    idempotency key and the coverage watch's ready-event delivery hold a lease from this
+    build on; the build before takes none and relies on the insert's dedup token. So
+    this build still inserts under the same token, and storage drops whichever of the
+    two builds' inserts comes second. It then reads the row back and inserts again
+    under a fresh token when an erased row's token dropped its insert. The token can go
+    once no build without the lease serves.
 
 ## What checks them
 

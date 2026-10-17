@@ -92,7 +92,32 @@ async def ready_event_exists(
     return bool(row and int(row.get("n") or 0) > 0)
 
 
-async def insert_ready_event(row: dict[str, Any], *, ch: _CHClient | None = None) -> None:
-    """The event row; the delivery's lease keeps a second one out."""
+async def insert_ready_event(row: dict[str, Any], *, ch: _CHClient | None = None) -> bool:
+    """Insert the event row; True when it is the ready event stored.
+
+    The delivery's lease keeps a second one of this build out. The previous build
+    takes no lease and inserts under the event id as the dedup token, so this one
+    does too, and storage drops whichever of the two comes second; the token stays
+    until no build without the lease serves (docs/architecture/rolling-upgrades.md).
+    An erased event's token can outlive it and drop this insert too: with no event
+    stored, the row goes in again under a fresh token."""
     ch = ch or _default_client()
-    await ch.insert("loom.task_events", [row], settings=dict(_INSERT_SETTINGS))
+    task_id = str(row["task_id"])
+    settings = {**_INSERT_SETTINGS, "insert_deduplication_token": task_id}
+    await ch.insert("loom.task_events", [row], settings=settings)
+    seqs = await _ready_event_seqs(row["org"], row["inbox"], task_id, ch=ch)
+    if seqs:
+        return int(row["seq"]) in seqs
+    settings["insert_deduplication_token"] = f"{task_id}:{uuid.uuid4().hex}"
+    await ch.insert("loom.task_events", [row], settings=settings)
+    return True
+
+
+async def _ready_event_seqs(org: str, inbox: str, task_id: str, *, ch: _CHClient) -> set[int]:
+    rows = await ch.query_all(
+        "SELECT seq FROM loom.task_events "
+        "WHERE org = {org:String} AND inbox = {inbox:String} AND task_id = {tid:UUID} "
+        "AND event = {event:String} SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "inbox": inbox, "tid": task_id, "event": READY_EVENT},
+    )
+    return {int(r["seq"]) for r in rows}
