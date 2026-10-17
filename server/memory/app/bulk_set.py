@@ -280,10 +280,17 @@ async def _bulk_intra_batch_pairs(
                     stamp_intra_batch_supersessions,
                 )
 
-                _ib = intra_batch_supersessions(
-                    [str(r.get("value") or "") for r in state.memory_rows],
-                    [str(r.get("memory_type") or "") for r in state.memory_rows],
-                )
+                # Only versions FINAL keeps pair: one the batch replaced says nothing now.
+                rows = state.memory_rows
+                kept = {id(r) for r in kept_versions(rows).values()}
+                _ib = [
+                    (i, j)
+                    for i, j in intra_batch_supersessions(
+                        [str(r.get("value") or "") for r in rows],
+                        [str(r.get("memory_type") or "") for r in rows],
+                    )
+                    if id(rows[i]) in kept and id(rows[j]) in kept
+                ]
                 _intra_pairs = stamp_intra_batch_supersessions(
                     state.memory_rows, state.embedding_rows, _ib, naive_utc_now()
                 )
@@ -521,7 +528,7 @@ async def _bulk_post_insert_links(
     _value_links: list[Any] = []
     _live_rows = [
         r
-        for r in state.memory_rows
+        for r in kept_versions(state.memory_rows).values()
         if str(r.get("status") or "") != "superseded"
         and str(r.get("memory_key") or "") not in state.judged_retired_keys
     ]

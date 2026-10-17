@@ -3724,6 +3724,37 @@ async def test_a_key_revised_inside_one_bulk_keeps_its_live_value_searchable(
     assert selfs[0]["n"] == 0
 
 
+async def test_a_value_its_own_bulk_replaced_retires_no_other_row(ch, org, newest_wins) -> None:
+    # k2's Russellville would retire k1's Moscow, but the same bulk then writes k2 again:
+    # k2 no longer says anything about the capital, so Moscow stays live and searchable.
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    out = await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            entries=[
+                {"memory_key": "k1", "value": "The capital of Soviet Union is Moscow."},
+                {"memory_key": "k2", "value": "The capital of Soviet Union is Russellville."},
+                {"memory_key": "k2", "value": "Alice likes green tea."},
+            ],
+        )
+    )
+    await after_write.drain()
+    assert await _status(ch, org, {"memory_id": out.written[0].memory_id}) == "active"
+    rows = await ch.query_all(
+        "SELECT memory_key, status FROM loom.memory_embeddings FINAL WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert {r["memory_key"]: r["status"] for r in rows} == {"k1": "active", "k2": "active"}
+
+
 async def test_a_replayed_repair_never_closes_a_newer_value(
     ch, org, monkeypatch, newest_wins
 ) -> None:
