@@ -79,7 +79,7 @@ class _ScriptedLLM:
         return SimpleNamespace(text=json.dumps({"peers": entries}))
 
 
-async def _set(org: str, session: str, key: str, value: str, **kw: Any) -> str:
+async def _set(org: str, session: str, key: str, value: str, user: str = USER, **kw: Any) -> str:
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app.write import handle_memory_set
 
@@ -88,7 +88,7 @@ async def _set(org: str, session: str, key: str, value: str, **kw: Any) -> str:
             org=org,
             namespace=NS,
             agent="bot",
-            user_id=USER,
+            user_id=user,
             session_id=session,
             memory_key=key,
             value=value,
@@ -98,13 +98,15 @@ async def _set(org: str, session: str, key: str, value: str, **kw: Any) -> str:
     return str(out.memory_id)
 
 
-async def _place(ch: Any, org: str, session: str, key: str, vec: list[float], owed: bool) -> None:
+async def _place(
+    ch: Any, org: str, session: str, key: str, vec: list[float], owed: bool, user: str = USER
+) -> None:
     """Give the row's vector a fixed direction, and the resolver's mark when `owed`."""
     from server.memory.store.conflict_resolver import OWED_MARK
     from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
 
     rows = await live_embedding_rows_for_key(
-        ch, org=org, namespace=NS, agent="bot", user_id=USER, session_id=session, memory_key=key
+        ch, org=org, namespace=NS, agent="bot", user_id=user, session_id=session, memory_key=key
     )
     assert rows, key
     await reemit_rows(
@@ -890,3 +892,45 @@ async def test_a_flagged_pair_is_judged_once_from_both_sides(ch, wired, monkeypa
     calls = len(llm.calls)
     await run_pass()
     assert len(llm.calls) == calls, "the peer's flag is not judged again, reversed"
+
+
+async def test_a_flagged_peer_of_another_user_is_never_judged_or_retired(
+    ch, wired, monkeypatch
+) -> None:
+    """User u1's owed row is flagged with user u2's row (a cosine flag is namespace
+    wide). u2's text never reaches u1's prompt, and u1's update never retires it."""
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    prompts: list[str] = []
+    real = llm.complete
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        prompts.append(user)
+        return await real(system, user, **kw)
+
+    monkeypatch.setattr(llm, "complete", complete)
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "office_city", "The office is in Paris", user="u2")
+        await _later()
+        await _set(org, "s2", "office_location", "The office moved to Rome")
+        await after_write.drain()
+    await _place(ch, org, "s1", "office_city", _vec((70, 1.0)), owed=False, user="u2")
+    await _place(ch, org, "s2", "office_location", _vec((70, 0.8), (71, 0.6)), owed=True)
+    rows = await _rows(ch, org)
+    landed = await conflicts.mark_peers_conflicted(
+        org=org, new_memory_id=rows["office_location"]["id"], peer_ids=[rows["office_city"]["id"]]
+    )
+    assert landed == "conflict"
+
+    await run_pass()
+    assert not any("Paris" in p for p in prompts)
+    after = await _rows(ch, org)
+    assert after["office_city"]["status"] == "conflicted", "u2's row is not retired"

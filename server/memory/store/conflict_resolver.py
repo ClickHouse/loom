@@ -185,7 +185,8 @@ def _nearest_sql() -> str:
         """ + vector_search_settings(table="loom.memory_embeddings")
 
 
-# The candidates' rows, joined by the full identity: a key alone repeats across sessions.
+# The candidates' rows, joined by the full identity (a key alone repeats across sessions),
+# within the row's subject like every read of the cluster.
 _PEER_ROWS_SQL = """
         SELECT toString(memory_id) AS memory_id, agent, user_id, session_id, memory_key,
                toString(value) AS value, pinned, valid_at, created_at, updated_at, version,
@@ -195,7 +196,8 @@ _PEER_ROWS_SQL = """
         PREWHERE org = {org:String} AND namespace = {ns:String}
           AND (agent, user_id, session_id, memory_key)
               IN {ids:Array(Tuple(String, String, String, String))}
-        WHERE memory_type = {mt:String}
+        WHERE user_id = {u:String} AND (user_id != '-' OR agent = {a:String})
+          AND memory_type = {mt:String}
           AND tombstoned_at IS NULL
           AND status IN ('active', 'conflicted')
           AND sensitivity != 'high'
@@ -206,13 +208,15 @@ _PEER_ROWS_SQL = """
 
 
 # The row's flagged peers, by id, with their distance: they join the cluster whatever
-# the vector cutoff or the floor.
+# the vector cutoff or the floor. Only those of the row's subject: a cosine flag can
+# name another user's row, whose text must not reach this row's prompt.
 _FLAGGED_SQL = """
         SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
                e.memory_key AS memory_key,
                cosineDistance(e.embedding, {emb:Array(Float32)}) AS dist
         FROM loom.memory_embeddings AS e FINAL
         WHERE e.org = {org:String} AND e.namespace = {ns:String}
+          AND e.user_id = {u:String} AND (e.user_id != '-' OR e.agent = {a:String})
           AND (e.agent, e.user_id, e.session_id, e.memory_key) IN (
               SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL
               WHERE org = {org:String} AND namespace = {ns:String}
