@@ -567,24 +567,7 @@ async def publish(
                         raise TemporalUnavailableError(
                             f"namespace {ns!r} publisher lease lost; retry"
                         )
-                    # The allocation is durable before the insert: an insert whose
-                    # outcome is unknown keeps its sequences, so a later one never
-                    # reuses them, and erasing the newest commits frees none.
-                    last = batch.commits[-1]
-                    await store.mark_published(
-                        org, ns, last["commit_seq"], last["recorded_at"], ch=ch
-                    )
-                    await _insert_commits(org, ns, batch.commits, ch)
-                    # The read-backs and the erasure fence again, in one round.
-                    outcomes = await asyncio.gather(
-                        _read_back(org, ns, batch.commits, ch),
-                        _refence(org, ns, changes, batch, ch, clock),
-                        return_exceptions=True,
-                    )
-                    for outcome in outcomes:
-                        if isinstance(outcome, BaseException):
-                            raise outcome
-                    _stamp_clock.set(clock)
+                    await _commit(batch, changes, clock, ch)
             if batch.commits:
                 projected = _project(
                     org,
@@ -607,6 +590,26 @@ async def publish(
                 bag.extend(batch.receipts)
             return batch.receipts
     raise TemporalUnavailableError(f"namespace {ns!r} is busy with writes to the same keys; retry")
+
+
+async def _commit(b: _Batch, changes: Sequence[_RowChange], clock: datetime, ch: _CHClient) -> None:
+    """Under the lock: allocate, insert, read back and fence the batch's commits."""
+    # The allocation is durable before the insert: an insert whose outcome is
+    # unknown keeps its sequences, so a later one never reuses them, and erasing
+    # the newest commits frees none.
+    last = b.commits[-1]
+    await store.mark_published(b.org, b.ns, last["commit_seq"], last["recorded_at"], ch=ch)
+    await _insert_commits(b.org, b.ns, b.commits, ch)
+    # The read-backs and the erasure fence again, in one round.
+    outcomes = await asyncio.gather(
+        _read_back(b.org, b.ns, b.commits, ch),
+        _refence(b.org, b.ns, changes, b, ch, clock),
+        return_exceptions=True,
+    )
+    for outcome in outcomes:
+        if isinstance(outcome, BaseException):
+            raise outcome
+    _stamp_clock.set(clock)
 
 
 # A batch re-plans at most this many times while other writers keep changing its keys.
