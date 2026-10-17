@@ -159,6 +159,8 @@ class _Table:
         self.token_inserts = 0
         self.claimed: set[tuple[str, str]] = set()  # token names a claim holds
         self.shuffle: random.Random | None = None  # the store's rows come in no set order
+        self.outright: dict[str, str] = {}  # the world's, for `_held_for_good`
+        self.lapsing: set[str] = set()
 
     def token(self, org: str, name: str) -> dict[str, Any] | None:
         rows = [r for r in self.tokens if (r["org"], r["name"]) == (org, name)]
@@ -228,6 +230,9 @@ class _Table:
             if self.shuffle is not None:
                 self.shuffle.shuffle(rows)
             return rows
+        if "issued_before IS NOT NULL OR" in sql:  # held for good, or narrowed
+            held = [s for s in params["s"] if s in self.outright and s not in self.lapsing]
+            return [{"jti": s} for s in params["s"] if s in held or s in self.lifted]
         if "loom.revoked_tokens" in sql:
             return [{"jti": s} for s in self._lifted_with(params)]
         if "loom.namespace_grants" in sql:
@@ -258,9 +263,11 @@ class _World:
         self.accounts: dict[str, list[str]] = {}  # email -> subjects it reaches
         self.elsewhere: dict[str, list[str]] = {}  # subject -> other orgs it is in
         self.outright: dict[str, str] = {}  # subject -> reason
+        self.lapsing: set[str] = set()  # outright revocations with an expiry (time-boxed)
         self.narrowed: list[tuple[str, datetime]] = []
         self.lifted: dict[str, str] = {}  # subject -> reason its narrowing was written with
         self.table = _Table(self.accounts, self.elsewhere, self.narrowed, self.lifted)
+        self.table.outright, self.table.lapsing = self.outright, self.lapsing
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.fail_revoke = False
         self.claim_limit: int | None = None  # names held at once before a claim runs out
@@ -269,8 +276,8 @@ class _World:
         self.holding = 0  # SCIM leases held now
         self.waits: list[float] = []  # what the real `wait_out` sleeps
 
-        async def has_outright_row(subject: str) -> bool:
-            return subject in self.outright
+        async def has_outright_row(subject: str, *, lasting: bool = False) -> bool:
+            return subject in self.outright and not (lasting and subject in self.lapsing)
 
         async def stale_snapshot(subject: str) -> bool:
             raise AssertionError("SCIM reads the store, not this process's snapshot")
@@ -281,7 +288,8 @@ class _World:
             if self.fail_revoke:
                 raise RuntimeError("ClickHouse is away")
             self.outright[subject] = reason
-            self.lifted.pop(subject, None)  # replaced under FINAL
+            self.lapsing.discard(subject)  # replaced under FINAL
+            self.lifted.pop(subject, None)
             return {}
 
         async def narrow(
@@ -799,6 +807,29 @@ async def test_an_operator_revocation_survives_deactivate_and_reactivate(world) 
     assert world.outright == {"lee": "offboarded"} and world.narrowed == []
 
 
+async def test_a_time_boxed_operator_revocation_still_gets_the_deactivations_own(world) -> None:
+    # `loom revoke-token --subject lee --expires-at <tomorrow>`: lee's old
+    # tokens must not work again once it lapses, while the user is inactive.
+    world.person("lee@example.com", "lee")
+    world.outright["lee"] = "suspended"
+    world.lapsing.add("lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    assert world.outright == {"lee": scim.DEACTIVATED} and world.lapsing == set()
+
+
+async def test_a_repeated_deactivation_revokes_a_subject_whose_revocation_lapsed(world) -> None:
+    world.person("lee@example.com", "lee", "lee-ops")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    del world.outright["lee"]  # a revocation that lapsed (or one written before this fix)
+    world.lapsing.add("lee-ops")  # an operator time-boxed this one meanwhile
+    world.outright["lee-ops"] = "suspended"
+    await scim.set_active(uid, False)  # the provider sends it again
+    assert world.outright == {"lee": scim.DEACTIVATED, "lee-ops": scim.DEACTIVATED}
+    assert world.lapsing == set()
+
+
 async def test_a_deactivation_after_a_failed_reactivation_revokes_outright_again(world) -> None:
     world.person("lee@example.com", "lee", "lee-ops")
     uid = await _create("lee@example.com")
@@ -856,6 +887,18 @@ async def test_a_retried_delete_finishes_the_token_list_and_still_answers_404(wo
     assert not await scim.delete(uid)  # the provider retries: 404, and the list is done
     assert world.table.live_tokens() == []
     assert world.events == ["auth.scim_deactivated", "auth.scim_deleted"]
+
+
+def test_a_retried_inactive_create_finishes_the_token_list(client: TestClient, world) -> None:
+    world.person("lee@example.com", "lee")
+    world.table.tokens.append(_saved_token("laptop", "lee"))
+    user = {"userName": "lee@example.com", "active": False}
+    world.table.fail_token_insert = "laptop"
+    assert client.post("/scim/v2/Users", json=user).status_code == 503
+    assert len(world.table.live_tokens()) == 1
+    world.table.fail_token_insert = None
+    assert client.post("/scim/v2/Users", json=user).status_code == 409  # the provider retries
+    assert world.table.live_tokens() == []
 
 
 async def test_deleting_an_inactive_user_is_audited_too(world) -> None:

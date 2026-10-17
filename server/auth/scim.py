@@ -163,8 +163,9 @@ async def create(
                 }
             changes = {"user_name": normalized(user_name), "deleted": 0, **_entry(email_entry)}
             new, cutoff = await _set_active(row, active, **changes)
-    if new is not None and not active:
-        await _revoke_tokens(new)
+    stored = new or row
+    if not stored["active"]:  # a retry too: it finishes what a failed try left
+        await _revoke_tokens(stored)
     await _wait_out(cutoff)
     if new is None:
         raise Exists
@@ -323,13 +324,16 @@ async def _set_active(
         else:
             new["subjects"] = sorted(known | set(found))
             # Going inactive (or retrying a try that stopped short of writing the
-            # row) revokes them all; once inactive, only accounts found since and
-            # those a reactivation that failed to write the row narrowed, so one an
-            # operator narrowed stays narrowed.
+            # row) revokes them all; once inactive, only accounts found since,
+            # those a reactivation that failed to write the row narrowed and those
+            # whose revocation lapses or lapsed, so one an operator narrowed stays
+            # narrowed.
             if was_active or unwritten:
                 subjects = new["subjects"]
             else:
-                subjects = sorted((set(found) - known) | await _lifted(sorted(known)))
+                lifted = await _lifted(sorted(known))
+                lapsed = known - await _held_for_good(sorted(known))
+                subjects = sorted((set(found) - known) | lifted | lapsed)
             for subject in subjects:
                 await _revoke(new["id"], subject, set(found.values()))
         if new != row or unwritten:  # a change, or a user not yet written
@@ -372,11 +376,13 @@ async def _subjects(email: str) -> dict[str, str]:
 
 
 async def _revoke(uid: str, subject: str, orgs: set[str]) -> None:
-    """Revoke `subject` outright unless it already is (by an operator, or by
-    the try this one retries). A subject is a name, not an org's: the same one
-    may be someone else's elsewhere, and the revocation reaches them too."""
+    """Revoke `subject` outright unless it already is for good (by an operator,
+    or by the try this one retries); one an operator time-boxed is replaced, as
+    it would let the old tokens back in when it lapses. A subject is a name, not
+    an org's: the same one may be someone else's elsewhere, and the revocation
+    reaches them too."""
     # The store, not this process's snapshot: one behind would skip a revocation needed again.
-    if await revocation.has_outright_row(subject):
+    if await revocation.has_outright_row(subject, lasting=True):
         return
     elsewhere = await _orgs_beyond(subject, orgs)
     if elsewhere:
@@ -465,6 +471,21 @@ async def _lifted(subjects: list[str]) -> set[str]:
               AND issued_before IS NOT NULL AND expires_at > now()
             """,
             params={"s": subjects, "r": revocation.lifted_reason(DEACTIVATED)},
+        )
+    return {r["jti"] for r in rows}
+
+
+async def _held_for_good(subjects: list[str]) -> set[str]:
+    """Those of `subjects` revoked outright with no expiry, or narrowed (by an
+    operator or a reactivation): the rest a repeated deactivation revokes again."""
+    with own_write_reads():
+        rows = await get_client().query_all(
+            """
+            SELECT jti FROM loom.revoked_tokens FINAL
+            WHERE jti IN {s:Array(String)} AND expires_at > now()
+              AND (issued_before IS NOT NULL OR expires_at >= {latest:DateTime64(3, 'UTC')})
+            """,
+            params={"s": subjects, "latest": revocation.revocation_expiry(None)},
         )
     return {r["jti"] for r in rows}
 

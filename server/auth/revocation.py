@@ -327,18 +327,21 @@ async def _next_version(jti: str) -> int:
     return await next_version(get_client(), "loom.revoked_tokens", "jti", jti)
 
 
-async def has_outright_row(jti: str) -> bool:
+async def has_outright_row(jti: str, *, lasting: bool = False) -> bool:
     """Whether loom.revoked_tokens itself revokes `jti` outright: what a cutoff
-    written under that key replaces (an owed session revocation it does not)."""
+    written under that key replaces (an owed session revocation it does not).
+    `lasting`: only a row that never lapses counts, not a time-boxed one."""
     from server.core.ch import get_client, own_write_reads
 
+    since = _LATEST_EXPIRY if lasting else datetime(1970, 1, 1)
     with own_write_reads():
         row = await get_client().query_one(
             """
             SELECT 1 AS x FROM loom.revoked_tokens FINAL
             WHERE jti = {j:String} AND expires_at > now() AND issued_before IS NULL
+              AND expires_at >= {since:DateTime64(3, 'UTC')}
             """,
-            params={"j": jti},
+            params={"j": jti, "since": since},
         )
     return row is not None
 
