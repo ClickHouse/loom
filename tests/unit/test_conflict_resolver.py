@@ -751,6 +751,8 @@ def test_the_defaults_are_the_benched_operating_point() -> None:
     assert defaults["memory_conflict_resolver_max_peers"] == 8
     assert defaults["memory_conflict_resolver_retire_confidence"] == 0.95
     assert defaults["memory_conflict_resolver_clear_confidence"] == 0.90
-    assert defaults["memory_conflict_resolver_batch"] == 20
-    assert defaults["memory_conflict_resolver_recheck_batch"] == 10
-    assert defaults["memory_conflict_resolver_interval_seconds"] == 60.0
+    # 48 rows a pass, 8 at once at ~5 s a call, then 10 s: ~70 rows a minute.
+    assert defaults["memory_conflict_resolver_batch"] == 40
+    assert defaults["memory_conflict_resolver_recheck_batch"] == 8
+    assert defaults["memory_conflict_resolver_concurrency"] == 8
+    assert defaults["memory_conflict_resolver_interval_seconds"] == 10.0

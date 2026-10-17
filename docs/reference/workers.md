@@ -216,7 +216,7 @@ adding its row.
 | `code_scip_py_delta` | Python compiler-tier deltas per merge. | `LOOM_CODE_SCIP_PY_DELTA_ENABLED` | True | `LOOM_CODE_SCIP_PY_DELTA_INTERVAL_SECONDS` | 600 |
 | `code_scip_ts_delta` | Per-merge compiler-tier freshness for TypeScript. | `LOOM_CODE_SCIP_TS_DELTA_ENABLED` | True | `LOOM_CODE_SCIP_TS_DELTA_INTERVAL_SECONDS` | 600 |
 | `code_summary` | Weekly LLM file/module summary cards for code.map orientation. | `LOOM_CODE_SUMMARY_ENABLED` | False | `LOOM_CODE_SUMMARY_INTERVAL_SECONDS` | 604800 |
-| `conflict_resolver` | Judge the writes the conflict check marked, one LLM call per row, and act on the verdicts (`memory.app.conflict_resolver`). | `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` | False | `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | 60.0 |
+| `conflict_resolver` | Judge the writes the conflict check marked, one LLM call per row, and act on the verdicts (`memory.app.conflict_resolver`). | `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` | False | `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | 10.0 |
 | `conversation_titler` | Conversation-titler worker. | `LOOM_CONVERSATION_TITLER_ENABLED` | True | `LOOM_CONVERSATION_TITLER_INTERVAL_SECONDS` | 1800 |
 | `document_blob_gc` | Document-original sweep: `loom.document_blobs` rows no live document names. | `LOOM_DOCUMENT_BLOB_GC_ENABLED` | True | `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` | 3600 |
 | `embedding_worker` | Embedding recovery worker. | `LOOM_EMBEDDING_WORKER_ENABLED` | True | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | 5 |

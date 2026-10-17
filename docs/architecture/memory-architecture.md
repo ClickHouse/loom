@@ -164,8 +164,8 @@ emits (`memory/store/conflict_resolver.py`):
 | any real time         | Stamped by an older build: owed again only while the row is `conflicted`.                                                          |
 
 A mark belongs to the write that set it: a revision emits a new vector row with its own.
-Each pass reads `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` (20) owed rows and then
-`LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` (10) rows already `conflicted` that no
+Each pass reads `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` (40) owed rows and then
+`LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` (8) rows already `conflicted` that no
 resolver judged, so a flag the cosine check raised is judged once too. Both reads take
 rows in turns across (org, namespace), oldest first within each, so one namespace's bulk
 import does not hold back a row written elsewhere. Neither reads a namespace that

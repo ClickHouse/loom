@@ -632,10 +632,10 @@ Source: `server/settings/_memory.py`
 | `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS` | `int` | `8` | Most peers judged with a row in one call, nearest first. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | `float` | `0.95` | An update at or above this confidence retires the older row (newest_wins only). |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` | `float` | `0.9` | Below this confidence a verdict changes nothing. At or above it a compatible verdict clears the pair's flag, and an update this build does not retire or a contradiction flags the pair for review. |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` | `int` | `20` | Marked rows judged per pass, then rows already `conflicted` re-checked per pass. |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` | `int` | `10` |  |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` | `int` | `8` | Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time. |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | `float` | `60.0` | Seconds between the resolver's passes. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` | `int` | `40` | Marked rows judged per pass, then rows already `conflicted` re-checked per pass. 48 rows at 8 at once are 6 rounds of ~5 s calls: a 30 s pass, then the 10 s wait, so ~70 rows a minute (55 at 7 s a call, 85 at 4 s). |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` | `int` | `8` |  |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` | `int` | `8` | Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time; doubling it roughly doubles the rows judged a minute, up to the provider's rate limit. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | `float` | `10.0` | Seconds the resolver waits after a pass before the next one. |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. |
 | `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` | Bulk-path conflict checks run at once (at least 1). |
 | `LOOM_MEMORY_WRITE_CANDIDATE_BATCH` | `int` | `6` | Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact. |
