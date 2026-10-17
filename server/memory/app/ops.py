@@ -512,13 +512,14 @@ async def _open_conflict_for_edge(org: str, namespace: str, from_key: str, to_ke
     if str(a.memory_id) == str(b.memory_id):
         return False
     try:
-        await mark_peers_conflicted(
+        # A superseded or retired endpoint is not flagged: no conflict opened then.
+        verdict = await mark_peers_conflicted(
             org=org, new_memory_id=str(a.memory_id), peer_ids=[str(b.memory_id)]
         )
     except Exception as e:  # noqa: BLE001 — the edge is kept
         log.warning("memory.link contradicts: mark_peers_conflicted failed: %s", e)
         return False
-    return True
+    return verdict == "conflict"
 
 
 async def handle_memory_link(input: MemoryLinkInput) -> MemoryLinkOutput:
