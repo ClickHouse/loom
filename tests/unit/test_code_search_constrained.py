@@ -204,6 +204,13 @@ def test_scope_file_count_is_a_uniq_exact_over_the_predicate() -> None:
     assert params["sc_pat"] == "Foo" and params["prefix"] == "src/"
 
 
+def test_a_case_insensitive_regex_keeps_its_index_guard() -> None:
+    sql, params = build_scope(pattern=r"getTotals\(\)|setTotals\(", regex=True).content_condition()
+    assert sql.startswith("(lower(content) LIKE {sc_0:String} OR lower(content) LIKE")
+    likes = {v for k, v in params.items() if k != "sc_pat"}
+    assert {"%gettotals()%", "%settotals(%", "%gettotal\u017f()%"} <= likes
+
+
 def test_grep_takes_path_filters_but_keeps_its_own_content_predicate() -> None:
     ch = _StubCH()
     ch.one = {"n": 3}
