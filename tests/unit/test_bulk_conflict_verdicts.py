@@ -326,6 +326,32 @@ def test_a_restated_landing_keeps_the_merge_peers_on_the_merging_entry() -> None
     assert last.memory_id == "A1" and last.version == 1
 
 
+def test_a_restated_landing_projects_the_entry_its_row_was_built_from() -> None:
+    # a=Berlin (entities [Berlin]) merges into T, t is rewritten, a=Berlin again
+    # (entities [Alice]) lands the first a's row. The graph must see the stored row's
+    # entities, the first a's.
+    from server.memory.app.bulk_rows import _bulk_skip_gate
+    from server.memory.app.bulk_set import _apply_verdicts, _projected
+
+    class Input(NS):
+        def model_copy(self, *, update):
+            return Input(**{**self.__dict__, **update})
+
+    state = _stored(t=("T", "berlin"))
+    _entry(state, "a", "A1", "berlin")
+    _entry(state, "t", "T", "bike")
+    assert _bulk_skip_gate(NS(memory_key="a"), "berlin", state, {})
+    _apply_verdicts(state, [], {0: NS(verdict="merge", existing_memory_id="T", peers=[])})
+    entries = [
+        NS(memory_key="a", entities=["Berlin"]),
+        NS(memory_key="t", entities=["bicycle"]),
+        NS(memory_key="a", entities=["Alice"]),
+    ]
+    p_input, p_results = _projected(Input(entries=entries), state)
+    assert [e.entities for e in p_input.entries] == [["bicycle"], ["Berlin"]]
+    assert [r.memory_id for r in p_results] == ["T", "A1"]
+
+
 def test_a_restatement_of_a_landed_entry_counts_once_as_unchanged() -> None:
     from server.memory.app.bulk_rows import _bulk_skip_gate
     from server.memory.app.bulk_set import _apply_verdicts

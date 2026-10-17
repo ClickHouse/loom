@@ -801,9 +801,13 @@ def _projected(
         for r in state.memory_rows
         if r.get("sensitivity") == "high"
     }
+    # A restatement that landed an earlier entry's row projects that entry: the row
+    # was built from its entities, tags and dates.
+    built_from = {res_i: src_i for res_i, src_i, _row, _t in state.restated_landings}
+    entries = [input.entries[built_from.get(i, i)] for i in range(len(input.entries))]
     kept = [
         (entry, res)
-        for entry, res in zip(input.entries, state.results, strict=True)
+        for entry, res in zip(entries, state.results, strict=True)
         if res.version
         and (res.memory_id, res.version) not in high
         and res.memory_key not in state.judged_retired_keys
