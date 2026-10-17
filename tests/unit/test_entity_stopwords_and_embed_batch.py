@@ -475,6 +475,10 @@ def test_a_japanese_name_written_in_hiragana_is_an_entity(text: str) -> None:
         ("우간다를 좋아한다", ["우간다"], ["좋아한다"]),
         # A name ending in 요 is not a polite verb.
         ("히데요 는 서울 에 살아요", ["히데요", "서울"], ["살아요"]),
+        # The particle 에서 and the plain copula come off the noun; a name keeps them.
+        ("서울에서 부산에서", ["서울", "부산"], ["서울에서", "부산에서"]),
+        ("학생이다 서울입니다", ["학생", "서울"], ["학생이다", "서울입니다", "이다", "입니다"]),
+        ("아이다", ["아이다"], []),
     ],
 )
 def test_a_korean_particle_or_plain_verb_is_not_an_entity(
@@ -495,6 +499,8 @@ def test_a_korean_particle_or_plain_verb_is_not_an_entity(
         ("저희는 오늘 서울에 가요", ["서울"], ["저희", "오늘"]),
         ("당신을 어제 만났다", [], ["당신", "어제"]),
         ("너희를 내일 그들을 본다", [], ["너희", "내일", "그들"]),
+        # A time word with its 은 or 는.
+        ("오늘은 지금은 내일은 어제는 부산", ["부산"], ["오늘은", "지금은", "내일은", "어제는"]),
     ],
 )
 def test_a_korean_pronoun_or_time_word_is_not_an_entity(

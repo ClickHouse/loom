@@ -284,6 +284,11 @@ _SET_ENTITY_STOPWORDS = frozenset(
         "오늘",
         "내일",
         "어제",
+        # With 은 or 는, which `_korean_stem` leaves on 은: "오늘은" (today).
+        "오늘은",
+        "지금은",
+        "내일은",
+        "어제는",
     }
 )
 # Runs of TitleCase words are strong proper-noun candidates. Applied to the
@@ -364,6 +369,9 @@ _GRAMMAR_WORDS = frozenset(
 # 은, 이, 가, 의 and 도 are left on: they end names and nouns too (김하은, 고양이,
 # 음악가, 민주주의, 제주도).
 _KOREAN_PARTICLES = ("는", "를", "에", "을")
+# Longer endings trimmed the same way: the particle 에서 ("서울에서", in Seoul) and the
+# plain copula ("학생이다", is a student; "서울입니다", it is Seoul).
+_KOREAN_LONG_ENDINGS = ("에서", "입니다", "이다")
 
 
 def _is_hangul(char: str) -> bool:
@@ -377,11 +385,16 @@ def _is_han(char: str) -> bool:
 
 
 def _korean_stem(word: str) -> str:
-    """The noun of a Hangul word that ends in a particle: "서울에" is 서울. A word of
-    two syllables keeps its ending ("마을", village), so "저는" stays whole and
-    `_not_a_name` drops it."""
+    """The noun of a Hangul word that ends in a particle or the copula: "서울에" and
+    "서울에서" are 서울, "학생이다" is 학생. A word of two syllables keeps its ending
+    ("마을", village), so "저는" stays whole and `_not_a_name` drops it."""
     if len(word) >= 3 and word.endswith(_KOREAN_PARTICLES) and _is_hangul(word[-2]):
         return word[:-1]
+    for ending in _KOREAN_LONG_ENDINGS:
+        stem = word[: -len(ending)]
+        # A stem of two syllables or more: "아이다" (Aida) keeps its ending.
+        if word.endswith(ending) and len(stem) >= 2 and all(_is_hangul(c) for c in stem):
+            return stem
     return word
 
 
