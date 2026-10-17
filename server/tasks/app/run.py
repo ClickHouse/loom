@@ -996,7 +996,8 @@ def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime]:
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:
-    """List a namespace's agent runs, newest first, filtered by agent, session, status or grade."""
+    """One page of a namespace's agent runs, filtered by agent, session, status, memory
+    activity, grade or text, in the asked order, with the count of every match."""
 
     where: list[str] = []
     params: dict[str, Any] = {}
@@ -1023,18 +1024,34 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
     elif input.grade:
         where.append("grade = {grade:String}")
         params["grade"] = input.grade
-    rows = await runs_store.list_runs(
-        get_client(),
-        input.org,
-        input.namespace,
-        where=where,
-        params=params,
-        limit=int(input.limit),
+    # The Runs page's search box: goal, run id or agent, any case.
+    q = (input.q or "").strip()
+    if q:
+        where.append(
+            "(positionCaseInsensitiveUTF8(goal, {q:String}) > 0"
+            " OR positionCaseInsensitiveUTF8(run_id, {q:String}) > 0"
+            " OR positionCaseInsensitiveUTF8(agent, {q:String}) > 0)"
+        )
+        params["q"] = q
+    ch = get_client()
+    # The page and the count of every match share one WHERE.
+    rows, total = await asyncio.gather(
+        runs_store.list_runs(
+            ch,
+            input.org,
+            input.namespace,
+            where=where,
+            params=params,
+            limit=int(input.limit),
+            offset=int(input.offset),
+            order_by=input.order_by,
+        ),
+        runs_store.count_runs(ch, input.org, input.namespace, where=where, params=params),
     )
 
     runs = [_row_to_model(r) for r in rows]
     project_rows(runs, RunRow, input.fields, always=frozenset({"run_id"}))
-    return RunListOutput(runs=runs)
+    return RunListOutput(runs=runs, total=total)
 
 
 async def recent_run_heads(

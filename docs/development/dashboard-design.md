@@ -95,7 +95,12 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - **Reading something keeps you where you are**: a related object opens in the drawer, a dialog or a popover. Going to another tool navigates, pushes history, and Back restores the scroll, the open drawer and the focus.
 - **Shortcut hints** appear only in tooltips, the help dialog and the global search field (`⌘K` on Apple platforms, `Ctrl K` elsewhere). Click UI has no shortcut component; the keys themselves all stay.
 - **Icons are Click UI's** (`@clickhouse/click-ui/Icon`), never a text glyph standing in for one.
-- A Loom primitive that brings a heavy Click UI component (`ListToolbar`, `ListPager`) is imported by path, not from `components/ui/index.ts`, or it lands in every page's boot chunk.
+- **A row's time is `ui/ListTime`** (`listTime` in `lib/format.ts`): "just now", "12m ago", "3h ago", "3d ago", then "Sep 20" or "Sep 20, 2025", in a `<time dateTime>` with the UTC time in a tooltip. A ClickHouse time is read with `parseChTime`, never `replace(" ", "T") + "Z"`.
+- **Per-row actions are `ui/RowMenu`**: Click UI's Dropdown behind an always-visible `dots-vertical` button named "Actions for <name>", at the row's far right; a destructive item is the danger item. At most one other action sits inline.
+- **A list with no rows to show is `ui/ListState`**: `empty` (the `EmptyState`, one action), `filtered` ("No documents match tag:billing" and `Clear filters` on one line) or `error` ("Couldn't load documents", the message, the request id and a secondary `Retry`, never the empty state).
+- **A row list is one tab stop, through `useRowNav`** (`lib/useRowNav.ts`) on the rows' container: `↑/↓` and `j/k` move, `Home/End` jump, `Enter` opens, `Space` toggles the row's checkbox; Escape is the page's. The row's open button carries `data-row-open`, and the focus ring is drawn on the row (`.list-row:has([data-row-open]:focus-visible)`), never on the button.
+- **An agent is `AgentBadge`**: at most 180 px with an ellipsis, the whole name in a tooltip when cut.
+- A Loom primitive that brings a heavy Click UI component (`ListToolbar`, `ListPager`, `RowMenu`, `ListState`) is imported by path, not from `components/ui/index.ts`, or it lands in every page's boot chunk.
 
 ## Checks
 

@@ -15200,6 +15200,18 @@ class RunListInput(TypedDict, total=False):
     session_id: NotRequired[str]
     status: NotRequired[Literal["", "active", "completed", "failed", "cancelled"]]
     limit: NotRequired[int]
+    offset: NotRequired[int]
+    order_by: NotRequired[
+        Literal[
+            "started_desc",
+            "started_asc",
+            "duration_desc",
+            "duration_asc",
+            "relied_on_desc",
+            "relied_on_asc",
+        ]
+    ]
+    q: NotRequired[Optional[str]]
     memory_activity: NotRequired[Literal["", "with", "without"]]
     grade: NotRequired[Literal["", "ungraded", "graded", "pass", "fail"]]
     fields: NotRequired[Optional[list[str]]]
@@ -15212,6 +15224,18 @@ class RunListBody(TypedDict, total=False):
     session_id: NotRequired[str]
     status: NotRequired[Literal["", "active", "completed", "failed", "cancelled"]]
     limit: NotRequired[int]
+    offset: NotRequired[int]
+    order_by: NotRequired[
+        Literal[
+            "started_desc",
+            "started_asc",
+            "duration_desc",
+            "duration_asc",
+            "relied_on_desc",
+            "relied_on_asc",
+        ]
+    ]
+    q: NotRequired[Optional[str]]
     memory_activity: NotRequired[Literal["", "with", "without"]]
     grade: NotRequired[Literal["", "ungraded", "graded", "pass", "fail"]]
     fields: NotRequired[Optional[list[str]]]
@@ -15219,6 +15243,7 @@ class RunListBody(TypedDict, total=False):
 
 class RunListOutput(TypedDict, total=False):
     runs: Required[list["RunRow"]]
+    total: NotRequired[int]
 
 
 class SearchQueryInput(TypedDict, total=False):

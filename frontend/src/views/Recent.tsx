@@ -50,6 +50,7 @@ import {
   toggleQueryToken,
 } from "../lib/memoriesSearch";
 import { shortcutOff } from "../lib/shortcuts";
+import { useRowNav } from "../lib/useRowNav";
 
 // Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
 // The browse feed pages up to this; past it, search covers the whole namespace.
@@ -462,36 +463,13 @@ export function Recent() {
     [selecting, toggleSelect, inspect],
   );
 
-  // Keyboard nav, active when no inspector is open and not typing. j / k move the focus
-  // itself from card to card, as on Tasks: Enter opens the focused card (its button), Space
-  // selects it (MemoryCard's onToggle), and the inspector returns focus to it on close.
-  const onList = () => {
-    const el = document.activeElement;
-    return !el || el === document.body || !!el.closest("[data-card]");
-  };
-  const moveFocus = (step: number): true => {
-    const cards = [...document.querySelectorAll<HTMLElement>("[data-memory-open]")];
-    const here = document.activeElement?.closest("[data-card]")?.querySelector<HTMLElement>("[data-memory-open]");
-    const at = here ? cards.indexOf(here) : -1;
-    const next = cards[at < 0 ? 0 : Math.max(0, Math.min(cards.length - 1, at + step))];
-    next?.scrollIntoView?.({ block: "nearest" });
-    next?.focus({ preventScroll: true });
-    return true;
-  };
-  useKeyboard(
-    {
-      j: () => moveFocus(1),
-      k: () => moveFocus(-1),
-      // The arrows move through the list only from a card or the page itself: on any
-      // other control they are that control's (a menu trigger opens its menu), and
-      // elsewhere they scroll.
-      ArrowDown: () => onList() && moveFocus(1),
-      ArrowUp: () => onList() && moveFocus(-1),
-      // Escape clears a selection; with none it is left to whatever else listens for it.
-      ...(selecting ? { Escape: () => setSelected(new Set()) } : {}),
-    },
-    !inspectedKey && flatList.length > 0,
-  );
+  // Keyboard nav, active when no inspector is open and not typing: the list is one tab
+  // stop, j / k and the arrows move the focus from card to card, Enter opens the focused
+  // card (its button), Space selects it, and the inspector returns focus to it on close.
+  const listNav = useRowNav({ enabled: !inspectedKey && flatList.length > 0 });
+  // Escape clears a selection; with none it is left to whatever else listens for it.
+  const clearOnEscape = useMemo(() => ({ Escape: () => setSelected(new Set()) }), []);
+  useKeyboard(clearOnEscape, selecting && !inspectedKey && flatList.length > 0);
 
   // A memory's identity is (org, namespace, agent, user_id, session_id) +
   // memory_key, and this list spans agents (there is an agent filter chip). The
@@ -1090,7 +1068,7 @@ export function Recent() {
       <h2 id="memories-list-top" tabIndex={-1} className="sr-only focus:not-sr-only focus:mb-2 focus:text-sm">
         Memories, page {page + 1}
       </h2>
-      <div className="space-y-6" aria-busy={refreshing || undefined}>
+      <div ref={listNav} className="space-y-6" aria-busy={refreshing || undefined}>
         {Array.from(byDay.entries()).map(([day, items]) => (
           <section key={day}>
             <SectionHeading level={2} label={day} count={items.length} />
@@ -1129,7 +1107,6 @@ export function Recent() {
                       value={e.value !== undefined ? e.value : bulkValues.get(e.memory_key)}
                       active={isActive}
                       onSelect={openCard}
-                      onToggle={toggleSelect}
                       onTagClick={toggleTag}
                       activeTags={activeTags}
                       timeMode="absolute"

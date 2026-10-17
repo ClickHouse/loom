@@ -575,11 +575,12 @@ textarea[aria-invalid="true"]:focus-visible {
 [role="tablist"] [role="tab"]:focus-visible {
   outline-offset: -2px;
 }
-/* A memory card's body is one stretched button: the ring goes round the card. */
-[data-memory-open]:focus-visible {
+/* A list row's body is one stretched button (`data-row-open`): the ring goes round the
+   row, meta slot included, and the button draws none of its own. */
+.list-row [data-row-open]:focus-visible {
   outline: none;
 }
-[data-card]:has([data-memory-open]:focus-visible) {
+.list-row:has([data-row-open]:focus-visible) {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
   /* At once, as every ring: the card's transition-colors would ease it in. */
@@ -1318,6 +1319,15 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 .list-row[data-deleted] {
   border-style: dashed;
+}
+/* AgentBadge: a long agent name is cut at 180 px with an ellipsis (the whole name is in
+   its tooltip); every box inside Click UI's Badge may shrink to it. */
+.agent-badge {
+  max-width: 180px;
+}
+.agent-badge * {
+  min-width: 0;
+  max-width: 100%;
 }
 .list-row-leading {
   display: flex;

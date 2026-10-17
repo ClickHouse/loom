@@ -86,7 +86,7 @@ describe("ThreadReplayDialog", () => {
     );
     const meta = (await screen.findByText("3 messages")).parentElement as HTMLElement;
     const agent = within(meta).getByText("planner");
-    expect(agent.closest('[data-testid="ellipsed-badge-content"]')).not.toBeNull();
+    expect(agent.closest('.agent-badge [data-testid$="-badge-content"]')).not.toBeNull();
     expect(agent.closest(".font-mono")).toBeNull();
     expect(meta).toHaveTextContent(`updated ${shortDate(old)}`);
     const dialog = screen.getByRole("dialog");

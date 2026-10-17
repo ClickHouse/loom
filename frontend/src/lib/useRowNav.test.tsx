@@ -1,0 +1,130 @@
+import { useState } from "react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "../test/rtl";
+import { ListRow } from "../components/ui/ListRow";
+import { setSingleKeyShortcuts } from "./shortcuts";
+import { useRowNav } from "./useRowNav";
+
+function List({ names = ["one", "two", "three"], onOpen = (_: string) => {} }) {
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const listRef = useRowNav();
+  return (
+    <>
+      <button type="button">Before</button>
+      <div ref={listRef}>
+        {names.map((n) => (
+          <ListRow
+            key={n}
+            leading={
+              <input
+                type="checkbox"
+                aria-label={`Select ${n}`}
+                checked={checked.has(n)}
+                onChange={() =>
+                  setChecked((s) => {
+                    const next = new Set(s);
+                    next.has(n) ? next.delete(n) : next.add(n);
+                    return next;
+                  })
+                }
+              />
+            }
+          >
+            <button type="button" data-row-open="" onClick={() => onOpen(n)}>
+              {n}
+            </button>
+          </ListRow>
+        ))}
+      </div>
+    </>
+  );
+}
+
+const open = (n: string) => screen.getByRole("button", { name: n });
+
+describe("useRowNav", () => {
+  afterEach(cleanup);
+
+  it("is one tab stop that follows the focused row", async () => {
+    render(<List />);
+    expect(open("one")).toHaveAttribute("tabindex", "0");
+    expect(open("two")).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByLabelText("Select one")).toHaveAttribute("tabindex", "-1");
+    const user = userEvent.setup();
+    await user.tab();
+    await user.tab();
+    expect(open("one")).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(open("two")).toHaveFocus();
+    expect(open("two")).toHaveAttribute("tabindex", "0");
+    expect(open("one")).toHaveAttribute("tabindex", "-1");
+    // Tab leaves the list, Shift+Tab comes back to the row it left from.
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "Before" })).toHaveFocus();
+    await user.tab();
+    expect(open("two")).toHaveFocus();
+  });
+
+  it("moves with j/k and the arrows, and jumps with Home/End", async () => {
+    render(<List />);
+    const user = userEvent.setup();
+    await user.keyboard("j");
+    expect(open("one")).toHaveFocus();
+    await user.keyboard("jj");
+    expect(open("three")).toHaveFocus();
+    await user.keyboard("j");
+    expect(open("three")).toHaveFocus();
+    await user.keyboard("k{ArrowUp}");
+    expect(open("one")).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(open("three")).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(open("one")).toHaveFocus();
+  });
+
+  it("leaves the arrows to a control outside the list", async () => {
+    render(<List />);
+    screen.getByRole("button", { name: "Before" }).focus();
+    await userEvent.keyboard("{ArrowDown}{End}");
+    expect(screen.getByRole("button", { name: "Before" })).toHaveFocus();
+  });
+
+  it("drops j/k while single-key shortcuts are off; the arrows stay", async () => {
+    render(<List />);
+    open("one").focus();
+    setSingleKeyShortcuts(false);
+    try {
+      await userEvent.keyboard("j");
+      expect(open("one")).toHaveFocus();
+      await userEvent.keyboard("{ArrowDown}");
+      expect(open("two")).toHaveFocus();
+    } finally {
+      setSingleKeyShortcuts(true);
+    }
+  });
+
+  it("opens with Enter and toggles the row's checkbox with Space", async () => {
+    const opened: string[] = [];
+    render(<List onOpen={(n) => opened.push(n)} />);
+    const user = userEvent.setup();
+    await user.keyboard("jj ");
+    expect(screen.getByLabelText("Select two")).toBeChecked();
+    expect(opened).toEqual([]);
+    expect(open("two")).toHaveFocus();
+    await user.keyboard(" ");
+    expect(screen.getByLabelText("Select two")).not.toBeChecked();
+    await user.keyboard("{Enter}");
+    expect(opened).toEqual(["two"]);
+  });
+
+  it("keeps one tab stop as rows change", () => {
+    const { rerender } = render(<List names={["one", "two"]} />);
+    rerender(<List names={["zero", "one", "two"]} />);
+    return Promise.resolve().then(() => {
+      const stops = screen.getAllByRole("button").filter((b) => b.hasAttribute("data-row-open") && b.tabIndex === 0);
+      expect(stops.map((b) => b.textContent)).toEqual(["one"]);
+      expect(open("zero")).toHaveAttribute("tabindex", "-1");
+    });
+  });
+});

@@ -105,6 +105,7 @@ export const MemoryCard = memo(function MemoryCard({
       <button
         type="button"
         data-memory-open=""
+        data-row-open=""
         onClick={() => onSelect(entry)}
         // A button clicks on Space's keyup, so both halves are taken.
         onKeyDown={

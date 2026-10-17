@@ -80,6 +80,50 @@ export function shortDate(iso: string): string {
     : fmt("month-day-year", { month: "short", day: "numeric", year: "numeric" }).format(d);
 }
 
+/** A ClickHouse time ("YYYY-MM-DD hh:mm:ss[.fff…]", no zone, so UTC) or an ISO time, as a
+ *  Date; null for nothing or anything that is not a time. */
+export function parseChTime(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  let t = s.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) t += "T00:00:00";
+  t = t.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, "$1T$2");
+  // DateTime64(6|9): Date reads three fraction digits at most.
+  t = t.replace(/(\.\d{3})\d+/, "$1");
+  return parseIso(t);
+}
+
+/** A list row's time (one rule for every list): "just now", "12m ago", "3h ago", "3d ago"
+ *  within the week, then "Sep 20", or "Sep 20, 2025" in another year. `ui/ListTime`
+ *  renders it with the absolute time in a tooltip. */
+export function listTime(iso: string | null | undefined): string {
+  const d = parseChTime(iso);
+  if (!d) return "";
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s > -60 && s < 60) return "just now";
+  if (s > 0 && s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s > 0 && s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s > 0 && s < 7 * 86400) return `${Math.floor(s / 86400)}d ago`;
+  return d.getFullYear() === new Date().getFullYear()
+    ? fmt("month-day", { month: "short", day: "numeric" }).format(d)
+    : fmt("month-day-year", { month: "short", day: "numeric", year: "numeric" }).format(d);
+}
+
+/** The absolute time behind a `listTime`, in UTC: "Sep 20, 2026, 14:32 UTC". */
+export function listTimeTitle(iso: string | null | undefined): string {
+  const d = parseChTime(iso);
+  if (!d) return "";
+  const f = fmt("utc-minute", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "UTC",
+  });
+  return `${f.format(d)} UTC`;
+}
+
 export function formatValue(v: unknown): string {
   if (v == null) return "";
   if (typeof v === "string") return v;

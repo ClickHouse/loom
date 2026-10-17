@@ -608,6 +608,7 @@ export function Documents() {
                 <div className="min-w-0 flex-1">
                   <button
                     type="button"
+                    data-row-open=""
                     onClick={() => onOpen(r)}
                     className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
                     aria-label={`Preview ${r.title || r.original_filename || r.source_uri}`}

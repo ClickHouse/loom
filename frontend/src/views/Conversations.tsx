@@ -286,6 +286,7 @@ export function Conversations() {
             <ListRow key={t.thread_id} className="group">
               <button
                 type="button"
+                data-row-open=""
                 onClick={() => openThreadDialog(t.thread_id, { knownAgent: t.agent })}
                 className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
               >

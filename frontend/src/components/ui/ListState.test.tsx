@@ -1,0 +1,53 @@
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "../../test/rtl";
+import { ApiError } from "../../lib/errors";
+import { ListState } from "./ListState";
+
+// What a list shows in place of its rows: nothing yet, nothing that matches, or a failed
+// read, and a failed read never says the list is empty.
+describe("ListState", () => {
+  it("empty: the big state with its one action", () => {
+    const onAdd = vi.fn();
+    render(
+      <ListState
+        kind="empty"
+        icon="folder-open"
+        title="Your library is empty"
+        description="Add a document to search it."
+        action={{ label: "Add document", onClick: onAdd }}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Your library is empty" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add document" }));
+    expect(onAdd).toHaveBeenCalled();
+  });
+
+  it("filtered: one inline line naming the filter, and Clear filters", () => {
+    const onClear = vi.fn();
+    render(<ListState kind="filtered" things="documents" filter="tag:billing" onClear={onClear} />);
+    expect(screen.getByRole("status")).toHaveTextContent("No documents match tag:billing");
+    expect(screen.queryByRole("heading")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(onClear).toHaveBeenCalled();
+  });
+
+  it("error: what failed, the humanized message, the request id and a secondary Retry", () => {
+    const onRetry = vi.fn();
+    const err = new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "ch down", requestId: "req-123" });
+    render(<ListState kind="error" things="documents" error={err} onRetry={onRetry} />);
+    expect(screen.getByRole("heading", { name: "Couldn't load documents" })).toBeInTheDocument();
+    expect(screen.getByText(/Loom's database is unreachable/)).toBeInTheDocument();
+    expect(screen.getByText("request id req-123")).toHaveClass("font-mono");
+    expect(screen.queryByText(/empty/i)).toBeNull();
+    const retry = screen.getByRole("button", { name: "Retry" });
+    expect(retry.className).toMatch(/secondary/);
+    fireEvent.click(retry);
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("error: a message the page already humanized, and its request id", () => {
+    render(<ListState kind="error" things="memories" error="Loom took too long." requestId="r-9" onRetry={() => {}} />);
+    expect(screen.getByText("Loom took too long.")).toBeInTheDocument();
+    expect(screen.getByText("request id r-9")).toBeInTheDocument();
+  });
+});
