@@ -19,6 +19,7 @@ from server.core.datetimes import naive_utc_now, parse_iso_dt, to_naive_utc
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
+    failed_projection,
     record_input_projection_failure,
     restated_repair_payload,
 )
@@ -739,7 +740,7 @@ async def _write_stated_relations(
         log.warning("%s: relations projection failed (recorded for repair): %s", op, e)
         await record_input_projection_failure(
             write,
-            projection="entity_triples",
+            projection=failed_projection("entity_triples", e),
             error=e,
             memory_keys=[results[0].memory_key],
             payload=bulk_projection_payload(write, results, error=e),

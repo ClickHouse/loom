@@ -3899,7 +3899,9 @@ async def test_a_failed_interval_repair_is_recorded_for_replay(ch, org, monkeypa
     )
     # The failure log is a fire-and-forget async insert: wait for its flush.
     for _ in range(100):
-        failures = await list_projection_failures(org=org, projection="entity_triples", ch=ch)
+        failures = await list_projection_failures(
+            org=org, projection="entity_triples_repair", ch=ch
+        )
         if failures:
             break
         await asyncio.sleep(0.1)

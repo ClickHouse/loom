@@ -72,6 +72,10 @@ schema. These rules keep that safe. The operator procedure is in
      commands (`loom reembed`) write those; run them when one build serves.
 3. **New enum or status values:** N ships readers that accept them, and only N+1
    writes them. N-1's Pydantic `Literal` would answer 500 on a value it does not know.
+   A projection failure's name is a plain string that N-1 already tolerates: its repair
+   worker leaves a name it does not know active as `unsupported_projection`. So N records
+   a triples repair that failed after its insert as `entity_triples_repair`, not
+   `entity_triples`, which N-1 would replay by inserting the triples again.
 4. **Wire formats** (cursors, session and run ids, worker resume cursors, JSON stored in
    rows): N reads the old and the new format, and only N+1 writes the new one.
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring

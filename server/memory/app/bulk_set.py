@@ -48,6 +48,7 @@ from server.memory.app.key_supersession import JudgedRetirements
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     bulk_source_resource_id,
+    failed_projection,
     record_input_projection_failure,
     restated_repair_payload,
 )
@@ -845,7 +846,7 @@ async def _bulk_run_projections(
                 log.warning("%s write failed (non-fatal): %s", name, e)
                 await record_input_projection_failure(
                     p_input,
-                    projection=name,
+                    projection=failed_projection(name, e),
                     error=e,
                     memory_keys=[r.memory_key for r in p_results],
                     payload=bulk_projection_payload(p_input, p_results, error=e),

@@ -25,6 +25,7 @@ from server.memory.app.projection_errors import (
     TRIPLES_ARRIVED_AT,
     TRIPLES_ENTITY_MAP,
     TRIPLES_INSERTED_AT,
+    TRIPLES_REPAIR,
     TRIPLES_REPAIRS,
     TRIPLES_RESTORE_ID,
     TriplesRepairFailed,
@@ -300,6 +301,7 @@ async def retry_projection_failure(
             "entity_vectors",
             "entity_edges",
             "entity_triples",
+            TRIPLES_REPAIR,
         }:
             reason = await _retry_graph_projection(failure, ch=ch)
         elif failure.projection == FOLLOW_ROWS:
@@ -820,7 +822,6 @@ async def _retry_graph_projection(
     from server.memory.app.projections import (
         value_sha256,
         write_entity_edges,
-        write_entity_triples,
         write_entity_vectors,
     )
 
@@ -846,7 +847,7 @@ async def _retry_graph_projection(
         raise ValueError("graph projection retry has no valid entries/results")
     dedup_token = f"projection-repair:{failure.failure_id}"
     scope = WHOLE_NAMESPACE
-    if failure.projection == "entity_triples":
+    if failure.projection in ("entity_triples", TRIPLES_REPAIR):
         try:
             scope = replayed_read_scope(failure.payload.get(READ_SCOPE_KEY))
         except RefusedReadScope:
@@ -894,24 +895,59 @@ async def _retry_graph_projection(
         # count its rows again next pass. The failure's id is the dedup token.
         elif failure.projection == "entity_edges":
             await write_entity_edges(bulk_input, bulk_results, ch=ch, dedup_token=dedup_token)
-        elif failure.projection == "entity_triples":
-            try:
-                await write_entity_triples(
-                    bulk_input,
-                    bulk_results,
-                    ch=ch,
-                    dedup_token=dedup_token,
-                    arrived_at=parse_iso_dt(failure.payload.get(TRIPLES_ARRIVED_AT) or ""),
-                    inserted_at=parse_iso_dt(failure.payload.get(TRIPLES_INSERTED_AT) or ""),
-                    repaired=_recorded_repairs(failure.payload),
-                    entity_map=_recorded_entity_map(failure.payload),
-                )
-            except TriplesRepairFailed as e:
-                # What this replay wrote rides the failure, for the next to finish: the
-                # entries it kept and the closes it made.
-                await _record_changes(failure, {**repair_failure_payload(e), **kept}, ch=ch)
-                raise
+        else:
+            await _replay_triples(
+                failure, bulk_input, bulk_results, kept, dedup_token=dedup_token, ch=ch
+            )
     return ""
+
+
+async def _replay_triples(
+    failure: ProjectionFailureRow,
+    bulk_input: MemoryBulkSetInput,
+    bulk_results: list[_BulkSetResult],
+    kept: dict[str, Any],
+    *,
+    dedup_token: str,
+    ch: Any,
+) -> None:
+    """Replay a triples failure: insert the triples unless they landed, then repair."""
+    from server.memory.app.projections import write_entity_triples
+
+    landed = bool(failure.payload.get(TRIPLES_INSERTED_AT))
+    try:
+        await write_entity_triples(
+            bulk_input,
+            bulk_results,
+            ch=ch,
+            dedup_token=dedup_token,
+            arrived_at=parse_iso_dt(failure.payload.get(TRIPLES_ARRIVED_AT) or ""),
+            inserted_at=parse_iso_dt(failure.payload.get(TRIPLES_INSERTED_AT) or ""),
+            repaired=_recorded_repairs(failure.payload),
+            entity_map=_recorded_entity_map(failure.payload),
+        )
+    except TriplesRepairFailed as e:
+        # What this replay wrote rides the failure, for the next to finish: the
+        # entries it kept and the closes it made.
+        changes = {**repair_failure_payload(e), **kept}
+        if landed:
+            await _record_changes(failure, changes, ch=ch)
+            raise
+        # This replay inserted the triples. Recorded as `entity_triples` with them
+        # landed, the build before would insert them again, so the repair moves to a
+        # failure of its own and this one resolves.
+        await record_projection_failure(
+            org=failure.org,
+            namespace=failure.namespace,
+            agent=failure.agent,
+            projection=TRIPLES_REPAIR,
+            source_operation=failure.source_operation,
+            source_resource_id=failure.source_resource_id,
+            memory_keys=failure.memory_keys,
+            error=e,
+            payload={**failure.payload, **changes},
+            ch=ch,
+        )
 
 
 async def _record_changes(

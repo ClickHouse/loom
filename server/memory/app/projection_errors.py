@@ -32,6 +32,11 @@ TRIPLES_ENTITY_MAP = "triples_entity_map"
 # The id of the Undo or fallback whose markers a failed repair was repairing.
 TRIPLES_RESTORE_ID = "triples_restore_id"
 
+# The projection a triples repair that failed after its insert is recorded under. The
+# build before replays every `entity_triples` failure by inserting the triples again,
+# which would count them twice; it leaves a name it does not know active.
+TRIPLES_REPAIR = "entity_triples_repair"
+
 
 class TriplesInsertFailed(Exception):
     """A write's triples, dated at `arrived_at`, failed to insert. The replay inserts
@@ -65,6 +70,14 @@ class TriplesRepairFailed(Exception):
         self.entity_map: dict[str, str] = {}
         # Set when the triples were an Undo's or a fallback's markers (`restore_id`).
         self.restore_id = restore_id
+
+
+def failed_projection(name: str, error: BaseException) -> str:
+    """The projection to record a failed leg under: a triples write whose triples
+    landed before its repair failed is `TRIPLES_REPAIR`."""
+    if name == "entity_triples" and isinstance(error, TriplesRepairFailed):
+        return TRIPLES_REPAIR
+    return name
 
 
 def messages_source_resource_id(input: Any) -> str:
