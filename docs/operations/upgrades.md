@@ -172,7 +172,8 @@ After upgrading:
 - **Compiler-tier entry locks.** A full SCIP pass and a delta also take a
   deployment-wide key per entry (`scip_entry:<org>/<namespace>` in
   `loom._migration_lock`), so two hosts never index one entry at once. The lock file in
-  `LOOM_CODE_SCIP_LOCK_DIR` is still taken first, for the host's cron scripts.
+  `LOOM_CODE_SCIP_LOCK_DIR` is taken first and keeps one host's passes apart,
+  including a manual harness run under `loom code entry-lock`.
 - **A Keeper is required.** Every lease and claim is a KeeperMap key, so a server
   without a Keeper is refused at boot, by `loom migrate` and by `loom ch-setup`. The
   bundled stack runs an embedded one; for your own server add
