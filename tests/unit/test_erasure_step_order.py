@@ -26,6 +26,15 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
 from server.knowledge.app import originals
 
+
+@pytest.fixture(autouse=True)
+def _journal_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The journal-on contract; `_journal_off` holds main's."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+
+
 _STEP: contextvars.ContextVar[str] = contextvars.ContextVar("step", default="")
 _ALTER = re.compile(r"ALTER TABLE\s+(\S+)\s+(UPDATE|DELETE)\b")
 _LIGHT = re.compile(r"DELETE FROM\s+(\S+)")
@@ -431,18 +440,23 @@ async def test_namespace_purge_saga_trace(run: Any, external: bool) -> None:
 
 
 @pytest.mark.parametrize(("scope_type", "scope_value"), [("user_id", "alice"), ("namespace", "a")])
-async def test_a_journal_that_never_existed_has_nothing_to_erase(
-    run: Any, scope_type: str, scope_value: str
+async def test_a_journal_turned_off_after_it_ran_is_still_erased(
+    run: Any, monkeypatch: pytest.MonkeyPatch, scope_type: str, scope_value: str
 ) -> None:
-    """With the journal never turned on, migration 039 never ran: its steps issue
-    nothing, and every other step runs as before."""
-    run.ch.journal = False
+    """Off now, but an earlier period with it on applied its migration (the ledger
+    says so): its tables are erased as with it on."""
+    from server.core.schema import status
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+
+    async def migrated(field: str, mig_dir: Any = None) -> bool:
+        return field == "memory_temporal_enabled"
+
+    monkeypatch.setattr(status, "feature_migrated", migrated)
+    monkeypatch.setattr(status, "feature_migrated_cached", lambda f, d=None: True)
     got = dict(await run(scope_type, scope_value))
-    assert got["memory_temporal.delete"] == () and got["history_mirrors.delete"] == ()
-    want = dict(_with_tail(USER_TRACE, USER_BACKENDS) if scope_type == "user_id" else NS_TRACE)
-    del want["memory_temporal.delete"], want["history_mirrors.delete"]
-    del got["memory_temporal.delete"], got["history_mirrors.delete"]
-    assert {k: v for k, v in got.items() if k in want} == want
+    assert got["memory_temporal.delete"] and got["history_mirrors.delete"] is not None
 
 
 @pytest.mark.parametrize(("scope_type", "scope_value"), [("user_id", "alice"), ("namespace", "a")])

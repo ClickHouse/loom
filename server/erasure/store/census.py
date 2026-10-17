@@ -31,7 +31,7 @@ from server.erasure.store.predicates import (
 )
 from server.erasure.store.provider_copies import copy_residue
 from server.erasure.store.steps_memory import SESSION_OUTCOME_TABLES, TERM_AGGREGATE_TABLES
-from server.erasure.store.steps_temporal import present_tables
+from server.erasure.store.steps_temporal import journal_present
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 
 log = logging.getLogger(__name__)
@@ -54,9 +54,6 @@ class Substrate:
     # The namespace-scope predicate for a table with no namespace column,
     # counted org-wide ("1"); None → the namespace predicate.
     ns_pred: str | None = None
-    # A table that exists only once its migration ran (the journal's): counted
-    # when it is there, skipped when it never was.
-    optional: bool = False
 
     def counted_in(self, scope_type: str) -> bool:
         return scope_type == "namespace" or self.user_pred is not None
@@ -140,29 +137,6 @@ _CENSUS: tuple[Substrate, ...] = (
         "graph_links.delete",
     ),
     Substrate("loom.session_summaries", LIVE, UID, "summaries.tombstone", "summaries.tombstone"),
-    # The bi-temporal journal and its projections: every retained revision of a
-    # memory's content, deleted outright. Vectors have no user column; a user
-    # erasure deletes the ones its assertions name, before the assertions go.
-    Substrate(
-        "loom.memory_temporal_commits",
-        "1",
-        UID,
-        "memory_temporal.delete",
-        "memory_temporal.delete",
-        final=False,
-        optional=True,
-    ),
-    Substrate(
-        "loom.memory_temporal_assertions",
-        "1",
-        UID,
-        "memory_temporal.delete",
-        "memory_temporal.delete",
-        optional=True,
-    ),
-    Substrate(
-        "loom.memory_temporal_vectors", "1", None, "memory_temporal.delete", None, optional=True
-    ),
     Substrate("loom.entity_summaries", LIVE, UID, "summaries.tombstone", "summaries.tombstone"),
     Substrate("loom.memory_records", LIVE, UID, "records.tombstone", "records.tombstone"),
     Substrate("loom.memory_record_versions", "1", UID, "records.tombstone", "records.tombstone"),
@@ -341,6 +315,39 @@ _CENSUS: tuple[Substrate, ...] = (
     ),
     Substrate("loom.document_blobs", "1", None, "documents.tombstone", None, final=False),
 )
+
+# The journal's tables, which exist only once its migration ran: in the census while
+# they exist (`steps_temporal.journal_present`), absent from it otherwise.
+_JOURNAL_CENSUS: tuple[Substrate, ...] = (
+    # The bi-temporal journal and its projections: every retained revision of a
+    # memory's content, deleted outright. Vectors have no user column; a user
+    # erasure deletes the ones its assertions name, before the assertions go.
+    Substrate(
+        "loom.memory_temporal_commits",
+        "1",
+        UID,
+        "memory_temporal.delete",
+        "memory_temporal.delete",
+        final=False,
+    ),
+    Substrate(
+        "loom.memory_temporal_assertions",
+        "1",
+        UID,
+        "memory_temporal.delete",
+        "memory_temporal.delete",
+    ),
+    Substrate("loom.memory_temporal_vectors", "1", None, "memory_temporal.delete", None),
+)
+
+
+def registry() -> tuple[Substrate, ...]:
+    """The substrates the census counts: main's, and the journal's while its tables
+    exist (from the flag, or the migration ledger the server cached)."""
+    from server.erasure.store.steps_temporal import journal_known
+
+    return _CENSUS + _JOURNAL_CENSUS if journal_known() else _CENSUS
+
 
 # Steps that mutate a table the census does not count, with the reason. The
 # registry test holds each saga's step list to `_CENSUS` owners ∪ these, so a
@@ -573,7 +580,7 @@ def classified_tables() -> dict[str, str]:
     """Every table the registry knows → which list holds it
     (`census` | `step_only` | `no_memory_content`)."""
     out: dict[str, str] = {}
-    for sub in _CENSUS:
+    for sub in (*_CENSUS, *_JOURNAL_CENSUS):
         out[sub.table] = "census"
     for tables in STEP_ONLY_TABLES.values():
         for t in tables:
@@ -585,13 +592,13 @@ def classified_tables() -> dict[str, str]:
 
 def census_tables(scope_type: str) -> list[str]:
     """The substrates the census covers for a scope (exposed for tests/docs)."""
-    return [s.table for s in _CENSUS if s.counted_in(scope_type)]
+    return [s.table for s in registry() if s.counted_in(scope_type)]
 
 
 def step_owners(scope_type: str) -> dict[str, tuple[str, ...]]:
     """Saga step → the census tables it owns in `scope_type` (namespace|user_id)."""
     out: dict[str, list[str]] = {}
-    for s in _CENSUS:
+    for s in registry():
         if not s.counted_in(scope_type):
             continue
         step = s.owner(scope_type)
@@ -648,12 +655,9 @@ async def residue_census(
     # A purge leaves nothing behind, so its census counts every row, not the
     # live ones.
     purge = purge_mode()
-    optional = [s.table for s in _CENSUS if s.optional]
-    present = await present_tables(optional, ch) if optional else set()
-    for sub in _CENSUS:
+    await journal_present()  # reads the ledger the census's registry is chosen by
+    for sub in registry():
         table, live = sub.table, sub.live
-        if sub.optional and table not in present:
-            continue
         if scope_type != "namespace":
             pred = sub.user_pred
         else:

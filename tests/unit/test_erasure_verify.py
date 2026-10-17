@@ -15,6 +15,14 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 
 
+@pytest.fixture(autouse=True)
+def _journal_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The journal-on contract; `_journal_off` holds main's."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+
+
 class _StubCH:
     def __init__(self, counts: list[int]) -> None:
         self.counts = list(counts)

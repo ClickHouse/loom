@@ -40,6 +40,7 @@ from server.erasure.app.saga_steps import (
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations
+from server.erasure.store import steps_temporal as temporal_steps
 from server.erasure.store.rows import CheckpointRow, RequestRow, VerifyColumns
 from server.observability import audit
 
@@ -503,7 +504,10 @@ async def _saga_user_id(
 
     await _marks.bump(org, _marks.ORG_WIDE, "erasure")
 
+    journal = await temporal_steps.journal_present()
     for name, fn in USER_STEPS:
+        if name in temporal_steps.JOURNAL_STEPS and not journal:
+            continue  # the journal's tables do not exist: nothing to erase, no step
         await _step(name, fn, org, user_id)
 
     # External backends fail closed: they raise ErasureBackendError on a
@@ -543,7 +547,10 @@ async def _saga_namespace(
             )
         )
 
+    journal = await temporal_steps.journal_present()
     for name, fn in NAMESPACE_STEPS:
+        if name in temporal_steps.JOURNAL_STEPS and not journal:
+            continue  # the journal's tables do not exist: nothing to erase, no step
         await _step(name, fn, org, namespace)
 
     # External backends fail closed — see _saga_user_id. A namespace_list erasure may

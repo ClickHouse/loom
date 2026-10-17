@@ -48,8 +48,10 @@ def compare(
     baseline the ledger already covers is not pending: it is recorded
     without running, and its tables exist."""
     classes = classify_ledger(repo, ledger, covers or {})
+    # A file whose setting is off is dormant, not pending (`migrate.ledger_report`).
+    dormant = set(dormant_names()) - set(ledger)
     return {
-        "pending": sorted(classes.pending),
+        "pending": sorted(n for n in classes.pending if n not in dormant),
         "ledger_only": sorted(classes.ledger_only),
         "applied": len(set(ledger) & set(repo)),
         "superseded": len(classes.superseded),
@@ -69,6 +71,7 @@ async def schema_status(*, ttl_s: float = TTL_SECONDS, now: float | None = None)
         rows = await get_client().query_all("SELECT filename FROM loom._migrations FINAL")
         ledger = [str(r.get("filename") or "").rstrip("\x00") for r in rows]
         out = compare(repo_migrations(), ledger, repo_baselines())
+        _cache["ledger"] = frozenset(ledger)
     except Exception as e:  # noqa: BLE001 — health never fails on this read
         out = {
             "pending": None,
@@ -114,9 +117,45 @@ def pending_created_tables(
     return out
 
 
+def dormant_names(mig_dir: Path | None = None) -> list[str]:
+    """The repo's migrations whose required setting is off now (`-- requires-setting`)."""
+    from server.core.schema.journal import required_setting
+    from server.settings import settings
+
+    d = mig_dir or MIGRATIONS_DIR
+    out = []
+    for name in repo_migrations(d):
+        field = required_setting((d / name).read_text())
+        if field is not None and not bool(settings.model_dump()[field]):
+            out.append(name)
+    return out
+
+
+def feature_migrated_cached(field: str, mig_dir: Path | None = None) -> bool:
+    """`feature_migrated` from the ledger as last cached (no read; False before one)."""
+    from server.core.schema.journal import required_setting
+
+    ledger = _cache.get("ledger") or frozenset()
+    d = mig_dir or MIGRATIONS_DIR
+    return any(
+        required_setting((d / name).read_text()) == field
+        for name in repo_migrations(d)
+        if name in ledger
+    )
+
+
+async def feature_migrated(field: str, mig_dir: Path | None = None) -> bool:
+    """Whether the ledger records a migration that requires setting `field` (one a past
+    run applied while it was on), from the read `schema_status` caches: no query of
+    its own while that cache is fresh. A ledger it could not read answers False."""
+    await schema_status()
+    return feature_migrated_cached(field, mig_dir)
+
+
 def reset_cache() -> None:
     """Forget this cache, the parsed files, and the client's guard set
     derived from them (after boot migrations, and in tests)."""
     _cache["at"], _cache["value"] = 0.0, None
+    _cache.pop("ledger", None)
     _created_cache.clear()
     schema_guard_reset()

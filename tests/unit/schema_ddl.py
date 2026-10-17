@@ -46,10 +46,14 @@ _OBJECT = re.compile(r"^CREATE (TABLE|MATERIALIZED VIEW) IF NOT EXISTS loom\.(\w
 _COLUMN = re.compile(r"^    `(\w+)` (.+?),?$")
 
 
+def kinds_in(text: str) -> dict[str, str]:
+    """`{object: TABLE | MATERIALIZED VIEW}` one dump declares."""
+    return {name: kind for kind, name in _OBJECT.findall(text)}
+
+
 @cache
 def _kinds() -> dict[str, str]:
-    both = schema_text() + temporal_schema_text()
-    return {name: kind for kind, name in _OBJECT.findall(both)}
+    return kinds_in(schema_text() + temporal_schema_text())
 
 
 def objects() -> set[str]:

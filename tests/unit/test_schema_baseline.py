@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from tests.unit.schema_ddl import ddl, objects, schema_text, tables, ttl
+from tests.unit.schema_ddl import ddl, schema_text, ttl
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "schemas" / "migrations"
 BASELINE = MIGRATIONS / "016_baseline.sql"
@@ -122,16 +122,18 @@ def test_the_baseline_only_creates_and_every_create_is_idempotent() -> None:
 def test_the_dump_declares_exactly_what_the_journal_leaves() -> None:
     """A replay applies each file's creates and drops in order; the dump is
     what remains."""
-    from server.core.schema.journal import live_objects
+    from server.core.schema.journal import live_objects, required_setting
+    from tests.unit.schema_ddl import kinds_in, temporal_schema_text
 
-    live = live_objects(MIGRATIONS.glob("*.sql"))
-    dumped = objects()
-    assert dumped == {name for name in live if not name.startswith("_")}
-    n_tables = len(tables())
-    assert (
-        f"-- Counts: {n_tables} tables + {len(dumped) - n_tables} materialized views."
-        in schema_text()
-    )
+    files = sorted(MIGRATIONS.glob("*.sql"))
+    # The default dump: every migration but the dormant ones (their setting off).
+    default = [f for f in files if required_setting(f.read_text()) is None]
+    for text, replayed in ((schema_text(), default), (temporal_schema_text(), files)):
+        live = live_objects(replayed)
+        kinds = kinds_in(text)
+        assert set(kinds) == {name for name in live if not name.startswith("_")}
+        n_tables = sum(kind == "TABLE" for kind in kinds.values())
+        assert f"-- Counts: {n_tables} tables + {len(kinds) - n_tables} materialized views." in text
 
 
 def test_removed_objects_stay_removed() -> None:

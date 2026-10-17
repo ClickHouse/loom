@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from server.core.feature_modes import temporal_on
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import count_then_mutate
 
@@ -50,16 +51,30 @@ JOURNAL_TABLES = (
 )
 
 
+async def journal_present() -> bool:
+    """Whether the journal's tables exist: it is on, or an earlier period with it on
+    applied its migration (their rows are erased whenever they exist). Read from the
+    migration ledger the server caches: an erasure with the journal never turned on
+    makes no query for it."""
+    from server.core.schema.status import feature_migrated
+
+    return temporal_on() or await feature_migrated("memory_temporal_enabled")
+
+
+def journal_known() -> bool:
+    """`journal_present` without a read: the flag, or the ledger as last cached."""
+    from server.core.schema.status import feature_migrated_cached
+
+    return temporal_on() or feature_migrated_cached("memory_temporal_enabled")
+
+
 async def present_tables(tables: Sequence[str], ch: _CHClient | None = None) -> set[str]:
-    """Which of `tables` the database has. A journal table is erased whenever it
-    exists, flag on or off: it holds what an earlier period with the journal on
-    recorded, and one that was never created has nothing to erase."""
-    rows = await (ch or _default_client()).query_all(
-        "SELECT concat('loom.', name) AS t FROM system.tables "
-        "WHERE database = 'loom' AND concat('loom.', name) IN {ts:Array(String)}",
-        params={"ts": list(tables)},
-    )
-    return {str(r["t"]) for r in rows}
+    """Which of `tables` (the journal's) the database has: all, or none."""
+    return set(tables) if await journal_present() else set()
+
+
+# The saga steps that erase the journal's tables, skipped while they do not exist.
+JOURNAL_STEPS = frozenset({"memory_temporal.delete", "history_mirrors.delete"})
 
 
 async def _delete(table: str, where: str, params: dict[str, Any], ch: _CHClient | None) -> int:

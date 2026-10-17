@@ -58,10 +58,6 @@ _TIERS = {
     "recovery": "drives a failure and the recovery path back from it",
 }
 _REQUEST_LOG_DEPTH = 25
-_MODES = {
-    "journal": "needs the bi-temporal journal on (LOOM_MEMORY_TEMPORAL_ENABLED=true)",
-    "no_journal": "covers what the journal replaces; runs with it off (the default)",
-}
 
 
 def journal_on() -> bool:
@@ -79,7 +75,7 @@ _TIER_BY_FIXTURE = {
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    for name, doc in {**_TIERS, **_MODES}.items():
+    for name, doc in _TIERS.items():
         config.addinivalue_line("markers", f"{name}: {doc}")
 
 

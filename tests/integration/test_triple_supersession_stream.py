@@ -27,7 +27,7 @@ from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry  # n
 from server.memory.api.models_facts import FactsListInput  # noqa: E402
 from server.memory.app.bulk_set import handle_memory_bulk_set  # noqa: E402
 from server.memory.app.facts import handle_facts_list  # noqa: E402
-from tests.integration.conftest import journal_on
+from tests.integration.conftest import journal_on  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

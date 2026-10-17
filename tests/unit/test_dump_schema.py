@@ -71,7 +71,7 @@ def test_a_table_without_ddl_fails_the_dump() -> None:
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, out: Path, *args: str, text: str | None) -> int:
-    def build() -> tuple[str, str]:
+    def build(name: str = "schema.sql") -> tuple[str, str]:
         if text is None:
             raise ConnectionError("refused")
         return text, "26.9.18.11"

@@ -250,7 +250,12 @@ async def test_schema_status_reads_the_ledger_once_per_ttl(monkeypatch: pytest.M
     a = await ss.schema_status(now=100.0)
     b = await ss.schema_status(now=130.0)
     assert calls["n"] == 1 and a == b
-    assert a["pending"] == [f for f in ss.repo_migrations() if f != "000_migrations.sql"]
+    # A migration whose setting is off (the journal's, by default) is dormant, not pending.
+    dormant = set(ss.dormant_names())
+    assert "039_bitemporal_memory.sql" in dormant
+    assert a["pending"] == [
+        f for f in ss.repo_migrations() if f != "000_migrations.sql" and f not in dormant
+    ]
     assert a["ledger_only"] == ["999_ledger_only.sql"] and a["applied"] == 1
     await ss.schema_status(now=170.0)
     assert calls["n"] == 2
