@@ -569,9 +569,9 @@ before the insert failed, so it also records what the write resolved its names t
 is recorded too), and the replay names them so. A failed interval repair records the
 triple write for replay too; when the triples landed before the repair failed, it is
 recorded as `entity_triples_repair` (a replay that inserted them and then failed to
-repair hands its repair to one), the replay does not insert them again, never repairs as of the replay's own clock, and names
-their entities as the write resolved them (the failure records those resolutions), not
-as they resolve by the replay. When the repair had issued closes before it failed, the
+repair hands its repair to one), the replay does not insert them again, never repairs
+as of the replay's own clock, and names their entities as the write resolved them (the
+failure records those resolutions), not as they resolve by the replay. When the repair had issued closes before it failed, the
 failure records them and the replay finishes them: it issues again a close that never
 landed, closes their edges and, under `newest_wins`, retires the rows behind them.
 
