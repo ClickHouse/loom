@@ -6542,3 +6542,22 @@ async def test_the_skip_log_counts_an_entry_a_landed_pin_refused(ch, org, caplog
     )
     assert out.written[1].conflict_verdict == "pinned"
     assert "skipped 1 entry targeting pinned key(s): ['plan']" in caplog.text
+
+
+async def test_names_that_look_like_grammar_are_reachable_from_a_point_write(ch, org) -> None:
+    # Saitama is written in hiragana; Uganda and Rwanda end like a Korean verb. Each is a
+    # name, so the write links it to the others and a walk from Uganda reaches them.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.api.models_facts import FactsTraverseInput
+    from server.memory.app import after_write
+    from server.memory.app.facts import handle_facts_traverse
+    from server.memory.app.write import handle_memory_set
+
+    ids = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
+    await handle_memory_set(
+        MemorySetInput(**ids, memory_key="trip", value="さいたま 우간다 르완다 캐나다")
+    )
+    await after_write.drain()
+    walk = FactsTraverseInput(org=org, namespace=NS, seed_entity="우간다", max_hops=1)
+    nodes = {n.entity for n in (await handle_facts_traverse(walk)).nodes}
+    assert {"さいたま", "르완다", "캐나다"} <= nodes, nodes

@@ -413,8 +413,9 @@ def test_canonical_order_survives_offset_enumeration() -> None:
         # A polite Korean verb: "I live in Seoul".
         ("서울 에 살아요", ["살아요"]),
         ("저는 학생 입니다", ["입니다"]),
-        # Hiragana writes greetings, copulas and verb endings, not names.
+        # Listed greetings, copulas and verb endings written alone are not names.
         ("こんにちは です ます", ["こんにちは", "です", "ます"]),
+        ("東京 に いる する ある", ["いる", "する", "ある"]),
         ("東京 に 行きました", ["行きました"]),
     ],
 )
@@ -427,13 +428,27 @@ def test_a_spaced_korean_or_japanese_verb_is_not_an_entity(text: str, junk: list
 
 
 @pytest.mark.parametrize(
+    "text",
+    ["さいたま に 住んで いる", "田中 lives in 東京", "さいたま と なごや"],
+)
+def test_a_japanese_name_written_in_hiragana_is_an_entity(text: str) -> None:
+    # Saitama is written in hiragana; the script alone says nothing about grammar.
+    ents = _candidate_entities_from_value(text)
+    for name in ("さいたま", "なごや", "田中", "東京"):
+        if name in text:
+            assert canonical_entity_text(name) in ents, ents
+    assert canonical_entity_text("いる") not in ents
+
+
+@pytest.mark.parametrize(
     ("text", "names", "junk"),
     [
         # "I lived in Seoul": a particle on the noun, a plain past-tense verb.
         ("저는 서울에 살았다", ["서울"], ["저는", "서울에", "살았다", "저"]),
         ("서울을 좋아한다", ["서울"], ["서울을", "좋아한다"]),
         ("김민준 은 서울 이 좋다", ["김민준", "서울"], ["좋다"]),
-        ("학생이다 그리고 조용하다", [], ["학생이다", "조용하다"]),
+        ("학생 이다 그리고 조용 하다", ["학생"], ["이다", "하다"]),
+        ("있다 없다 했다 간다", [], ["있다", "없다", "했다", "간다"]),
         # Names and nouns that end like a particle or a verb stay whole: a name ending
         # in 은 or 이, a province in 도, a village (마을), the sea and Canada (다).
         (
@@ -441,6 +456,11 @@ def test_a_spaced_korean_or_japanese_verb_is_not_an_entity(text: str, junk: list
             ["김하은", "고양이", "제주도", "마을", "바다", "캐나다"],
             [],
         ),
+        # Countries that end like a verb (간다, 완다), and one with its particle.
+        ("우간다 르완다 캐나다", ["우간다", "르완다", "캐나다"], []),
+        ("우간다를 좋아한다", ["우간다"], ["좋아한다"]),
+        # A name ending in 요 is not a polite verb.
+        ("히데요 는 서울 에 살아요", ["히데요", "서울"], ["살아요"]),
     ],
 )
 def test_a_korean_particle_or_plain_verb_is_not_an_entity(

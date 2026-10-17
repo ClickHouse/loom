@@ -294,8 +294,55 @@ _SET_ENTITY_MAX_WIDE_LEN = 6
 # Longer than a name in Chinese characters alone: a sentence ("我住在北京"). A Chinese
 # name is two to four ("北京", "毛泽东", "乌鲁木齐").
 _SET_ENTITY_MAX_HAN_LEN = 4
-# The polite endings of a Korean verb: "살아요" (live), "입니다" (am).
-_KOREAN_VERB_ENDINGS = ("요", "니다")
+# Polite verb endings, which end no name: Korean "살아요" (live), "입니다" (am), Japanese
+# "行きました" (went), "です" (is). A bare 요 is not one: "히데요" (Hideyo) is a name.
+_POLITE_VERB_ENDINGS = (
+    "니다",
+    "아요",
+    "어요",
+    "해요",
+    "에요",
+    "예요",
+    "세요",
+    "네요",
+    "ます",
+    "ました",
+    "ません",
+    "です",
+    "でした",
+)
+# Common grammar words written alone between spaces: Japanese particles, verbs and a
+# greeting, Korean plain-form verbs and adjectives. Only these, not a whole script or
+# an ending: "さいたま" (Saitama) is hiragana and "캐나다" (Canada) ends in 다.
+_GRAMMAR_WORDS = frozenset(
+    {
+        "こんにちは",
+        "した",
+        "する",
+        "いる",
+        "ある",
+        "から",
+        "まで",
+        "では",
+        "には",
+        "でも",
+        "좋다",
+        "좋아한다",
+        "살았다",
+        "산다",
+        "간다",
+        "갔다",
+        "있다",
+        "없다",
+        "했다",
+        "한다",
+        "하다",
+        "이다",
+        "였다",
+        "본다",
+        "만났다",
+    }
+)
 # Korean particles that end no common name or noun: "서울에" (in Seoul), "저는" (I).
 # 은, 이, 가, 의 and 도 are left on: they end names and nouns too (김하은, 고양이,
 # 음악가, 민주주의, 제주도).
@@ -307,25 +354,9 @@ def _is_hangul(char: str) -> bool:
     return "\uac00" <= char <= "\ud7a3"
 
 
-def _has_final_consonant(syllable: str) -> bool:
-    """A Hangul syllable ending in a consonant: "좋", "었", "한" (not "바", "나").
-    Each syllable's code counts up in steps of 28 final-consonant slots, slot 0 none."""
-    return _is_hangul(syllable) and (ord(syllable) - 0xAC00) % 28 != 0
-
-
 def _is_han(char: str) -> bool:
     """A Chinese character (also used in Japanese and Korean): "北", "東"."""
     return "\u3400" <= char <= "\u9fff" or "\uf900" <= char <= "\ufaff"
-
-
-def _korean_plain_verb(word: str) -> bool:
-    """A plain-form verb or adjective: "좋다", "살았다", "조용하다", "학생이다". The
-    syllable before 다 ends in a consonant or is 하 or 이; "바다" (sea) and "캐나다"
-    (Canada) are nouns."""
-    if len(word) < 2 or not word.endswith("다"):
-        return False
-    before = word[-2]
-    return before in ("하", "이") or _has_final_consonant(before)
 
 
 def _korean_stem(word: str) -> str:
@@ -340,9 +371,9 @@ def _korean_stem(word: str) -> str:
 def _not_a_name(word: str) -> bool:
     """Shorter than a thing's name: "is", "at", "of", "3pm". Wide characters (CJK,
     Hangul) write a name in two: "東京", "서울", and five Chinese characters alone are
-    a sentence ("我住在北京"). A word with hiragana is grammar
-    ("です", "こんにちは"), as is a Korean verb ("살아요", "좋다") or a one-syllable
-    word and its particle ("저는", "집에")."""
+    a sentence ("我住在北京"). A polite verb ("살아요", "です"), a listed grammar word
+    ("좋다", "こんにちは") or a one-syllable word and its particle ("저는", "집에") is
+    not a name."""
     if not word[0].isalpha():
         return True
     if all(unicodedata.east_asian_width(c) in ("W", "F") for c in word):
@@ -350,11 +381,10 @@ def _not_a_name(word: str) -> bool:
             return True
         if len(word) > _SET_ENTITY_MAX_HAN_LEN and all(_is_han(c) for c in word):
             return True
-        has_hiragana = any("\u3040" <= c <= "\u309f" for c in word)
-        korean_verb = word.endswith(_KOREAN_VERB_ENDINGS) or _korean_plain_verb(word)
+        grammar = word in _GRAMMAR_WORDS or word.endswith(_POLITE_VERB_ENDINGS)
         # Not 을: "마을" (village) and "가을" (autumn) are words.
         particle = len(word) == 2 and word.endswith(("는", "를", "에"))
-        return has_hiragana or korean_verb or particle
+        return grammar or particle
     return len(word) < _SET_ENTITY_MIN_LEN
 
 
