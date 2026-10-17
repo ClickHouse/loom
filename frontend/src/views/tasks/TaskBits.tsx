@@ -13,8 +13,8 @@ import {
 } from "../../lib/tasks";
 
 /**
- * The Tasks page's small shapes: the poster avatar, the priority bar, the lease bar (the
- * `tq-*` classes in styles.css), and the kind, status and priority badges. The list, the
+ * The Tasks page's small shapes: the poster avatar, the lease bar (the `tq-*` classes in
+ * styles.css), and the kind, status and priority badges. The list, the
  * board and the panel draw them the same way.
  */
 
@@ -40,9 +40,16 @@ export function PosterAvatar({
   return <Avatar name={name} kind={posterKind(r, ownerAgent)} />;
 }
 
+/** A list row's priority: "P1" in a neutral badge, read in full ("P1 urgent"). */
 export function PriorityBar({ priority }: { priority: number }) {
-  const label = PRIORITY_LABEL[priority] ?? `P${priority}`;
-  return <span className="tq-pri" data-p={priority} role="img" aria-label={label} />;
+  return (
+    <>
+      <span aria-hidden="true">
+        <Badge text={`P${priority}`} state="neutral" size="sm" />
+      </span>
+      <span className="sr-only">{PRIORITY_LABEL[priority] ?? `P${priority}`}</span>
+    </>
+  );
 }
 
 export function KindTag({ kind }: { kind: string }) {

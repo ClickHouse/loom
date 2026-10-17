@@ -729,3 +729,14 @@ async def test_threads_passes_its_offset_to_the_store(
     await handle_conversation_threads(ConversationThreadsInput(org="o", namespace="ns"))
     await handle_conversation_threads(ConversationThreadsInput(org="o", namespace="ns", offset=50))
     assert seen == [0, 50]
+
+
+def test_threads_rejects_an_offset_past_its_bound() -> None:
+    """An offset past 100,000 is a 422, not a silent first page (the store binds it as UInt32)."""
+    from pydantic import ValidationError
+
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+
+    assert ConversationThreadsInput(org="o", namespace="ns", offset=100_000).offset == 100_000
+    with pytest.raises(ValidationError):
+        ConversationThreadsInput(org="o", namespace="ns", offset=100_001)

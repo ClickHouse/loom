@@ -38,3 +38,34 @@ test("a run's replay opens and has no WCAG A/AA violations", async ({ page }) =>
   expect(errors).toEqual([]);
   expect(await violations(page)).toEqual([]);
 });
+
+test("on a phone the status and agent filters sit under the 48 px toolbar, nothing clipped", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 800 });
+  await open(page, "/runs");
+  const toolbar = page.getByRole("search", { name: "Search and filters" });
+  expect((await toolbar.boundingBox())?.height).toBe(48);
+  const statuses = page.getByLabel("Filter runs by status");
+  await expect(statuses).toBeVisible();
+  expect(await toolbar.getByLabel("Filter runs by status").count()).toBe(0);
+  for (const control of [statuses, page.getByRole("button", { name: "Agent" })]) {
+    const box = await control.boundingBox();
+    expect(box && box.x >= 0 && box.x + box.width <= 375).toBe(true);
+  }
+  // Nothing in the row scrolls sideways, and neither does the page.
+  const sideways = await statuses.evaluate((el) => {
+    for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+      if (n.scrollWidth > n.clientWidth + 1) return true;
+    }
+    return false;
+  });
+  expect(sideways).toBe(false);
+});
+
+test("the runs intro keeps its info icon on the sentence's first line", async ({ page }) => {
+  await open(page, "/runs");
+  const intro = page.getByText(/^One row per agent execution/);
+  const icon = page.getByRole("button", { name: "About runs" });
+  const [text, info] = [await intro.boundingBox(), await icon.boundingBox()];
+  expect(text && info).toBeTruthy();
+  expect(info!.y - text!.y).toBeLessThan(12);
+});

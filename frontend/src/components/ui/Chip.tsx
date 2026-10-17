@@ -49,6 +49,9 @@ const INTERACTIVE_OFF = "hover:text-text hover:border-border-strong";
 const OUTLINE =
   "bg-surface border-(--click-badge-opaque-color-stroke-default) text-(--click-badge-opaque-color-text-default)";
 const ON = "bg-text border-text text-bg";
+/** An outlined chip's look, for a chip-shaped control this component cannot draw (a link
+ *  that anchors a popover). */
+export const CHIP_OUTLINE_CLASS = `${BASE} ${OUTLINE}`;
 // Click UI's disabled field colours, not an opacity: natively disabled, and aria-disabled
 // (a disabled chip with a tip stays focusable so its reason can be read).
 const DISABLED =

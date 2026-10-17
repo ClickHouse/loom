@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunRow } from "../api";
 import { useStore } from "../lib/state";
@@ -105,5 +105,29 @@ describe("Runs table", () => {
     const heads = screen.getAllByRole("table").map((t) => t.querySelector("thead"));
     expect(heads.map((h) => h?.matches(".table-header-sr-only > thead"))).toEqual([false, true, true]);
     for (const t of screen.getAllByRole("table")) expect(t.querySelectorAll("th").length).toBeGreaterThan(0);
+  });
+  // Five statuses are wider than a phone: there the status is a select under the toolbar.
+  it("puts the status filter under the toolbar on a phone, and in it on a wider screen", async () => {
+    listRuns.mockResolvedValue([run("r-1", "first", "s-1")]);
+    const toolbarHasStatuses = async () => {
+      await screen.findByRole("button", { name: "first" });
+      const bar = document.querySelector<HTMLElement>('search[aria-label="Search and filters"]')!;
+      expect(screen.getByLabelText("Filter runs by status")).toBeInTheDocument();
+      return within(bar).queryByLabelText("Filter runs by status") !== null;
+    };
+    render(<Runs />);
+    expect(await toolbarHasStatuses()).toBe(true);
+    cleanup();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(max-width: 639px)",
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    try {
+      render(<Runs />);
+      expect(await toolbarHasStatuses()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

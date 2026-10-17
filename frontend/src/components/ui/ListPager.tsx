@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Pagination } from "@clickhouse/click-ui/Pagination";
 
 const SIZES = [25, 50, 100];
@@ -51,6 +51,13 @@ export interface ListPagerProps {
  */
 export function ListPager({ label, page, pageSize, shown, total, onPage, onPageSize, topId }: ListPagerProps) {
   const [said, setSaid] = useState("");
+  // The page being typed into the field: Click UI reports every keystroke as a page, so the
+  // pager goes there only on Enter or when the field loses focus.
+  const [draft, setDraft] = useState<number | null>(null);
+  const phone = usePhone();
+  // Click UI calls `onChange` for a typed number and, just before its own click handler,
+  // for an arrow; the arrows go at once and take the reader to the list's top.
+  const pending = useRef(page + 1);
   // Click UI names its arrows after their icons ("chevron-left") and its page field after
   // the number in it; these are the names they read as.
   const nav = useRef<HTMLElement>(null);
@@ -62,19 +69,24 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
     el.querySelector('input[type="number"]')?.setAttribute("aria-label", "Page");
   });
   const pages = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : undefined;
+  // A page past the end (its last rows deleted) steps back to the last one.
+  const pastEnd = pages !== undefined && page > pages - 1;
+  useEffect(() => {
+    if (pastEnd && pages !== undefined) onPage(pages - 1);
+  }, [pastEnd, pages, onPage]);
   const lastKnown = pages !== undefined ? page >= pages - 1 : shown < pageSize;
-  if (page === 0 && lastKnown && pages !== undefined && pages <= 1) return null;
-  const start = shown === 0 ? 0 : page * pageSize + 1;
+  if (page === 0 && lastKnown) return null;
+  const start = page * pageSize + 1;
   const end = page * pageSize + shown;
-  const range =
-    total !== undefined
-      ? `${start.toLocaleString()}–${end.toLocaleString()} of ${total.toLocaleString()}`
-      : `${start.toLocaleString()}–${end.toLocaleString()}`;
+  const span = shown === 0 ? `${start.toLocaleString()}` : `${start.toLocaleString()}–${end.toLocaleString()}`;
+  const range = total !== undefined ? `${span} of ${total.toLocaleString()}` : span;
 
-  const go = (n: number) => {
+  const go = (n: number, { focusList }: { focusList: boolean }) => {
+    setDraft(null);
+    if (n === page + 1) return;
     onPage(n - 1);
     setSaid(pages !== undefined ? `Page ${n} of ${pages}` : `Page ${n}`);
-    const top = topId ? document.getElementById(topId) : null;
+    const top = focusList && topId ? document.getElementById(topId) : null;
     if (top) {
       top.scrollIntoView?.({ block: "start" });
       top.focus({ preventScroll: true });
@@ -82,14 +94,29 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
   };
 
   return (
-    <nav ref={nav} aria-label={label} className="list-pager mt-4 border-t border-border pt-3">
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Enter in the page field, which Click UI's NumberField does not report
+    <nav
+      ref={nav}
+      aria-label={label}
+      className="list-pager mt-4 border-t border-border pt-3"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && e.target instanceof HTMLInputElement && draft !== null)
+          go(draft, { focusList: false });
+      }}
+    >
       <Pagination
         rowCount={range}
         totalPages={pages}
-        currentPage={page + 1}
-        onChange={go}
+        currentPage={draft ?? page + 1}
+        onChange={(n) => {
+          pending.current = n;
+          setDraft(n);
+        }}
+        onPrevPageClick={() => go(pending.current, { focusList: true })}
+        onNextPageClick={() => go(pending.current, { focusList: true })}
+        onPageNumberBlur={() => draft !== null && go(draft, { focusList: false })}
         disableNextButton={lastKnown}
-        {...(onPageSize
+        {...(onPageSize && !phone
           ? { pageSize, maxRowsPerPageList: SIZES, onPageSizeChange: onPageSize, allowAllRows: false }
           : {})}
       />
@@ -98,4 +125,18 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
       </p>
     </nav>
   );
+}
+
+/** True under 640 px, where the pager has no room for the page size. */
+function usePhone(): boolean {
+  const query = "(max-width: 639px)";
+  const [phone, setPhone] = useState(() => typeof matchMedia === "function" && matchMedia(query).matches);
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const m = matchMedia(query);
+    const on = () => setPhone(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return phone;
 }

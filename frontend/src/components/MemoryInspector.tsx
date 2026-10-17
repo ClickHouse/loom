@@ -47,6 +47,7 @@ import { toast } from "./Toast";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
 import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
+import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
@@ -742,7 +743,6 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
                       <Chip
                         key={t}
                         label={t}
-                        icon="#"
                         tip={`Show all memories tagged ${t}`}
                         onClick={() => searchByTag(t)}
                         onRemove={() => onRemoveTag(t)}
@@ -875,7 +875,6 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
                                 <EntityChip
                                   key={en}
                                   entity={en}
-                                  small
                                   identity={identity}
                                   memoryKey={memoryKey}
                                   onInspect={inspectInPlace}
@@ -1698,14 +1697,12 @@ const POPOVER_LIST = 5;
  */
 function EntityChip({
   entity,
-  small = false,
   identity,
   memoryKey,
   onInspect,
   onWalk,
 }: {
   entity: string;
-  small?: boolean;
   identity: Identity;
   memoryKey: string;
   onInspect: (key: string) => void;
@@ -1736,7 +1733,7 @@ function EntityChip({
             leaving.current = false;
             setOpen((v) => !v);
           }}
-          className={`inline-flex items-center gap-1 rounded-md bg-surface-2 text-text no-underline hover:text-accent transition-colors ${small ? "text-xs px-1.5 py-px" : "text-xs px-2 py-0.5"}`}
+          className={`${CHIP_OUTLINE_CLASS} no-underline transition-colors hover:bg-(--click-card-horizontal-default-color-background-hover)`}
         >
           <Icon name="share-network" size="xs" aria-hidden="true" />
           {entity}

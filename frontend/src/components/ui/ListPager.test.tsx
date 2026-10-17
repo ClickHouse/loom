@@ -67,3 +67,32 @@ describe("usePageSize", () => {
     act(() => again.result.current[1](50));
   });
 });
+
+// Review findings: typing a page number goes there on Enter or blur and leaves focus in the
+// field; one short page without a total shows no pager; the range never reads "0–30"; a page
+// past the end (the last rows deleted) steps back to the last page.
+describe("ListPager, typed and edge pages", () => {
+  it("goes to a typed page on Enter, keeping focus in the field", () => {
+    const onPage = vi.fn();
+    render(<ListPager label="Memories pages" page={2} pageSize={50} total={1300} shown={50} onPage={onPage} />);
+    const field = screen.getByRole("spinbutton", { name: "Page" });
+    field.focus();
+    fireEvent.change(field, { target: { value: "1" } });
+    fireEvent.change(field, { target: { value: "15" } });
+    expect(onPage).not.toHaveBeenCalled();
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onPage).toHaveBeenCalledWith(14);
+    expect(field).toHaveFocus();
+  });
+
+  it("shows no pager for one short page when there is no total", () => {
+    const { container } = render(<ListPager label="x" page={0} pageSize={30} shown={12} onPage={() => {}} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("steps back to the last page when its page is past the end", () => {
+    const onPage = vi.fn();
+    render(<ListPager label="x" page={2} pageSize={50} total={98} shown={0} onPage={onPage} />);
+    expect(onPage).toHaveBeenCalledWith(1);
+  });
+});

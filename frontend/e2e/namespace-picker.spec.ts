@@ -73,3 +73,27 @@ test("a search opens the group it matches", async ({ page }) => {
   await expect(dialog.getByRole("button", { name: /acme\/loom @ main/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /^Tracker records/ })).toHaveCount(0);
 });
+
+// The list fades out over 24 px at an edge it can still scroll past; a row reached with
+// the arrow keys stops clear of the fade, never under it.
+test("a row reached with Down is scrolled clear of the list's fade", async ({ page }) => {
+  const many = Array.from({ length: 30 }, (_, i) => row(`team-${String(i).padStart(2, "0")}`, "memory", "writer"));
+  await installApi(page, { mine: [...MINE, ...many], claims: [...MINE, ...many].map((r) => r.namespace) });
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: /^Namespace: / }).click();
+  const dialog = page.getByRole("dialog", { name: "Namespaces" });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  for (let i = 0; i < 14; i++) await page.keyboard.press("ArrowDown");
+  const gap = await page.evaluate(() => {
+    const row = document.activeElement as HTMLElement;
+    const list = row.closest(".scroll-fade") as HTMLElement;
+    const [r, l] = [row.getBoundingClientRect(), list.getBoundingClientRect()];
+    return { scrolled: list.scrollTop > 0, below: l.bottom - r.bottom, above: r.top - l.top };
+  });
+  expect(gap.scrolled).toBe(true);
+  expect(gap.below).toBeGreaterThanOrEqual(23);
+  expect(gap.above).toBeGreaterThanOrEqual(23);
+});

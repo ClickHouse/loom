@@ -289,8 +289,9 @@ class ConversationThreadsInput(BaseModel):
     limit: int = Field(default=30, ge=1, le=200)
     # Skip this many threads of the most-recent-first list: the next page starts at the
     # previous page's offset plus its length. A build that predates it answers the first
-    # page again, which a caller tells apart by thread_id.
-    offset: int = Field(default=0, ge=0)
+    # page again, which a caller tells apart by thread_id. At most 100,000: a larger one
+    # is a 422, where the store's UInt32 bind would wrap it and answer the first page.
+    offset: int = Field(default=0, ge=0, le=100_000)
     # The output fields the caller reads (a whitelist
     # resolved against the row model; an unknown name is a 422); unset, every
     # field. Every list operation is projectable.

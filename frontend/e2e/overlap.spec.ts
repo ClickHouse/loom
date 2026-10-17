@@ -78,3 +78,33 @@ for (const width of [1400, 375]) {
     }
   });
 }
+
+// Review findings: on a phone the pager stays one row (Click UI's own Pagination stacks into
+// a column), and a row's checkbox takes a 44 px tap.
+test.describe("phone", () => {
+  test.use({ viewport: { width: 375, height: 800 }, hasTouch: true, isMobile: true });
+
+  test("the memories pager is one row", async ({ page }) => {
+    await installApi(page, { memoryRows: 130 });
+    await page.goto("/memories");
+    const pager = page.getByRole("navigation", { name: "Memories pages" });
+    await pager.scrollIntoViewIfNeeded();
+    // Both arrows measured in one frame: the page may still be scrolling to the pager.
+    const gap = await pager.evaluate((nav) => {
+      const top = (name: string) => nav.querySelector(`[aria-label="${name}"]`)?.getBoundingClientRect().top ?? NaN;
+      return Math.abs(top("Previous page") - top("Next page"));
+    });
+    expect(gap, "the arrows sit on one row").toBeLessThan(4);
+  });
+
+  test("a row's checkbox takes a 44 px tap", async ({ page }) => {
+    await memories(page);
+    const box = page.getByRole("checkbox").first();
+    await box.scrollIntoViewIfNeeded();
+    const r = await box.boundingBox();
+    if (!r) throw new Error("no checkbox");
+    // A tap 12 px left of the box's edge still lands on it.
+    await page.touchscreen.tap(r.x - 12, r.y + r.height / 2);
+    await expect(box).toBeChecked();
+  });
+});

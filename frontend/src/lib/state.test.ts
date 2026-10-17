@@ -208,6 +208,19 @@ describe("the object a page shows is in its URL", () => {
     expect(useStore.getState().inspectedAgent).toBe("claude-code");
   });
 
+  // Review finding: a tag clicked in the drawer, or the sidebar's Memories link, closed the
+  // drawer but left ?memory= behind, so a reload reopened what the reader had closed.
+  it("navigating to Memories closes the open memory in the URL too", () => {
+    setLocation("/memories");
+    useStore.getState().inspect("api/rate-limit", { agent: "claude-code" });
+    useStore.getState().navigate("memories");
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+    expect(window.location.search).toBe("");
+    useStore.getState().inspect("api/rate-limit", { agent: "claude-code" });
+    useStore.getState().searchByTag("api");
+    expect(window.location.search).toBe("");
+  });
+
   it("opening a document or a thread from elsewhere pushes its URL", () => {
     setLocation("/memories");
     useStore.getState().openDocument("docs/a.md");

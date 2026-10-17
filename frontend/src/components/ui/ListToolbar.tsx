@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import type { IconName } from "@clickhouse/click-ui/Icon";
@@ -44,15 +44,29 @@ export function ListToolbar({ label, children, count, selection }: ListToolbarPr
     return () => io.disconnect();
   }, []);
 
+  // The selection's Clear button leaves with it (Clear itself, or a bulk action that empties
+  // the selection): focus that fell to the page goes to the search the bar brings back.
+  const bar = useRef<HTMLElement>(null);
+  const selecting = !!selection && selection.count > 0;
+  const wasSelecting = useRef(selecting);
+  useLayoutEffect(() => {
+    if (wasSelecting.current && !selecting) {
+      const lost = !document.activeElement || document.activeElement === document.body;
+      if (lost) bar.current?.querySelector<HTMLElement>("input, button")?.focus();
+    }
+    wasSelecting.current = selecting;
+  }, [selecting]);
+
   return (
     <>
       <div ref={sentinel} aria-hidden="true" className="h-px -mb-px" />
       <search
+        ref={bar}
         aria-label={label}
         data-stuck={stuck || undefined}
         className="list-toolbar sticky top-0 z-[2] -mx-2 mb-3 flex h-12 items-center gap-3 bg-bg px-2"
       >
-        {selection && selection.count > 0 ? (
+        {selecting && selection ? (
           <>
             <span className="text-sm font-medium tabular whitespace-nowrap">{selection.count} selected</span>
             <Button type="empty" htmlType="button" onClick={selection.onClear} aria-label="Clear selection">

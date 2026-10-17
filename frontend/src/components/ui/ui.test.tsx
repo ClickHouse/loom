@@ -175,6 +175,8 @@ describe("Kbd and Tip", () => {
       </p>,
     );
     expect(container.querySelector("kbd")).toHaveTextContent("↵");
+    // The look is the .kbd rule in styles.css, on Click UI's tokens, not arbitrary values.
+    expect(container.querySelector("kbd")?.className).toBe("kbd");
     await user.tab();
     expect(screen.getByRole("button", { name: "Walk" })).toHaveFocus();
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Walk from this entity");

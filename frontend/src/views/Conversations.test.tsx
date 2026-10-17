@@ -451,7 +451,7 @@ describe("Conversations: thread pages", () => {
     render(<Conversations />);
     expect(await screen.findByText("Thread 0")).toBeInTheDocument();
     const pager = screen.getByRole("navigation", { name: "Thread pages" });
-    fireEvent.click(within(pager).getAllByRole("button").at(-1)!);
+    fireEvent.click(within(pager).getByRole("button", { name: "Next page" }));
     expect(await screen.findByText("Thread 30")).toBeInTheDocument();
     expect(listConversationThreads).toHaveBeenLastCalledWith(
       { org: "dev", namespace: "ns-a" },
@@ -475,5 +475,28 @@ describe("Conversations: thread pages", () => {
     );
     await waitFor(() => expect(screen.queryByRole("navigation", { name: "Thread pages" })).toBeNull());
     expect(screen.getByText("Thread 0")).toBeInTheDocument();
+  });
+
+  it("with an exact multiple of 30 threads, the empty page after the last goes back to it", async () => {
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => ({
+      threads: (opts.offset ?? 0) >= 60 ? [] : page(opts.offset ?? 0, 30),
+    }));
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+      ).toBeDisabled(),
+    );
+    expect(screen.getByText("Thread 30")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent("31–60 of 60");
+    expect(screen.queryByText("No conversations yet in this namespace")).toBeNull();
   });
 });

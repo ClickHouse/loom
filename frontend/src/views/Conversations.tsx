@@ -16,12 +16,12 @@ import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { Skeleton } from "../components/Skeleton";
-import { ListRow, PageHeader, SectionHeading } from "../components/ui";
+import { ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
 import { ListPager } from "../components/ui/ListPager";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
-import { displayAgent, relativeTime, truncate, humanizeError, errorRequestId } from "../lib/format";
+import { displayAgent, relativeTime, shortDate, truncate, humanizeError, errorRequestId } from "../lib/format";
 import { useAbortableEffect, useKeyboard } from "../lib/hooks";
 import { IconButton } from "../components/IconButton";
 import { SessionBriefsSection } from "../components/SessionBriefsSection";
@@ -60,6 +60,8 @@ export function Conversations() {
   // Threads come a page at a time, most recently active first, over the past year.
   const [threadPage, setThreadPage] = useState(0);
   const [threadsPaged, setThreadsPaged] = useState(true);
+  // Known only once a page after the last full one comes back empty.
+  const [threadsTotal, setThreadsTotal] = useState<number | undefined>(undefined);
   const [seenAgents, setSeenAgents] = useState<string[]>([]);
   const firstThreadRef = useRef<string | null>(null);
   // Selected thread for the message-replay dialog. Click a thread
@@ -98,6 +100,8 @@ export function Conversations() {
     setThreads(null);
     setThreadPage(0);
     setSeenAgents([]);
+    setThreadsPaged(true);
+    setThreadsTotal(undefined);
     setAgentFilter("*");
     setLoggingEnabled(null);
   }, [identity.org, identity.namespace]);
@@ -126,6 +130,12 @@ export function Conversations() {
             setThreadsPaged(false);
             setThreadPage(0);
             return;
+          } else if (rows.length === 0) {
+            // The last page was full, so the one after it is empty: go back to it, now
+            // knowing how many threads there are.
+            setThreadsTotal(threadPage * THREADS_PAGE);
+            setThreadPage(threadPage - 1);
+            return;
           }
           setThreads(rows);
           setSeenAgents((prev) => Array.from(new Set([...prev, ...rows.map((t) => t.agent)])).sort());
@@ -138,6 +148,12 @@ export function Conversations() {
           setThreadsError(rid ? `${humanizeError(e)} (request id ${rid})` : humanizeError(e));
           setThreads([]);
         });
+    },
+    [identity.org, identity.namespace, threadsRetry, threadPage, agentFilter],
+  );
+  // The recording switch is the namespace's, read once per namespace, not per page.
+  useAbortableEffect(
+    (signal, live) => {
       getNamespace(identity, { signal })
         .then((n) => {
           if (live()) setLoggingEnabled(n?.conversation_logging_enabled ?? true);
@@ -146,7 +162,7 @@ export function Conversations() {
           if (live()) setLoggingEnabled(null);
         });
     },
-    [identity.org, identity.namespace, threadsRetry, threadPage, agentFilter],
+    [identity.org, identity.namespace],
   );
 
   const run = async () => {
@@ -273,7 +289,7 @@ export function Conversations() {
               >
                 <span className="flex items-baseline gap-3">
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{title}</span>
-                  <span className="shrink-0 text-xs text-text-muted tabular">{relativeTime(t.last_seen)}</span>
+                  <span className="shrink-0 text-xs text-text-muted tabular">{shortDate(t.last_seen)}</span>
                 </span>
                 <span className="mt-1 flex items-center gap-2 text-xs text-text-muted">
                   <span className="inline-flex shrink-0">
@@ -296,6 +312,7 @@ export function Conversations() {
             page={threadPage}
             pageSize={THREADS_PAGE}
             shown={visibleThreads.length}
+            total={threadsTotal}
             onPage={setThreadPage}
             topId="threads-list"
           />
@@ -337,6 +354,7 @@ export function Conversations() {
             value={agentFilter}
             onSelect={(value) => {
               setAgentFilter(value);
+              setThreadsTotal(undefined);
               setThreadPage(0);
             }}
             triggerProps={{ "aria-label": "Agent" }}
@@ -360,6 +378,7 @@ export function Conversations() {
               value={agentFilter}
               onSelect={(value) => {
                 setAgentFilter(value);
+                setThreadsTotal(undefined);
                 setThreadPage(0);
               }}
               triggerProps={{ "aria-label": "Agent" }}
@@ -397,14 +416,18 @@ export function Conversations() {
       <p role="status" className="sr-only">
         {searchStatus}
       </p>
-      {busy && <Skeleton className="h-20 w-full" />}
+      {busy && (
+        <LoadingSkeleton label="Searching transcripts">
+          <Skeleton className="h-20 w-full" />
+        </LoadingSkeleton>
+      )}
 
       {hits === null && <SessionBriefsSection org={identity.org} namespace={identity.namespace} />}
       {!busy && hits === null && threads === null && (
-        <div className="space-y-2">
+        <LoadingSkeleton label="Loading threads" className="space-y-2">
           <Skeleton className="h-14" />
           <Skeleton className="h-14" />
-        </div>
+        </LoadingSkeleton>
       )}
 
       {!busy && hits === null && threads !== null && threads.length === 0 && threadsError && (

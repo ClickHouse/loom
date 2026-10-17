@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import {
   getConversationThread,
@@ -10,7 +11,7 @@ import {
   type Identity,
   type MemoryListEntry,
 } from "../api";
-import { Chip, ExternalLink, SectionHeading } from "./ui";
+import { Chip, ExternalLink, Loading, SectionHeading } from "./ui";
 import { Modal } from "./ui/Modal";
 import { toast } from "./Toast";
 import { absoluteTime, displayAgent, relativeTime, humanizeError } from "../lib/format";
@@ -27,19 +28,20 @@ export interface ReplayThread {
   hit?: ConversationHit;
 }
 
-// Role → visual treatment for the thread replay. Differentiating turns is the
-// single biggest readability win: a coding chat is otherwise an undifferentiated
-// wall of gray text with code indistinguishable from prose.
-const ROLE_META: Record<string, { label: string; rail: string; card: string; muted?: boolean }> = {
-  user: { label: "You", rail: "border-l-2 border-accent", card: "bg-surface" },
-  assistant: {
-    label: "Assistant",
-    rail: "border-l-2 border-border",
-    card: "bg-surface-2",
-  },
-  system: { label: "System", rail: "", card: "bg-transparent border border-dashed border-border", muted: true },
-  tool: { label: "Tool", rail: "border-l-2 border-warn/60", card: "bg-surface-2" },
+// Role → treatment for the thread replay. The role is a neutral badge on each turn, and the
+// card's fill tells prose turns from the dashed system ones: colour stays for meaning.
+const ROLE_META: Record<string, { label: string; card: string; muted?: boolean }> = {
+  user: { label: "You", card: "border-l-2 border-border bg-surface" },
+  assistant: { label: "Assistant", card: "border-l-2 border-border bg-surface-2" },
+  system: { label: "System", card: "bg-transparent border border-dashed border-border", muted: true },
+  tool: { label: "Tool", card: "border-l-2 border-border bg-surface-2" },
 };
+
+// Click UI's Badge measures its text on every render; a long transcript re-renders each
+// turn on every "Load more", so the badge renders again only when its label changes.
+const RoleBadge = memo(function RoleBadge({ label }: { label: string }) {
+  return <Badge text={label} state="neutral" size="sm" />;
+});
 
 function linkify(text: string) {
   return text.split(/(https?:\/\/[^\s)]+)/g).map((p, i) =>
@@ -339,14 +341,7 @@ export function ThreadReplayDialog({
             </div>
           </div>
         )}
-        <p role="status" className="sr-only">
-          {threadLoading ? "Loading…" : ""}
-        </p>
-        {threadLoading && (
-          <div className="text-center text-sm text-text-muted py-12" aria-hidden="true">
-            Loading…
-          </div>
-        )}
+        {threadLoading && <Loading label="Loading thread" />}
         {!threadLoading && threadDetail && !threadDetail.found && (
           <div className="text-center text-sm text-text-muted py-12">
             {/* "or upgraded" goes with the previous-release fallback above. */}
@@ -375,10 +370,10 @@ export function ThreadReplayDialog({
                   id={turnId(m)}
                   data-msg-id={m.msg_id}
                   data-highlighted={highlighted || undefined}
-                  className={`rounded-lg px-3 py-2 ${meta.rail} ${meta.card} ${highlighted ? "ring-2 ring-accent" : ""}`}
+                  className={`rounded-lg px-3 py-2 ${meta.card} ${highlighted ? "ring-1 ring-[color:var(--click-card-horizontal-default-color-stroke-active)]" : ""}`}
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-medium text-text-muted">{label}</span>
+                    <RoleBadge label={label} />
                     {typeof m.tokens === "number" && m.tokens > 0 && (
                       <span className="text-xs text-text-muted">· {m.tokens} tok</span>
                     )}

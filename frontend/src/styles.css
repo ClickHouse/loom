@@ -963,7 +963,7 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   .tq-row {
     display: grid;
-    grid-template-columns: 4px minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 0 12px;
     align-items: center;
     width: 100%;
@@ -980,7 +980,7 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   @container (max-width: 560px) {
     .tq-row {
-      grid-template-columns: 4px minmax(0, 1fr);
+      grid-template-columns: auto minmax(0, 1fr);
     }
     .tq-row > [role="gridcell"]:last-child {
       grid-column: 2;
@@ -1007,21 +1007,6 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-inbox:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: -2px;
-  }
-  .tq-pri {
-    height: 32px;
-    border-radius: 2px;
-    background: var(--color-surface-3);
-  }
-  .tq-pri[data-p="1"] {
-    background: var(--color-danger);
-  }
-  .tq-pri[data-p="2"] {
-    background: var(--color-warn);
-  }
-  .tq-pri[data-p="4"] {
-    background: transparent;
-    border: 1px dashed var(--color-surface-3);
   }
   .tq-row .t {
     display: flex;
@@ -1341,22 +1326,19 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 
 /* ui/ListPager: Click UI's Pagination stacks into a column under 768 px (its containers are
-   responsive); a pager stays one row, the range wrapping above the arrows, and keeps the
-   widths it sets (a 50 px page field). On a phone the page size goes. */
+   responsive and it offers no way to say otherwise); a pager stays one row, the range
+   wrapping above the arrows, and keeps the widths it sets (a 50 px page field). Click UI's
+   Container marks itself `data-testid="container"`, the one stable hook its build keeps;
+   e2e/overlap.spec.ts checks the pager is one row at 375 px. */
 @media (max-width: 768px) {
-  .list-pager [class*="container_responsive"] {
+  .list-pager [data-testid="container"] {
     flex-direction: row;
     width: var(--container-width);
     max-width: var(--container-max-width);
   }
-  .list-pager > [class*="container_responsive"] {
+  .list-pager > [data-testid="container"] {
     flex-wrap: wrap;
     row-gap: 8px;
-  }
-}
-@media (max-width: 639px) {
-  .list-pager > [class*="container_responsive"] > :nth-child(3) {
-    display: none;
   }
 }
 
@@ -1370,7 +1352,11 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 
 /* A scroll area that fades out at an edge it can still scroll past, so the rows below the
-   fold read as more to come (`data-fade` is set from the scroll position). */
+   fold read as more to come (`data-fade` is set from the scroll position). The scroll
+   padding matches the fade, so a row focused with the arrow keys stops clear of it. */
+.scroll-fade {
+  scroll-padding-block: 24px;
+}
 .scroll-fade[data-fade="top"] {
   mask-image: linear-gradient(to bottom, transparent, black 24px);
 }
@@ -1379,6 +1365,29 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 .scroll-fade[data-fade="both"] {
   mask-image: linear-gradient(to bottom, transparent, black 24px, black calc(100% - 24px), transparent);
+}
+
+/* Kbd (ui/Kbd.tsx): a key or a short chord on Click UI's tokens: Inter 12 px/500, muted
+   text on the muted surface, the default stroke, 4 px radius, 20 px high. In the
+   components layer, so a utility the caller passes (`hidden`, a position) still wins. */
+@layer components {
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border: 1px solid var(--global-color-stroke-default);
+    border-radius: 4px;
+    background: var(--global-color-background-muted);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    line-height: 1;
+    color: var(--global-color-text-muted);
+    white-space: nowrap;
+  }
 }
 
 /* Tasks: the open card on the board takes Click UI's active stroke, as an inspected list row does. */
@@ -1402,4 +1411,17 @@ textarea[aria-invalid="true"]:focus-visible {
 .graph-svg .graph-relation svg {
   width: 1em;
   height: 1em;
+}
+
+/* A row's checkbox under a coarse pointer: a 44 px target (WCAG 2.5.8), so a tap beside it
+   selects the row instead of opening it. */
+@media (pointer: coarse) {
+  .list-row-leading [role="checkbox"] {
+    position: relative;
+  }
+  .list-row-leading [role="checkbox"]::after {
+    content: "";
+    position: absolute;
+    inset: -14px;
+  }
 }

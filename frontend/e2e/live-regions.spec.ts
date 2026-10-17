@@ -14,10 +14,15 @@ async function open(page: Page, path: string) {
 
 test("the library's filter count is announced from a status region mounted before the search", async ({ page }) => {
   await open(page, "/library");
-  const status = page.locator("main [role='status']");
-  await expect(status).toHaveText("showing 4");
+  // The toolbar shows the count; the region says it when a search or filter moves it, so it
+  // is there, empty, before the search.
+  const regions = await page.locator("main [role='status']").elementHandles();
   await page.getByRole("textbox", { name: "Search library" }).fill("tag:lane-0");
-  await expect(status).toHaveText("1 of 4 shown");
+  await expect
+    .poll(async () =>
+      (await Promise.all(regions.map((r) => r.evaluate((e) => e.textContent ?? "")))).includes("1 of 4 shown"),
+    )
+    .toBe(true);
 });
 
 test("the memory search summary is announced from a status region mounted before the search", async ({ page }) => {

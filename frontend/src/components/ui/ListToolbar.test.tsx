@@ -40,4 +40,22 @@ describe("ListToolbar", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]);
     expect(onDelete).toHaveBeenCalled();
   });
+
+  // The Clear button leaves with the selection; focus goes to the search the bar brings back
+  // instead of falling to the page (WCAG 2.4.3).
+  it("puts focus on the search once the selection empties", () => {
+    const sel = (count: number) => ({ count, onClear: () => {}, actions: [] });
+    const { rerender } = render(
+      <ListToolbar label="Search and filters" selection={sel(2)}>
+        <input aria-label="Search memories" />
+      </ListToolbar>,
+    );
+    screen.getByRole("button", { name: "Clear selection" }).focus();
+    rerender(
+      <ListToolbar label="Search and filters" selection={sel(0)}>
+        <input aria-label="Search memories" />
+      </ListToolbar>,
+    );
+    expect(screen.getByLabelText("Search memories")).toHaveFocus();
+  });
 });

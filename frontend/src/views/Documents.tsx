@@ -23,7 +23,7 @@ import { EmptyState } from "../components/EmptyState";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
-import { Chip, ListRow, PageHeader, TagList, Tip } from "../components/ui";
+import { Chip, ListRow, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { Modal } from "../components/ui/Modal";
 import { formatBytesShort, relativeTime, shortDate } from "../lib/format";
@@ -141,6 +141,7 @@ export function Documents() {
   // A memory write cannot change the document list.
   useAbortableEffect(load, [identity.org, identity.namespace, serverTags]);
 
+  const readTags = [...new Set((JSON.parse(serverTags) as string[]).flatMap((t) => [t, t.toLowerCase()]))];
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     const scope = scopeRef.current;
@@ -152,7 +153,8 @@ export function Documents() {
           cursor: nextCursor,
           fields: LIBRARY_LIST_FIELDS,
           limit: LIBRARY_PAGE,
-          ...(queryTags.length ? { tags: [...new Set(queryTags.flatMap((t) => [t, t.toLowerCase()]))] } : {}),
+          // The tags the list was read with, so the cursor and the filter agree.
+          ...(readTags.length ? { tags: readTags } : {}),
         },
       );
       if (scopeRef.current !== scope) return;
@@ -161,7 +163,8 @@ export function Documents() {
     } catch (e) {
       if (scopeRef.current === scope) toastError("Load more failed", e);
     } finally {
-      if (scopeRef.current === scope) setLoadingMore(false);
+      // Always: a load for a scope the list has left must not leave the button spinning.
+      setLoadingMore(false);
     }
   };
 
@@ -369,11 +372,10 @@ export function Documents() {
         title="Library"
         actions={
           <>
-            <span role="status" className="text-sm text-text-muted tabular">
-              {rows
-                ? visibleRows && visibleRows.length !== rows.length
-                  ? `${visibleRows.length} of ${rows.length} shown`
-                  : `showing ${rows.length}`
+            {/* The toolbar shows the count; this says it when a search or filter moves it. */}
+            <span role="status" className="sr-only">
+              {rows && visibleRows && visibleRows.length !== rows.length
+                ? `${visibleRows.length} of ${rows.length} shown`
                 : ""}
             </span>
             <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
@@ -532,10 +534,10 @@ export function Documents() {
       />
 
       {rows === null && (
-        <div className="space-y-2">
+        <LoadingSkeleton label="Loading documents" className="space-y-2">
           <SkeletonCard />
           <SkeletonCard />
-        </div>
+        </LoadingSkeleton>
       )}
 
       {rows !== null && rows.length === 0 && (
@@ -693,7 +695,7 @@ export function Documents() {
       {aggregateStats && rows && rows.length > 0 && (
         <div className="mt-8 pt-4 border-t border-border text-xs text-text-muted tabular flex items-center justify-between flex-wrap gap-2">
           <span>
-            showing <span className="text-text font-medium">{rows.length}</span>
+            Showing <span className="text-text font-medium">{rows.length}</span>
             {" · "}
             <span className="text-text font-medium">{aggregateStats.chunks.toLocaleString()}</span> chunk
             {aggregateStats.chunks === 1 ? "" : "s"} indexed

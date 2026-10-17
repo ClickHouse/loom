@@ -596,7 +596,9 @@ async def recent_threads(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The namespace's threads with a live message in the window, most recent
-    first (ties by thread id, so pages never overlap), skipping `offset` of them:
+    first (ties by thread id, so the order is deterministic for a fixed snapshot: a
+    thread that gets a new message between page loads moves to the front and shifts
+    the later threads by one), skipping `offset` of them:
     message count, first/last seen and the latest message's agent
     (`last_agent`), role and 240-character excerpt. `count_turns`: the message
     count is the thread's distinct turns, as an opened thread shows; off, the

@@ -135,6 +135,22 @@ describe("an entity on a memory opens in place", () => {
   });
   afterEach(() => cleanup());
 
+  // An entity is a tag-like value: Click UI's outlined badge stroke and text, and the
+  // CardHorizontal hover tint, not an accent-coloured text hover.
+  it("draws the entity as an outlined chip with a hover background", async () => {
+    await open();
+    const cls = chip("rate limiting").className;
+    expect(cls).toContain("--click-badge-opaque-color-stroke-default");
+    expect(cls).toContain("hover:bg-(--click-card-horizontal-default-color-background-hover)");
+    expect(cls).not.toContain("hover:text-accent");
+  });
+
+  it("shows a tag by its name, with no '#' glyph", async () => {
+    vi.mocked(getMemory).mockResolvedValue({ ...DETAIL, tags: ["ops"] });
+    await open();
+    expect(screen.getByRole("button", { name: "ops" }).textContent).toBe("ops");
+  });
+
   it("a click opens a popover with the memories that mention it and its neighbours, focus on the first link", async () => {
     await open();
     await userEvent.click(chip("rate limiting"));

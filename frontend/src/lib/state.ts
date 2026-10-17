@@ -313,6 +313,9 @@ export const useStore = create<AppState>((set, get) => ({
     // Mirror the view into the URL first (skipping no-op pushes): the entry being left
     // remembers the open memory before it is cleared.
     pushView(view, opts);
+    // A navigation closes the memory the drawer had open; on Memories itself the URL is the
+    // same page, so its `?memory=` goes too, or a reload would reopen what was closed.
+    if (!opts.query && urlParam("memory") !== null) setViewParam("memory", null, { loomInspect: null });
     set((s) => ({ view, inspectedMemoryKey: null, navSeq: s.navSeq + 1, navNote: opts.note ?? null }));
   },
   bootView: (view) => {

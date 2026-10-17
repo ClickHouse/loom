@@ -1,6 +1,6 @@
 /** An audit row's subject is JSON text from the server; one that parses to something other
  *  than an object ("null", an array, garbage) renders as a row with no details, never throws. */
-import { cleanup, render, screen, within, fireEvent } from "../../test/rtl";
+import { act, cleanup, render, screen, waitFor, within, fireEvent } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
@@ -112,5 +112,46 @@ describe("Audit: older events", () => {
     expect(screen.getByText("Created namespace team (org)")).toBeTruthy();
     expect(vi.mocked(api.listAuditLog).mock.calls[1][1]).toMatchObject({ cursor: "c1" });
     expect(screen.queryByRole("button", { name: "Load older" })).toBeNull();
+  });
+
+  // A namespace switch while an older page is in flight: the answer belongs to the old
+  // namespace, so it is dropped, its request aborted, and the new list's button is idle.
+  it("drops an older page that lands after the namespace changed", async () => {
+    let land: (v: Awaited<ReturnType<typeof api.listAuditLog>>) => void = () => {};
+    vi.mocked(api.listAuditLog)
+      .mockResolvedValueOnce({ rows: [row("alice", '{"namespace":"team","visibility":"org"}')], next_cursor: "c1" })
+      .mockImplementationOnce(() => new Promise((resolve) => (land = resolve)))
+      .mockResolvedValueOnce({ rows: [row("carol", '{"namespace":"two","visibility":"org"}')], next_cursor: "c2" });
+    render(<Audit />);
+    await screen.findByText("Created namespace team (org)");
+    fireEvent.click(screen.getByRole("button", { name: "Load older" }));
+    const signal = vi.mocked(api.listAuditLog).mock.calls[1][1]?.signal;
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "ns2", agent: "loom-ui" } }));
+    await screen.findByText("Created namespace two (org)");
+    expect(signal?.aborted).toBe(true);
+    await act(async () => land({ rows: [row("bob", '{"namespace":"ops","visibility":"org"}')], next_cursor: null }));
+    expect(screen.queryByText("Created namespace ops (org)")).toBeNull();
+    expect(screen.getByRole("button", { name: "Load older" })).not.toHaveAttribute("aria-busy");
+  });
+
+  // The button unmounts with the last page; focus goes to the first row it added, and stays
+  // on the button while more remain.
+  it("keeps focus on the button while more remain, then moves it to the first new row", async () => {
+    vi.mocked(api.listAuditLog)
+      .mockResolvedValueOnce({ rows: [row("alice", '{"namespace":"team","visibility":"org"}')], next_cursor: "c1" })
+      .mockResolvedValueOnce({ rows: [row("bob", '{"namespace":"ops","visibility":"org"}')], next_cursor: "c2" })
+      .mockResolvedValueOnce({ rows: [row("dave", '{"namespace":"last","visibility":"org"}')], next_cursor: null });
+    render(<Audit />);
+    await screen.findByText("Created namespace team (org)");
+    const button = screen.getByRole("button", { name: "Load older" });
+    button.focus();
+    fireEvent.click(button);
+    await screen.findByText("Created namespace ops (org)");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Load older" })));
+    fireEvent.click(screen.getByRole("button", { name: "Load older" }));
+    await screen.findByText("Created namespace last (org)");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByText("Created namespace last (org)").closest("tr")),
+    );
   });
 });

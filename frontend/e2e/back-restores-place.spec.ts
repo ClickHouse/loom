@@ -73,7 +73,7 @@ for (const width of [1400, 375]) {
 
     test("an entity opens in place, Open in Graph pushes, and Back restores scroll, drawer and focus", async ({
       page,
-    }) => {
+    }, testInfo) => {
       await installApi(page, { memoryRows: 60 });
       await entityApi(page);
       await page.goto("/memories", { waitUntil: "domcontentloaded" });
@@ -106,7 +106,7 @@ for (const width of [1400, 375]) {
       const box = await pop.boundingBox();
       expect(box && box.width <= 360 && box.x >= 0 && box.x + box.width <= width).toBe(true);
       expect(await violations(page)).toEqual([]);
-      await page.screenshot({ path: `test-results/entity-popover-${width}.png` });
+      await page.screenshot({ path: testInfo.outputPath(`entity-popover-${width}.png`) });
 
       // Escape closes only the popover and hands the focus back.
       await page.keyboard.press("Escape");
@@ -124,7 +124,7 @@ for (const width of [1400, 375]) {
       await expect(back).toBeVisible();
       await expect(page.getByRole("heading", { level: 1, name: "Graph" })).toBeFocused();
       await expect(page.locator("#loom-nav-status")).toHaveText(`Graph, walked from ${ENTITY}`);
-      await page.screenshot({ path: `test-results/graph-back-${width}.png` });
+      await page.screenshot({ path: testInfo.outputPath(`graph-back-${width}.png`) });
 
       // Back: the list where it was, the drawer on that memory, the focus on the chip.
       await back.click();
@@ -138,7 +138,7 @@ for (const width of [1400, 375]) {
       await expect(page.getByRole("dialog", { name: key })).toBeVisible();
     });
 
-    test("the drawer footer is one row: Edit, More and Delete", async ({ page }) => {
+    test("the drawer footer is one row: Edit, More and Delete", async ({ page }, testInfo) => {
       await installApi(page, { memoryRows: 3 });
       await entityApi(page);
       await page.goto("/memories?memory=alerts%2F2026-09-19%2F0001", { waitUntil: "domcontentloaded" });
@@ -156,7 +156,7 @@ for (const width of [1400, 375]) {
         .evaluateAll((items) => items.filter((i) => i.scrollWidth > i.clientWidth + 1).map((i) => i.textContent));
       expect(cut).toEqual([]);
       expect(await violations(page)).toEqual([]);
-      await page.screenshot({ path: `test-results/drawer-more-${width}.png` });
+      await page.screenshot({ path: testInfo.outputPath(`drawer-more-${width}.png`) });
     });
   });
 }

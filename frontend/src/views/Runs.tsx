@@ -65,8 +65,9 @@ const RUNS_LIMIT = 200;
 
 const RUN_FILTERS: readonly Filter[] = ["", "active", "completed", "failed", "cancelled"];
 
-// Every agent filter; "" is not a value the Select can hold.
+// Every agent filter, and every status on a phone; "" is not a value the Select can hold.
 const ALL_AGENTS = "*";
+const ALL_STATUSES = "*";
 
 const STATUS_META: Record<RunStatus, { label: string; state: BadgeState; icon: IconName }> = {
   active: { label: "Active", state: "neutral", icon: "sand-glass" },
@@ -347,8 +348,30 @@ function matches(r: RunRow, q: string): boolean {
   return `${r.goal} ${r.agent} ${r.run_id}`.toLowerCase().includes(q);
 }
 
+// Below Tailwind's sm breakpoint the toolbar holds the search alone.
+const PHONE_QUERY = "(max-width: 639px)";
+
+function matchesPhone(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia(PHONE_QUERY).matches;
+}
+
+/** True while the viewport is phone-wide. */
+function usePhone(): boolean {
+  const [phone, setPhone] = useState(matchesPhone);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(PHONE_QUERY);
+    const sync = () => setPhone(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  return phone;
+}
+
 export function Runs() {
   const identity = useIdentity();
+  const phone = usePhone();
   const [rows, setRows] = useState<RunRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("");
@@ -443,21 +466,64 @@ export function Runs() {
     counts.written += (r.memories_written ?? []).length;
   }
 
+  // Five statuses are wider than a phone: there the status is a select beside the agent's.
+  const filters = (
+    <>
+      {phone ? (
+        <Select
+          value={filter || ALL_STATUSES}
+          onSelect={(v) => setFilter(v === ALL_STATUSES ? "" : (v as Filter))}
+          triggerProps={{ "aria-label": "Filter runs by status" }}
+          className="min-w-0 flex-1"
+        >
+          {RUN_FILTERS.map((f) => (
+            <Select.Item key={f || ALL_STATUSES} value={f || ALL_STATUSES}>
+              {f ? STATUS_META[f].label : "Every status"}
+            </Select.Item>
+          ))}
+        </Select>
+      ) : (
+        <ButtonGroup
+          aria-label="Filter runs by status"
+          selected={filter}
+          onClick={(value) => setFilter(value as Filter)}
+          options={RUN_FILTERS.map((f) => ({ value: f, label: f ? STATUS_META[f].label : "All" }))}
+        />
+      )}
+      {(agents.length > 1 || agent) && (
+        <Select
+          value={agent || ALL_AGENTS}
+          onSelect={(v) => setAgent(v === ALL_AGENTS ? "" : v)}
+          triggerProps={{ "aria-label": "Agent" }}
+          className={phone ? "min-w-0 flex-1" : "w-44 shrink-0"}
+        >
+          <Select.Item value={ALL_AGENTS}>Every agent</Select.Item>
+          {agents.map((a) => (
+            <Select.Item key={a} value={a}>
+              {displayAgent(a)}
+            </Select.Item>
+          ))}
+        </Select>
+      )}
+    </>
+  );
+
   return (
     <PageContainer>
       <PageHeader title="Runs">
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
-      <div className="text-sm text-text-muted mb-4 max-w-[72ch]">
-        One row per agent execution: the goal, how it ended, the memories it relied on and what it wrote.{" "}
-        <span className="inline-flex align-middle">
-          <IconButton
-            icon="info-in-circle"
-            size="xs"
-            label="About runs"
-            tooltip="Open a run to replay what it recalled, observed and cost. A session is one connection's worth of runs: group by it to see a whole working sitting."
-          />
-        </span>
+      {/* The icon sits beside the sentence's box, so a wrapped sentence never strands it. */}
+      <div className="mb-4 flex items-start gap-1">
+        <p className="max-w-[72ch] text-sm text-text-muted">
+          One row per agent execution: the goal, how it ended, the memories it relied on and what it wrote.
+        </p>
+        <IconButton
+          icon="info-in-circle"
+          size="xs"
+          label="About runs"
+          tooltip="Open a run to replay what it recalled, observed and cost. A session is one connection's worth of runs: group by it to see a whole working sitting."
+        />
       </div>
 
       <ListToolbar label="Search and filters" count={rows !== null && visible.length > 0 ? countLine : undefined}>
@@ -472,32 +538,10 @@ export function Runs() {
             aria-label="Search runs"
           />
         </div>
-        {/* Five statuses and the agent are wider than a phone: they scroll sideways inside
-            the bar, not the page. */}
-        <div className="flex min-w-0 items-center gap-2 overflow-x-auto">
-          <ButtonGroup
-            aria-label="Filter runs by status"
-            selected={filter}
-            onClick={(value) => setFilter(value as Filter)}
-            options={RUN_FILTERS.map((f) => ({ value: f, label: f ? STATUS_META[f].label : "All" }))}
-          />
-          {(agents.length > 1 || agent) && (
-            <Select
-              value={agent || ALL_AGENTS}
-              onSelect={(v) => setAgent(v === ALL_AGENTS ? "" : v)}
-              triggerProps={{ "aria-label": "Agent" }}
-              className="w-44 shrink-0"
-            >
-              <Select.Item value={ALL_AGENTS}>Every agent</Select.Item>
-              {agents.map((a) => (
-                <Select.Item key={a} value={a}>
-                  {displayAgent(a)}
-                </Select.Item>
-              ))}
-            </Select>
-          )}
-        </div>
+        {!phone && <div className="flex min-w-0 items-center gap-2 overflow-x-auto">{filters}</div>}
       </ListToolbar>
+      {/* A phone's toolbar has room for the search only; the filters sit under it. */}
+      {phone && <div className="-mt-1 mb-3 flex items-center gap-2">{filters}</div>}
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <Chip label="Group by session" selected={groupBy} onClick={() => setGroupBy((v) => !v)} />

@@ -110,7 +110,8 @@ async function open(page: Page, path: string) {
   await page.goto(path);
   await expect(page.locator("main h1").first()).toBeVisible();
   await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(300);
+  // Settled: no table or list still marks itself loading.
+  await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
 }
 
 /** Neither the document nor the scrolling main is wider than the window. */

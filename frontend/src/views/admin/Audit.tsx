@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState, type Ref } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -198,8 +198,20 @@ export function Audit() {
   const scope = isPlatformAdmin ? { org: identity.org } : { org: identity.org, namespace: identity.namespace };
   // The window the first page read; older pages keep to it.
   const since = useRef("");
+  // Bumped by every first read: an older page asked for under another scope is dropped.
+  const scopeGen = useRef(0);
+  const olderCtl = useRef<AbortController | null>(null);
+  // Where focus goes once an older page lands (the first new row's index).
+  const focusAfterLoad = useRef<number | null>(null);
+  const olderButton = useRef<HTMLButtonElement>(null);
+  const eventsTable = useRef<HTMLTableElement>(null);
+  useEffect(() => () => olderCtl.current?.abort(), []);
   useAbortableEffect(
     (signal, live) => {
+      scopeGen.current += 1;
+      olderCtl.current?.abort();
+      focusAfterLoad.current = null;
+      setLoadingOlder(false);
       setRows(null);
       setOlder(null);
       since.current = new Date(Date.now() - AUDIT_WINDOW_MS).toISOString();
@@ -219,17 +231,45 @@ export function Audit() {
   // 100 more, older than the last row shown; the rows already shown stay.
   const loadOlder = async () => {
     if (!older) return;
+    const gen = scopeGen.current;
+    const ctl = new AbortController();
+    olderCtl.current = ctl;
+    focusAfterLoad.current = visibleRows.length;
     setLoadingOlder(true);
     try {
-      const r = await listAuditLog(scope, { limit: 100, since: since.current, cursor: older, fields: ACTIVITY_FIELDS });
+      const r = await listAuditLog(scope, {
+        limit: 100,
+        since: since.current,
+        cursor: older,
+        fields: ACTIVITY_FIELDS,
+        signal: ctl.signal,
+      });
+      if (gen !== scopeGen.current) return;
       setRows((prev) => [...(prev ?? []), ...(r.rows || [])]);
       setOlder(r.next_cursor ?? null);
     } catch (e) {
-      toastError("Loading older events failed", e);
+      if (gen === scopeGen.current) toastError("Loading older events failed", e);
     } finally {
-      setLoadingOlder(false);
+      if (gen === scopeGen.current) setLoadingOlder(false);
     }
   };
+
+  // The loading button is disabled, which drops focus: once the page lands it goes back to
+  // the button while more remain, else to the first row the page added.
+  useEffect(() => {
+    const at = focusAfterLoad.current;
+    if (at === null || loadingOlder) return;
+    focusAfterLoad.current = null;
+    if (older) {
+      olderButton.current?.focus();
+      return;
+    }
+    const row = eventsTable.current?.querySelectorAll<HTMLElement>("tbody tr")[at];
+    if (row) {
+      row.tabIndex = -1;
+      row.focus();
+    }
+  });
 
   const me = whoami?.subject || "";
   const q = filterQuery.trim().toLowerCase();
@@ -328,11 +368,14 @@ export function Audit() {
             </div>
           )}
           {rows !== null && visibleRows.length > 0 && (
-            <EventsTable rows={firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows} />
+            <EventsTable
+              tableRef={eventsTable}
+              rows={firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows}
+            />
           )}
           {rows !== null && older && (
             <div className="mt-4 flex justify-center">
-              <Button type="secondary" htmlType="button" loading={loadingOlder} onClick={loadOlder}>
+              <Button ref={olderButton} type="secondary" htmlType="button" loading={loadingOlder} onClick={loadOlder}>
                 Load older
               </Button>
             </div>
@@ -441,9 +484,18 @@ const EVENT_HEADERS = [{ label: "Event" }, { label: "By", width: "220px" }, { la
 
 /** The events, one row each: what happened, who did it and when. The first read is Click
  *  UI's own loading table. */
-function EventsTable({ rows, loading = false }: { rows: AuditEntry[]; loading?: boolean }) {
+function EventsTable({
+  rows,
+  loading = false,
+  tableRef,
+}: {
+  rows: AuditEntry[];
+  loading?: boolean;
+  tableRef?: Ref<HTMLTableElement>;
+}) {
   return (
     <Table
+      ref={tableRef}
       aria-label="Audit events"
       aria-busy={loading || undefined}
       loading={loading}

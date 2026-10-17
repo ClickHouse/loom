@@ -156,4 +156,29 @@ describe("Memories: filtering by tags", () => {
     // The search box kept its focus through the refetch.
     expect(screen.getByLabelText("Search memories")).toHaveFocus();
   });
+
+  // Pinned has no server filter: it reads the newest 1,000 and keeps the pinned ones, so a
+  // pinned memory past the first page shows, with no pager over pages it emptied.
+  it("Pinned reads past the page on screen", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, limit) =>
+      limit === 1000
+        ? {
+            entries: [{ ...entry("old_pin", []), pinned: true }, entry("both", ["Alerts", "storage"])],
+            total: 250,
+            today: 0,
+            truncated: false,
+          }
+        : {
+            entries: [{ ...entry("both", ["Alerts", "storage"]), pinned: true }],
+            total: 250,
+            today: 0,
+            truncated: false,
+          },
+    );
+    await openMemories();
+    await userEvent.click(screen.getByRole("button", { name: /^Pinned/ }));
+    expect(await screen.findByText("old_pin")).toBeInTheDocument();
+    expect(vi.mocked(listMemories).mock.calls.at(-1)?.[1]).toBe(1000);
+    expect(screen.queryByRole("navigation", { name: "Memories pages" })).toBeNull();
+  });
 });

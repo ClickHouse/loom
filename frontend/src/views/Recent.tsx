@@ -24,7 +24,7 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { Alert, Chip, ListRow, PageHeader, SectionHeading } from "../components/ui";
+import { Alert, Chip, ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { SkeletonCard } from "../components/Skeleton";
@@ -581,18 +581,32 @@ export function Recent() {
   const [bulkValues, setBulkValues] = useState<Map<string, unknown>>(new Map());
   const fetchOnceRef = useRef<(isFirst: boolean) => Promise<void>>(async () => {});
 
-  // A tag or agent filter is asked of the server, over the whole namespace: filtering
-  // only the page on screen showed empty pages while matches sat on others. The server
-  // narrows to rows with any of the tags (and the agent); the list then requires every
-  // tag, in any case. Debounced, so typing `tag:…` sends one read, not one per key.
-  const filterKey = JSON.stringify({ tags: queryTags, agent: queryAgent ?? agentFilter ?? "" });
-  const [serverFilter, setServerFilter] = useState(filterKey);
+  // A filter covers the whole namespace, not the page on screen (which showed empty pages
+  // while matches sat on others). A tag or agent filter is asked of the server: it narrows
+  // to rows with any of the tags (and the agent), and the list then requires every tag, in
+  // any case. Pinned has no server filter: the list reads the newest 1,000 and keeps the
+  // pinned ones. What is typed is debounced, so `tag:…` sends one read, not one per key; a
+  // chip applies at once.
+  const typedKey = JSON.stringify({ tags: queryTags, agent: queryAgent ?? "" });
+  const [typedFilter, setTypedFilter] = useState(typedKey);
   useEffect(() => {
-    const t = setTimeout(() => setServerFilter(filterKey), 250);
+    const t = setTimeout(() => setTypedFilter(typedKey), 250);
     return () => clearTimeout(t);
-  }, [filterKey]);
-  const listFilter = useMemo(() => JSON.parse(serverFilter) as { tags: string[]; agent: string }, [serverFilter]);
-  const listFiltered = listFilter.tags.length > 0 || listFilter.agent !== "";
+  }, [typedKey]);
+  const listFilter = useMemo(() => {
+    const typed = JSON.parse(typedFilter) as { tags: string[]; agent: string };
+    // A typed agent is matched in any case; agents are written lowercase.
+    return { tags: typed.tags, agent: typed.agent.toLowerCase() || agentFilter || "", pinned: pinnedOnly };
+  }, [typedFilter, agentFilter, pinnedOnly]);
+  const listFiltered = listFilter.tags.length > 0 || listFilter.agent !== "" || listFilter.pinned;
+  // A new namespace, view or filter starts at its first page, set before the read so the
+  // read never asks for a page of the old scope.
+  const pageScope = `${identity.org}/${identity.namespace}/${showDeleted}/${JSON.stringify(listFilter)}`;
+  const [pagedFor, setPagedFor] = useState(pageScope);
+  if (pagedFor !== pageScope) {
+    setPagedFor(pageScope);
+    setPage(0);
+  }
   // The list blanks only for a new namespace or view; a new page or filter keeps the
   // rows on screen (marked busy) until the next ones land, and the search keeps focus.
   const shownScope = useRef("");
@@ -710,20 +724,16 @@ export function Recent() {
     void fetchOnceRef.current(false);
   }, 8000);
 
-  // Reset to the first page when the scope changes, so we never sit on a page
-  // index that no longer exists under the new filter.
-  useEffect(() => {
-    setPage(0);
-  }, [showDeleted, identity.org, identity.namespace, serverFilter]);
-
   if (entries === null) {
     return (
       <PageContainer className="space-y-3">
         <PageHeader title="Memories" />
         <MemoryTabs active="memories" />
-        <SkeletonCard />
-        <SkeletonCard />
-        <SkeletonCard />
+        <LoadingSkeleton label="Loading memories" className="space-y-2">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </LoadingSkeleton>
       </PageContainer>
     );
   }
@@ -1049,10 +1059,16 @@ export function Recent() {
 
       {truncated && (
         <p className="mb-3 text-xs text-text-muted">
-          Showing the newest 1,000 matches. Add a tag or a search word to narrow them.
+          {listFilter.tags.length > 0 || listFilter.agent
+            ? "Showing the newest 1,000 matches. Add a tag or a search word to narrow them."
+            : "Showing the pinned memories among the newest 1,000."}
         </p>
       )}
-      <div id="memories-list" tabIndex={-1} className="space-y-6 outline-none" aria-busy={refreshing || undefined}>
+      {/* Where a page change takes the reader: a heading a screen reader announces. */}
+      <h2 id="memories-list-top" tabIndex={-1} className="sr-only">
+        Memories, page {page + 1}
+      </h2>
+      <div className="space-y-6" aria-busy={refreshing || undefined}>
         {Array.from(byDay.entries()).map(([day, items]) => (
           <section key={day}>
             <SectionHeading level={2} label={day} count={items.length} />
@@ -1162,7 +1178,7 @@ export function Recent() {
             setPageSize(n);
             setPage(0);
           }}
-          topId="memories-list"
+          topId="memories-list-top"
         />
       )}
     </PageContainer>
