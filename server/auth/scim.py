@@ -64,6 +64,9 @@ COLUMNS = (
 # only a revocation with this reason, never an operator's.
 DEACTIVATED = "scim: deactivated"
 _BY = "scim"
+# How far another replica's clock may run behind this one's, as account
+# admin's `wait_out` allows: one behind stamps a sign-in's `iat` earlier.
+_CLOCK_SKEW_S = 5
 # SCIM ids are uuid5 of the email under this namespace: one id per person,
 # whichever replica or retry computes it. The provider holds the email anyway.
 _ID_NAMESPACE = uuid.UUID("6f1c3e0a-5b7d-4c2e-9a41-2d8f0b6e7c13")
@@ -294,8 +297,8 @@ async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict
         # An account made before the row said inactive (a first sign-in's JIT):
         # revoke it too, with the sessions and tokens it made meanwhile.
         new = await _set_active(new, False)
-    if cutoff is not None:  # wait out the cutoff's second, a token issued in it falls before it
-        await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
+    if cutoff is not None:  # until every replica is past it: a token issued before stays revoked
+        await asyncio.sleep(max(0.0, cutoff.timestamp() + _CLOCK_SKEW_S - time.time()))
     return new
 
 

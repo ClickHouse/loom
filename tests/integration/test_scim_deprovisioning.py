@@ -130,6 +130,7 @@ def _set_active(base: str, uid: str, active: bool) -> dict[str, Any]:
             "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
             "Operations": [{"op": "replace", "value": {"active": active}}],
         },
+        timeout=30,  # a reactivation returns once every replica's clock is past its cutoff
     )
     assert r.status_code == 200, r.text
     out: dict[str, Any] = r.json()
