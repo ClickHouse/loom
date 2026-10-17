@@ -41,14 +41,10 @@ def _from_now_on() -> datetime:
     return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1 + _CLOCK_SKEW_S)
 
 
-def _after_this_second() -> datetime:
-    """A cutoff that ends the tokens issued so far and none after: a person's,
-    whose next token comes from a new sign-in, not from a row that may race."""
-    return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
-
-
-async def _wait_until(cutoff: datetime) -> None:
-    await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
+async def wait_out(cutoff: datetime) -> None:
+    """Return once every replica's clock is past `cutoff`: one running behind
+    this one stamps an earlier `iat`."""
+    await asyncio.sleep(max(0.0, cutoff.timestamp() + _CLOCK_SKEW_S - time.time()))
 
 
 # ── carrying password accounts over to SSO ────────────────────────────────
@@ -114,15 +110,16 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
         if not a["skip"]:
             adoptable.setdefault(a["email"], []).append(a)
     linked = 0
+    cutoff: datetime | None = None
     for email, accounts in adoptable.items():
         org, owner = accounts[0]["org"], accounts[0]["owner"]
         # Whoever registered the address may hold tokens from before; the person
         # signs in again through the provider. Revoked before the link lands, so
         # an adopt stopped between the two is redone whole by the next one.
         if not keep_tokens:
-            await revocation.cut_off(
-                owner, issued_before=_after_this_second(), reason="sso adopt", revoked_by=by
-            )
+            # Past every token issued so far on any replica, as a bot's cutoff is.
+            cutoff = _from_now_on()
+            await revocation.cut_off(owner, issued_before=cutoff, reason="sso adopt", revoked_by=by)
         live = await sso_links.link_live(email, [(org, a["namespace"]) for a in accounts], by)
         if not live:
             continue  # released meanwhile: nothing was linked
@@ -140,6 +137,8 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
                 "tokens_revoked": not keep_tokens,
             },
         )
+    if cutoff is not None:  # a sign-in once adopt returns, on any replica, is past every cutoff
+        await wait_out(cutoff)
     return linked
 
 
@@ -445,9 +444,12 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         if bot["issuer"]:  # its checks against the other trusts and its save, at once
             await held.enter_async_context(trusts_change())
         await held.enter_async_context(bot_change(name))
-        existing = await machines.get(name)
-        if existing is not None and not replace:
+        live = await machines.get(name)
+        if live is not None and not replace:
             raise ValueError(f"bot {name!r} exists; replace it to change it")
+        # A disabled one too: its disable may have saved the row and stopped
+        # before its cutoff, so its tokens end here as a replace's do.
+        existing = live or await machines.get(name, active_only=False)
         if bot["agent_claim"]:
             await _refuse_overlap(name)
         if bot["issuer"]:
@@ -458,7 +460,7 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         # The cutoff is taken after the save, so a request that read the old
         # row falls under it; returning once it has passed lets the new key's
         # first token live.
-        await _wait_until(await end_tokens(machines.subject(name), by=by, reason="bot replaced"))
+        await wait_out(await end_tokens(machines.subject(name), by=by, reason="bot replaced"))
     try:
         await audit.emit(
             "auth.machine_created",
@@ -521,7 +523,7 @@ async def disable_bot(name: str, *, by: str) -> bool:
             return False
         await machines.save(bot, by=by, active=False)
     # Waited out, as a replace's is, so a bot made again at once is not refused.
-    await _wait_until(await end_tokens(machines.subject(name), by=by, reason="bot disabled"))
+    await wait_out(await end_tokens(machines.subject(name), by=by, reason="bot disabled"))
     await audit.emit(
         "auth.machine_disabled", org=bot["org"], namespace="-", actor=by, subject={"name": name}
     )

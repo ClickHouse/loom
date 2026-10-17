@@ -119,10 +119,8 @@ async def live_roles(m: Machine) -> list[tuple[str, str]]:
     return [(ns, role) for ns, role in m["ns_roles"] if ns in active]
 
 
-async def forget_namespace(org: str, namespace: str, by: str, *, ch: Any = None) -> list[str]:
-    """Drop (org, namespace) from every active bot naming it: it was released,
-    and a next holder of the name is not who the bot was made for. Returns the
-    bots changed."""
+async def naming(org: str, namespace: str, *, ch: Any = None) -> list[str]:
+    """The active bots naming (org, namespace)."""
     ch = ch or get_client()
     with own_write_reads():
         rows = await ch.query_all(
@@ -130,12 +128,20 @@ async def forget_namespace(org: str, namespace: str, by: str, *, ch: Any = None)
             "AND arrayExists(r -> r.1 = {ns:String}, ns_roles)",
             params={"org": org, "ns": namespace},
         )
+    return [str(r["name"]) for r in rows]
+
+
+async def forget_namespace(org: str, namespace: str, by: str, *, ch: Any = None) -> list[str]:
+    """Drop (org, namespace) from every active bot naming it: it was released,
+    and a next holder of the name is not who the bot was made for. Returns the
+    bots changed."""
+    ch = ch or get_client()
     from server.auth.grant_claims import bot_change
 
     changed = []
-    for r in rows:
-        async with bot_change(r["name"]):  # read again under it: a disable or replace may land
-            m = await get(r["name"], ch=ch)
+    for name in await naming(org, namespace, ch=ch):
+        async with bot_change(name):  # read again under it: a disable or replace may land
+            m = await get(name, ch=ch)
             if m is not None:
                 m["ns_roles"] = [(ns, role) for ns, role in m["ns_roles"] if ns != namespace]
                 await save(m, by=by, ch=ch)

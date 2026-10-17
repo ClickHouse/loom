@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -14,7 +16,7 @@ from server.identity.app import account_admin
 from server.identity.store import namespaces
 
 _KEY = machines.generate_key()[1].decode()
-_real_wait = account_admin._wait_until
+_real_wait = account_admin.wait_out
 
 
 @pytest.mark.parametrize(
@@ -104,7 +106,7 @@ def world(monkeypatch) -> dict[str, Any]:
     monkeypatch.setattr(revocation, "revoked_outright", revoked_outright)
     monkeypatch.setattr(revocation, "cut_off", cut_off)
     monkeypatch.setattr(account_admin.audit, "emit", emit)
-    monkeypatch.setattr(account_admin, "_wait_until", no_wait)
+    monkeypatch.setattr(account_admin, "wait_out", no_wait)
     return state
 
 
@@ -148,7 +150,7 @@ def test_a_token_minted_from_the_old_row_during_a_replace_is_revoked(world, monk
         await save(m, by=by, active=active)
 
     monkeypatch.setattr(machines, "save", slow_save)
-    monkeypatch.setattr(account_admin, "_wait_until", _real_wait)  # the real wait
+    monkeypatch.setattr(account_admin, "wait_out", _real_wait)  # the real wait
     monkeypatch.setattr(account_admin, "_CLOCK_SKEW_S", 0)  # and a short one
     asyncio.run(account_admin.create_bot(_bot(["triage=viewer"]), by="ops", replace=True))
     assert read_during_save[0] < world["cutoff"].timestamp()
@@ -170,6 +172,19 @@ def test_a_cutoff_covers_a_replica_whose_clock_runs_ahead(world) -> None:
     assert world["cutoff"].timestamp() > ahead
 
 
+def test_the_wait_covers_a_replica_whose_clock_runs_behind(monkeypatch) -> None:
+    slept: list[float] = []
+
+    async def sleep(s: float) -> None:
+        slept.append(s)
+
+    monkeypatch.setattr(account_admin, "asyncio", SimpleNamespace(sleep=sleep))
+    cutoff = datetime.fromtimestamp(time.time() + 6, UTC)
+    asyncio.run(_real_wait(cutoff))
+    # Past the cutoff on a clock that many seconds behind this one too.
+    assert slept[0] > 5 + account_admin._CLOCK_SKEW_S
+
+
 def test_a_disable_waits_out_its_cutoff(world, monkeypatch) -> None:
     waited: list[Any] = []
 
@@ -177,22 +192,29 @@ def test_a_disable_waits_out_its_cutoff(world, monkeypatch) -> None:
         waited.append(cutoff)
 
     asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
-    monkeypatch.setattr(account_admin, "_wait_until", wait)
+    monkeypatch.setattr(account_admin, "wait_out", wait)
     asyncio.run(account_admin.disable_bot("triage", by="ops"))
     assert waited == [world["cutoff"]]
 
 
-def test_adopting_ends_a_persons_tokens_but_not_their_next_sign_in(world, monkeypatch) -> None:
+def test_adopting_ends_tokens_from_any_replica_but_not_the_next_sign_in(world, monkeypatch) -> None:
     async def link(email: str, accounts: list[tuple[str, str]], by: str) -> list[tuple[str, str]]:
         return accounts
 
     monkeypatch.setattr(account_admin.sso_links, "link_live", link)
     monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
+    waited: list[Any] = []
+
+    async def wait(cutoff: Any) -> None:
+        waited.append(cutoff)
+
+    monkeypatch.setattr(account_admin, "wait_out", wait)
     plan = [{"email": "lee@acme.io", "org": "acme", "namespace": "lee", "owner": "lee", "skip": ""}]
     asyncio.run(account_admin.adopt(plan, by="ops", keep_tokens=False))
-    # The next whole second, not the bots' margin: they sign in again at once.
-    # And still past every token issued so far.
-    assert time.time() < world["cutoff"].timestamp() <= time.time() + 1
+    # Past every token issued so far, a replica's clock ahead included, as a
+    # bot's cutoff is; and waited out, so a sign-in once adopt returns is past it.
+    assert world["cutoff"].timestamp() >= time.time() + account_admin._CLOCK_SKEW_S
+    assert waited == [world["cutoff"]]
 
 
 def test_a_disable_that_stopped_part_way_is_finished_by_another(world) -> None:
@@ -474,3 +496,13 @@ def test_the_cli_refuses_an_adoption_whose_skip_matches_nothing(monkeypatch, cap
     )
     assert sso._cmd_adopt(args) == 2
     assert "typo@acme.io" in capsys.readouterr().err
+
+
+def test_making_a_disabled_bot_again_ends_its_old_tokens(world, monkeypatch) -> None:
+    # A disable that saved the row and stopped before its cutoff: the old
+    # key's tokens must not outlive the bot made again under its name.
+    asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
+    world["bots"]["triage"]["active"] = False  # disabled, its cutoff never written
+    world["revoked"].clear()
+    asyncio.run(account_admin.create_bot(_bot(["triage=viewer"]), by="ops", replace=False))
+    assert world["revoked"] == [("sa:triage", "bot replaced")]

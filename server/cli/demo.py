@@ -1,7 +1,7 @@
 """`loom demo` — the first five minutes: ingest this repo's own memory file
 and ask it a question.
 
-  1. ingest `CLAUDE.md` (or `--file`) into the knowledge plane exactly the
+  1. ingest `AGENTS.md` (or `--file`) into the knowledge plane exactly the
      way `make ingest FILE=… TAGS=…` does — `dev/loom_ingest.py`'s parse step
      and request body, posted to `knowledge.upsert` so a re-run replaces the
      chunks instead of 409-ing on the duplicate;
@@ -14,7 +14,7 @@ and ask it a question.
   3. print the answer and the evidence rows (file#chunk, section, score,
      excerpt) as a compact table;
   4. default question "What is the identity tuple on every row?" — answered
-     by CLAUDE.md's "Conventions" section — `--question` overrides.
+     by AGENTS.md's "Invariants" section — `--question` overrides.
 
 Talks to `--base-url` (default http://localhost:7777) with the token from
 `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`, else none
@@ -43,9 +43,9 @@ from server.cli._client import (
 )
 from server.core.paths import REPO_ROOT
 
-DEFAULT_FILE = "CLAUDE.md"
+DEFAULT_FILE = "AGENTS.md"
 DEFAULT_QUESTION = "What is the identity tuple on every row?"
-DEFAULT_TAGS = "loom,project-memory"  # what CLAUDE.md's own header suggests
+DEFAULT_TAGS = "loom,project-memory"
 TOP_K = 3
 REAL_LLM_HINT = (
     "synthesis needs a real LLM: set LOOM_LLM_PROVIDER=openai and OPENAI_API_KEY "
@@ -238,7 +238,7 @@ def _add_demo_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--root",
         default=None,
-        help="Checkout root holding CLAUDE.md and dev/loom_ingest.py "
+        help="Checkout root holding AGENTS.md and dev/loom_ingest.py "
         "(default: the package's checkout, then the cwd).",
     )
     p.add_argument(
@@ -363,7 +363,7 @@ def _cmd_demo(args: argparse.Namespace) -> int:
 
 
 _DEMO_HELP = (
-    "The first five minutes: ingest this repo's CLAUDE.md (or --file) into the "
+    "The first five minutes: ingest this repo's AGENTS.md (or --file) into the "
     "knowledge plane the way `make ingest` does, ask it a question, and print the "
     "answer with its evidence rows. On the stock fake-LLM stack it prints the top "
     "knowledge.search hits and says what a real answer needs."

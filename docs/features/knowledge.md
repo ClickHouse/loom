@@ -170,7 +170,7 @@ It reads the token from `--token`, `LOOM_API_KEY`, `~/.loom/config.json` or `~/.
 server from `--base-url` or `LOOM_BASE_URL`, and defaults `--namespace` to the token's first
 namespace, `--title` to the file name and `--source-uri` to `file://<absolute path>`.
 `--upsert` calls `knowledge.upsert` instead of `add`. Images, video, Parquet and Iceberg
-are out of scope. `loom demo` ingests `CLAUDE.md` and asks a question of it, which is
+are out of scope. `loom demo` ingests `AGENTS.md` and asks a question of it, which is
 the shortest check that the knowledge plane works on a fresh stack.
 
 ## Example

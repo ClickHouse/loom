@@ -83,7 +83,7 @@ docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --p
 
 ```bash
 make format        # ruff, Biome, Prettier, Taplo, shfmt (CI: make format-check)
-make lint          # ruff, the function-length and secret gates, generated files current
+make lint          # ruff, the function-length and secret gates, generated files current, Biome's dashboard accessibility rules
 make typecheck     # mypy --strict on the SDK + the server's mypy ratchet
 make test-unit     # pytest tests/unit and pytest bench (no ClickHouse needed)
 
@@ -160,6 +160,10 @@ Docs follow the [documentation style guide](./docs/development/documentation-sty
 - **Body:** fill the template (`.github/PULL_REQUEST_TEMPLATE.md`). It opens with the linked issues (`Closes:` / `Related:`, full URLs) and a **changelog category** with a one- or two-sentence **changelog entry** a user can read without the diff; the release pull request collects those entries into its release notes. Then **Why**, **Scope and risk**, **Compatibility, rollout and rollback** (ops and fields added, changed or removed, operator steps, what a revert leaves behind), **Tests** (what you ran and what it showed) and how AI tools were used. Its checklist matches what CI and repository policy enforce.
 - **Measurements** that justify a change go in the description with the command that reproduces them, not in code comments or docs.
 - CI must be green before merge. Squash-merge is the default: one logical change per pull request.
+
+## Working with a coding agent
+
+Agents are welcome, and held to the same bar as a person: whoever submits a pull request, issue or comment answers for it. [`AGENTS.md`](./AGENTS.md) is the instruction file Claude Code, Codex and Cursor read, and `.claude/skills/` holds the procedures they follow: setting up a worktree, debugging, the gates before a push, shipping and reviewing a pull request, answering review comments, filing an issue, and writing in plain technical English. A person can follow the same files by hand.
 
 ## Asking questions
 

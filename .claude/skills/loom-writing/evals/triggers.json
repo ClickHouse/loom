@@ -1,0 +1,30 @@
+[
+  {
+    "query": "write the commit message for this change",
+    "should_trigger": true
+  },
+  {
+    "query": "draft the reply to the reviewer's comment about the cursor",
+    "should_trigger": true
+  },
+  {
+    "query": "rewrite this PR description so it reads like an engineer wrote it",
+    "should_trigger": true
+  },
+  {
+    "query": "check this issue text for jargon before I post it",
+    "should_trigger": true
+  },
+  {
+    "query": "fill in the issue form for this bug",
+    "should_trigger": false
+  },
+  {
+    "query": "fix the failing doc-link test",
+    "should_trigger": false
+  },
+  {
+    "query": "add a docs page for the new op",
+    "should_trigger": false
+  }
+]

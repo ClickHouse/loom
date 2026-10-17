@@ -163,3 +163,15 @@ test("a refused exchange saves nothing", async () => {
   assert.equal(await exchange({ env, fetchImpl }), false);
   assert.equal(fs.existsSync(agentTokenPath(env)), false);
 });
+
+test("a redirect from the token endpoint is never followed", async () => {
+  const env = agentEnv();
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({ url, redirect: init.redirect });
+    return new Response(null, { status: 307, headers: { location: "https://elsewhere.example/collect" } });
+  };
+  assert.equal(await exchange({ env, fetchImpl, now: 1000 }), false);
+  assert.deepEqual(seen, [{ url: `${SERVER}/oauth/token`, redirect: "manual" }]);
+  assert.equal(fs.existsSync(agentTokenPath(env)), false);
+});

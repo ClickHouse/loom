@@ -25,6 +25,8 @@ import hashlib
 import re
 from pathlib import Path
 
+from tests.unit.tracked_files import tracked
+
 ROOT = Path(__file__).resolve().parents[2]
 
 PUBLIC_COPY_FILES = (
@@ -154,6 +156,7 @@ BENCHMARK_NAMES = re.compile(r"LoCoMo|LOCOMO|Locomo|LongMemEval|MemoryAgentBench
 BENCHMARK_SCOPE = "server/"
 
 SCAN_DIRS = (
+    ".claude",
     "server",
     "sdk",
     "docs",
@@ -226,7 +229,9 @@ def _iter_scan_files():
         base = ROOT / d
         if not base.exists():
             continue
-        for path in sorted(base.rglob("*")):
+        # `.claude/` also holds worktrees and ignored skills a contributor installed.
+        files = (ROOT / p for p in tracked(d)) if d == ".claude" else base.rglob("*")
+        for path in sorted(files):
             if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
                 continue
             if SKIP_DIR_PARTS.intersection(path.parts):
