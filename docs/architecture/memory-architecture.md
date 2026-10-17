@@ -299,7 +299,9 @@ object its prose names.
 
 Each successor the follow writes, one already open included, is linked to its winner as
 `inferred`: an inferred link adds to what a row is read by, so a winner whose extractor
-stated nothing is still matched by its text too. A successor then goes through the
+stated nothing is still matched by its text too. The link stays the row's after a
+revision while the new value says the fact in the same words, and is kept until the row
+is erased. A successor then goes through the
 interval repair, as a write of it does: an older value of its single-valued relation
 that another live row still states closes when the newer successor starts (see Which
 value is newer).
@@ -835,6 +837,9 @@ is in `server/erasure/store/census.py`:
 | `_CENSUS`           | One `Substrate(table, live, user_pred, ns_step, user_step, final)` per table that can hold content in scope. Any live row in scope fails the saga.    |
 | `STEP_ONLY_TABLES`  | Tables a step clears that the census does not count (shared and consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
 | `NO_MEMORY_CONTENT` | Every other table, each with the reason it holds no content in scope.                                                                                 |
+
+The row links (`entity_triple_rows`, `entity_edge_rows`) carry the row's writer as
+`user_id`, so a user's erasure finds them after the row itself is gone.
 
 The terminal row carries `residue_count`, `residue` (per table) and `verified_at`. A
 resumed saga re-runs the owning step of any table the last census found rows in.

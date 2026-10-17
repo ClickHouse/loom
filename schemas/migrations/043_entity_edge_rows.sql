@@ -1,11 +1,6 @@
--- Which memory row stated each entity edge, as `entity_triple_rows` links triples.
--- `entity_edge_memories` links a pair to a memory_key; this links it to the one row
--- (`memory_id`) and to the value that row held when it named the pair
--- (`content_sha256`, as on `loom.memory`), since a revision keeps the row's id. When
--- a dropped fact's edge would end, it stays open while a live row's current value
--- has a link to the pair. `user_id` is the row's writer, so a user's erasure finds
--- its links after the row itself is gone. The skip index serves the "still holds"
--- lookup, which asks by pair.
+-- The memory row (`memory_id`, writer `user_id`) and value (`content_sha256`) that named
+-- each entity edge's pair. Reads by row use the sort key; the "still holds" lookup by
+-- pair uses `pair_skip`. See docs/architecture/memory-architecture.md, "Rows that hold facts".
 CREATE TABLE IF NOT EXISTS loom.entity_edge_rows
 (
     `org` LowCardinality(String),

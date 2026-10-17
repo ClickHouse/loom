@@ -1,15 +1,6 @@
--- Which memory row stated each triple. `entity_triple_memories` links a triple to
--- a memory_key, which every session's row of that key shares; this links it to the
--- one row (`memory_id`) and to the value that row held when it stated it
--- (`content_sha256`, as on `loom.memory`), since a revision keeps the row's id.
--- When a row retires, the triple plane closes the triples its current value stated
--- and no live row still holds, whatever their subject was canonicalised to ("I live
--- in Paris" is `(user, lives_in, paris)`). `inferred` marks a successor the triple
--- plane wrote for the row rather than one its extractor stated; it stays the row's
--- after a revision while the new value says it in the same words, and is kept until
--- the row is erased. `user_id` is the row's writer, so a user's erasure finds its
--- links after the row itself is gone. The skip index serves the "still holds"
--- lookup, which asks by triple.
+-- The memory row (`memory_id`, writer `user_id`) and value (`content_sha256`) that stated
+-- each triple. Reads by row use the sort key; the "still holds" lookup by triple uses
+-- `triple_skip`. See docs/architecture/memory-architecture.md, "Rows that hold facts".
 CREATE TABLE IF NOT EXISTS loom.entity_triple_rows
 (
     `org` LowCardinality(String),
