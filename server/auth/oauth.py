@@ -750,7 +750,7 @@ async def _finish_oidc_login(request: Request) -> Response:
         if kind == "device":
             await device.deny(user_code)
         return _denied_page(f"{reason}; ask your Loom operator for access")
-    return await _signed_in_as(pending, resolved, upstream)
+    return await _signed_in_as(pending, resolved, upstream, email)
 
 
 class _Denied(NamedTuple):
@@ -770,8 +770,8 @@ async def _account_for(
     from server.auth.login import SignInUnavailable, resolve_identity_for_email
 
     try:
-        if await scim.deactivated(email):  # by the identity provider, over SCIM
-            return _Denied("this account is deactivated")
+        if await scim.deactivated(email):  # before JIT makes them an account
+            return _Denied(_DEACTIVATED)
         await finish_unfinished_account(email)
         resolved = await resolve_identity_for_email(email)
         if resolved is not None:
@@ -790,14 +790,32 @@ async def _account_for(
         return _sign_in_unavailable(_restart_url(pending))
 
 
+_DEACTIVATED = "this account is deactivated"
+
+
 async def _signed_in_as(
     pending: dict[str, Any],
     identity: Identity,
     upstream: str,
+    email: str,
 ) -> Response:
-    """Carry on the sign-in `pending` began, as `identity`."""
-    from server.auth import device
+    """Carry on the sign-in `pending` began, as `identity`. Every SSO sign-in
+    ends here, so here is where a SCIM deactivation is sure to be checked: a
+    link page may have been open since before it."""
+    from server.auth import device, oidc
+    from server.auth.login import SignInUnavailable
 
+    try:
+        deactivated = await scim.deactivated(email)
+    except SignInUnavailable:
+        await oidc.revoke(upstream)
+        return _sign_in_unavailable(_restart_url(pending))
+    if deactivated:
+        await _signin_denied(email, _DEACTIVATED)
+        await oidc.revoke(upstream)
+        if pending["kind"] == "device":
+            await device.deny(pending["user_code"])
+        return _denied_page(f"{_DEACTIVATED}; ask your Loom operator for access")
     if pending["kind"] == "device":
         return await device.signed_in(pending["user_code"], identity, upstream)
     if pending["kind"] == "dashboard":
@@ -940,7 +958,7 @@ async def _link_proven(
         await _signin_denied(email, "linked account does not resolve")
         await oidc.revoke(upstream)
         return _denied_page("this email names several accounts; ask your Loom operator")
-    return await _signed_in_as(sign_in, resolved, upstream)
+    return await _signed_in_as(sign_in, resolved, upstream, email)
 
 
 async def _without_the_password_account(
@@ -971,7 +989,7 @@ async def _without_the_password_account(
         if sign_in["kind"] == "device":
             await device.deny(sign_in["user_code"])
         return _denied_page("no loom account for this email; ask your Loom operator for access")
-    return await _signed_in_as(sign_in, identity, upstream)
+    return await _signed_in_as(sign_in, identity, upstream, email)
 
 
 async def _connect_consent(

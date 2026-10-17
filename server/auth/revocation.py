@@ -294,13 +294,14 @@ async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: 
     """Turn the outright revocation of `key` that was written with `reason`
     into one of the tokens issued before `issued_before`, so new tokens work
     and old ones stay revoked. A revocation written for another reason (an
-    operator's) is left as it is. Returns whether it narrowed."""
+    operator's) is left as it is, also one landing while this runs. Returns
+    whether it narrowed."""
     from server.core.ch import get_client, own_write_reads
 
     with own_write_reads():
         row = await get_client().query_one(
             """
-            SELECT reason, issued_before FROM loom.revoked_tokens FINAL
+            SELECT reason, issued_before, version FROM loom.revoked_tokens FINAL
             WHERE jti = {j:String} AND expires_at > now()
             """,
             params={"j": key},
@@ -310,9 +311,27 @@ async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: 
     # A refresh lays this process's recent writes back, and the outright one
     # would win over the narrowing below.
     _recent[:] = [w for w in _recent if not (w[0] == "revoke" and w[1] == key)]
-    await revoke(
-        key, issued_before=issued_before, reason=f"{reason}, lifted", revoked_by=revoked_by
-    )
+    lifted = f"{reason}, lifted"
+    await revoke(key, issued_before=issued_before, reason=lifted, revoked_by=revoked_by)
+    # Another revocation written between the read and this write is replaced by
+    # it under FINAL: write that one again, on top.
+    with own_write_reads():
+        other = await get_client().query_one(
+            """
+            SELECT reason, revoked_by, issued_before, expires_at FROM loom.revoked_tokens
+            WHERE jti = {j:String} AND version > {v:UInt64} AND reason != {lifted:String}
+            ORDER BY version DESC LIMIT 1
+            """,
+            params={"j": key, "v": row["version"], "lifted": lifted},
+        )
+    if other is not None:
+        await revoke(
+            key,
+            expires_at=other["expires_at"],
+            reason=other["reason"],
+            revoked_by=other["revoked_by"],
+            issued_before=other["issued_before"],
+        )
     return True
 
 

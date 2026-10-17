@@ -2,14 +2,16 @@
 deactivate and reactivate people (`server/auth/scim.py`).
 
 Mounted only when `LOOM_SCIM_TOKEN` is set, and that bearer token is the only
-credential these routes take. A user resource carries `userName` (the email)
-and `active`; other attributes a provider sends are accepted and not kept.
+credential these routes take. A user resource carries `userName`, its email
+(the primary `emails` value, else `userName`) and `active`; other attributes a
+provider sends are accepted and not kept.
 """
 
 from __future__ import annotations
 
 import hmac
 import json
+import logging
 import re
 from typing import Any
 
@@ -26,6 +28,10 @@ _LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 _ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 _CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
 _MAX_RESULTS = 200
+# A shorter bearer token is guessable: SCIM refuses to start with one.
+MIN_TOKEN_LENGTH = 32
+
+log = logging.getLogger(__name__)
 
 
 class ScimError(Exception):
@@ -139,11 +145,28 @@ async def _body(request: Request) -> dict[str, Any]:
     return body
 
 
-def _user_name(body: dict[str, Any]) -> str:
+def user_name_and_email(body: dict[str, Any]) -> tuple[str, str]:
+    """The userName, and the email SSO sign-in will carry: the primary
+    `emails` value when there is one, else the userName."""
     name = body.get("userName")
-    if not isinstance(name, str) or "@" not in name:
-        raise ScimError(400, "userName must be the person's email", "invalidValue")
-    return scim.normalized(name)
+    if not isinstance(name, str) or not name.strip():
+        raise ScimError(400, "userName is required", "invalidValue")
+    emails = body.get("emails")
+    entries = (
+        [e for e in emails if isinstance(e, dict) and isinstance(e.get("value"), str)]
+        if isinstance(emails, list)
+        else []
+    )
+    primary = [e for e in entries if e.get("primary") is True] or entries
+    email = scim.normalized(primary[0]["value"] if primary else name)
+    if "@" not in email:
+        raise ScimError(
+            400, "userName or a primary email must be the person's email", "invalidValue"
+        )
+    if email != scim.normalized(name):
+        # Deactivations follow the email: say so where an operator will look.
+        log.warning("scim: a userName differs from its primary email; Loom keys on the email")
+    return scim.normalized(name), email
 
 
 # ── resources ─────────────────────────────────────────────────────────────
@@ -157,7 +180,7 @@ def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
         "id": row["id"],
         "userName": row["user_name"],
         "active": bool(row["active"]),
-        "emails": [{"value": row["user_name"], "primary": True}],
+        "emails": [{"value": row["email"], "primary": True}],
         "meta": {
             "resourceType": "User",
             "created": _iso(row["created_at"]),
@@ -232,11 +255,11 @@ async def get_user(uid: str, request: Request) -> JSONResponse:
 async def create_user(request: Request) -> JSONResponse:
     """Records the email; the Loom account comes from the person's first sign-in."""
     body = await _body(request)
-    name = _user_name(body)
+    name, email = user_name_and_email(body)
     try:
-        row = await scim.create(name, active=parse_active(body.get("active", True)))
+        row = await scim.create(name, email, active=parse_active(body.get("active", True)))
     except scim.Exists:
-        raise ScimError(409, "a user with this userName exists", "uniqueness") from None
+        raise ScimError(409, "a user with this email exists", "uniqueness") from None
     resource = _resource(request, row)
     return _answer(resource, 201, Location=resource["meta"]["location"])
 
@@ -247,9 +270,9 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
     row = await scim.get(uid)
     if row is None:
         raise _not_found()
-    if _user_name(body) != row["user_name"]:
+    if user_name_and_email(body)[1] != row["email"]:
         # The id is the email's: another email is another person.
-        raise ScimError(400, "userName cannot change", "mutability")
+        raise ScimError(400, "the email cannot change", "mutability")
     if "active" in body:
         row = await scim.set_active(uid, parse_active(body["active"])) or row
     return _answer(_resource(request, row))
@@ -274,6 +297,8 @@ async def delete_user(uid: str) -> Response:
 def attach(app: Any) -> None:
     if not settings.scim_token:
         return
+    if len(settings.scim_token) < MIN_TOKEN_LENGTH:
+        raise RuntimeError(f"LOOM_SCIM_TOKEN must be at least {MIN_TOKEN_LENGTH} characters")
     app.add_exception_handler(ScimError, _error_response)
     app.add_exception_handler(scim.Busy, _error_response)  # answered as a 503
     app.include_router(router)

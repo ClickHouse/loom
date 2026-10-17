@@ -268,10 +268,12 @@ address is revoked: offboarding stands, and a squatter's account is released
 
 With `LOOM_SCIM_TOKEN` set, the provider deactivates people over SCIM 2.0 (`/scim/v2`,
 `server/auth/scim.py`); that bearer token, compared in constant time, is the only credential
-those routes take. A deactivation revokes the subject the email signs in to outright, which
-ends its sessions and every token delegated from it, and `loom.scim_users` refuses SSO
-sign-in with the email until a reactivation, which narrows the revocation to tokens issued
-before it. A subject an operator revoked stays revoked through both.
+those routes take, and Loom refuses to start with one shorter than 32 characters. A
+deactivation revokes outright every subject an SSO sign-in with the email could reach, in
+any org, which ends their sessions and every token delegated from them, and
+`loom.scim_users` refuses SSO sign-in with the email until a reactivation, which narrows the
+revocations to tokens issued before it. A subject an operator revoked stays revoked through
+both.
 
 Loom stays the authorization server for every client (the dashboard, `loom login`, MCP
 clients); the provider only authenticates the person. The OAuth server:

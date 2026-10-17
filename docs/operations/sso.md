@@ -264,7 +264,8 @@ they do not stop with someone's offboarding.
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
   `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`,
-  `auth.session_revoked`, `auth.scim_deactivated`, `auth.scim_reactivated`.
+  `auth.session_revoked`, `auth.scim_deactivated`, `auth.scim_reactivated`,
+  `auth.scim_deleted`.
 
 ## Deprovisioning with SCIM
 
@@ -277,9 +278,14 @@ random token and restart:
 LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
 ```
 
-Empty (the default) leaves SCIM off and its routes unmounted. The token is the
-only credential `/scim/v2` takes, and nothing else; keep it with the client
-secret.
+Empty (the default) leaves SCIM off and its routes unmounted; Loom refuses to
+start with a token shorter than 32 characters. The token is the only
+credential `/scim/v2` takes; keep it with the client secret.
+
+Loom keys a SCIM user on an email: the request's primary `emails` value, or
+its `userName` when it sends none (Loom logs a warning when the two differ).
+That address must be the one the provider puts in the ID token's `email`
+claim, since that is what a sign-in carries.
 
 In Okta, on the app integration from [Okta setup](#okta-setup):
 
@@ -300,8 +306,15 @@ In Okta, on the app integration from [Okta setup](#okta-setup):
    **Email**: Loom knows people by their email.
 
 People already assigned are pushed when you next assign or update them, or
-from **Assignments → Provision User**. Other providers (Microsoft Entra ID,
-OneLogin, …) take the same base URL and bearer token.
+from **Assignments → Provision User**. Other providers (OneLogin, …) take the
+same base URL and bearer token.
+
+**Microsoft Entra ID** maps `userPrincipalName` to `userName` and `mail` to
+`emails[type eq "work"].value` by default, and its ID token's `email` claim is
+`mail`. Keep the `mail` mapping (Loom takes the email from it), and where a
+user has no `mail`, map `userName` to `mail` too, not to the UPN, which can be
+another address. Use **Tenant URL** `<public Loom URL>/scim/v2` and the token
+as **Secret Token**.
 
 What Loom does with each request:
 
@@ -309,23 +322,31 @@ What Loom does with each request:
   first SSO sign-in makes it (JIT) or reaches the one they have, as without
   SCIM. A second create of the same email answers 409.
 - **Deactivating** (`active: false` by `PATCH` or `PUT`, or a `DELETE`)
-  revokes the subject the email signs in to outright: every session, and every
-  service account and MCP token the person made. While it lasts, SSO sign-in
-  with the email is refused ("this account is deactivated"), even if it
-  reaches no account yet. The account, its grants and its data stay; this is
-  not erasure.
+  revokes outright every subject an SSO sign-in with the email could reach
+  (each SSO account naming it and each password account linked to it, in any
+  org): every session, and every service account and MCP token the person
+  made. While it lasts, SSO sign-in with the email is refused ("this account
+  is deactivated"), even if it reaches no account yet. The accounts, their
+  grants and their data stay; this is not erasure.
 - **Reactivating** (`active: true`) lets the person sign in again. Tokens from
   before stay revoked; they make new ones. A subject an operator revoked
   (`loom revoke-token --subject`) stays revoked through both.
-- **Deleting** deactivates and the user answers 404 from then on. The
-  provider creating them again reactivates them.
+- **Deleting** deactivates and the user answers 404 from then on
+  (`auth.scim_deleted` is audited). The provider creating them again
+  reactivates them.
 
-A user is mapped to an account the way an SSO sign-in is (an SSO account, or
-a password account linked to the email), so an email whose accounts span orgs
-or owners reaches none: its sign-in is refused, and no subject is revoked.
-Requests are idempotent, so the provider's retries are safe. The only filter
-served is `userName eq "<email>"`; `GET /Users`, `GET /Users/{id}` and
-`GET /ServiceProviderConfig` answer as RFC 7644 says.
+Loom keeps each SCIM user's row in `loom.scim_users` (the userName, the email,
+the subjects it revoked and whether it is active) for as long as the
+deployment does, deleted users included: that row is what keeps a deactivated
+person out. Requests are idempotent, so the provider's retries are safe. The
+only filter served is `userName eq "<userName>"`; `GET /Users`,
+`GET /Users/{id}` and `GET /ServiceProviderConfig` answer as RFC 7644 says.
+
+Turning SCIM off (`LOOM_SCIM_TOKEN` empty) stops refusing sign-in by email,
+and nothing reactivates anyone any more. The revocations stand: a deactivated
+person's subjects stay revoked, new tokens included, until an operator narrows
+each with `loom revoke-token --subject <it> --issued-before <now>`. Reactivate
+at the provider first anyone who should keep Loom.
 
 ## Behind a proxy
 
@@ -352,8 +373,12 @@ cutoffs: an access token whose session ended still works there for its hour,
 and so do the tokens a bot disable or an adopt cut off. Finish the rollout
 before adopting accounts or relying on a logout or a bot disable. The
 previous build serves no SCIM and does not read deactivations, but honours the
-revocation a deactivation writes: point the provider at Loom once the rollout
-is done.
+revocations a deactivation writes. One case it misses: an email deactivated
+before it reached any account. There is nothing to revoke, and with JIT on,
+the previous build makes that person a new account, unrevoked, at their next
+sign-in. Point the provider at Loom once the rollout is done, and do not roll
+back past this build with people deactivated that way (revoke any account
+they got with `loom revoke-token --subject`).
 
 A browser sign-in whose steps land on both builds (a code exchanged, an
 identity provider's callback) fails and is started again. The SDK and `loom

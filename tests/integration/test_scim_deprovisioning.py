@@ -73,7 +73,7 @@ def _seed(ch_client: Any, org: str, email: str) -> str:
 
 
 @pytest.fixture
-def scim_server(ch_client) -> Iterator[tuple[str, str, str]]:
+def scim_server(ch_client) -> Iterator[tuple[str, str, str, Any]]:
     if os.environ.get("LOOM_CH_SECURE", "").lower() == "true":
         pytest.skip("seeds local namespaces rows; skip against Cloud CH")
     org = unique_org("scim")
@@ -92,8 +92,17 @@ def scim_server(ch_client) -> Iterator[tuple[str, str, str]]:
         "LOOM_OIDC_CLIENT_SECRET": CLIENT_SECRET,
         "LOOM_SCIM_TOKEN": _SCIM_TOKEN,
     }
-    with idp.running(), loom_server("scim", env, port=port):
-        yield base, email, ns
+    try:
+        with idp.running(), loom_server("scim", env, port=port):
+            yield base, email, ns, ch_client
+    finally:
+        # Neither row names the org the suite purges by.
+        for table, column in (("scim_users", "email"), ("revoked_tokens", "jti")):
+            ch_client.command(
+                f"ALTER TABLE loom.{table} DELETE WHERE {column} = %(e)s "
+                "SETTINGS mutations_sync = 2",
+                parameters={"e": email},
+            )
 
 
 def _sign_in(base: str) -> httpx.Response:
@@ -130,7 +139,7 @@ def _set_active(base: str, uid: str, active: bool) -> dict[str, Any]:
 def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
     scim_server,
 ) -> None:
-    base, email, ns = scim_server
+    base, email, ns, ch_client = scim_server
     session = _token(_sign_in(base))
     made = httpx.post(
         f"{base}/v1/me/service_accounts.create",
@@ -140,6 +149,9 @@ def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
     assert made.status_code == 200, made.text
     service_account = made.json()["token"]
     assert _authenticated(base, session) and _authenticated(base, service_account)
+    # The address also names an account in another org now: sign-in would refuse
+    # to pick one, and deactivation must still reach this one.
+    _seed(ch_client, unique_org("scim"), email)
 
     assert httpx.get(f"{base}/scim/v2/Users").status_code == 401  # no token, no SCIM
     created = httpx.post(f"{base}/scim/v2/Users", headers=_SCIM, json={"userName": email})
@@ -158,6 +170,11 @@ def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
     assert denied.status_code == 403 and "deactivated" in denied.text
 
     assert _set_active(base, uid, True)["active"] is True
+    ch_client.command(
+        "ALTER TABLE loom.namespaces DELETE WHERE contact_email = %(e)s AND namespace != %(ns)s "
+        "SETTINGS mutations_sync = 2",
+        parameters={"e": email, "ns": ns},
+    )
     again = _token(_sign_in(base))
     assert _authenticated(base, again)
     assert not _authenticated(base, session)  # revoked tokens stay revoked

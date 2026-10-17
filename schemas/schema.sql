@@ -3111,10 +3111,10 @@ CREATE TABLE IF NOT EXISTS loom.scim_users
 (
     `id` String,
     `user_name` String,
+    `email` String,
     `active` UInt8,
     `deleted` UInt8,
-    `subject` String,
-    `org` LowCardinality(String),
+    `subjects` Array(String),
     `created_at` DateTime64(3, 'UTC'),
     `updated_at` DateTime64(3, 'UTC'),
     `version` UInt64
