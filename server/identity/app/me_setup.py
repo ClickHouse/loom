@@ -233,8 +233,8 @@ async def _save_mcp_token(
     org = delegated.org
     sa_subject = new_token_subject(org, client, subject)
     sa_hash = sa_subject.removeprefix(f"sa:{client}-")
-    now = naive_utc_now_seconds()
     minted = delegated.mint(sa_subject)
+    now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat
     client_label = MCP_SETUP_CLIENT_LABELS.get(client, client)
     token_name = _mcp_token_name(client_label, now, sa_hash)
     await save_token(
