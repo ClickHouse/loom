@@ -85,6 +85,18 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - Text holds 4.5:1, focus rings and control boundaries 3:1.
 - Animations live in `styles.css`, which turns them off under `prefers-reduced-motion: reduce`, along with Click UI's dialog, popover, menu and tooltip entrances.
 
+## Lists, loading and navigation
+
+- **Colour carries meaning, never decoration.** Status is a Click UI `Badge` (success, warning, danger, info, neutral); feedback is an `Alert`. Links, the focus ring, the one primary action, a selected row's tint and charts are the other uses. Tags, agents, keys, counts, headings, icons and timestamps stay neutral, and nothing that is not a warning uses the warning colour.
+- **A list row is `ui/ListRow`**, on Click UI's CardHorizontal tokens: hover tints it, the row whose detail is open takes the active stroke, a checked row the tint Click UI's Table gives a selected row. Tags are `ui/TagList` (outlined chips, three, then "+N"); an agent is a filled neutral badge. Columns of comparable fields (runs, users, audit) are a Click UI `Table`.
+- **A list page has one sticky element, `ui/ListToolbar`:** the search, the filters in force and the count in one 48 px row. Selected rows' actions take its place in the same row, so it never grows over the rows. Section headings inside a list do not stick.
+- **Paging is `ui/ListPager`**, Click UI's Pagination as its full bar, under the list: the range, the pages, a 25/50/100 page size remembered per view. A page change moves focus to the list's top and announces the page. A cursor without a total gets "Load more"; ranked search results get "Show more".
+- **Loading is `ui/Loading` or `ui/LoadingSkeleton`**, Click UI's loader with a "Loading <thing>" label, or a labelled skeleton shaped like the rows; neither shows before 300 ms. A refresh keeps what is on screen, marked `aria-busy`. A raw `Skeleton` outside `LoadingSkeleton` is a bug.
+- **Reading something keeps you where you are**: a related object opens in the drawer, a dialog or a popover. Going to another tool navigates, pushes history, and Back restores the scroll, the open drawer and the focus.
+- **Shortcut hints** appear only in tooltips, the help dialog and the global search field (`⌘K` on Apple platforms, `Ctrl K` elsewhere). Click UI has no shortcut component; the keys themselves all stay.
+- **Icons are Click UI's** (`@clickhouse/click-ui/Icon`), never a text glyph standing in for one.
+- A Loom primitive that brings a heavy Click UI component (`ListToolbar`, `ListPager`) is imported by path, not from `components/ui/index.ts`, or it lands in every page's boot chunk.
+
 ## Checks
 
 - `make lint` and CI run Biome's accessibility rules over `frontend/src` (`biome.json` overrides). A suppression names its rule and the reason.
