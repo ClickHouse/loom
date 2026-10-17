@@ -130,3 +130,57 @@ def test_memory_home_helpers() -> None:
     assert mi.memory_home_from_grants(rows[:4], KINDS, "alice") == ""
     assert mi.is_memory_home(KINDS, "unknown-ns") is True  # directory default is memory
     assert mi.is_memory_home(KINDS, "code-loom") is False
+
+
+class _SetupTokenCH(_CH):
+    """A Setup-page `*` token: the service account's row names its creator,
+    and only the creator holds grants and a saved default."""
+
+    def __init__(self, creator: str | None, saved: str | None, grants: list[str]) -> None:
+        super().__init__(saved, grants)
+        self.creator = creator
+
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        params = params or {}
+        if "service_accounts" in sql:
+            return {"created_by": self.creator} if self.creator else None
+        if "user_state" in sql:
+            return {"namespace": self.saved} if self.saved and params["sub"] == "alice" else None
+        if "namespace_grants" in sql:
+            return {"role": "admin"} if "alice" in params["subs"] else None
+        return None
+
+    async def query_all(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        if "alice" not in (params or {}).get("subs", []):
+            return []
+        return [{"namespace": n, "role": "admin"} for n in self.grants]
+
+
+def _setup_token() -> _Auth:
+    return _Auth("sa:cursor-ab12cd", ("*",), sa=True)
+
+
+def test_a_wildcard_setup_token_defaults_to_its_creators_home(_wired) -> None:
+    _wired(_SetupTokenCH("alice", saved=None, grants=["code-loom", "alice"]))
+    assert _defaults(_setup_token())["namespace"] == "alice"
+
+
+def test_a_wildcard_setup_token_follows_its_creators_saved_default(_wired) -> None:
+    _wired(_SetupTokenCH("alice", saved="agent-box-claude-code", grants=["alice"]))
+    assert _defaults(_setup_token())["namespace"] == "agent-box-claude-code"
+
+
+def test_a_wildcard_setup_token_without_grants_falls_to_its_creators_personal_slug(
+    _wired,
+) -> None:
+    _wired(_SetupTokenCH("alice", saved=None, grants=[]))
+    assert _defaults(_setup_token())["namespace"] == "personal-alice"
+
+
+def test_a_service_account_without_a_creator_keeps_todays_default(_wired) -> None:
+    from server.auth.personal_namespace import derive_personal_slug
+
+    _wired(_SetupTokenCH(None, saved=None, grants=["alice"]))
+    assert _defaults(_setup_token())["namespace"] == derive_personal_slug("sa:cursor-ab12cd")

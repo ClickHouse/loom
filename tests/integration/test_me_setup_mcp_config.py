@@ -7,14 +7,19 @@ returns a per-client MCP config block.
 
 from __future__ import annotations
 
-import json
-import re
 import sys
+import time
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 import jwt as pyjwt
 import pytest
+
+from tests.integration._eventually import eventually
+from tests.integration.test_mcp import _post as _mcp_post
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
@@ -28,15 +33,6 @@ async def _auth_on(control_plane_url: str) -> bool:
     return r.status_code == 401
 
 
-async def _server_default_namespace(control_plane_url: str) -> str | None:
-    """The server's LOOM_DEFAULT_NAMESPACE, read from the dashboard page's boot
-    snippet; None when the dashboard is not built."""
-    async with httpx.AsyncClient(base_url=control_plane_url, timeout=10.0) as c:
-        r = await c.get("/")
-    match = re.search(r"window\.__LOOM_DEFAULT_NAMESPACE = (\"[^\"]*\");", r.text)
-    return json.loads(match.group(1)) if r.status_code == 200 and match else None
-
-
 async def _post(control_plane_url: str, token: str | None, body: dict) -> httpx.Response:
     headers: dict[str, str] = {}
     if token:
@@ -45,14 +41,59 @@ async def _post(control_plane_url: str, token: str | None, body: dict) -> httpx.
         return await c.post("/v1/me/setup/mcp_config", json=body)
 
 
-@pytest.mark.asyncio
-async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
-    from server.auth.jwt import mint_token
+def _tool_call(tool: str, arguments: dict) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": tool, "arguments": arguments},
+    }
 
+
+def _grant_writer(ch_client: Any, org: str, namespace: str, subject: str, *, revoke: bool) -> None:
+    """A person's writer grant on `namespace`, or its revocation."""
+    now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    row = [org, namespace, subject, "writer", now, "it", now if revoke else None, time.time_ns()]
+    cols = ["org", "namespace", "subject", "role", "granted_at", "granted_by", "revoked_at"]
+    ch_client.insert("loom.namespace_grants", [row], column_names=[*cols, "version"])
+
+
+async def _assert_unaddressed_write_lands_in(base_url: str, token: str, namespace: str) -> None:
+    """An MCP memory_set naming no namespace, read back by key in `namespace`."""
+    key = f"setup-default-{uuid.uuid4().hex[:8]}"
+    value = {"check": key}
+    set_args = {
+        "agent": "setup-check",
+        "memory_key": key,
+        "memory_type": "semantic",
+        "value": value,
+    }
+
+    async def _write() -> dict | None:
+        # The creator's new grant reaches the gate within the grant cache TTL.
+        r = await _mcp_post(base_url, _tool_call("loom_memory_set", set_args), token)
+        result = r.json()["result"]
+        return None if result["isError"] else result
+
+    await eventually(_write, description="unaddressed memory_set succeeds")
+    get_args = {"namespace": namespace, "agent": "setup-check", "memory_key": key}
+    r = await _mcp_post(base_url, _tool_call("loom_memory_get", get_args), token)
+    got = r.json()["result"]["structuredContent"]
+    assert got["found"] is True, got
+    assert got["value"] == value
+
+
+@pytest.mark.asyncio
+async def test_setup_mcp_config_claude_desktop(control_plane_url: str, ch_client: Any) -> None:
+    from server.auth.jwt import mint_token
+    from server.auth.personal_namespace import derive_personal_slug
+
+    # A person of their own: the test grants them the namespace the page shows.
+    person = f"setup-{uuid.uuid4().hex[:8]}"
     token = mint_token(
-        subject="alice",
+        subject=person,
         org="clickhouse",
-        namespaces=["personal-alice"],
+        namespaces=[derive_personal_slug(person)],
         roles=["WRITER"],
         is_service_account=False,
     )
@@ -61,18 +102,16 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
 
     body = r.json()
     assert body["client"] == "claude-desktop"
-    assert body["subject"] == "alice"
+    assert body["subject"] == person
     assert body["org"] == "clickhouse"
-    # With auth off (single-user) the token isn't delegated from the bearer and
-    # writes to the server's default namespace.
-    if await _auth_on(control_plane_url):
-        assert body["namespace"] == "personal-alice"
-    else:
-        default_namespace = await _server_default_namespace(control_plane_url)
-        if default_namespace is None:
-            assert body["namespace"] != "personal-alice"
-        else:
-            assert body["namespace"] == default_namespace
+    # The namespace the page shows is where the token's unaddressed writes land.
+    _grant_writer(ch_client, "clickhouse", body["namespace"], person, revoke=False)
+    try:
+        await _assert_unaddressed_write_lands_in(
+            control_plane_url, body["token"], body["namespace"]
+        )
+    finally:
+        _grant_writer(ch_client, "clickhouse", body["namespace"], person, revoke=True)
     assert body["mcp_url"].endswith("/mcp")
     assert body["config_key"] == "mcpServers"
     # `namespace` in the response is the write target; reads

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from server.auth.authz import claim_cap, live_claims
 from server.auth.personal_namespace import derive_personal_slug
+from server.auth.service_accounts import sa_creator
 from server.core.naming import slugify
 from server.identity.app import caller_defaults
 from server.operations.base import grant_rank
@@ -264,6 +265,15 @@ async def _kinds_or_empty(org: str) -> dict[str, str]:
         return {}
 
 
+async def _home_subject(auth: Any, org: str, subject: str, ch: Any) -> str:
+    """Whose home an unaddressed call follows: a service account's creator,
+    else the caller (also a service account with no creator)."""
+    if not getattr(auth, "is_service_account", False):
+        return subject
+    sa = await sa_creator(org, subject, ch=ch)
+    return sa.subject if sa is not None else subject
+
+
 async def _claimed_home_default(auth_info: Any, org: str, claimed: list[str], ch: Any) -> str:
     """`pick_default_namespace` over live inputs: namespace kinds, the
     token's own write test, and — for a service account — its owner's login
@@ -274,12 +284,9 @@ async def _claimed_home_default(auth_info: Any, org: str, claimed: list[str], ch
         from server.identity.app.namespace_kinds import kind_map
 
         kinds = await kind_map(org)
-        owner = str(getattr(auth_info, "subject", "") or "")
-        if getattr(auth_info, "is_service_account", False):
-            from server.auth.service_accounts import sa_creator
-
-            sa = await sa_creator(org, owner, ch=ch)
-            owner = sa.subject if sa is not None else owner
+        owner = await _home_subject(
+            auth_info, org, str(getattr(auth_info, "subject", "") or ""), ch
+        )
         owner_default = await caller_defaults.saved_default(org, owner, ch=ch)
         # A claim capped below writer there is not a write home.
         caps = {ns: await claim_cap(auth_info, org, ns) for ns in claimed}
@@ -364,7 +371,7 @@ async def _caller_defaults(
             "agent": _client_name_to_agent(client_name),
         }
 
-    user_state_subject = subject
+    home_subject = subject  # a service account's creator, once read below
 
     # Base default: a namespace the token explicitly claims (e.g. the one a
     # Setup-tab service-account token was minted for) beats the personal-<sub>
@@ -380,12 +387,17 @@ async def _caller_defaults(
 
         from server.auth.aliases import subject_aliases
 
+        home_subject = await _home_subject(auth, org, subject, ch)
         subs = await subject_aliases(org, subject, ch=ch)
+        if home_subject != subject:
+            subs += await subject_aliases(org, home_subject, ch=ch)
+            if not claimed_namespaces:
+                namespace = derive_personal_slug(home_subject)
         kinds = await _kinds_or_empty(org)  # only a memory plane is a home
         # Priority 1: caller's explicit pick in the dashboard's switcher. Validated
         # against current grants before trust — a stale saved default
         # (grant since revoked) must not keep coming back.
-        saved_ns = await caller_defaults.saved_default(org, user_state_subject, ch=ch)
+        saved_ns = await caller_defaults.saved_default(org, home_subject, ch=ch)
         # A switcher pick of a QA/code namespace is where the user was
         # LOOKING, not where an agent's memory goes.
         if saved_ns and is_memory_home(kinds, saved_ns):
@@ -412,12 +424,12 @@ async def _caller_defaults(
             rows = await caller_defaults.ranked_grants(org, subs, ch=ch)
             namespace = (
                 ranked_grant_default(
-                    list(rows or []), kinds, subject, auth, org, claimed_namespaces
+                    list(rows or []), kinds, home_subject, auth, org, claimed_namespaces
                 )
                 or namespace
             )
         if not is_memory_home(kinds, namespace):  # never a shared plane by default
-            namespace = derive_personal_slug(subject)
+            namespace = derive_personal_slug(home_subject)
     except Exception:  # noqa: BLE001 — default namespace falls back to claim or personal slug
         pass
     return {

@@ -152,7 +152,6 @@ def test_a_wildcard_setup_token_names_the_default_namespace(
     r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=_alice())
     assert r.status_code == 200, r.text
     assert r.json()["namespace"] == "shared-dev"
-    assert r.json()["namespace"] != "home"
 
 
 def test_a_wildcard_setup_token_with_auth_off_outside_single_user_names_the_personal_namespace(
