@@ -96,9 +96,9 @@ def _add_scip_full_parser(csub: Any) -> None:
     `register_code_cli` for the function-length gate)."""
     p_full = csub.add_parser(
         "scip-full",
-        help="Full compiler-tier re-index (the weekly backstop: heals the "
-        "TU-cap degrades of per-merge deltas and any drift). Heavy: "
-        "~50 min of scip-clang + apply; runs HERE, not in the server.",
+        help="Full compiler-tier re-index by hand (the code_scip_full worker "
+        "runs it weekly: heals the TU-cap degrades of per-merge deltas and any "
+        "drift). Heavy: ~50 min of scip-clang + apply, in this process.",
     )
     p_full.add_argument("--checkout", default="", help="default: LOOM_CODE_SCIP_CHECKOUT_DIR")
     p_full.add_argument("--jobs", type=int, default=0, help="scip-clang -j (0 = nproc/2)")
@@ -120,8 +120,9 @@ def _add_scip_full_parser(csub: Any) -> None:
 
     p_lock = csub.add_parser(
         "scip-lock-path",
-        help="Print the entry's compiler-tier lock file (for `flock` in a host "
-        "script: a full pass and a delta never work on one entry at once).",
+        help="Print the entry's compiler-tier lock file, the host half of "
+        "`entry-lock`; wrap a manual run in `loom code entry-lock`, which also "
+        "takes the deployment lease.",
     )
     _add_common(p_lock)
     p_lock.set_defaults(func=_print_scip_lock_path)

@@ -750,7 +750,7 @@ def _code_lag_series(
     - seconds: `tier_lag_seconds{tier}` = now minus the committer time of the
       oldest commit the tier has not reached (tier `fast` against the tip, a
       compiler tier against git_head); 0 when caught up. A watermark that stops
-      while git_head moves grows this without bound, whatever a cron log says.
+      while git_head moves grows this without bound, whatever the worker's last status says.
 
     -1 commits (unknown) is not observed, nor is a repo whose mirror is not on this
     host (still cloning, or LOOM_GIT_HISTORY=none)."""

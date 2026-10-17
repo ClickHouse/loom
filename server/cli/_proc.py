@@ -2,7 +2,7 @@
 
 A `loom code` subcommand that runs a harness or a clone for tens of minutes
 must not leave it running when the command itself is interrupted (Ctrl-C) or
-terminated (the cron's `timeout`, an operator's `kill`): the orphan keeps
+terminated (a wrapper's `timeout`, an operator's `kill`): the orphan keeps
 writing into the checkout the next run moves, and holds its CPU.
 """
 

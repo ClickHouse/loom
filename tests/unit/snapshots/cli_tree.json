@@ -3290,12 +3290,12 @@
         },
         {
          "dest": "scip-full",
-         "help": "Full compiler-tier re-index (the weekly backstop: heals the TU-cap degrades of per-merge deltas and any drift). Heavy: ~50 min of scip-clang + apply; runs HERE, not in the server.",
+         "help": "Full compiler-tier re-index by hand (the code_scip_full worker runs it weekly: heals the TU-cap degrades of per-merge deltas and any drift). Heavy: ~50 min of scip-clang + apply, in this process.",
          "metavar": "scip-full"
         },
         {
          "dest": "scip-lock-path",
-         "help": "Print the entry's compiler-tier lock file (for `flock` in a host script: a full pass and a delta never work on one entry at once).",
+         "help": "Print the entry's compiler-tier lock file, the host half of `entry-lock`; wrap a manual run in `loom code entry-lock`, which also takes the deployment lease.",
          "metavar": "scip-lock-path"
         },
         {
