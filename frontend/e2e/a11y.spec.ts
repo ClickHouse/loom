@@ -32,8 +32,9 @@ async function violations(page: Page): Promise<Violation[]> {
       }
     ).axe;
     const wcag = await axe.run(document, { runOnly: { type: "tag", values: tags } });
-    // A popover or sheet is a dialog; axe files its name under best practice, not WCAG.
-    const names = await axe.run(document, { runOnly: { type: "rule", values: ["aria-dialog-name"] } });
+    // A popover or sheet is a dialog, and headings follow one outline; axe files both under
+    // best practice, not WCAG.
+    const names = await axe.run(document, { runOnly: { type: "rule", values: ["aria-dialog-name", "heading-order"] } });
     return [...wcag.violations, ...names.violations].map((v) => ({
       id: v.id,
       impact: v.impact,
@@ -363,6 +364,32 @@ test.describe("open overlays", () => {
       await page.keyboard.press("Tab");
       expect(await dialog.evaluate((d) => d.contains(document.activeElement))).toBe(true);
     }
+  });
+
+  test("Conversations with recent threads", async ({ page }) => {
+    const now = new Date().toISOString();
+    await installApi(page);
+    await page.route("**/v1/conversation.threads", (route) =>
+      route.fulfill({
+        json: {
+          threads: [
+            {
+              thread_id: "t-1",
+              agent: "cursor",
+              msg_count: 2,
+              first_seen: now,
+              last_seen: now,
+              last_role: "user",
+              last_content_excerpt: "x",
+              title: "Deploy plan",
+            },
+          ],
+        },
+      }),
+    );
+    await page.goto("/conversations");
+    await expect(page.getByText("Deploy plan").first()).toBeVisible();
+    expect(await violations(page)).toEqual([]);
   });
 
   test("an open Select list", async ({ page }) => {

@@ -507,6 +507,10 @@ async def list_thread(
 
     columns = """org, namespace, agent, thread_id, msg_id, role, content,
                reasoning, user_id, run_id, metadata, tokens, ts"""
+    if agent is not None:
+        # One agent never logs a turn twice, so its page filters in the one WHERE.
+        where += page_where
+        page_where = []
     source = f"loom.conversations WHERE {' AND '.join(where)}"
     if agent is None:
         # Two agents logging the same turn store it under one content-hashed msg_id. A

@@ -148,3 +148,19 @@ async def test_a_thread_list_that_asks_no_count_reads_no_count() -> None:
     )
     assert len(ch.calls) == 1
     assert rows[0]["msg_count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_a_paged_read_for_one_agent_is_one_statement() -> None:
+    """A cursor page for a named agent filters in one WHERE, as before the cross-agent read
+    wrapped its source; a second WHERE would be a syntax error."""
+    from datetime import datetime
+
+    ch = StubCH()
+    await conversation_repo.list_thread(
+        "o", "ns", "bot", "t-1", after=(datetime(2026, 6, 1, 9, 0), "m1"), ch=ch
+    )
+    sql, params = ch.calls[-1]
+    assert sql.count("WHERE") == 1
+    assert "(ts, msg_id) >" in sql
+    assert params["agent"] == "bot"

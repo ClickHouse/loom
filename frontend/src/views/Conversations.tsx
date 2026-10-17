@@ -453,7 +453,7 @@ export function Conversations() {
     if (!visibleThreads || visibleThreads.length === 0) return null;
     return (
       <div className="space-y-2">
-        <SectionHeading label={label} count={visibleThreads.length} />
+        <SectionHeading level={2} label={label} count={visibleThreads.length} />
         {visibleThreads.map((t) => (
           <button
             type="button"
