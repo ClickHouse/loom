@@ -117,7 +117,7 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
             return
         with own_write_reads():
             rows = await ch.query_all(
-                "SELECT org, name, sa_subject, created_by, created_at, revoked_by, "
+                "SELECT org, name, sa_subject, created_by, created_at, "
                 "revoked_at IS NULL AS live FROM loom.service_accounts FINAL "
                 f"WHERE created_by IN {{subs:Array(String)}} AND {_UNEXPIRED}",
                 params={"subs": creators},
@@ -125,11 +125,7 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
         # Read after the list, so it tells whether each token listed is dead.
         revoked = await revocation.cutoffs(creators)
         # Only those still dead: an operator may have let the creator live since.
-        dead |= {
-            str(r["sa_subject"])
-            for r in rows
-            if not r["live"] and r["revoked_by"] == revoked_by and _is_dead(r, revoked, dead)
-        }
+        dead |= {str(r["sa_subject"]) for r in rows if not r["live"] and _is_dead(r, revoked, dead)}
         live = [r for r in rows if r["live"]]
         dead |= await _revoke_all(live, creators, revoked, dead, revoked_by)
         # Revoked ones too: a retry still reaches what their tokens made.
