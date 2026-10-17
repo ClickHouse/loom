@@ -65,7 +65,12 @@ class CodeScipPyDeltaResult:
 
 async def run_pass() -> CodeScipPyDeltaResult:
     return await run_tier(
-        "code_scip_py_delta", PRODUCER, WATERMARK, CodeScipPyDeltaResult(), _run_repo
+        "code_scip_py_delta",
+        PRODUCER,
+        WATERMARK,
+        CodeScipPyDeltaResult(),
+        _run_repo,
+        gc_checkout=True,
     )
 
 

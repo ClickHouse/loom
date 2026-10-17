@@ -4,12 +4,14 @@ and reassign."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
 from datetime import timedelta
 from typing import Any, cast
 
+from server.core import readiness
 from server.core.datetimes import utc_now as _now
 from server.tasks.api.models_task import (
     TaskAcceptInput,
@@ -245,7 +247,9 @@ async def handle_task_pull(input: TaskPullInput) -> TaskPullOutput:
     """Owner side. ``status = todo`` claims up to ``limit`` tasks; ``triage``
     returns review items unclaimed. With ``wait_seconds`` the call blocks
     until something arrives (woken by a create/accept in this process, or by
-    the periodic re-read for one that landed elsewhere)."""
+    the periodic re-read for one that landed elsewhere), or until this
+    process starts draining. A pull cancelled before it answers puts the
+    tasks it claimed back, so none stays leased to a caller that never got it."""
 
     inbox = await _load_readable_inbox(input.org, input.inbox)
     await _require_owner_side(input.org, inbox["owner_namespace"])
@@ -253,10 +257,42 @@ async def handle_task_pull(input: TaskPullInput) -> TaskPullOutput:
     claimant = input.agent if input.agent != "-" else inbox["owner_agent"]
     actor = _actor(f"process:{claimant}")
     backend = await repo.lease_backend()
+    claimed: list[TaskRow] = []
+    try:
+        return await _pull(input, inbox, claimed, claimant, actor, lease_seconds, backend.name)
+    except asyncio.CancelledError:
+        if input.status != "triage":
+            await asyncio.shield(_return_claims(claimed, actor=actor, agent=claimant))
+        raise
+
+
+async def _return_claims(rows: list[TaskRow], *, actor: str, agent: str) -> None:
+    for row in rows:
+        await _release_lease(row, status="todo")
+        await _record(
+            row,
+            event="claim_returned",
+            actor=actor,
+            agent=agent,
+            reason="the pull was cancelled before it answered",
+            status="todo",
+            owner="",
+            lease_until=None,
+        )
+
+
+async def _pull(
+    input: TaskPullInput,
+    inbox: Any,
+    claimed: list[TaskRow],
+    claimant: str,
+    actor: str,
+    lease_seconds: int,
+    backend_name: str,
+) -> TaskPullOutput:
     started = time.monotonic()
     deadline = started + input.wait_seconds
     key = task_wakeups.inbox_key(input.org, input.inbox)
-    claimed: list[TaskRow] = []
     while True:
         if input.status == "triage":
             rows = await repo.list_tasks(
@@ -276,15 +312,24 @@ async def handle_task_pull(input: TaskPullInput) -> TaskPullOutput:
                 limit=max(input.limit * 2, input.limit),
             )
             for cand in cands:
-                got = await _claim_one(
-                    cand, claimant=claimant, actor=actor, lease_seconds=lease_seconds
+                # A claim that won its compare-and-set lands in `claimed` even
+                # when the pull is cancelled meanwhile, so it can be returned.
+                claim = asyncio.ensure_future(
+                    _claim_one(cand, claimant=claimant, actor=actor, lease_seconds=lease_seconds)
                 )
+                try:
+                    got = await asyncio.shield(claim)
+                except asyncio.CancelledError:
+                    got = await claim
+                    if got is not None:
+                        claimed.append(got[0])
+                    raise
                 if got is not None:
                     claimed.append(got[0])
                 if len(claimed) >= input.limit:
                     break
         remaining = deadline - time.monotonic()
-        if claimed or remaining <= 0:
+        if claimed or remaining <= 0 or readiness.draining():
             break
         await task_wakeups.wait(key, remaining)
     waited_ms = int((time.monotonic() - started) * 1000)
@@ -292,7 +337,7 @@ async def handle_task_pull(input: TaskPullInput) -> TaskPullOutput:
     if not claimed and input.status == "todo":
         note = await _triage_waiting_note(input.org, input.inbox)
     return TaskPullOutput(
-        tasks=[_payload(r) for r in claimed], waited_ms=waited_ms, backend=backend.name, note=note
+        tasks=[_payload(r) for r in claimed], waited_ms=waited_ms, backend=backend_name, note=note
     )
 
 

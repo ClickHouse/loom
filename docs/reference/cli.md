@@ -219,8 +219,8 @@ python scripts/codegen/docs_reference.py
 | `loom code scip-full` | Full compiler-tier re-index (the weekly backstop: heals the TU-cap degrades of per-merge deltas and any drift). | `--checkout`, `--jobs`, `--keep-delta`, `--apply-delta`, `--org`, `--namespace` |
 | `loom code scip-lock-path` | Print the entry's compiler-tier lock file (for `flock` in a host script: a full pass and a delta never work on one entry at once). | `--org`, `--namespace` |
 | `loom code entry-lock` | Run a command under the entry's compiler-tier lock (this host's file and the deployment's lease): exit 75 when another pass holds it, 3 when the lease is lost mid-run (the command is stopped). | `--org`, `--namespace`, `<command>` |
-| `loom code scip-delta` | One compiler-tier delta pass (same code as the code_scip_delta worker) for the host cron: git_head vs scip_commit per configured repo, scip-clang over the changed TUs, apply. |  |
-| `loom code entries` | One line per configured repository for the host crons: org namespace checkout lock-file (the lock path resolved). |  |
+| `loom code scip-delta` | One compiler-tier delta pass (same code as the code_scip_delta worker), by hand: git_head vs scip_commit per configured repo, scip-clang over the changed TUs, apply. |  |
+| `loom code entries` | One line per configured repository, for scripts: org namespace checkout lock-file (the lock path resolved). |  |
 | `loom code warm` | Pre-seed the code.ask answer cache from a question list (one question per line, or JSONL with a 'question' field). | `<file>`, `--org`, `--namespace` |
 | `loom code scip-retry` | Reset a failed SCIP batch to pending. | `--org`, `--namespace`, `<batch_id>` |
 | `loom code backfill-reviews` | Inline review comments for merged PRs already in code_pr_history that have none stored yet (newest first, one GitHub request per PR). | `--org`, `--namespace`, `--prs` |
@@ -238,7 +238,9 @@ python scripts/codegen/docs_reference.py
 | `loom participant` | The Loom processes a provider change waits for. |  |
 | `loom participant retire` | Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health). | `--participant`, `--yes` |
 | `loom deployment` | The configuration every replica checks itself against. |  |
-| `loom deployment publish` | Publish this env's configuration as the deployment's, replacing its root secret or LOOM_EMBEDDING_MODEL/DIM on purpose. | `--yes` |
+| `loom deployment publish` | Publish this env's configuration as the deployment's, replacing its root secret or LOOM_EMBEDDING_MODEL/DIM on purpose. | `--yes`, `--check` |
+| `loom secrets` | Credentials and signing keys stored sealed in ClickHouse. |  |
+| `loom secrets reseal` | Seal again under LOOM_JWT_SECRET what only LOOM_JWT_SECRET_PREVIOUS opens. | `--dry-run`, `--check` |
 | `loom signing-key` | The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse. |  |
 | `loom signing-key rotate` | Add a key; it signs once every process has loaded it. | `--algorithm`, `--activate-in` |
 | `loom signing-key import` | Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. | `--map-env`, `--active`, `--algorithm`, `--activate-in` |

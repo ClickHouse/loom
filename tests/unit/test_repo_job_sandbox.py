@@ -620,7 +620,7 @@ async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
     from unittest.mock import AsyncMock
 
     from server.cli import code_scip
-    from server.code.app.index import compiler_tier
+    from server.code.app.index import compiler_tier, scip_full
     from server.code.store import index as store_index
     from server.settings import settings
     from tests.unit.code_fixtures import repo_config
@@ -634,7 +634,7 @@ async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
     repo = AsyncMock()
     repo.get_state.return_value = "a" * 40
     monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
-    monkeypatch.setattr(code_scip, "_scip_move_checkout", AsyncMock())
+    monkeypatch.setattr(scip_full, "move_checkout", AsyncMock())
     harness = AsyncMock(return_value=(1, "harness output\n"))
     monkeypatch.setattr(compiler_tier, "run_harness", harness)
     cfg = repo_config(
@@ -655,7 +655,7 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
     from unittest.mock import AsyncMock
 
     from server.cli import code_scip
-    from server.code.app.index import compiler_tier
+    from server.code.app.index import compiler_tier, scip_full
     from server.code.store import index as store_index
     from server.settings import settings
     from tests.unit.code_fixtures import repo_config
@@ -668,7 +668,7 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
     repo = AsyncMock()
     repo.get_state.return_value = "a" * 40
     monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
-    monkeypatch.setattr(code_scip, "_scip_move_checkout", AsyncMock())
+    monkeypatch.setattr(scip_full, "move_checkout", AsyncMock())
     harness = AsyncMock(return_value=(1, "harness output\n"))
     monkeypatch.setattr(compiler_tier, "run_harness", harness)
     cfg = repo_config(
@@ -686,8 +686,7 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
 async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, monkeypatch) -> None:
     """The fetch reads the bare clone, which the sandbox mounts only when named,
     and the submodule pins come from the network."""
-    from server.cli import code_scip
-    from server.code.app.index import compiler_tier
+    from server.code.app.index import compiler_tier, scip_full
 
     calls: list[tuple[tuple[str, ...], dict]] = []
 
@@ -696,7 +695,7 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
 
     monkeypatch.setattr(compiler_tier, "git", _git)
     bare = tmp_path / "bare.git"
-    await code_scip._scip_move_checkout(tmp_path / "checkout", bare, "a" * 40)
+    await scip_full.move_checkout(tmp_path / "checkout", bare, "a" * 40)
     fetch, _checkout, submodules = calls
     assert fetch[0][0] == "fetch" and fetch[1]["local_remote"] == bare
     assert submodules[0][0] == "submodule" and submodules[1]["network"] is True
@@ -704,18 +703,15 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
 
 @pytest.mark.asyncio
 async def test_a_scip_full_harness_timeout_is_reported_as_one(tmp_path: Path, monkeypatch) -> None:
-    import argparse
 
-    from server.cli import code_scip
-    from server.code.app.index import compiler_tier
+    from server.code.app.index import compiler_tier, scip_full
 
     async def _timed_out(*_a: object, **_k: object) -> tuple[int, str]:
         raise RuntimeError("harness timed out after 21600s")
 
     monkeypatch.setattr(compiler_tier, "run_harness", _timed_out)
-    args = argparse.Namespace(jobs=0)
-    rc = await code_scip._run_full_harness(
-        args, tmp_path / "h.sh", tmp_path, tmp_path / "scip-clang", tmp_path / "delta.json"
+    rc, _ = await scip_full.run_full_harness(
+        tmp_path, tmp_path / "scip-clang", tmp_path / "delta.json", timeout_s=1
     )
     assert rc == 124
 
@@ -730,7 +726,7 @@ async def test_scip_full_hands_the_sandbox_an_absolute_checkout(
     from unittest.mock import AsyncMock
 
     from server.cli import code_scip
-    from server.code.app.index import compiler_tier
+    from server.code.app.index import compiler_tier, scip_full
     from server.code.store import index as store_index
     from server.settings import settings
     from tests.unit.code_fixtures import repo_config
@@ -746,7 +742,7 @@ async def test_scip_full_hands_the_sandbox_an_absolute_checkout(
     repo.get_state.return_value = "a" * 40
     monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
     move = AsyncMock()
-    monkeypatch.setattr(code_scip, "_scip_move_checkout", move)
+    monkeypatch.setattr(scip_full, "move_checkout", move)
     harness = AsyncMock(return_value=(1, ""))
     monkeypatch.setattr(compiler_tier, "run_harness", harness)
     cfg = repo_config(git_dir=str(tmp_path / "bare.git"), scip_checkout_dir="")

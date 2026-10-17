@@ -269,7 +269,7 @@ async def host_round() -> None:
                 await _fetch_round(git_dir, cfgs)
         async with _host_lock(f"{git_dir}.gc-lock") as held:
             if held:
-                await _gc_if_due(git_dir)
+                await gc_if_due(git_dir)
     await sweep()
 
 
@@ -362,12 +362,12 @@ async def _merge_page(cfg: Any, git_dir: str, repo: Any) -> None:
         logger.info("mirror %s: ledger merges of %s: %s", git_dir, cfg.namespace, e)
 
 
-async def _gc_if_due(git_dir: str) -> None:
-    """`git gc --no-prune` of the mirror every `code_mirror_gc_interval_h`, at low CPU
-    and IO priority, only when the disk holds a second copy plus the margin (the new
-    pack is written beside the old one); without that room it waits another interval.
-    Nothing unreachable is pruned, so a checkout borrowing objects from the mirror
-    never loses one."""
+async def gc_if_due(git_dir: str) -> None:
+    """`git gc --no-prune` of a mirror or a compiler tier's checkout every
+    `code_mirror_gc_interval_h`, at low CPU and IO priority, only when the disk holds
+    a second copy plus the margin (the new pack is written beside the old one);
+    without that room it waits another interval. Nothing unreachable is pruned, so a
+    checkout borrowing objects from the mirror never loses one."""
     hours = float(settings.code_mirror_gc_interval_h)
     if hours <= 0 or _mark_age_s(git_dir, _GC_MARK) < hours * 3600:
         return
@@ -386,12 +386,15 @@ async def _gc_if_due(git_dir: str) -> None:
     proc = await asyncio.create_subprocess_exec(
         *argv, "--quiet", "--no-prune", stdout=asyncio.subprocess.DEVNULL
     )
+    rc = -1
     try:
         rc = await asyncio.wait_for(proc.wait(), _GC_TIMEOUT_S)
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
-        rc = -1
+        pass
+    finally:
+        if proc.returncode is None:  # timed out, or a cancelled pass: no repack outlives its lock
+            proc.kill()
+            await proc.wait()
     logger.info("mirror %s: gc exit %s", git_dir, rc)
 
 

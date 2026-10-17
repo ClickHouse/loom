@@ -1,0 +1,103 @@
+{{- $fullname := include "loom.fullname" . }}
+{{- $mustMatch := include "loom.mustMatch" . }}
+{{- $live := lookup "apps/v1" "Deployment" .Release.Namespace $fullname }}
+{{- /* The embedding space and the root secret cannot roll: pods on the old
+value stop being ready the moment the new one is published. Refuse the change
+unless this upgrade publishes (mustMatchChange.publish). The root
+secret is checked against the chart's own Secret; one the chart does not
+manage is the operator's to publish. */}}
+{{- $publishing := include "loom.publishing" . }}
+{{- if not $publishing }}
+{{- $was := dig "metadata" "annotations" "loom.clickhouse.com/must-match" "" ($live | default dict) }}
+{{- $secret := lookup "v1" "Secret" .Release.Namespace $fullname }}
+{{- $root := dig "data" "LOOM_JWT_SECRET" "" ($secret | default dict) | b64dec }}
+{{- if or (and $was (ne $was $mustMatch)) (and $root (not .Values.secrets.existingSecret) (ne $root .Values.secrets.jwtSecret)) }}
+{{- fail "this upgrade changes the embedding settings or LOOM_JWT_SECRET, which every pod must share and cannot roll. Set mustMatchChange.publish to a new token to publish the new configuration (pods on the old one stop serving): docs/operations/kubernetes.md" }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "loom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  annotations:
+    loom.clickhouse.com/must-match: {{ $mustMatch | quote }}
+spec:
+  {{- if .Values.autoscaling.enabled }}
+  {{- /* The HPA owns the count. Every revision records one (the live count, at
+  least minReplicas), because Helm's merge resets a dropped field
+  unpredictably; a rollback writes the count its revision recorded and the
+  HPA corrects it. */}}
+  replicas: {{ max (int .Values.autoscaling.minReplicas) (int (dig "spec" "replicas" 0 ($live | default dict))) }}
+  {{- else }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  # Past the startup probe's budget: a pod may wait on the migration lease.
+  progressDeadlineSeconds: {{ add (mul .Values.probes.startup.periodSeconds .Values.probes.startup.failureThreshold) 300 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      {{- if $publishing }}
+      # After a publish every old pod is drifted: replace them all at once.
+      maxSurge: 100%
+      maxUnavailable: 0
+      {{- else }}
+      {{- toYaml .Values.strategy.rollingUpdate | nindent 6 }}
+      {{- end }}
+  selector:
+    matchLabels:
+      {{- include "loom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "loom.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        kubectl.kubernetes.io/default-container: loom
+        {{- with include "loom.publishedToken" . }}
+        # A new token rolls the pods, an existingSecret change included.
+        loom.clickhouse.com/published: {{ . | quote }}
+        {{- end }}
+        {{- if not .Values.secrets.existingSecret }}
+        checksum/secret: {{ include "loom.secretChecksum" . }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "loom.podCommon" (dict "root" . "leads" (not .Values.workers.enabled)) | nindent 6 }}
+      {{- if .Values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpread.zoneSkew }}
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: {{ .Values.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "loom.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: web
+          matchLabelKeys: [pod-template-hash]
+        - maxSkew: {{ .Values.topologySpread.nodeSkew }}
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ .Values.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "loom.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: web
+          matchLabelKeys: [pod-template-hash]
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "loom.waitForDevClickhouse" . | nindent 6 }}
+      containers:
+        {{- include "loom.container" (dict "root" . "serves" true "resources" .Values.resources "resourcesPath" "resources") | nindent 8 }}
+      volumes:
+        {{- include "loom.volumes" (dict "root" . "workers" false) | nindent 8 }}

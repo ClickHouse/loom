@@ -64,14 +64,16 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     await repo.symbol_names_for_paths(ORG, NS, ["src/a.py", "src/b.py"])
     await repo.scope_file_count(ORG, NS, MODEL, scope or _scope("globs"), path_prefix=prefix)
-    await repo.grep_chunks(
-        ORG, NS, "needle", regex=c["scope"] == "regex", path_prefix=prefix, scope=scope
-    )
+    regex = c["scope"] == "regex"
+    await repo.grep_chunks(ORG, NS, "needle", regex=regex, path_prefix=prefix, scope=scope)
+    if regex:
+        # An alternation gets the needle guard in front of match()
+        await repo.grep_chunks(ORG, NS, "needle|other", regex=True, path_prefix=prefix, scope=scope)
     await repo.grep_files(
         ORG,
         NS,
         "needle",
-        regex=c["scope"] == "regex",
+        regex=regex,
         case_sensitive=False,
         path_prefix=prefix,
         scope=scope,

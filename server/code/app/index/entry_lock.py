@@ -1,10 +1,10 @@
 """Per-entry exclusion for the compiler-tier passes.
 
-A full re-index (`loom code scip-full`) and a delta pass (`loom code
-scip-delta`, the crossref pass, `run_python_delta.sh`) all move one entry's
-checkout and write its watermarks, so two of them must never work on the same
-entry at once. Different entries are independent and may run side by side.
-The Python entry points take the lock themselves; the cron's shell steps run
+A full re-index (code_scip_full, `loom code scip-full`) and a delta pass
+(code_scip_delta, `loom code scip-delta`, `run_python_delta.sh`) all move one
+entry's checkout and write its watermarks, so two of them must never work on the
+same entry at once. Different entries are independent and may run side by side.
+The Python entry points take the lock themselves; a harness run by hand goes
 under `loom code entry-lock --org ORG --namespace NS -- <command>`.
 
 Two locks, taken in this order:
@@ -52,8 +52,8 @@ from server.settings import settings
 ENTRY_LEASE_TTL_S = 120
 # The environment variable the `entry-lock` wrapper hands its command the holder in.
 HOLDER_ENV = "LOOM_ENTRY_LEASE_HOLDER"
-# A full pass waits this long for a delta on its entry (the longest delta step
-# is bounded at 3 h by the cron).
+# A full pass waits this long for a delta on its entry (past any delta's
+# harness timeout).
 _WAIT_S = 4 * 3600.0
 # How often a waiting pass retries the host's lock file.
 _POLL_S = 1.0

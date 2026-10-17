@@ -71,7 +71,7 @@ def repos(tmp_path: Path) -> dict[str, object]:
 
 
 def _run(
-    r: dict[str, object], *, wm: str, head: str, bare: str, owner: str = "cron"
+    r: dict[str, object], *, wm: str, head: str, bare: str, owner: str = "manual"
 ) -> tuple[str, str]:
     env = {
         **os.environ,
@@ -170,22 +170,22 @@ def _ident_snippet() -> str:
     ("tree", "producer", "extras", "py_worker", "owner"),
     [
         (["go.mod"], "", (), False, "none"),
-        (["go.mod", "pyproject.toml"], "", (), False, "cron"),
-        (["pyproject.toml"], "", (), False, "cron"),
+        (["go.mod", "pyproject.toml"], "", (), False, "manual"),
+        (["pyproject.toml"], "", (), False, "manual"),
         (["CMakeLists.txt"], "", (), False, "none"),
         (["go.mod", "pyproject.toml"], "go", (), False, "go"),
         (["go.mod", "pyproject.toml"], "go", ("python",), False, "go"),
-        (["CMakeLists.txt"], "clang", (), False, "cron"),
+        (["CMakeLists.txt"], "clang", (), False, "manual"),
         (["go.mod"], "", (), True, "none"),
         (["go.mod", "pyproject.toml"], "", (), True, "worker"),
         (["go.mod", "pyproject.toml"], "go", ("python",), True, "worker"),
     ],
 )
-def test_the_cron_python_pass_goes_where_the_entry_and_its_tree_say(
+def test_the_manual_python_pass_goes_where_the_entry_and_its_tree_say(
     monkeypatch, capsys, tree, producer, extras, py_worker, owner
 ) -> None:
     """The Python worker takes what it owns; a Go or TypeScript entry's worker moves its
-    checkout; an entry naming no producer gets the cron pass only where its tree has a
+    checkout; an entry naming no producer gets the manual pass only where its tree has a
     Python build file (its Go and TypeScript tiers work in their own trees)."""
     from unittest.mock import AsyncMock
 

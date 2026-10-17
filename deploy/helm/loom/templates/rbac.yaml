@@ -1,0 +1,32 @@
+{{- if .Values.retireLostPods }}
+{{- if not (or .Values.serviceAccount.create .Values.serviceAccount.name) }}
+{{- fail "retireLostPods grants `get pods` to the release's service account: set serviceAccount.create or serviceAccount.name, not the namespace's default" }}
+{{- end }}
+{{- /* Only `get` on pods: the workers leader asks whether a lost participant's
+pod still exists (server/core/provider_process.py `pod_gone`). */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "loom.fullname" . }}
+  labels:
+    {{- include "loom.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "loom.fullname" . }}
+  labels:
+    {{- include "loom.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "loom.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "loom.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

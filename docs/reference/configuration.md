@@ -30,6 +30,7 @@ Source: `server/settings/_auth.py`
 | `LOOM_OIDC_JIT_ORG` | `str` | `''` | Org that JIT-provisioned accounts are created in; required when `oidc_jit_provision` is on. |
 | `LOOM_OIDC_JIT_EMAIL_DOMAINS` | `str` | `''` | Comma-separated email domains JIT provisioning admits; empty admits any verified email. |
 | `LOOM_JWT_SECRET` | `str` | *(set)* | The root secret, and the one secret a deployment carries: it signs tokens as kid `default` and seals every stored credential and every signing key in loom.signing_keys (`loom signing-key rotate` adds those). Required when auth is on. The default is the checked-in DEV secret anyone can mint with: a deployment with auth on refuses to start with it, except the `make dev` stack (`loom doctor` warns everywhere else). |
+| `LOOM_JWT_SECRET_PREVIOUS` | `str` | `''` | The root secret LOOM_JWT_SECRET replaced, while a rotation is under way: credentials and signing keys sealed under it still open (tokens it signed as kid `default` do not verify: a leaked root mints nothing). `loom secrets reseal` rewrites the stored ones under the new root; then remove this. "" = none. |
 | `LOOM_JWT_KEYRING_REFRESH_SECONDS` | `float` | `30.0` | Seconds between re-reads of loom.signing_keys in every process (at least 1); `loom signing-key rotate` waits out two of the slowest process's. |
 | `LOOM_JWT_ISSUER` | `str` | `'loom'` | The `iss` Loom stamps on every token it mints and the `aud` every verified token must carry; a token naming another audience is refused. |
 | `LOOM_JWT_AUDIENCE` | `str` | `'loom-platform'` | The `aud` claim stamped on minted tokens and required on every verified token. |
@@ -175,10 +176,18 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_SCIP_DELTA_ENABLED` | `bool` | `True` | C++ compiler-tier per-merge deltas: scip-clang over changed TUs when git_head outruns scip_commit. Needs the configured checkout and a scip-clang binary; CPU-heavy in bursts. |
 | `LOOM_CODE_SCIP_DELTA_INTERVAL_SECONDS` | `int` | `300` | Seconds between C++ delta passes. |
 | `LOOM_CODE_SCIP_CHECKOUT_DIR` | `str` | `'var/code_repos/checkout'` | The scalar entry's working tree the compiler tiers index; other entries default to a sibling named after their namespace, and an entry's `scip_checkout_dir` wins. |
-| `LOOM_CODE_SCIP_CLANG_PATH` | `str` | `'var/bin/scip-clang'` | Path of the scip-clang binary the delta pass and `loom code` run. |
+| `LOOM_CODE_SCIP_CLANG_PATH` | `str` | `'scip-clang'` | The scip-clang binary: a name looked up on PATH, or a path. The image carries it on amd64 only (upstream builds no arm64 Linux binary). |
+| `LOOM_CODE_SCIP_CLANG_JOBS` | `int` | `0` | scip-clang's parallel jobs in a delta or full run; 0 = half the CPUs the host shows (a container sees the node's). Each job holds a translation unit's AST: a few GiB for a large C++ tree. |
+| `LOOM_CODE_SCIP_WORK_DIR` | `str` | `''` | Where the C++ harness writes its index and delta (several GB for a full run of a large tree); "" = the system temp dir. |
 | `LOOM_CODE_SCIP_DELTA_MAX_TUS` | `int` | `200` | Max translation units one delta indexes; past it only the changed `.cpp` files are indexed and the header fan-out heals on the next full run. |
 | `LOOM_CODE_SCIP_DELTA_TIMEOUT_SECONDS` | `int` | `3600` | Seconds the C++ delta harness may run before it is killed. |
-| `LOOM_CODE_SCIP_LOCK_DIR` | `str` | `'var/cron/locks'` | Directory of the per-entry lock files every compiler-tier pass on this host takes (`scip.<org>.<namespace>.lock`): a full re-index and a delta never work on one entry at once; different entries run side by side. The host cron scripts lock the same files with flock(1). |
+| `LOOM_CODE_SCIP_FULL_ENABLED` | `bool` | `True` | C++ full re-index: seeds an entry the delta has no watermark for, and re-indexes each entry every `code_scip_full_every_hours` (heals deltas that hit the TU cap). One entry per pass, under its entry lock. |
+| `LOOM_CODE_SCIP_FULL_INTERVAL_SECONDS` | `int` | `900` | Seconds between checks for an entry that is due. |
+| `LOOM_CODE_SCIP_FULL_EVERY_HOURS` | `int` | `168` | Hours between full re-indexes of one entry. |
+| `LOOM_CODE_SCIP_FULL_TIMEOUT_SECONDS` | `int` | `28800` | Seconds the full re-index harness (CMake configure, scip-clang, convert) may run; the checkout move and the apply get 6 h more in the pass deadline. |
+| `LOOM_CODE_CROSSREF_ENABLED` | `bool` | `True` | SQL <-> C++ crossref (code_test_map from registrations and test queries) for each C++ entry whose git_head moved since its last run. |
+| `LOOM_CODE_CROSSREF_INTERVAL_SECONDS` | `int` | `1800` | Seconds between crossref passes. |
+| `LOOM_CODE_SCIP_LOCK_DIR` | `str` | `'var/cron/locks'` | Directory of the per-entry lock files every compiler-tier pass on this host takes (`scip.<org>.<namespace>.lock`): a full re-index and a delta never work on one entry at once; different entries run side by side. `loom code entry-lock` takes the same lock. |
 | `LOOM_CODE_SCIP_TS_DELTA_ENABLED` | `bool` | `True` | TypeScript compiler-tier deltas: scip-typescript over an entry with `scip_producer` "typescript" when git_head outruns scip_commit_ts. The worker prepares dependencies with lifecycle scripts disabled; needs Node 22+ and the toolchain from scripts/install-code-toolchains.sh (in the image). |
 | `LOOM_CODE_SCIP_TS_DELTA_INTERVAL_SECONDS` | `int` | `600` | Seconds between TypeScript delta passes. |
 | `LOOM_CODE_SCIP_TYPESCRIPT_PATH` | `str` | `'scip-typescript'` | The scip-typescript binary: a name looked up on PATH, or a path. |

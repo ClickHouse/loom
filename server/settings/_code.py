@@ -265,17 +265,41 @@ class CodeSettings(BaseModel):
     # The scalar entry's working tree the compiler tiers index; other entries default to a
     # sibling named after their namespace, and an entry's `scip_checkout_dir` wins.
     code_scip_checkout_dir: str = "var/code_repos/checkout"
-    # Path of the scip-clang binary the delta pass and `loom code` run.
-    code_scip_clang_path: str = "var/bin/scip-clang"
+    # The scip-clang binary: a name looked up on PATH, or a path. The image
+    # carries it on amd64 only (upstream builds no arm64 Linux binary).
+    code_scip_clang_path: str = "scip-clang"
+    # scip-clang's parallel jobs in a delta or full run; 0 = half the CPUs the
+    # host shows (a container sees the node's). Each job holds a translation
+    # unit's AST: a few GiB for a large C++ tree.
+    code_scip_clang_jobs: int = 0
+    # Where the C++ harness writes its index and delta (several GB for a full
+    # run of a large tree); "" = the system temp dir.
+    code_scip_work_dir: str = ""
     # Max translation units one delta indexes; past it only the changed `.cpp` files are
     # indexed and the header fan-out heals on the next full run.
     code_scip_delta_max_tus: int = 200
     # Seconds the C++ delta harness may run before it is killed.
     code_scip_delta_timeout_seconds: int = 3600
+    # C++ full re-index: seeds an entry the delta has no watermark for, and
+    # re-indexes each entry every `code_scip_full_every_hours` (heals deltas
+    # that hit the TU cap). One entry per pass, under its entry lock.
+    code_scip_full_enabled: bool = True
+    # Seconds between checks for an entry that is due.
+    code_scip_full_interval_seconds: int = 900
+    # Hours between full re-indexes of one entry.
+    code_scip_full_every_hours: int = 168
+    # Seconds the full re-index harness (CMake configure, scip-clang, convert)
+    # may run; the checkout move and the apply get 6 h more in the pass deadline.
+    code_scip_full_timeout_seconds: int = 8 * 3600
+    # SQL <-> C++ crossref (code_test_map from registrations and test queries)
+    # for each C++ entry whose git_head moved since its last run.
+    code_crossref_enabled: bool = True
+    # Seconds between crossref passes.
+    code_crossref_interval_seconds: int = 1800
     # Directory of the per-entry lock files every compiler-tier pass on this
     # host takes (`scip.<org>.<namespace>.lock`): a full re-index and a delta
-    # never work on one entry at once; different entries run side by side. The
-    # host cron scripts lock the same files with flock(1).
+    # never work on one entry at once; different entries run side by side.
+    # `loom code entry-lock` takes the same lock.
     code_scip_lock_dir: str = "var/cron/locks"
     # TypeScript compiler-tier deltas: scip-typescript over an entry with
     # `scip_producer` "typescript" when git_head outruns scip_commit_ts. The
