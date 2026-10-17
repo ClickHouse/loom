@@ -361,8 +361,7 @@ jobs:
     name: pytest integration (ClickHouse service)
     needs: clickhouse
     runs-on: ubuntu-latest
-    # The suite, then the auth-on server's tests: about 30 minutes with sign-in's
-    # end-to-end flows on a slow runner, so room to spare above that.
+    # The suite, then the auth-on server's tests, with room for a slow runner.
     timeout-minutes: 45
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
