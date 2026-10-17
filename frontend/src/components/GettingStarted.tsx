@@ -6,6 +6,7 @@ import { Select } from "@clickhouse/click-ui/Select";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import type { Identity, MyNamespaceEntry, ServiceAccountEntry } from "../api";
 import { useStore } from "../lib/state";
+import { paletteShortcut } from "../lib/platform";
 import { CLIENTS, formatMcpConfig, type ClientId } from "../lib/clients";
 import {
   countDone,
@@ -242,7 +243,7 @@ export function GettingStarted({
                   <p className="text-xs text-text-muted mt-0.5">{meta.why}</p>
                   {step === "find" && !isDone && (
                     <p className="text-xs text-text-muted mt-1">
-                      Or press <Kbd>⌘K</Kbd> anywhere and type a few words.
+                      Or press <Kbd>{paletteShortcut()}</Kbd> anywhere and type a few words.
                     </p>
                   )}
                   {step === "connect" && lastMint && <ConnectLine mint={lastMint} />}

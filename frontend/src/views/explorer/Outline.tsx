@@ -2,15 +2,15 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../../components/IconButton";
-import { Kbd } from "../../components/ui";
+import { DirectionIcon, directionWord } from "./Direction";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
 import { shortcutOff } from "../../lib/shortcuts";
 
 /**
  * Outline — the walk as a tree a keyboard can read. One row per drawn node in tree order,
  * the seed as the root; each row is one line of name and one of metadata (hop, the edge
- * that reached it, the community when known). Roving tabindex: `↑`/`↓` move, `→` expands
- * a collapsed row or moves into its children, `←` collapses or moves to the parent, `↵`
+ * that reached it, the community when known). Roving tabindex: Up / Down move, Right expands
+ * a collapsed row or moves into its children, Left collapses or moves to the parent, Enter
  * selects, `w` walks from here, `p` finds a path from the seed to here, `e` expands in
  * place (`facts.related`), `r` selects the edge that reached the row, `x` pins. A click on
  * the row selects its node; the edge that reached it has its own button at the row's end,
@@ -166,48 +166,16 @@ export function Outline({
 
   return (
     <div className="explorer-outline mt-3 lg:flex-1 lg:min-h-0 flex flex-col">
-      <p className="text-xs text-text-muted mb-1" id="explorer-outline-summary">
-        {summary}{" "}
-        <span className="text-text-muted inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-          <span>
-            <Kbd>↑</Kbd>
-            <Kbd>↓</Kbd> move
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>←</Kbd>
-            <Kbd>→</Kbd> collapse/expand
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>↵</Kbd> select
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>w</Kbd> walk
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>p</Kbd> path
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>e</Kbd> expand
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>r</Kbd> edge
-          </span>{" "}
-          ·{" "}
-          <span>
-            <Kbd>x</Kbd> pin
-          </span>
-        </span>
+      <p className="text-xs text-text-muted mb-1">{summary}</p>
+      {/* The keys are listed in the help dialog's Graph group; the tree describes them in one line. */}
+      <p className="sr-only" id="explorer-outline-keys">
+        Arrow keys move and fold, Enter selects; w walks from a row, p finds a path, e expands, r selects the edge, x
+        pins.
       </p>
       <div
         role="tree"
         aria-label="Walk outline"
-        aria-describedby="explorer-outline-summary"
+        aria-describedby="explorer-outline-keys"
         className="lg:flex-1 min-h-[120px] max-h-[320px] lg:max-h-none overflow-auto rounded-lg border border-border bg-surface text-xs"
       >
         {rows.map((n, i) => {
@@ -219,10 +187,10 @@ export function Outline({
           const edgeSelected = selectedEdgeChild === n.entity;
           const parent = n.parent;
           const isSeed = n.entity === model.seed;
-          const relation =
-            typed && n.via_relation
-              ? `${n.via_direction === "in" ? "← " : "→ "}${relationLabel(n.via_relation)}`
-              : `co-mentioned ${n.via_co_occur}×`;
+          const typedEdge = typed && !!n.via_relation;
+          const relation = typedEdge
+            ? `${relationLabel(n.via_relation)} (${directionWord(n.via_direction)})`
+            : `co-mentioned ${n.via_co_occur}×`;
           return (
             <div
               key={n.entity}
@@ -268,7 +236,15 @@ export function Outline({
                   <span className="tabular-nums shrink-0">hop {n.hop}</span>
                   {parent && (
                     <span className={`truncate ${edgeSelected ? "text-text" : ""}`}>
-                      {relation} with {shorten(parent, 20)}
+                      {typedEdge ? (
+                        <>
+                          <DirectionIcon direction={n.via_direction} />
+                          {relationLabel(n.via_relation)}
+                        </>
+                      ) : (
+                        relation
+                      )}{" "}
+                      with {shorten(parent, 20)}
                     </span>
                   )}
                   {hasCommunities && n.community_id !== null && (

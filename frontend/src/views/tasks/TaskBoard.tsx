@@ -1,8 +1,8 @@
 import { Title } from "@clickhouse/click-ui/Title";
 import type { HTMLAttributes, KeyboardEvent } from "react";
 import type { TaskListRow } from "../../api/tasks";
-import { GROUPS, GROUP_META, leaseMinutesLeft, posterName, rel, sublineOf, type Group } from "../../lib/tasks";
-import { Avatar, KindTag, PosterAvatar } from "./TaskBits";
+import { GROUPS, leaseMinutesLeft, posterName, rel, sublineOf, type Group } from "../../lib/tasks";
+import { Avatar, KindTag, LaneBadge, PosterAvatar } from "./TaskBits";
 import type { RowContext } from "./TaskList";
 import { useTaskDrag } from "./drag";
 
@@ -90,7 +90,6 @@ export function TaskBoard({
     <section className="tq-board" aria-label="Tasks board">
       {GROUPS.map((g) => {
         const rows = groups[g];
-        const meta = GROUP_META[g];
         return (
           <section key={g} className="tq-col" aria-labelledby={`tq-col-${g}`} {...drag.target(g)}>
             <Title
@@ -99,8 +98,7 @@ export function TaskBoard({
               id={`tq-col-${g}`}
               className="px-3 py-2.5 border-b border-border flex items-center gap-2"
             >
-              <span className="inline-block w-2 h-2 rounded-xs" style={{ background: meta.color }} aria-hidden="true" />
-              {meta.label}
+              <LaneBadge group={g} />
               <span className="ml-auto text-xs font-medium text-text-muted tabular">{rows.length}</span>
             </Title>
             <div className="p-2 flex flex-col gap-2">

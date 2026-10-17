@@ -169,7 +169,9 @@ describe("TaskPanel", () => {
     expect(within(panel).getByText("exception 36")).not.toHaveClass("font-mono");
     expect(within(panel).getByText(/The reproducer must not appear/)).toHaveClass("tq-constraint");
     expect(within(panel).getByText("from reporter-public")).toBeInTheDocument();
-    expect(within(panel).getByText("→ private-bot")).toBeInTheDocument();
+    // The hand-off arrow is an icon; its text says "to".
+    const handed = within(panel).getByText((_, el) => el?.tagName === "SPAN" && el.textContent === "to private-bot");
+    expect(handed.querySelector("svg")).not.toBeNull();
     expect(within(panel).getByText("01234567…")).toBeInTheDocument();
     expect(getTask).toHaveBeenCalledTimes(1);
     expect(taskHistory).toHaveBeenCalledTimes(1);

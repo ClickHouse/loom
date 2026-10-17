@@ -447,7 +447,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
 }
 
 function RoleIcon({ role }: { role: GrantRole }) {
-  if (role === "admin") return <Icon name="star" size="xs" color="var(--color-warn)" aria-label="Admin" />;
+  if (role === "admin") return <Icon name="star" size="xs" color="var(--global-color-text-muted)" aria-label="Admin" />;
   if (role === "writer") return <Icon name="user" size="xs" color="var(--color-text-muted)" aria-label="Writer" />;
   return <Icon name="eye" size="xs" color="var(--color-text-muted)" aria-label="Viewer" />;
 }

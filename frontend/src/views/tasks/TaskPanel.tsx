@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import { Title } from "@clickhouse/click-ui/Title";
 import {
@@ -125,10 +126,11 @@ function InputValue({ v }: { v: unknown }) {
 }
 
 // Each status allows at most one of these: the footer's primary, last on the right.
-const PRIMARY_ACTIONS: { action: TaskAction; label: string; tip?: string }[] = [
-  { action: "accept", label: "Accept" },
-  { action: "start", label: "Start", tip: "Claim it: to do → in progress" },
-  { action: "complete", label: "Mark done…" },
+// A button with a key names it in its tooltip ("Accept · A"); the help dialog lists them all.
+const PRIMARY_ACTIONS: { action: TaskAction; label: string; tip?: string; key?: string }[] = [
+  { action: "accept", label: "Accept", tip: "Accept · A", key: "a" },
+  { action: "start", label: "Start", tip: "Claim it: to do → in progress · S", key: "s" },
+  { action: "complete", label: "Mark done…", tip: "Mark done · C", key: "c" },
   { action: "unblock", label: "Unblock" },
   { action: "resume", label: "Resume now" },
 ];
@@ -406,7 +408,11 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
           {handed ? (
             <>
               <b className="font-medium text-text-muted">from {posterName(current)}</b>
-              <span>→ {current.inbox}</span>
+              <span className="inline-flex items-center gap-1">
+                <Icon name="arrow-right" size="xs" aria-hidden="true" />
+                <span className="sr-only">to </span>
+                {current.inbox}
+              </span>
             </>
           ) : (
             <b className="font-medium text-text-muted">this agent's own task</b>
@@ -529,9 +535,11 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
             </Button>
           )}
           {allowed.has("defer") && (
-            <Button type="secondary" htmlType="button" onClick={() => act("defer")}>
-              Defer…
-            </Button>
+            <Tip content="Defer · D">
+              <Button type="secondary" htmlType="button" aria-keyshortcuts="d" onClick={() => act("defer")}>
+                Defer…
+              </Button>
+            </Tip>
           )}
           {allowed.has("block") && (
             <Button type="secondary" htmlType="button" onClick={() => act("block")}>
@@ -539,9 +547,11 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
             </Button>
           )}
           {allowed.has("wont_do") && (
-            <Button type="secondary" htmlType="button" onClick={() => act("wont_do")}>
-              Won't do…
-            </Button>
+            <Tip content="Won't do · X">
+              <Button type="secondary" htmlType="button" aria-keyshortcuts="x" onClick={() => act("wont_do")}>
+                Won't do…
+              </Button>
+            </Tip>
           )}
           {allowed.has("reopen") && (
             <Button type="secondary" htmlType="button" onClick={() => act("reopen")}>
@@ -550,7 +560,12 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
           )}
           {primary && (
             <Tip content={primary.tip} disabled={!primary.tip}>
-              <Button type="primary" htmlType="button" onClick={() => act(primary.action)}>
+              <Button
+                type="primary"
+                htmlType="button"
+                aria-keyshortcuts={primary.key}
+                onClick={() => act(primary.action)}
+              >
                 {primary.label}
               </Button>
             </Tip>

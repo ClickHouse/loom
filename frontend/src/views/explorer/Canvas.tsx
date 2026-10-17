@@ -14,6 +14,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { Chip, LoadingSkeleton } from "../../components/ui";
 import { Skeleton } from "../../components/Skeleton";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
+import { DirectionIcon, directionWord } from "./Direction";
 
 /**
  * Canvas — the walk's picture: a fixed `aspect-[820/560]` box, hover as DOM attributes
@@ -225,7 +226,7 @@ function badgeWidth(n: number): number {
 
 function edgeText(n: XNode, typed: boolean): string {
   return typed && n.via_relation
-    ? `${n.via_direction === "in" ? "← " : "→ "}${relationLabel(n.via_relation)}`
+    ? `${relationLabel(n.via_relation)} (${directionWord(n.via_direction)})`
     : `co-mentioned ${n.via_co_occur}×`;
 }
 
@@ -334,11 +335,14 @@ const GraphNode = memo(function GraphNode({
           {shorten(n.entity, labelFit(n.labelRoom, scale))}
         </text>
       )}
+      {/* HTML in the picture, so the direction is Click UI's arrow icon, not a text glyph. */}
       {showRelation && n.via_relation && (
-        <text y={-n.r - 6} textAnchor="middle" fill="var(--color-text-muted)" style={{ pointerEvents: "none" }}>
-          {n.via_direction === "in" ? "← " : "→ "}
-          {relationLabel(n.via_relation)}
-        </text>
+        <foreignObject x={-120} y={-n.r - 26} width={240} height={24} style={{ pointerEvents: "none" }}>
+          <div className="graph-relation">
+            <DirectionIcon direction={n.via_direction} />
+            {relationLabel(n.via_relation)}
+          </div>
+        </foreignObject>
       )}
       {hidden > 0 ? (
         <g className="graph-badge" data-action="uncollapse" data-id={n.id} transform={`translate(${ax},${ay})`}>

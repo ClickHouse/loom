@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { EmptyState } from "../../../components/EmptyState";
 import { Skeleton } from "../../../components/Skeleton";
 import { LoadingSkeleton, Tip } from "../../../components/ui";
@@ -59,6 +60,9 @@ function splitCellId(id: string): [string, string] {
   return i < 0 ? [id, ""] : [id.slice(0, i), id.slice(i + SEP.length)];
 }
 
+// The gap ratio's trend since the previous snapshot: more bugs without a test is worse.
+const TREND_ICON: Record<string, IconName> = { worse: "arrow-up", better: "arrow-down", flat: "minus" };
+
 function RowHeader({ row }: { row: BoardRow }) {
   const g = row.gap;
   const t = g ? trendGlyph(g.trend_delta) : null;
@@ -82,7 +86,7 @@ function RowHeader({ row }: { row: BoardRow }) {
             className={`tabular-nums shrink-0 inline-flex items-center gap-0.5 ${t.word === "worse" ? "text-danger" : t.word === "better" ? "text-success" : "text-text-muted"}`}
             aria-hidden="true"
           >
-            {pct(g.gap_ratio)} <span>{t.glyph}</span>
+            {pct(g.gap_ratio)} <Icon name={TREND_ICON[t.word] ?? "minus"} size="xs" aria-hidden="true" />
           </span>
         ) : (
           <span className="text-text-muted shrink-0" aria-hidden="true">
@@ -315,7 +319,7 @@ export function Board({
               role="columnheader"
               className="sticky top-0 left-0 z-20 bg-surface-2 px-2 py-1.5 section-label border-b border-r border-border"
             >
-              component · open · gap ▲▼
+              component · open · gap, trend
             </div>
             {board.severities.map((s) => (
               <div

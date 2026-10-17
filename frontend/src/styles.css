@@ -846,9 +846,11 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-tile:hover {
     border-color: var(--color-border-strong);
   }
+  /* A pressed tile is a checked filter: the selected-row tint, and the active stroke so it
+     does not rest on the tint alone. */
   .tq-tile[aria-pressed="true"] {
-    border-color: var(--color-accent);
-    background: var(--color-accent-soft);
+    border-color: var(--click-card-horizontal-default-color-stroke-active);
+    background: var(--click-table-row-color-background-active);
   }
   .tq-tile .n {
     font-size: var(--text-2xl);
@@ -902,7 +904,7 @@ textarea[aria-invalid="true"]:focus-visible {
     font-weight: 500;
   }
 
-  /* ---- avatars: the inbox's own agent round on the accent, another agent square on info, a person by initials */
+  /* ---- avatars: the inbox's own agent round with a stroke, another agent square on info, a person by initials */
   .tq-av {
     width: 20px;
     height: 20px;
@@ -924,9 +926,9 @@ textarea[aria-invalid="true"]:focus-visible {
     color: var(--color-info);
   }
   .tq-av[data-kind="me"] {
-    background: var(--color-accent-soft);
-    color: var(--color-accent);
-    border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+    background: var(--global-color-background-muted);
+    color: var(--global-color-text-default);
+    border: 1px solid var(--global-color-stroke-default);
   }
 
   /* ---- list */
@@ -997,8 +999,7 @@ textarea[aria-invalid="true"]:focus-visible {
     background: var(--color-surface-2);
   }
   .tq-row[aria-selected="true"] {
-    background: var(--color-surface-2);
-    box-shadow: inset 3px 0 0 var(--color-accent);
+    background: var(--click-table-row-color-background-active);
   }
   .tq-row:focus-visible,
   .tq-card:focus-visible,
@@ -1357,4 +1358,48 @@ textarea[aria-invalid="true"]:focus-visible {
   .list-pager > [class*="container_responsive"] > :nth-child(3) {
     display: none;
   }
+}
+
+/* Namespace picker rows (NamespacePicker.tsx): Click UI's card hover, and the current
+   namespace in the tint Click UI's Table gives a selected row. */
+.ns-row:hover {
+  background: var(--click-card-horizontal-default-color-background-hover);
+}
+.ns-row[data-current] {
+  background: var(--click-table-row-color-background-active);
+}
+
+/* A scroll area that fades out at an edge it can still scroll past, so the rows below the
+   fold read as more to come (`data-fade` is set from the scroll position). */
+.scroll-fade[data-fade="top"] {
+  mask-image: linear-gradient(to bottom, transparent, black 24px);
+}
+.scroll-fade[data-fade="bottom"] {
+  mask-image: linear-gradient(to top, transparent, black 24px);
+}
+.scroll-fade[data-fade="both"] {
+  mask-image: linear-gradient(to bottom, transparent, black 24px, black calc(100% - 24px), transparent);
+}
+
+/* Tasks: the open card on the board takes Click UI's active stroke, as an inspected list row does. */
+.tq-card[aria-current="true"] {
+  border-color: var(--click-card-horizontal-default-color-stroke-active);
+}
+
+/* Graph canvas: a node's relation caption with its direction arrow (Canvas.tsx), centred
+   above the node at the canvas text size, in the muted caption colour. */
+.graph-svg .graph-relation {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+  font-size: calc(var(--canvas-label-min) * var(--canvas-scale, 1.45));
+  line-height: 1.2;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+/* The arrow at the caption's size, not Click UI's fixed 12 px, which the viewBox shrinks. */
+.graph-svg .graph-relation svg {
+  width: 1em;
+  height: 1em;
 }

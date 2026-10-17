@@ -3,6 +3,7 @@ import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import {
   acceptTask,
   claimTask,
@@ -39,7 +40,7 @@ import {
   type TaskAction,
 } from "../lib/tasks";
 import { SkeletonCard } from "../components/Skeleton";
-import { Kbd, LoadingSkeleton, PageHeader, Tip } from "../components/ui";
+import { LoadingSkeleton, PageHeader, Tip } from "../components/ui";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { toast, toastError } from "../components/Toast";
@@ -157,6 +158,7 @@ function isFullTask(t: TaskListRow | TaskRow): t is TaskRow {
 export function Tasks() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
+  const openHelp = useStore((s) => s.openHelp);
   const role = useNamespaceRole(identity.namespace);
   const caller = useMemo(
     () => ({ org: identity.org, namespace: identity.namespace }),
@@ -549,6 +551,10 @@ export function Tasks() {
         title="Tasks"
         actions={
           <>
+            {/* The keys are listed in the help dialog and each action's tooltip, not on the page. */}
+            <Link component="button" type="button" size="sm" onClick={() => openHelp(true)}>
+              Keyboard shortcuts
+            </Link>
             <ButtonGroup
               aria-label="View"
               selected={mode}
@@ -654,35 +660,6 @@ export function Tasks() {
               {truncated && (
                 <div className="text-xs text-text-muted px-1 pt-1">Showing the first 200 tasks per inbox.</div>
               )}
-              <div className="flex gap-3.5 flex-wrap text-xs text-text-muted px-1 py-3">
-                <span>
-                  <Kbd>j</Kbd> <Kbd>k</Kbd> move
-                </span>
-                <span>
-                  <Kbd>enter</Kbd> open
-                </span>
-                <span>
-                  <Kbd>a</Kbd> accept
-                </span>
-                <span>
-                  <Kbd>s</Kbd> start
-                </span>
-                <span>
-                  <Kbd>c</Kbd> done
-                </span>
-                <span>
-                  <Kbd>x</Kbd> won't do
-                </span>
-                <span>
-                  <Kbd>d</Kbd> defer
-                </span>
-                <span>
-                  <Kbd>/</Kbd> filter
-                </span>
-                <span>
-                  <Kbd>esc</Kbd> close
-                </span>
-              </div>
             </div>
             {openRow && !sheetLayout && panelFor(openRow, false)}
           </div>

@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { EmptyState } from "../../../components/EmptyState";
 import { Skeleton } from "../../../components/Skeleton";
 import { LoadingSkeleton } from "../../../components/ui";
@@ -441,10 +442,17 @@ export function TrackerGraph({ graph, loading, error, hint, selected, onSelect, 
             selected={selected === placed.seed.number}
             sel={selChain ? selChain.has(placed.seed.id) : false}
           />
-          <text x={12} y={H - 14} fill="var(--color-text-muted)">
-            ← caused by · fixed by → · duplicates and related below
-          </text>
         </svg>
+      )}
+      {/* The picture's key, over its bottom edge; hidden from a screen reader like the picture. */}
+      {show && (
+        <div
+          className="absolute left-3 bottom-2 inline-flex flex-wrap items-center gap-1 text-xs text-text-muted pointer-events-none"
+          aria-hidden="true"
+        >
+          <Icon name="arrow-left" size="xs" /> caused by · fixed by <Icon name="arrow-right" size="xs" /> · duplicates
+          and related below
+        </div>
       )}
       {show && <div ref={readoutRef} hidden className="graph-readout" aria-hidden="true" />}
     </div>

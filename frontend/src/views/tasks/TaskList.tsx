@@ -3,13 +3,14 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { TaskListRow } from "../../api/tasks";
 import { GROUPS, GROUP_META, posterName, rel, sublineOf, type Group, type Subline } from "../../lib/tasks";
-import { Avatar, KindTag, LeaseBar, PosterAvatar, PriorityBar } from "./TaskBits";
+import { Avatar, KindTag, LaneBadge, LeaseBar, PosterAvatar, PriorityBar } from "./TaskBits";
 import { useTaskDrag } from "./drag";
 import { absoluteTime } from "../../lib/format";
+import { Tip } from "../../components/ui";
 
 /**
  * The list: five collapsible groups by what happens next — Triage, To do, In progress,
- * Waiting, Closed — each with a swatch, a count and a hint. A row carries the decision:
+ * Waiting, Closed — each with its state badge, a count and a hint. A row carries the decision:
  * the priority bar, the kind, the title, the one line that matters for its state, and a
  * meta cell — inline Accept / Won't do in Triage, the owner and lease bar in progress,
  * the poster and age otherwise. The DOM is a grid: each group is a rowgroup whose first
@@ -69,30 +70,36 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
       <span className="tq-meta">
         {ctx.canWrite && (
           <span className="tq-acts">
-            <Button
-              type="secondary"
-              htmlType="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                stop(e);
-                ctx.onAccept(r);
-              }}
-              aria-label={`Accept ${r.title}`}
-            >
-              Accept
-            </Button>
-            <Button
-              type="empty"
-              htmlType="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                stop(e);
-                ctx.onWontDo(r);
-              }}
-              aria-label={`Won't do ${r.title}`}
-            >
-              Won't do…
-            </Button>
+            <Tip content="Accept · A">
+              <Button
+                type="secondary"
+                htmlType="button"
+                tabIndex={-1}
+                onClick={(e) => {
+                  stop(e);
+                  ctx.onAccept(r);
+                }}
+                aria-label={`Accept ${r.title}`}
+                aria-keyshortcuts="a"
+              >
+                Accept
+              </Button>
+            </Tip>
+            <Tip content="Won't do · X">
+              <Button
+                type="empty"
+                htmlType="button"
+                tabIndex={-1}
+                onClick={(e) => {
+                  stop(e);
+                  ctx.onWontDo(r);
+                }}
+                aria-label={`Won't do ${r.title}`}
+                aria-keyshortcuts="x"
+              >
+                Won't do…
+              </Button>
+            </Tip>
           </span>
         )}
         <time className="tabular" dateTime={r.created_at}>
@@ -280,14 +287,7 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
                     aria-controls={closed ? undefined : `tq-rows-${g}`}
                     onClick={() => setCollapsed((c) => ({ ...c, [g]: !c[g] }))}
                   >
-                    <span
-                      className="w-2.5 h-2.5 rounded-xs shrink-0"
-                      style={{ background: meta.color }}
-                      aria-hidden="true"
-                    />
-                    <span id={`tq-group-${g}`} className="text-sm font-semibold whitespace-nowrap">
-                      {meta.label}
-                    </span>
+                    <LaneBadge group={g} id={`tq-group-${g}`} />
                     <span className="text-xs text-text-muted tabular">{rows.length}</span>
                     <span className="ml-auto text-xs text-text-muted hidden sm:inline">{meta.hint}</span>
                     <Icon name="chevron-down" size="xs" className="car" aria-hidden="true" />

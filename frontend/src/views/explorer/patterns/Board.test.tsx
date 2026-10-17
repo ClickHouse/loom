@@ -51,7 +51,7 @@ describe("Board", () => {
     const grid = screen.getByRole("grid", { name: /2 components, 275 open/ });
     expect(grid).toBeInTheDocument();
     expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
-      "component · open · gap ▲▼",
+      "component · open · gap, trend",
       "critical",
       "medium",
       "low",

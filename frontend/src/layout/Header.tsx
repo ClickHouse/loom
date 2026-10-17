@@ -25,6 +25,7 @@ import { IconButton } from "../components/IconButton";
 import { Kbd, Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { MenuTrigger } from "../components/ui/Menu";
+import { paletteShortcut } from "../lib/platform";
 
 /**
  * Header — top chrome of every page.
@@ -146,7 +147,7 @@ export function Header() {
         <IconButton
           icon="question"
           label="Keyboard shortcuts"
-          tooltip="Keyboard shortcuts (press ?)"
+          tooltip="Keyboard shortcuts · ?"
           onClick={() => openHelp(true)}
         />
 
@@ -226,7 +227,7 @@ function DisabledNew({ reason }: { reason: string }) {
 }
 
 /** The same input in the same place, before the search body has loaded (HeaderSearch
- *  draws the same SearchField with the ⌘K hint over its end while empty):
+ *  draws the same SearchField with the ⌘K / Ctrl K hint over its end while empty):
  *  it takes focus and keystrokes (kept as the draft the real box mounts
  * with), and carries the Graph view's tab-order rule. */
 function SearchPlaceholder({
@@ -245,7 +246,7 @@ function SearchPlaceholder({
     if (focus) ref.current?.focus();
   }, [focus]);
   return (
-    <div className="relative w-full">
+    <div className="group relative w-full">
       <SearchField
         ref={ref}
         aria-label="Search Loom"
@@ -254,8 +255,11 @@ function SearchPlaceholder({
         onChange={(v) => onDraft(v)}
         tabIndex={view === "graph" ? -1 : undefined}
       />
+      {/* The hint leaves once the field has the focus or any text. */}
       {!draft && (
-        <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex">⌘K</Kbd>
+        <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex sm:group-focus-within:hidden">
+          {paletteShortcut()}
+        </Kbd>
       )}
     </div>
   );

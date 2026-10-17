@@ -3,7 +3,7 @@ import { ATTENTIONS, ATTENTION_META, type Attention } from "../../lib/tasks";
 /**
  * Four tiles that answer "what needs me?": triage to decide, blocked on a person, failed,
  * a lease ending within ten minutes. Each is a toggle filter over the loaded rows; a zero
- * is muted.
+ * is muted. No coloured dot: the lanes' badges carry the state.
  */
 export function AttentionTiles({
   counts,
@@ -34,11 +34,6 @@ export function AttentionTiles({
               <span className="block text-xs text-text-muted">{meta.label}</span>
               <span className="n tabular">{n}</span>
             </span>
-            <span
-              className="w-2 h-2 rounded-full shrink-0"
-              style={{ background: n ? meta.color : "var(--color-surface-3)" }}
-              aria-hidden="true"
-            />
           </button>
         );
       })}

@@ -1,12 +1,14 @@
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import type { TaskListRow, TaskStatus } from "../../api/tasks";
 import {
+  GROUP_META,
   PRIORITY_LABEL,
   STATUS_META,
   initials,
   leaseMinutesLeft,
   posterKind,
   posterName,
+  type Group,
   type PosterKind,
 } from "../../lib/tasks";
 
@@ -16,7 +18,7 @@ import {
  * board and the panel draw them the same way.
  */
 
-/** The inbox's own agent is round on the accent, another agent square on
+/** The inbox's own agent is round with a stroke, another agent square on
  *  info, a person by initials on the neutral surface. Decorative: the name it stands for
  *  is written beside it. */
 export function Avatar({ name, kind }: { name: string; kind: PosterKind }) {
@@ -92,4 +94,23 @@ export function StatusPill({ status }: { status: TaskStatus }) {
 
 export function PriorityBadge({ priority }: { priority: number }) {
   return <Badge text={PRIORITY_LABEL[priority] ?? `P${priority}`} state="neutral" size="md" />;
+}
+
+// A lane's state is a Click UI badge, the one status carrier: Triage asks for a decision
+// (info), Waiting is held up (warning); the rest are neutral.
+const LANE_STATE: Record<Group, BadgeState> = {
+  triage: "info",
+  todo: "neutral",
+  in_progress: "default",
+  waiting: "warning",
+  closed: "default",
+};
+
+/** A list group's or board column's name, as its state badge. */
+export function LaneBadge({ group, id }: { group: Group; id?: string }) {
+  return (
+    <span id={id} className="inline-flex">
+      <Badge text={GROUP_META[group].label} state={LANE_STATE[group]} size="md" />
+    </span>
+  );
 }

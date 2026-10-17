@@ -1,57 +1,94 @@
 import { Kbd } from "./ui";
 import { Modal } from "./ui/Modal";
-import { useId, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import { Switch } from "@clickhouse/click-ui/Switch";
 import { setSingleKeyShortcuts, singleKeyShortcutsOn } from "../lib/shortcuts";
+import { isApplePlatform, paletteShortcut } from "../lib/platform";
 
+/** One shortcut: its keys ("g m" is a sequence, "j / ↓" two alternatives) and what it does. */
 interface Shortcut {
-  key: string;
+  keys: string;
   label: string;
 }
 
-const GLOBAL: Shortcut[] = [
-  { key: "⌘K", label: "Focus the universal search bar" },
-  { key: "?", label: "Show keyboard shortcuts" },
-  { key: "/", label: "Focus search (on Memories)" },
-  { key: "Esc", label: "Close inspector / dialog" },
-];
+interface Group {
+  title: string;
+  rows: Shortcut[];
+}
 
-const GOTO: Shortcut[] = [
-  { key: "g m", label: "Go to Memories" },
-  { key: "g l", label: "Go to Library (or g k)" },
-  { key: "g d", label: "Go to Spaces (browse and join)" },
-  { key: "g r", label: "Go to Review queue" },
-  { key: "g a", label: "Go to Activity" },
-  { key: "g s", label: "Go to Settings" },
-];
-
-const LIST: Shortcut[] = [
-  { key: "j / ↓", label: "Next item" },
-  { key: "k / ↑", label: "Previous item" },
-  { key: "Enter", label: "Open item" },
-  { key: "Space", label: "Toggle select (Memories)" },
-];
-
-const INSPECTOR: Shortcut[] = [
-  { key: "e", label: "Edit memory value" },
-  { key: "⌘↵", label: "Save edit" },
-  { key: "Esc", label: "Cancel edit" },
-  { key: "d", label: "Delete memory (confirm)" },
-  { key: "p", label: "Toggle pin" },
-];
-
-const SEARCH: Shortcut[] = [
-  { key: "tag:work", label: "Memories tagged work (partial OK)" },
-  { key: "namespace:qa", label: "Jump to a namespace" },
-  { key: "↑ / ↓", label: "Navigate results" },
-  { key: "Enter", label: "Open result" },
-];
+// The one place that lists every key. Pages show no key strips of their own; a button's
+// tooltip names its key ("Accept · A").
+function groups(): Group[] {
+  return [
+    {
+      title: "Global",
+      rows: [
+        { keys: paletteShortcut(), label: "Focus the universal search bar" },
+        { keys: "↑ / ↓", label: "Move through search results" },
+        { keys: "Enter", label: "Open the search result" },
+        { keys: "tag:work", label: "Search memories tagged work (partial OK)" },
+        { keys: "namespace:qa", label: "Search for a namespace to jump to" },
+        { keys: "?", label: "Show keyboard shortcuts" },
+        { keys: "g m", label: "Go to Memories" },
+        { keys: "g l / g k", label: "Go to Library" },
+        { keys: "g d", label: "Go to Spaces (browse and join)" },
+        { keys: "g r", label: "Go to Review queue" },
+        { keys: "g a", label: "Go to Activity" },
+        { keys: "g s", label: "Go to Settings" },
+        { keys: "Esc", label: "Close the inspector or dialog" },
+      ],
+    },
+    {
+      title: "Memories",
+      rows: [
+        { keys: "/", label: "Focus the memory search" },
+        { keys: "j / ↓", label: "Next memory" },
+        { keys: "k / ↑", label: "Previous memory" },
+        { keys: "Enter", label: "Open the memory" },
+        { keys: "Space", label: "Select or unselect" },
+        { keys: "e", label: "Edit the open memory's value" },
+        { keys: isApplePlatform() ? "⌘Enter" : "Ctrl Enter", label: "Save the edit" },
+        { keys: "Esc", label: "Cancel the edit" },
+        { keys: "d", label: "Delete the open memory (asks first)" },
+        { keys: "p", label: "Pin or unpin the open memory" },
+      ],
+    },
+    {
+      title: "Tasks",
+      rows: [
+        { keys: "j / k", label: "Next or previous task" },
+        { keys: "Enter", label: "Open the task" },
+        { keys: "a", label: "Accept" },
+        { keys: "s", label: "Start" },
+        { keys: "c", label: "Mark done" },
+        { keys: "x", label: "Won't do" },
+        { keys: "d", label: "Defer" },
+        { keys: "/", label: "Filter by kind" },
+        { keys: "Esc", label: "Close the task panel" },
+      ],
+    },
+    {
+      title: "Graph",
+      rows: [
+        { keys: "↑ / ↓", label: "Move through the outline" },
+        { keys: "Home / End", label: "First or last row" },
+        { keys: "← / →", label: "Collapse, or expand and move in" },
+        { keys: "Enter", label: "Select the row's node" },
+        { keys: "w", label: "Walk from here" },
+        { keys: "p", label: "Find a path from the seed to here" },
+        { keys: "e", label: "Expand in place" },
+        { keys: "r", label: "Select the edge that reached the row" },
+        { keys: "x", label: "Pin or unpin" },
+      ],
+    },
+  ];
+}
 
 export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [singleKeys, setSingleKeys] = useState(singleKeyShortcutsOn);
   const describedBy = useId();
   return (
-    <Modal open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts" className="max-w-[520px] w-full">
+    <Modal open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts" className="max-w-[560px] w-full">
       <div className="mb-4 space-y-1">
         <Switch
           checked={singleKeys}
@@ -66,8 +103,8 @@ export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         />
         <p id={describedBy} className="text-xs text-text-muted">
           Every one-key shortcut: ?, /, g then a letter, j and k; the Tasks keys (a, s, c, x, d); the memory drawer's e,
-          d and p; and the graph outline's letters. Turn them off if speech input or a stray key sets them off; ⌘K,
-          Escape and the arrows stay on.
+          d and p; and the graph outline's letters. Turn them off if speech input or a stray key sets them off;{" "}
+          {paletteShortcut()}, Escape and the arrows stay on.
         </p>
       </div>
       <section
@@ -76,28 +113,40 @@ export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region must take focus so a keyboard user can scroll it (WCAG 2.1.1)
         tabIndex={0}
       >
-        <Section title="Global" rows={GLOBAL} />
-        <Section title="Universal search" rows={SEARCH} />
-        <Section title="Navigation" rows={GOTO} />
-        <Section title="Lists" rows={LIST} />
-        <Section title="Inspector" rows={INSPECTOR} />
+        {groups().map((g) => (
+          <ShortcutGroup key={g.title} group={g} />
+        ))}
       </section>
     </Modal>
   );
 }
 
-function Section({ title, rows }: { title: string; rows: Shortcut[] }) {
+function ShortcutGroup({ group }: { group: Group }) {
   return (
     <div>
-      <h3 className="section-label mb-2">{title}</h3>
-      <div className="space-y-1">
-        {rows.map((r) => (
-          <div key={r.key} className="flex items-center justify-between text-sm">
-            <span className="text-text">{r.label}</span>
-            <Kbd>{r.key}</Kbd>
-          </div>
+      <h3 className="section-label mb-2">{group.title}</h3>
+      <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-1.5 items-center">
+        {group.rows.map((r) => (
+          <Fragment key={`${r.keys}-${r.label}`}>
+            <dt className="flex flex-wrap items-center gap-1">
+              <Keys keys={r.keys} />
+            </dt>
+            <dd className="text-sm text-text">{r.label}</dd>
+          </Fragment>
         ))}
-      </div>
+      </dl>
     </div>
   );
+}
+
+/** One cap per key: "g m" is g then m, "Ctrl K" is Ctrl with K; " / " separates alternatives. */
+function Keys({ keys }: { keys: string }) {
+  return keys.split(" / ").map((alt, i) => (
+    <Fragment key={alt}>
+      {i > 0 && <span className="text-xs text-text-muted">or</span>}
+      {alt.split(" ").map((k) => (
+        <Kbd key={k}>{k}</Kbd>
+      ))}
+    </Fragment>
+  ));
 }

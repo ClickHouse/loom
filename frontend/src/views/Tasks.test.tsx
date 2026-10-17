@@ -460,6 +460,25 @@ describe("Tasks page", () => {
     await waitFor(() => expect(acceptTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent"));
   });
 
+  // The keys live in the help dialog and in each action's tooltip, not in a strip under the
+  // lanes; a lane's name is its state badge.
+  it("names the keys in the action tooltips and the help dialog, with no key strip", async () => {
+    seed(admin, [row("admin")]);
+    useStore.setState({ helpOpen: false });
+    const user = userEvent.setup();
+    const { container } = render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    expect(container.querySelector("kbd")).toBeNull();
+    const accept = screen.getByRole("button", { name: "Accept Task urgent" });
+    expect(accept).toHaveAttribute("aria-keyshortcuts", "a");
+    await user.hover(accept);
+    expect((await screen.findAllByText("Accept · A")).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+    expect(useStore.getState().helpOpen).toBe(true);
+    const triage = within(screen.getByRole("rowgroup", { name: /^Triage/ })).getByRole("button", { name: /^Triage/ });
+    expect(triage.querySelector("[class*='badge']")).not.toBeNull();
+  });
+
   it("the grid is one tab stop: arrows move between headers and rows, Home / End jump, Left / Right walk a row", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();

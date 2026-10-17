@@ -100,7 +100,8 @@ export function TaskInboxBell() {
             tooltip={tip}
           />
         </PopoverTrigger>
-        {total > 0 && <CountBadge count={total} state="warning" />}
+        {/* Neutral: triage items and blocks on a person wait, they have not failed. */}
+        {total > 0 && <CountBadge count={total} />}
       </span>
       <Popover.Content
         align="end"
@@ -151,8 +152,8 @@ export function TaskInboxBell() {
                   .join(" · ")}
               </div>
             </div>
-            <span className="text-xs text-text-muted mt-1 shrink-0">
-              Open <span aria-hidden="true">→</span>
+            <span className="text-xs text-text-muted mt-1 shrink-0 inline-flex items-center gap-1">
+              Open <Icon name="arrow-right" size="xs" aria-hidden="true" />
             </span>
           </button>
         ))}

@@ -16,6 +16,7 @@ import {
   type WalkModel,
   type XNode,
 } from "./model";
+import { DirectionIcon } from "./Direction";
 import type { ExpandNotice } from "./notices";
 
 /**
@@ -478,9 +479,14 @@ export function Inspector({
   const isCollapsed = collapsed.has(n.entity);
   const firstHit = hits && hits.length ? hits[0] : null;
   const reachedBy =
-    typed && n.via_relation
-      ? `${n.via_direction === "in" ? "← " : "→ "}${relationLabel(n.via_relation)} with ${n.parent}`
-      : `co-mentioned ${n.via_co_occur}× with ${n.parent}`;
+    typed && n.via_relation ? (
+      <>
+        <DirectionIcon direction={n.via_direction} />
+        {relationLabel(n.via_relation)} with {n.parent}
+      </>
+    ) : (
+      `co-mentioned ${n.via_co_occur}× with ${n.parent}`
+    );
   return (
     <Panel
       as="aside"
