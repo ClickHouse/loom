@@ -18,20 +18,10 @@
  * header's Join on an open branch is the one direct verb.
  */
 import { useId, useState, type ReactNode } from "react";
-import {
-  AlertTriangle,
-  Check,
-  ChevronRight,
-  Clock,
-  Database,
-  FileText,
-  GitBranch,
-  Hourglass,
-  Lock,
-  Plus,
-  UserPlus,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Select } from "@clickhouse/click-ui/Select";
 import type { CodeRepoSummary } from "../api";
 import { absoluteTime, fmtInt, relativeTime } from "../lib/format";
 import { stageLabel } from "../lib/codeStage";
@@ -44,7 +34,7 @@ import {
   type TrackerNamespaceState,
   type TrackerSource,
 } from "../lib/trackerSources";
-import { Chip, MetaList, MetaRow, Panel, Tip } from "../components/ui";
+import { Chip, MetaList, MetaRow, Panel, Tip, TipTarget } from "../components/ui";
 import {
   branchState,
   canBeApproved,
@@ -72,31 +62,29 @@ import { oneOf } from "../lib/oneOf";
 export const RESTRICTED_SENTENCE =
   "Restricted repository. Request access asks its maintainers; you read nothing until one approves. One approval covers you as a person: every token minted for you, and the service accounts you create, read it without naming it.";
 
-const TONE: Record<FreshTone, string> = {
-  ok: "border-success/40 text-success",
-  warn: "border-warn/40 text-warn",
-  bad: "border-danger/40 text-danger",
-  muted: "text-text-subtle",
+export const FRESH_STATE: Record<FreshTone, BadgeState> = {
+  ok: "success",
+  warn: "warning",
+  bad: "danger",
+  muted: "neutral",
 };
 
-export const BTN =
-  "inline-flex items-center justify-center gap-1.5 min-h-9 px-3.5 text-sm font-medium rounded-md border disabled:opacity-50 pointer-coarse:min-h-11";
-export const BTN_TONE = {
-  primary: "bg-accent text-on-accent border-accent hover:bg-accent-strong",
-  default: "bg-surface text-text border-border-strong hover:bg-surface-2",
-  quiet: "bg-transparent text-text-muted border-border hover:bg-surface-2 hover:text-text",
-} as const;
-/** A small text verb: 36 px tall on a fine pointer, 44 × 44 under a coarse one. */
-const LINK =
-  "inline-flex items-center gap-1 min-h-9 px-1 rounded text-xs text-text-muted hover:text-text hover:underline disabled:opacity-50 disabled:hover:no-underline pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-2";
-const LINK_DANGER = `${LINK} hover:text-danger`;
+/** A status badge whose tooltip carries the detail; the wrapper takes focus so keyboard
+ *  users reach the tip. */
+function TipBadge({ text, state, tip }: { text: string; state: BadgeState; tip: string }) {
+  return (
+    <TipTarget tip={tip}>
+      <Badge text={text} state={state} size="sm" />
+    </TipTarget>
+  );
+}
 
-const VERB_ICON: Record<Verb, LucideIcon> = {
-  Open: ChevronRight,
-  Join: UserPlus,
-  "Request access": Lock,
-  "Withdraw request": Clock,
-  Leave: ChevronRight,
+const VERB_ICON: Record<Verb, IconName> = {
+  Open: "chevron-right",
+  Join: "users",
+  "Request access": "lock",
+  "Withdraw request": "clock",
+  Leave: "chevron-right",
 };
 
 // ---------------------------------------------------------------------------
@@ -105,13 +93,13 @@ const VERB_ICON: Record<Verb, LucideIcon> = {
 // the name, the verb in the tooltip and the accessible name.
 // ---------------------------------------------------------------------------
 
-const STATE_META: Record<TrackerNamespaceState, { word: string; icon: LucideIcon }> = {
-  member: { word: "reading", icon: Check },
-  pending: { word: "requested", icon: Clock },
-  open: { word: "", icon: Plus },
-  approval: { word: "", icon: Lock },
-  closed: { word: "closed", icon: Lock },
-  registering: { word: "registering…", icon: Hourglass },
+const STATE_META: Record<TrackerNamespaceState, { word: string; icon: IconName }> = {
+  member: { word: "reading", icon: "check" },
+  pending: { word: "requested", icon: "clock" },
+  open: { word: "", icon: "plus" },
+  approval: { word: "", icon: "lock" },
+  closed: { word: "closed", icon: "lock" },
+  registering: { word: "registering…", icon: "sand-glass" },
 };
 
 const HINT: Record<TrackerNamespaceState, string> = {
@@ -149,21 +137,20 @@ function StandingChip({
   extraTip?: string;
 }) {
   const meta = STATE_META[st];
-  const Icon = meta.icon;
   const label = meta.word ? `${name} · ${meta.word}` : name;
   const tip = disabledReason ?? `${HINT[st]}${extraTip ? ` · ${extraTip}` : ""}`;
   return (
     <Chip
       label={label}
       mono={mono}
-      icon={<Icon size={11} />}
+      icon={<Icon name={meta.icon} size="xs" aria-hidden="true" />}
       selected={st === "member"}
       onClick={onClick}
       disabled={disabled || !onClick}
       ariaLabel={`${name}: ${disabledReason ? disabledReason : standingWord(st)}`}
       tip={tip}
       className={
-        st === "pending" ? "border-warn/40 text-warn" : st === "closed" || st === "registering" ? "opacity-70" : ""
+        st === "pending" ? "border-warn/40 text-warn" : st === "closed" || st === "registering" ? "text-text-muted" : ""
       }
     />
   );
@@ -241,15 +228,16 @@ function RecordChip({
 // Facet rows
 // ---------------------------------------------------------------------------
 
-function FacetRow({ icon: Icon, label, children }: { icon: LucideIcon; label: string; children: ReactNode }) {
+function FacetRow({ icon, label, children }: { icon: IconName; label: string; children: ReactNode }) {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls
     <div
       className="grid grid-cols-1 gap-x-4 gap-y-1 border-t border-border pt-3 sm:grid-cols-[6.5rem_minmax(0,1fr)]"
       role="group"
       aria-label={label}
     >
       <div className="section-label inline-flex items-center gap-1.5 text-text-muted">
-        <Icon size={12} aria-hidden="true" /> {label}
+        <Icon name={icon} size="xs" aria-hidden="true" /> {label}
       </div>
       <div className="min-w-0">{children}</div>
     </div>
@@ -320,8 +308,8 @@ function CodeFacetRow({
   const anyBusy = busy !== null;
   const openable = c.joinable.filter((b) => branchState(b) === "open").length;
   return (
-    <FacetRow icon={GitBranch} label="Code">
-      <p className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+    <FacetRow icon="git-merge" label="Code">
+      <div className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
         <span>
           {c.branches.length} branch{c.branches.length === 1 ? "" : "es"}
         </span>
@@ -331,9 +319,9 @@ function CodeFacetRow({
           </span>
         ) : null}
         {head.indexed_at && <span>· indexed {relativeTime(head.indexed_at.replace(" ", "T") + "Z")}</span>}
-        {f && <Chip label={f.label} tip={f.detail} className={TONE[f.tone]} />}
-        {building && <Chip label={building.label} tip={building.title} className={TONE[building.tone]} />}
-      </p>
+        {f && <TipBadge text={f.label} state={FRESH_STATE[f.tone]} tip={f.detail} />}
+        {building && <TipBadge text={building.label} state={FRESH_STATE[building.tone]} tip={building.title} />}
+      </div>
       <ul className="mt-2 flex flex-wrap items-center gap-2 list-none p-0 m-0" aria-label={`${c.repo} branches`}>
         {shown.map((b) => (
           <li key={b.namespace} className="inline-flex max-w-full">
@@ -349,9 +337,9 @@ function CodeFacetRow({
       </ul>
       <Verbs>
         {(hidden > 0 || expanded) && (
-          <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded} className={LINK}>
+          <Button type="empty" htmlType="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
             {expanded ? "Show fewer" : `Show ${hidden} more`}
-          </button>
+          </Button>
         )}
         {c.joinable.length > 1 && (
           <Tip
@@ -361,50 +349,51 @@ function CodeFacetRow({
                 : "Open branches join instantly; restricted ones go to a maintainer"
             }
           >
-            <button type="button" onClick={() => actions.onJoinAll(c.branches)} disabled={anyBusy} className={LINK}>
+            <Button type="empty" htmlType="button" onClick={() => actions.onJoinAll(c.branches)} disabled={anyBusy}>
               {openable === 0 ? "Request access to" : "Join"} all {c.joinable.length} branches
-            </button>
+            </Button>
           </Tip>
         )}
         {c.maintained && actions.onAddBranch && (
           <Tip content="Index another branch of this repository. It shares the mirror; you maintain it.">
-            <button type="button" onClick={() => actions.onAddBranch?.(c)} disabled={anyBusy} className={LINK}>
-              <GitBranch size={11} aria-hidden="true" /> Add branch
-            </button>
+            <Button
+              type="empty"
+              htmlType="button"
+              iconLeft="git-merge"
+              onClick={() => actions.onAddBranch?.(c)}
+              disabled={anyBusy}
+            >
+              Add branch
+            </Button>
           </Tip>
         )}
         {leaveInline && c.joined.length === 1 && (
-          <button type="button" onClick={() => actions.onLeave(c.joined[0])} disabled={anyBusy} className={LINK_DANGER}>
+          <Button type="empty" htmlType="button" onClick={() => actions.onLeave(c.joined[0])} disabled={anyBusy}>
             Leave · {c.joined[0].branch}
-          </button>
+          </Button>
         )}
         {c.joined.length > 1 && (
-          <button
-            type="button"
-            onClick={() => actions.onLeaveAll(c.branches)}
-            disabled={anyBusy}
-            className={LINK_DANGER}
-          >
+          <Button type="empty" htmlType="button" onClick={() => actions.onLeaveAll(c.branches)} disabled={anyBusy}>
             Leave all {c.joined.length} branches
-          </button>
+          </Button>
         )}
         {c.branches.length > 1 && (
           <Tip content="Pick exactly which branches you read">
-            <button type="button" onClick={() => actions.onManage(c)} disabled={anyBusy} className={LINK}>
+            <Button type="empty" htmlType="button" onClick={() => actions.onManage(c)} disabled={anyBusy}>
               Choose branches…
-            </button>
+            </Button>
           </Tip>
         )}
         {!c.maintained && c.pendingCount === 0 && branchState(c.primary) !== "closed" && (
           <Tip content="Maintainers approve readers and set how people join. A current maintainer decides.">
-            <button
-              type="button"
+            <Button
+              type="empty"
+              htmlType="button"
               onClick={() => actions.onRequest(c.primary, "admin")}
               disabled={anyBusy}
-              className={LINK}
             >
               Request maintainer access
-            </button>
+            </Button>
           </Tip>
         )}
       </Verbs>
@@ -427,8 +416,8 @@ function RecordFacetRow({
   const f = r.freshness;
   const unapprovable = r.namespaces.some((n) => n.state === "approval" && canBeApproved(n.ns) === false);
   return (
-    <FacetRow icon={Database} label="Tracker">
-      <p className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+    <FacetRow icon="database" label="Tracker">
+      <div className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
         {f ? (
           <>
             {r.sources.length > 0 && <span className="text-text">{r.sources.map((x) => x.name).join(", ")}</span>}
@@ -437,23 +426,21 @@ function RecordFacetRow({
               {fmtInt(f.issues)} issues · {fmtInt(f.prs)} PRs
             </span>
             {f.last_refresh_at && (
-              <Tip content={`Last refresh ${absoluteTime(f.last_refresh_at)}`}>
-                <span tabIndex={0} className="underline decoration-dotted rounded outline-none">
-                  · refreshed {relativeTime(f.last_refresh_at)}
-                </span>
-              </Tip>
+              <TipTarget tip={`Last refresh ${absoluteTime(f.last_refresh_at)}`} underline>
+                · refreshed {relativeTime(f.last_refresh_at)}
+              </TipTarget>
             )}
           </>
         ) : r.unconfigured ? (
-          <Chip
-            label="no credential"
+          <TipBadge
+            text="no credential"
+            state="neutral"
             tip="The tracker is declared but has no credential yet — nothing can be read from it until one is added."
-            className={TONE.muted}
           />
         ) : (
           <span>read live · counts not available right now</span>
         )}
-      </p>
+      </div>
       <ul className="mt-2 flex flex-wrap items-center gap-2 list-none p-0 m-0" aria-label="tracker scopes">
         {r.namespaces.map((n) => (
           <li key={n.ns.namespace} className="inline-flex max-w-full">
@@ -474,15 +461,15 @@ function RecordFacetRow({
       {(leaveInline || r.joined.length > 1) && r.joined.length > 0 && (
         <Verbs>
           {r.joined.map((n) => (
-            <button
+            <Button
               key={n.ns.namespace}
-              type="button"
+              type="empty"
+              htmlType="button"
               onClick={() => actions.onLeave(n)}
               disabled={anyBusy}
-              className={LINK_DANGER}
             >
               Leave · {r.joined.length > 1 ? n.label : RECORD_NOUN}
-            </button>
+            </Button>
           ))}
         </Verbs>
       )}
@@ -498,10 +485,12 @@ function Details({ card, adminOpsPresent }: { card: CardModel; adminOpsPresent: 
   return (
     <details className="group mt-3 border-t border-border pt-2">
       <summary className="inline-flex items-center gap-1 min-h-9 px-1 -mx-1 rounded text-xs text-text-muted hover:text-text cursor-pointer list-none pointer-coarse:min-h-11 pointer-coarse:min-w-11">
-        <ChevronRight size={12} aria-hidden="true" className="transition-transform group-open:rotate-90" /> Details
+        <Icon name="chevron-right" size="xs" aria-hidden="true" className="transition-transform group-open:rotate-90" />{" "}
+        Details
       </summary>
       <div className="mt-2 space-y-3">
         {card.code && (
+          // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls
           <div role="group" aria-label="Code details">
             <MetaList>
               {card.code.branches.map((b) => (
@@ -593,9 +582,8 @@ export function RepositoryCard({
     if (sole.branch) code.onLeave(sole.branch);
     else if (sole.record) record.onLeave(sole.record);
   };
-  const PrimaryIcon = primary ? VERB_ICON[primary.verb] : null;
-  const tone: keyof typeof BTN_TONE =
-    primary?.verb === "Open" ? "default" : primary?.verb === "Withdraw request" ? "quiet" : "primary";
+  // Join and Request access are the card's call to action; Open and Withdraw are not.
+  const primaryType = primary?.verb === "Open" || primary?.verb === "Withdraw request" ? "secondary" : "primary";
 
   return (
     <Panel as="section" aria-label={card.repo} className={open ? "p-pane sm:p-4" : "px-2 py-1.5 sm:px-3 sm:py-2"}>
@@ -604,9 +592,7 @@ export function RepositoryCard({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             {/* The disclosure: the heading is the button, so the row opens from its
                 name (WAI-ARIA disclosure pattern); the chevron says which way. */}
-            {/* `text-base!`: styles.css sizes every h2 by tag (22 px), outside Tailwind's
-                layers, so only an important utility brings a row's title down to 15 px. */}
-            <h2 className="text-md! leading-[22px]! font-semibold tracking-tight min-w-0 max-w-full">
+            <h2 className="min-w-0 max-w-full">
               <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}
@@ -614,26 +600,27 @@ export function RepositoryCard({
                 aria-controls={open ? bodyId : undefined}
                 className="inline-flex items-start gap-1.5 min-h-9 -ml-1 pl-1 pr-2 py-1.5 rounded text-left hover:bg-surface-2 pointer-coarse:min-h-11"
               >
-                <ChevronRight
-                  size={14}
+                <Icon
+                  name={open ? "chevron-down" : "chevron-right"}
+                  size="sm"
                   aria-hidden="true"
-                  className={`mt-[5px] shrink-0 text-text-muted transition-transform ${open ? "rotate-90" : ""}`}
+                  className="mt-1 shrink-0"
                 />
                 <span className="break-words">{card.repo}</span>
               </button>
             </h2>
             {/* A static pill, not a target: the page intro says what open and
                 restricted mean, so it carries no tooltip and no 44 px box. */}
-            <span
-              className={`inline-flex items-center min-h-6 px-2 rounded-full border text-2xs leading-none ${card.restricted ? TONE.warn : TONE.ok}`}
-            >
-              {card.restricted ? "restricted" : "open"}
-            </span>
+            <Badge
+              text={card.restricted ? "restricted" : "open"}
+              state={card.restricted ? "warning" : "success"}
+              size="sm"
+            />
             {card.restricted && open && (
               // Membership reads it; a client token reads it only when added at mint
-              // (Setup → For my own tools).
-              <span className="text-2xs text-text-muted" data-testid="repo-client-tokens-note">
-                your client tokens: only when added at Setup
+              // (Settings → For my own tools).
+              <span className="text-xs text-text-muted" data-testid="repo-client-tokens-note">
+                your client tokens: only when added in Settings
               </span>
             )}
           </div>
@@ -649,19 +636,18 @@ export function RepositoryCard({
             </p>
           )}
         </div>
-        {primary && PrimaryIcon && (
+        {primary && (
           <div className="flex flex-wrap items-center gap-2 pl-6 sm:pl-0 sm:shrink-0">
-            <button
-              type="button"
+            <Button
+              type={primaryType}
+              htmlType="button"
+              iconLeft={VERB_ICON[primary.verb]}
               onClick={() => fire(primary)}
               disabled={anyBusy}
-              className={`${BTN} ${BTN_TONE[tone]} w-full sm:w-auto`}
+              className="w-full sm:w-auto"
             >
-              <PrimaryIcon size={13} aria-hidden="true" /> {primary.verb}{" "}
-              <span className={tone === "primary" ? "opacity-80 font-normal" : "text-text-muted font-normal"}>
-                · {primary.qualifier}
-              </span>
-            </button>
+              {primary.verb} · {primary.qualifier}
+            </Button>
           </div>
         )}
       </div>
@@ -671,9 +657,9 @@ export function RepositoryCard({
           {(sole || outOfScope) && (
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-6">
               {sole && (
-                <button type="button" onClick={leaveSole} disabled={anyBusy} className={LINK_DANGER}>
+                <Button type="empty" htmlType="button" onClick={leaveSole} disabled={anyBusy}>
                   Leave · {sole.qualifier}
-                </button>
+                </Button>
               )}
               {outOfScope && <p className="text-xs text-text-muted">{OUT_OF_SCOPE_MAINTAINER}</p>}
             </div>
@@ -693,7 +679,7 @@ export function RepositoryCard({
             )}
             {docs && (
               // The documents agents read before changing this code
-              <FacetRow icon={FileText} label="Docs">
+              <FacetRow icon="document" label="Docs">
                 <RepoDocsList
                   org={docs.org}
                   docsNamespace={docs.namespace}
@@ -727,7 +713,6 @@ export function RepositoryCard({
 // through one op, audited.
 // ---------------------------------------------------------------------------
 
-const FIELD = "min-h-9 rounded-md border border-border-strong bg-surface px-2 text-sm text-text";
 type RepoClass = "standard" | "restricted";
 type JoinPolicy = "open" | "approval" | "closed";
 const CLASSES: ReadonlyArray<{ value: RepoClass; label: string }> = [
@@ -768,20 +753,18 @@ function RepoAccessPanel({
       aria-label={`Maintain ${card.repo}`}
       className="rounded-lg border border-border bg-surface-2/40 p-3 space-y-3"
     >
-      <div className="text-xs font-medium uppercase tracking-wide text-text-muted">Maintain · access and tracker</div>
+      <div className="text-xs font-medium text-text-muted">Maintain · access and tracker</div>
       {actions.onSetAccess && (
         <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-xs text-text-muted">
-            Access
-            <select
-              className={FIELD}
+          <div className="w-full sm:w-72">
+            <Select
+              label="Access"
               value={cls}
-              aria-label="Classification"
               disabled={busy}
-              onChange={(e) => {
+              onSelect={(value) => {
                 const v = oneOf(
                   CLASSES.map((o) => o.value),
-                  e.target.value,
+                  value,
                 );
                 if (v === null) return;
                 setCls(v);
@@ -789,42 +772,40 @@ function RepoAccessPanel({
               }}
             >
               {CLASSES.map((o) => (
-                <option key={o.value} value={o.value}>
+                <Select.Item key={o.value} value={o.value}>
                   {o.label}
-                </option>
+                </Select.Item>
               ))}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-text-muted">
-            Join policy
-            <select
-              className={FIELD}
+            </Select>
+          </div>
+          <div className="w-full sm:w-72">
+            <Select
+              label="Join policy"
               value={policy}
-              aria-label="Join policy"
               disabled={busy}
-              onChange={(e) => {
+              onSelect={(value) => {
                 const v = oneOf(
                   POLICIES.map((o) => o.value),
-                  e.target.value,
+                  value,
                 );
                 if (v !== null) setPolicy(v);
               }}
             >
               {POLICIES.map((o) => (
-                <option key={o.value} value={o.value} disabled={o.value === "open" && cls === "restricted"}>
+                <Select.Item key={o.value} value={o.value} disabled={o.value === "open" && cls === "restricted"}>
                   {o.label}
-                </option>
+                </Select.Item>
               ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            className={`${BTN} ${BTN_TONE[openingRestricted ? "primary" : "default"]}`}
+            </Select>
+          </div>
+          <Button
+            type={openingRestricted ? "primary" : "secondary"}
+            htmlType="button"
             disabled={busy || !accessDirty || restrictedOpen}
             onClick={() => actions.onSetAccess?.(facet, cls, policy, openingRestricted)}
           >
             {openingRestricted ? `Open ${card.repo}` : "Save access"}
-          </button>
+          </Button>
           {openingRestricted && (
             <span className="text-xs text-warn">
               Opening a restricted index: you will be asked to type the namespace.
@@ -870,6 +851,7 @@ function TrackerLinkRow({
   const primaryLabel = records.find((r) => r.namespace === linked[0])?.label ?? linked[0];
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls and their link actions
     <div className="space-y-2 border-t border-border pt-3" role="group" aria-label="Tracker link">
       <div className="text-xs text-text-muted font-medium">{many ? `Trackers · ${linked.length}` : "Tracker"}</div>
       {linked.length === 0 ? (
@@ -903,9 +885,9 @@ function TrackerLinkRow({
       {!editing ? (
         <div className="flex flex-wrap items-center gap-2">
           {unlinked.length > 0 && (
-            <button
-              type="button"
-              className={`${BTN} ${BTN_TONE.default}`}
+            <Button
+              type="secondary"
+              htmlType="button"
               disabled={busy}
               onClick={() => {
                 setPick(covering[0]?.namespace ?? "");
@@ -913,52 +895,57 @@ function TrackerLinkRow({
               }}
             >
               {linked.length ? "Link another tracker" : "Link a tracker"}
-            </button>
+            </Button>
           )}
           {actions.onRegisterSource && (
-            <button
-              type="button"
-              className={`${BTN} ${BTN_TONE.default}`}
+            <Button
+              type="secondary"
+              htmlType="button"
+              iconLeft="plus"
               disabled={busy}
               onClick={() => actions.onRegisterSource?.(facet)}
             >
-              <Plus size={13} aria-hidden="true" /> Add a tracker…
-            </button>
+              Add a tracker…
+            </Button>
           )}
         </div>
       ) : (
         <div className="space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              className={`${FIELD} w-full sm:w-auto sm:min-w-64`}
-              value={pick}
-              aria-label="Tracker"
-              disabled={busy}
-              onChange={(e) => setPick(e.target.value)}
-            >
-              <option value="">Choose a tracker…</option>
-              {covering.length > 0 && (
-                <optgroup label={`Trackers listing ${card.repo}`}>
-                  {covering.map((r) => (
-                    <option key={r.namespace} value={r.namespace}>
-                      {r.label}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {others.length > 0 && (
-                <optgroup label={`Other trackers — they answer nothing for ${card.repo}`}>
-                  {others.map((r) => (
-                    <option key={r.namespace} value={r.namespace}>
-                      {r.label}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-            <button
-              type="button"
-              className={`${BTN} ${BTN_TONE.primary}`}
+            <div className="w-full sm:w-auto sm:min-w-64">
+              <Select
+                value={pick || undefined}
+                placeholder="Choose a tracker…"
+                triggerProps={{ "aria-label": "Tracker" }}
+                disabled={busy}
+                onSelect={(value) => setPick(value)}
+              >
+                {covering.length > 0 && (
+                  <Select.Group heading={`Trackers listing ${card.repo}`}>
+                    {covering.map((r) => (
+                      <Select.Item key={r.namespace} value={r.namespace}>
+                        {r.label}
+                      </Select.Item>
+                    ))}
+                  </Select.Group>
+                )}
+                {others.length > 0 && (
+                  <Select.Group heading={`Other trackers — they answer nothing for ${card.repo}`}>
+                    {others.map((r) => (
+                      <Select.Item key={r.namespace} value={r.namespace}>
+                        {r.label}
+                      </Select.Item>
+                    ))}
+                  </Select.Group>
+                )}
+              </Select>
+            </div>
+            <Button type="secondary" htmlType="button" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="primary"
+              htmlType="button"
               disabled={busy || !pick}
               onClick={() => {
                 set([...linked, pick]);
@@ -966,10 +953,7 @@ function TrackerLinkRow({
               }}
             >
               Link
-            </button>
-            <button type="button" className={`${BTN} ${BTN_TONE.default}`} onClick={() => setEditing(false)}>
-              Cancel
-            </button>
+            </Button>
           </div>
           {picked && !picked.covers && (
             <p className="text-xs text-warn">
@@ -1048,36 +1032,30 @@ function LinkedTracker({
   const name = known?.label ?? ns;
   return (
     <li className="flex flex-col sm:flex-row sm:items-start gap-x-2 gap-y-1">
-      <p className={`text-sm ${warn ? "text-warn" : "text-text-muted"} flex items-start gap-1.5 min-w-0 sm:flex-1`}>
+      <div className={`text-sm ${warn ? "text-warn" : "text-text-muted"} flex items-start gap-1.5 min-w-0 sm:flex-1`}>
         {warn ? (
-          <AlertTriangle size={14} aria-hidden="true" className="shrink-0 mt-0.5" />
+          <Icon name="warning" size="sm" color="var(--color-warn)" aria-hidden="true" className="shrink-0 mt-0.5" />
         ) : (
-          <Check size={14} aria-hidden="true" className="shrink-0 mt-0.5 text-success" />
+          <Icon name="check" size="sm" color="var(--color-success)" aria-hidden="true" className="shrink-0 mt-0.5" />
         )}
         <span className="min-w-0">{line}</span>
-        {many && primary && <span className="text-2xs rounded border border-border px-1 shrink-0 mt-0.5">primary</span>}
-      </p>
+        {many && primary && <Badge text="primary" state="neutral" size="sm" className="shrink-0" />}
+      </div>
       <span className="flex items-center gap-1.5 pl-5 sm:pl-0 sm:shrink-0">
         {many && !primary && (
-          <button
-            type="button"
-            className={`${BTN} ${BTN_TONE.default}`}
+          <Button
+            type="secondary"
+            htmlType="button"
             disabled={busy}
             aria-label={`Make ${name} primary`}
             onClick={onPrimary}
           >
             Make primary
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
-          className={`${BTN} ${BTN_TONE.default}`}
-          disabled={busy}
-          aria-label={`Unlink ${name}`}
-          onClick={onUnlink}
-        >
+        <Button type="secondary" htmlType="button" disabled={busy} aria-label={`Unlink ${name}`} onClick={onUnlink}>
           Unlink
-        </button>
+        </Button>
       </span>
     </li>
   );

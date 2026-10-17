@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Copy, ExternalLink, Footprints, GitBranch, Lock, Search, X } from "lucide-react";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import type { TrackerItem, TrackerSection } from "../../../api";
 import { IconButton } from "../../../components/IconButton";
-import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../../components/ui";
+import { Chip, ExternalLink, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../../components/ui";
 import { shorten } from "../model";
 import { areaClass, type AreaClass, type Cell, type DuplicateRow, type Issue } from "./model";
 
@@ -115,7 +115,7 @@ function AreaClassList({
         caption={caption}
         hint={`${hint} Answered by ${trackerNamespace}${a.capped ? `; the read stops at ${a.docs.length} rows, most severe then newest first` : ""}.`}
       />
-      {a.status === "empty" && <p className="text-xs text-text-subtle">None in the last {a.days} days.</p>}
+      {a.status === "empty" && <p className="text-xs text-text-muted">None in the last {a.days} days.</p>}
       {a.status === "tracker_unavailable" && (
         <p className="text-xs text-warn">The tracker source could not be read; nothing here is a claim.</p>
       )}
@@ -126,23 +126,19 @@ function AreaClassList({
               <Tip content={`${d.source_id} — ${d.title}${d.detail ? ` — ${d.detail}` : ""}`}>
                 <div className="text-xs rounded-md border border-border bg-surface px-2 py-1.5 min-h-7">
                   <div className="flex items-center gap-1.5">
-                    <Lock size={11} aria-hidden="true" className="shrink-0 text-text-subtle" />
+                    <Icon
+                      name="lock"
+                      size="xs"
+                      className="shrink-0"
+                      color="var(--color-text-muted)"
+                      aria-hidden="true"
+                    />
                     <span className="font-mono shrink-0 text-text-muted">{d.ref}</span>
                     <TextClamp text={d.title} lines={1} max={160} reach="parent" className="flex-1 min-w-0" />
                     <span className={`shrink-0 ${sevTone(d.severity)}`}>{d.severity}</span>
-                    {d.url && (
-                      <a
-                        href={d.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label={`Open ${d.ref}`}
-                        className="shrink-0 text-text-muted hover:text-text"
-                      >
-                        <ExternalLink size={12} aria-hidden="true" />
-                      </a>
-                    )}
+                    {d.url && <ExternalLink href={d.url} label={`Open ${d.ref}`} />}
                   </div>
-                  <div className="mt-0.5 pl-4 text-2xs text-text-subtle truncate tabular-nums">
+                  <div className="mt-0.5 pl-4 text-xs text-text-muted truncate tabular-nums">
                     {d.open ? "open" : "closed"}
                     {d.opened_at ? ` · opened ${d.opened_at.slice(0, 10)}` : ""}
                     {d.detail ? ` · ${d.detail}` : ""}
@@ -164,7 +160,7 @@ function Flags({ i }: { i: Issue }) {
     i.bisected ? `bisected${i.bisect_outcome ? `: ${i.bisect_outcome}` : ""}` : null,
   ].filter((x): x is string => typeof x === "string");
   if (!f.length) return null;
-  return <span className="text-2xs text-text-subtle shrink-0">{f.join(" · ")}</span>;
+  return <span className="text-xs text-text-muted shrink-0">{f.join(" · ")}</span>;
 }
 
 export function PatternsInspector(p: PatternsInspectorProps) {
@@ -178,14 +174,13 @@ export function PatternsInspector(p: PatternsInspectorProps) {
       })
       .catch(() => undefined);
   };
-  const actionCls = "text-text-muted hover:text-text hover:bg-surface";
   const restrictedLine = p.restricted.length > 0 && (
-    <p className="mt-2 text-2xs text-text-subtle inline-flex items-start gap-1">
-      <Lock size={11} aria-hidden="true" className="mt-0.5 shrink-0" />
+    <div className="mt-2 text-xs text-text-muted inline-flex items-start gap-1">
+      <Icon name="lock" size="xs" className="mt-0.5 shrink-0" aria-hidden="true" />
       <span>
         {p.restricted.map((t) => RESTRICTED_WORDS[t] ?? t).join(", ")}: restricted — not available with this token
       </span>
-    </p>
+    </div>
   );
 
   if (p.issue) {
@@ -209,9 +204,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                 <span className="font-mono">#{i.number}</span> {i.title}
               </div>
             </div>
-            <IconButton label="Back to the cell" onClick={() => p.onPickIssue(null)} className={actionCls}>
-              <X size={14} />
-            </IconButton>
+            <IconButton label="Back to the cell" onClick={() => p.onPickIssue(null)} icon="cross" size="sm" />
           </div>
         }
       >
@@ -219,7 +212,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           <MetaRow label="severity">
             <span className={sevTone(i.severity)}>{i.severity}</span>
           </MetaRow>
-          <MetaRow label="component">{i.component || <span className="text-text-subtle">none</span>}</MetaRow>
+          <MetaRow label="component">{i.component || <span className="text-text-muted">none</span>}</MetaRow>
           <MetaRow label="labels">
             {i.labels.length ? (
               <span className="flex flex-wrap gap-1">
@@ -228,11 +221,11 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                 ))}
               </span>
             ) : (
-              <span className="text-text-subtle">none</span>
+              <span className="text-text-muted">none</span>
             )}
           </MetaRow>
           <MetaRow label="flags">
-            <Flags i={i} /> {!i.untested && !i.flaky && !i.bisected && <span className="text-text-subtle">none</span>}
+            <Flags i={i} /> {!i.untested && !i.flaky && !i.bisected && <span className="text-text-muted">none</span>}
           </MetaRow>
           <MetaRow label="state">
             {i.state}
@@ -270,12 +263,12 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                         className="text-left underline decoration-dotted hover:text-text break-words"
                         onClick={() => p.onPickIssue(n)}
                       >
-                        {titled(n)} <span className="text-danger text-2xs">named by graph</span>
+                        {titled(n)} <span className="text-danger text-xs">named by graph</span>
                       </button>
                     ))}
                   </span>
                 ) : (
-                  <span className="text-text-subtle">no caused_by edge recorded</span>
+                  <span className="text-text-muted">no caused_by edge recorded</span>
                 )}
               </MetaRow>
               <MetaRow label="fixed by">
@@ -293,7 +286,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                     ))}
                   </span>
                 ) : (
-                  <span className="text-text-subtle">no fixes edge recorded</span>
+                  <span className="text-text-muted">no fixes edge recorded</span>
                 )}
               </MetaRow>
               {q.affected_versions?.length ? (
@@ -321,7 +314,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                       onClick={() => p.onPickIssue(d.number)}
                     >
                       #{d.number} {shorten(d.title, 48)}{" "}
-                      <span className="text-text-subtle text-2xs">
+                      <span className="text-text-muted text-xs">
                         {d.direction === "out" ? "this duplicates it" : "duplicates this"}
                       </span>
                     </button>
@@ -342,7 +335,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                       onClick={() => p.onPickIssue(d.number)}
                     >
                       #{d.number} {shorten(d.title, 48)}{" "}
-                      <span className="text-text-subtle text-2xs">related, not a duplicate</span>
+                      <span className="text-text-muted text-xs">related, not a duplicate</span>
                     </button>
                   ))}
               </span>
@@ -355,39 +348,28 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           )}
         </MetaList>
         <div className="mt-3 flex items-center gap-0.5 -mx-1 flex-wrap">
-          <IconButton label="Show in the tracker graph" onClick={p.onShowGraph} className={actionCls}>
-            <GitBranch size={14} />
-          </IconButton>
+          <IconButton label="Show in the tracker graph" onClick={p.onShowGraph} icon="git-merge" size="sm" />
           {p.isEntity(i.number) && (
             <IconButton
               label={`Walk from #${i.number} in the co-mention graph`}
               onClick={() => p.onWalk(String(i.number))}
-              className={actionCls}
-            >
-              <Footprints size={14} />
-            </IconButton>
+              icon="arrow-right"
+              size="sm"
+            />
           )}
-          <IconButton label={`Similar to #${i.number}`} onClick={() => p.onSimilar(i.title)} className={actionCls}>
-            <Search size={14} />
-          </IconButton>
+          <IconButton label={`Similar to #${i.number}`} onClick={() => p.onSimilar(i.title)} icon="search" size="sm" />
           {i.url && (
-            <a
-              href={i.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text px-1.5 min-h-7"
-            >
-              <ExternalLink size={13} aria-hidden="true" /> Open on GitHub
-            </a>
+            <ExternalLink href={i.url} size="sm" className="min-h-7">
+              Open on GitHub
+            </ExternalLink>
           )}
           <IconButton
             label="Copy the issue line"
             onClick={() => copy(`#${i.number} ${i.title}${p.item?.line ? ` ${p.item.line}` : ""}`)}
-            className={actionCls}
-          >
-            <Copy size={14} />
-          </IconButton>
-          {copied && <span className="text-2xs text-text-muted">copied</span>}
+            icon="copy"
+            size="sm"
+          />
+          {copied && <span className="text-xs text-text-muted">copied</span>}
         </div>
         {p.similarFor === i.title && (
           <div className="mt-3">
@@ -397,9 +379,9 @@ export function PatternsInspector(p: PatternsInspectorProps) {
               caption="by title"
               hint="similar_bugs: issues whose title or body carries the tokens of this issue's title, newest first; partial when only some tokens matched."
             />
-            {p.similarBusy && <p className="text-xs text-text-subtle">Searching…</p>}
+            {p.similarBusy && <p className="text-xs text-text-muted">Searching…</p>}
             {p.similar && p.similar.length === 0 && !p.similarBusy && (
-              <p className="text-xs text-text-subtle">No other issue carries these words.</p>
+              <p className="text-xs text-text-muted">No other issue carries these words.</p>
             )}
             {p.similar && p.similar.length > 0 && (
               <ul className="space-y-1">
@@ -412,20 +394,10 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                     >
                       <span className="flex-1 min-w-0 break-words">
                         <span className="font-mono">#{h.number}</span> {h.title}
-                        {h.partial ? <span className="text-text-subtle"> · partial</span> : ""}
+                        {h.partial ? <span className="text-text-muted"> · partial</span> : ""}
                       </span>
                       <span className={`shrink-0 ${sevTone(h.severity)}`}>{h.severity || "—"}</span>
-                      {h.url && (
-                        <a
-                          href={h.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={`Open #${h.number} on GitHub`}
-                          className="shrink-0 text-text-muted hover:text-text"
-                        >
-                          <ExternalLink size={12} aria-hidden="true" />
-                        </a>
-                      )}
+                      {h.url && <ExternalLink href={h.url} label={`Open #${h.number} on GitHub`} />}
                     </li>
                   ))}
               </ul>
@@ -470,7 +442,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
             empty
           </li>
         </ul>
-        <p className="mt-3 text-2xs text-text-subtle">
+        <p className="mt-3 text-xs text-text-muted">
           source: <span className="font-mono">{p.trackerNamespace}</span>
         </p>
       </Panel>
@@ -492,9 +464,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
               {cell.label} <span className={`font-normal ${sevTone(cell.severity)}`}>{cell.severity}</span>
             </div>
           </div>
-          <IconButton label="Clear the cell" onClick={p.onClearCell} className={actionCls}>
-            <X size={14} />
-          </IconButton>
+          <IconButton label="Clear the cell" onClick={p.onClearCell} icon="cross" size="sm" />
         </div>
       }
     >
@@ -503,7 +473,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           <MetaRow label="open">{c.open}</MetaRow>
           <MetaRow label="untested">
             {c.untested}{" "}
-            <span className="text-text-subtle">
+            <span className="text-text-muted">
               ({c.open ? Math.round((c.untested / c.open) * 100) : 0}% — no linked test known)
             </span>
           </MetaRow>
@@ -518,7 +488,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           caption={p.issues && c && p.issues.length !== c.open ? `of ${c.open}` : undefined}
           hint={`area_open_issues reads the open ${cell.severity} issues of ${cell.label} — the cell the board counted, filtered on the server, up to ${p.issuesRead || 300} rows, most severe then newest first; the flag chips narrow the list here. When the ceiling is reached the list says so.`}
         />
-        {p.issuesStatus === "loading" && <p className="text-xs text-text-subtle">Reading…</p>}
+        {p.issuesStatus === "loading" && <p className="text-xs text-text-muted">Reading…</p>}
         {p.issuesStatus === "error" && (
           <p className="text-xs text-danger">{p.issuesError || "The issue list did not answer."}</p>
         )}
@@ -526,15 +496,15 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           <p className="text-xs text-warn">The tracker source could not be read; nothing here is a claim.</p>
         )}
         {p.issuesStatus === "restricted_required" && (
-          <p className="text-xs text-text-subtle inline-flex items-center gap-1">
-            <Lock size={11} aria-hidden="true" /> restricted — not available with this token
-          </p>
+          <div className="text-xs text-text-muted inline-flex items-center gap-1">
+            <Icon name="lock" size="xs" aria-hidden="true" /> restricted — not available with this token
+          </div>
         )}
         {p.issuesStatus === "empty" && (
-          <p className="text-xs text-text-subtle">No open issue of this component was served.</p>
+          <p className="text-xs text-text-muted">No open issue of this component was served.</p>
         )}
         {p.issuesStatus === "served" && p.issues && p.issues.length === 0 && (
-          <p className="text-xs text-text-subtle">
+          <p className="text-xs text-text-muted">
             No open {cell.severity} issue of {cell.label} was served
             {c && c.open > 0 ? ` — the board counted ${c.open}; the counts and the list are two reads` : ""}.
           </p>
@@ -559,7 +529,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           </ul>
         )}
         {p.issues && c && p.issues.length > 0 && p.issuesCapped && p.issues.length < c.open && (
-          <p className="mt-1.5 text-2xs text-text-subtle">
+          <p className="mt-1.5 text-xs text-text-muted">
             <span className="tabular-nums">{p.issues.length}</span> of {c.open} shown: the read stops at {p.issuesRead}{" "}
             rows.
           </p>

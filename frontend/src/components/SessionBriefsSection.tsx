@@ -25,7 +25,7 @@ export function SessionBriefsSection({ org, namespace }: { org: string; namespac
   return (
     <div className="mb-6">
       <SectionHeading label="Session briefs" count={briefs.length} />
-      <p className="text-xs text-[var(--color-text-muted)] mb-2">
+      <p className="text-xs text-text-muted mb-2">
         Where each coding session's work stood when it last compacted or ended. Open one to read it and copy what to say
         in Claude Code or Codex to restore it.
       </p>

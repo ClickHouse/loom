@@ -6,7 +6,9 @@
  * own: the page's one `tracker.source.list`.
  */
 import { lazy, Suspense, useState } from "react";
-import { Database, Plus } from "lucide-react";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { checkTrackerSource } from "../api";
 import { fmtInt, humanizeError, relativeTime } from "../lib/format";
 import {
@@ -20,7 +22,7 @@ import {
   type TrackerTone,
 } from "../lib/trackerSources";
 import { toast } from "../components/Toast";
-import { BTN, BTN_TONE } from "./RepositoryCard";
+import { TipTarget } from "../components/ui";
 
 const ContractReportView = lazy(() =>
   import("../flows/TrackerSourceDialogs").then((m) => ({ default: m.ContractReportView })),
@@ -35,11 +37,11 @@ const EditMappingDialog = lazy(() =>
   import("../flows/TrackerSourceDialogs").then((m) => ({ default: m.EditMappingDialog })),
 );
 
-const TONE_PILL: Record<TrackerTone, string> = {
-  ok: "border-success/40 text-success",
-  warn: "border-warn/50 text-warn",
-  danger: "border-danger/50 text-danger",
-  muted: "border-border text-text-muted",
+const TONE_STATE: Record<TrackerTone, BadgeState> = {
+  ok: "success",
+  warn: "warning",
+  danger: "danger",
+  muted: "neutral",
 };
 
 export function TrackersPanel({
@@ -61,8 +63,8 @@ export function TrackersPanel({
     <section aria-labelledby="trackers-heading" className="mt-8">
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <h2 id="trackers-heading" className="text-lg font-semibold tracking-tight inline-flex items-center gap-2">
-            <Database size={16} aria-hidden="true" /> Trackers
+          <h2 id="trackers-heading" className="inline-flex items-center gap-2">
+            <Icon name="database" size="sm" aria-hidden="true" /> Trackers
           </h2>
           <p className="text-xs text-text-muted mt-0.5 max-w-2xl">
             ClickHouse databases of issues, PRs and incidents that Loom reads live. A repository links to one, and
@@ -84,9 +86,9 @@ export function TrackersPanel({
               : " Ask the operator to connect one."}
           </span>
           {selfService && org && (
-            <button type="button" onClick={onAdd} className={`${BTN} ${BTN_TONE.primary}`}>
-              <Plus size={13} aria-hidden="true" /> Add a tracker
-            </button>
+            <Button type="primary" htmlType="button" iconLeft="plus" onClick={onAdd}>
+              Add a tracker
+            </Button>
           )}
         </div>
       )}
@@ -133,17 +135,14 @@ function TrackerRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{s.name}</span>
-            <span
-              className={`inline-flex items-center rounded-full border px-2 text-2xs min-h-5 ${TONE_PILL[status.tone]}`}
-              title={status.detail}
-            >
-              {status.label}
-            </span>
-            <span className="text-2xs text-text-subtle">
+            <TipTarget tip={status.detail}>
+              <Badge text={status.label} state={TONE_STATE[status.tone]} size="sm" />
+            </TipTarget>
+            <span className="text-xs text-text-muted">
               {operatorOwned(s) ? "set up by the operator" : "added from the dashboard"}
             </span>
             {/* Read through a mapping of the team's own tables, or loom's views */}
-            <span className="text-2xs text-text-subtle">
+            <span className="text-xs text-text-muted">
               · {s.mode === "mapping" ? "your tables, mapped" : "Loom's views"}
             </span>
           </div>
@@ -191,19 +190,19 @@ function TrackerRow({
           </div>
         </div>
         {admin && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <button type="button" className={ADMIN_LINK} disabled={check.busy} onClick={() => void runCheck()}>
-              {check.busy ? "Checking…" : "Check now"}
-            </button>
-            <button type="button" className={ADMIN_LINK} onClick={() => setDialog("mapping")}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="empty" htmlType="button" loading={check.busy} onClick={() => void runCheck()}>
+              Check now
+            </Button>
+            <Button type="empty" htmlType="button" onClick={() => setDialog("mapping")}>
               Edit mapping
-            </button>
-            <button type="button" className={ADMIN_LINK} onClick={() => setDialog("rotate")}>
+            </Button>
+            <Button type="empty" htmlType="button" onClick={() => setDialog("rotate")}>
               Rotate credential
-            </button>
-            <button type="button" className={`${ADMIN_LINK} text-danger`} onClick={() => setDialog("retire")}>
+            </Button>
+            <Button type="danger" htmlType="button" onClick={() => setDialog("retire")}>
               Retire
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -275,6 +274,3 @@ function TrackerRow({
     </li>
   );
 }
-
-const ADMIN_LINK =
-  "min-h-8 px-1 -mx-1 rounded text-text-muted hover:text-text underline-offset-2 hover:underline disabled:opacity-50 pointer-coarse:min-h-11";

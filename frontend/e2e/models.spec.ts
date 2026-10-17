@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installApi } from "./fixtures";
+import { installApi, pickOption } from "./fixtures";
 
 test("local Settings navigation reaches the provider form and submits an explicit embedding choice", async ({
   page,
@@ -38,9 +38,9 @@ test("local Settings navigation reaches the provider form and submits an explici
   await page.goto("/settings");
   await page.getByRole("tab", { name: "Models & keys", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Models & keys", exact: true })).toBeVisible();
-  await page.getByRole("combobox", { name: "LLM provider", exact: true }).selectOption("openai");
+  await pickOption(page, "LLM provider", "openai");
   await page.getByLabel("LLM model", { exact: true }).fill("gpt-6-luna");
-  await page.getByRole("combobox", { name: "Embedding provider", exact: true }).selectOption("compatible");
+  await pickOption(page, "Embedding provider", "compatible");
   await page.getByLabel("Embedding model", { exact: true }).fill("fixture-model");
   await page.getByLabel("Embedding API base URL", { exact: true }).fill("http://provider-smoke:8080/v1");
   await page.getByLabel("Custom embedding provider API key", { exact: true }).fill("fixture-embedding-key");

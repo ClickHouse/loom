@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { Clock as ClockIcon, X as XIcon } from "lucide-react";
+import { Alert } from "./ui/Alert";
+import { Button } from "@clickhouse/click-ui/Button";
 import { cancelNamespaceRequest, type MyNamespaceEntry } from "../api";
 import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { toast } from "./Toast";
 import { confirmAction } from "./ConfirmDialog";
+import { IconButton } from "./IconButton";
 import { relativeTime, humanizeError } from "../lib/format";
 
 /**
@@ -70,47 +72,49 @@ export function PendingRequestBanner() {
   };
 
   return (
-    <div className="px-6 xl:px-8 mt-4">
-      <div className="rounded-lg border border-warn/60 bg-warn/10 px-4 py-3 flex items-start gap-3">
-        <ClockIcon size={16} className="text-warn mt-0.5 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm text-warn">
-            Your <strong>{requested}</strong> request on <span className="font-mono">{entry.namespace}</span> is
-            awaiting approval. You can read in the meantime; writes are blocked until an admin approves.
-          </div>
-          {admins.length > 0 && (
-            <div className="text-2xs text-warn/80 mt-1">
-              Admins who can approve:{" "}
-              {admins
-                .map((a) => (
-                  <span key={a} className="font-mono">
-                    {a}
-                  </span>
-                ))
-                .reduce<React.ReactNode[]>((acc, el, i) => {
-                  if (i > 0) acc.push(<span key={`sep-${i}`}>, </span>);
-                  acc.push(el);
-                  return acc;
-                }, [])}
-              {since && <> · requested {relativeTime(since)}</>}
+    <div className="px-6 xl:px-8 mt-4 relative">
+      <Alert
+        state="warning"
+        size="medium"
+        customIcon="clock"
+        text={
+          <div className="pr-8">
+            <p>
+              Your <strong>{requested}</strong> request on <span className="font-mono">{entry.namespace}</span> is
+              awaiting approval. You can read in the meantime; writes are blocked until an admin approves.
+            </p>
+            {admins.length > 0 && (
+              <p className="text-xs mt-1">
+                Admins who can approve:{" "}
+                {admins
+                  .map((a) => (
+                    <span key={a} className="font-mono">
+                      {a}
+                    </span>
+                  ))
+                  .reduce<React.ReactNode[]>((acc, el, i) => {
+                    if (i > 0) acc.push(<span key={`sep-${i}`}>, </span>);
+                    acc.push(el);
+                    return acc;
+                  }, [])}
+                {since && <> · requested {relativeTime(since)}</>}
+              </p>
+            )}
+            <div className="mt-2">
+              <Button type="secondary" htmlType="button" onClick={onCancel} loading={cancelling}>
+                Withdraw request
+              </Button>
             </div>
-          )}
-        </div>
-        <button
-          onClick={onCancel}
-          disabled={cancelling}
-          className="text-xs px-2.5 py-1 rounded-md border border-warn/60 text-warn hover:bg-warn/15 disabled:opacity-50 whitespace-nowrap"
-        >
-          {cancelling ? "Cancelling…" : "Withdraw request"}
-        </button>
-        <button
-          onClick={() => setDismissed(true)}
-          aria-label="Dismiss"
-          className="p-1 text-warn hover:bg-warn/15 rounded"
-        >
-          <XIcon size={13} />
-        </button>
-      </div>
+          </div>
+        }
+      />
+      <IconButton
+        icon="cross"
+        size="sm"
+        label="Dismiss"
+        onClick={() => setDismissed(true)}
+        className="absolute top-2 right-8 xl:right-10"
+      />
     </div>
   );
 }

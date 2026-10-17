@@ -1,6 +1,7 @@
 /** An audit row's subject is JSON text from the server; one that parses to something other
  *  than an object ("null", an array, garbage) renders as a row with no details, never throws. */
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "../../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
 import type { AuditEntry } from "../../api";
@@ -95,5 +96,19 @@ describe("Audit rows", () => {
         "Loom retired 2 memories automatically (replaced by a newer memory with more detail), and may have retired 1 more",
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("Audit filter", () => {
+  it("announces how many events it shows in an always-mounted status region", async () => {
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [row("alice", "{}"), row("bob", "{}"), row("bob", "{}")],
+    });
+    render(<Audit />);
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("3 events");
+    await userEvent.setup().type(screen.getByRole("textbox", { name: "Filter audit events" }), "alice");
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status).toHaveTextContent("1 event");
   });
 });

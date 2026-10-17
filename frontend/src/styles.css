@@ -1,16 +1,55 @@
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
-@import "@fontsource-variable/jetbrains-mono";
+
+/* Click UI names its families "Inter" and "Inconsolata"; these faces give
+   those names the variable fonts, latin and latin-ext only. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../node_modules/@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inconsolata";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 900;
+  src: url("../node_modules/@fontsource-variable/inconsolata/files/inconsolata-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inconsolata";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 900;
+  src: url("../node_modules/@fontsource-variable/inconsolata/files/inconsolata-latin-ext-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
 /* ============================================================
-   Design tokens — Loom v3 (ClickHouse-aligned)
+   Design tokens — Click UI light (https://github.com/ClickHouse/click-ui)
    ============================================================
-   Single dark theme matching clickhouse.com/cloud:
-   - Backgrounds = the official neutral scale (neutral-950→neutral-700)
-   - Accent      = primary-300 (#FAFF69, the CH yellow), used for CTAs,
-                    active states, links. Text on accent = neutral-950
-                    so the yellow stays legible.
-   - Status      = CH cyan / orange / red. No indigo. */
+   One theme: Click UI's light set, loaded from the package (main.tsx). Loom's
+   semantic tokens below are Click UI variables (`--global-color-*`,
+   `--click-<component>-*`) for Loom's own elements; Click UI components read
+   Click UI's variables directly. A hex literal is a Click UI palette step with
+   no variable of its own, named in its comment. */
 
 /* `static`: every token here is emitted whether or not a utility uses it.
    Without it Tailwind v4 emits only the variables its generated classes
@@ -18,51 +57,41 @@
    (the hop colours) resolves to nothing, and the canvas would draw both rings
    in the svg default black. */
 @theme static {
-  --font-sans: "Inter Variable", "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* Click UI families: Inter for text, Inconsolata for code. */
+  --font-sans: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Inconsolata", Consolas, "SF Mono", ui-monospace, monospace;
 
-  /* Type scale — one scale, six steps, 11 px floor. Every
-     `text-*` utility resolves here; arbitrary `text-[Npx]` sizes and raw
-     palette classes are not written in TSX. Each step carries its line
-     height so density is decided once, not per element.
-       2xs 11  captions, uppercase labels, chip counts
-       xs  12  dense UI: table cells, metadata, chips
-       sm  13  body in panes, inputs
-       base 14 body in pages, list rows
-       md  15  lead text
-       lg  16  card and empty-state titles
-     Display steps (xl 18, 2xl 22, 3xl 30) are for page titles only. */
-  --text-2xs: 11px;
-  --text-2xs--line-height: 16px;
+  /* Type scale — Click UI's product sizes, 150 % lead. One name per size; every
+     `text-*` utility resolves here, and arbitrary `text-[Npx]` sizes are not
+     written in TSX. Click UI's 10 px is left out: captions are 12 px.
+       xs  12  captions, dense UI: table cells, metadata, chips, field labels
+       sm  14  body text, inputs, buttons
+       lg  16  lead text, card and empty-state titles
+       xl  18  section titles
+       2xl 20  page titles
+       3xl 32  a hero number or an empty page's headline */
   --text-xs: 12px;
   --text-xs--line-height: 18px;
-  --text-sm: 13px;
-  --text-sm--line-height: 18px;
-  --text-base: 14px;
-  --text-base--line-height: 20px;
-  --text-md: 15px;
-  --text-md--line-height: 22px;
+  --text-sm: 14px;
+  --text-sm--line-height: 21px;
   --text-lg: 16px;
   --text-lg--line-height: 24px;
   --text-xl: 18px;
-  --text-xl--line-height: 24px;
-  --text-2xl: 22px;
-  --text-2xl--line-height: 28px;
-  --text-3xl: 30px;
-  --text-3xl--line-height: 36px;
+  --text-xl--line-height: 27px;
+  --text-2xl: 20px;
+  --text-2xl--line-height: 30px;
+  --text-3xl: 32px;
+  --text-3xl--line-height: 48px;
 
   /* Label and caption styles: uppercase tracking for section labels. */
   --tracking-label: 0.06em;
   --tracking-caption: 0.02em;
 
   /* Spacing rhythm: the 4 px grid Tailwind multiplies, plus the named
-     steps the primitives use (`p-pane`, `gap-row`, `px-gutter`). */
+     steps the primitives use (`p-pane`, `gap-x-inline`). */
   --spacing: 4px;
   --spacing-inline: 6px; /* between a label and its value or count */
-  --spacing-row: 8px; /* between rows in a list or a meta grid */
   --spacing-pane: 12px; /* padding inside a pane or panel */
-  --spacing-gutter: 24px; /* page side gutter */
-  --spacing-hit: 44px; /* the smallest touch target under a coarse pointer */
 
   /* Hit target under a coarse pointer: every primitive and
      Explorer control reaches this on touch — the Tailwind `pointer-coarse:`
@@ -73,58 +102,127 @@
   /* Canvas labels: the smallest text drawn on the graph canvas, in screen
      pixels. The svg scales with its viewBox, so `Canvas.tsx` writes the
      inverse scale to `--canvas-scale` and `.graph-svg text` multiplies. */
-  --canvas-label-min: 11px;
+  --canvas-label-min: 12px;
 
-  /* Surfaces — matches clickhouse.com body bg + neutral scale */
-  --color-bg: #131312; /* CH body bg — warm near-black */
-  --color-surface: #1d1d1d; /* neutral-800 */
-  --color-surface-2: #282828; /* neutral-725 */
-  --color-surface-3: #414141; /* neutral-700 */
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-border-strong: rgba(255, 255, 255, 0.16);
+  /* Surfaces — the ClickHouse Cloud layout: white page, white panes set off
+     by a 1 px stroke (not a fill), slate-50 for hover, selected and header
+     rows, the stroke grey for the deepest fill (skeletons, tracks). */
+  --color-bg: var(--global-color-background-default);
+  --color-surface: var(--global-color-background-default);
+  --color-surface-2: var(--global-color-background-muted);
+  --color-surface-3: var(--global-color-stroke-default);
+  --color-border: var(--global-color-stroke-default);
+  --color-border-strong: var(--global-color-stroke-intense);
 
-  /* Text — CH uses #f9f9f9 (neutral-100) for body, not pure white.
-     `text-subtle` was #808080 (neutral-500); axe-core flagged it as
-     failing WCAG AA on --color-surface-2 (#282828) — ratio 3.68 vs
-     required 4.5. Bumped to #9b9b9b (neutral-400) → ratio 5.26 on
-     surface-2 and stays comfortably readable on the warm-black bg. */
-  --color-text: #f9f9f9; /* neutral-100 */
-  --color-text-muted: #c0c0c0; /* neutral-300 */
-  --color-text-subtle: #9b9b9b; /* neutral-400 — AA on surface-2 */
-  /* Text drawn on the graph canvas (node labels): full text colour with a
-     surface-coloured stroke behind it; 16.0:1 on --color-surface. The ring
-     and relation captions use text-subtle (6.1:1 on --color-surface). */
-  --color-text-on-canvas: #f9f9f9;
+  /* Text: Click UI's two greys. Muted is 4.8:1 on --color-surface-2. */
+  --color-text: var(--global-color-text-default);
+  --color-text-muted: var(--global-color-text-muted);
+  --color-text-on-canvas: var(--global-color-text-default);
 
-  /* Focus ring — one token, used by the global focus-visible rule and by
-     every primitive that draws its own ring. */
-  --color-focus: #faff69;
+  /* Links — Click UI's link pair, the default corrected for AA below. */
+  --color-link: var(--global-color-text-link-default);
+  --color-link-hover: var(--global-color-text-link-hover);
+
+  /* Focus ring — global outline. */
+  --color-focus: var(--global-color-outline-default);
 
   /* Modal and drawer backdrop. */
-  --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-overlay: var(--click-dialog-color-opaqueBackground-default);
 
-  /* Brand yellow — CH primary-300 */
-  --color-accent: #faff69; /* primary-300 */
-  --color-accent-soft: rgba(250, 255, 105, 0.1);
-  --color-accent-strong: #eef400; /* primary-400, hover */
-  --color-on-accent: #0a0a0a; /* text/icon color on yellow surfaces */
+  /* Accent — the primary button: slate-800, white text. */
+  --color-accent: var(--click-button-basic-color-primary-background-default);
+  --color-accent-soft: color-mix(
+    in srgb,
+    var(--click-button-basic-color-primary-background-default) 5%,
+    transparent
+  ); /* muted text holds 4.6:1 on it */
+  --color-on-accent: var(--click-button-basic-color-primary-text-default);
 
-  /* Semantic — CH cyan / orange / red */
-  --color-success: #00cbeb;
-  --color-warn: #feaa0c;
-  --color-danger: #fe4234;
-  --color-info: #7dd3fc;
+  /* Semantic — the Click UI badge text colours as corrected below (success-800,
+     warning-700, danger-600), which read as text on white and tint as
+     `bg-x/15`. Info is the solid badge blue (info-600). */
+  --color-success: var(--click-badge-opaque-color-text-success);
+  --color-warn: var(--click-badge-opaque-color-text-warning);
+  --color-danger: var(--click-badge-opaque-color-text-danger);
+  --color-info: var(--click-badge-solid-color-background-info);
 
-  /* Categorical — eight hues for things that are different, not ranked
-     (graph communities, hop rings). Cycle in this order. */
-  --color-cat-1: #faff69;
-  --color-cat-2: #00cbeb;
-  --color-cat-3: #feaa0c;
-  --color-cat-4: #7dd3fc;
-  --color-cat-5: #c4b5fd;
-  --color-cat-6: #86efac;
-  --color-cat-7: #fda4af;
-  --color-cat-8: #fcd34d;
+  /* Elevation — Click UI's one shadow (cards, popovers, dialogs) is `md` and
+     `lg`; `sm` is a hairline and `xl`/`2xl` reach further for drawers. */
+  --color-shadow: var(--global-color-shadow-default);
+  --shadow-sm: 0 1px 2px 0 var(--color-shadow);
+  --shadow-md: 0 4px 6px -1px var(--color-shadow), 0 2px 4px -1px var(--color-shadow);
+  --shadow-lg: 0 4px 6px -1px var(--color-shadow), 0 2px 4px -1px var(--color-shadow);
+  --shadow-xl: 0 8px 16px -4px var(--color-shadow), 0 4px 6px -2px var(--color-shadow);
+  --shadow-2xl: 0 16px 32px -8px var(--color-shadow), 0 4px 6px -2px var(--color-shadow);
+
+  /* Radii — Click UI is square-cornered: 2 px checkboxes, 4 px buttons, fields,
+     cards, panels, popovers and nav items, full for badges. Its dialogs draw their own
+     8 px. Every Tailwind step a card uses lands on the 4 px card radius. */
+  --radius-xs: var(--click-checkbox-radii-all);
+  --radius-sm: var(--click-button-radii-all);
+  --radius-md: var(--click-button-radii-all);
+  --radius-lg: var(--click-card-primary-radii-all);
+  --radius-xl: var(--click-card-primary-radii-all);
+  --radius-2xl: var(--click-card-primary-radii-all);
+  --radius-3xl: var(--click-panel-radii-lg);
+
+  /* Categorical — for things that are different, not ranked (graph
+     communities, hop rings). Click UI's chart hues that hold 3:1 on white
+     (WCAG 1.4.11), and the darker palette step for the ones that do not
+     (orange, green; yellow, sunrise and baby blue are left out). */
+  --color-cat-1: var(--global-color-chart-default-blue);
+  --color-cat-2: #d64f00; /* warning-600 */
+  --color-cat-3: var(--global-color-chart-default-violet);
+  --color-cat-4: var(--global-color-chart-default-teal);
+  --color-cat-5: var(--global-color-chart-default-fuchsia);
+  --color-cat-6: #008a0b; /* success-700 */
+  --color-cat-7: var(--global-color-chart-default-red);
+  --color-cat-8: var(--global-color-text-link-hover); /* info-600 */
+}
+
+/* ============================================================
+   Click UI light, corrected for WCAG 2.2 AA
+   ============================================================
+   A handful of Click UI 0.13's light values miss AA: link and empty-button
+   blue (3.8:1), info alert text (3.4 on its tint), opaque success and info
+   badge text (4.3, 3.4), solid default and warning badges (2.6, 4.2),
+   placeholder text (2.6), and the field, checkbox, radio and switch strokes a
+   control is recognised by (1.2–2.0, under 1.4.11's 3:1).
+   Each is redefined here with the next Click UI palette step that passes, so
+   every Click UI component picks it up. Unlayered, so it wins over the
+   `clickui` layer. */
+:root[data-cui-theme="light"] {
+  --global-color-text-link-default: #1d64ec; /* info-500, 5.1:1 */
+  --click-global-color-text-link-default: #1d64ec;
+  --click-button-basic-color-empty-text-default: #1d64ec;
+  --click-button-basic-color-empty-text-active: #1d64ec;
+  --click-button-basic-color-empty-text-hover: #104ec6; /* info-600 */
+  --click-alert-color-text-info: #104ec6; /* info-600, 6.4:1 on its tint */
+  --click-badge-opaque-color-text-success: #006108; /* success-800, 7.4:1 on its tint */
+  --click-badge-opaque-color-text-info: #104ec6; /* 6.4:1 on its tint */
+  --click-badge-solid-color-background-default: #606060; /* neutral-600, 6.3:1 */
+  --click-badge-solid-color-background-warning: #a33c00; /* warning-700, 6.6:1 */
+  --click-field-color-placeholder-default: #696e79; /* slate-600, 5.0:1 */
+  --click-field-color-stroke-default: #808691; /* slate-500, 3.6:1 */
+  --click-field-color-stroke-hover: #696e79;
+  --click-checkbox-color-stroke-default: #808691;
+  --click-checkbox-color-stroke-hover: #696e79;
+  --click-radio-color-stroke-default: #808691;
+  --click-radio-color-stroke-hover: #696e79;
+  --click-switch-color-stroke-default: #808691;
+  /* Click UI's avatar lightens to slate-400 on hover (2.6:1 under its white
+     initial); it keeps slate-600 (5.0:1). */
+  --click-avatar-color-background-hover: #696e79;
+  --click-avatar-color-background-active: #696e79;
+  /* Click UI's small badge is 10 px and its small avatar 11 px, off the 12 px floor. */
+  --click-avatar-typography-label-sm-default:
+    600 0.75rem / 1.5 "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --click-avatar-typography-label-sm-hover:
+    600 0.75rem / 1.5 "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --click-avatar-typography-label-sm-active:
+    600 0.75rem / 1.5 "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --click-badge-typography-label-sm-default:
+    500 0.75rem / 1.5 "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 /* ============================================================
@@ -133,8 +231,7 @@
 
 :root {
   font-family: var(--font-sans);
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
-  color-scheme: dark;
+  color-scheme: light;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-synthesis: none;
@@ -150,53 +247,163 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   min-height: 100vh;
-  font-size: 16px; /* matches CH blog body */
-  line-height: 1.55;
-  letter-spacing: -0.005em;
+  font-size: var(--text-sm); /* Click UI text md, 14 px */
+  line-height: 1.5;
 }
 
-/* Heading scale — CH-aligned typographic rhythm.
-   Page h1s should breathe (28-32px); section h2/h3 should not
-   shout in 10px caps. Components opt into these via tag, not class. */
-h1 {
-  font-size: 2rem; /* 32px */
-  line-height: 1.18;
-  letter-spacing: -0.022em;
-  font-weight: 600;
-}
-h2 {
-  font-size: 1.375rem;
-  line-height: 1.3;
-  letter-spacing: -0.015em;
-  font-weight: 600;
-}
-h3 {
-  font-size: 1.125rem;
-  line-height: 1.4;
-  font-weight: 600;
+/* Links — Click UI blue, underlined on hover. A link styled as a button or
+   a nav row sets its own colour with a utility, which wins over this. */
+@layer base {
+  a {
+    color: var(--color-link);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--color-link-hover);
+    text-decoration: underline;
+  }
 }
 
-/* Section label. Use `.section-label` instead of inline classes. */
-.section-label {
-  font-size: var(--text-2xs);
-  line-height: var(--text-2xs--line-height);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--color-text-subtle);
-}
-.caption {
-  font-size: var(--text-2xs);
-  line-height: var(--text-2xs--line-height);
-  letter-spacing: var(--tracking-caption);
-  color: var(--color-text-subtle);
+/* Heading scale — Click UI's product titles: a page title is titles-xl (700,
+   20 px), a section titles-lg (700, 18 px), a sub-section titles-md (600,
+   16 px). In the base layer, so a heading's own `text-*` class still wins. */
+@layer base {
+  h1 {
+    font: var(--typography-styles-product-titles-xl);
+  }
+  h2 {
+    font: var(--typography-styles-product-titles-lg);
+  }
+  h3 {
+    font: var(--typography-styles-product-titles-md);
+  }
 }
 
-.tabular {
-  font-variant-numeric: tabular-nums;
+/* Loom's own classes sit in the components layer, so a utility on the same
+   element still applies. */
+@layer components {
+  /* Click UI's dialog close (its CrossButton, which the package does not export),
+     drawn by ui/Modal. */
+  .dialog-close {
+    display: inline-flex;
+    padding: var(--click-button-iconButton-sm-space-y) var(--click-button-iconButton-sm-space-x);
+    border: 0;
+    border-radius: var(--click-button-iconButton-radii-all);
+    background: var(--click-button-iconButton-color-primary-background-default);
+    color: inherit;
+    cursor: pointer;
+  }
+  .dialog-close:hover {
+    background: var(--click-button-iconButton-color-primary-background-hover);
+  }
+
+  /* Click UI's navigation title: 12 px medium, sentence case, muted. It labels a group
+     inside a list, menu or rail; a panel or card title is Click UI's Title (SectionHeading). */
+  .section-label {
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    font-weight: 500;
+    color: var(--color-text-muted);
+  }
+  .caption {
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    letter-spacing: var(--tracking-caption);
+    color: var(--color-text-muted);
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
 }
-.font-mono {
-  font-family: var(--font-mono);
+
+/* Date and date-time inputs, which Click UI has no field for (its DatePicker
+   picks a day and takes no accessible name), drawn as a Click UI field. */
+@layer base {
+  input[type="date"],
+  input[type="datetime-local"] {
+    width: 100%;
+    font: var(--click-field-typography-fieldText-default);
+    color: var(--click-field-color-text-default);
+    background: var(--click-field-color-background-default);
+    border: 1px solid var(--click-field-color-stroke-default);
+    border-radius: var(--click-field-radii-all);
+    padding: var(--click-field-space-y) var(--click-field-space-x);
+  }
+  input[type="date"]:hover,
+  input[type="datetime-local"]:hover {
+    border-color: var(--click-field-color-stroke-hover);
+  }
+  /* :focus-within: the field's calendar button takes focus apart from the field (the
+     browser draws that button's ring; author styles cannot), and the field keeps its
+     focused look meanwhile, as a Click UI field does around its inner controls. */
+  input[type="date"]:focus-within,
+  input[type="datetime-local"]:focus-within {
+    background: var(--click-field-color-background-active);
+    border-color: var(--click-field-color-stroke-active);
+  }
+}
+
+/* ============================================================
+   Tables — Click UI's table: a slate-50 header row, 1 px row strokes,
+   a faint blue row hover. Utilities on a table still win.
+   ============================================================ */
+@layer base {
+  thead th {
+    background: var(--click-table-header-color-background-default);
+  }
+  tbody tr:hover {
+    background: var(--click-table-row-color-background-hover);
+  }
+}
+
+/* Room in a Click UI dialog's title for Loom's close button (components/ui/Modal). */
+@layer components {
+  [data-testid="click-dialog-title"] {
+    padding-right: 2.5rem;
+  }
+}
+
+/* A Click UI Button that is unavailable but must stay focusable so its reason can be
+   read (`aria-disabled`, not `disabled`; components/ui/Unavailable) takes Click UI's
+   disabled look, which Click UI only gives `:disabled`. `data-unavailable` is the
+   button's type. A loading button is natively disabled and keeps its own. */
+@layer components {
+  [data-unavailable]:not(:disabled) {
+    background: var(--click-button-basic-color-primary-background-disabled);
+    border-color: var(--click-button-basic-color-primary-stroke-disabled);
+    color: var(--click-button-basic-color-primary-text-disabled);
+    cursor: not-allowed;
+  }
+  [data-unavailable="secondary"]:not(:disabled) {
+    background: var(--click-button-basic-color-secondary-background-disabled);
+    border-color: var(--click-button-basic-color-secondary-stroke-disabled);
+    color: var(--click-button-basic-color-secondary-text-disabled);
+  }
+  [data-unavailable="empty"]:not(:disabled) {
+    background: var(--click-button-basic-color-empty-background-disabled);
+    border-color: var(--click-button-basic-color-empty-stroke-disabled);
+    color: var(--click-button-basic-color-empty-text-disabled);
+  }
+}
+
+/* A thumb needs 44 × 44 px. Click UI's buttons are 32 px tall and its icon buttons
+   26 px wide, so under a coarse pointer every button reaches the hit size; a
+   checkbox, radio or switch keeps its box, its label is the larger target. */
+@layer components {
+  @media (pointer: coarse) {
+    button:not([role="checkbox"]):not([role="radio"]):not([role="switch"]) {
+      min-height: var(--spacing-hit);
+      min-width: var(--spacing-hit);
+    }
+  }
+}
+
+/* Popovers, menus, selects and tooltips: Click UI gives them z-index 1–2 and
+   Radix copies that onto the popper wrapper inline; lift them over Loom's
+   dialogs (z-50/60) and toasts (z-[65]). */
+[data-radix-popper-content-wrapper] {
+  z-index: 70 !important;
 }
 
 /* ============================================================
@@ -217,7 +424,7 @@ h3 {
   border: 2px solid transparent;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--color-text-subtle);
+  background-color: var(--color-text-muted);
 }
 
 /* ============================================================
@@ -303,830 +510,786 @@ h3 {
   );
   background-size: 200% 100%;
   animation: shimmer 1.4s ease-in-out infinite;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
+}
+
+/* Reduced motion: the stylesheet's animations, Click UI's entrance animations and
+   every transition stop for a reader who asks the OS for less motion, so a
+   component needs no `motion-reduce:` variant; a spinner keeps turning, it is a
+   status. After the rules it overrides. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-network-slide,
+  .animate-view-in,
+  .animate-slide-in,
+  .animate-fade-in,
+  .skeleton {
+    animation: none;
+  }
+  /* Click UI's own entrances: dialogs, popovers, menus, selects and tooltips. */
+  [role="dialog"],
+  [role="tooltip"],
+  [data-radix-popper-content-wrapper] > * {
+    animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ============================================================
-   Focus rings — yellow on dark
+   Focus rings — Click UI outline blue
    ============================================================ */
 
+/* Click UI's focus ring (outline-default, 2 px, 2 px offset) on every focusable
+   element, including the ones Click UI draws none on (checkbox, switch, tabs,
+   link, its dialog close). */
 *:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
-  border-radius: 4px;
+  /* Shown at once, as Click UI's is: Tailwind's transition-colors also eases
+     outline-color, which would fade the ring in from the text colour. */
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+}
+/* A text field shows focus the Click UI way, a dark border on the field, not a
+   ring inside it. */
+input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+/* Click UI draws no focused border on a field in its error state, so an errored field
+   takes the ring. */
+input[aria-invalid="true"]:not([type="checkbox"]):not([type="radio"]):focus-visible,
+textarea[aria-invalid="true"]:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+/* A dialog or drawer that takes focus itself on open is not a control: no frame
+   around the whole surface. */
+[role="dialog"]:focus-visible {
+  outline: none;
+}
+/* A tab row scrolls in its own box, which would clip a ring drawn outside the tab. */
+[role="tablist"] [role="tab"]:focus-visible {
+  outline-offset: -2px;
+}
+/* A memory card's body is one stretched button: the ring goes round the card. */
+[data-memory-open]:focus-visible {
+  outline: none;
+}
+[data-card]:has([data-memory-open]:focus-visible) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  /* At once, as every ring: the card's transition-colors would ease it in. */
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
 }
 
-button:focus-visible,
-input:focus-visible,
-[role="button"]:focus-visible {
-  outline-offset: 1px;
+/* A table whose column header another table above it already shows: the header stays
+   for a screen reader, out of sight (Tailwind's sr-only). */
+.table-header-sr-only > thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border-width: 0;
 }
 
 /* ============================================================
-   Selection — yellow on dark
+   Selection — the primary-button slate, white text
    ============================================================ */
 ::selection {
   background: var(--color-accent);
   color: var(--color-on-accent);
 }
 
-/* ============================================================
-   Graph view / Explorer canvas. Hover lighting is
-   DOM attributes, not React state: the svg carries `data-hover` while a
-   node or edge is under the pointer and the hovered chain's nodes and
-   edges carry `data-hot`; `data-sel-mode` / `data-sel` do the same for
-   the clicked selection. A hover wins over the selection while it lasts.
-   Nothing here changes layout, so nothing moves under the cursor.
-   An edge is a group: a 10 px transparent hit line and the drawn line,
-   whose width is the group's `--w`. The ⊕ expand affordance is in every
-   node group and shown by CSS on :hover and on the selected node
-   (`data-selected`) — no state, no mount.
-   ============================================================ */
-.graph-svg .graph-edge {
-  opacity: 0.6;
-  transition: opacity 120ms ease;
-}
-.graph-svg .graph-edge-hit {
-  stroke: transparent;
-  stroke-width: 10;
-  pointer-events: stroke;
-  cursor: pointer;
-}
-.graph-svg .graph-edge-line {
-  stroke-width: var(--w, 1);
-  pointer-events: none;
-  transition: stroke-width 120ms ease;
-}
-.graph-svg .graph-edge-note {
-  pointer-events: none;
-  paint-order: stroke;
-  stroke: var(--color-surface);
-  stroke-width: 3px;
-}
-.graph-svg .graph-node {
-  opacity: 0.9;
-  transition: opacity 120ms ease;
-}
-.graph-svg[data-hover] .graph-edge,
-.graph-svg:not([data-hover])[data-sel-mode] .graph-edge {
-  opacity: 0.12;
-}
-.graph-svg[data-hover] .graph-node,
-.graph-svg:not([data-hover])[data-sel-mode] .graph-node {
-  opacity: 0.3;
-}
-.graph-svg[data-hover] .graph-edge[data-hot],
-.graph-svg:not([data-hover])[data-sel-mode] .graph-edge[data-sel] {
-  opacity: 0.95;
-}
-.graph-svg[data-hover] .graph-edge[data-hot] .graph-edge-line,
-.graph-svg:not([data-hover])[data-sel-mode] .graph-edge[data-sel] .graph-edge-line {
-  stroke: var(--color-text);
-  stroke-width: calc(var(--w, 1) * 1.8);
-}
-.graph-svg[data-hover] .graph-node[data-hot],
-.graph-svg:not([data-hover])[data-sel-mode] .graph-node[data-sel] {
-  opacity: 1;
-}
-/* Expand affordance: present on every node, painted only for the hovered
-   or selected one. Opacity and pointer-events are paint, not layout. */
-.graph-svg .graph-expand {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
-}
-.graph-svg .graph-node:hover .graph-expand,
-.graph-svg .graph-node[data-selected] .graph-expand {
-  opacity: 1;
-  pointer-events: all;
-  cursor: pointer;
-}
-.graph-svg .graph-badge {
-  cursor: pointer;
-}
-/* Emphasis by distance when colour is the hop (`data-by-hop` on the svg;
-   community colouring is left whole): the seed is brightest, hop 1 mid,
-   hop 2 and beyond muted, so the outer ring never out-shouts the centre.
-   The hovered or selected chain and the selected node are lit in full.
-   fill-opacity is paint, not layout, and a hop is a static attribute. */
-.graph-svg[data-by-hop] .graph-node[data-hop="1"] .graph-dot {
-  fill-opacity: 0.8;
-}
-.graph-svg[data-by-hop] .graph-node[data-hop="2"] .graph-dot {
-  fill-opacity: 0.45;
-}
-.graph-svg[data-by-hop] .graph-node[data-hop="3"] .graph-dot {
-  fill-opacity: 0.3;
-}
-.graph-svg[data-hover] .graph-node[data-hot] .graph-dot,
-.graph-svg:not([data-hover])[data-sel-mode] .graph-node[data-sel] .graph-dot,
-.graph-svg .graph-node[data-selected] .graph-dot {
-  fill-opacity: 1;
-}
-/* Canvas text is drawn in svg units and scaled with the viewBox; the card
-   writes 820 / rendered-width to `--canvas-scale` (a ResizeObserver, one
-   DOM write per resize, never on hover), so every label is at least
-   --canvas-label-min on screen whatever the pane width.
-   Node labels use text-on-canvas over a surface-coloured stroke; the
-   ring and relation captions are the smaller class at the same floor. */
-.graph-svg text {
-  font-size: calc(var(--canvas-label-min) * var(--canvas-scale, 1.45));
-}
-.graph-svg .graph-label {
-  fill: var(--color-text-on-canvas);
-}
-.graph-svg .graph-label-seed {
-  font-size: calc(var(--canvas-label-min) * var(--canvas-scale, 1.45) * 1.1);
-  font-weight: 600;
-}
-/* The hover name readout: always in the DOM once a walk is drawn, moved and
-   filled by the same handler that sets data-hover. Absolute inside the
-   overflow-hidden card, so it can never change layout. */
-.graph-readout {
-  position: absolute;
-  z-index: 2;
-  pointer-events: none;
-  max-width: 60%;
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.4;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  background: var(--color-text);
-  color: var(--color-bg);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  transform: translate(-50%, -100%);
-}
-.graph-readout[data-side="below"] {
-  transform: translate(-50%, 0);
-}
-/* Outline tree rows: one line of name, one of metadata. */
-.explorer-outline [role="treeitem"]:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 1px var(--color-border-strong);
-}
-
-/* ============================================================
-   Coarse pointer. A thumb needs 44 × 44 CSS px; the
-   primitives carry `pointer-coarse:` variants for their own boxes, and
-   this rule set covers the Explorer's rows and the shared shapes that are
-   not primitives: outline tree rows, tab triggers, the Facets community
-   rows and small text actions, the inspector's row buttons. Sizes only —
-   nothing here changes what is drawn on a fine pointer, and none of it is
-   read by the hover path.
-   ============================================================ */
-@media (pointer: coarse) {
-  .explorer-outline [role="treeitem"] {
-    min-height: var(--spacing-hit);
-    align-items: center;
+@layer components {
+  /* ============================================================
+     Graph view / Explorer canvas. Hover lighting is
+     DOM attributes, not React state: the svg carries `data-hover` while a
+     node or edge is under the pointer and the hovered chain's nodes and
+     edges carry `data-hot`; `data-sel-mode` / `data-sel` do the same for
+     the clicked selection. A hover wins over the selection while it lasts.
+     Nothing here changes layout, so nothing moves under the cursor.
+     An edge is a group: a 10 px transparent hit line and the drawn line,
+     whose width is the group's `--w`. The ⊕ expand affordance is in every
+     node group and shown by CSS on :hover and on the selected node
+     (`data-selected`) — no state, no mount.
+     ============================================================ */
+  .graph-svg .graph-edge {
+    opacity: 0.6;
+    transition: opacity 120ms ease;
+  }
+  .graph-svg .graph-edge-hit {
+    stroke: transparent;
+    stroke-width: 10;
+    pointer-events: stroke;
+    cursor: pointer;
+  }
+  .graph-svg .graph-edge-line {
+    stroke-width: var(--w, 1);
+    pointer-events: none;
+    transition: stroke-width 120ms ease;
+  }
+  .graph-svg .graph-edge-note {
+    pointer-events: none;
+    paint-order: stroke;
+    stroke: var(--color-surface);
+    stroke-width: 3px;
+  }
+  .graph-svg .graph-node {
+    opacity: 0.9;
+    transition: opacity 120ms ease;
+  }
+  .graph-svg[data-hover] .graph-edge,
+  .graph-svg:not([data-hover])[data-sel-mode] .graph-edge {
+    opacity: 0.12;
+  }
+  .graph-svg[data-hover] .graph-node,
+  .graph-svg:not([data-hover])[data-sel-mode] .graph-node {
+    opacity: 0.3;
+  }
+  .graph-svg[data-hover] .graph-edge[data-hot],
+  .graph-svg:not([data-hover])[data-sel-mode] .graph-edge[data-sel] {
+    opacity: 0.95;
+  }
+  .graph-svg[data-hover] .graph-edge[data-hot] .graph-edge-line,
+  .graph-svg:not([data-hover])[data-sel-mode] .graph-edge[data-sel] .graph-edge-line {
+    stroke: var(--color-text);
+    stroke-width: calc(var(--w, 1) * 1.8);
+  }
+  .graph-svg[data-hover] .graph-node[data-hot],
+  .graph-svg:not([data-hover])[data-sel-mode] .graph-node[data-sel] {
+    opacity: 1;
+  }
+  /* Expand affordance: present on every node, painted only for the hovered
+     or selected one. Opacity and pointer-events are paint, not layout. */
+  .graph-svg .graph-expand {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+  .graph-svg .graph-node:hover .graph-expand,
+  .graph-svg .graph-node[data-selected] .graph-expand {
+    opacity: 1;
+    pointer-events: all;
+    cursor: pointer;
+  }
+  .graph-svg .graph-badge {
+    cursor: pointer;
+  }
+  /* Emphasis by distance when colour is the hop (`data-by-hop` on the svg;
+     community colouring is left whole): the seed is brightest, hop 1 mid,
+     hop 2 and beyond muted, so the outer ring never out-shouts the centre.
+     The hovered or selected chain and the selected node are lit in full.
+     fill-opacity is paint, not layout, and a hop is a static attribute. */
+  .graph-svg[data-by-hop] .graph-node[data-hop="1"] .graph-dot {
+    fill-opacity: 0.8;
+  }
+  .graph-svg[data-by-hop] .graph-node[data-hop="2"] .graph-dot {
+    fill-opacity: 0.45;
+  }
+  .graph-svg[data-by-hop] .graph-node[data-hop="3"] .graph-dot {
+    fill-opacity: 0.3;
+  }
+  .graph-svg[data-hover] .graph-node[data-hot] .graph-dot,
+  .graph-svg:not([data-hover])[data-sel-mode] .graph-node[data-sel] .graph-dot,
+  .graph-svg .graph-node[data-selected] .graph-dot {
+    fill-opacity: 1;
+  }
+  /* Canvas text is drawn in svg units and scaled with the viewBox; the card
+     writes 820 / rendered-width to `--canvas-scale` (a ResizeObserver, one
+     DOM write per resize, never on hover), so every label is at least
+     --canvas-label-min on screen whatever the pane width.
+     Node labels use text-on-canvas over a surface-coloured stroke; the
+     ring and relation captions are the smaller class at the same floor. */
+  .graph-svg text {
+    font-size: calc(var(--canvas-label-min) * var(--canvas-scale, 1.45));
+  }
+  .graph-svg .graph-label {
+    fill: var(--color-text-on-canvas);
+  }
+  .graph-svg .graph-label-seed {
+    font-size: calc(var(--canvas-label-min) * var(--canvas-scale, 1.45) * 1.1);
+    font-weight: 600;
+  }
+  /* The hover name readout: always in the DOM once a walk is drawn, moved and
+     filled by the same handler that sets data-hover. Absolute inside the
+     overflow-hidden card, so it can never change layout. */
+  .graph-readout {
+    position: absolute;
+    z-index: 2;
+    pointer-events: none;
+    max-width: 60%;
+    padding: 2px 8px;
+    border-radius: var(--radius-md);
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: var(--color-text);
+    color: var(--color-bg);
+    box-shadow: var(--shadow-md);
+    transform: translate(-50%, -100%);
+  }
+  .graph-readout[data-side="below"] {
+    transform: translate(-50%, 0);
+  }
+  /* Every tab row: a label keeps to one line, and a row wider than the page scrolls
+     sideways in its own box. */
+  [role="tablist"] {
+    max-width: 100%;
+    overflow-x: auto;
   }
   [role="tablist"] [role="tab"] {
-    min-height: var(--spacing-hit);
+    flex-shrink: 0;
+    white-space: nowrap;
   }
-  /* Facets: community rows, the "now" / "clear chips" actions. */
-  aside[aria-label="Facets"] button {
-    min-height: var(--spacing-hit);
+  /* Outline tree rows: one line of name, one of metadata. */
+  .explorer-outline [role="treeitem"]:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1px var(--color-border-strong);
   }
-  /* Inspector: memory and fact-source row buttons, "why it is here" steps. */
-  aside[aria-label="Inspector"] button {
-    min-height: var(--spacing-hit);
-  }
-}
 
-/* The Patterns board's cells can be 72x27 CSS
-   px on a phone, under the 44 px a finger needs. Under a coarse pointer every
-   cell of a grid row grows to the hit height; the mouse layout is unchanged. */
-@media (pointer: coarse) {
-  .board-cell {
-    min-height: var(--spacing-hit);
+  /* ============================================================
+     Coarse pointer. A thumb needs 44 × 44 CSS px; the
+     primitives carry `pointer-coarse:` variants for their own boxes, and
+     this rule set covers the Explorer's rows and the shared shapes that are
+     not primitives: outline tree rows, tab triggers, the Facets community
+     rows and small text actions, the inspector's row buttons. Sizes only —
+     nothing here changes what is drawn on a fine pointer, and none of it is
+     read by the hover path.
+     ============================================================ */
+  @media (pointer: coarse) {
+    .explorer-outline [role="treeitem"] {
+      min-height: var(--spacing-hit);
+      align-items: center;
+    }
+    [role="tablist"] [role="tab"] {
+      min-height: var(--spacing-hit);
+    }
+    /* Facets: community rows, the "now" / "clear chips" actions. */
+    aside[aria-label="Facets"] button {
+      min-height: var(--spacing-hit);
+    }
+    /* Inspector: memory and fact-source row buttons, "why it is here" steps. */
+    aside[aria-label="Inspector"] button {
+      min-height: var(--spacing-hit);
+    }
+  }
+
+  /* The Patterns board's cells can be 72x27 CSS
+     px on a phone, under the 44 px a finger needs. Under a coarse pointer every
+     cell of a grid row grows to the hit height; the mouse layout is unchanged. */
+  @media (pointer: coarse) {
+    .board-cell {
+      min-height: var(--spacing-hit);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
+
+  /* A library row's actions: the width of its four small icon buttons, kept while they
+     are not rendered; on a phone they take a line of their own under the document. */
+  .doc-acts {
+    display: flex;
+    flex: none;
+    gap: 12px;
+    min-width: 140px;
+  }
+  @media (max-width: 639px) {
+    .doc-acts {
+      flex-basis: 100%;
+      justify-content: flex-end;
+    }
+  }
+
+  /* ============================================================
+     Tasks page. Attention tiles, an inbox rail,
+     five groups by what happens next, a document-shaped detail panel. The
+     layout, the row grid and the breakpoints live here because they are
+     one component's shape, not a utility; type sizes are the tokens above.
+     ============================================================ */
+  .tq-body {
+    display: grid;
+    grid-template-columns: 224px minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  .tq-body[data-panel="true"] {
+    grid-template-columns: 224px minmax(0, 1fr) 440px;
+  }
+  .tq-attn {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin: 4px 0 16px;
+  }
+  .tq-tile {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    text-align: left;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    background: var(--color-surface);
+  }
+  .tq-tile:hover {
+    border-color: var(--color-border-strong);
+  }
+  .tq-tile[aria-pressed="true"] {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+  }
+  .tq-tile .n {
+    font-size: var(--text-2xl);
+    line-height: 24px;
+    font-weight: 600;
+  }
+  .tq-tile[data-zero="true"] .n {
+    color: var(--color-text-muted);
+    font-weight: 500;
+  }
+
+  .tq-rail section {
+    margin-bottom: 18px;
+  }
+  .tq-inbox {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 8px;
+    padding: 7px 8px;
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
+    text-align: left;
+  }
+  .tq-inbox:hover {
+    background: var(--color-surface-2);
+  }
+  .tq-inbox[aria-current="true"] {
+    background: var(--color-surface-2);
+    color: var(--color-text);
+  }
+  .tq-inbox .nm {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .tq-inbox .nm > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tq-inbox .cnt {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  .tq-inbox .cnt b {
+    color: var(--color-text);
+    font-weight: 500;
+  }
+
+  /* ---- avatars: the inbox's own agent round on the accent, another agent square on info, a person by initials */
+  .tq-av {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--color-surface-3);
+    flex: none;
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--color-text);
+    text-transform: lowercase;
   }
-}
-
-/* ============================================================
-   Tasks page. Attention tiles, an inbox rail,
-   five groups by what happens next, a document-shaped detail panel. The
-   layout, the row grid and the breakpoints live here because they are
-   one component's shape, not a utility; type sizes are the tokens above.
-   ============================================================ */
-.tq-body {
-  display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-.tq-body[data-panel="true"] {
-  grid-template-columns: 224px minmax(0, 1fr) 440px;
-}
-.tq-attn {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin: 4px 0 16px;
-}
-.tq-tile {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  text-align: left;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
-}
-.tq-tile:hover {
-  border-color: var(--color-border-strong);
-}
-.tq-tile[aria-pressed="true"] {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft);
-}
-.tq-tile .n {
-  font-size: var(--text-2xl);
-  line-height: 24px;
-  font-weight: 600;
-}
-.tq-tile[data-zero="true"] .n {
-  color: var(--color-text-subtle);
-  font-weight: 500;
-}
-
-.tq-rail section {
-  margin-bottom: 18px;
-}
-.tq-inbox {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  gap: 8px;
-  padding: 7px 8px;
-  border-radius: 8px;
-  color: var(--color-text-muted);
-  text-align: left;
-}
-.tq-inbox:hover {
-  background: var(--color-surface);
-}
-.tq-inbox[aria-current="true"] {
-  background: var(--color-surface-2);
-  color: var(--color-text);
-}
-.tq-inbox .nm {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.tq-inbox .nm > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tq-inbox .cnt {
-  font-size: var(--text-xs);
-  color: var(--color-text-subtle);
-  white-space: nowrap;
-}
-.tq-inbox .cnt b {
-  color: var(--color-text);
-  font-weight: 500;
-}
-
-/* ---- avatars: the inbox's own agent round on the accent, another agent square on info, a person by initials */
-.tq-av {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--color-surface-3);
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-text);
-  text-transform: lowercase;
-}
-.tq-av[data-kind="bot"] {
-  border-radius: 5px;
-  background: #2a3b44;
-  color: var(--color-info);
-}
-.tq-av[data-kind="me"] {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-  border: 1px solid rgba(250, 255, 105, 0.3);
-}
-
-/* ---- list */
-.tq-group {
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
-  margin-bottom: 12px;
-  overflow: hidden;
-}
-.tq-ghead {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 14px;
-  text-align: left;
-  border-bottom: 1px solid var(--color-border);
-}
-.tq-ghead:hover {
-  background: var(--color-surface-2);
-}
-.tq-ghead .car {
-  transition: transform 0.15s;
-  color: var(--color-text-subtle);
-}
-.tq-group[data-collapsed="true"] .tq-ghead {
-  border-bottom: 0;
-}
-.tq-group[data-collapsed="true"] .tq-ghead .car {
-  transform: rotate(-90deg);
-}
-.tq-row {
-  display: grid;
-  grid-template-columns: 4px minmax(0, 1fr) auto;
-  gap: 0 12px;
-  align-items: center;
-  width: 100%;
-  padding: 9px 14px 9px 10px;
-  text-align: left;
-  border-top: 1px solid var(--color-border);
-  cursor: pointer;
-  user-select: none;
-}
-.tq-rows .tq-row:first-child {
-  border-top: 0;
-}
-.tq-row:hover {
-  background: var(--color-surface-2);
-}
-.tq-row[aria-selected="true"] {
-  background: var(--color-surface-2);
-  box-shadow: inset 3px 0 0 var(--color-accent);
-}
-.tq-row:focus-visible,
-.tq-card:focus-visible,
-.tq-tile:focus-visible,
-.tq-inbox:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: -2px;
-}
-.tq-pri {
-  height: 32px;
-  border-radius: 2px;
-  background: var(--color-surface-3);
-}
-.tq-pri[data-p="1"] {
-  background: var(--color-danger);
-}
-.tq-pri[data-p="2"] {
-  background: var(--color-warn);
-}
-.tq-pri[data-p="4"] {
-  background: transparent;
-  border: 1px dashed var(--color-surface-3);
-}
-.tq-kind {
-  display: inline-block;
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  line-height: 18px;
-  color: var(--color-text-muted);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  padding: 0 6px;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: none;
-}
-.tq-row .t {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.tq-row .title {
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tq-sub {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  font-size: var(--text-xs);
-  color: var(--color-text-subtle);
-  margin-top: 2px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-.tq-sub .reason {
-  color: var(--color-text-muted);
-  font-style: italic;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-.tq-sub a {
-  color: var(--color-info);
-}
-.tq-meta {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  font-size: var(--text-xs);
-  color: var(--color-text-subtle);
-  white-space: nowrap;
-}
-.tq-who {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.tq-lease {
-  width: 72px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--color-surface-3);
-  overflow: hidden;
-}
-.tq-lease i {
-  display: block;
-  height: 100%;
-  background: var(--color-info);
-}
-.tq-lease[data-low="true"] i {
-  background: var(--color-warn);
-}
-.tq-acts {
-  display: inline-flex;
-  gap: 6px;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-.tq-row:hover .tq-acts,
-.tq-row:focus-within .tq-acts,
-.tq-row[aria-selected="true"] .tq-acts {
-  opacity: 1;
-}
-.tq-mini {
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 6px;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-surface);
-  color: var(--color-text);
-}
-.tq-mini[data-ok="true"] {
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-  border-color: transparent;
-}
-.tq-mini:hover {
-  filter: brightness(1.08);
-}
-
-/* ---- board */
-.tq-board {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(260px, 1fr);
-  gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 8px;
-}
-.tq-col {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  min-height: 200px;
-  display: flex;
-  flex-direction: column;
-}
-.tq-card {
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 10px 10px 8px;
-  text-align: left;
-  width: 100%;
-  display: grid;
-  gap: 6px;
-  cursor: pointer;
-}
-.tq-card:hover {
-  border-color: var(--color-border-strong);
-}
-.tq-card[draggable="true"]:active {
-  cursor: grabbing;
-}
-.tq-col[data-drop="ok"],
-.tq-group[data-drop="ok"] {
-  border-style: dashed;
-  border-color: var(--color-accent);
-}
-.tq-col[data-drop="over"],
-.tq-group[data-drop="over"] {
-  border-color: var(--color-accent);
-  background: var(--color-surface-2);
-}
-.tq-col[data-drop="no"],
-.tq-group[data-drop="no"] {
-  opacity: 0.5;
-}
-.tq-card[aria-selected="true"] {
-  border-color: var(--color-accent);
-}
-.tq-pdot {
-  width: 6px;
-  height: 14px;
-  border-radius: 2px;
-  background: var(--color-surface-3);
-  flex: none;
-}
-.tq-pdot[data-p="1"] {
-  background: var(--color-danger);
-}
-.tq-pdot[data-p="2"] {
-  background: var(--color-warn);
-}
-
-/* ---- detail panel: a sticky column beside the list, a sheet under 1180 px */
-.tq-panel {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  position: sticky;
-  top: 12px;
-  max-height: calc(100vh - 24px);
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.tq-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border-strong);
-  text-transform: lowercase;
-}
-.tq-sec {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--color-border);
-}
-.tq-sec:last-child {
-  border-bottom: 0;
-}
-.tq-sec h4 {
-  font-size: var(--text-2xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-subtle);
-  font-weight: 600;
-  margin: 0 0 6px;
-}
-.tq-kv {
-  display: grid;
-  grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
-  gap: 4px 12px;
-  font-size: var(--text-sm);
-}
-.tq-kv dt {
-  color: var(--color-text-subtle);
-}
-.tq-kv dd {
-  margin: 0;
-  color: var(--color-text-muted);
-  overflow-wrap: anywhere;
-}
-.tq-kv a,
-.tq-outcome a {
-  color: var(--color-info);
-  text-decoration: none;
-}
-.tq-kv a:hover,
-.tq-outcome a:hover {
-  text-decoration: underline;
-}
-.tq-constraint {
-  border-left: 3px solid var(--color-warn);
-  padding: 6px 10px;
-  background: rgba(254, 170, 12, 0.06);
-  border-radius: 0 6px 6px 0;
-  color: var(--color-text-muted);
-  white-space: pre-wrap;
-}
-.tq-tl {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.tq-tl li {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  gap: 10px;
-  padding: 5px 0;
-  font-size: var(--text-sm);
-  align-items: start;
-}
-.tq-tl .ic {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--color-surface-3);
-  margin-top: 2px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9px;
-  font-family: var(--font-mono);
-  color: var(--color-text);
-}
-.tq-tl .ic[data-kind="human"] {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-}
-.tq-tl .ic[data-kind="sweeper"] {
-  color: var(--color-text-subtle);
-}
-.tq-track {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-}
-.tq-track div {
-  background: var(--color-surface-2);
-  border-radius: 6px;
-  padding: 6px 8px;
-}
-.tq-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border-strong);
-  color: var(--color-text);
-  background: var(--color-surface);
-  font-weight: 500;
-  font-size: var(--text-sm);
-}
-.tq-btn:hover {
-  background: var(--color-surface-2);
-}
-.tq-btn[data-tone="primary"] {
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-  border-color: transparent;
-}
-.tq-btn[data-tone="primary"]:hover {
-  background: var(--color-accent-strong);
-}
-.tq-btn[data-tone="ghost"] {
-  border-color: transparent;
-  color: var(--color-text-muted);
-}
-.tq-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.tq-seg {
-  display: inline-flex;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.tq-seg button {
-  height: 32px;
-  padding: 0 12px;
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.tq-seg button[aria-pressed="true"] {
-  background: var(--color-surface-2);
-  color: var(--color-text);
-}
-.tq-empty {
-  border: 1px dashed var(--color-border-strong);
-  border-radius: 10px;
-  padding: 28px;
-  text-align: center;
-  color: var(--color-text-muted);
-}
-.tq-menu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 4px);
-  min-width: 180px;
-  z-index: 30;
-  padding: 4px;
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border-strong);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-.tq-menu button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: var(--text-sm);
-  color: var(--color-text);
-}
-.tq-menu button:hover,
-.tq-menu button:focus-visible {
-  background: var(--color-surface-3);
-  outline: none;
-}
-
-@media (max-width: 1180px) {
-  .tq-body[data-panel="true"] {
-    grid-template-columns: 224px minmax(0, 1fr);
+  .tq-av[data-kind="bot"] {
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-info) 15%, transparent);
+    color: var(--color-info);
   }
+  .tq-av[data-kind="me"] {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  }
+
+  /* ---- list */
+  .tq-group {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    background: var(--color-surface);
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .tq-ghead {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .tq-ghead:hover {
+    background: var(--color-surface-2);
+  }
+  .tq-ghead .car {
+    transition: transform 0.15s;
+    color: var(--color-text-muted);
+  }
+  .tq-group[data-collapsed="true"] .tq-ghead {
+    border-bottom: 0;
+  }
+  .tq-group[data-collapsed="true"] .tq-ghead .car {
+    transform: rotate(-90deg);
+  }
+  .tq-row {
+    display: grid;
+    grid-template-columns: 4px minmax(0, 1fr) auto;
+    gap: 0 12px;
+    align-items: center;
+    width: 100%;
+    padding: 9px 14px 9px 10px;
+    text-align: left;
+    border-top: 1px solid var(--color-border);
+    cursor: pointer;
+    user-select: none;
+  }
+  /* A list narrower than a row's title and metadata side by side (beside the open
+     panel, on a phone) stacks the metadata under the title. */
+  .tq-rows {
+    container-type: inline-size;
+  }
+  @container (max-width: 560px) {
+    .tq-row {
+      grid-template-columns: 4px minmax(0, 1fr);
+    }
+    .tq-row > [role="gridcell"]:last-child {
+      grid-column: 2;
+      margin-top: 4px;
+    }
+    .tq-row .tq-meta {
+      justify-content: flex-start;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+  }
+  .tq-rows .tq-row:first-child {
+    border-top: 0;
+  }
+  .tq-row:hover {
+    background: var(--color-surface-2);
+  }
+  .tq-row[aria-selected="true"] {
+    background: var(--color-surface-2);
+    box-shadow: inset 3px 0 0 var(--color-accent);
+  }
+  .tq-row:focus-visible,
+  .tq-card:focus-visible,
+  .tq-tile:focus-visible,
+  .tq-inbox:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+  }
+  .tq-pri {
+    height: 32px;
+    border-radius: 2px;
+    background: var(--color-surface-3);
+  }
+  .tq-pri[data-p="1"] {
+    background: var(--color-danger);
+  }
+  .tq-pri[data-p="2"] {
+    background: var(--color-warn);
+  }
+  .tq-pri[data-p="4"] {
+    background: transparent;
+    border: 1px dashed var(--color-surface-3);
+  }
+  .tq-row .t {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  /* Two lines before it ellipsises, so a long title is read in the row. */
+  .tq-row .title {
+    font-weight: 500;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .tq-sub {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    margin-top: 2px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .tq-sub .reason {
+    color: var(--color-text-muted);
+    font-style: italic;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .tq-meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  .tq-who {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tq-lease {
+    width: 72px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--color-surface-3);
+    overflow: hidden;
+  }
+  .tq-lease i {
+    display: block;
+    height: 100%;
+    background: var(--color-info);
+  }
+  .tq-lease[data-low="true"] i {
+    background: var(--color-warn);
+  }
+  .tq-acts {
+    display: inline-flex;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.1s;
+  }
+  .tq-row:hover .tq-acts,
+  .tq-row:focus-within .tq-acts,
+  .tq-row[aria-selected="true"] .tq-acts {
+    opacity: 1;
+  }
+
+  /* ---- board */
+  .tq-board {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(260px, 1fr);
+    gap: 12px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+  .tq-col {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+  }
+  .tq-card {
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 10px 10px 8px;
+    text-align: left;
+    width: 100%;
+    display: grid;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .tq-card:hover {
+    border-color: var(--color-border-strong);
+  }
+  .tq-card[draggable="true"]:active {
+    cursor: grabbing;
+  }
+  .tq-col[data-drop="ok"],
+  .tq-group[data-drop="ok"] {
+    border-style: dashed;
+    border-color: var(--color-accent);
+  }
+  .tq-col[data-drop="over"],
+  .tq-group[data-drop="over"] {
+    border-color: var(--color-accent);
+    background: var(--color-surface-2);
+  }
+  .tq-col[data-drop="no"],
+  .tq-group[data-drop="no"] {
+    opacity: 0.5;
+  }
+  .tq-card[aria-current="true"] {
+    border-color: var(--color-accent);
+  }
+  .tq-pdot {
+    width: 6px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--color-surface-3);
+    flex: none;
+  }
+  .tq-pdot[data-p="1"] {
+    background: var(--color-danger);
+  }
+  .tq-pdot[data-p="2"] {
+    background: var(--color-warn);
+  }
+
+  /* ---- detail panel: a sticky column beside the list, a sheet under 1280 px */
   .tq-panel {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    position: sticky;
+    top: 12px;
+    max-height: calc(100vh - 24px);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .tq-sec {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .tq-sec:last-child {
+    border-bottom: 0;
+  }
+  .tq-sec h4 {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    font-weight: 500;
+    margin: 0 0 6px;
+  }
+  .tq-kv {
+    display: grid;
+    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
+    gap: 4px 12px;
+    font-size: var(--text-sm);
+  }
+  .tq-kv dt {
+    color: var(--color-text-muted);
+  }
+  .tq-kv dd {
+    margin: 0;
+    color: var(--color-text-muted);
+    overflow-wrap: anywhere;
+  }
+  .tq-constraint {
+    border-left: 3px solid var(--color-warn);
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--color-warn) 6%, transparent);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    color: var(--color-text-muted);
+    white-space: pre-wrap;
+  }
+  .tq-tl {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .tq-tl li {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 5px 0;
+    font-size: var(--text-sm);
+    align-items: start;
+  }
+  .tq-tl .ic {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-surface-3);
+    margin-top: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    color: var(--color-text);
+  }
+  .tq-tl .ic[data-kind="human"] {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+  }
+  .tq-tl .ic[data-kind="sweeper"] {
+    color: var(--color-text-muted);
+  }
+  .tq-empty {
+    border: 1px dashed var(--color-border-strong);
+    border-radius: var(--radius-xl);
+    padding: 28px;
+    text-align: center;
+    color: var(--color-text-muted);
+  }
+
+  /* The task panel as a sheet (Tasks.tsx decides when, below 1280 px). */
+  .tq-panel[data-sheet] {
     position: fixed;
     inset: 0 0 0 auto;
     width: min(480px, 100vw);
     z-index: 40;
     border-radius: 0;
     max-height: none;
-    box-shadow: -24px 0 48px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-2xl);
   }
-}
-@media (max-width: 820px) {
-  .tq-body,
-  .tq-body[data-panel="true"] {
-    grid-template-columns: minmax(0, 1fr);
+  @media (max-width: 767px) {
+    .tq-body,
+    .tq-body[data-panel="true"] {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .tq-rail {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .tq-rail section {
+      min-width: max-content;
+      margin-bottom: 0;
+    }
+    .tq-rail .tq-filters {
+      display: none;
+    }
+    .tq-attn {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .tq-acts {
+      opacity: 1;
+    }
+    .tq-panel {
+      width: 100vw;
+    }
   }
-  .tq-rail {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    padding-bottom: 4px;
-  }
-  .tq-rail section {
-    min-width: max-content;
-    margin-bottom: 0;
-  }
-  .tq-rail .tq-filters {
-    display: none;
-  }
-  .tq-attn {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .tq-row {
-    grid-template-columns: 4px minmax(0, 1fr);
-  }
-  .tq-row .tq-kind {
-    display: none;
-  }
-  .tq-row .tq-meta {
-    grid-column: 2;
-    justify-content: flex-start;
-    margin-top: 4px;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .tq-acts {
-    opacity: 1;
-  }
-  .tq-panel {
-    width: 100vw;
-  }
-}
-@media (pointer: coarse) {
-  .tq-row,
-  .tq-inbox,
-  .tq-tile {
-    min-height: var(--spacing-hit);
+  @media (pointer: coarse) {
+    .tq-row,
+    .tq-inbox,
+    .tq-tile {
+      min-height: var(--spacing-hit);
+    }
   }
 }

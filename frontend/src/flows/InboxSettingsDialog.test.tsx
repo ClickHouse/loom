@@ -3,7 +3,7 @@
  *  namespace are checked and disabled (they post regardless), the filter
  *  narrows the rows, and saving sends the checked subjects as `posters`. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { InboxSettingsDialog } from "./InboxSettingsDialog";
 import * as tasks from "../api/tasks";
@@ -114,16 +114,16 @@ describe("InboxSettingsDialog poster picker", () => {
     const bot = must(
       within(list)
         .getByRole("checkbox", { name: /team-bot/ })
-        .closest("label"),
-      "team-bot label",
+        .closest("li"),
+      "team-bot row",
     );
     expect(bot).toHaveTextContent("sa:team-bot-9f8e7d");
     expect(bot).toHaveTextContent("Service account");
     const alice = must(
       within(list)
         .getByRole("checkbox", { name: /^alice@example\.com/ })
-        .closest("label"),
-      "alice label",
+        .closest("li"),
+      "alice row",
     );
     expect(alice).toHaveTextContent("Person");
     expect(alice).toHaveTextContent("team, other, qa +2");
@@ -138,22 +138,22 @@ describe("InboxSettingsDialog poster picker", () => {
     const bot = within(list).getByRole("checkbox", { name: /team-bot/ });
     expect(bot).toBeChecked();
     expect(bot).toBeDisabled();
-    expect(bot.closest("label")).toHaveTextContent("already a writer here");
+    expect(bot.closest("li")).toHaveTextContent("already a writer here");
     expect(screen.getByText(/2 listed as posters/)).toBeInTheDocument();
   });
 
   it("the filter narrows the rows over label, subject and namespaces", async () => {
     const list = await openEditing();
     const user = userEvent.setup();
-    await user.type(screen.getByRole("searchbox", { name: /^Posters/ }), "carol");
+    await user.type(screen.getByRole("textbox", { name: "Filter posters" }), "carol");
     expect(within(list).getAllByRole("checkbox")).toHaveLength(1);
     expect(within(list).getByRole("checkbox", { name: /carol@example\.com/ })).toBeInTheDocument();
-    await user.clear(screen.getByRole("searchbox", { name: /^Posters/ }));
-    await user.type(screen.getByRole("searchbox", { name: /^Posters/ }), "code-y");
+    await user.clear(screen.getByRole("textbox", { name: "Filter posters" }));
+    await user.type(screen.getByRole("textbox", { name: "Filter posters" }), "code-y");
     expect(within(list).getAllByRole("checkbox")).toHaveLength(1);
     expect(within(list).getByRole("checkbox", { name: /^alice@example\.com/ })).toBeInTheDocument();
-    await user.clear(screen.getByRole("searchbox", { name: /^Posters/ }));
-    await user.type(screen.getByRole("searchbox", { name: /^Posters/ }), "nobody-here");
+    await user.clear(screen.getByRole("textbox", { name: "Filter posters" }));
+    await user.type(screen.getByRole("textbox", { name: "Filter posters" }), "nobody-here");
     expect(screen.queryByRole("list", { name: "Posters" })).toBeNull();
     expect(screen.getByText("No identity matches the filter.")).toBeInTheDocument();
     // The directory was not re-queried: the list fit, so the filter is client-side.
@@ -177,7 +177,7 @@ describe("InboxSettingsDialog poster picker", () => {
     render(<InboxSettingsDialog open onOpenChange={noop} identity={identity} inbox={null} onSaved={noop} />);
     await screen.findByRole("dialog");
     expect(screen.getByText("Name the inbox to choose posters.")).toBeInTheDocument();
-    expect(screen.getByRole("searchbox", { name: /^Posters/ })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Filter posters" })).toBeDisabled();
     expect(tasks.listPrincipals).not.toHaveBeenCalled();
     await userEvent.setup().type(screen.getByRole("textbox", { name: /^Inbox/ }), "new-bot");
     await waitFor(() => expect(tasks.listPrincipals).toHaveBeenCalledWith(identity, { inbox: "new-bot", query: "" }));

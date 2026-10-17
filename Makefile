@@ -289,6 +289,7 @@ lint:
 	$(PYTHON) scripts/codegen/settings_reference.py --check
 	$(PYTHON) scripts/codegen/docs_reference.py --check
 	$(PYTHON) scripts/codegen/op_reach_census.py --check
+	$(BIOME) lint frontend/src
 
 # Formatting: ruff (Python), Biome (JS/TS/JSON/CSS), Prettier (Markdown/YAML),
 # Taplo (TOML), shfmt (shell). Versions are pinned so a local run and CI agree.

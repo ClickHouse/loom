@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { CodeRepoSummary } from "../api";
@@ -399,7 +399,9 @@ describe("RepositoryCard", () => {
 
   it("busy disables every verb and chip", () => {
     mount([branch()], [source()], "code-clickhouse");
-    for (const b of verbs()) expect(b).toBeDisabled();
+    // A chip with a tip is aria-disabled rather than disabled, so its tip stays reachable.
+    for (const b of verbs())
+      expect(b.hasAttribute("disabled") || b.getAttribute("aria-disabled") === "true", b.outerHTML).toBe(true);
     // The disclosure itself stays usable: folding is not a write.
     expect(screen.getByRole("button", { name: "ClickHouse/ClickHouse" })).toBeEnabled();
   });
@@ -448,18 +450,15 @@ describe("RepositoryCard — the tracker links", () => {
     );
     expect(within(line()).queryByRole("button", { name: /Make .* primary/ })).toBeNull();
     await userEvent.click(within(line()).getByRole("button", { name: "Link another tracker" }));
-    const select = screen.getByRole("combobox", { name: "Tracker" });
-    expect(
-      within(select)
-        .getAllByRole("group")
-        .map((g) => g.getAttribute("label")),
-    ).toEqual([
+    const select = screen.getByRole("button", { name: "Tracker" });
+    expect(select).toHaveTextContent("qa · private"); // the first tracker listing the repository
+    expect(screen.getByText(/stays primary/)).toBeInTheDocument();
+    await userEvent.click(select);
+    expect(Array.from(document.querySelectorAll("[cui-select-group-name]")).map((g) => g.textContent)).toEqual([
       "Trackers listing ClickHouse/ClickHouse",
       "Other trackers — they answer nothing for ClickHouse/ClickHouse",
     ]);
-    expect(select).toHaveValue("tracker-example-private"); // the first tracker listing the repository
-    expect(screen.getByText(/stays primary/)).toBeInTheDocument();
-    await userEvent.selectOptions(select, "tracker-kj");
+    await userEvent.click(screen.getByText("kj"));
     expect(
       screen.getByText("kj lists Acme/kj, not ClickHouse/ClickHouse: it would answer nothing here."),
     ).toBeInTheDocument();

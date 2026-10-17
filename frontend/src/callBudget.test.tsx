@@ -6,7 +6,7 @@
 // poll, a per-row fetch or a duplicate read cannot land unnoticed. Budgets are the calls
 // a page NEEDS on load — raise one only with a reason in the commit message, never to
 // make a test pass.
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render } from "./test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "./api";
 import { useStore, type View } from "./lib/state";

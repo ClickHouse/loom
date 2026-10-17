@@ -1,5 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Inbox as InboxIcon, LayoutGrid, List as ListIcon, Plus, Settings as SettingsIcon } from "lucide-react";
+import * as RadixDialog from "@radix-ui/react-dialog";
+import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import {
   acceptTask,
   claimTask,
@@ -36,7 +39,7 @@ import {
   type TaskAction,
 } from "../lib/tasks";
 import { SkeletonCard } from "../components/Skeleton";
-import { Kbd } from "../components/ui";
+import { Kbd, PageHeader, Tip } from "../components/ui";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { toast, toastError } from "../components/Toast";
@@ -47,8 +50,8 @@ import { ALL_INBOXES, InboxRail, railCounts } from "./tasks/InboxRail";
 import { TaskList, type RowContext } from "./tasks/TaskList";
 import { TaskBoard } from "./tasks/TaskBoard";
 import { TaskPanel } from "./tasks/TaskPanel";
-import { TqButton } from "./tasks/TaskBits";
 import type { ReasonAction } from "../flows/TaskActionDialog";
+import { shortcutOff } from "../lib/shortcuts";
 
 // Dialogs load on the click that opens them.
 const TaskEditDialog = lazy(() => import("../flows/TaskEditDialog").then((m) => ({ default: m.TaskEditDialog })));
@@ -67,7 +70,8 @@ const InboxSettingsDialog = lazy(() =>
  * happens next — Triage, To do, In progress, Waiting, Closed — as a list or
  * a board; each row carries the one line that matters for its state and,
  * in Triage, inline Accept / Won't do. A row opens the document-shaped
- * panel beside the list; its footer holds the status's actions.
+ * panel beside the list (under 1280 px, a modal sheet over it); its footer holds the
+ * status's actions.
  *
  * Reads on load: `inbox.list` once, `task.counts` once (the rail), and
  * `task.list` once for the picked inbox (the list's projection); a 60 s poll while
@@ -78,6 +82,15 @@ const InboxSettingsDialog = lazy(() =>
  * / focuses the kind filter, Esc closes the panel.
  */
 type Mode = "list" | "board";
+
+function ViewLabel({ icon, text }: { icon: "list-bulleted" | "services"; text: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Icon name={icon} size="xs" aria-hidden="true" />
+      {text}
+    </span>
+  );
+}
 
 function readQuery(key: string): string | null {
   try {
@@ -96,6 +109,28 @@ function writeQuery(key: string, value: string | null): void {
   } catch {
     /* nothing to write into */
   }
+}
+
+// Below Click UI's xl breakpoint the panel is a modal sheet over the list, not a column
+// beside it. The one place the breakpoint lives: styles.css keys on what this decides.
+const SHEET_QUERY = "(max-width: 1279px)";
+
+function matchesSheet(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia(SHEET_QUERY).matches;
+}
+
+/** True while the viewport is narrow enough for the panel to be a modal sheet. */
+function useSheetLayout(): boolean {
+  const [sheet, setSheet] = useState(matchesSheet);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(SHEET_QUERY);
+    const sync = () => setSheet(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  return sheet;
 }
 
 function inEditable(el: EventTarget | null): boolean {
@@ -147,6 +182,8 @@ export function Tasks() {
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openRow, setOpenRow] = useState<TaskListRow | null>(null);
+  const openRowRef = useRef(openRow);
+  openRowRef.current = openRow;
   const [reloadKey, setReloadKey] = useState(0);
   const [progressNotes, setProgressNotes] = useState<ReadonlyMap<string, string>>(new Map());
   const [creating, setCreating] = useState(false);
@@ -154,6 +191,7 @@ export function Tasks() {
   const [dialog, setDialog] = useState<{ action: ReasonAction; task: TaskListRow | TaskRow } | null>(null);
   const [editing, setEditing] = useState<TaskRow | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const sheetLayout = useSheetLayout();
 
   // Only the latest task.counts may write the counts: a namespace switch while A's read is
   // in flight drops A's answer, so B's tiles never show A's numbers.
@@ -303,6 +341,12 @@ export function Tasks() {
     writeQuery("task", r.task_id);
   }, []);
   const closeTask = useCallback(() => {
+    // Closing the side panel from inside it hands the focus back to its row (the sheet's
+    // dialog does the same on its own close).
+    const open = openRowRef.current;
+    const from = document.activeElement;
+    if (open && from instanceof Element && from.closest(".tq-panel"))
+      document.querySelector<HTMLElement>(`[data-task-id="${open.task_id}"]`)?.focus({ preventScroll: true });
     setOpenRow(null);
     writeQuery("task", null);
   }, []);
@@ -357,28 +401,36 @@ export function Tasks() {
     setProgressNotes((m) => (m.get(taskId) === note ? m : new Map(m).set(taskId, note)));
   }, []);
 
+  // Moving the selection (j / k here, the arrow keys in the list) follows with the open
+  // panel and takes the focus to the row.
+  const selectRow = useCallback(
+    (r: TaskListRow) => {
+      setSelectedId(r.task_id);
+      if (openRow) openTask(r);
+      const el = document.querySelector<HTMLElement>(`[data-task-id="${r.task_id}"]`);
+      el?.scrollIntoView?.({ block: "nearest" });
+      el?.focus({ preventScroll: true });
+    },
+    [openRow, openTask],
+  );
+
   // Keys: j / k over the visible rows, Enter opens, a / s / c / x / d act on the
   // selected row, / focuses the kind filter, Esc closes the panel. Ignored
   // while typing or while a dialog is open.
   const orderedRef = useRef(ordered);
   orderedRef.current = ordered;
-  const stateRef = useRef({ selectedId, openRow, onAction, openTask, closeTask });
-  stateRef.current = { selectedId, openRow, onAction, openTask, closeTask };
+  const stateRef = useRef({ selectedId, openRow, onAction, openTask, closeTask, selectRow });
+  stateRef.current = { selectedId, openRow, onAction, openTask, closeTask, selectRow };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target)) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target) || shortcutOff(e)) return;
       if (document.querySelector('[role="dialog"]')) return;
       const { selectedId: sel, openRow: open, onAction: act, openTask: openT, closeTask: closeT } = stateRef.current;
       const list = orderedRef.current;
       const i = list.findIndex((r) => r.task_id === sel);
       const move = (to: number) => {
         const r = list[Math.max(0, Math.min(list.length - 1, to))];
-        if (!r) return;
-        setSelectedId(r.task_id);
-        if (open) openT(r);
-        const el = document.querySelector<HTMLElement>(`[data-task-id="${r.task_id}"]`);
-        el?.scrollIntoView?.({ block: "nearest" });
-        el?.focus({ preventScroll: true });
+        if (r) stateRef.current.selectRow(r);
       };
       const row = i >= 0 ? list[i] : null;
       switch (e.key) {
@@ -452,6 +504,7 @@ export function Tasks() {
       selectedId,
       canWrite: mayWrite,
       onOpen: openTask,
+      onSelect: selectRow,
       onAccept: (r) => {
         void onAction("accept", r);
       },
@@ -463,45 +516,65 @@ export function Tasks() {
         if (a) void onAction(a, r);
       },
     }),
-    [now, ownerAgentOf, leaseSecondsOf, progressNotes, selectedId, mayWrite, openTask, onAction],
+    [now, ownerAgentOf, leaseSecondsOf, progressNotes, selectedId, mayWrite, openTask, selectRow, onAction],
   );
 
   const createInbox = inbox?.inbox ?? inboxes?.[0]?.inbox ?? null;
 
+  // The open task beside the list, or (narrow) as the content of a modal sheet.
+  const panelFor = (task: TaskListRow, sheet: boolean) => (
+    <TaskPanel
+      identity={caller}
+      row={task}
+      inboxes={inboxes ?? []}
+      canWrite={mayWrite}
+      sheet={sheet}
+      now={now}
+      reloadKey={reloadKey}
+      onClose={closeTask}
+      onAction={(a, t) => {
+        void onAction(a, t);
+      }}
+      onHistory={onHistory}
+      onOpenTask={(id) => {
+        const r = rows?.find((x) => x.task_id === id);
+        if (r) openTask(r);
+      }}
+    />
+  );
+
   return (
     <PageContainer>
-      <header className="flex items-center justify-between gap-4 flex-wrap pb-3">
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2.5 m-0">
-            <InboxIcon size={20} aria-hidden="true" /> Tasks
-          </h1>
-          <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div role="group" aria-label="View" className="tq-seg">
-            <button type="button" aria-pressed={mode === "list"} onClick={() => setModeAndRemember("list")}>
-              <ListIcon size={13} aria-hidden="true" /> List
-            </button>
-            <button type="button" aria-pressed={mode === "board"} onClick={() => setModeAndRemember("board")}>
-              <LayoutGrid size={13} aria-hidden="true" /> Board
-            </button>
-          </div>
-          {mayAdmin && inbox && (
-            <TqButton
-              tone="ghost"
-              onClick={() => setSettings("edit")}
-              title="Inbox settings: posters, disclosure, trust, leases"
-            >
-              <SettingsIcon size={13} aria-hidden="true" /> Inbox settings
-            </TqButton>
-          )}
-          {mayWrite && createInbox && (
-            <TqButton tone="primary" onClick={() => setCreating(true)}>
-              <Plus size={13} aria-hidden="true" /> New task
-            </TqButton>
-          )}
-        </div>
-      </header>
+      <PageHeader
+        title="Tasks"
+        actions={
+          <>
+            <ButtonGroup
+              aria-label="View"
+              selected={mode}
+              onClick={(v) => setModeAndRemember(v === "board" ? "board" : "list")}
+              options={[
+                { value: "list", label: <ViewLabel icon="list-bulleted" text="List" /> },
+                { value: "board", label: <ViewLabel icon="services" text="Board" /> },
+              ]}
+            />
+            {mayAdmin && inbox && (
+              <Tip content="Inbox settings: posters, disclosure, trust, leases">
+                <Button type="empty" htmlType="button" iconLeft="gear" onClick={() => setSettings("edit")}>
+                  Inbox settings
+                </Button>
+              </Tip>
+            )}
+            {mayWrite && createInbox && (
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreating(true)}>
+                New task
+              </Button>
+            )}
+          </>
+        }
+      >
+        <ScopeBadge kind="namespace" value={identity.namespace} />
+      </PageHeader>
 
       {inboxes === null && (
         <div className="space-y-3">
@@ -509,12 +582,10 @@ export function Tasks() {
           <SkeletonCard />
         </div>
       )}
-      {inboxes && inboxError && (
-        <EmptyState icon={InboxIcon} title="Couldn't load the inboxes" description={inboxError} />
-      )}
+      {inboxes && inboxError && <EmptyState icon="email" title="Couldn't load the inboxes" description={inboxError} />}
       {inboxes && !inboxError && inboxes.length === 0 && (
         <EmptyState
-          icon={InboxIcon}
+          icon="email"
           title="No inbox here yet"
           description={`An inbox is one agent's queue, owned by ${identity.namespace}. An admin of this namespace registers it; writers then pull from it and the trust table says who else may post.`}
           action={mayAdmin ? { label: "Register inbox", onClick: () => setSettings("register") } : undefined}
@@ -531,7 +602,7 @@ export function Tasks() {
       {inboxes && inboxes.length > 0 && picked && (
         <>
           <AttentionTiles counts={attention} active={filters.attention} onToggle={toggleTile} />
-          <div className="tq-body" data-panel={!!openRow}>
+          <div className="tq-body" data-panel={!!openRow && !sheetLayout}>
             <InboxRail
               inboxes={inboxes}
               counts={counts ? railCounts(counts) : null}
@@ -550,18 +621,20 @@ export function Tasks() {
                   <SkeletonCard />
                 </div>
               )}
-              {rows && rowsError && (
-                <EmptyState icon={InboxIcon} title="Couldn't load the tasks" description={rowsError} />
-              )}
+              {rows && rowsError && <EmptyState icon="email" title="Couldn't load the tasks" description={rowsError} />}
               {rows && !rowsError && visible.length === 0 && (
                 <div className="tq-empty">
                   {rows.length === 0 ? "Nothing here yet." : "No tasks match."} Bots post with{" "}
                   <span className="font-mono text-xs">task.create</span>; people use New task.
                   {filtering && (
                     <div className="mt-2">
-                      <TqButton onClick={() => setFilters((f) => ({ ...NO_FILTERS, showClosed: f.showClosed }))}>
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        onClick={() => setFilters((f) => ({ ...NO_FILTERS, showClosed: f.showClosed }))}
+                      >
                         Clear filters
-                      </TqButton>
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -575,14 +648,9 @@ export function Tasks() {
                   <TaskBoard groups={groups} ctx={ctx} showClosed={showClosed} />
                 ))}
               {truncated && (
-                <div className="text-xs text-[var(--color-text-subtle)] px-1 pt-1">
-                  Showing the first 200 tasks per inbox.
-                </div>
+                <div className="text-xs text-text-muted px-1 pt-1">Showing the first 200 tasks per inbox.</div>
               )}
-              <div
-                className="flex gap-3.5 flex-wrap text-xs text-[var(--color-text-subtle)] px-1 py-3"
-                aria-label="Keyboard"
-              >
+              <div className="flex gap-3.5 flex-wrap text-xs text-text-muted px-1 py-3">
                 <span>
                   <Kbd>j</Kbd> <Kbd>k</Kbd> move
                 </span>
@@ -612,27 +680,23 @@ export function Tasks() {
                 </span>
               </div>
             </div>
-            {openRow && (
-              <TaskPanel
-                identity={caller}
-                row={openRow}
-                inboxes={inboxes}
-                canWrite={mayWrite}
-                now={now}
-                reloadKey={reloadKey}
-                onClose={closeTask}
-                onAction={(a, t) => {
-                  void onAction(a, t);
-                }}
-                onHistory={onHistory}
-                onOpenTask={(id) => {
-                  const r = rows?.find((x) => x.task_id === id);
-                  if (r) openTask(r);
-                }}
-              />
-            )}
+            {openRow && !sheetLayout && panelFor(openRow, false)}
           </div>
         </>
+      )}
+
+      {sheetLayout && (
+        <RadixDialog.Root
+          open={!!openRow}
+          onOpenChange={(v) => {
+            if (!v) closeTask();
+          }}
+        >
+          <RadixDialog.Portal>
+            <RadixDialog.Overlay className="fixed inset-0 z-40 bg-overlay" />
+            {openRow && panelFor(openRow, true)}
+          </RadixDialog.Portal>
+        </RadixDialog.Root>
       )}
 
       {creating && createInbox && (

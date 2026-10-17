@@ -239,12 +239,13 @@ async def insert_thread(
 async def fetch_thread(
     org: str,
     namespace: str,
-    agent: str,
+    agent: str | None,
     thread_id: str,
     *,
     ch: _CHClient | None = None,
 ) -> ThreadRow | None:
-    """Return the thread-level metadata row, or None if absent.
+    """Return the thread-level metadata row, or None if absent. `agent=None`
+    reads it whoever owns it (a thread is one row per thread_id).
 
     `loom.conversation_threads` is ReplacingMergeTree(updated_at) so
     FINAL collapses earlier (title/metadata) versions; we read the
@@ -252,23 +253,23 @@ async def fetch_thread(
     if they need structure (the handler does).
     """
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "tid": thread_id}
+    agent_clause = ""
+    if agent is not None:
+        agent_clause = "AND agent = {agent:String}"
+        params["agent"] = agent
     row = await ch.query_one(
-        """
+        f"""
         SELECT thread_id, title, metadata, run_id, user_id, created_at, updated_at, agent
         FROM loom.conversation_threads FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND thread_id = {{tid:String}}
           AND tombstoned_at IS NULL
+          {agent_clause}
         LIMIT 1
         """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-        },
+        params=params,
     )
     return cast(ThreadRow | None, row)
 
@@ -376,6 +377,15 @@ async def tombstone_thread(
     return counts
 
 
+# One turn of a thread, however many agents logged it: its id and its content, since a
+# msg_id is unique per agent only and a client may number its own turns. The content hash
+# also orders two turns that share a millisecond and an id; the page cursor carries only
+# (ts, msg_id), a format the previous release reads, so a page boundary that falls
+# between two such turns skips the second. Carrying the hash in the cursor is the next
+# release's change (docs/architecture/rolling-upgrades.md, rule 4).
+TURN = "msg_id, cityHash64(content)"
+
+
 async def search_substring(
     org: str,
     namespaces: list[str],
@@ -399,17 +409,19 @@ async def search_substring(
     where = [
         "org = {org:String}",
         "namespace IN {nss:Array(String)}",
-        "agent = {agent:String}",
         "positionCaseInsensitive(content, {q:String}) > 0",
         "tombstoned_at IS NULL",
     ]
     params: dict[str, Any] = {
         "org": org,
         "nss": list(namespaces),
-        "agent": agent,
         "q": query,
         "limit": int(limit),
     }
+    # "*"/"-" spans every agent, as the vector search does.
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
     if thread_id:
         where.append("thread_id = {thread_id:String}")
         params["thread_id"] = thread_id
@@ -420,13 +432,22 @@ async def search_substring(
         where.append("run_id = {run_id:String}")
         params["run_id"] = run_id
 
+    columns = """org, namespace, agent, thread_id, msg_id, role, content,
+               reasoning, user_id, run_id, metadata, tokens, ts"""
+    source = f"loom.conversations WHERE {' AND '.join(where)}"
+    if agent in ("*", "-"):
+        # Across agents a turn two agents logged comes back once, collapsed before the
+        # limit so the page holds `limit` turns, on the thread read's key (`TURN`) and as
+        # its first copy, the one a thread read shows.
+        source = f"""(
+            SELECT {columns} FROM {source}
+            ORDER BY ts ASC, agent ASC
+            LIMIT 1 BY namespace, thread_id, {TURN}
+        )"""
     rows = await ch.query_all(
         f"""
-        SELECT org, namespace, agent, thread_id, msg_id, role, content,
-               reasoning, user_id, run_id, metadata,
-               tokens, ts
-        FROM loom.conversations
-        WHERE {" AND ".join(where)}
+        SELECT {columns}
+        FROM {source}
         ORDER BY ts DESC
         LIMIT {{limit:UInt32}}
         """,
@@ -438,7 +459,7 @@ async def search_substring(
 async def list_thread(
     org: str,
     namespace: str,
-    agent: str,
+    agent: str | None,
     thread_id: str,
     *,
     run_id: str | None = None,
@@ -451,6 +472,8 @@ async def list_thread(
 
     `after`: `(ts, msg_id)` of the previous page's last row — returns
     only messages strictly after it. `run_id`: restrict to one agent run.
+    `agent=None`: every agent's messages in the thread, a turn two agents both
+    logged once.
     `order`: `asc` (oldest first, the default) or `desc` (newest first —
     the thread's tail; `after` is an ascending cursor and is not combined
     with it).
@@ -460,20 +483,22 @@ async def list_thread(
     where = [
         "org = {org:String}",
         "namespace = {ns:String}",
-        "agent = {agent:String}",
         "thread_id = {tid:String}",
         "tombstoned_at IS NULL",
     ]
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
-        "agent": agent,
         "tid": thread_id,
         "limit": int(limit),
     }
+    if agent is not None:
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    page_where: list[str] = []
     if after is not None:
         ts_after, msg_after = after
-        where.append(
+        page_where.append(
             "(ts, msg_id) > (toDateTime64({ts:String}, 3, 'UTC'), {mid:String})",
         )
         # A basic-mode `toDateTime64` reads `YYYY-MM-DD hh:mm:ss.fff`; the
@@ -489,14 +514,31 @@ async def list_thread(
         where.append("run_id = {run_id:String}")
         params["run_id"] = run_id
 
+    columns = """org, namespace, agent, thread_id, msg_id, role, content,
+               reasoning, user_id, run_id, metadata, tokens, ts"""
+    if agent is not None:
+        # One agent's read pages its own rows as stored, in the one WHERE; its count is
+        # the same rows (count_thread_msgs).
+        where += page_where
+        page_where = []
+    source = f"loom.conversations WHERE {' AND '.join(where)}"
+    if agent is None:
+        # Two agents logging the same turn store it under one content-hashed msg_id. A
+        # read across agents keeps each turn's first copy before it pages, so a later
+        # copy never slips past the cursor onto the next page. That reads the thread
+        # from its start on every page: a thread is one key prefix, and the copy before
+        # the cursor is what says a later one is not a new turn.
+        source = f"""(
+            SELECT {columns} FROM {source}
+            ORDER BY ts ASC, msg_id ASC, cityHash64(content) ASC, agent ASC
+            LIMIT 1 BY {TURN}
+        )"""
     rows = await ch.query_all(
         f"""
-        SELECT org, namespace, agent, thread_id, msg_id, role, content,
-               reasoning, user_id, run_id, metadata,
-               tokens, ts
-        FROM loom.conversations
-        WHERE {" AND ".join(where)}
-        ORDER BY ts {direction}, msg_id {direction}
+        SELECT {columns}
+        FROM {source}
+        {"WHERE " + " AND ".join(page_where) if page_where else ""}
+        ORDER BY ts {direction}, msg_id {direction}, cityHash64(content) {direction}
         LIMIT {{limit:UInt32}}
         """,
         params=params,
@@ -507,33 +549,37 @@ async def list_thread(
 async def count_thread_msgs(
     org: str,
     namespace: str,
-    agent: str,
+    agent: str | None,
     thread_id: str,
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Total messages for one (org, ns, agent, thread_id).
+    """Turns in one (org, ns, agent, thread_id): the rows its list pages
+    through. `agent=None` counts every agent's distinct turns (`TURN`): two
+    agents logging the same turn store it under one content-hashed id, which a
+    read across agents shows once.
 
     Used by `conversation.get` to populate `msg_count` whether or not
     the caller asked for the messages payload.
     """
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "tid": thread_id}
+    agent_clause = ""
+    if agent is not None:
+        agent_clause = "AND agent = {agent:String}"
+        params["agent"] = agent
+    turns = "count()" if agent is not None else f"uniqExact({TURN})"
     row = await ch.query_one(
-        """
-        SELECT count() AS n
+        f"""
+        SELECT {turns} AS n
         FROM loom.conversations
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND thread_id = {{tid:String}}
           AND tombstoned_at IS NULL
+          {agent_clause}
         """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-        },
+        params=params,
     )
     return int(row["n"]) if row else 0
 
@@ -545,11 +591,14 @@ async def recent_threads(
     window_days: int,
     limit: int,
     agent: str | None = None,
+    count_turns: bool = True,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The namespace's threads with a live message in the window, most recent
     first: message count, first/last seen and the latest message's agent
-    (`last_agent`), role and 240-character excerpt."""
+    (`last_agent`), role and 240-character excerpt. `count_turns`: the message
+    count is the thread's distinct turns, as an opened thread shows; off, the
+    window's raw row count (for a caller that does not read the count)."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace, "wd": window_days, "lim": limit}
     # The aggregate is aliased `last_agent`, not `agent`: the analyzer would resolve a bare
@@ -558,7 +607,7 @@ async def recent_threads(
     if agent:
         agent_clause = " AND agent = {agent:String}"
         params["agent"] = agent
-    return await ch.query_all(
+    rows = await ch.query_all(
         f"""
         SELECT
             thread_id,
@@ -580,6 +629,27 @@ async def recent_threads(
         """,
         params=params,
     )
+    if not rows or not count_turns:
+        return rows
+    # The count an opened thread shows (each thread whole, one per turn however many agents
+    # logged it), for the page's threads only: an exact distinct count over the whole
+    # window would hold every turn's key in memory to rank threads it then drops.
+    per_thread = "count()" if agent else f"uniqExact({TURN})"
+    counted = await ch.query_all(
+        f"""
+        SELECT thread_id, {per_thread} AS n
+        FROM loom.conversations
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND thread_id IN {{tids:Array(String)}}
+          AND tombstoned_at IS NULL
+          {agent_clause}
+        GROUP BY thread_id
+        """,
+        params={**params, "tids": [r["thread_id"] for r in rows]},
+    )
+    turns = {r["thread_id"]: r["n"] for r in counted}
+    return [{**r, "msg_count": turns.get(r["thread_id"], r["msg_count"])} for r in rows]
 
 
 async def thread_titles(

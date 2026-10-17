@@ -1,4 +1,5 @@
 import { useEffect, useRef, type DependencyList } from "react";
+import { shortcutOff } from "./shortcuts";
 
 const INTERACTIVE =
   'button, a[href], summary, select, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="option"], [role="checkbox"], [role="switch"]';
@@ -9,9 +10,11 @@ const LAYER = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="list
  *
  * Two more cases are left alone: Enter and Space on a focused control — a button, link,
  *  menu item, tab, or anything else tabbable — keep their native activation, so a list
- *  view binding `Enter` cannot swallow Enter on the header's "New" button; and a key
- *  pressed inside an open dialog, menu or listbox belongs to that layer. */
-export function useKeyboard(bindings: Record<string, () => void>, enabled: boolean = true): void {
+ *  view binding `Enter` cannot swallow Enter on the header's "New" button; a key
+ *  pressed inside an open dialog, menu or listbox belongs to that layer; and a key a
+ *  focused widget already handled (a menu trigger's ArrowDown) is not handled twice.
+ *  A binding that returns `false` declines the key, which keeps its default (scrolling). */
+export function useKeyboard(bindings: Record<string, () => boolean | void>, enabled: boolean = true): void {
   useEffect(() => {
     if (!enabled) return;
     const isTyping = (): boolean => {
@@ -34,14 +37,11 @@ export function useKeyboard(bindings: Record<string, () => void>, enabled: boole
       return t instanceof Element && !!t.closest(LAYER);
     };
     const onKey = (e: KeyboardEvent): void => {
-      if (isTyping()) return;
+      if (e.defaultPrevented || isTyping() || shortcutOff(e)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return; // skip when modifiers
       if (activatesFocusedControl(e) || insideLayer(e)) return;
       const handler = bindings[e.key];
-      if (handler) {
-        e.preventDefault();
-        handler();
-      }
+      if (handler && handler() !== false) e.preventDefault();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

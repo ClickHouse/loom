@@ -22,8 +22,8 @@ export function NetworkProgress() {
         busy ? "opacity-100" : "opacity-0"
       }`}
     >
-      <div className="h-full bg-[var(--color-accent)]/30 overflow-hidden">
-        <div className="h-full w-1/3 bg-[var(--color-accent)] animate-network-slide motion-reduce:animate-none!" />
+      <div className="h-full bg-accent/30 overflow-hidden">
+        <div className="h-full w-1/3 bg-accent animate-network-slide" />
       </div>
     </div>
   );

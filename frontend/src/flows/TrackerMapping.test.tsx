@@ -4,7 +4,7 @@
  * switching tables keeps the fields the new table also has; an optional role can be left
  * out.
  */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -61,6 +61,11 @@ function edit(mapping: SourceMapping) {
   );
   return onChange;
 }
+/** Opens a Click UI Select by its trigger's name and picks the option with this text. */
+function choose(trigger: RegExp | string, option: RegExp | string) {
+  fireEvent.click(screen.getByRole("button", { name: trigger }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByText(option));
+}
 const ISSUES_MAP: SourceMapping = {
   version: 1,
   tables: {
@@ -99,23 +104,23 @@ describe("MappingEditor", () => {
 
   it("shows each role's table and fields, labelled and axe-clean", async () => {
     edit(ISSUES_MAP);
-    expect(screen.getByLabelText("Items: your table")).toHaveValue("issues");
-    expect(screen.getByLabelText("Pull requests: your table")).toHaveValue("");
-    expect(screen.getByLabelText(/Reference: repository/)).toHaveValue("col:repo");
-    expect(screen.getByLabelText(/Reference: number/)).toHaveValue("col:issue_id");
+    expect(screen.getByRole("button", { name: "Items: your table" })).toHaveTextContent("issues · 3 rows");
+    expect(screen.getByRole("button", { name: "Pull requests: your table" })).toHaveTextContent("None");
+    expect(screen.getByRole("button", { name: /Reference: repository/ })).toHaveTextContent(/^repo$/);
+    expect(screen.getByRole("button", { name: /Reference: number/ })).toHaveTextContent("issue_id · UInt32");
     expect(unlabeledControls(document.body)).toEqual([]);
     expect(await axeViolations(document.body)).toEqual([]);
   });
 
   it("builds a reference from one fixed repository and the number in a key", () => {
     const onChange = edit(ISSUES_MAP);
-    fireEvent.change(screen.getByLabelText(/Reference: number/), { target: { value: "digits:key" } });
+    choose(/Reference: number/, "number in key");
     expect(onChange.mock.lastCall?.[0].tables.github_issues.columns.source_id).toEqual({
       concat: ["repo", { lit: "#" }, { digits: "key" }],
     });
     cleanup();
     const again = edit(ISSUES_MAP);
-    fireEvent.change(screen.getByLabelText(/Reference: repository/), { target: { value: "fixed" } });
+    choose(/Reference: repository/, "one repository:");
     expect(again.mock.lastCall?.[0].tables.github_issues.columns.source_id).toEqual({
       concat: [{ lit: "#" }, "issue_id"],
     });
@@ -123,7 +128,7 @@ describe("MappingEditor", () => {
 
   it("switching tables keeps the fields the new table has, and sets FINAL by its engine", () => {
     const onChange = edit(ISSUES_MAP);
-    fireEvent.change(screen.getByLabelText("Items: your table"), { target: { value: "bugs" } });
+    choose("Items: your table", /^bugs/);
     const t = onChange.mock.lastCall?.[0].tables.github_issues;
     expect(t.source).toBe("acme.bugs");
     expect(t.final).toBe(true);
@@ -133,7 +138,7 @@ describe("MappingEditor", () => {
 
   it("an optional role is added and left out by its table picker", () => {
     const onChange = edit(ISSUES_MAP);
-    fireEvent.change(screen.getByLabelText("Pull requests: your table"), { target: { value: "pull_requests" } });
+    choose("Pull requests: your table", /^pull_requests/);
     expect(onChange.mock.lastCall?.[0].tables.github_prs.source).toBe("acme.pull_requests");
     cleanup();
     const both: SourceMapping = {
@@ -141,7 +146,7 @@ describe("MappingEditor", () => {
       tables: { ...ISSUES_MAP.tables, github_prs: { source: "acme.pull_requests", final: false, columns: {} } },
     };
     const again = edit(both);
-    fireEvent.change(screen.getByLabelText("Pull requests: your table"), { target: { value: "" } });
+    choose("Pull requests: your table", "None");
     expect(again.mock.lastCall?.[0].tables.github_prs).toBeUndefined();
     expect(again.mock.lastCall?.[0].tables.github_issues).toBeDefined();
   });

@@ -7,7 +7,6 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { GitBranch } from "lucide-react";
 import { EmptyState } from "../../../components/EmptyState";
 import { Skeleton } from "../../../components/Skeleton";
 import { shorten } from "../model";
@@ -395,10 +394,11 @@ export function TrackerGraph({ graph, loading, error, hint, selected, onSelect, 
       {error && <div className="absolute inset-0 grid place-items-center p-6 text-sm text-danger">{error}</div>}
       {!loading && !error && !placed && (
         <div className="absolute inset-0 overflow-auto grid place-items-center">
-          <EmptyState icon={GitBranch} title="Pick an issue to see its graph" description={hint} />
+          <EmptyState icon="git-merge" title="Pick an issue to see its graph" description={hint} />
         </div>
       )}
       {show && (
+        // biome-ignore lint/a11y/useKeyWithMouseEvents: hover only lights the picture, which is aria-hidden; keyboard users read and open the same links in the inspector beside it
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}
@@ -440,7 +440,7 @@ export function TrackerGraph({ graph, loading, error, hint, selected, onSelect, 
             selected={selected === placed.seed.number}
             sel={selChain ? selChain.has(placed.seed.id) : false}
           />
-          <text x={12} y={H - 14} fill="var(--color-text-subtle)">
+          <text x={12} y={H - 14} fill="var(--color-text-muted)">
             ← caused by · fixed by → · duplicates and related below
           </text>
         </svg>

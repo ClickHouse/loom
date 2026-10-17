@@ -17,21 +17,15 @@
  *      the one that passed.
  *   Then a done state that says what happened and what happens next.
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  ChevronRight,
-  Circle,
-  Database,
-  Download,
-  Info,
-  KeyRound,
-  ShieldAlert,
-  Trash2,
-  X,
-  XCircle,
-} from "lucide-react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { Alert } from "../components/ui/Alert";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { PasswordField } from "@clickhouse/click-ui/PasswordField";
+import { Table } from "@clickhouse/click-ui/Table";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   addTrackerSource,
   getTrackerContract,
@@ -62,29 +56,38 @@ import {
   type TrackerSourceForm,
 } from "../lib/trackerSources";
 import { CopyButton } from "../components/CopyButton";
+import { IconButton } from "../components/IconButton";
 import { Skeleton } from "../components/Skeleton";
+import { ChoiceGroup } from "../components/ui/ChoiceGroup";
+import { Unavailable } from "../components/ui/Unavailable";
 import { MappingEditor } from "./TrackerMapping";
-import {
-  CancelButton,
-  DANGER_BTN,
-  DialogFrame,
-  ErrorNote,
-  Field,
-  INPUT_CLS,
-  PRIMARY_BTN,
-  SECONDARY_BTN,
-} from "./TaskDialogFrame";
+import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
+
+/** A field label with its hint in parentheses. */
+function hinted(label: string, hint: string): ReactNode {
+  return (
+    <>
+      {label} <span className="font-normal text-text-muted">({hint})</span>
+    </>
+  );
+}
+
+const SUCCESS = "var(--color-success)";
+const WARN = "var(--color-warn)";
+const DANGER = "var(--color-danger)";
+const SUBTLE = "var(--color-text-muted)";
+const MUTED = "var(--color-text-muted)";
 
 // ---------------------------------------------------------------------------
 // The check report, table by table (shared with a tracker's "Check now")
 // ---------------------------------------------------------------------------
 
-const STATE_ICON: Record<ContractTableRow["state"], { icon: typeof CheckCircle2; tone: string; word: string }> = {
-  ok: { icon: CheckCircle2, tone: "text-success", word: "ok" },
-  aliased: { icon: CheckCircle2, tone: "text-success", word: "ok" },
-  incomplete: { icon: AlertTriangle, tone: "text-warn", word: "incomplete" },
-  missing: { icon: XCircle, tone: "text-danger", word: "missing" },
-  absent: { icon: Info, tone: "text-text-muted", word: "absent" },
+const STATE_ICON: Record<ContractTableRow["state"], { icon: IconName; color: string; word: string }> = {
+  ok: { icon: "check-in-circle", color: SUCCESS, word: "ok" },
+  aliased: { icon: "check-in-circle", color: SUCCESS, word: "ok" },
+  incomplete: { icon: "warning", color: WARN, word: "incomplete" },
+  missing: { icon: "cross", color: DANGER, word: "missing" },
+  absent: { icon: "info-in-circle", color: MUTED, word: "absent" },
 };
 
 /** The schema check, one row per table, and a copyable fix per failing table. */
@@ -103,14 +106,13 @@ export function ContractReportView({
       <ul className="space-y-1" aria-label="Views, table by table">
         {rows.map((r) => {
           const s = STATE_ICON[r.state];
-          const Icon = s.icon;
           return (
             <li key={r.table} className="flex items-start gap-2 text-xs min-w-0">
-              <Icon size={13} aria-hidden="true" className={`${s.tone} shrink-0 mt-0.5`} />
+              <Icon name={s.icon} size="xs" color={s.color} aria-hidden="true" className="shrink-0 mt-0.5" />
               <span className="font-mono text-text shrink-0">{r.table}</span>
               <span className="sr-only">{s.word}</span>
               <span className="text-text-muted min-w-0 break-words">
-                {!r.required && <span className="text-text-subtle">optional · </span>}
+                {!r.required && <span className="text-text-muted">optional · </span>}
                 {r.detail}
               </span>
             </li>
@@ -125,9 +127,7 @@ export function ContractReportView({
               <span className="font-mono">&lt;your_table&gt;</span>, map every column marked{" "}
               <strong className="font-medium">MUST map</strong>, run it, then Check again.
             </p>
-            {drafts.length > 1 && (
-              <CopyButton text={all} label="Copy all fixes" className={`${SECONDARY_BTN} text-xs`} />
-            )}
+            {drafts.length > 1 && <CopyButton text={all} label="Copy all fixes" />}
           </div>
           {drafts.map(([table, sql]) => (
             <SqlBlock key={table} table={table} sql={sql} copyLabel={`Copy the view draft for ${table}`} />
@@ -143,14 +143,9 @@ function SqlBlock({ table, sql, copyLabel }: { table: string; sql: string; copyL
     <div className="rounded-md border border-border bg-surface-2 min-w-0">
       <div className="flex items-center justify-between px-2 py-1 border-b border-border">
         <span className="text-xs font-mono">{table}</span>
-        <CopyButton
-          text={sql}
-          label="Copy SQL"
-          ariaLabel={copyLabel}
-          className="inline-flex items-center gap-1 px-2 min-h-7 text-xs rounded-md border border-border hover:bg-surface-3"
-        />
+        <CopyButton text={sql} label="Copy SQL" ariaLabel={copyLabel} />
       </div>
-      <pre className="max-h-56 overflow-auto p-2 text-2xs leading-relaxed font-mono whitespace-pre">{sql}</pre>
+      <pre className="max-h-56 overflow-auto p-2 text-xs leading-relaxed font-mono whitespace-pre">{sql}</pre>
     </div>
   );
 }
@@ -353,73 +348,74 @@ export function RegisterTrackerSourceDialog({
       return (
         <>
           <CancelButton />
-          <button
-            type="button"
-            className={PRIMARY_BTN}
-            disabled={problems.length > 0 || busy !== null}
-            onClick={() => void inspect()}
-            title={problems.length ? problems[0] : undefined}
-          >
-            {busy === "inspect" ? (
-              "Reading your tables…"
-            ) : (
-              <>
-                Next: map your tables <ChevronRight size={14} aria-hidden="true" />
-              </>
-            )}
-          </button>
+          <Unavailable reason={problems[0]}>
+            <Button
+              type="primary"
+              htmlType="button"
+              iconRight="chevron-right"
+              loading={busy === "inspect"}
+              disabled={busy !== null}
+              onClick={() => void inspect()}
+            >
+              Next: map your tables
+            </Button>
+          </Unavailable>
         </>
       );
     if (step === "map")
       return (
         <>
-          <button type="button" className={SECONDARY_BTN} onClick={() => setStep("connect")}>
+          <Button type="secondary" htmlType="button" onClick={() => setStep("connect")}>
             Back
-          </button>
-          <button
-            type="button"
-            className={PRIMARY_BTN}
-            disabled={mapProblems.length > 0 || busy !== null}
-            onClick={goCheck}
-            title={mapProblems[0]}
-          >
-            Check <ChevronRight size={14} aria-hidden="true" />
-          </button>
+          </Button>
+          <Unavailable reason={mapProblems[0]}>
+            <Button
+              type="primary"
+              htmlType="button"
+              iconRight="chevron-right"
+              disabled={busy !== null}
+              onClick={goCheck}
+            >
+              Check
+            </Button>
+          </Unavailable>
         </>
       );
     if (step === "check")
       return (
         <>
-          <button
-            type="button"
-            className={SECONDARY_BTN}
+          <Button
+            type="secondary"
+            htmlType="button"
             disabled={busy !== null}
             onClick={() => setStep(inspected ? "map" : "connect")}
           >
             {inspected ? "Edit mapping" : "Edit connection"}
-          </button>
-          <button
-            type="button"
-            className={SECONDARY_BTN}
+          </Button>
+          <Button
+            type="secondary"
+            htmlType="button"
+            loading={busy === "check"}
             disabled={busy !== null || problems.length > 0}
             onClick={() => void run(true)}
           >
-            {busy === "check" ? "Checking…" : "Check again"}
-          </button>
-          <button
-            type="button"
-            className={PRIMARY_BTN}
+            Check again
+          </Button>
+          <Button
+            type="primary"
+            htmlType="button"
+            loading={busy === "add"}
             disabled={busy !== null || !passed}
             onClick={() => void run(false)}
           >
-            {busy === "add" ? "Adding…" : repo ? `Add and link ${repo}` : "Add tracker"}
-          </button>
+            {repo ? `Add and link ${repo}` : "Add tracker"}
+          </Button>
         </>
       );
     return (
-      <button type="button" className={PRIMARY_BTN} onClick={() => onOpenChange(false)}>
+      <Button type="primary" htmlType="button" onClick={() => onOpenChange(false)}>
         Done
-      </button>
+      </Button>
     );
   })();
 
@@ -428,7 +424,6 @@ export function RegisterTrackerSourceDialog({
       open={open}
       onOpenChange={onOpenChange}
       width={760}
-      icon={<Database size={16} aria-hidden="true" />}
       title="Add a tracker"
       description="A tracker is a ClickHouse database of your issues, PRs and incidents — in whatever schema you have. Loom reads it live with a read-only user and never copies it."
       footer={footer}
@@ -503,36 +498,39 @@ function MapStep({
   problems: string[];
 }) {
   const [views, setViews] = useState(false);
+  const viewsHintId = useId();
   const db = form.database.trim();
   if (inspected.proposal.mode === "views") {
     return (
-      <div className="rounded-lg bg-surface-2 border border-border p-3 text-sm space-y-1" role="status">
-        <p className="flex items-center gap-1.5">
-          <CheckCircle2 size={14} className="text-success" aria-hidden="true" />{" "}
-          <span>
-            <span className="font-mono">{db}</span> already exposes Loom's tables — nothing to map.
-          </span>
-        </p>
-        <p className="text-xs text-text-muted">
-          Loom reads <span className="font-mono">github_issues</span>, <span className="font-mono">github_prs</span> and{" "}
-          <span className="font-mono">edges</span> there as they are. Go to Check.
-        </p>
-      </div>
+      <Alert
+        role="status"
+        state="success"
+        text={
+          <>
+            <strong className="font-medium">
+              <span className="font-mono">{db}</span> already exposes Loom's tables — nothing to map.
+            </strong>{" "}
+            Loom reads <span className="font-mono">github_issues</span>, <span className="font-mono">github_prs</span>{" "}
+            and <span className="font-mono">edges</span> there as they are. Go to Check.
+          </>
+        }
+      />
     );
   }
   return (
     <div className="space-y-4">
-      <div className="rounded-lg bg-surface-2 border border-border p-3 text-sm space-y-1">
-        <p>
-          <strong className="font-medium">Your schema, not Loom's:</strong> pick the table that holds your items and
-          which of its columns holds each field. Loom proposed what it could match — check the ones marked "guessed".
-          Fields you leave on "Loom default" are filled in for you.
-        </p>
-        <p className="text-xs text-text-muted">
-          Loom reads {inspected.tables.length} table{inspected.tables.length === 1 ? "" : "s"} in{" "}
-          <span className="font-mono">{db}</span>. Its read-only user needs SELECT on the tables you map.
-        </p>
-      </div>
+      <Alert
+        state="info"
+        text={
+          <>
+            <strong className="font-medium">Your schema, not Loom's:</strong> pick the table that holds your items and
+            which of its columns holds each field. Loom proposed what it could match — check the ones marked "guessed".
+            Fields you leave on "Loom default" are filled in for you. Loom reads {inspected.tables.length} table
+            {inspected.tables.length === 1 ? "" : "s"} in <span className="font-mono">{db}</span>; its read-only user
+            needs SELECT on the tables you map.
+          </>
+        }
+      />
       {mode === "mapping" && (
         <MappingEditor
           database={db}
@@ -555,20 +553,28 @@ function MapStep({
         onToggle={(e) => setViews(e.currentTarget.open)}
       >
         <summary className="cursor-pointer list-none px-3 min-h-10 flex items-center gap-1.5 text-sm">
-          <ChevronRight size={13} aria-hidden="true" className="transition-transform group-open:rotate-90" />
+          <Icon
+            name="chevron-right"
+            size="xs"
+            aria-hidden="true"
+            className="transition-transform group-open:rotate-90"
+          />
           Prefer views?{" "}
           <span className="text-xs text-text-muted">— create Loom's tables in your database yourself</span>
         </summary>
         <div className="px-3 pb-3 space-y-3">
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          <div>
+            <Checkbox
               checked={mode === "views"}
-              onChange={(e) => onMode(e.target.checked ? "views" : "mapping")}
+              onCheckedChange={(x) => onMode(x === true ? "views" : "mapping")}
+              aria-describedby={viewsHintId}
+              label="I created Loom's views — read them instead of a mapping"
             />
-            I created Loom's views in <span className="font-mono">{db}</span> — read them instead of a mapping
-          </label>
-          {views && <ViewsStep org={org} database={db} onDatabase={() => {}} />}
+            <p id={viewsHintId} className="mt-1 ml-6 text-xs text-text-muted">
+              Loom reads them in <span className="font-mono">{db}</span>.
+            </p>
+          </div>
+          {views && <ViewsStep org={org} database={db} />}
         </div>
       </details>
     </div>
@@ -597,10 +603,10 @@ function Stepper({
               onClick={() => onStep(s.id)}
               aria-current={state === "current" ? "step" : undefined}
               disabled={state === "current" || !canGo(s.id)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 min-h-8 border ${state === "current" ? "border-accent bg-accent-soft text-text font-medium" : state === "done" ? "border-border text-text" : "border-border text-text-subtle"} disabled:cursor-default`}
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 min-h-8 border ${state === "current" ? "border-accent bg-accent-soft text-text font-medium" : state === "done" ? "border-border text-text" : "border-border text-text-muted"} disabled:cursor-default`}
             >
               {state === "done" ? (
-                <CheckCircle2 size={12} className="text-success" aria-hidden="true" />
+                <Icon name="check-in-circle" size="xs" color={SUCCESS} aria-hidden="true" />
               ) : (
                 <span className="tabular-nums" aria-hidden="true">
                   {i + 1}
@@ -610,7 +616,7 @@ function Stepper({
               <span className="sr-only">{`Step ${i + 1} of ${STEPS.length}: ${s.label}${state === "done" ? " (done)" : ""}`}</span>
             </button>
             {i < STEPS.length - 1 && (
-              <ChevronRight size={12} aria-hidden="true" className="text-text-subtle shrink-0" />
+              <Icon name="chevron-right" size="xs" color={SUBTLE} aria-hidden="true" className="shrink-0" />
             )}
           </li>
         );
@@ -621,7 +627,7 @@ function Stepper({
 
 // ---- 1. Views --------------------------------------------------------------
 
-function ViewsStep({ org, database, onDatabase }: { org: string; database: string; onDatabase: (v: string) => void }) {
+function ViewsStep({ org, database }: { org: string; database: string }) {
   const [cat, setCat] = useState<TrackerContractCatalogue | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [db, setDb] = useState(database);
@@ -662,27 +668,22 @@ function ViewsStep({ org, database, onDatabase }: { org: string; database: strin
   };
   return (
     <div className="space-y-4">
-      <div className="rounded-lg bg-surface-2 border border-border p-3 text-sm space-y-1">
-        <p>
-          <strong className="font-medium">Who decides the schema:</strong> Loom reads fixed view names and columns; you
-          decide how your tables map onto them, as views in your own ClickHouse. Loom only ever reads.
-        </p>
-        <p className="text-xs text-text-muted">
-          Create the three required views below, then connect. Already have them? Go straight to Next.
-        </p>
-      </div>
-      <Field id="views-db" label="Database for the views" hint="create it if it does not exist">
-        <input
-          id="views-db"
-          className={`${INPUT_CLS} font-mono`}
-          value={db}
-          placeholder="loom_tracker"
-          onChange={(e) => {
-            setDb(e.target.value);
-            onDatabase(e.target.value);
-          }}
-        />
-      </Field>
+      <Alert
+        state="info"
+        text={
+          <>
+            <strong className="font-medium">Who decides the schema:</strong> Loom reads fixed view names and columns;
+            you decide how your tables map onto them, as views in your own ClickHouse. Loom only ever reads. Create the
+            three required views below, then connect. Already have them? Go straight to Next.
+          </>
+        }
+      />
+      <TextField
+        label={hinted("Database for the views", "create it if it does not exist")}
+        value={db}
+        placeholder="loom_tracker"
+        onChange={(v) => setDb(v)}
+      />
       {error && (
         <ErrorNote>
           Couldn't load the view list — {error}. You can still connect; the check lists what is missing.
@@ -699,7 +700,7 @@ function ViewsStep({ org, database, onDatabase }: { org: string; database: strin
         <>
           <section aria-label="Required views" className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-medium">Required — Loom does not read the tracker without these</h3>
+              <h3>Required — Loom does not read the tracker without these</h3>
               <div className="flex flex-wrap gap-2">
                 <CopyButton
                   text={() =>
@@ -709,12 +710,12 @@ function ViewsStep({ org, database, onDatabase }: { org: string; database: strin
                     )
                   }
                   label="Copy SQL"
-                  className={`${SECONDARY_BTN} text-xs`}
                   ariaLabel="Copy the SQL for the required views"
                 />
-                <button
-                  type="button"
-                  className={`${SECONDARY_BTN} text-xs`}
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconLeft="download"
                   onClick={() =>
                     download(
                       required.map((t) => t.table),
@@ -722,8 +723,8 @@ function ViewsStep({ org, database, onDatabase }: { org: string; database: strin
                     )
                   }
                 >
-                  <Download size={12} aria-hidden="true" /> Download .sql
-                </button>
+                  Download .sql
+                </Button>
               </div>
             </div>
             {required.map((t) => (
@@ -737,7 +738,7 @@ function ViewsStep({ org, database, onDatabase }: { org: string; database: strin
             </p>
           </section>
           <section aria-label="Read-only user" className="space-y-2">
-            <h3 className="text-sm font-medium">A read-only user for Loom</h3>
+            <h3>A read-only user for Loom</h3>
             <p className="text-xs text-text-muted">
               <span className="font-mono">readonly = 2</span>, not 1: it still allows SELECT only, but lets Loom set a
               timeout on each read. It needs SELECT on the views and on{" "}
@@ -751,16 +752,22 @@ function ViewsStep({ org, database, onDatabase }: { org: string; database: strin
           </section>
           <details className="group rounded-lg border border-border">
             <summary className="cursor-pointer list-none px-3 min-h-10 flex items-center gap-1.5 text-sm">
-              <ChevronRight size={13} aria-hidden="true" className="transition-transform group-open:rotate-90" />
+              <Icon
+                name="chevron-right"
+                size="xs"
+                aria-hidden="true"
+                className="transition-transform group-open:rotate-90"
+              />
               Optional views ({optional.length}){" "}
               <span className="text-xs text-text-muted">
                 — incidents, checks, releases; add them when you have the data
               </span>
             </summary>
             <div className="px-3 pb-3 space-y-2">
-              <button
-                type="button"
-                className={`${SECONDARY_BTN} text-xs`}
+              <Button
+                type="secondary"
+                htmlType="button"
+                iconLeft="download"
                 onClick={() =>
                   download(
                     cat.tables.map((t) => t.table),
@@ -768,8 +775,8 @@ function ViewsStep({ org, database, onDatabase }: { org: string; database: strin
                   )
                 }
               >
-                <Download size={12} aria-hidden="true" /> Download all {cat.tables.length} views
-              </button>
+                {`Download all ${cat.tables.length} views`}
+              </Button>
               {optional.map((t) => (
                 <TableCard key={t.table} t={t} defaultOpen={false} />
               ))}
@@ -786,39 +793,40 @@ function TableCard({ t, defaultOpen }: { t: ContractTable; defaultOpen: boolean 
   return (
     <details className="group rounded-lg border border-border" open={defaultOpen}>
       <summary className="cursor-pointer list-none px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 min-h-10">
-        <ChevronRight size={13} aria-hidden="true" className="transition-transform group-open:rotate-90 shrink-0" />
+        <Icon
+          name="chevron-right"
+          size="xs"
+          aria-hidden="true"
+          className="transition-transform group-open:rotate-90 shrink-0"
+        />
         <span className="font-mono text-sm">{t.table}</span>
         <span className="text-xs text-text-muted">{t.note}</span>
-        <span className="text-2xs text-text-subtle ml-auto">
+        <span className="text-xs text-text-muted ml-auto">
           {t.columns.length} column{t.columns.length === 1 ? "" : "s"}
           {must ? ` · ${must} must map` : ""}
         </span>
       </summary>
-      <div className="px-3 pb-3 overflow-x-auto">
-        <table className="w-full text-xs">
-          <caption className="sr-only">Columns of {t.table}</caption>
-          <thead>
-            <tr className="text-left text-text-subtle">
-              <th className="font-normal py-1 pr-3">column</th>
-              <th className="font-normal py-1 pr-3">type</th>
-              <th className="font-normal py-1">holds</th>
-            </tr>
-          </thead>
-          <tbody>
-            {t.columns.map((c) => (
-              <tr key={c.name} className="border-t border-border align-top">
-                <td className="py-1 pr-3 font-mono whitespace-nowrap">
-                  {c.name}
-                  {c.must_map && (
-                    <span className="ml-1.5 rounded bg-warn/15 text-warn px-1 text-2xs font-sans">must map</span>
-                  )}
-                </td>
-                <td className="py-1 pr-3 font-mono text-text-muted whitespace-nowrap">{c.type}</td>
-                <td className="py-1 text-text-muted">{c.note || "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="px-3 pb-3">
+        <Table
+          size="sm"
+          aria-label={`Columns of ${t.table}`}
+          headers={[{ label: "Column" }, { label: "Type" }, { label: "Holds" }]}
+          rows={t.columns.map((c) => ({
+            id: c.name,
+            items: [
+              {
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="font-mono">{c.name}</span>
+                    {c.must_map && <Badge size="sm" state="warning" text="must map" />}
+                  </span>
+                ),
+              },
+              { label: <span className="font-mono">{c.type}</span> },
+              { label: c.note || "—" },
+            ],
+          }))}
+        />
       </div>
     </details>
   );
@@ -837,29 +845,24 @@ function RepoChips({ repos, onChange }: { repos: string[]; onChange: (r: string[
     setDraft("");
   };
   return (
-    <div className={`${INPUT_CLS} flex flex-wrap items-center gap-1.5 min-h-10 py-1`}>
+    <div className="flex flex-wrap items-center gap-1.5 min-h-8 rounded-sm border border-[var(--click-field-color-stroke-default)] bg-[var(--click-field-color-background-default)] px-2 py-1 focus-within:border-[var(--click-field-color-stroke-active)]">
       {repos.map((r) => (
-        <span
-          key={r}
-          className="inline-flex items-center gap-1 rounded-full bg-surface-3 px-2 min-h-7 text-xs font-mono"
-        >
+        <span key={r} className="inline-flex items-center gap-1 rounded-full bg-surface-3 pl-2 text-xs font-mono">
           {r}
-          <button
-            type="button"
-            aria-label={`Remove ${r}`}
-            className="rounded-full p-0.5 hover:bg-surface-2 min-h-6 min-w-6 inline-flex items-center justify-center"
+          <IconButton
+            icon="cross"
+            size="xs"
+            label={`Remove ${r}`}
             onClick={() => onChange(repos.filter((x) => x !== r))}
-          >
-            <X size={11} aria-hidden="true" />
-          </button>
+          />
         </span>
       ))}
       <input
         id="tsrc-repos"
         aria-label="Repositories it holds"
-        className="flex-1 min-w-32 bg-transparent outline-none font-mono text-sm"
+        className="flex-1 min-w-32 bg-transparent font-mono text-sm"
         value={draft}
-        placeholder={repos.length ? "add another…" : "Org/repo"}
+        placeholder={repos.length ? "Add another…" : "Org/repo"}
         onChange={(e) => {
           const v = e.target.value;
           if (/[\s,]$/.test(v)) commit(v);
@@ -899,7 +902,12 @@ function ConnectStep({
     <div className="space-y-4">
       <details className="group rounded-lg border border-border">
         <summary className="cursor-pointer list-none px-3 min-h-10 flex items-center gap-1.5 text-sm">
-          <ChevronRight size={13} aria-hidden="true" className="transition-transform group-open:rotate-90" />
+          <Icon
+            name="chevron-right"
+            size="xs"
+            aria-hidden="true"
+            className="transition-transform group-open:rotate-90"
+          />
           Need a read-only user? <span className="text-xs text-text-muted">— run this in your ClickHouse</span>
         </summary>
         <div className="px-3 pb-3 space-y-1">
@@ -914,71 +922,54 @@ function ConnectStep({
           />
         </div>
       </details>
-      <Field id={id("addr")} label="ClickHouse address" hint="paste the URL from your console, or a host">
-        <input
-          id={id("addr")}
-          className={`${INPUT_CLS} font-mono`}
-          value={address}
-          autoFocus
-          placeholder="https://abc.us-east-1.aws.clickhouse.cloud:8443"
-          onChange={(e) => onAddress(e.target.value)}
-        />
-      </Field>
+      <TextField
+        label={hinted("ClickHouse address", "paste the URL from your console, or a host")}
+        value={address}
+        autoFocus
+        placeholder="https://abc.us-east-1.aws.clickhouse.cloud:8443"
+        onChange={onAddress}
+      />
       {form.host && (
         <div className="flex flex-wrap items-end gap-3 text-xs">
           <span className="text-text-muted">
             Host <span className="font-mono text-text">{form.host}</span>
           </span>
-          <label className="inline-flex items-center gap-1.5 text-text-muted">
-            Port
-            <input
-              className="min-h-8 w-20 rounded-md border border-border bg-surface-2 px-2 font-mono text-text"
-              inputMode="numeric"
-              value={String(form.port)}
-              onChange={(e) => set("port", Number(e.target.value.replace(/\D/g, "")) || 0)}
-              aria-label="Port"
-            />
-          </label>
-          <label className="inline-flex items-center gap-1.5 text-text-muted min-h-8">
-            <input type="checkbox" checked={form.secure} onChange={(e) => set("secure", e.target.checked)} /> TLS
-          </label>
+          <TextField
+            label="Port"
+            orientation="horizontal"
+            className="w-36"
+            inputMode="numeric"
+            value={String(form.port)}
+            onChange={(v) => set("port", Number(v.replace(/\D/g, "")) || 0)}
+          />
+          <Checkbox label="TLS" checked={form.secure} onCheckedChange={(x) => set("secure", x === true)} />
         </div>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field id={id("db")} label="Database" hint="the one holding your tracker tables">
-          <input
-            id={id("db")}
-            className={`${INPUT_CLS} font-mono`}
-            value={form.database}
-            onChange={(e) => set("database", e.target.value)}
-          />
-        </Field>
+        <TextField
+          label={hinted("Database", "the one holding your tracker tables")}
+          value={form.database}
+          onChange={(v) => set("database", v)}
+        />
         <div>
-          <label htmlFor={id("repos")} className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
-            Repositories it holds <span className="text-[var(--color-text-subtle)] font-normal">(Org/repo)</span>
+          <label htmlFor={id("repos")} className="block text-xs font-medium text-text-muted mb-1.5">
+            {hinted("Repositories it holds", "Org/repo")}
           </label>
           <RepoChips repos={form.repos} onChange={(r) => set("repos", r)} />
         </div>
-        <Field id={id("user")} label="Read-only user" hint="SELECT on the views + system.columns">
-          <input
-            id={id("user")}
-            className={`${INPUT_CLS} font-mono`}
-            value={form.user}
-            autoComplete="off"
-            placeholder="loom_ro"
-            onChange={(e) => set("user", e.target.value)}
-          />
-        </Field>
-        <Field id={id("pw")} label="Password" hint="stored encrypted, never shown again">
-          <input
-            id={id("pw")}
-            type="password"
-            className={`${INPUT_CLS} font-mono`}
-            value={form.password}
-            autoComplete="new-password"
-            onChange={(e) => set("password", e.target.value)}
-          />
-        </Field>
+        <TextField
+          label={hinted("Read-only user", "SELECT on the views + system.columns")}
+          value={form.user}
+          autoComplete="off"
+          placeholder="loom_ro"
+          onChange={(v) => set("user", v)}
+        />
+        <PasswordField
+          label={hinted("Password", "stored encrypted, never shown again")}
+          value={form.password}
+          autoComplete="new-password"
+          onChange={(v) => set("password", v)}
+        />
       </div>
       <div className="rounded-lg border border-border">
         <button
@@ -987,8 +978,9 @@ function ConnectStep({
           onClick={() => setAdvanced((v) => !v)}
           className="w-full flex items-center gap-1.5 px-3 min-h-10 text-sm text-left"
         >
-          <ChevronRight
-            size={13}
+          <Icon
+            name="chevron-right"
+            size="xs"
             aria-hidden="true"
             className={`transition-transform ${advanced ? "rotate-90" : ""}`}
           />
@@ -1000,76 +992,46 @@ function ConnectStep({
               : `public, ${form.join_policy === "open" ? "joins at once" : "join by approval"}`}
           </span>
           {nameProblem && !advanced && (
-            <AlertTriangle size={12} className="text-warn ml-auto shrink-0" aria-label="needs attention" />
+            <Icon name="warning" size="xs" color={WARN} aria-label="needs attention" className="ml-auto shrink-0" />
           )}
         </button>
         {advanced && (
           <div className="px-3 pb-3 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field id={id("name")} label="Name" hint="lower-case, 2–32">
-                <input
-                  id={id("name")}
-                  className={`${INPUT_CLS} font-mono`}
-                  value={form.name}
-                  onChange={(e) => {
-                    onTouch("name");
-                    set("name", e.target.value.toLowerCase());
-                  }}
-                />
-              </Field>
-              <Field id={id("ns")} label="Namespace" hint="tracker-<team>">
-                <input
-                  id={id("ns")}
-                  className={`${INPUT_CLS} font-mono`}
-                  value={form.namespace}
-                  onChange={(e) => {
-                    onTouch("namespace");
-                    set("namespace", e.target.value.toLowerCase());
-                  }}
-                />
-              </Field>
+              <TextField
+                label={hinted("Name", "lower-case, 2–32")}
+                value={form.name}
+                onChange={(v) => {
+                  onTouch("name");
+                  set("name", v.toLowerCase());
+                }}
+              />
+              <TextField
+                label={hinted("Namespace", "tracker-<team>")}
+                value={form.namespace}
+                onChange={(v) => {
+                  onTouch("namespace");
+                  set("namespace", v.toLowerCase());
+                }}
+              />
             </div>
-            <fieldset className="space-y-1.5 text-sm">
-              <legend className="text-xs font-medium text-text-muted mb-1">Who can read it</legend>
-              <label className="flex items-start gap-2">
-                <input
-                  type="radio"
-                  name="tsrc-access"
-                  className="mt-1"
-                  checked={!form.restricted && form.join_policy === "open"}
-                  onChange={() => {
-                    set("restricted", false);
-                    set("join_policy", "open");
-                  }}
-                />
-                <span>Public — anyone in the org joins at once, read-only</span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="radio"
-                  name="tsrc-access"
-                  className="mt-1"
-                  checked={!form.restricted && form.join_policy === "approval"}
-                  onChange={() => {
-                    set("restricted", false);
-                    set("join_policy", "approval");
-                  }}
-                />
-                <span>Public, you approve each reader</span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="radio"
-                  name="tsrc-access"
-                  className="mt-1"
-                  checked={form.restricted}
-                  onChange={() => set("restricted", true)}
-                />
-                <span className="inline-flex items-center gap-1">
-                  <ShieldAlert size={13} aria-hidden="true" /> Private — approval, and a token must name it
-                </span>
-              </label>
-            </fieldset>
+            <ChoiceGroup
+              label="Who can read it"
+              value={form.restricted ? "private" : form.join_policy}
+              onChange={(v) => {
+                if (v === "private") {
+                  set("restricted", true);
+                  return;
+                }
+                set("restricted", false);
+                set("join_policy", v);
+              }}
+              options={[
+                { value: "open", label: "Public — anyone in the org joins at once, read-only" },
+                { value: "approval", label: "Public, you approve each reader" },
+                { value: "private", label: "Private — approval, and a token must name it" },
+              ]}
+            />
           </div>
         )}
       </div>
@@ -1088,23 +1050,38 @@ function ConnectStep({
 
 type CheckState = "pending" | "ok" | "fail" | "todo";
 
-function CheckRow({ state, title, children }: { state: CheckState; title: string; children?: ReactNode }) {
+function CheckRow({
+  state,
+  title,
+  stale = false,
+  children,
+}: {
+  state: CheckState;
+  title: string;
+  /** The result predates an edit: shown in the muted text colour, not in its pass/fail colour. */
+  stale?: boolean;
+  children?: ReactNode;
+}) {
   const icon =
     state === "ok" ? (
-      <CheckCircle2 size={15} className="text-success" aria-hidden="true" />
+      <Icon name="check-in-circle" size="sm" color={stale ? MUTED : SUCCESS} aria-hidden="true" />
     ) : state === "fail" ? (
-      <XCircle size={15} className="text-danger" aria-hidden="true" />
-    ) : state === "pending" ? (
-      <Circle size={15} className="text-text-subtle animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+      <Icon name="cross" size="sm" color={stale ? MUTED : DANGER} aria-hidden="true" />
     ) : (
-      <Circle size={15} className="text-text-subtle" aria-hidden="true" />
+      <Icon
+        name="circle"
+        size="sm"
+        color={SUBTLE}
+        aria-hidden="true"
+        className={state === "pending" ? "animate-pulse motion-reduce:animate-none" : undefined}
+      />
     );
   const word = { ok: "passed", fail: "failed", pending: "checking", todo: "not checked" }[state];
   return (
     <li className="flex items-start gap-2.5">
       <span className="mt-0.5 shrink-0">{icon}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-sm">
+        <div className={`text-sm ${stale ? "text-text-muted" : ""}`}>
           {title} <span className="sr-only">— {word}</span>
         </div>
         {children && <div className="mt-1 text-xs text-text-muted">{children}</div>}
@@ -1144,15 +1121,21 @@ function CheckStep({
   return (
     <div className="space-y-4" aria-live="polite">
       {stale && (
-        <div className="rounded-lg border border-warn/50 bg-warn/10 px-3 py-2 text-xs" role="status">
-          The connection or the mapping changed since this check. Check again before adding.
-        </div>
+        <Alert
+          role="status"
+          state="warning"
+          text="The connection or the mapping changed since this check. Check again before adding."
+        />
       )}
-      <ul className={`space-y-3 ${stale ? "opacity-60" : ""}`} aria-label="Checks">
-        <CheckRow state={state("reach")} title={`Reach ${form.host || "the host"} as ${form.user || "the user"}`}>
+      <ul className="space-y-3" aria-label="Checks">
+        <CheckRow
+          state={state("reach")}
+          stale={stale}
+          title={`Reach ${form.host || "the host"} as ${form.user || "the user"}`}
+        >
           {refusal?.gate === "reach" && <span className="text-danger">{refusal.message}</span>}
         </CheckRow>
-        <CheckRow state={state("readonly")} title="The user can only read">
+        <CheckRow state={state("readonly")} stale={stale} title="The user can only read">
           {refusal?.gate === "readonly" && (
             <span className="text-danger">
               {refusal.message} — create a user with SELECT only: on the tables you map (or the views) and
@@ -1168,6 +1151,7 @@ function CheckStep({
         </CheckRow>
         <CheckRow
           state={state("schema")}
+          stale={stale}
           title={
             checked?.contract.mode === "mapping"
               ? `Your mapping fits the tables in ${form.database}`
@@ -1180,6 +1164,7 @@ function CheckStep({
         </CheckRow>
         <CheckRow
           state={state("rows")}
+          stale={stale}
           title={
             checked?.contract.mode === "mapping"
               ? "Loom can read rows through your mapping"
@@ -1209,9 +1194,10 @@ function CheckStep({
           )}
           {checked.contract.capabilities && <Capabilities caps={checked.contract.capabilities} />}
           {checked.contract.ok && !stale && (
-            <p className="text-sm text-success flex items-center gap-1.5">
-              <CheckCircle2 size={14} aria-hidden="true" /> Ready to add. Nothing has been saved yet.
-            </p>
+            <div className="text-sm text-success flex items-center gap-1.5">
+              <Icon name="check-in-circle" size="sm" color={SUCCESS} aria-hidden="true" /> Ready to add. Nothing has
+              been saved yet.
+            </div>
           )}
         </>
       )}
@@ -1232,22 +1218,22 @@ function Capabilities({ caps }: { caps: Record<string, boolean> }) {
       aria-label="What Loom can do with this tracker"
       className="rounded-lg border border-border p-3 space-y-1.5"
     >
-      <h3 className="text-sm font-medium">What Loom can do with this tracker</h3>
+      <h3>What Loom can do with this tracker</h3>
       <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
         {on.map((k) => (
           <li key={k} className="flex items-center gap-1.5">
-            <CheckCircle2 size={12} className="text-success" aria-hidden="true" /> {CAPABILITY_LABEL[k] ?? k}
+            <Icon name="check-in-circle" size="xs" color={SUCCESS} aria-hidden="true" /> {CAPABILITY_LABEL[k] ?? k}
           </li>
         ))}
         {off.map((k) => (
           <li key={k} className="flex items-center gap-1.5 text-text-muted">
-            <Circle size={12} aria-hidden="true" /> {CAPABILITY_LABEL[k] ?? k}{" "}
+            <Icon name="circle" size="xs" color={MUTED} aria-hidden="true" /> {CAPABILITY_LABEL[k] ?? k}{" "}
             <span className="sr-only">— not with this data</span>
           </li>
         ))}
       </ul>
       {off.length > 0 && (
-        <p className="text-2xs text-text-subtle">
+        <p className="text-xs text-text-muted">
           Map more fields later (Trackers → Edit mapping) to switch the rest on.
         </p>
       )}
@@ -1261,9 +1247,9 @@ function DoneStep({ added, repo }: { added: TrackerSourceAddResult; repo?: strin
   const ns = added.namespaces[0];
   return (
     <div className="space-y-3 text-sm" role="status">
-      <p className="flex items-center gap-2 text-base font-medium">
-        <CheckCircle2 size={18} className="text-success" aria-hidden="true" /> {added.name} is connected
-      </p>
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Icon name="check-in-circle" size="md" color={SUCCESS} aria-hidden="true" /> {added.name} is connected
+      </div>
       <ul className="space-y-1 text-text-muted list-disc pl-5">
         <li>
           Loom reads <span className="font-mono">{added.database}</span> on {added.host} live; nothing was copied.
@@ -1321,43 +1307,25 @@ export function RotateCredentialDialog({
       open={open}
       onOpenChange={onOpenChange}
       width={460}
-      icon={<KeyRound size={16} aria-hidden="true" />}
       title={`Rotate the credential · ${name}`}
       description="The new user is checked like the first one — read-only, and the views must still match — before it replaces the old one."
       footer={
         <>
           <CancelButton />
-          <button
-            type="button"
-            className={PRIMARY_BTN}
-            disabled={busy || !user.trim() || !password}
+          <Button
+            type="primary"
+            htmlType="button"
+            loading={busy}
+            disabled={!user.trim() || !password}
             onClick={() => void submit()}
           >
-            {busy ? "Rotating…" : "Rotate"}
-          </button>
+            Rotate
+          </Button>
         </>
       }
     >
-      <Field id="rot-user" label="Read-only user">
-        <input
-          id="rot-user"
-          className={`${INPUT_CLS} font-mono`}
-          value={user}
-          autoComplete="off"
-          onChange={(e) => setUser(e.target.value)}
-          autoFocus
-        />
-      </Field>
-      <Field id="rot-pw" label="Password">
-        <input
-          id="rot-pw"
-          type="password"
-          className={`${INPUT_CLS} font-mono`}
-          value={password}
-          autoComplete="new-password"
-          onChange={(e) => setPassword(e.target.value)}
-        />
-      </Field>
+      <TextField label="Read-only user" value={user} autoComplete="off" onChange={setUser} autoFocus />
+      <PasswordField label="Password" value={password} autoComplete="new-password" onChange={setPassword} />
       {error && <ErrorNote>{error}</ErrorNote>}
     </DialogFrame>
   );
@@ -1399,46 +1367,34 @@ export function RetireSourceDialog({
       open={open}
       onOpenChange={onOpenChange}
       width={460}
-      icon={<Trash2 size={16} aria-hidden="true" />}
       title={`Retire ${name}?`}
-      description={
-        <>
-          Loom stops reading the database and retires {namespaces.length === 1 ? "its namespace" : "its namespaces"}{" "}
-          <span className="font-mono">{namespaces.join(", ")}</span>: every reader loses access and every repository
-          linked to it answers nothing. Your data in ClickHouse is not touched.
-        </>
-      }
+      description={`Loom stops reading the database and retires ${namespaces.length === 1 ? "its namespace" : "its namespaces"} ${namespaces.join(", ")}: every reader loses access and every repository linked to it answers nothing. Your data in ClickHouse is not touched.`}
       footer={
         <>
           <CancelButton />
-          <button
-            type="button"
-            className={DANGER_BTN}
-            disabled={busy || typed.trim() !== name}
+          <Button
+            type="danger"
+            htmlType="button"
+            loading={busy}
+            disabled={typed.trim() !== name}
             onClick={() => void submit()}
           >
-            {busy ? "Retiring…" : "Retire tracker"}
-          </button>
+            Retire tracker
+          </Button>
         </>
       }
     >
-      <Field
-        id="retire-name"
+      <TextField
         label={
           <>
             Type <span className="font-mono">{name}</span> to confirm
           </>
         }
-      >
-        <input
-          id="retire-name"
-          className={`${INPUT_CLS} font-mono`}
-          value={typed}
-          autoComplete="off"
-          onChange={(e) => setTyped(e.target.value)}
-          autoFocus
-        />
-      </Field>
+        value={typed}
+        autoComplete="off"
+        onChange={setTyped}
+        autoFocus
+      />
       {error && <ErrorNote>{error}</ErrorNote>}
     </DialogFrame>
   );
@@ -1512,28 +1468,29 @@ export function EditMappingDialog({
       open={open}
       onOpenChange={onOpenChange}
       width={760}
-      icon={<Database size={16} aria-hidden="true" />}
       title={`Edit mapping · ${source.name}`}
       description="Which of your tables and columns Loom reads for each field. Check reads a row through the new mapping before anything is saved."
       footer={
         <>
           <CancelButton />
-          <button
-            type="button"
-            className={SECONDARY_BTN}
+          <Button
+            type="secondary"
+            htmlType="button"
+            loading={busy === "check"}
             disabled={busy !== null || problems.length > 0 || !inspected}
             onClick={() => void run(true)}
           >
-            {busy === "check" ? "Checking…" : "Check"}
-          </button>
-          <button
-            type="button"
-            className={PRIMARY_BTN}
+            Check
+          </Button>
+          <Button
+            type="primary"
+            htmlType="button"
+            loading={busy === "save"}
             disabled={busy !== null || !passed}
             onClick={() => void run(false)}
           >
-            {busy === "save" ? "Saving…" : "Save mapping"}
-          </button>
+            Save mapping
+          </Button>
         </>
       }
     >
@@ -1561,11 +1518,17 @@ export function EditMappingDialog({
         </ul>
       )}
       {checked && (
-        <div className={checked.fp !== fp ? "opacity-60" : ""}>
+        <div>
+          {checked.fp !== fp && (
+            <p className="text-sm text-text-muted mb-1">This result is from before your last change. Check again.</p>
+          )}
           {checked.contract.ok ? (
-            <p className="text-sm text-success flex items-center gap-1.5">
-              <CheckCircle2 size={14} aria-hidden="true" /> The mapping reads. Nothing has been saved yet.
-            </p>
+            <div
+              className={`text-sm flex items-center gap-1.5 ${checked.fp !== fp ? "text-text-muted" : "text-success"}`}
+            >
+              <Icon name="check-in-circle" size="sm" color={checked.fp !== fp ? MUTED : SUCCESS} aria-hidden="true" />{" "}
+              The mapping reads. Nothing has been saved yet.
+            </div>
           ) : (
             <ErrorNote>{checked.contract.summary}</ErrorNote>
           )}

@@ -283,6 +283,9 @@ jobs:
           chmod +x /usr/local/bin/shfmt
       - name: biome
         run: npx --yes @biomejs/biome@2.5.14 format .
+      # The dashboard's accessibility rules (biome.json overrides): a new violation fails here.
+      - name: biome lint (dashboard accessibility)
+        run: npx --yes @biomejs/biome@2.5.14 lint frontend/src
       - name: prettier
         run: npx --yes prettier@3.9.9 --check --log-level warn "**/*.{md,yml,yaml}"
       - name: taplo

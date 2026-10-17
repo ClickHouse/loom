@@ -180,6 +180,7 @@ def test_threads_aggregate_alias_does_not_shadow_the_agent_filter(
                     "last_content_excerpt": "hi",
                 }
             ],
+            [{"thread_id": "t1", "n": 2}],
             [{"thread_id": "t1", "title": "Titled"}],
         ]
     )

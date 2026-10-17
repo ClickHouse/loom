@@ -30,6 +30,8 @@ export function unlabeledControls(root: ParentNode): string[] {
   const out: string[] = [];
   root.querySelectorAll<HTMLElement>("input, select, textarea").forEach((el) => {
     if (el instanceof HTMLInputElement && el.type === "hidden") return;
+    // Radix's form bubble beside a Checkbox, RadioGroup or Switch: hidden from assistive tech.
+    if (el.getAttribute("aria-hidden") === "true" && el.tabIndex === -1) return;
     if (el.getAttribute("aria-label")?.trim()) return;
     if (el.getAttribute("aria-labelledby")?.trim()) return;
     if (el.id && root.querySelector(`label[for="${el.id}"]`)) return;
