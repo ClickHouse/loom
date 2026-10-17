@@ -1039,14 +1039,14 @@ async def test_a_failed_reconcile_mirror_leaves_the_failure_open(monkeypatch) ->
 async def test_an_unconfirmed_value_update_is_followed_but_not_counted(
     monkeypatch, emitted
 ) -> None:
-    from server.memory.app import value_updates as vu
+    from server.memory.app import auto_resolution as ar
 
     queued: list = []
 
     async def queue(rows):
         queued.extend(r["memory_id"] for r in rows)
 
-    monkeypatch.setattr(vu, "queue_status_mirror", queue)
+    monkeypatch.setattr(ar, "queue_status_mirror", queue)
     report, _ = await _value_updates(monkeypatch, {"o1": {}}, unconfirmed=frozenset({"o1"}))
     assert report.links == [] and [ln.older_id for ln in report.follow_links] == ["o1"]
     assert queued == ["o1"]

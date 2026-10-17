@@ -43,7 +43,6 @@ from server.memory.app.auto_resolution import (
     record_auto_supersessions,
     retired_entry,
 )
-from server.memory.app.projection_failures import queue_status_mirror
 
 log = logging.getLogger(__name__)
 
@@ -469,64 +468,42 @@ async def link_value_updates(
     for ln in links:
         by_older[ln.older_id] = ln
     retired: list[dict[str, Any]] = []
-    linked: list[UpdateLink] = []
-    to_follow: list[UpdateLink] = []
     if by_older:
         from server.memory.domain.lock import refuses_retirement
 
         # As the other automatic paths: a locked, pinned or no-longer-live older row is
         # left as it is (the peer query reads neither the lock nor the pin).
-        _skip = RetirementTracker(refuses_retirement).skip
-
+        tracker = RetirementTracker(refuses_retirement)
         try:
             for older_id, ln in by_older.items():
                 inv = _as_dt(newer_at.get(ln.newer_id))
-
-                # Only a row whose superseded version reached loom.memory: a skipped,
-                # vanished or overtaken one retired nothing, and a failed mirror after the
-                # insert did. One the re-read could not confirm is recorded as such and
-                # still followed (the follow re-checks it).
-                def _written(
-                    rows: list[Any], ln: UpdateLink = ln, unconfirmed: bool = False
-                ) -> None:
-                    if not rows:
-                        return
-                    to_follow.append(ln)
-                    if not unconfirmed:
-                        linked.append(ln)
-                    retired.extend(
-                        retired_entry(
-                            r,
-                            superseded_by=ln.newer_id,
-                            superseded_by_key=ln.newer_key,
-                            unconfirmed=unconfirmed or None,
-                        )
-                        for r in rows
-                    )
-
-                async def _unconfirmed(rows: list[Any], ln: UpdateLink = ln) -> None:
-                    _written(rows, ln, unconfirmed=True)
-                    await queue_status_mirror(rows)
-
                 await memory_repo.write_versions_by_ids(
                     org,
                     [older_id],
                     _supersession_update(ln.newer_id, inv),
                     ch=ch,
-                    skip=_skip,
+                    skip=tracker.skip,
                     # Read-your-writes: a lagging replica's row would be rebuilt over a
                     # revision.
                     strong=True,
-                    on_written=_written,
-                    on_unconfirmed=_unconfirmed,
+                    on_written=tracker.written,
+                    on_unconfirmed=tracker.unconfirmed,
                 )
         except Exception as e:  # noqa: BLE001 — fails open: counted in report.errors
             log.warning("value_updates: supersession write failed (open): %s", e)
             report.errors += 1
-        # Only the pairs whose older row retired: the triple plane must not close a
-        # live row's triples.
-        report.links = linked
-        report.follow_links = to_follow
+        # Only a row whose superseded version reached loom.memory: a skipped, vanished or
+        # overtaken one retired nothing, and a failed mirror after the insert did. One the
+        # re-read could not confirm is recorded as such and still followed (the follow
+        # re-checks it); the triple plane must not close a live row's triples.
+        report.links = [ln for ln in by_older.values() if ln.older_id in tracker.ids]
+        maybe = tracker.ids | tracker.unconfirmed_ids
+        report.follow_links = [ln for ln in by_older.values() if ln.older_id in maybe]
+        for r in tracker.retired(tracker.rows):
+            ln = by_older[str(r["memory_id"])]
+            retired.append(
+                retired_entry(r, superseded_by=ln.newer_id, superseded_by_key=ln.newer_key)
+            )
     await record_auto_supersessions(
         org=org, namespace=namespace, retired=retired, reason=VALUE_UPDATE
     )

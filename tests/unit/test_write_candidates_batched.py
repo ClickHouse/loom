@@ -127,10 +127,8 @@ async def test_link_value_updates_uses_one_statement_per_batch(monkeypatch) -> N
     async def fake_write(
         org: str, ids: list[str], update: Any, *, ch: Any = None, **_kw: Any
     ) -> int:
-        from types import SimpleNamespace
-
         writes.append(ids)
-        _kw["on_written"]([SimpleNamespace(memory_id=ids[0], memory_key="k")])
+        _kw["on_written"]([{"memory_id": ids[0], "memory_key": "k"}])
         return len(ids)
 
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", fake_write)

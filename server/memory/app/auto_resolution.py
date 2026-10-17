@@ -69,12 +69,14 @@ class RetirementTracker:
     whose retirement the re-read confirmed, `unconfirmed` those it could not tell
     about. `retired(victims)` keeps the victims among both, the second marked
     `unconfirmed`, so a refused, vanished, overtaken or never-written row is never
-    recorded."""
+    recorded. `rows` holds the written rows themselves, for a caller with no victim
+    list of its own."""
 
     def __init__(self, base: Callable[[MemoryRow], bool] | None = None) -> None:
         self._base = base
         self.ids: set[str] = set()
         self.unconfirmed_ids: set[str] = set()
+        self.rows: list[Mapping[str, Any]] = []
 
     def skip(self, row: MemoryRow) -> bool:
         # Only a live row moves to `superseded`; any other is already retired (or
@@ -87,11 +89,14 @@ class RetirementTracker:
         return self._base is not None and self._base(row)
 
     def written(self, rows: Iterable[Mapping[str, Any]]) -> None:
+        rows = list(rows)
+        self.rows.extend(rows)
         self.ids.update(str(r["memory_id"]) for r in rows)
 
     async def unconfirmed(self, rows: list[dict[str, Any]]) -> None:
         """Rows the re-read could not confirm: recorded, and queued for the repair to
         mirror their head onto recall, before the write goes on."""
+        self.rows.extend(rows)
         self.unconfirmed_ids.update(str(r["memory_id"]) for r in rows)
         await queue_status_mirror(rows)
 

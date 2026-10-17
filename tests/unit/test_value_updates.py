@@ -131,7 +131,8 @@ async def test_link_value_updates_writes_supersession_on_the_older_row(
         row = SimpleNamespace(memory_id=ids[0], conflict_with=[], status="active", pinned=False)
         assert not _kw["skip"](row)
         writes.append((ids, update(row)))
-        _kw["on_written"]([row])
+        # The writer hears the version rows it built: dicts, the update applied.
+        _kw["on_written"]([{**vars(row), **update(row)}])
         return len(ids)
 
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", fake_write)
