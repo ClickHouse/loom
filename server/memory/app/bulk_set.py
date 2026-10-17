@@ -36,7 +36,6 @@ from server.memory.app.bulk_rows import (
 from server.memory.app.bulk_verdicts import (
     BulkVerdictPlan,
     apply_bulk_verdicts,
-    verdict_dropped_rows,
 )
 from server.memory.app.entity_projections import (
     _write_derived_facts,
@@ -265,12 +264,12 @@ def _apply_verdicts(
     """Settle which batch rows land now that the verdicts are known (a row an earlier
     entry's landed pin refuses, or one its key already holds, is dropped), then fold the
     verdicts into the rows that are left."""
-    drop, copies = settle_batch_rows(state, verdict_dropped_rows(state.memory_rows, verdicts))
+    drop, copies, stale = settle_batch_rows(state, verdicts)
     emb_idx_of, verdicts = drop_built_rows(state, emb_idx_of, verdicts, drop)
     # Verdicts are keyed by row; skipped entries have results but no row.
     row_results = [state.results[i] for i in state.row_results]
     plan = apply_bulk_verdicts(
-        state.memory_rows, state.embedding_rows, emb_idx_of, row_results, verdicts
+        state.memory_rows, state.embedding_rows, emb_idx_of, row_results, verdicts, stale
     )
     copy_restated_verdicts(state, plan.merged_into, copies)
     state.memory_rows = plan.memory_rows

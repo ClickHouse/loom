@@ -22,6 +22,7 @@ from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     _BulkSetResult,
 )
+from server.memory.app.bulk_verdicts import NOT_LANDING, verdict_target
 from server.memory.app.projections import (
     resolved_entity_list,
 )
@@ -328,20 +329,25 @@ def _keep_row(state: _BulkWriteState, row: dict[str, Any]) -> None:
 
 
 def settle_batch_rows(
-    state: _BulkWriteState, dropped: set[int]
-) -> tuple[set[int], list[tuple[int, int, dict[str, Any]]]]:
+    state: _BulkWriteState, verdicts: dict[int, Any]
+) -> tuple[set[int], list[tuple[int, int, dict[str, Any]]], set[int]]:
     """Replay the batch in entry order as serial memory.set calls would see it, once the
-    verdicts are known. `dropped` are the rows a merge or pinned rejection keeps out.
+    `verdicts` (by memory-row index) are known.
 
     Starting from the stored values and pins, each row that lands becomes its key's value
     and pin. A later row is then refused if that landed pin is set, or is unchanged if it
-    repeats the value its key now holds; both rows are returned to drop. An entry that
-    repeated an earlier row's value takes that row's outcome: unchanged if it landed,
-    pinned if it was refused, and the row's own merge or rejection, returned as
-    (entry's result index, row's result index, row) to copy once the verdicts are folded.
+    repeats the value its key now holds; both rows are returned to drop. A merge or pinned
+    rejection keeps its row out too, unless its verdict is stale: an earlier row that
+    landed rewrote the stored row it matched, so serially it would have met the new value.
+    An entry that repeated an earlier row's value takes that row's outcome: unchanged if
+    it landed, pinned if it was refused, and the row's own merge or rejection, returned
+    as (entry's result index, row's result index, row) to copy once the verdicts are
+    folded. Also returns the `id()` of each row whose verdict is stale.
     """
     sha = dict(state.existing_sha)
     pinned = dict(state.existing_pinned)
+    rewritten: set[str] = set()  # ids of the stored rows an earlier landed row rewrote
+    stale: set[int] = set()
     outcome: dict[int, str] = {}  # id(row) -> landed | unchanged | pinned | verdict
     result_of: dict[int, int] = {}  # id(row) -> its result index
     steps: list[tuple[int, int, dict[str, Any]]] = [
@@ -367,19 +373,23 @@ def settle_batch_rows(
                 _note_restatement(state, str(row["memory_id"]))
             continue
         result_of[id(row)] = res_i
+        v = verdicts.get(idx)
+        if verdict_target(v) and verdict_target(v) in rewritten:
+            stale.add(id(row))
         # The skip gate's order: unchanged, then pinned, then the verdict.
         unchanged = sha.get(key) == row["content_sha256"]
         if unchanged or pinned.get(key):
             outcome[id(row)] = "unchanged" if unchanged else PINNED
             _drop_built_row(state, res, row, outcome[id(row)])
             drop.add(idx)
-        elif idx in dropped:
+        elif getattr(v, "verdict", "") in NOT_LANDING and id(row) not in stale:
             outcome[id(row)] = "verdict"
         else:
             outcome[id(row)] = "landed"
             sha[key] = str(row["content_sha256"])
             pinned[key] = bool(row["pinned"])
-    return drop, copies
+            rewritten.add(str(row["memory_id"]))
+    return drop, copies, stale
 
 
 def _drop_built_row(

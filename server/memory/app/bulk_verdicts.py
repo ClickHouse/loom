@@ -5,6 +5,7 @@ first stated event date a merged row keeps. No I/O."""
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Collection
 from typing import Any
 
 from server.core.datetimes import parse_iso_dt
@@ -45,7 +46,7 @@ class BulkVerdictPlan:
 
 
 # The verdicts that keep an entry's row out of the insert.
-_NOT_LANDING = ("merge", "rejected")
+NOT_LANDING = ("merge", "rejected")
 
 # A restatement dated within this many days of its peer's first date keeps its own date.
 _FIRST_DATE_MAX_GAP_DAYS = 2
@@ -153,11 +154,9 @@ def _kept_embeddings(
     return kept
 
 
-def _target_rewritten_before(v: Any, idx: int, first_row: dict[str, int]) -> bool:
-    """A merge or duplicate verdict whose stored peer an earlier row of the batch
-    rewrote."""
-    target = str(getattr(v, "existing_memory_id", "") or getattr(v, "duplicate_of_id", "") or "")
-    return bool(target) and first_row.get(target, idx) < idx
+def verdict_target(v: Any) -> str:
+    """The stored row a merge or duplicate verdict matched, else ''."""
+    return str(getattr(v, "existing_memory_id", "") or getattr(v, "duplicate_of_id", "") or "")
 
 
 def _without_rewritten_peers(v: Any, idx: int, first_row: dict[str, int]) -> Any:
@@ -184,31 +183,16 @@ def _first_landing_rows(
     dropped here, which can miss a retirement but never makes a wrong one."""
     first: dict[str, int] = {}
     for i, r in enumerate(memory_rows):
-        if getattr(verdicts.get(i), "verdict", "") not in _NOT_LANDING:
+        if getattr(verdicts.get(i), "verdict", "") not in NOT_LANDING:
             first.setdefault(str(r.get("memory_id") or ""), i)
     return first
-
-
-def verdict_dropped_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) -> set[int]:
-    """The rows `apply_bulk_verdicts` keeps out: a merge or a pinned rejection, unless an
-    earlier row of the batch rewrote the stored row it matched (then the verdict is stale
-    and the row lands)."""
-    first_row: dict[str, int] = {}
-    for i, r in enumerate(memory_rows):
-        first_row.setdefault(str(r.get("memory_id") or ""), i)
-    return {
-        i
-        for i, v in verdicts.items()
-        if getattr(v, "verdict", "") in _NOT_LANDING
-        and not _target_rewritten_before(v, i, first_row)
-    }
 
 
 def _settling_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) -> set[int]:
     """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
     versions of one row, so only the kept version's verdict may mark or retire
     peers. A merged or rejected entry writes no row."""
-    dropped = {i for i, v in verdicts.items() if getattr(v, "verdict", "") in _NOT_LANDING}
+    dropped = {i for i, v in verdicts.items() if getattr(v, "verdict", "") in NOT_LANDING}
     written = [r for i, r in enumerate(memory_rows) if i not in dropped]
     return {id(r) for r in kept_versions(written).values()}
 
@@ -219,21 +203,18 @@ def apply_bulk_verdicts(
     emb_idx_of: list[int],
     results: list[Any],
     verdicts: dict[int, Any],
+    stale_rows: Collection[int] = (),
 ) -> BulkVerdictPlan:
     """Pure: fold ConflictResults into the rows. `merge` and `rejected` drop
     the row (its result reports version 0); `duplicate` stamps status and
     duplicate_of on both rows; `conflict` keeps the row and records the peers
-    to cross-link after the insert. Rows without a verdict pass through."""
+    to cross-link after the insert. Rows without a verdict pass through.
+    `stale_rows` are the `id()` of the rows whose verdict is stale
+    (`settle_batch_rows`): they land as clear."""
     plan = BulkVerdictPlan()
     drop: set[int] = set()
     dup_idx: set[int] = set()
-    # A verdict against a stored row an earlier entry of the batch rewrote matched bytes
-    # that are gone: memory.set in the same order would find the new value there. A merge
-    # or duplicate against a row a later entry rewrites is fine: it changes no peer row.
-    first_row: dict[str, int] = {}
-    for i, r in enumerate(memory_rows):
-        first_row.setdefault(str(r.get("memory_id") or ""), i)
-    stale = {i for i, v in verdicts.items() if _target_rewritten_before(v, i, first_row)}
+    stale = {i for i in verdicts if id(memory_rows[i]) in stale_rows}
     landing_first_row = _first_landing_rows(memory_rows, verdicts)
     verdicts = dict(verdicts)
     for i, v in list(verdicts.items()):

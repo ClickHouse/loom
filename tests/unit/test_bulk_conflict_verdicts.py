@@ -19,6 +19,30 @@ def _rows(n: int):
     return memory_rows, embedding_rows, emb_idx_of, results
 
 
+def _stored(**keys: tuple[str, str]):
+    """A bulk's state over stored rows `keys` (key -> (memory_id, sha)), no entries yet."""
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    state = _BulkWriteState(existing_lookup_ok=True)
+    state.existing_ids = {k: mid for k, (mid, _sha) in keys.items()}
+    state.existing_sha = {k: sha for k, (_mid, sha) in keys.items()}
+    return state
+
+
+def _entry(state, key: str, memory_id: str, sha: str) -> None:
+    """One entry that passes the skip gate and builds a row."""
+    from server.memory.api.models_bulk import _BulkSetResult
+    from server.memory.app.bulk_rows import _bulk_skip_gate, _keep_row
+
+    assert not _bulk_skip_gate(NS(memory_key=key), sha, state, {})
+    state.row_results.append(len(state.results))
+    state.results.append(_BulkSetResult(memory_key=key, version=1, memory_id=memory_id))
+    state.entry_metas.append(None)
+    state.n_updated += 1
+    row = {"memory_key": key, "memory_id": memory_id, "content_sha256": sha, "pinned": False}
+    _keep_row(state, row)
+
+
 def test_no_verdicts_is_a_pass_through() -> None:
     m, e, ix, r = _rows(3)
     plan = apply_bulk_verdicts(m, e, ix, r, {})
@@ -128,16 +152,23 @@ def test_only_the_version_a_key_keeps_settles_its_verdict() -> None:
 def test_a_merge_with_a_row_an_earlier_entry_rewrote_lands() -> None:
     # Row 0 rewrites id0; rows 1 and 2 matched id0's stored bytes, which are gone. A
     # target rewritten only after the entry still merges, as memory.set in that order would.
-    m, e, ix, r = _rows(3)
+    from server.memory.app.bulk_set import _apply_verdicts
+
+    state = _stored(k0=("id0", "s0"))
+    for i in range(3):
+        _entry(state, f"k{i}", f"id{i}", f"n{i}")
     verdicts = {
         1: NS(verdict="merge", existing_memory_id="id0", peers=[]),
         2: NS(verdict="duplicate", duplicate_of_id="id0", peers=[]),
     }
-    plan = apply_bulk_verdicts(m, e, ix, r, verdicts)
+    plan = _apply_verdicts(state, [], verdicts)
     assert [x["memory_key"] for x in plan.memory_rows] == ["k0", "k1", "k2"]
     assert plan.merged == [] and plan.duplicates == [] and plan.reinforce_ids == []
-    assert r[1].conflict_verdict == "clear" and r[1].version == 101
-    late = apply_bulk_verdicts(*_rows(2), {0: NS(verdict="merge", existing_memory_id="id1")})
+    assert state.results[1].conflict_verdict == "clear" and state.results[1].version == 1
+    state = _stored(k1=("id1", "s1"))
+    _entry(state, "k0", "id0", "n0")
+    _entry(state, "k1", "id1", "n1")
+    late = _apply_verdicts(state, [], {0: NS(verdict="merge", existing_memory_id="id1")})
     assert late.merged == ["k0"]
 
 
@@ -205,7 +236,7 @@ def test_a_pin_from_a_landed_bulk_row_refuses_a_later_value() -> None:
     from server.memory.app.bulk_rows import settle_batch_rows
 
     state = _batch("s0", ("s1", True), ("s2", False))
-    drop, _copies = settle_batch_rows(state, set())
+    drop, _copies, _stale = settle_batch_rows(state, {})
     assert drop == {1} and state.skipped_pinned == ["k"]
     assert [r.conflict_verdict for r in state.results] == ["", "pinned"]
 
@@ -215,6 +246,24 @@ def test_returning_to_the_stored_value_after_a_rejected_row_is_unchanged() -> No
     from server.memory.app.bulk_rows import settle_batch_rows
 
     state = _batch("s0", ("s1", False), ("s0", False))
-    drop, _copies = settle_batch_rows(state, {0})
+    drop, _copies, _stale = settle_batch_rows(state, {0: NS(verdict="rejected")})
     assert drop == {1} and state.results[1].version == 0
     assert state.skipped_unchanged == 1 and state.restated_ids == ["e1"]
+
+
+def test_a_merge_stays_a_merge_when_the_earlier_rewrite_of_its_target_did_not_land() -> None:
+    # Stored: K (id X, value "x") and Y (id Y, value "y"). Entry 0 sets K to "y" and
+    # merges into Y, so K keeps "x". Entry 1 sets L to "x": serially it merges into X.
+    from server.memory.app.bulk_set import _apply_verdicts
+
+    state = _stored(K=("X", "x"), Y=("Y", "y"))
+    _entry(state, "K", "X", "y")
+    _entry(state, "L", "L1", "x")
+    verdicts = {
+        0: NS(verdict="merge", existing_memory_id="Y", peers=[]),
+        1: NS(verdict="merge", existing_memory_id="X", peers=[]),
+    }
+    plan = _apply_verdicts(state, [], verdicts)
+    assert plan.memory_rows == [] and plan.merged == ["K", "L"]
+    assert [(r.version, r.conflict_verdict) for r in state.results] == [(0, "merge")] * 2
+    assert plan.reinforce_ids == ["Y", "X"]
