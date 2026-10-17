@@ -658,6 +658,7 @@ async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, 
     if not holds_graph_facts(row):
         return
     scope = SimpleNamespace(tags=row.get("tags"), source_trace=row.get("source_trace", ""))
+    # From the new value only: the row's stored `entities` describe the value it replaced.
     ents = set_entities_for_projection(scope, value)
     if len(ents) < 2:
         return

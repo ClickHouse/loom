@@ -463,6 +463,8 @@ still finds it.
 
 A revision writes its new value's edges before that close: `memory.set` waits for its
 entity projection when it revises a row (a first write projects beside the response).
+Those edges come from the new value alone, not the row's stored `entities`, which
+describe the value it replaced.
 Either way it projects only while its row still holds that value: if a revision or
 retirement lands while it runs, whose close may run before these edges exist, it ends
 the edges it wrote that no live row names, at the moment the row stopped holding that
