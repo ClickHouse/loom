@@ -177,3 +177,55 @@ async def test_a_repeat_on_a_read_only_row_never_changes_its_expiry(monkeypatch)
         else:
             assert state.memory_rows == [] and state.skipped_locked == ["k"]
             assert state.results[0].conflict_verdict == "locked"
+
+
+async def test_a_repeat_keeps_the_expiry_of_the_batch_row_it_repeats(monkeypatch) -> None:
+    # Serially, the second memory.set meets the value the first one wrote: the same bytes
+    # keep that row's expiry, and other bytes start with none, whatever the stored row had.
+    from server.core.datetimes import to_naive_utc
+
+    ten_days = (NOW + timedelta(days=10)).replace(tzinfo=None, microsecond=0)
+    ttl_row = {"memory_key": "k", "value": "C", "ttl_seconds": 600}
+    for stored, entries, want in (
+        (
+            None,
+            [ttl_row, {"memory_key": "k", "value": "C", "pinned": True}],
+            NOW + timedelta(seconds=600),
+        ),
+        (
+            _stored("A", expires_at=ten_days),
+            [{"memory_key": "k", "value": "C"}, {"memory_key": "k", "value": "A"}],
+            None,
+        ),
+    ):
+        state = await _build(monkeypatch, stored, *entries)
+        assert to_naive_utc(state.memory_rows[-1]["expires_at"]) == to_naive_utc(want)
+
+
+async def test_a_relabelling_repeat_still_reinforces_the_row(monkeypatch) -> None:
+    # memory.set counts the same bytes as a restatement even when the write changes a
+    # label: the row lands and is reinforced once.
+    from server.memory.app.bulk_rows import settle_batch_rows
+
+    value = "Alice lives in Berlin"
+    for entry in (
+        {"memory_key": "k", "value": value, "sensitivity": "medium"},
+        {"memory_key": "k", "value": value, "pinned": True},
+    ):
+        state = await _build(monkeypatch, _stored(value), entry)
+        replay = settle_batch_rows(state, {})
+        assert replay.drop == set() and len(replay.landed) == 1
+        assert state.restated_ids == [STORED_ID]
+
+
+async def test_a_ttl_only_repeat_on_a_read_only_row_is_locked(monkeypatch) -> None:
+    # memory.set 423s any ttl_seconds on a read_only row, even with the same bytes and
+    # labels; bulk answers that entry locked, not unchanged.
+    value = "Alice lives in Berlin"
+    stored = _stored(value, lock_mode="read_only")
+    state = await _build(
+        monkeypatch, stored, {"memory_key": "k", "value": value, "ttl_seconds": 60}
+    )
+    assert state.memory_rows == [] and state.skipped_locked == ["k"]
+    assert state.skipped_unchanged == 0 and state.restated_ids == []
+    assert state.results[0].conflict_verdict == "locked"

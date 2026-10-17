@@ -398,6 +398,10 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
         now=datetime.now(UTC),
         settings=settings,
     )
+    # A new expiry from the retention window is an expiry change: a read_only lock refuses
+    # it as it refuses a ttl_seconds (423, refused_action 'expire'), as memory.bulk_set does.
+    if expires_at != w.expires_at:
+        _lock.assert_unlocked(existing, "expire", op="memory.set")
     # Protected-attribute label: a tag, never a refusal.
     from server.memory.domain.sensitivity import attribute_tags
 

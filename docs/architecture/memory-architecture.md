@@ -79,7 +79,8 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 5. **Prepare the value** (`_set_prepare_value`): canonical JSON, `content_sha256`, the
    `char_limit` check (422 `CHAR_LIMIT_EXCEEDED`), the blacklist (422 `BLACKLISTED`,
    `server/memory/app/blacklist_guard.py`), the sensitivity tier (`memory/domain/sensitivity.py`) and its
-   retention.
+   retention. A retention window that would move a `read_only` row's expiry is refused
+   (423, `refused_action` `expire`), as in `memory.bulk_set`.
 6. **Proposals and preconditions.** `proposed=true` may not overwrite an established
    fact (`_refuse_proposal_over_fact`). `if_match_sha256` must match the live hash (409
    `PRECONDITION_FAILED`).

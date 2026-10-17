@@ -255,6 +255,15 @@ def _bulk_skip_gate(
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
         return True
     restated = state.existing_sha.get(entry.memory_key) == entry_sha
+    # A ttl_seconds asks to change the expiry, which a read_only lock refuses even when
+    # nothing else changes (memory.set: 423, refused_action 'expire').
+    if (
+        restated
+        and getattr(entry, "ttl_seconds", None) is not None
+        and _bulk_locked(state, entry.memory_key, "expire")
+    ):
+        _refuse_locked(state, entry.memory_key)
+        return True
     if batch_row is None and restated and _same_labels_as_stored(state, entry):
         state.skipped_unchanged += 1
         _note_restatement(state, state.existing_ids.get(entry.memory_key, ""))
@@ -342,10 +351,16 @@ def _entry_expiry(
     state: _BulkWriteState, entry: Any, entry_sha: str, now_utc: datetime
 ) -> datetime | None:
     """The expiry an entry's row starts from, before the sensitive retention: its
-    `ttl_seconds`, else the stored row's expiry when the entry repeats its bytes and that
-    expiry has not passed (memory.set keeps it the same way), else none."""
+    `ttl_seconds`, else the expiry of the value it repeats (the batch's latest row for its
+    key, else the stored row) when that expiry has not passed (memory.set keeps it the same
+    way), else none."""
     if entry.ttl_seconds is not None:
         return now_utc + timedelta(seconds=entry.ttl_seconds)
+    batch_row = state.batch_rows.get(entry.memory_key)
+    if batch_row is not None:
+        if batch_row["content_sha256"] != entry_sha:
+            return None
+        return _not_lapsed(batch_row.get("expires_at"), now_utc)
     if state.existing_sha.get(entry.memory_key) != entry_sha:
         return None
     return _live_stored_expiry(state, entry.memory_key, now_utc)
@@ -355,9 +370,14 @@ def _live_stored_expiry(
     state: _BulkWriteState, memory_key: str, now_utc: datetime
 ) -> datetime | None:
     """The stored row's expiry under `memory_key`, if it has not passed yet."""
-    stored = to_naive_utc(getattr(state.existing_rows.get(memory_key), "expires_at", None))
-    if stored is not None and stored > to_naive_utc(now_utc):
-        return stored
+    return _not_lapsed(getattr(state.existing_rows.get(memory_key), "expires_at", None), now_utc)
+
+
+def _not_lapsed(expires_at: datetime | None, now_utc: datetime) -> datetime | None:
+    """`expires_at` as naive UTC, or None when it is unset or has passed."""
+    expiry = to_naive_utc(expires_at)
+    if expiry is not None and expiry > to_naive_utc(now_utc):
+        return expiry
     return None
 
 
@@ -500,6 +520,9 @@ def settle_batch_rows(state: _BulkWriteState, verdicts: dict[int, Any]) -> _Repl
         elif getattr(v, "verdict", "") in NOT_LANDING and id(row) not in replay.stale:
             replay.outcome[id(row)] = "verdict"
         else:
+            # The same bytes with a new label: still a restatement, as on memory.set.
+            if same_bytes:
+                _note_restatement(state, str(row["memory_id"]))
             replay.land(row)
     return replay
 
