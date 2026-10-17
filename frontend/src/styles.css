@@ -1293,3 +1293,48 @@ textarea[aria-invalid="true"]:focus-visible {
     }
   }
 }
+
+/* A list page's sticky toolbar (ui/ListToolbar): Click UI's 1 px separator under it, only
+   once it is stuck over the rows. A shadow, so the bar keeps its 48 px. `main` scrolls
+   a focused row clear of it (WCAG 2.4.11): the bar's height and a little air. */
+.list-toolbar[data-stuck] {
+  box-shadow: 0 1px 0 var(--global-color-stroke-default);
+}
+#main {
+  scroll-padding-top: 56px;
+}
+
+/* ui/ListRow: a Memories, Library or Conversations row on Click UI's CardHorizontal
+   tokens. Hover tints the background (the stroke stays, as in Click UI); the open row
+   takes the active stroke; a checked row the tint Click UI's Table gives a selected row. */
+.list-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--click-card-horizontal-space-sm-gap);
+  padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
+  border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+  border-radius: var(--click-card-horizontal-radii-all);
+  background: var(--click-card-horizontal-default-color-background-default);
+  scroll-margin-top: 8px;
+  /* The browser lays out and paints only the rows in view. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 76px;
+}
+.list-row:hover {
+  background: var(--click-card-horizontal-default-color-background-hover);
+}
+.list-row[data-checked] {
+  background: var(--click-table-row-color-background-active);
+}
+.list-row[data-active] {
+  border-color: var(--click-card-horizontal-default-color-stroke-active);
+}
+.list-row[data-deleted] {
+  border-style: dashed;
+}
+.list-row-leading {
+  display: flex;
+  flex-shrink: 0;
+  padding-top: 1px;
+}

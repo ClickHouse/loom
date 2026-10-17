@@ -69,7 +69,7 @@ describe("Library rows", () => {
     expect(screen.getAllByText(/^Handbook \d+$/).length).toBe(ROWS);
     expect(actionButtons().length).toBe(0);
 
-    const row = must(screen.getByText("Handbook 7").closest("[class*='rounded-xl']"), "Handbook 7 row");
+    const row = must(screen.getByText("Handbook 7").closest("[data-doc-row]"), "Handbook 7 row");
     fireEvent.mouseEnter(row);
     expect(actionButtons().length).toBe(4);
     expect(row.contains(actionButtons()[0])).toBe(true);

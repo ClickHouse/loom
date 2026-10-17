@@ -4,8 +4,8 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import type { Identity, MemoryListEntry } from "../api";
 import { getMemory } from "../api";
 import { AgentBadge } from "./AgentBadge";
-import { Chip } from "./ui";
-import { relativeTime, timeOfDay, truncate, previewValue } from "../lib/format";
+import { ListRow, TagList } from "./ui";
+import { relativeTime, timeOfDay, previewValue } from "../lib/format";
 import { detectEncodedValue, detectEncodedRecord } from "../lib/encoded";
 import { useAbortableEffect } from "../lib/hooks";
 
@@ -98,18 +98,10 @@ export const MemoryCard = memo(function MemoryCard({
   const value = shown ? shown.value : null;
   const encoded = shown ? shown.encoded : false;
 
-  const card = embedded
-    ? "relative"
-    : `relative p-3.5 rounded-xl border transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_112px] ${
-        active
-          ? "border-accent bg-accent-soft"
-          : "border-border bg-surface hover:border-border-strong hover:bg-surface-2"
-      }`;
-
-  // The card's body is one button stretched over the whole card (its ::after); the tag
-  // chips sit beside it, above the stretch, so no control is nested in another.
-  return (
-    <div data-memory-key={entry.memory_key} data-card={embedded ? undefined : ""} className={`group ${card}`}>
+  // The row's body is one button stretched over the whole row (its ::after); the tag chips
+  // sit beside it, above the stretch, so no control is nested in another.
+  const body = (
+    <>
       <button
         type="button"
         data-memory-open=""
@@ -124,71 +116,87 @@ export const MemoryCard = memo(function MemoryCard({
           })
         }
         onKeyUp={onToggle && ((e) => e.key === " " && e.preventDefault())}
-        className="flex w-full items-start justify-between gap-3 text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:rounded-xl after:content-['']"
+        className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
       >
-        <span className="block min-w-0 flex-1">
-          <span className="flex items-center gap-2 mb-1.5">
-            <span className="font-mono text-xs text-text-muted truncate">{entry.memory_key}</span>
-            {entry.pinned && (
-              <>
-                <Icon name="star" size="xs" color="var(--color-warn)" aria-hidden="true" />
-                <span className="sr-only">, pinned</span>
-              </>
-            )}
-            {(entry.verification === "human" || entry.verification === "process") && (
-              <>
-                <Icon name="secure" size="xs" color="var(--color-success)" aria-hidden="true" className="shrink-0" />
-                <span className="sr-only">, verified by {entry.verified_by || "—"}</span>
-              </>
-            )}
-            {entry.verification === "stale" && (
-              <>
-                <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" className="shrink-0" />
-                <span className="sr-only">
-                  , verified by {entry.verified_by || "—"}, then edited — verification is stale
-                </span>
-              </>
-            )}
-            {encoded && (
-              <span className="inline-flex shrink-0">
-                <Badge text="b64" state="warning" size="sm" aria-hidden="true" />
-                <span className="sr-only">, agent-encoded (base64) value — the preview shows the decoded text</span>
+        {/* Line 1: what it is, its state, who wrote it and when. */}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <span className="min-w-0 truncate font-mono text-text">{entry.memory_key}</span>
+          {entry.pinned && (
+            <>
+              <Icon name="star" size="xs" color="var(--global-color-text-muted)" aria-hidden="true" />
+              <span className="sr-only">, pinned</span>
+            </>
+          )}
+          {(entry.verification === "human" || entry.verification === "process") && (
+            <>
+              <Icon
+                name="secure"
+                size="xs"
+                color="var(--global-color-text-muted)"
+                aria-hidden="true"
+                className="shrink-0"
+              />
+              <span className="sr-only">, verified by {entry.verified_by || "—"}</span>
+            </>
+          )}
+          {hasConflict && (
+            <span className="inline-flex shrink-0">
+              <Badge text="Conflicted" state="warning" size="sm" aria-hidden="true" />
+              <span className="sr-only">, conflicts with another memory in the namespace — open to review</span>
+            </span>
+          )}
+          {entry.verification === "stale" && (
+            <span className="inline-flex shrink-0">
+              <Badge text="Stale verification" state="warning" size="sm" aria-hidden="true" />
+              <span className="sr-only">
+                , verified by {entry.verified_by || "—"}, then edited — verification is stale
               </span>
-            )}
-            {hasConflict && (
-              <>
-                <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" className="shrink-0" />
-                <span className="sr-only">, conflicts with another memory in the namespace — open to review</span>
-              </>
-            )}
-          </span>
-          <span className="block text-sm text-text leading-snug">
-            {value === null ? <span className="text-text-muted">…</span> : truncate(value, 140)}
+            </span>
+          )}
+          {entry.tombstoned_at && (
+            <span className="inline-flex shrink-0">
+              <Badge text="Deleted" state="danger" size="sm" aria-hidden="true" />
+              <span className="sr-only">, deleted</span>
+            </span>
+          )}
+          {encoded && (
+            <span className="inline-flex shrink-0">
+              <Badge text="b64" state="neutral" size="sm" aria-hidden="true" />
+              <span className="sr-only">, agent-encoded (base64) value — the preview shows the decoded text</span>
+            </span>
+          )}
+          <span className="ml-auto flex shrink-0 items-center gap-2 text-text-muted">
+            {entry.agent && <AgentBadge agent={entry.agent} />}
+            <span className="tabular">
+              {timeMode === "absolute" ? timeOfDay(entry.created_at) : relativeTime(entry.created_at)}
+            </span>
+            <Icon name="chevron-right" size="sm" aria-hidden="true" />
           </span>
         </span>
-        <Icon name="chevron-right" size="sm" aria-hidden="true" className="shrink-0" />
+        {/* Line 2: the value, two lines at most. */}
+        <span className="mt-1 text-sm text-text leading-normal line-clamp-2 break-words">
+          {value === null ? <span className="text-text-muted">…</span> : value}
+        </span>
       </button>
-      <div className="relative mt-2 flex items-center gap-2 flex-wrap pointer-events-none">
-        {(entry.tags ?? []).slice(0, 4).map((t) => (
-          <Chip
-            key={t}
-            label={t}
-            icon="#"
-            onClick={onTagClick ? () => onTagClick(t) : undefined}
-            selected={onTagClick ? (activeTags?.has(t.toLowerCase()) ?? false) : undefined}
-            ariaLabel={onTagClick ? `Filter by tag: ${t}` : undefined}
-            className="pointer-events-auto relative z-[1]"
-          />
-        ))}
-        <span className="text-xs text-text-muted tabular ml-auto">
-          {timeMode === "absolute" ? timeOfDay(entry.created_at) : relativeTime(entry.created_at)}
-        </span>
+      <TagList
+        tags={entry.tags ?? []}
+        onTagClick={onTagClick}
+        activeTags={activeTags}
+        className="mt-2 pointer-events-none [&>*]:pointer-events-auto"
+      />
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div data-memory-key={entry.memory_key} className="group relative">
+        {body}
       </div>
-      {entry.agent && (
-        <div className="relative mt-2 pointer-events-none">
-          <AgentBadge agent={entry.agent} />
-        </div>
-      )}
-    </div>
+    );
+  }
+  return (
+    <ListRow data-memory-key={entry.memory_key} data-card="" active={active} className="group">
+      {body}
+    </ListRow>
   );
 });

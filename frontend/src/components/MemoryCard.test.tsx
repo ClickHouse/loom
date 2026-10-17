@@ -34,7 +34,7 @@ describe("MemoryCard", () => {
         value="oat milk"
       />,
     );
-    await userEvent.click(screen.getByRole("button", { name: "Filter by tag: coffee" }));
+    await userEvent.click(screen.getByRole("button", { name: "Filter by tag coffee" }));
     expect(onTagClick).toHaveBeenCalledWith("coffee");
     expect(onSelect).not.toHaveBeenCalled();
 

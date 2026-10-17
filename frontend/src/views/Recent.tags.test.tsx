@@ -92,9 +92,9 @@ describe("Memories: filtering by tags", () => {
 
   it("stacks a second tag onto the first, and shows each in the toolbar", async () => {
     await openMemories();
-    await userEvent.click(within(card("alerts_only")).getByRole("button", { name: "Filter by tag: Alerts" }));
+    await userEvent.click(within(card("alerts_only")).getByRole("button", { name: "Filter by tag Alerts" }));
     expect(shown()).toEqual(["both", "alerts_only"]);
-    await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag: storage" }));
+    await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag storage" }));
     expect(shown()).toEqual(["both"]);
 
     const toolbar = screen.getByLabelText("Search and filters");
@@ -102,7 +102,7 @@ describe("Memories: filtering by tags", () => {
     expect(within(toolbar).getByText("tag:storage")).toBeInTheDocument();
     expect(screen.getByLabelText("Search memories")).toHaveValue("tag:Alerts tag:storage");
     // On the card, an applied tag reads as pressed.
-    expect(within(card("both")).getByRole("button", { name: "Filter by tag: storage" })).toHaveAttribute(
+    expect(within(card("both")).getByRole("button", { name: "Filter by tag storage" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -110,18 +110,18 @@ describe("Memories: filtering by tags", () => {
 
   it("takes one tag out from the toolbar or the card, and clears them all", async () => {
     await openMemories();
-    await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag: Alerts" }));
-    await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag: storage" }));
+    await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag Alerts" }));
+    await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag storage" }));
     const toolbar = screen.getByLabelText("Search and filters");
 
     await userEvent.click(within(toolbar).getByRole("button", { name: "Remove tag:Alerts" }));
     expect(shown()).toEqual(["both", "storage_only"]);
     // Pressing an applied tag on a card takes it out again.
-    await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag: storage" }));
+    await userEvent.click(within(card("both")).getByRole("button", { name: "Filter by tag storage" }));
     expect(shown()).toEqual(["both", "alerts_only", "storage_only"]);
 
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:alerts tag:storage");
-    await userEvent.click(within(toolbar).getByRole("button", { name: "Clear filters" }));
+    await userEvent.click(within(toolbar).getAllByRole("button", { name: "Clear filters" })[0]);
     expect(shown()).toEqual(["both", "alerts_only", "storage_only"]);
     expect(screen.getByLabelText("Search memories")).toHaveValue("");
   });

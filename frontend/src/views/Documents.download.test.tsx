@@ -47,7 +47,7 @@ async function settle() {
 }
 
 function hoverRow(title: string) {
-  const row = screen.getByText(title).closest("[class*='rounded-xl']");
+  const row = screen.getByText(title).closest("[data-doc-row]");
   if (!row) throw new Error(`no row for ${title}`);
   fireEvent.mouseEnter(row);
 }

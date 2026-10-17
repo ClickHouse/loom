@@ -74,7 +74,7 @@ describe("Library: filtering by tags", () => {
     await userEvent.click(within(bar).getByRole("button", { name: "Remove tag:Specs" }));
     await settle();
     expect(shown()).toEqual(["Both", "Onboarding only"]);
-    await userEvent.click(within(bar).getByRole("button", { name: "Clear filters" }));
+    await userEvent.click(within(bar).getAllByRole("button", { name: "Clear filters" })[0]);
     await settle();
     expect(shown()).toEqual(["Both", "Specs only", "Onboarding only"]);
   });

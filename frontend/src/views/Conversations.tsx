@@ -23,7 +23,7 @@ import { useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { Skeleton } from "../components/Skeleton";
-import { Chip, ExternalLink, PageHeader, SectionHeading } from "../components/ui";
+import { Chip, ExternalLink, ListRow, ListToolbar, PageHeader, SectionHeading } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -461,35 +461,47 @@ export function Conversations() {
     }
   };
 
+  const threadsCount =
+    hits !== null
+      ? `${hits.length} found`
+      : visibleThreads
+        ? `${visibleThreads.length.toLocaleString()} threads`
+        : undefined;
+
   const renderRecentThreads = (label = "Recent threads") => {
     if (!visibleThreads || visibleThreads.length === 0) return null;
     return (
       <div className="space-y-2">
         <SectionHeading level={2} label={label} count={visibleThreads.length} />
-        {visibleThreads.map((t) => (
-          <button
-            type="button"
-            key={t.thread_id}
-            onClick={() => openThreadDialog(t.thread_id, { knownAgent: t.agent })}
-            className="w-full text-left p-3 rounded-xl border border-border bg-surface hover:border-border-strong flex items-start gap-3"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 mb-1 text-xs tabular">
-                <span className="font-mono text-xs text-text-muted">{displayAgent(t.agent)}</span>
-                <span className="text-text-muted">·</span>
-                <span className="text-text-muted">
-                  {t.msg_count} msg{t.msg_count === 1 ? "" : "s"}
+        {visibleThreads.map((t) => {
+          // An untitled thread is named by its last message, so no row looks broken.
+          const title = t.title || truncate(t.last_content_excerpt, 140);
+          return (
+            <ListRow key={t.thread_id} className="group">
+              <button
+                type="button"
+                onClick={() => openThreadDialog(t.thread_id, { knownAgent: t.agent })}
+                className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+              >
+                <span className="flex items-baseline gap-3">
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{title}</span>
+                  <span className="shrink-0 text-xs text-text-muted tabular">{relativeTime(t.last_seen)}</span>
                 </span>
-              </div>
-              {t.title ? <div className="text-sm font-medium text-text truncate">{t.title}</div> : null}
-              <div className={`text-sm truncate ${t.title ? "text-text-muted" : "text-text"}`}>
-                <span className="text-xs font-medium text-text-muted mr-1.5">{t.last_role}</span>
-                {truncate(t.last_content_excerpt, 140)}
-              </div>
-            </div>
-            <span className="text-xs tabular text-text-muted shrink-0 mt-0.5">{relativeTime(t.last_seen)}</span>
-          </button>
-        ))}
+                <span className="mt-1 flex items-center gap-2 text-xs text-text-muted">
+                  <span className="inline-flex shrink-0">
+                    <Badge text={t.last_role} state="neutral" size="sm" />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {t.title ? truncate(t.last_content_excerpt, 140) : null}
+                  </span>
+                  <span className="shrink-0 tabular">
+                    {t.msg_count.toLocaleString()} message{t.msg_count === 1 ? "" : "s"} · {displayAgent(t.agent)}
+                  </span>
+                </span>
+              </button>
+            </ListRow>
+          );
+        })}
       </div>
     );
   };
@@ -506,29 +518,48 @@ export function Conversations() {
         </p>
       </div>
 
-      <div className="mb-6">
-        <SearchField
-          ref={searchRef}
-          value={q}
-          onChange={(value) => {
-            setQ(value);
-            if (!value) setHits(null);
-          }}
-          onKeyDown={(e) => e.key === "Enter" && run()}
-          placeholder="Search transcripts (press / to focus)…"
-          aria-label="Search conversation transcripts"
-        />
-      </div>
+      {/* The search and the agent filter, in the bar that stays at the top as the threads
+          scroll. Recording is a namespace setting, not a filter: it sits under the bar. */}
+      <ListToolbar label="Search and filters" count={threadsCount}>
+        <div className="min-w-[10rem] flex-1">
+          <SearchField
+            ref={searchRef}
+            value={q}
+            onChange={(value) => {
+              setQ(value);
+              if (!value) setHits(null);
+            }}
+            onKeyDown={(e) => e.key === "Enter" && run()}
+            placeholder="Search transcripts"
+            aria-label="Search conversation transcripts"
+          />
+        </div>
+        {agentOptions.length > 1 && (
+          <Select
+            value={agentFilter}
+            onSelect={(value) => setAgentFilter(value)}
+            triggerProps={{ "aria-label": "Agent" }}
+            className="hidden w-48 shrink-0 sm:block"
+          >
+            <Select.Item value="*">All agents</Select.Item>
+            {agentOptions.map((a) => (
+              <Select.Item key={a} value={a}>
+                {displayAgent(a)}
+              </Select.Item>
+            ))}
+          </Select>
+        )}
+      </ListToolbar>
 
       {(agentOptions.length > 1 || (canSetLogging && loggingEnabled !== null)) && (
-        <div className="flex items-center gap-3 mb-5 -mt-3">
+        <div className="mb-4 flex items-center gap-3">
           {agentOptions.length > 1 && (
+            // A phone's bar has room for the search only; the agent filter sits under it.
             <Select
-              label="Agent"
-              orientation="horizontal"
               value={agentFilter}
               onSelect={(value) => setAgentFilter(value)}
-              className="w-64"
+              triggerProps={{ "aria-label": "Agent" }}
+              className="w-48 sm:hidden"
             >
               <Select.Item value="*">All agents</Select.Item>
               {agentOptions.map((a) => (

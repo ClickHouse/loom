@@ -23,9 +23,9 @@ import { EmptyState } from "../components/EmptyState";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
-import { Chip, PageHeader, Tip, TipTarget } from "../components/ui";
+import { Chip, ListRow, ListToolbar, PageHeader, TagList, Tip } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
-import { formatBytesShort, relativeTime } from "../lib/format";
+import { formatBytesShort, relativeTime, shortDate } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
@@ -95,6 +95,7 @@ export function Documents() {
   // every one), so it covers documents past the pages loaded so far. Debounced, so typing
   // `tag:…` sends one read.
   const queryTags = useMemo(() => parseSearchQuery(query).tags, [query]);
+  const activeTags = useMemo(() => new Set(queryTags.map((t) => t.toLowerCase())), [queryTags]);
   const tagKey = JSON.stringify(queryTags);
   const [serverTags, setServerTags] = useState(tagKey);
   useEffect(() => {
@@ -376,18 +377,39 @@ export function Documents() {
 
       {rows !== null && rows.length > 0 && (
         <>
-          {/* The search and the filters in force stay at the top as the list scrolls, so a
-              tag picked from a row further down is seen to apply. */}
-          <search aria-label="Search and filters" className="sticky top-0 z-[2] -mx-2 mb-3 bg-bg px-2 py-2">
-            <SearchField
-              value={query}
-              onChange={(value) => setQuery(value)}
-              placeholder="Search title, filename, description, or tag — try `tag:specs` or `tag:specs onboarding`"
-              aria-label="Search library"
-            />
+          {/* The search, the tags in force, the sort and the count, in the one bar that
+              stays at the top as the list scrolls: a tag picked from a row further down is
+              seen to apply. While documents are selected, the bar holds their actions. */}
+          <ListToolbar
+            label="Search and filters"
+            count={`${(visibleRows ?? []).length.toLocaleString()} shown`}
+            selection={
+              selected.size > 0
+                ? {
+                    count: selected.size,
+                    onClear: clearSelection,
+                    actions: [
+                      { label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete },
+                    ],
+                  }
+                : null
+            }
+          >
+            <div className="min-w-[10rem] flex-1">
+              <SearchField
+                value={query}
+                onChange={(value) => setQuery(value)}
+                placeholder="Search title, filename, description, or tag — try tag:specs"
+                aria-label="Search library"
+              />
+            </div>
             {queryTags.length > 0 && (
-              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-                <span className="text-text-muted">Filtering:</span>
+              // biome-ignore lint/a11y/useSemanticElements: a group of filter chips, not a fieldset of inputs
+              <div
+                role="group"
+                aria-label="Filters in force"
+                className="hidden min-w-0 items-center gap-1.5 overflow-x-auto text-xs sm:flex"
+              >
                 {queryTags.map((t) => (
                   <Chip
                     key={t}
@@ -401,20 +423,18 @@ export function Documents() {
                 </Button>
               </div>
             )}
-            {selected.size > 0 && (
-              <div className="mt-2 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
-                <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
-                <div className="flex-1" />
-                <Button type="secondary" htmlType="button" iconLeft="cross" onClick={clearSelection}>
-                  Clear
-                </Button>
-                <Button type="danger" htmlType="button" iconLeft="trash" loading={bulkBusy} onClick={onBulkDelete}>
-                  Delete all
-                </Button>
-              </div>
+            {queryTags.length > 0 && (
+              // A phone's search shows the `tag:` text itself; the chips would not fit beside it.
+              <Button
+                type="empty"
+                htmlType="button"
+                className="sm:hidden"
+                onClick={() => setQuery(parseSearchQuery(query).text)}
+                aria-label="Clear filters"
+              >
+                Clear
+              </Button>
             )}
-          </search>
-          <div className="mb-5 flex justify-end">
             <Select
               value={sortBy}
               onSelect={(value) => {
@@ -425,7 +445,28 @@ export function Documents() {
                 if (v !== null) setSortBy(v);
               }}
               triggerProps={{ "aria-label": "Sort documents" }}
-              className="w-44"
+              className="hidden w-40 shrink-0 sm:block"
+            >
+              {SORTS.map((o) => (
+                <Select.Item key={o.value} value={o.value}>
+                  {o.label}
+                </Select.Item>
+              ))}
+            </Select>
+          </ListToolbar>
+          {/* A phone's toolbar has room for the search only; the sort sits under it. */}
+          <div className="-mt-1 mb-3 flex justify-end sm:hidden">
+            <Select
+              value={sortBy}
+              onSelect={(value) => {
+                const v = oneOf(
+                  SORTS.map((o) => o.value),
+                  value,
+                );
+                if (v !== null) setSortBy(v);
+              }}
+              triggerProps={{ "aria-label": "Sort documents" }}
+              className="w-40"
             >
               {SORTS.map((o) => (
                 <Select.Item key={o.value} value={o.value}>
@@ -512,131 +553,127 @@ export function Documents() {
           {(firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows).map((r) => (
             // biome-ignore lint/a11y/noStaticElementInteractions: tracks the row under the pointer or holding focus for the row actions; nothing happens on these events alone
             // biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above
-            <div
+            <ListRow
               key={r.source_uri}
               onMouseEnter={() => setHotRow(r.source_uri)}
               onMouseLeave={() => setHotRow((cur) => (cur === r.source_uri ? null : cur))}
               onFocus={() => setHotRow(r.source_uri)}
               data-doc-row
-              className={`p-3.5 rounded-xl border bg-surface flex flex-wrap items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_96px] ${
-                selected.has(r.source_uri)
-                  ? "border-accent ring-1 ring-accent/40"
-                  : "border-border hover:border-border-strong"
-              }`}
+              checked={selected.has(r.source_uri)}
+              leading={
+                <Checkbox
+                  checked={selected.has(r.source_uri)}
+                  onCheckedChange={() => toggleSelected(r.source_uri)}
+                  aria-label={`Select ${r.title || r.original_filename || r.source_uri}`}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              }
             >
-              <Checkbox
-                checked={selected.has(r.source_uri)}
-                onCheckedChange={() => toggleSelected(r.source_uri)}
-                aria-label={`Select ${r.title || r.original_filename || r.source_uri}`}
-                className="mt-1 shrink-0"
-                onClick={(e) => e.stopPropagation()}
-              />
-              <Icon name="document" size="sm" aria-hidden="true" className="shrink-0 mt-0.5" />
-              <div className="min-w-0 flex-1">
-                <button
-                  type="button"
-                  onClick={() => onOpen(r)}
-                  className="w-full text-left bg-transparent border-0 p-0 cursor-pointer"
-                  aria-label={`Preview ${r.title || r.original_filename || r.source_uri}`}
-                >
-                  <div className={`text-sm text-text font-medium truncate ${r.title ? "" : "font-mono"}`}>
-                    {r.title || r.original_filename || r.source_uri}
-                  </div>
-                  {r.title && (r.original_filename || r.source_uri) && (
-                    <div className="text-xs text-text-muted font-mono truncate">
-                      {r.original_filename || r.source_uri}
-                    </div>
-                  )}
-                  {r.description && (
-                    <div className="text-xs text-text mt-1 line-clamp-2 leading-snug">{r.description}</div>
-                  )}
-                </button>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-text-muted tabular">
-                  <span>{r.chunk_count} chunks</span>
-                  <span>·</span>
-                  <span>{relativeTime(r.ingested_at)}</span>
-                  {r.superseded && (
-                    <TipTarget tip="A newer version of this URI was uploaded; agents read the latest">
-                      <Badge text="Superseded" state="warning" size="sm" />
-                    </TipTarget>
-                  )}
-                  {r.tags && r.tags.length > 0 && (
-                    <span className="flex flex-wrap items-center gap-1 sm:ml-2">
-                      {r.tags.slice(0, 3).map((t) => (
-                        <Chip
-                          key={t}
-                          label={`#${t}`}
-                          ariaLabel={`Filter by tag ${t}`}
-                          selected={queryTags.some((q) => q.toLowerCase() === t.toLowerCase())}
-                          onClick={() => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`))}
-                        />
-                      ))}
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => onOpen(r)}
+                    className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer"
+                    aria-label={`Preview ${r.title || r.original_filename || r.source_uri}`}
+                  >
+                    {/* Line 1: the document, its state, how much of it is indexed and when. */}
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
+                      <span className={`min-w-0 truncate text-sm font-medium text-text ${r.title ? "" : "font-mono"}`}>
+                        {r.title || r.original_filename || r.source_uri}
+                      </span>
+                      {r.superseded && (
+                        <span className="inline-flex shrink-0">
+                          <Badge text="Superseded" state="warning" size="sm" aria-hidden="true" />
+                          <span className="sr-only">, superseded: a newer version of this URI was uploaded</span>
+                        </span>
+                      )}
+                      <span className="ml-auto shrink-0 text-xs text-text-muted tabular">
+                        {r.chunk_count} chunks · {shortDate(r.ingested_at)}
+                      </span>
                     </span>
-                  )}
+                    {/* Line 2: the file it came from and what it is about. */}
+                    {((r.title && (r.original_filename || r.source_uri)) || r.description) && (
+                      <span className="mt-1 block truncate text-xs text-text-muted">
+                        {r.title && (r.original_filename || r.source_uri) && (
+                          <span className="font-mono">{r.original_filename || r.source_uri}</span>
+                        )}
+                        {r.title && (r.original_filename || r.source_uri) && r.description && " — "}
+                        {r.description}
+                      </span>
+                    )}
+                  </button>
+                  <TagList
+                    tags={r.tags ?? []}
+                    activeTags={activeTags}
+                    onTagClick={(t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`))}
+                    className="mt-2"
+                  />
                 </div>
-              </div>
-              <div className="doc-acts">
-                {(touch || hotRow === r.source_uri || selected.has(r.source_uri)) && (
-                  <>
-                    {/* Icon actions: ≥36 px targets, named by aria-label + tooltip.
+                <div className="doc-acts">
+                  {(touch || hotRow === r.source_uri || selected.has(r.source_uri)) && (
+                    <>
+                      {/* Icon actions: ≥36 px targets, named by aria-label + tooltip.
                     "Edit content" also covers the no-blob case — uploading a file
                     into a text-only document is the same replace flow. Download is
                     offered for every document: the original file
                     when one was preserved, else the stored text as Markdown. */}
-                    <IconButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDownload(r);
-                      }}
-                      label={hasOriginalFile(r) ? "Download original file" : "Download text (.md)"}
-                      tooltip={
-                        hasOriginalFile(r)
-                          ? r.original_filename
-                            ? `Download ${r.original_filename}${r.blob_size ? ` (${formatBytesShort(r.blob_size)})` : ""}`
-                            : "Download original file"
-                          : `Download text (.md) — ${textDownloadName(r.source_uri)}`
-                      }
-                      icon="download"
-                      size="sm"
-                    />
-                    <IconButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditEntry(r);
-                      }}
-                      label="Edit details"
-                      tooltip="Edit details (title, description, tags — no re-upload)"
-                      icon="pencil"
-                      size="sm"
-                    />
-                    <IconButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setReplaceEntry(r);
-                      }}
-                      label="Edit content"
-                      tooltip={
-                        r.has_blob
-                          ? `Edit content — upload a new file version of ${r.title || r.original_filename || r.source_uri}`
-                          : "Edit content — upload the source file to enable download and preserve the original"
-                      }
-                      icon="refresh"
-                      size="sm"
-                    />
-                    <IconButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(r.source_uri);
-                      }}
-                      label="Delete document"
-                      icon="trash"
-                      type="danger"
-                      size="sm"
-                    />
-                  </>
-                )}
+                      <IconButton
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDownload(r);
+                        }}
+                        label={hasOriginalFile(r) ? "Download original file" : "Download text (.md)"}
+                        tooltip={
+                          hasOriginalFile(r)
+                            ? r.original_filename
+                              ? `Download ${r.original_filename}${r.blob_size ? ` (${formatBytesShort(r.blob_size)})` : ""}`
+                              : "Download original file"
+                            : `Download text (.md) — ${textDownloadName(r.source_uri)}`
+                        }
+                        icon="download"
+                        size="sm"
+                      />
+                      <IconButton
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditEntry(r);
+                        }}
+                        label="Edit details"
+                        tooltip="Edit details (title, description, tags — no re-upload)"
+                        icon="pencil"
+                        size="sm"
+                      />
+                      <IconButton
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReplaceEntry(r);
+                        }}
+                        label="Edit content"
+                        tooltip={
+                          r.has_blob
+                            ? `Edit content — upload a new file version of ${r.title || r.original_filename || r.source_uri}`
+                            : "Edit content — upload the source file to enable download and preserve the original"
+                        }
+                        icon="refresh"
+                        size="sm"
+                      />
+                      <IconButton
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(r.source_uri);
+                        }}
+                        label="Delete document"
+                        icon="trash"
+                        type="danger"
+                        size="sm"
+                      />
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
+            </ListRow>
           ))}
         </div>
       )}

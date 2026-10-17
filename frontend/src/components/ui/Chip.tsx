@@ -30,6 +30,8 @@ export interface ChipProps {
   onRemove?: () => void;
   swatch?: string;
   mono?: boolean;
+  /** Drawn outlined on white (a tag), where a plain chip is filled (a filter value). */
+  outline?: boolean;
   disabled?: boolean;
   /** Override the accessible name (defaults to label, count and countLabel). */
   ariaLabel?: string;
@@ -44,6 +46,8 @@ const BASE =
   "inline-flex items-center justify-center gap-1 max-w-full min-h-6 px-3 py-0.5 rounded-full border text-xs font-medium pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 const OFF = "bg-surface-2 border-border text-text-muted";
 const INTERACTIVE_OFF = "hover:text-text hover:border-border-strong";
+const OUTLINE =
+  "bg-surface border-(--click-badge-opaque-color-stroke-default) text-(--click-badge-opaque-color-text-default)";
 const ON = "bg-text border-text text-bg";
 // Click UI's disabled field colours, not an opacity: natively disabled, and aria-disabled
 // (a disabled chip with a tip stays focusable so its reason can be read).
@@ -61,6 +65,7 @@ export function Chip({
   onRemove,
   swatch,
   mono = false,
+  outline = false,
   disabled = false,
   ariaLabel,
   tip,
@@ -90,7 +95,7 @@ export function Chip({
       )}
     </>
   );
-  const tone = selected ? ON : `${OFF} ${onClick ? INTERACTIVE_OFF : ""}`;
+  const tone = selected ? ON : `${outline ? OUTLINE : OFF} ${onClick ? INTERACTIVE_OFF : ""}`;
   const wrap = (el: ReactNode) => (tip ? <Tip content={tip}>{el}</Tip> : el);
   // A span has no role that takes a name, so a static chip's spoken name is sr-only text
   // and the visible text is hidden from assistive technology.

@@ -68,6 +68,18 @@ export function dayLabel(iso: string): string {
   return date;
 }
 
+/** A row's date: how long ago within the last week, then the day ("Sep 19", with the
+ *  year when it is not this one). */
+export function shortDate(iso: string): string {
+  const d = parseIso(iso);
+  if (!d) return "";
+  const now = new Date();
+  if (now.getTime() - d.getTime() < 7 * 86_400_000) return relativeTime(iso);
+  return d.getFullYear() === now.getFullYear()
+    ? fmt("month-day", { month: "short", day: "numeric" }).format(d)
+    : fmt("month-day-year", { month: "short", day: "numeric", year: "numeric" }).format(d);
+}
+
 export function formatValue(v: unknown): string {
   if (v == null) return "";
   if (typeof v === "string") return v;

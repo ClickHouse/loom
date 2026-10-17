@@ -25,7 +25,7 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { Alert, Chip, PageHeader, SectionHeading } from "../components/ui";
+import { Alert, Chip, ListRow, ListToolbar, PageHeader, SectionHeading } from "../components/ui";
 import { SkeletonCard } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -321,7 +321,9 @@ export function Recent() {
         }
         // One memory.bulk_get, not one memory.get per hit — the list path below already
         // reads this way.
-        const bulk = await bulkGetMemories({ ...identity, agent: "*" }, missing, { signal: ac.signal }).catch(() => ({
+        const bulk = await bulkGetMemories({ ...identity, agent: "*" }, missing, {
+          signal: ac.signal,
+        }).catch(() => ({
           results: {} as Record<string, MemoryDetail>,
           missing,
         }));
@@ -810,6 +812,13 @@ export function Recent() {
   const pageCount = showDeleted || listFiltered ? 1 : Math.max(1, Math.ceil((total || entries.length) / PAGE_SIZE));
   const rangeStart = entries.length === 0 ? 0 : page * PAGE_SIZE + 1;
   const rangeEnd = page * PAGE_SIZE + entries.length;
+  const countLine = searchActive
+    ? `${flatList.length} shown`
+    : showDeleted
+      ? `${flatList.length.toLocaleString()} recently deleted`
+      : listFiltered
+        ? `${flatList.length.toLocaleString()} matching`
+        : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`;
 
   return (
     <PageContainer className="pb-24">
@@ -817,15 +826,6 @@ export function Recent() {
         title="Memories"
         actions={
           <>
-            <span className="text-sm text-text-muted tabular whitespace-nowrap">
-              {searchActive
-                ? `${flatList.length} shown`
-                : showDeleted
-                  ? `${flatList.length.toLocaleString()} recently deleted`
-                  : listFiltered
-                    ? `${flatList.length.toLocaleString()} matching`
-                    : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
-            </span>
             <span id={SHOWN_GROUP} className="whitespace-nowrap">
               <ButtonGroup
                 aria-label="Memories shown"
@@ -876,41 +876,47 @@ export function Recent() {
         onAdded={() => bumpMemoriesVersion()}
       />
 
-      {/* Search and the filters in force, in one bar that stays at the top as the list
-          scrolls: a filter picked from a card further down is seen to apply. Press / to
-          focus the search. */}
-      <search aria-label="Search and filters" className="sticky top-0 z-[2] -mx-2 mb-3 bg-bg px-2 py-2">
-        <SearchField
-          ref={searchInputRef}
-          value={query}
-          onChange={(value) => setQuery(value)}
-          placeholder="Search memories. Try a keyword, or filter with tag:work, agent:claude-desktop…"
-          aria-label="Search memories"
-        />
-        {/* Mounted before the first search, so a screen reader hears each summary. */}
-        <div role="status" className={searchHits != null ? "mt-2 text-xs text-text-muted tabular" : ""}>
-          {searchHits != null &&
-            (searching
-              ? "Searching…"
-              : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`)}
-        </div>
-        {!searching && searchAbstain && (
-          <Alert
-            role="status"
-            state="warning"
-            size="small"
-            className="mt-2"
-            text={
-              <>
-                <strong>Low confidence.</strong> No strong match for "{rawQuery}" — these are best-effort results; treat
-                them as weak.
-              </>
-            }
+      {/* The search, the filters in force and where the list stands, in the one bar that
+          stays at the top as the list scrolls: a filter picked from a card further down is
+          seen to apply. While memories are selected, the bar holds their actions instead. */}
+      <ListToolbar
+        label="Search and filters"
+        count={countLine}
+        selection={
+          selected.size > 0
+            ? {
+                count: selected.size,
+                onClear: () => setSelected(new Set()),
+                actions: [
+                  { label: "Pin", icon: "pin", disabled: busy, onClick: bulkPin },
+                  {
+                    label: "Delete",
+                    icon: "trash",
+                    danger: true,
+                    disabled: busy,
+                    onClick: bulkDelete,
+                  },
+                ],
+              }
+            : null
+        }
+      >
+        <div className="min-w-[10rem] flex-1">
+          <SearchField
+            ref={searchInputRef}
+            value={query}
+            onChange={(value) => setQuery(value)}
+            placeholder="Search memories. Try a keyword, or filter with tag:work, agent:claude-desktop…"
+            aria-label="Search memories"
           />
-        )}
+        </div>
         {filtering && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-text-muted">Filtering:</span>
+          // biome-ignore lint/a11y/useSemanticElements: a group of filter chips, not a fieldset of inputs
+          <div
+            role="group"
+            aria-label="Filters in force"
+            className="hidden min-w-0 items-center gap-1.5 overflow-x-auto text-xs sm:flex"
+          >
             {queryAgent && (
               <Chip
                 label={`agent:${queryAgent}`}
@@ -930,22 +936,40 @@ export function Recent() {
             </Button>
           </div>
         )}
-        {selected.size > 0 && (
-          <div className="mt-2 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
-            <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
-            <div className="flex-1" />
-            <Button type="secondary" htmlType="button" iconLeft="cross" onClick={() => setSelected(new Set())}>
-              Clear
-            </Button>
-            <Button type="secondary" htmlType="button" iconLeft="pin" disabled={busy} onClick={bulkPin}>
-              Pin all
-            </Button>
-            <Button type="danger" htmlType="button" iconLeft="trash" disabled={busy} onClick={bulkDelete}>
-              Delete all
-            </Button>
-          </div>
+        {filtering && (
+          // A phone's search shows the `tag:` text itself; the chips would not fit beside it.
+          <Button
+            type="empty"
+            htmlType="button"
+            className="sm:hidden"
+            onClick={clearFilters}
+            aria-label="Clear filters"
+          >
+            Clear
+          </Button>
         )}
-      </search>
+      </ListToolbar>
+      {/* Mounted before the first search, so a screen reader hears each summary. */}
+      <div role="status" className={searchHits != null ? "-mt-1 mb-3 text-xs text-text-muted tabular" : ""}>
+        {searchHits != null &&
+          (searching
+            ? "Searching…"
+            : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`)}
+      </div>
+      {!searching && searchAbstain && (
+        <Alert
+          role="status"
+          state="warning"
+          size="small"
+          className="mb-3"
+          text={
+            <>
+              <strong>Low confidence.</strong> No strong match for "{rawQuery}" — these are best-effort results; treat
+              them as weak.
+            </>
+          }
+        />
+      )}
 
       {(entries.some((e) => e.pinned) || agentsInList.length > 1 || showDeleted) && (
         <div className="mb-5 flex flex-wrap items-center gap-1">
@@ -1004,8 +1028,9 @@ export function Recent() {
             </div>
             <h2>Nothing matches your filters</h2>
             <p className="mt-1 text-sm text-text-muted leading-relaxed">
-              {(total || entries.length).toLocaleString()} memor{(total || entries.length) === 1 ? "y is" : "ies are"}{" "}
-              in this namespace, but none pass the active filters.
+              {(total || entries.length).toLocaleString()} memor
+              {(total || entries.length) === 1 ? "y is" : "ies are"} in this namespace, but none pass the active
+              filters.
             </p>
             <Button
               type="secondary"
@@ -1029,13 +1054,8 @@ export function Recent() {
       <div className="space-y-6" aria-busy={refreshing || undefined}>
         {Array.from(byDay.entries()).map(([day, items]) => (
           <section key={day}>
-            <SectionHeading
-              level={2}
-              label={day}
-              count={items.length}
-              className="sticky top-0 z-[1] bg-bg/85 backdrop-blur py-2 -my-1"
-            />
-            <div className="space-y-1.5 mt-2">
+            <SectionHeading level={2} label={day} count={items.length} />
+            <div className="space-y-2 mt-2">
               {items.map((e) => {
                 const isNew = newKeys.has(e.memory_key);
                 const isSelected = selected.has(e.memory_key);
@@ -1043,94 +1063,83 @@ export function Recent() {
                 const isActive = inspectedKey === e.memory_key;
                 const why = searchActive ? searchWhy.get(e.memory_key) : undefined;
                 return (
-                  <div
+                  <ListRow
                     key={e.memory_key}
                     data-card=""
-                    className={[
-                      // The browser lays out and paints only the rows in view
-                      "p-3.5 rounded-xl border flex items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_112px]",
-                      isSelected
-                        ? "border-accent bg-surface ring-1 ring-accent/40"
-                        : isActive
-                          ? "border-accent bg-accent-soft"
-                          : "border-border bg-surface hover:border-border-strong",
-                      isNew ? "animate-fade-in ring-2 ring-accent" : "",
-                      // A deleted memory keeps full-contrast text; the dashed edge and the
-                      // "Deleted" line under it set it apart.
-                      isTombstoned ? "border-dashed" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                  >
-                    <Checkbox
-                      checked={isSelected}
-                      onCheckedChange={() => toggleSelect(e.memory_key)}
-                      onClick={(ev) => ev.stopPropagation()}
-                      aria-label={`Select ${e.memory_key}`}
-                      className="mt-1 shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <MemoryCard
-                        embedded
-                        hasConflict={conflictKeys.has(e.memory_key)}
-                        identity={identity}
-                        entry={e}
-                        value={e.value !== undefined ? e.value : bulkValues.get(e.memory_key)}
-                        active={isActive}
-                        onSelect={openCard}
-                        onToggle={toggleSelect}
-                        onTagClick={toggleTag}
-                        activeTags={activeTags}
-                        timeMode="absolute"
+                    checked={isSelected}
+                    active={isActive}
+                    deleted={isTombstoned}
+                    className={isNew ? "animate-fade-in" : ""}
+                    leading={
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleSelect(e.memory_key)}
+                        onClick={(ev) => ev.stopPropagation()}
+                        aria-label={`Select ${e.memory_key}`}
+                        className="relative z-[1]"
                       />
-                      {searchActive && keywordKeys.has(e.memory_key) ? (
-                        <div className="mt-1 px-2 text-xs text-text-muted" data-testid="search-why">
-                          contains "{rawQuery.trim()}"
-                        </div>
-                      ) : (
-                        why && <SearchWhy hit={why} rank={(searchHits?.indexOf(e.memory_key) ?? 0) + 1} />
-                      )}
-                      {isTombstoned && (
-                        <div className="flex items-center justify-between mt-1 px-2 py-1 text-xs text-text-muted">
-                          <span>
-                            Deleted
-                            {e.tombstoned_at
-                              ? ` ${new Date(e.tombstoned_at).toISOString().slice(0, 16).replace("T", " ")}`
-                              : ""}{" "}
-                            ·{(() => {
-                              if (!e.tombstoned_at) return " in grace window";
-                              const ageMs = Date.now() - new Date(e.tombstoned_at).getTime();
-                              const daysLeft = Math.max(0, 14 - Math.floor(ageMs / (24 * 3600 * 1000)));
-                              return ` ${daysLeft} day${daysLeft === 1 ? "" : "s"} left to restore`;
-                            })()}
-                          </span>
-                          <Button
-                            type="empty"
-                            htmlType="button"
-                            onClick={async (ev) => {
-                              ev.stopPropagation();
-                              // Identity carries only (org, namespace, agent);
-                              // pass user_id/session_id alongside the key.
-                              const r = await restoreMemory({ ...identity, agent: e.agent || "-" }, e.memory_key, {
-                                user_id: e.user_id || "-",
-                                session_id: e.session_id || "-",
-                              });
-                              if (r.restored) {
-                                toast(`Restored ${e.memory_key}`, "ok");
-                                bumpMemoriesVersion();
-                              } else if (r.expired) {
-                                toast("Outside the 14-day grace window — can't restore", "error");
-                              } else {
-                                toast("Nothing to restore", "info");
-                              }
-                            }}
-                          >
-                            Restore
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                    }
+                  >
+                    <MemoryCard
+                      embedded
+                      hasConflict={conflictKeys.has(e.memory_key)}
+                      identity={identity}
+                      entry={e}
+                      value={e.value !== undefined ? e.value : bulkValues.get(e.memory_key)}
+                      active={isActive}
+                      onSelect={openCard}
+                      onToggle={toggleSelect}
+                      onTagClick={toggleTag}
+                      activeTags={activeTags}
+                      timeMode="absolute"
+                    />
+                    {searchActive && keywordKeys.has(e.memory_key) ? (
+                      <div className="mt-1 px-2 text-xs text-text-muted" data-testid="search-why">
+                        contains "{rawQuery.trim()}"
+                      </div>
+                    ) : (
+                      why && <SearchWhy hit={why} rank={(searchHits?.indexOf(e.memory_key) ?? 0) + 1} />
+                    )}
+                    {isTombstoned && (
+                      <div className="flex items-center justify-between mt-1 px-2 py-1 text-xs text-text-muted">
+                        <span>
+                          Deleted
+                          {e.tombstoned_at
+                            ? ` ${new Date(e.tombstoned_at).toISOString().slice(0, 16).replace("T", " ")}`
+                            : ""}{" "}
+                          ·{(() => {
+                            if (!e.tombstoned_at) return " in grace window";
+                            const ageMs = Date.now() - new Date(e.tombstoned_at).getTime();
+                            const daysLeft = Math.max(0, 14 - Math.floor(ageMs / (24 * 3600 * 1000)));
+                            return ` ${daysLeft} day${daysLeft === 1 ? "" : "s"} left to restore`;
+                          })()}
+                        </span>
+                        <Button
+                          type="empty"
+                          htmlType="button"
+                          onClick={async (ev) => {
+                            ev.stopPropagation();
+                            // Identity carries only (org, namespace, agent);
+                            // pass user_id/session_id alongside the key.
+                            const r = await restoreMemory({ ...identity, agent: e.agent || "-" }, e.memory_key, {
+                              user_id: e.user_id || "-",
+                              session_id: e.session_id || "-",
+                            });
+                            if (r.restored) {
+                              toast(`Restored ${e.memory_key}`, "ok");
+                              bumpMemoriesVersion();
+                            } else if (r.expired) {
+                              toast("Outside the 14-day grace window — can't restore", "error");
+                            } else {
+                              toast("Nothing to restore", "info");
+                            }
+                          }}
+                        >
+                          Restore
+                        </Button>
+                      </div>
+                    )}
+                  </ListRow>
                 );
               })}
             </div>
