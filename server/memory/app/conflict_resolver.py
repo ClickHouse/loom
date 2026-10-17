@@ -133,8 +133,9 @@ async def _head(org: str, memory_id: str) -> Any:
 
 
 def _eligible(row: Any) -> bool:
-    """Whether a row may be judged or acted on: live, not deleted, not expired, and
-    its fact not ended (the rule `_PEER_ROWS_SQL` applies to peers)."""
+    """Whether a row may be judged or acted on: live, not deleted, not expired, its
+    fact not ended, and not labelled 'high' (the rule `_PEER_ROWS_SQL` applies to
+    peers). The content hash does not cover the label, so this is read every time."""
     now = naive_utc_now()
 
     def ended(t: Any) -> bool:
@@ -146,6 +147,7 @@ def _eligible(row: Any) -> bool:
         and row.tombstoned_at is None
         and not ended(row.expires_at)
         and not ended(row.valid_to)
+        and str(row.sensitivity or "") != "high"
     )
 
 
@@ -426,6 +428,8 @@ async def resolve_row(
     )
     if peers:
         row, peers = await _newest_as_new(org, row, peers)
+        row, peers = await _still_unprotected(org, row, peers)
+    if row is not None and peers:
         await _judge_and_act(
             org,
             namespace,
@@ -436,6 +440,19 @@ async def resolve_row(
             acting=acting or asyncio.Lock(),
         )
     await queue.stamp_judged(q)
+
+
+async def _still_unprotected(
+    org: str, row: Any, peers: list[dict[str, Any]]
+) -> tuple[Any, list[dict[str, Any]]]:
+    """The row and its peers re-read right before the prompt is built: a row relabelled
+    'high' since it was read (same bytes, same hash) is never sent. (None, []) when the
+    judged row is no longer eligible; a protected peer is dropped."""
+    fresh = await _head(org, str(row.memory_id))
+    if not _holds(fresh, str(row.namespace), str(row.content_sha256 or "")):
+        return None, []
+    high = await queue.protected_ids(org, [str(p["memory_id"]) for p in peers])
+    return fresh, [p for p in peers if str(p["memory_id"]) not in high]
 
 
 async def _newest_as_new(

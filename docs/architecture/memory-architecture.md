@@ -178,7 +178,9 @@ import does not hold back a row written elsewhere. Neither reads a namespace tha
 the same key written by another session is a peer; the row's own identity is not. Peers
 join their rows by the full identity, never by key alone, since keys repeat across
 sessions. The row's current flags take places first. A `sensitivity='high'` row is never
-a peer, so its value never reaches the LLM.
+a peer, so its value never reaches the LLM. The label is outside the content hash, so the
+judged row is re-read strongly and the cluster's labels checked again right before the
+prompt is built: a row relabelled `high` since it was read is not sent.
 
 **The call.** The prompt names each peer `p1`..`p8` with its key and cosine, values cut
 to 700 characters, and asks for a strict JSON schema: per peer a reason, `same_entity`,

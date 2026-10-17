@@ -730,3 +730,29 @@ async def test_rows_written_in_one_second_retire_by_the_order_their_values_were_
     assert after["office_city"]["version"] > before["office_city"]["version"]
     assert after["office_city"]["status"] == "superseded", out
     assert after["office_location"]["status"] == "active"
+
+
+@pytest.mark.parametrize("relabelled", ["office_location", "office_city"])
+async def test_a_row_relabelled_high_after_it_was_read_never_reaches_the_model(
+    ch, wired, monkeypatch, relabelled: str
+) -> None:
+    """The judged row (s2) or its peer (s1) is rewritten with the same bytes and
+    sensitivity 'high' after the cluster was read: no call is made."""
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 58)
+    session = {"office_location": "s2", "office_city": "s1"}[relabelled]
+    value = {"office_location": "The office moved to Rome", "office_city": "The office is in Paris"}
+    real = queue.cluster_peers
+
+    async def then_relabel(*a: Any, **kw: Any) -> Any:
+        peers = await real(*a, **kw)
+        await _set(org, session, relabelled, value[relabelled], sensitivity="high")
+        return peers
+
+    monkeypatch.setattr(queue, "cluster_peers", then_relabel)
+    out = await run_pass()
+    assert llm.calls == [] and out["judged"] == 0
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"

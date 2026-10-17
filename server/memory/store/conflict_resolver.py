@@ -247,6 +247,25 @@ async def cluster_peers(
     return kept
 
 
+async def protected_ids(org: str, ids: list[str], *, ch: _CHClient | None = None) -> set[str]:
+    """The ids among `ids` whose current row is labelled 'high', read strongly: such a
+    row's text never goes to the model, whatever was read before."""
+    if not ids:
+        return set()
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT toString(memory_id) AS memory_id
+        FROM loom.memory FINAL
+        PREWHERE org = {org:String}
+        WHERE toString(memory_id) IN {ids:Array(String)} AND sensitivity = 'high'
+        SETTINGS select_sequential_consistency = 1
+        """,
+        {"org": org, "ids": [str(i) for i in ids]},
+    )
+    return {str(r["memory_id"]) for r in rows}
+
+
 async def asserted_versions(
     org: str, namespace: str, rows: list[tuple[str, str]], *, ch: _CHClient | None = None
 ) -> dict[str, int]:
@@ -278,6 +297,7 @@ __all__ = [
     "asserted_versions",
     "cluster_peers",
     "owed_rows",
+    "protected_ids",
     "queued_namespaces",
     "stamp_judged",
     "unjudged_conflicted_rows",

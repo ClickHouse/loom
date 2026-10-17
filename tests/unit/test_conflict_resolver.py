@@ -299,7 +299,13 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     monkeypatch.setattr(queue, "cluster_peers", cluster)
     monkeypatch.setattr(resolver, "judge", judge)
     monkeypatch.setattr(queue, "stamp_judged", stamp)
+    e.protected = set()
+
+    async def protected(org: str, ids: list[str], **kw: Any) -> set[str]:
+        return e.protected & set(ids)
+
     monkeypatch.setattr(queue, "asserted_versions", asserted)
+    monkeypatch.setattr(queue, "protected_ids", protected)
     monkeypatch.setattr(resolver, "_head", head)
     monkeypatch.setattr(resolver, "_act", act)
     monkeypatch.setattr(resolver, "_audit", audit)
@@ -423,8 +429,26 @@ async def test_a_pair_is_not_acted_on_once_either_row_has_expired(row_env: NS, w
     expired.expires_at = datetime(2020, 1, 1)
     row_env.heads[who] = expired
     counts = await _resolve()
-    assert row_env.llm_calls == 1 and row_env.acted == []
-    assert counts.skipped_changed == 1 and counts.retired == 0
+    assert row_env.acted == [] and counts.retired == 0
+    if who == "m1":
+        # The judged row is re-read right before its prompt: no call at all.
+        assert row_env.llm_calls == 0 and row_env.stamped == ["office_city"]
+    else:
+        assert row_env.llm_calls == 1 and counts.skipped_changed == 1
+
+
+async def test_a_row_or_peer_labelled_high_before_the_prompt_is_never_sent(row_env: NS) -> None:
+    import copy
+
+    row_env.protected = {"m2"}
+    counts = await _resolve()
+    assert row_env.llm_calls == 0 and counts.judged == 0, "the only peer is protected"
+    row_env.protected = set()
+    high = copy.copy(row_env.mem)
+    high.sensitivity = "high"
+    row_env.heads["m1"] = high
+    await _resolve()
+    assert row_env.llm_calls == 0 and row_env.acted == []
 
 
 async def test_the_recheck_clears_a_false_flag_and_judges_the_flagged_peer(row_env: NS) -> None:
