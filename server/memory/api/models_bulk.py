@@ -303,6 +303,10 @@ PINNED = "pinned"
 LOCKED = "locked"
 # The verdict of an entry that landed retired behind a later stored row.
 SUPERSEDED = "superseded"
+# The verdicts of an entry refused outright (version 0): the message produced no row,
+# so nothing it carries attaches to the stored one. A restatement of the stored value
+# is not among them.
+REFUSED = frozenset({BLACKLISTED, PINNED, LOCKED})
 
 
 class _BulkSetResult(BaseModel):

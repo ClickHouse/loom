@@ -14,7 +14,7 @@ from typing import Any
 
 from server.core.datetimes import parse_iso_dt
 from server.core.hashing import hash_text
-from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
+from server.memory.api.models_bulk import REFUSED, MemoryBulkSetInput, _BulkSetEntry
 from server.memory.api.models_crud import MemoryDeleteInput
 from server.memory.app.pipeline_state import PipelineStep, StepCallable, WorkflowState
 from server.memory.domain.extracted_facts import (
@@ -968,10 +968,10 @@ async def _step_bulk_write(
         entries=entries,
     )
     bulk_out = await handle_memory_bulk_set(bulk_input)
-    # The per-entry results of what bulk_set inserted (version > 0). An entry with
-    # version 0 wrote nothing: a blacklisted, pinned or locked key refused it, or its
-    # value was already stored. No evidence or chunk may attach to a row through it.
-    state.written = [r.model_dump() for r in bulk_out.written if r.version > 0]
+    # The whole per-entry result, so set_from_messages answers what bulk_set did, but
+    # for a refused entry (blacklisted, pinned or locked key): it produced no row, and
+    # neither evidence nor chunks may attach to the stored one through it.
+    state.written = [r.model_dump() for r in bulk_out.written if r.conflict_verdict not in REFUSED]
     for _phase, _ms in (getattr(bulk_out, "stage_ms", None) or {}).items():
         state.stage_ms[f"bulk.{_phase}"] = float(_ms)
     return state

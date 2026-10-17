@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from server.memory.api.models_bulk import MemorySetFromMessagesInput, _BulkSetResult
+from server.memory.api.models_bulk import REFUSED, MemorySetFromMessagesInput, _BulkSetResult
 
 
 def _stub_projections(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -286,7 +286,8 @@ async def test_a_scope_skipped_record_projection_leaves_provider_health_alone(
     "result",
     [
         _BulkSetResult(memory_key="rec1", version=0, conflict_verdict="blacklisted"),
-        _BulkSetResult(memory_key="rec1", version=0),  # a locked or pinned key, kept as it was
+        _BulkSetResult(memory_key="rec1", version=0, conflict_verdict="pinned"),
+        _BulkSetResult(memory_key="rec1", version=0),  # the stored value, restated
         _BulkSetResult(memory_key="rec1", version=7, conflict_verdict="superseded"),
     ],
 )
@@ -330,18 +331,21 @@ async def test_a_record_the_write_kept_out_projects_no_typed_record(
         )
     )
     assert projected == []
-    # A record the write refused or kept as it was (version 0) is not among what
-    # was written, either.
-    assert (out.written == []) == (result.version == 0)
+    # A refused record is not among what was written, either; a restatement is.
+    assert (out.written == []) == (result.conflict_verdict in REFUSED)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("verdict", ["pinned", "locked", "blacklisted"])
+@pytest.mark.parametrize(
+    ("verdict", "linked_keys"),
+    [("pinned", []), ("locked", []), ("blacklisted", []), ("", ["rec1"])],
+)
 async def test_a_refused_record_gets_no_evidence_and_no_count(
-    monkeypatch: pytest.MonkeyPatch, verdict: str
+    monkeypatch: pytest.MonkeyPatch, verdict: str, linked_keys: list[str]
 ) -> None:
-    # A pinned or locked key refuses the record (version 0): the message never
-    # produced the stored row, so no evidence links to it and it is not counted.
+    # A pinned, locked or blacklisted key refuses the record (version 0): the message
+    # never produced the stored row, so no evidence links to it and it is not counted.
+    # A restatement of the stored value (version 0, no verdict) keeps both.
     import server.memory.app.extract.handler as mx
     from server.llm.client import LLMResult
     from server.memory.app.extract import ExtractedRecord
@@ -382,4 +386,5 @@ async def test_a_refused_record_gets_no_evidence_and_no_count(
             record_schema={"note": "string"},
         )
     )
-    assert linked == [[]] and counted == [0] and out.written == []
+    assert linked == [linked_keys] and counted == [len(linked_keys)]
+    assert [r.memory_key for r in out.written] == linked_keys
