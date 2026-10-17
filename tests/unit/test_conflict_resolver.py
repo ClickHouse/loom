@@ -110,6 +110,13 @@ def test_a_peer_id_is_accepted_in_every_spelling_a_model_uses(spelled: str) -> N
         _answer(_entry("p1", confidence="high")),
         _answer(_entry("p1", confidence=1.4)),
         _answer(_entry("p1", confidence=True)),
+        # A 0.99 contradiction whose booleans are missing or not booleans: read as
+        # False they would make it "different entities", which clears the flag.
+        _answer({k: v for k, v in _entry("p1", "contradiction", 0.99).items() if "same" not in k}),
+        _answer(_entry("p1", "contradiction", 0.99) | {"same_entity": "true"}),
+        _answer(_entry("p1", "contradiction", 0.99) | {"same_attribute": None}),
+        _answer(_entry("p1", "contradiction", 0.99) | {"same_entity": 1}),
+        _answer(_entry("p1", verdict=["update"])),  # type: ignore[arg-type]
     ],
 )
 def test_malformed_output_yields_no_verdict(text: str) -> None:

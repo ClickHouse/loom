@@ -172,8 +172,10 @@ def _peer_of(raw_id: str, peers: list[Note]) -> Note | None:
 def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
     """{peer memory_id: its verdict} for every well-formed entry naming a peer.
     Malformed output yields {}: an entry with an unknown verdict, a confidence
-    that is not a number in [0, 1], or a peer id that names no peer is dropped.
-    A peer named twice keeps its first entry."""
+    that is not a number in [0, 1], a `same_entity` or `same_attribute` that is not
+    a boolean, or a peer id that names no peer is dropped, so its peer is left
+    unresolved and never acted on. A peer named twice keeps its first entry. Checked
+    here, not trusted to the schema: not every provider enforces it."""
     m = _JSON_RE.search(text or "")
     if not m:
         return {}
@@ -189,11 +191,17 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
         if not isinstance(e, dict):
             continue
         peer = _peer_of(str(e.get("peer_id") or ""), peers)
-        verdict = str(e.get("verdict") or "").strip().lower()
-        confidence = e.get("confidence")
+        raw_verdict, confidence = e.get("verdict"), e.get("confidence")
+        verdict = raw_verdict.strip().lower() if isinstance(raw_verdict, str) else ""
         if peer is None or verdict not in VERDICTS or peer.memory_id in out:
             continue
         if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+            continue
+        # A missing boolean must not read as False: that turns a contradiction into
+        # "different entities", which clears the pair's flag.
+        if not (
+            isinstance(e.get("same_entity"), bool) and isinstance(e.get("same_attribute"), bool)
+        ):
             continue
         if not 0.0 <= float(confidence) <= 1.0:
             continue
