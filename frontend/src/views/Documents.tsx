@@ -558,8 +558,6 @@ export function Documents() {
       {rows !== null && rows.length > 0 && visibleRows && visibleRows.length > 0 && (
         <div className="space-y-2">
           {(firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows).map((r) => (
-            // biome-ignore lint/a11y/noStaticElementInteractions: tracks the row under the pointer or holding focus for the row actions; nothing happens on these events alone
-            // biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above
             <ListRow
               key={r.source_uri}
               onMouseEnter={() => setHotRow(r.source_uri)}

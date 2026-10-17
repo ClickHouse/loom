@@ -1059,13 +1059,7 @@ export function Recent() {
           Showing the newest 1,000 matches. Add a tag or a search word to narrow them.
         </p>
       )}
-      <div
-        id="memories-list"
-        tabIndex={-1}
-        className="space-y-6 outline-none"
-        aria-label="Memories"
-        aria-busy={refreshing || undefined}
-      >
+      <div id="memories-list" tabIndex={-1} className="space-y-6 outline-none" aria-busy={refreshing || undefined}>
         {Array.from(byDay.entries()).map(([day, items]) => (
           <section key={day}>
             <SectionHeading level={2} label={day} count={items.length} />
