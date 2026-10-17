@@ -17,6 +17,7 @@ from pydantic import (
     model_validator,
 )
 
+from server.core.feature_modes import CLASSIC, TEMPORAL, temporal_on
 from server.memory.api.models_common import (
     MemorySetPeer,
     MemoryType,
@@ -25,7 +26,6 @@ from server.memory.api.models_common import (
     TemporalCutoff,
     _Identity,
 )
-from server.core.feature_modes import CLASSIC, TEMPORAL, temporal_on
 from server.memory.domain.code_change import CodeState
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow

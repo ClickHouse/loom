@@ -23,7 +23,6 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 
-from server.core.feature_modes import strip_inactive_input
 from server.auth.bearer import verify_bearer_header
 from server.auth.jwt import AuthInfo
 from server.code.app.common import (
@@ -31,6 +30,7 @@ from server.code.app.common import (
 )
 from server.core import idempotency
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, LoomServerError
+from server.core.feature_modes import strip_inactive_input
 from server.observability.consumer import (
     bind_current_consumer,
     explicit_consumer,

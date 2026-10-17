@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
-from server.core.feature_modes import strip_inactive_input
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
+from server.core.feature_modes import strip_inactive_input
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import _MCP_HIDDEN_OPS
