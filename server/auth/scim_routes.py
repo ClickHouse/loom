@@ -24,7 +24,7 @@ from fastapi.routing import APIRoute
 
 from server.auth import scim
 from server.core.ch import set_query_tag
-from server.core.errors import BackendUnavailableError
+from server.core.errors import LoomServerError
 from server.settings import settings
 
 SCIM_JSON = "application/scim+json"
@@ -75,8 +75,10 @@ def _error_response(e: ScimError) -> JSONResponse:
 
 
 class _ScimRoute(APIRoute):
-    """Answers every error of these routes, their bearer check included, as
-    RFC 7644 does, leaving the rest of the server's error format alone."""
+    """Answers, as RFC 7644 errors, what these routes and their bearer check
+    raise: a SCIM refusal, a busy user, and any of Loom's own errors (a 5xx as a
+    retryable 503). Unknown paths and methods under /scim/v2 reach `unknown`
+    below. The rest of the server's error format is left alone."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         handler = super().get_route_handler()
@@ -88,8 +90,10 @@ class _ScimRoute(APIRoute):
                 return _error_response(e)
             except scim.Busy:
                 return _error_response(ScimError(503, "this user is being changed; retry"))
-            except BackendUnavailableError:
-                return _error_response(ScimError(503, "the store is unavailable; retry"))
+            except LoomServerError as e:
+                if e.status_code >= 500:  # the store, overloaded or timed out: retryable
+                    return _error_response(ScimError(503, f"{e.code.lower()}; retry"))
+                return _error_response(ScimError(e.status_code, str(e) or e.code.lower()))
 
         return run
 
@@ -455,8 +459,8 @@ async def _deactivating_anyway(uid: str, active: bool | None) -> AsyncIterator[N
     a 400, so dropping its `active: false` would leave them active."""
     try:
         yield
-    except scim.Busy:
-        raise  # the deactivation itself may be what waited: a retry would wait again
+    except (scim.Busy, LoomServerError):
+        raise  # busy, or the store failing: what a retry here would wait on again
     except Exception:  # re-raised: a refused or failed request must still deactivate
         if active is False:
             await scim.set_active(uid, False)
@@ -484,6 +488,24 @@ async def delete_user(uid: str) -> Response:
     if not await scim.delete(uid):
         raise _not_found()
     return Response(status_code=204)
+
+
+# Registered last, so it only answers what no route above matches: what a
+# provider probes (`/Groups`, `/Schemas`), and a known path's other methods.
+@router.api_route(
+    "/{rest:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+)
+async def unknown(rest: str, request: Request) -> Response:
+    path = request.url.path
+    known = any(
+        isinstance(r, APIRoute) and r.endpoint is not unknown and r.path_regex.match(path)
+        for r in router.routes
+    )
+    if known:
+        raise ScimError(405, f"{request.method} is not served here")
+    raise ScimError(404, "this server serves only Users and ServiceProviderConfig")
 
 
 def short_token_problem(token: str) -> str:

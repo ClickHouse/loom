@@ -1013,3 +1013,74 @@ def test_a_store_outage_answers_a_scim_503(client: TestClient, monkeypatch) -> N
     assert r.status_code == 503 and r.headers["retry-after"] == "5"
     assert r.headers["content-type"].startswith("application/scim+json")
     assert r.json()["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:Error"]
+
+
+async def test_the_transition_is_audited_even_when_the_re_read_fails(world, monkeypatch) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    reads = scim._subjects
+    calls = 0
+
+    async def second_read_fails(email: str) -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        if calls == 2:  # the re-read after the row landed
+            raise RuntimeError("ClickHouse is away")
+        return await reads(email)
+
+    monkeypatch.setattr(scim, "_subjects", second_read_fails)
+    with pytest.raises(RuntimeError):
+        await scim.set_active(uid, False)
+    assert world.events == [
+        "auth.scim_deactivated"
+    ]  # the retry finds it inactive: no second chance
+    await scim.set_active(uid, False)
+    assert world.events == ["auth.scim_deactivated"]
+
+
+def test_unknown_paths_and_methods_answer_scim_errors(client: TestClient) -> None:
+    for method, path, status in [
+        ("GET", "/Groups", 404),
+        ("GET", "/Schemas", 404),
+        ("POST", "/Users/x", 405),
+        ("DELETE", "/Users", 405),
+    ]:
+        r = client.request(method, f"/scim/v2{path}")
+        assert r.status_code == status, (method, path)
+        assert r.json()["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:Error"]
+    client.headers.pop("Authorization")
+    assert client.get("/scim/v2/Groups").status_code == 401  # probing needs the token too
+
+
+def test_every_loom_error_answers_in_scim_format(client: TestClient, monkeypatch) -> None:
+    from server.core.errors import BackendTimeoutError, OverloadedError, RateLimitedError
+
+    for error, status in [
+        (OverloadedError("busy"), 503),
+        (BackendTimeoutError("slow"), 503),
+        (RateLimitedError("slow down"), 429),
+    ]:
+
+        async def fail(*_a: Any, _e: Exception = error, **_k: Any) -> None:
+            raise _e
+
+        monkeypatch.setattr(scim, "get", fail)
+        r = client.get("/scim/v2/Users/x")
+        assert r.status_code == status, error
+        assert r.json()["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:Error"]
+        assert (r.headers.get("retry-after") == "5") is (status == 503)
+
+
+def test_a_store_failure_is_not_deactivated_twice(client: TestClient, world, monkeypatch) -> None:
+    from server.core.errors import BackendTimeoutError
+
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    calls: list[Any] = []
+
+    async def slow(*a: Any, **k: Any) -> None:
+        calls.append(k)
+        raise BackendTimeoutError("a write ran past its deadline")
+
+    monkeypatch.setattr(scim, "update", slow)
+    r = _patch(client, uid, {"op": "replace", "path": "active", "value": False})
+    assert r.status_code == 503 and len(calls) == 1

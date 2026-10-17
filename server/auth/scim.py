@@ -209,8 +209,7 @@ async def delete(uid: str) -> bool:
         row = await get(uid)
         if row is None:
             return False
-        row = await _set_active(row, False, deleted=1)
-        await _audit("auth.scim_deleted", row)
+        await _set_active(row, False, deleted=1)
         return True
 
 
@@ -286,6 +285,9 @@ async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict
                 await _revoke(new["id"], subject, set(found.values()))
         if new != row or unwritten:  # a change, or a user not yet written
             await _write(new)
+        # Audited as the row lands: a retry after a later failure finds the row
+        # already changed and would never audit the transition.
+        await _audit_transition(row, new)
     # The snapshot re-read each revocation would make, once and past the leases.
     await revocation.refresh()
     if not active and set(await _subjects(row["email"])) - set(new["subjects"]):
@@ -294,9 +296,14 @@ async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict
         new = await _set_active(new, False)
     if cutoff is not None:  # wait out the cutoff's second, a token issued in it falls before it
         await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
-    if active != was_active:
-        await _audit("auth.scim_reactivated" if active else "auth.scim_deactivated", new)
     return new
+
+
+async def _audit_transition(row: dict[str, Any], new: dict[str, Any]) -> None:
+    if bool(new["active"]) != bool(row["active"]):
+        await _audit("auth.scim_reactivated" if new["active"] else "auth.scim_deactivated", new)
+    if new["deleted"] and not row["deleted"]:
+        await _audit("auth.scim_deleted", new)
 
 
 async def _subjects(email: str) -> dict[str, str]:
