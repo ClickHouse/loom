@@ -408,13 +408,19 @@ def _marks_kept(run: re.Match[str]) -> str:
     return "".join(out)
 
 
+# An "i" and its dots above (one from "İ", any more typed after it).
+_DOTTED_I_RE = re.compile("i\u0307+")
+
+
 def _normalise(lowered: str) -> str:
     # One spelling for one name: a letter typed composed or as a letter and its mark
     # ("ü", "u" + "¨"), and compatibility forms ("ＴＯＫＹＯ", the ligature "ﬁ").
     # NFKC can turn a lower-case form into an upper-case letter ("ℌ" is "H").
     text = unicodedata.normalize("NFKC", lowered).lower()
     # "İ".lower() is "i" and a dot above: keep the "i" a user types for "istanbul".
-    text = text.replace("i\u0307", "i")
+    # NFC again, so a mark after the dot joins the "i" ("í"), and a mark lowering
+    # left apart joins its letter.
+    text = unicodedata.normalize("NFC", _DOTTED_I_RE.sub("i", text))
     text = text.replace("'s", "").replace("’s", "")
     text = _PUNCT_RE.sub(_marks_kept, text)
     text = _settle(_lead(_SPACE_RE.sub(" ", text)))

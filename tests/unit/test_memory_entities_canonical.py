@@ -119,6 +119,23 @@ def test_text_lowercasing_lengthens_is_a_fixed_point_too(raw: str) -> None:
 
 @pytest.mark.parametrize(
     ("raw", "canonical"),
+    # "İ" and an accent: the dot goes and the "i" takes the accent ("í"); a second
+    # dot goes too. U+03D4 is a symbol NFKC makes an upper-case letter of, and with
+    # an accent its lower case is one letter ("ΰ").
+    [
+        ("x\u0130\u0301y", "x\u00edy"),
+        ("x\u0130\u0307y", "xiy"),
+        ("\u03d4", "\u03cb"),
+        ("x\u03d4\u0301y", "x\u03b0y"),
+    ],
+)
+def test_a_letter_normalising_changes_is_a_fixed_point(raw: str, canonical: str) -> None:
+    assert canonical_entity_text(raw) == canonical
+    assert canonical_entity_text(canonical) == canonical
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical"),
     [
         ("The .NET Services", "net service"),
         ("the .the .net", "net"),
