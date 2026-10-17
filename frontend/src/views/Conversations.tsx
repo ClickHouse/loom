@@ -383,9 +383,13 @@ export function Conversations() {
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
 
   const focusTurn = useRef<string | null>(null);
+  const transcriptRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!focusTurn.current) return;
-    document.getElementById(focusTurn.current)?.focus();
+    // The transcript takes focus, not the turn: a tabbable region, so Tab moves on from
+    // it inside the dialog; the first new turn is scrolled into view.
+    transcriptRef.current?.focus({ preventScroll: true });
+    document.getElementById(focusTurn.current)?.scrollIntoView?.({ block: "start" });
     focusTurn.current = null;
   }, [threadDetail]);
 
@@ -418,7 +422,8 @@ export function Conversations() {
         return { ...prev, messages: [...prev.messages, ...r.rows] };
       });
       setMoreCursor(r.next_cursor);
-      // The last page removes Load more; its focus moves to the first turn it brought.
+      // The last page removes Load more; its focus moves to the transcript, at the first
+      // turn the page brought.
       if (!r.next_cursor && r.rows.length > 0) focusTurn.current = turnId(r.rows[0]);
     } catch (e) {
       if (signal.aborted) return;
@@ -716,7 +721,13 @@ export function Conversations() {
             <div className="text-center text-sm text-text-muted py-12">Thread exists but contains no messages.</div>
           )}
           {!threadLoading && threadDetail && threadDetail.messages.length > 0 && (
-            <div className="space-y-2.5">
+            <section
+              ref={transcriptRef}
+              aria-label="Transcript"
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: the last Load more hands focus here; Radix's focus trap wraps only from a tabbable element
+              tabIndex={0}
+              className="space-y-2.5"
+            >
               {threadDetail.messages.map((m) => {
                 const meta = ROLE_META[m.role] || ROLE_META.assistant;
                 const label =
@@ -727,7 +738,6 @@ export function Conversations() {
                     key={turnId(m)}
                     id={turnId(m)}
                     data-msg-id={m.msg_id}
-                    tabIndex={-1}
                     className={`rounded-lg px-3 py-2 ${meta.rail} ${meta.card} ${highlighted ? "ring-2 ring-accent" : ""}`}
                   >
                     <div className="flex items-center gap-2 mb-1">
@@ -758,7 +768,7 @@ export function Conversations() {
                   {`Showing ${threadDetail.messages.length} of ${threadDetail.msg_count} turns.`}
                 </p>
               )}
-            </div>
+            </section>
           )}
         </div>
       </Modal>

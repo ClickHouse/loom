@@ -1,9 +1,17 @@
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { keepFocusThroughLoading } from "../../lib/clickUiFixes";
 import { act, fireEvent, render, screen, waitFor } from "../../test/rtl";
 import { Modal } from "./Modal";
 
 describe("Modal", () => {
+  // main.tsx starts the Click UI focus correction the opener fallback reads.
+  let stop = () => {};
+  beforeEach(() => {
+    stop = keepFocusThroughLoading();
+  });
+  afterEach(() => stop());
+
   it("closes on one Escape, even with focus on its close button", async () => {
     const onOpenChange = vi.fn();
     render(

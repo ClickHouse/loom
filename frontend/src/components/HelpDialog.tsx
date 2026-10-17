@@ -1,5 +1,8 @@
 import { Kbd } from "./ui";
 import { Modal } from "./ui/Modal";
+import { useState } from "react";
+import { Switch } from "@clickhouse/click-ui/Switch";
+import { setSingleKeyShortcuts, singleKeyShortcutsOn } from "../lib/shortcuts";
 
 interface Shortcut {
   key: string;
@@ -45,8 +48,25 @@ const SEARCH: Shortcut[] = [
 ];
 
 export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [singleKeys, setSingleKeys] = useState(singleKeyShortcutsOn);
   return (
     <Modal open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts" className="max-w-[520px] w-full">
+      <div className="mb-4 space-y-1">
+        <Switch
+          checked={singleKeys}
+          onCheckedChange={(on) => {
+            setSingleKeyShortcuts(on);
+            setSingleKeys(on);
+          }}
+          label="Single-key shortcuts"
+          orientation="horizontal"
+          dir="start"
+        />
+        <p className="text-xs text-text-muted">
+          The one-key shortcuts below (?, /, g then a letter, j, k). Turn them off if speech input or a stray key sets
+          them off; ⌘K, Escape and the arrows stay on.
+        </p>
+      </div>
       <section
         className="max-h-[60vh] overflow-y-auto space-y-5"
         aria-label="Keyboard shortcuts"

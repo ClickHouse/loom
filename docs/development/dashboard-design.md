@@ -74,6 +74,7 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - A page is titled with `PageHeader`, which carries no icon. A panel, card or pane section is titled with `SectionHeading` (Click UI's `Title`, 14 px semibold). `.section-label` (12 px, muted) labels a group inside a list, menu or rail.
 - A toggle keeps one label; `aria-pressed` carries its state. A single choice among a few options is a `ButtonGroup`.
 - A field's hint is tied to its control with `aria-describedby`.
+- A shortcut of one character key checks `shortcutOff` (`src/lib/shortcuts.ts`): the help dialog's switch turns them all off (WCAG 2.1.4). `useKeyboard` does this for its bindings.
 - An `Alert` takes its lead-in as `<strong>` in `text`, not `title`: Click UI renders the title as an `<h6>`, which breaks the heading order.
 - One primary button per surface. Footers are right-aligned, secondary first, the primary last.
 - A control that is unavailable and has a tooltip saying why uses `aria-disabled="true"` instead of `disabled`, so the reason stays reachable.

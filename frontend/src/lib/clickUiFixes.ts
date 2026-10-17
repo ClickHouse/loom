@@ -43,15 +43,8 @@ function notePress(e: Event): void {
   if (target) pressed = target;
 }
 
-if (typeof document !== "undefined") {
-  document.addEventListener("pointerdown", notePress, true);
-  document.addEventListener(
-    "keydown",
-    (e) => {
-      if (e.key === "Enter" || e.key === " ") notePress(e);
-    },
-    true,
-  );
+function noteKeyPress(e: KeyboardEvent): void {
+  if (e.key === "Enter" || e.key === " ") notePress(e);
 }
 
 /** The control the user last pressed, by pointer or by Enter/Space. */
@@ -60,6 +53,8 @@ export function lastPressed(): HTMLElement | null {
 }
 
 export function keepFocusThroughLoading(root: HTMLElement = document.body): () => void {
+  document.addEventListener("pointerdown", notePress, true);
+  document.addEventListener("keydown", noteKeyPress, true);
   const observer = new MutationObserver((records) => {
     for (const { target } of records) {
       const lost = document.activeElement === null || document.activeElement === document.body;
@@ -67,5 +62,9 @@ export function keepFocusThroughLoading(root: HTMLElement = document.body): () =
     }
   });
   observer.observe(root, { attributes: true, attributeFilter: ["disabled"], subtree: true });
-  return () => observer.disconnect();
+  return () => {
+    observer.disconnect();
+    document.removeEventListener("pointerdown", notePress, true);
+    document.removeEventListener("keydown", noteKeyPress, true);
+  };
 }

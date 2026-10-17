@@ -53,6 +53,16 @@ describe("keepFocusThroughLoading", () => {
     expect(run).toHaveFocus();
   });
 
+  it("records nothing once stopped", () => {
+    stop = keepFocusThroughLoading();
+    document.body.innerHTML = `<button type="button">Run audit</button><button type="button">Other</button>`;
+    const [run, other] = [...document.querySelectorAll("button")];
+    fireEvent.pointerDown(run);
+    stop();
+    fireEvent.pointerDown(other);
+    expect(lastPressed()).toBe(run);
+  });
+
   it("leaves focus alone when the user has moved on", async () => {
     stop = keepFocusThroughLoading();
     document.body.innerHTML = `<button type="button">Run audit</button><input aria-label="Search" />`;

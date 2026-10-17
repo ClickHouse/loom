@@ -18,6 +18,11 @@ for (const width of [1400, 375]) {
           width: document.documentElement.scrollWidth - window.innerWidth,
         }));
         expect(doc).toEqual({ height: 0, width: 0 });
+        // Click UI draws an icon, a badge and an ellipsis as a <div>: none sits in a <p>.
+        const blocksInText = await page.evaluate(() =>
+          [...document.querySelectorAll("p div")].map((d) => d.closest("p")?.textContent?.slice(0, 60)),
+        );
+        expect(blocksInText).toEqual([]);
         // Tab labels keep to one line; a tab row wider than the page scrolls in its own box.
         const tabs = await page.evaluate(() =>
           [...document.querySelectorAll("main [role='tablist']")].map((list) => ({

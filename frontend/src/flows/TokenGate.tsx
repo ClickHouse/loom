@@ -261,7 +261,7 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
         <p className="mt-5 text-center text-xs text-text-muted">
           Loom doesn't email-verify on signup. Run it behind a VPN, intranet, or auth proxy if exposed.
         </p>
-        <p className="mt-2 text-center text-xs leading-relaxed text-text-muted">
+        <div className="mt-2 text-center text-xs leading-relaxed text-text-muted">
           Running this yourself? Mint a token with <code>loom mint-token …</code> and open{" "}
           <code>&lt;server&gt;/#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user
           install. See{" "}
@@ -273,7 +273,7 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
             Quickstart
           </ExternalLink>
           .
-        </p>
+        </div>
       </div>
     </main>
   );

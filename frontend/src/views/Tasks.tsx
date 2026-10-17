@@ -51,6 +51,7 @@ import { TaskList, type RowContext } from "./tasks/TaskList";
 import { TaskBoard } from "./tasks/TaskBoard";
 import { TaskPanel } from "./tasks/TaskPanel";
 import type { ReasonAction } from "../flows/TaskActionDialog";
+import { shortcutOff } from "../lib/shortcuts";
 
 // Dialogs load on the click that opens them.
 const TaskEditDialog = lazy(() => import("../flows/TaskEditDialog").then((m) => ({ default: m.TaskEditDialog })));
@@ -422,7 +423,7 @@ export function Tasks() {
   stateRef.current = { selectedId, openRow, onAction, openTask, closeTask, selectRow };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target)) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target) || shortcutOff(e)) return;
       if (document.querySelector('[role="dialog"]')) return;
       const { selectedId: sel, openRow: open, onAction: act, openTask: openT, closeTask: closeT } = stateRef.current;
       const list = orderedRef.current;

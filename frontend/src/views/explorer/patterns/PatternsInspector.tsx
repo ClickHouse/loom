@@ -175,12 +175,12 @@ export function PatternsInspector(p: PatternsInspectorProps) {
       .catch(() => undefined);
   };
   const restrictedLine = p.restricted.length > 0 && (
-    <p className="mt-2 text-xs text-text-muted inline-flex items-start gap-1">
+    <div className="mt-2 text-xs text-text-muted inline-flex items-start gap-1">
       <Icon name="lock" size="xs" className="mt-0.5 shrink-0" aria-hidden="true" />
       <span>
         {p.restricted.map((t) => RESTRICTED_WORDS[t] ?? t).join(", ")}: restricted — not available with this token
       </span>
-    </p>
+    </div>
   );
 
   if (p.issue) {
@@ -496,9 +496,9 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           <p className="text-xs text-warn">The tracker source could not be read; nothing here is a claim.</p>
         )}
         {p.issuesStatus === "restricted_required" && (
-          <p className="text-xs text-text-muted inline-flex items-center gap-1">
+          <div className="text-xs text-text-muted inline-flex items-center gap-1">
             <Icon name="lock" size="xs" aria-hidden="true" /> restricted — not available with this token
-          </p>
+          </div>
         )}
         {p.issuesStatus === "empty" && (
           <p className="text-xs text-text-muted">No open issue of this component was served.</p>

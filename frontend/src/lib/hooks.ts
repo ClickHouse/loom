@@ -1,4 +1,5 @@
 import { useEffect, useRef, type DependencyList } from "react";
+import { shortcutOff } from "./shortcuts";
 
 const INTERACTIVE =
   'button, a[href], summary, select, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="option"], [role="checkbox"], [role="switch"]';
@@ -36,7 +37,7 @@ export function useKeyboard(bindings: Record<string, () => boolean | void>, enab
       return t instanceof Element && !!t.closest(LAYER);
     };
     const onKey = (e: KeyboardEvent): void => {
-      if (e.defaultPrevented || isTyping()) return;
+      if (e.defaultPrevented || isTyping() || shortcutOff(e)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return; // skip when modifiers
       if (activatesFocusedControl(e) || insideLayer(e)) return;
       const handler = bindings[e.key];

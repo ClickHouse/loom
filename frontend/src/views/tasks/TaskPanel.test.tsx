@@ -332,6 +332,8 @@ describe("TaskPanel", () => {
   // Under 1280 px the page renders the panel as a modal sheet: a dialog named by the task's
   // title that takes the focus, closes on Escape and hands the focus back to the task's row.
   it("as a sheet is a dialog that takes the focus, closes on Escape and returns it to the row", async () => {
+    // Radix's Portal hands its child a ref to track it; the panel must take it.
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(getTask).mockResolvedValueOnce(fullRow("todo"));
     const row = listRow("todo");
     function Page() {
@@ -371,5 +373,7 @@ describe("TaskPanel", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByRole("button", { name: "row" })).toHaveFocus();
+    expect(errors.mock.calls.flat().join(" ")).not.toMatch(/cannot be given refs/);
+    errors.mockRestore();
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
@@ -284,19 +284,11 @@ function Menu({ items }: { items: Array<{ label: string; onClick: () => void; di
   );
 }
 
-export function TaskPanel({
-  identity,
-  row,
-  inboxes,
-  canWrite,
-  now,
-  reloadKey,
-  onClose,
-  onAction,
-  onOpenTask,
-  onHistory,
-  sheet = false,
-}: Props) {
+// A ref: under a Radix Dialog.Portal (the sheet), Radix tracks its child by one.
+export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
+  { identity, row, inboxes, canWrite, now, reloadKey, onClose, onAction, onOpenTask, onHistory, sheet = false },
+  ref,
+) {
   const [task, setTask] = useState<TaskRow | null>(null);
   const [events, setEvents] = useState<TaskEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -565,7 +557,7 @@ export function TaskPanel({
 
   if (!sheet) {
     return (
-      <aside className="tq-panel" aria-label="Task detail" data-status={current.status}>
+      <aside ref={ref} className="tq-panel" aria-label="Task detail" data-status={current.status}>
         {body}
       </aside>
     );
@@ -588,9 +580,9 @@ export function TaskPanel({
         rowEl.focus({ preventScroll: true });
       }}
     >
-      <div className="tq-panel" data-sheet="" data-status={current.status}>
+      <div ref={ref as Ref<HTMLDivElement>} className="tq-panel" data-sheet="" data-status={current.status}>
         {body}
       </div>
     </RadixDialog.Content>
   );
-}
+});

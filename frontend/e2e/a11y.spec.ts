@@ -260,6 +260,58 @@ test.describe("open overlays", () => {
     await expect(run).toBeFocused();
   });
 
+  test("the thread dialog's last Load more leaves Tab moving inside the dialog", async ({ page }) => {
+    const now = new Date().toISOString();
+    const turn = (i: number) => ({ msg_id: `m${i}`, agent: "cursor", role: "user", content: `turn ${i}`, ts: now });
+    await installApi(page);
+    await page.route("**/v1/conversation.threads", (route) =>
+      route.fulfill({
+        json: {
+          threads: [
+            {
+              thread_id: "t-long",
+              agent: "cursor",
+              msg_count: 3,
+              first_seen: now,
+              last_seen: now,
+              last_role: "user",
+              last_content_excerpt: "x",
+              title: "Long thread",
+            },
+          ],
+        },
+      }),
+    );
+    await page.route("**/v1/conversation.get", (route) =>
+      route.fulfill({
+        json: {
+          found: true,
+          thread_id: "t-long",
+          title: "Long thread",
+          agent: "cursor",
+          msg_count: 3,
+          created_at: null,
+          updated_at: null,
+          messages: [turn(0), turn(1)],
+          next_cursor: "c-1",
+        },
+      }),
+    );
+    await page.route("**/v1/conversation.list", (route) =>
+      route.fulfill({ json: { rows: [turn(2)], next_cursor: null } }),
+    );
+    await page.goto("/conversations");
+    await page.getByText("Long thread").first().click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: /Load more/ }).focus();
+    await page.keyboard.press("Enter");
+    const transcript = dialog.getByRole("region", { name: "Transcript" });
+    await expect(transcript).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(transcript).not.toBeFocused();
+    expect(await dialog.evaluate((d) => d.contains(document.activeElement))).toBe(true);
+  });
+
   test("an open Select list", async ({ page }) => {
     await open(page, "/settings");
     await page.getByRole("button", { name: /Home namespace/ }).click();
@@ -288,6 +340,20 @@ test.describe("open overlays", () => {
       await expect(dialog).toBeHidden();
     });
   });
+});
+
+// WCAG 2.1.4: the one-key shortcuts can be turned off, and ? then types nothing.
+test("the single-key shortcuts turn off from the help dialog", async ({ page }) => {
+  await open(page, "/memories");
+  await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await help.getByRole("switch", { name: "Single-key shortcuts" }).click();
+  await page.keyboard.press("Escape");
+  await expect(help).toBeHidden();
+  await page.locator("main h1").first().click();
+  await page.keyboard.press("?");
+  await page.waitForTimeout(300);
+  await expect(help).toBeHidden();
 });
 
 test("reduced motion stops Click UI's dialog animation", async ({ page }) => {

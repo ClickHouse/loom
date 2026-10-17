@@ -31,6 +31,7 @@ import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { ProblemsBanner } from "./components/ProblemsBanner";
+import { shortcutOff } from "./lib/shortcuts";
 
 // One view per chunk, so a person opening Memories does not pay for the code index
 // explorer, the graph and every admin page. React.lazy loads a view the first time it is
@@ -178,7 +179,7 @@ export default function App() {
       const t = e.target;
       if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable))
         return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e)) return;
       if (!armed) {
         if (e.key === "g") {
           armed = true;

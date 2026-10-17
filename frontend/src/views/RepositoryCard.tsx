@@ -309,7 +309,7 @@ function CodeFacetRow({
   const openable = c.joinable.filter((b) => branchState(b) === "open").length;
   return (
     <FacetRow icon="git-merge" label="Code">
-      <p className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <div className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
         <span>
           {c.branches.length} branch{c.branches.length === 1 ? "" : "es"}
         </span>
@@ -321,7 +321,7 @@ function CodeFacetRow({
         {head.indexed_at && <span>· indexed {relativeTime(head.indexed_at.replace(" ", "T") + "Z")}</span>}
         {f && <TipBadge text={f.label} state={FRESH_STATE[f.tone]} tip={f.detail} />}
         {building && <TipBadge text={building.label} state={FRESH_STATE[building.tone]} tip={building.title} />}
-      </p>
+      </div>
       <ul className="mt-2 flex flex-wrap items-center gap-2 list-none p-0 m-0" aria-label={`${c.repo} branches`}>
         {shown.map((b) => (
           <li key={b.namespace} className="inline-flex max-w-full">
@@ -417,7 +417,7 @@ function RecordFacetRow({
   const unapprovable = r.namespaces.some((n) => n.state === "approval" && canBeApproved(n.ns) === false);
   return (
     <FacetRow icon="database" label="Tracker">
-      <p className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <div className="text-xs text-text-muted tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
         {f ? (
           <>
             {r.sources.length > 0 && <span className="text-text">{r.sources.map((x) => x.name).join(", ")}</span>}
@@ -440,7 +440,7 @@ function RecordFacetRow({
         ) : (
           <span>read live · counts not available right now</span>
         )}
-      </p>
+      </div>
       <ul className="mt-2 flex flex-wrap items-center gap-2 list-none p-0 m-0" aria-label="tracker scopes">
         {r.namespaces.map((n) => (
           <li key={n.ns.namespace} className="inline-flex max-w-full">
@@ -1032,7 +1032,7 @@ function LinkedTracker({
   const name = known?.label ?? ns;
   return (
     <li className="flex flex-col sm:flex-row sm:items-start gap-x-2 gap-y-1">
-      <p className={`text-sm ${warn ? "text-warn" : "text-text-muted"} flex items-start gap-1.5 min-w-0 sm:flex-1`}>
+      <div className={`text-sm ${warn ? "text-warn" : "text-text-muted"} flex items-start gap-1.5 min-w-0 sm:flex-1`}>
         {warn ? (
           <Icon name="warning" size="sm" color="var(--color-warn)" aria-hidden="true" className="shrink-0 mt-0.5" />
         ) : (
@@ -1040,7 +1040,7 @@ function LinkedTracker({
         )}
         <span className="min-w-0">{line}</span>
         {many && primary && <Badge text="primary" state="neutral" size="sm" className="shrink-0" />}
-      </p>
+      </div>
       <span className="flex items-center gap-1.5 pl-5 sm:pl-0 sm:shrink-0">
         {many && !primary && (
           <Button

@@ -43,6 +43,7 @@ import { Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
+import { shortcutOff } from "../lib/shortcuts";
 
 // Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
 // The browse feed pages up to this; past it, search covers the whole namespace.
@@ -186,7 +187,7 @@ export function Recent() {
   // `/` focuses the inline search anywhere on Memories.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/") return;
+      if (e.key !== "/" || shortcutOff(e)) return;
       const t = e.target;
       if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable))
         return;

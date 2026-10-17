@@ -339,7 +339,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(new Set(ids).size).toBe(2);
   });
 
-  it("moves focus to the first new turn when Load more brings the last page", async () => {
+  it("moves focus to the transcript, at the first new turn, when Load more brings the last page", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
     getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2, next_cursor: "c-1" });
@@ -355,8 +355,16 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     const more = await screen.findByRole("button", { name: /Load more/ });
     more.focus();
     fireEvent.click(more);
-    const turn = (await screen.findByText("second turn")).closest("[data-msg-id]");
-    await waitFor(() => expect(turn).toHaveFocus());
+    const scrolled = vi.fn();
+    const scrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    await screen.findByText("second turn");
+    // A tabbable region, so Tab moves on from it inside the dialog.
+    const transcript = screen.getByRole("region", { name: "Transcript" });
+    await waitFor(() => expect(transcript).toHaveFocus());
+    expect(transcript).toHaveAttribute("tabindex", "0");
+    expect(scrolled).toHaveBeenCalled();
+    Element.prototype.scrollIntoView = scrollIntoView;
   });
 
   it("ignores '/' pressed inside the thread dialog", async () => {
