@@ -9,7 +9,7 @@ import re
 import time
 from collections.abc import Iterable
 from contextlib import AsyncExitStack
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from server.auth import aliases, machines, revocation, sso_links
@@ -28,11 +28,6 @@ _SERVICE_ACCOUNT_SUFFIX = re.compile(r"-[0-9a-f]{6}")
 
 # Claims every token of an issuer carries: alone they tell no workload apart.
 _STANDARD_CLAIMS = frozenset({"iss", "aud", "exp", "iat", "nbf", "jti"})
-
-
-def cutoff_after(seconds: float) -> datetime:
-    """A cutoff past every token issued in the next `seconds`, on any replica."""
-    return revocation.from_now_on() + timedelta(seconds=seconds)
 
 
 # ── carrying password accounts over to SSO ────────────────────────────────
@@ -523,11 +518,9 @@ async def disable_bot(name: str, *, by: str) -> bool:
     return True
 
 
-async def end_tokens(
-    subject: str, *, by: str, reason: str, cutoff: datetime | None = None
-) -> datetime:
+async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
     """A bot's or an agent's tokens live an hour; revoked now, not when they
-    run out. Returns the cutoff: `cutoff`, or every token issued so far."""
-    cutoff = cutoff or revocation.from_now_on()
+    run out. Returns the cutoff: past every token issued so far."""
+    cutoff = revocation.from_now_on()
     await revocation.cut_off(subject, issued_before=cutoff, reason=reason, revoked_by=by)
     return cutoff
