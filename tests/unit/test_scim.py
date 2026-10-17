@@ -3,10 +3,12 @@ the deactivate / reactivate state machine with its retries."""
 
 from __future__ import annotations
 
+import asyncio
+import random
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -24,6 +26,7 @@ from server.auth.scim_routes import (
     user_name_and_email,
 )
 from server.core import ch
+from server.core.errors import GrantBusyError
 from server.identity.app import me_service_accounts
 from server.observability import audit
 from server.settings import settings
@@ -155,20 +158,24 @@ class _Table:
         self.fail_token_insert: str | None = None  # an insert with this token name fails
         self.token_inserts = 0
         self.claimed: set[tuple[str, str]] = set()  # token names a claim holds
+        self.shuffle: random.Random | None = None  # the store's rows come in no set order
 
     def token(self, org: str, name: str) -> dict[str, Any] | None:
         rows = [r for r in self.tokens if (r["org"], r["name"]) == (org, name)]
         return max(rows, key=lambda r: r["version"]) if rows else None
 
-    def made_by(self, subs: list[str] | None, sql: str) -> list[dict[str, Any]]:
-        """The tokens `subs` (any, when None) made, revoked or not; unexpired,
-        when `sql` says so."""
+    def made_by(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """The tokens `subs` (any, when absent) made, revoked or not; unexpired
+        and made by `before`, when `sql` says so."""
+        subs = params.get("subs")
         unexpired = "expires_at > now()" in sql
+        before = params["before"] if "created_at <=" in sql else None
         return [
             r
             for r in self.heads()
             if (subs is None or r["created_by"] in subs)
             and not (unexpired and r["expires_at"] and r["expires_at"] <= datetime.now())
+            and (before is None or r["created_at"] <= before)
         ]
 
     def heads(self) -> list[dict[str, Any]]:
@@ -191,9 +198,11 @@ class _Table:
         return sorted((r for r in heads if r and not r["deleted"]), key=lambda r: r["user_name"])
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        if sql.startswith("SELECT now()"):
+            return {"now": datetime.now(UTC).replace(tzinfo=None, microsecond=0)}
         if "loom.service_accounts" in sql:
             p = params or {}
-            live = [r for r in self.made_by(p.get("subs"), sql) if r["revoked_at"] is None]
+            live = [r for r in self.made_by(sql, p) if r["revoked_at"] is None]
             return next((r for r in live if (r["org"], r["name"]) == (p["org"], p["name"])), None)
         if "loom.revoked_tokens" in sql:
             cutoffs = [c for s, c in self.narrowed if s in self._lifted_with(params)]
@@ -219,9 +228,10 @@ class _Table:
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         if "loom.service_accounts" in sql:
-            return [
-                {**r, "live": r["revoked_at"] is None} for r in self.made_by(params["subs"], sql)
-            ]
+            rows = [{**r, "live": r["revoked_at"] is None} for r in self.made_by(sql, params)]
+            if self.shuffle is not None:
+                self.shuffle.shuffle(rows)
+            return rows
         if "loom.revoked_tokens" in sql:
             return [{"jti": s} for s in self._lifted_with(params)]
         if "loom.namespace_grants" in sql:
@@ -258,6 +268,7 @@ class _World:
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.fail_revoke = False
         self.claim_limit: int | None = None  # names held at once before a claim runs out
+        self.claims: dict[tuple[str, str], asyncio.Lock] = {}  # one holder a name, as a lease
         self.leases: list[str] = []
         self.holding = 0  # SCIM leases held now
         self.waits: list[float] = []  # what the real `wait_out` sleeps
@@ -305,11 +316,18 @@ class _World:
             assert self.holding == 0, "token names are claimed past the SCIM leases"
             if self.claim_limit is not None and len(self.table.claimed) >= self.claim_limit:
                 raise RuntimeError("a token name's claim ran out of time")
+            lock = self.claims.setdefault((org, name), asyncio.Lock())
+            try:  # a name another holds is waited on, then busy, as the real claim
+                async with asyncio.timeout(1.0):
+                    await lock.acquire()
+            except TimeoutError:
+                raise GrantBusyError(f"another change to the token name {name!r}") from None
             self.table.claimed.add((org, name))
             try:
                 yield
             finally:
                 self.table.claimed.discard((org, name))
+                lock.release()
 
         async def no_wait(s: float) -> None:
             self.waits.append(s)
@@ -511,30 +529,74 @@ async def test_tokens_made_by_the_persons_tokens_read_revoked_too(world) -> None
     assert world.table.live_tokens() == [_saved_token("ci", "admin")]
 
 
-async def test_many_tokens_are_revoked_in_one_request_one_insert_a_chunk(world) -> None:
+async def test_many_tokens_are_revoked_in_one_request_a_few_names_held_at_once(world) -> None:
     world.person("lee@example.com", "lee")
     world.table.tokens += [_saved_token(f"bot-{i:04}", "lee") for i in range(2000)]
-    world.claim_limit = service_accounts._CHUNK  # holding more would outlast a claim
+    world.claim_limit = service_accounts._CLAIMS_AT_ONCE  # each task holds one name
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    assert world.table.live_tokens() == [] and world.table.token_inserts == 20
+    assert world.table.live_tokens() == [] and world.table.token_inserts == 2000
 
 
-async def test_a_failed_chunk_keeps_the_ones_before_it_and_the_retry_does_the_rest(
+async def test_two_passes_over_the_same_tokens_both_finish(world) -> None:
+    # Two deactivations reaching the same subject: each pass claims the names
+    # in its own order, as the store lists them in none.
+    world.person("lee@example.com", "lee")
+    world.person("lee.work@example.com", "lee")
+    world.table.tokens += [_saved_token(f"bot-{i:04}", "lee") for i in range(300)]
+    world.table.shuffle = random.Random(7)
+    one, two = await _create("lee@example.com"), await _create("lee.work@example.com")
+    await asyncio.gather(scim.set_active(one, False), scim.set_active(two, False))
+    assert world.table.live_tokens() == []
+    assert world.table.token_inserts == 300  # each name revoked once, the other pass re-read it
+
+
+async def test_a_failed_insert_keeps_the_ones_before_it_and_the_retry_does_the_rest(
     world,
 ) -> None:
     world.person("lee@example.com", "lee")
     world.table.tokens += [_saved_token(f"bot-{i:04}", "lee") for i in range(300)]
     uid = await _create("lee@example.com")
-    world.table.fail_token_insert = "bot-0150"  # in the second chunk
+    world.table.fail_token_insert = "bot-0150"
     with pytest.raises(RuntimeError):
         await scim.set_active(uid, False)
-    assert len(world.table.live_tokens()) == 200 and world.table.token_inserts == 1
+    landed = 300 - len(world.table.live_tokens())
+    assert landed >= 100 and world.table.token_inserts == landed  # siblings were cancelled
+    assert world.table.claimed == set()
     world.table.fail_token_insert = None
     written = len(world.table.tokens)
     await scim.set_active(uid, False)  # the provider retries
-    assert world.table.live_tokens() == [] and world.table.token_inserts == 3
-    assert len(world.table.tokens) - written == 200  # only what the first try left
+    assert world.table.live_tokens() == []
+    assert len(world.table.tokens) - written == 300 - landed  # only what the first try left
+
+
+async def test_a_late_deactivation_pass_leaves_a_token_made_after_reactivating(
+    world, monkeypatch
+) -> None:
+    world.person("lee@example.com", "lee")
+    world.table.tokens.append(_saved_token("laptop", "lee"))
+    uid = await _create("lee@example.com")
+    claim = grant_claims.service_account_change
+    reached, resume = asyncio.Event(), asyncio.Event()
+
+    @asynccontextmanager
+    async def paused(org: str, name: str) -> AsyncIterator[None]:
+        reached.set()
+        await resume.wait()
+        async with claim(org, name):
+            yield
+
+    monkeypatch.setattr(grant_claims, "service_account_change", paused)
+    deactivating = asyncio.create_task(scim.set_active(uid, False))
+    await reached.wait()  # the pass has listed `laptop` and waits for its name
+    await scim.set_active(uid, True)
+    # The old `laptop` reads dead, so its name is free: the person makes a new one.
+    made = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
+    new = {**_saved_token("laptop", "lee"), "sa_subject": "sa:laptop-def456"}
+    world.table.tokens.append({**new, "created_at": made, "version": 2})
+    resume.set()
+    await deactivating
+    assert [r["sa_subject"] for r in world.table.live_tokens()] == ["sa:laptop-def456"]
 
 
 async def test_an_expired_token_is_left_as_it_is(world) -> None:
@@ -700,6 +762,20 @@ async def test_a_deleted_user_is_gone_but_stays_deactivated(world) -> None:
     # Created again by the provider: assigned again, so active again.
     again = await scim.create("lee@example.com", "lee@example.com", active=True)
     assert again["id"] == uid and again["active"] and world.narrowed
+
+
+async def test_a_retried_delete_finishes_the_token_list_and_still_answers_404(world) -> None:
+    world.person("lee@example.com", "lee")
+    world.table.tokens.append(_saved_token("laptop", "lee"))
+    uid = await _create("lee@example.com")
+    world.table.fail_token_insert = "laptop"
+    with pytest.raises(RuntimeError):
+        await scim.delete(uid)
+    assert await scim.get(uid) is None and len(world.table.live_tokens()) == 1
+    world.table.fail_token_insert = None
+    assert not await scim.delete(uid)  # the provider retries: 404, and the list is done
+    assert world.table.live_tokens() == []
+    assert world.events == ["auth.scim_deactivated", "auth.scim_deleted"]
 
 
 async def test_deleting_an_inactive_user_is_audited_too(world) -> None:

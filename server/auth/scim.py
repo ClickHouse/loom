@@ -224,14 +224,17 @@ def is_primary(value: Any) -> bool:
 
 
 async def delete(uid: str) -> bool:
-    """A SCIM DELETE: the user is deactivated and answers 404 from now on."""
+    """A SCIM DELETE: the user is deactivated and answers 404 from now on.
+    A retry of one whose token step failed finishes it, and still answers 404."""
     async with _held(_user_lease(uid)):
-        row = await get(uid)
+        row = await _row(uid)
         if row is None:
             return False
-        new, _ = await _set_active(row, False, deleted=1)
-    await _revoke_tokens(new)
-    return True
+        deleted = bool(row["deleted"])
+        if not deleted:
+            row, _ = await _set_active(row, False, deleted=1)
+    await _revoke_tokens(row)
+    return not deleted
 
 
 async def _refuse_taken(user_name: str, uid: str) -> None:
@@ -285,8 +288,11 @@ async def _row(uid: str) -> dict[str, Any] | None:
 async def _revoke_tokens(row: dict[str, Any]) -> None:
     # Past the leases, as it may claim many token names: the subjects are
     # revoked outright already, so their tokens are dead with them meanwhile.
-    # This lists them so and frees their names.
-    await service_accounts.revoke_created_by(row["subjects"], revoked_by=_BY)
+    # This lists them so and frees their names. Only those made by now: a
+    # later one can only be one a reactivation let in since this began.
+    now = await get_client().query_one("SELECT now() AS now")
+    before = now["now"] if now else datetime.now(UTC)
+    await service_accounts.revoke_created_by(row["subjects"], revoked_by=_BY, before=before)
 
 
 async def _wait_out(cutoff: datetime | None) -> None:
