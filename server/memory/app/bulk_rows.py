@@ -222,6 +222,10 @@ def _bulk_skip_gate(
     # Re-ingest skip-gate: a byte-identical live value skips the
     # rewrite+re-embed+re-project. Caller still gets a result row
     # (version 0) so the response shape is unchanged.
+    # A value the batch wrote counts here before the verdicts can drop its row (merge,
+    # pinned rejection): an entry returning to the stored value after it is then written
+    # again, equal to the stored one. Nothing is lost; deciding after the verdicts would
+    # need them before this loop, and they need the embeddings it prepares.
     if state.existing_sha.get(entry.memory_key) == entry_sha:
         state.skipped_unchanged += 1
         # The stored row, or the one an earlier entry of this batch is creating.
