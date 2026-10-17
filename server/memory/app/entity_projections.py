@@ -280,19 +280,57 @@ _SET_ENTITY_PROPER_RE = re.compile(r"\b[A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*)*"
 _SET_ENTITY_MAX_WIDE_LEN = 6
 # The polite endings of a Korean verb: "살아요" (live), "입니다" (am).
 _KOREAN_VERB_ENDINGS = ("요", "니다")
+# Korean particles that end no common name or noun: "서울에" (in Seoul), "저는" (I).
+# 은, 이, 가, 의 and 도 are left on: they end names and nouns too (김하은, 고양이,
+# 음악가, 민주주의, 제주도).
+_KOREAN_PARTICLES = ("는", "를", "에", "을")
+
+
+def _is_hangul(char: str) -> bool:
+    """A Hangul syllable: "서", "울"."""
+    return "\uac00" <= char <= "\ud7a3"
+
+
+def _has_final_consonant(syllable: str) -> bool:
+    """A Hangul syllable ending in a consonant: "좋", "었", "한" (not "바", "나").
+    Each syllable's code counts up in steps of 28 final-consonant slots, slot 0 none."""
+    return _is_hangul(syllable) and (ord(syllable) - 0xAC00) % 28 != 0
+
+
+def _korean_plain_verb(word: str) -> bool:
+    """A plain-form verb or adjective: "좋다", "살았다", "조용하다", "학생이다". The
+    syllable before 다 ends in a consonant or is 하 or 이; "바다" (sea) and "캐나다"
+    (Canada) are nouns."""
+    if len(word) < 2 or not word.endswith("다"):
+        return False
+    before = word[-2]
+    return before in ("하", "이") or _has_final_consonant(before)
+
+
+def _korean_stem(word: str) -> str:
+    """The noun of a Hangul word that ends in a particle: "서울에" is 서울. A word of
+    two syllables keeps its ending ("마을", village), so "저는" stays whole and
+    `_not_a_name` drops it."""
+    if len(word) >= 3 and word.endswith(_KOREAN_PARTICLES) and _is_hangul(word[-2]):
+        return word[:-1]
+    return word
 
 
 def _not_a_name(word: str) -> bool:
     """Shorter than a thing's name: "is", "at", "of", "3pm". Wide characters (CJK,
     Hangul) write a name in two: "東京", "서울". A word with hiragana is grammar
-    ("です", "こんにちは"), as is a Korean polite verb ("살아요")."""
+    ("です", "こんにちは"), as is a Korean verb ("살아요", "좋다") or a one-syllable
+    word and its particle ("저는", "집에")."""
     if not word[0].isalpha():
         return True
     if all(unicodedata.east_asian_width(c) in ("W", "F") for c in word):
         if len(word) < 2 or len(word) > _SET_ENTITY_MAX_WIDE_LEN:
             return True
         has_hiragana = any("\u3040" <= c <= "\u309f" for c in word)
-        return has_hiragana or word.endswith(_KOREAN_VERB_ENDINGS)
+        korean_verb = word.endswith(_KOREAN_VERB_ENDINGS) or _korean_plain_verb(word)
+        # Not 을: "마을" (village) and "가을" (autumn) are words.
+        particle = len(word) == 2 and word.endswith(("는", "를", "에"))
+        return has_hiragana or korean_verb or particle
     return len(word) < _SET_ENTITY_MIN_LEN
 
 
@@ -332,7 +370,8 @@ def _candidate_entities_from_value(value: Any) -> list[str]:
         phrase = m.group(0).strip()
         if len(phrase) >= _SET_ENTITY_MIN_LEN:
             raw_candidates.append(phrase)
-    for tok in tfr.split_words(text, dots=True):
+    for word in tfr.split_words(text, dots=True):
+        tok = _korean_stem(word)
         if _not_a_name(tok):
             continue
         if tok.lower() in _SET_ENTITY_STOPWORDS:

@@ -379,3 +379,28 @@ def test_a_spaced_korean_or_japanese_verb_is_not_an_entity(text: str, junk: list
     for name in ("서울", "東京"):
         if name in text:
             assert canonical_entity_text(name) in ents
+
+
+@pytest.mark.parametrize(
+    ("text", "names", "junk"),
+    [
+        # "I lived in Seoul": a particle on the noun, a plain past-tense verb.
+        ("저는 서울에 살았다", ["서울"], ["저는", "서울에", "살았다", "저"]),
+        ("서울을 좋아한다", ["서울"], ["서울을", "좋아한다"]),
+        ("김민준 은 서울 이 좋다", ["김민준", "서울"], ["좋다"]),
+        ("학생이다 그리고 조용하다", [], ["학생이다", "조용하다"]),
+        # Names and nouns that end like a particle or a verb stay whole: a name ending
+        # in 은 or 이, a province in 도, a village (마을), the sea and Canada (다).
+        (
+            "김하은 고양이 제주도 마을 바다 캐나다",
+            ["김하은", "고양이", "제주도", "마을", "바다", "캐나다"],
+            [],
+        ),
+    ],
+)
+def test_a_korean_particle_or_plain_verb_is_not_an_entity(
+    text: str, names: list[str], junk: list[str]
+) -> None:
+    ents = _candidate_entities_from_value(text)
+    assert all(canonical_entity_text(n) in ents for n in names), ents
+    assert not {canonical_entity_text(j) for j in junk} & set(ents), ents
