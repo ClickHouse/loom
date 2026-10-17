@@ -712,12 +712,14 @@ async def test_another_undos_marker_is_not_taken_for_this_ones(monkeypatch) -> N
     assert {e["restore_id"] for e in ch.inserts["loom.entity_edges"]} == {_UNDO_ID}
 
 
-def test_the_row_links_migration_the_legacy_check_names_exists() -> None:
-    # Renumbered and missed, the check would find no applied time and drop legacy rows.
+def test_the_row_links_migrations_the_legacy_checks_name_exist() -> None:
+    # Renumbered and missed, a check would find no applied time and drop legacy rows.
     from server.core.paths import MIGRATIONS_DIR
     from server.memory.app.entity_projections import _ROW_LINKS_MIGRATION
+    from server.memory.app.projections import _EDGE_ROW_LINKS_MIGRATION
 
     assert (MIGRATIONS_DIR / _ROW_LINKS_MIGRATION).exists()
+    assert (MIGRATIONS_DIR / _EDGE_ROW_LINKS_MIGRATION).exists()
 
 
 def _as_set(stub: Any) -> Any:
