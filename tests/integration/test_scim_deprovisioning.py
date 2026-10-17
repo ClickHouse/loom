@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as _dt
 import os
 import secrets
+import subprocess
 import sys
 import time
 import uuid
@@ -73,7 +74,7 @@ def _seed(ch_client: Any, org: str, email: str) -> str:
 
 
 @pytest.fixture
-def scim_server(ch_client) -> Iterator[tuple[str, str, str, Any]]:
+def scim_server(ch_client) -> Iterator[tuple[str, str, str, str, Any]]:
     if os.environ.get("LOOM_CH_SECURE", "").lower() == "true":
         pytest.skip("seeds local namespaces rows; skip against Cloud CH")
     org = unique_org("scim")
@@ -94,7 +95,7 @@ def scim_server(ch_client) -> Iterator[tuple[str, str, str, Any]]:
     }
     try:
         with idp.running(), loom_server("scim", env, port=port):
-            yield base, email, ns, ch_client
+            yield base, org, email, ns, ch_client
     finally:
         # Neither row names the org the suite purges by.
         for table, column in (("scim_users", "email"), ("revoked_tokens", "jti")):
@@ -122,6 +123,35 @@ def _authenticated(base: str, token: str) -> bool:
     return bool(r.json().get("authenticated"))
 
 
+def _bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _listed(base: str, token: str) -> dict[str, Any]:
+    """The caller's Tokens list, by name."""
+    r = httpx.get(f"{base}/v1/me/service_accounts", headers=_bearer(token))
+    assert r.status_code == 200, r.text
+    return {row["name"]: row for row in r.json()["rows"]}
+
+
+def _org_admin_token(org: str, email: str) -> str:
+    """An org admin's token, signed in a process of its own under the server's secret."""
+    mint = (
+        "import sys; from server.auth import keyring; from server.auth.jwt import mint_token; "
+        "keyring.load_for_offline_mint(); "
+        "print(mint_token(sys.argv[1], sys.argv[2], ['*'], ['org_admin'], is_service_account=False))"
+    )
+    minted = subprocess.run(
+        [sys.executable, "-c", mint, email, org],
+        env={**os.environ, "LOOM_JWT_SECRET": _JWT_SECRET},
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=ROOT,
+    )
+    return minted.stdout.strip().splitlines()[-1]
+
+
 def _set_active(base: str, uid: str, active: bool) -> dict[str, Any]:
     r = httpx.patch(
         f"{base}/scim/v2/Users/{uid}",
@@ -140,16 +170,40 @@ def _set_active(base: str, uid: str, active: bool) -> dict[str, Any]:
 def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
     scim_server,
 ) -> None:
-    base, email, ns, ch_client = scim_server
+    base, org, email, ns, ch_client = scim_server
     session = _token(_sign_in(base))
     made = httpx.post(
         f"{base}/v1/me/service_accounts.create",
-        headers={"Authorization": f"Bearer {session}"},
+        headers=_bearer(session),
         json={"name": "ci-bot", "namespaces": [ns], "role": "viewer"},
     )
     assert made.status_code == 200, made.text
     service_account = made.json()["token"]
-    assert _authenticated(base, session) and _authenticated(base, service_account)
+    never = httpx.post(
+        f"{base}/v1/me/service_accounts.create",
+        headers=_bearer(session),
+        json={"name": "never", "namespaces": [ns], "role": "viewer", "ttl_days": 0},
+    )
+    assert never.status_code == 200 and never.json()["expires_at"] is None, never.text
+    mcp = httpx.post(
+        f"{base}/v1/me/setup/mcp_config",
+        headers=_bearer(session),
+        json={"client": "claude-code", "ttl_days": 0},
+    )
+    assert mcp.status_code == 200, mcp.text
+    made_by_person = [service_account, never.json()["token"], mcp.json()["token"]]
+    # Another org admin's token, which the person's deactivation must leave alone.
+    admin_email = f"admin-{uuid.uuid4().hex[:6]}@corp.example"
+    admin_ns = _seed(ch_client, org, admin_email)
+    admin = _org_admin_token(org, admin_email)
+    minted = httpx.post(
+        f"{base}/v1/admin/token.mint",
+        headers=_bearer(admin),
+        json={"name": "admin-bot", "org": org, "namespaces": [admin_ns], "roles": ["viewer"]},
+    )
+    assert minted.status_code == 200, minted.text
+    admin_bot = minted.json()["token"]
+    assert all(_authenticated(base, t) for t in [session, *made_by_person, admin_bot])
     # The address also names an account in another org now: sign-in would refuse
     # to pick one, and deactivation must still reach this one.
     _seed(ch_client, unique_org("scim"), email)
@@ -165,8 +219,8 @@ def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
 
     assert _set_active(base, uid, False)["active"] is False
     assert _set_active(base, uid, False)["active"] is False  # a retry changes nothing
-    assert not _authenticated(base, session)
-    assert not _authenticated(base, service_account)
+    assert not any(_authenticated(base, t) for t in [session, *made_by_person])
+    assert _authenticated(base, admin_bot)
     denied = _sign_in(base)
     assert denied.status_code == 403 and "deactivated" in denied.text
 
@@ -178,7 +232,17 @@ def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
     )
     again = _token(_sign_in(base))
     assert _authenticated(base, again)
-    assert not _authenticated(base, session)  # revoked tokens stay revoked
-    assert not _authenticated(base, service_account)
+    assert not any(_authenticated(base, t) for t in [session, *made_by_person])  # still dead
+    listed = _listed(base, again)
+    assert len(listed) == 3 and all(row["revoked_by"] == "scim" for row in listed.values())
+    assert _authenticated(base, admin_bot)
+    assert _listed(base, admin)["admin-bot"]["revoked_at"] is None
+    # A dead token's name is free again.
+    remade = httpx.post(
+        f"{base}/v1/me/service_accounts.create",
+        headers=_bearer(again),
+        json={"name": "never", "namespaces": [ns], "role": "viewer"},
+    )
+    assert remade.status_code == 200, remade.text
     got = httpx.get(f"{base}/scim/v2/Users/{uid}", headers=_SCIM).json()
     assert got["userName"] == email and got["active"] is True

@@ -9,8 +9,9 @@ changes is `active`:
 - Deactivating revokes outright every subject an SSO sign-in with the email
   could reach (an SSO account naming it, or a password account linked to it),
   in every org: every session and every token those subjects made, since a
-  delegated token names them as its creator or a parent. SSO sign-in with the
-  email is refused while it lasts, even when it reaches no account yet.
+  delegated token names them as its creator or a parent; the tokens they saved
+  read revoked in the Tokens list. SSO sign-in with the email is refused while
+  it lasts, even when it reaches no account yet.
 - Reactivating lifts the refusal and narrows those revocations to the tokens
   issued before now, so the person signs in again and the old tokens stay dead.
 
@@ -35,7 +36,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from server.auth import login, revocation
+from server.auth import login, revocation, service_accounts
 from server.core import leases
 from server.core.ch import get_client, own_write_reads
 from server.core.versions import next_version
@@ -316,6 +317,8 @@ async def _set_active(
                 subjects = sorted((set(found) - known) | await _lifted(sorted(known)))
             for subject in subjects:
                 await _revoke(new["id"], subject, set(found.values()))
+            # Their tokens are dead with them: list them so, and free their names.
+            await service_accounts.revoke_created_by(subjects, revoked_by=_BY)
         if new != row or unwritten:  # a change, or a user not yet written
             await _write(new)
         # Audited as the row lands: a retry after a later failure finds the row

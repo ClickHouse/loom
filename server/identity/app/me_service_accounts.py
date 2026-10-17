@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
 from server.auth.self_signup import AGENT_NAME_PREFIX
+from server.auth.service_accounts import revoked_row
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, token_grants
@@ -403,8 +404,6 @@ async def me_service_accounts_revoke(
     """Mark an SA as revoked. The JWT itself remains valid until TTL —
     for hard cutoff, also revoke the grants the SA depends on. Caller
     must be the creator or admin on at least one of the SA's namespaces."""
-    import time as _time
-
     from server.core.ch import get_client
 
     if settings.auth_actually_required():
@@ -467,26 +466,9 @@ async def me_service_accounts_revoke(
             await ch.insert(
                 "loom.service_accounts",
                 [
-                    {
-                        "org": org,
-                        "name": name,
-                        "sa_subject": row["sa_subject"],
-                        "namespaces": row["namespaces"],
-                        "roles": row["roles"],
-                        "ttl_days": row["ttl_days"],
-                        "created_by": row["created_by"],
-                        "created_at": row["created_at"],
-                        "expires_at": row["expires_at"],
-                        "revoked_at": now,
-                        "revoked_by": subject,
-                        "version": _time.time_ns(),
-                        # Column-mirror discipline: carry every column
-                        # forward or the merge zeros it.
-                        "kind": row.get("kind") or "service_account",
-                        "client": row.get("client") or "",
-                        "inherit_creator_grants": bool(row.get("inherit_creator_grants", True)),
-                        "ns_roles": row.get("ns_roles") or "{}",
-                    }
+                    revoked_row(
+                        {**row, "org": org, "name": name}, revoked_at=now, revoked_by=subject
+                    )
                 ],
             )
 

@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.auth import login, oauth, revocation, scim, scim_routes
+from server.auth import grant_claims, login, oauth, revocation, scim, scim_routes
 from server.auth.scim_routes import (
     ScimError,
     parse_active,
@@ -23,6 +23,8 @@ from server.auth.scim_routes import (
     patched_names,
     user_name_and_email,
 )
+from server.core import ch
+from server.identity.app import me_service_accounts
 from server.observability import audit
 from server.settings import settings
 from tests.unit.schema_ddl import column_names
@@ -149,6 +151,19 @@ class _Table:
         self.narrowed = narrowed
         self.lifted = lifted
         self.fail_insert = False
+        self.tokens: list[dict[str, Any]] = []  # loom.service_accounts
+
+    def token(self, org: str, name: str) -> dict[str, Any] | None:
+        rows = [r for r in self.tokens if (r["org"], r["name"]) == (org, name)]
+        return max(rows, key=lambda r: r["version"]) if rows else None
+
+    def live_tokens(self, subs: list[str] | None = None) -> list[dict[str, Any]]:
+        heads = [self.token(o, n) for o, n in sorted({(r["org"], r["name"]) for r in self.tokens})]
+        return [
+            r
+            for r in heads
+            if r and r["revoked_at"] is None and (subs is None or r["created_by"] in subs)
+        ]
 
     def newest(self, uid: str) -> dict[str, Any] | None:
         rows = [r for r in self.rows if r["id"] == uid]
@@ -159,6 +174,10 @@ class _Table:
         return sorted((r for r in heads if r and not r["deleted"]), key=lambda r: r["user_name"])
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        if "loom.service_accounts" in sql:
+            p = params or {}
+            live = self.live_tokens(p.get("subs"))
+            return next((r for r in live if (r["org"], r["name"]) == (p["org"], p["name"])), None)
         if "loom.revoked_tokens" in sql:
             cutoffs = [c for s, c in self.narrowed if s in self._lifted_with(params)]
             return {"cutoff": max(cutoffs, default=None)}
@@ -182,6 +201,8 @@ class _Table:
         return [s for s in params["s"] if self.lifted.get(s) == params["r"]]
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if "loom.service_accounts" in sql:
+            return self.live_tokens(params["subs"])
         if "loom.revoked_tokens" in sql:
             return [{"jti": s} for s in self._lifted_with(params)]
         if "loom.namespace_grants" in sql:
@@ -192,9 +213,12 @@ class _Table:
         return self.live()[params["skip"] : params["skip"] + params["count"]]
 
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
-        assert table == scim.TABLE
         if self.fail_insert:
             raise RuntimeError("ClickHouse is away")
+        if table == "loom.service_accounts":
+            self.tokens.extend(dict(r) for r in rows)
+            return
+        assert table == scim.TABLE
         self.rows.extend(dict(r) for r in rows)
 
 
@@ -247,6 +271,10 @@ class _World:
             self.leases.append(name)
             yield
 
+        @asynccontextmanager
+        async def name_claim(org: str, name: str) -> AsyncIterator[None]:
+            yield
+
         async def no_wait(s: float) -> None:
             self.waits.append(s)
 
@@ -255,7 +283,9 @@ class _World:
 
         monkeypatch.setattr(settings, "scim_token", _TOKEN)
         monkeypatch.setattr(scim, "get_client", lambda: self.table)
+        monkeypatch.setattr(ch, "get_client", lambda: self.table)
         monkeypatch.setattr(scim, "_held", held)
+        monkeypatch.setattr(grant_claims, "service_account_change", name_claim)
         monkeypatch.setattr(revocation, "asyncio", SimpleNamespace(sleep=no_wait))
         monkeypatch.setattr(revocation, "has_outright_row", has_outright_row)
         monkeypatch.setattr(revocation, "revoked_outright", stale_snapshot)
@@ -375,6 +405,59 @@ async def test_reactivating_lifts_the_refusal_and_keeps_old_tokens_revoked(world
 
     await scim.set_active(uid, True)
     assert len(world.narrowed) == 1 and len(world.events) == 2
+
+
+def _saved_token(name: str, created_by: str) -> dict[str, Any]:
+    return {
+        "org": "acme",
+        "name": name,
+        "sa_subject": f"sa:{name}-abc123",
+        "namespaces": ["ns"],
+        "roles": ["writer"],
+        "ttl_days": 0,
+        "created_by": created_by,
+        "created_at": datetime(2026, 1, 1),
+        "expires_at": None,
+        "revoked_at": None,
+        "revoked_by": "",
+        "version": 1,
+        "kind": "mcp",
+        "client": "claude-code",
+        "inherit_creator_grants": True,
+        "ns_roles": '{"ns": "writer"}',
+    }
+
+
+async def test_a_deactivated_persons_tokens_read_revoked_and_free_their_names(world) -> None:
+    world.person("lee@example.com", "lee")
+    world.table.tokens += [_saved_token("laptop", "lee"), _saved_token("ci", "admin")]
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    laptop = world.table.token("acme", "laptop")
+    assert laptop is not None and sorted(laptop) == sorted(column_names("service_accounts"))
+    assert laptop["revoked_at"] is not None and laptop["revoked_by"] == "scim"
+    carried = {k: laptop[k] for k in laptop if k not in ("revoked_at", "revoked_by", "version")}
+    assert carried.items() <= _saved_token("laptop", "lee").items()
+    assert world.table.live_tokens() == [_saved_token("ci", "admin")]  # the admin's own
+
+    written = len(world.table.tokens)
+    await scim.set_active(uid, False)  # the provider's retry
+    await scim.set_active(uid, True)
+    assert len(world.table.tokens) == written  # reactivating revives no token
+    assert world.table.live_tokens() == [_saved_token("ci", "admin")]
+    await me_service_accounts.refuse_taken_name("acme", "laptop", "lee")  # the name is free
+
+
+async def test_a_failed_token_revocation_fails_the_deactivation(world) -> None:
+    world.person("lee@example.com", "lee")
+    world.table.tokens.append(_saved_token("laptop", "lee"))
+    uid = await _create("lee@example.com")
+    world.table.fail_insert = True
+    with pytest.raises(RuntimeError):
+        await scim.set_active(uid, False)
+    world.table.fail_insert = False
+    await scim.set_active(uid, False)  # the provider retries
+    assert world.table.live_tokens() == [] and await _DEACTIVATED("lee@example.com")
 
 
 async def test_a_retried_reactivation_still_waits_out_the_first_ones_cutoff(
