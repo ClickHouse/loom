@@ -21,7 +21,7 @@ LOOM_COLOUR=blue LOOM_COLOUR_PORT=7781 docker compose --env-file .env -f dev/doc
 ```
 
 - Another deploy in flight (an idle colour starting, a held lease, someone else's announced cut): wait. Two swaps at once can leave the proxy on a colour that is about to stop.
-- Read what the incoming commits change: new migrations (additive, applied at boot by the new colour while the old one serves), new settings that need `.env` values, a re-index the PR body announced, host cron scripts a move relocated.
+- Read what the incoming commits change: new migrations (additive, applied at boot by the new colour while the old one serves), new settings that need `.env` values, a re-index or a worker change the PR body announced.
 - Never start throwaway containers with the deployment's names (`loom-blue`, `loom-green`, `loom-proxy`, `loom-server`, `loom-workers`, `loom-*-workers`); a cleanup of the throwaway then stops production.
 
 ## 2. Swap
