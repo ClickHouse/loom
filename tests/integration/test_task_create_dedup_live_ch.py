@@ -1,9 +1,9 @@
 """task.create calls with one idempotency key, on live ClickHouse: they run
 one at a time under a lease on the key, so a racing retry answers with the
 task the first one stored, and a create after the task was erased lands a new
-one. Each insert also carries the key's dedup token, which the previous build
-relies on instead of the lease. The coverage-watch ready event's delivery works
-the same way.
+one. Each insert also carries the key's dedup token, for a create whose lease
+ran out before its insert. The coverage-watch ready event's delivery works the
+same way.
 
 Skips cleanly when LOOM_CH_HOST is unset.
 """
@@ -354,12 +354,20 @@ async def test_racing_deliveries_store_one(ch: Any, monkeypatch: pytest.MonkeyPa
 
 # ---- the previous build beside this one (rolling upgrade) ----------------------------
 #
-# The previous build takes no lease: its create looks the key up and inserts the task
-# under the key's dedup token, and its delivery checks for the event and inserts it under
-# the event id. Pausing that build mid-request takes hooks it does not have, so these
-# tests make its exact inserts (same token, same settings) beside this build's call.
+# The previous build takes no lease. Its create looks the key up, inserts the task, logs
+# the created event and writes the lease row; its delivery checks for the event and
+# inserts it. It names a dedup token, but its client writes a fresh random one over it
+# for every insert, so storage never drops its rows as repeats. Pausing that build
+# mid-request takes hooks it does not have, so these tests make its exact inserts
+# (a random token each) beside this build's call. Neither build keeps the other's row
+# out: a race gives two tasks, as two replicas of the previous build already can.
 
 _OLD_SETTINGS = {"async_insert": 0, "wait_for_async_insert": 1}
+
+
+def _old_token() -> dict[str, Any]:
+    """The previous build's insert settings: its client's random per-insert token."""
+    return {**_OLD_SETTINGS, "insert_deduplication_token": uuid.uuid4().hex}
 
 
 async def _registered(prefix: str) -> tuple[str, dict[str, Any]]:
@@ -384,8 +392,8 @@ async def _registered(prefix: str) -> tuple[str, dict[str, Any]]:
 
 
 async def _old_build_create(ch: Any, org: str, namespace: str) -> str:
-    """The previous build's create once its lookup found no task: the task row under
-    the key's dedup token, then its created event. Returns the task id it answered."""
+    """The previous build's create once its lookup found no task: the task row, its
+    created event and its lease row. Returns the task id it answered."""
     from server.tasks.app.common import _new_version
 
     task_id, now = str(uuid.uuid4()), datetime.now(UTC).replace(tzinfo=None)
@@ -418,10 +426,7 @@ async def _old_build_create(ch: Any, org: str, namespace: str) -> str:
     )
     seq = await repo.server_version(0)
     row = _new_version(task, seq)  # type: ignore[arg-type]
-    token = f"task.create:{org}:bot:k1"
-    await ch.insert(
-        "loom.tasks", [dict(row)], settings={**_OLD_SETTINGS, "insert_deduplication_token": token}
-    )
+    await ch.insert("loom.tasks", [dict(row)], settings=_old_token())
     event = {
         "org": org,
         "inbox": "bot",
@@ -441,7 +446,9 @@ async def _old_build_create(ch: Any, org: str, namespace: str) -> str:
         "note": "",
         "ts": now,
     }
-    await ch.insert("loom.task_events", [event], settings=_OLD_SETTINGS)
+    await ch.insert("loom.task_events", [event], settings=_old_token())
+    backend = await repo.lease_backend()
+    await backend.ensure_row(task_id, org, "bot", 0)
     return task_id
 
 
@@ -454,21 +461,39 @@ async def _live_tasks(ch: Any, org: str) -> list[str]:
     return [str(r["task_id"]) for r in rows]
 
 
+async def _claimable(ch: Any, org: str, task_id: str) -> bool:
+    """The task has its lease row (a claim needs one) and its created event."""
+    leases = await ch.query_all(
+        "SELECT fence FROM loom.task_leases WHERE task_id = {tid:String}",
+        params={"tid": task_id},
+    )
+    events = await ch.query_all(
+        "SELECT event FROM loom.task_events WHERE org = {org:String} AND task_id = {tid:UUID} "
+        "SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "tid": task_id},
+    )
+    return [int(r["fence"]) for r in leases] == [0] and [e["event"] for e in events] == ["created"]
+
+
 @pytest.mark.asyncio
-async def test_an_old_builds_create_after_this_builds_lands_no_second_task(ch: Any) -> None:
+async def test_an_old_builds_create_after_this_builds_lands_a_second_task(ch: Any) -> None:
     # The old build looked the key up before this build's create, and inserts after it.
     org, body = await _registered("itest-mixed")
     new = await transitions.handle_task_create(wire.TaskCreateInput(**body))
-    await _old_build_create(ch, org, new.task.namespace)
+    old = await _old_build_create(ch, org, new.task.namespace)
+
     assert new.created
-    assert await _live_tasks(ch, org) == [new.task.task_id]
+    assert sorted(await _live_tasks(ch, org)) == sorted([new.task.task_id, old])
+    assert await _claimable(ch, org, new.task.task_id)
+    assert await _claimable(ch, org, old)
 
 
 @pytest.mark.asyncio
-async def test_this_builds_create_after_an_old_builds_answers_its_task(
+async def test_this_builds_create_after_an_old_builds_keeps_its_own_task_claimable(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # This build looked the key up before the old build's create landed, and inserts after.
+    # This build looked the key up before the old build's create landed, and inserts
+    # after it. Both tasks land; this build's must not be left without a lease row.
     org, body = await _registered("itest-mixed")
     lookup, old = repo.fetch_task_by_idempotency_key, []
 
@@ -480,21 +505,39 @@ async def test_this_builds_create_after_an_old_builds_answers_its_task(
 
     monkeypatch.setattr(repo, "fetch_task_by_idempotency_key", old_build_lands_after_the_lookup)
     new = await transitions.handle_task_create(wire.TaskCreateInput(**body))
-    assert await _live_tasks(ch, org) == old
-    assert not new.created and new.task.task_id == old[0]
+
+    assert new.created and new.task.task_id != old[0]
+    assert sorted(await _live_tasks(ch, org)) == sorted([new.task.task_id, old[0]])
+    assert await _claimable(ch, org, new.task.task_id)
+    assert await _claimable(ch, org, old[0])
+
+
+@pytest.mark.asyncio
+async def test_a_create_whose_lease_ran_out_answers_the_task_stored_meanwhile(ch: Any) -> None:
+    # Two creates of this build: the first one's lease ran out before its insert, and
+    # the second one stored the key's task meanwhile. The key's token drops the first
+    # one's row, and it answers the second one's task.
+    org, body = await _registered("itest-expired")
+    stored = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    late = await repo.fetch_task(org, stored.task.task_id)
+    assert late is not None
+    late = {**late, "task_id": str(uuid.uuid4()), "version": int(late["version"]) + 1}
+
+    answered = await repo.insert_created_task(late)  # type: ignore[arg-type]
+
+    assert str(answered["task_id"]) == stored.task.task_id
+    assert await _live_tasks(ch, org) == [stored.task.task_id]
 
 
 async def _old_build_delivery(ch: Any, watch: Any) -> None:
     """The previous build's delivery once its check found no event: the ready event
-    under its id as the dedup token."""
+    under a random token."""
     from server.code.app import watches as svc
     from server.code.store import coverage_watches as wrepo
 
     task_id = wrepo.event_id(watch.org, watch.namespace, watch.commit_sha, watch.inbox)
     row = svc._event_row(watch, task_id, [], await repo.server_version(0))
-    await ch.insert(
-        "loom.task_events", [row], settings={**_OLD_SETTINGS, "insert_deduplication_token": task_id}
-    )
+    await ch.insert("loom.task_events", [row], settings=_old_token())
 
 
 async def _ready_events(ch: Any, watch: Any) -> int:
@@ -510,7 +553,7 @@ async def _ready_events(ch: Any, watch: Any) -> int:
 
 
 @pytest.mark.asyncio
-async def test_an_old_builds_delivery_after_this_builds_posts_no_second_event(ch: Any) -> None:
+async def test_an_old_builds_delivery_after_this_builds_posts_a_second_event(ch: Any) -> None:
     from server.code.app import watches as svc
     from server.code.store import coverage_watches as wrepo
 
@@ -519,11 +562,11 @@ async def test_an_old_builds_delivery_after_this_builds_posts_no_second_event(ch
     await wrepo.insert_watch_version(watch)
     emitted, _ = await svc.deliver(watch, {"tiers": []})
     await _old_build_delivery(ch, watch)
-    assert emitted and await _ready_events(ch, watch) == 1
+    assert emitted and await _ready_events(ch, watch) == 2
 
 
 @pytest.mark.asyncio
-async def test_this_builds_delivery_after_an_old_builds_posts_nothing(
+async def test_this_builds_delivery_after_an_old_builds_reports_its_own_event(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.code.app import watches as svc
@@ -542,4 +585,5 @@ async def test_this_builds_delivery_after_an_old_builds_posts_nothing(
 
     monkeypatch.setattr(wrepo, "ready_event_exists", old_build_lands_after_the_check)
     emitted, _ = await svc.deliver(watch, {"tiers": []})
-    assert not emitted and await _ready_events(ch, watch) == 1
+    # Both events landed, so this delivery reports the one it stored.
+    assert emitted and await _ready_events(ch, watch) == 2
