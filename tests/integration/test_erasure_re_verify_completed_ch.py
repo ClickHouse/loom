@@ -1,6 +1,7 @@
 """`loom erasure-re-verify --completed-since` against ClickHouse: a saga a previous
 build completed without erasing a table this build added (rolling-upgrades rule 14)
-is counted again by this build's census and finished."""
+leaves orphan row links, and only those are deleted. Data written after the
+erasure finished is not touched."""
 
 from __future__ import annotations
 
@@ -27,40 +28,54 @@ async def ch() -> Any:
     await c.disconnect()
 
 
-async def _triple_rows(ch: Any, org: str) -> int:
+_EDGE_KEYS = ("org", "namespace", "memory_id", "user_id", "content_sha256")
+
+
+def _triple_row(org: str, memory_id: str) -> dict[str, Any]:
+    return {
+        "org": org,
+        "namespace": NS,
+        "memory_id": memory_id,
+        "user_id": "u1",
+        "content_sha256": "0" * 64,
+        "subject": "user",
+        "relation": "live_in",
+        "object": "rome",
+        "inferred": False,
+    }
+
+
+async def _edge_rows(ch: Any, org: str) -> int:
     row = await ch.query_one(
-        "SELECT count() AS n FROM loom.entity_triple_rows WHERE org = {org:String}",
+        "SELECT count() AS n FROM loom.entity_edge_rows WHERE org = {org:String}",
         params={"org": org},
     )
     return int(row["n"])
 
 
-async def test_a_completed_saga_with_a_left_row_is_finished(ch: Any) -> None:
-    from server.cli import hygiene
+async def _triple_rows(ch: Any, org: str) -> set[str]:
+    rows = await ch.query_all(
+        "SELECT toString(memory_id) AS id FROM loom.entity_triple_rows WHERE org = {org:String}",
+        params={"org": org},
+    )
+    return {str(r["id"]) for r in rows}
+
+
+async def _live_memory(ch: Any, org: str, key: str) -> int:
+    row = await ch.query_one(
+        "SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} "
+        "AND memory_key = {k:String} AND tombstoned_at IS NULL",
+        params={"org": org, "k": key},
+    )
+    return int(row["n"])
+
+
+async def _completed_saga(org: str, now: datetime) -> str:
+    """A namespace saga, completed with every step checkpointed and a clean census."""
     from server.erasure.api.erasure import ErasureRequestInput
     from server.erasure.app.saga import checkpoint, request_row_template
     from server.erasure.app.saga_steps import NAMESPACE_STEPS
 
-    org = unique_org("re-verify")
-    # The row an older build's saga did not know to delete.
-    await ch.insert(
-        "loom.entity_triple_rows",
-        [
-            {
-                "org": org,
-                "namespace": NS,
-                "memory_id": str(uuid.uuid4()),
-                "user_id": "u1",
-                "content_sha256": "0" * 64,
-                "subject": "user",
-                "relation": "live_in",
-                "object": "rome",
-                "inferred": False,
-            }
-        ],
-    )
-    # Its saga, completed with every step checkpointed and a clean census.
-    now = datetime.now(UTC).replace(tzinfo=None)
     request = ErasureRequestInput(
         org=org,
         scope_type="namespace_list",
@@ -80,9 +95,11 @@ async def test_a_completed_saga_with_a_left_row_is_finished(ch: Any) -> None:
         completed_at=now,
         extra={"residue_count": 0, "residue": "{}", "verified_at": now},
     )
-    assert await _triple_rows(ch, org) == 1
+    return erasure_id
 
-    args = argparse.Namespace(
+
+def _args(org: str, erasure_id: str, since: datetime) -> argparse.Namespace:
+    return argparse.Namespace(
         org=org,
         id=[erasure_id],
         resume=False,
@@ -92,15 +109,59 @@ async def test_a_completed_saga_with_a_left_row_is_finished(ch: Any) -> None:
         batch=200,
         show=20,
         requester="itest",
-        completed_since=now - timedelta(minutes=1),
+        completed_since=since,
     )
-    # Read-only: the census finds the row, and nothing is erased.
+
+
+async def test_only_orphan_row_links_go_and_later_writes_stay(ch: Any) -> None:
+    from server.cli import hygiene
+
+    org = unique_org("re-verify")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    erasure_id = await _completed_saga(org, now)
+    # The link an older build's saga did not know to delete: its memory is gone.
+    orphan_id = str(uuid.uuid4())
+    # A memory written after the erasure finished, with its own link.
+    later_id = str(uuid.uuid4())
+    await ch.insert("loom.entity_triple_rows", [_triple_row(org, orphan_id)])
+    edge = {k: v for k, v in _triple_row(org, orphan_id).items() if k in _EDGE_KEYS}
+    await ch.insert("loom.entity_edge_rows", [{**edge, "entity_a": "rome", "entity_b": "user"}])
+    await ch.insert(
+        "loom.memory",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "agent": "a",
+                "user_id": "u1",
+                "session_id": "-",
+                "memory_key": "later",
+                "memory_type": "semantic",
+                "value": "user lives in rome",
+                "version": 1,
+                "memory_id": later_id,
+            }
+        ],
+    )
+    await ch.insert("loom.entity_triple_rows", [_triple_row(org, later_id)])
+    assert await _triple_rows(ch, org) == {orphan_id, later_id}
+    assert await _edge_rows(ch, org) == 1
+
+    args = _args(org, erasure_id, now - timedelta(minutes=1))
+    # Read-only: the orphan is found, and nothing is erased.
     assert await hygiene._re_verify_run(ch, args) == 1
-    assert await _triple_rows(ch, org) == 1
+    assert await _triple_rows(ch, org) == {orphan_id, later_id}
 
     args.resume = True
     assert await hygiene._re_verify_run(ch, args) == 0
-    assert await _triple_rows(ch, org) == 0
+    # Only the orphan went; the later memory and its link stay.
+    assert await _triple_rows(ch, org) == {later_id}
+    assert await _edge_rows(ch, org) == 0
+    assert await _live_memory(ch, org, "later") == 1
+
+    # Nothing orphan is left, so a second read-only run is clean.
+    args.resume = False
+    assert await hygiene._re_verify_run(ch, args) == 0
 
     # A saga verified before the cut is not taken.
     args.completed_since = now + timedelta(minutes=1)

@@ -785,9 +785,10 @@ async def test_re_verify_orphan_graph_lists_and_erases_in_loom_only_purge_sagas(
     assert await hygiene._re_verify_run(object(), args) == 2
 
 
-async def test_completed_since_also_re_verifies_completed_sagas(monkeypatch) -> None:
+async def test_completed_since_deletes_only_orphan_row_links(monkeypatch) -> None:
     # A saga an N-1 replica completed during a rollout never erased the tables N added
-    # (entity_triple_rows, entity_edge_rows): N's census finds them and resumes it.
+    # (entity_triple_rows, entity_edge_rows). Everything else in its scope may have
+    # been written since, so the saga is not run again: only the orphan links go.
     from datetime import datetime
 
     from server.cli import hygiene
@@ -802,7 +803,7 @@ async def test_completed_since_also_re_verifies_completed_sagas(monkeypatch) -> 
         failure_reason="",
     )
     asked: list[Any] = []
-    resumed: list[Any] = []
+    deleted: list[Any] = []
 
     async def fake_failed(*, org=None, ch=None):
         return []
@@ -811,25 +812,30 @@ async def test_completed_since_also_re_verifies_completed_sagas(monkeypatch) -> 
         asked.append((since, org))
         return [left, clean]
 
-    async def fake_census(org, st, sv, *, ch=None):
-        return {"loom.entity_triple_rows": 2} if sv == ["lme-1"] and not resumed else {}
+    async def fake_orphans(org, st, sv, *, ch=None):
+        n = 2 if sv == ["lme-1"] and not deleted else 0
+        return {"loom.entity_triple_rows": n, "loom.entity_edge_rows": 0}
+
+    async def fake_delete(org, st, sv, *, ch=None):
+        deleted.append((org, st, sv))
+        return 2
+
+    async def no_census(*a, **k):
+        raise AssertionError("a completed saga gets no full census")
+
+    async def no_saga(**k):
+        raise AssertionError("a completed saga is not run again")
 
     async def fake_counts(*, ch=None):
         return {"orphan_entity_vectors": 0, "orphan_graph_namespaces": 0}
 
-    async def fake_run_saga(
-        *, input, row, erasure_id, requested_at, previously_completed, residue=None
-    ):
-        resumed.append((erasure_id, sorted(set(done) - previously_completed)))
-        return SimpleNamespace(
-            status="completed", steps=[], residue_count=0, residue={}, failure_reason=""
-        )
-
     monkeypatch.setattr(erasure_ledger, "list_failed_requests", fake_failed)
     monkeypatch.setattr(erasure_ledger, "list_completed_requests", fake_completed)
-    monkeypatch.setattr(erasure_census, "residue_census", fake_census)
+    monkeypatch.setattr(graph_steps, "count_orphan_row_links", fake_orphans)
+    monkeypatch.setattr(graph_steps, "delete_orphan_row_links", fake_delete)
+    monkeypatch.setattr(erasure_census, "residue_census", no_census)
     monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
-    monkeypatch.setattr(h, "run_saga", fake_run_saga)
+    monkeypatch.setattr(h, "run_saga", no_saga)
     args = argparse.Namespace(
         org="o",
         id=None,
@@ -842,13 +848,23 @@ async def test_completed_since_also_re_verifies_completed_sagas(monkeypatch) -> 
         requester="t",
         completed_since=since,
     )
-    assert await hygiene._re_verify_run(object(), args) == 1  # residue found, read-only
-    assert asked == [(since, "o")] and resumed == []
+    assert await hygiene._re_verify_run(object(), args) == 1  # orphans found, read-only
+    assert asked == [(since, "o")] and deleted == []
 
     args.resume = True
     assert await hygiene._re_verify_run(object(), args) == 0
-    # Only the saga with residue runs again, and only the step that owns it.
-    assert resumed == [("c1", ["graph_links.delete"])]
+    # Only the saga with orphans deletes, and only in its own scope.
+    assert deleted == [("o", "namespace", ["lme-1"])]
+
+
+def test_an_orphan_row_link_is_one_whose_memory_has_no_live_row() -> None:
+    where, params = graph_steps._orphan_row_links("namespace", ["a", "b"])
+    assert where.startswith("namespace IN {ns:Array(String)} AND memory_id NOT IN (")
+    assert "FROM loom.memory FINAL" in where and "tombstoned_at IS NULL" in where
+    assert params == {"ns": ["a", "b"]}
+    where, params = graph_steps._orphan_row_links("user_id", "u1")
+    assert where.startswith("user_id = {uid:String} AND memory_id NOT IN (")
+    assert params == {"uid": "u1"}
 
 
 async def test_list_completed_requests_takes_sagas_verified_since() -> None:

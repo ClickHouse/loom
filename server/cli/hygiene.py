@@ -535,6 +535,29 @@ def _re_verify_input(row: Mapping[str, Any], *, skip_external: bool) -> Any:
     )
 
 
+async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool) -> int:
+    """A completed saga gets no second run: everything in its scope now may have
+    been written after it finished. Only the row links an older build's erasure
+    did not know, and whose memory has no live row, are counted (and with
+    `resume`, deleted). 1 while any are left, else 0."""
+    from server.erasure.store import steps_graph
+
+    org = str(row["org"])
+    scope_type, scope_value, _purge, _external = _re_verify_scope(row)
+    print(f"  {row['id']} {org}/{row['scope_type']} completed")
+    orphans = await steps_graph.count_orphan_row_links(org, scope_type, scope_value, ch=ch)
+    found = {t.split(".", 1)[-1]: n for t, n in orphans.items() if n}
+    print(f"    orphan row links: {sum(found.values())} {json.dumps(found, sort_keys=True)}")
+    if not found:
+        return 0
+    if not resume:
+        return 1
+    deleted = await steps_graph.delete_orphan_row_links(org, scope_type, scope_value, ch=ch)
+    left = await steps_graph.count_orphan_row_links(org, scope_type, scope_value, ch=ch)
+    print(f"    deleted {deleted}; left {sum(left.values())}")
+    return 1 if any(left.values()) else 0
+
+
 async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
     from server.erasure.store import census as erasure_census
     from server.erasure.store import health as erasure_health
@@ -558,6 +581,9 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
     if not args.orphan_graph or rows or wanted:
         print(f"{len(rows)} {label}" + (f" in org {args.org!r}" if args.org else ""))
     for row in rows:
+        if str(row["id"]) in completed:
+            rc = max(rc, await _re_verify_completed(ch, row, resume=bool(args.resume)))
+            continue
         scope_type, scope_value, purge, _external = _re_verify_scope(row)
         names = scope_value if isinstance(scope_value, list) else [scope_value]
         with erasure_mutations.purge_scope(purge):
@@ -572,9 +598,6 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
         )
         print(f"    last: {str(row.get('failure_reason') or '')[:160]}")
         print(f"    residue now: {sum(residue.values())} {json.dumps(residue, sort_keys=True)}")
-        # A completed saga with nothing left needs no second run.
-        if str(row["id"]) in completed and not residue:
-            continue
         if args.resume:
             from server.erasure.app.saga import request_row_template, run_saga
 
@@ -773,8 +796,9 @@ def _add_namespace_hygiene_parsers(sub: Any) -> None:
         type=_utc_instant,
         metavar="ISO_TIMESTAMP",
         help="Also re-verify completed sagas whose census ran at or after this time (UTC "
-        "unless it names an offset): after a rollout, the erasures the previous build ran; "
-        "with --resume, one with residue re-runs the steps that own it",
+        "unless it names an offset): after a rollout, the erasures the previous build ran. "
+        "Only their orphan row links are counted (entity_triple_rows and entity_edge_rows "
+        "rows whose memory has no live row); --resume deletes them",
     )
     p_erv.add_argument(
         "--orphan-graph",

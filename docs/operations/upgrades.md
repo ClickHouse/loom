@@ -89,7 +89,10 @@ checkout.
 7. Once the last old replica has stopped, re-verify the erasures completed during the
    rollout: `loom erasure-re-verify --completed-since <when step 3 began> --resume`. An
    old replica's saga does not know the tables the new build added
-   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 14).
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 14). The command
+   deletes only orphan row links: rows of `entity_triple_rows` and `entity_edge_rows`
+   in each erasure's scope whose memory has no live row. Without `--resume` it counts
+   them and exits 1 if any are left. Data written after the erasure stays.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in

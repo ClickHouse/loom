@@ -74,6 +74,7 @@ async def _census_and_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.erasure.store import health as erasure_health
     from server.erasure.store import ledger as erasure_ledger
     from server.erasure.store import mutations as erasure_mutations
+    from server.erasure.store import steps_graph
 
     scope_value: Any = (
         ["n", "n2"]
@@ -82,6 +83,8 @@ async def _census_and_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     scope_type = "user_id" if c["scope"] == "user_id" else "namespace"
     await erasure_census.residue_census(ORG, scope_type, scope_value, ch=ch)
+    await steps_graph.count_orphan_row_links(ORG, scope_type, scope_value, ch=ch)
+    await steps_graph.delete_orphan_row_links(ORG, scope_type, scope_value, ch=ch)
     await erasure_ledger.list_failed_requests(org=ORG, ch=ch)
     await erasure_ledger.list_failed_requests(ch=ch)
     await erasure_ledger.list_completed_requests(since=datetime(2026, 1, 1), org=ORG, ch=ch)

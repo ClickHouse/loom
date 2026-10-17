@@ -137,8 +137,10 @@ schema. These rules keep that safe. The operator procedure is in
     know `entity_triple_rows` and `entity_edge_rows`, so an erasure it runs during the
     rollout leaves their rows in its scope and still records the saga `completed`. Once
     N-1 stops serving, re-verify the erasures completed since the rollout began:
-    `loom erasure-re-verify --completed-since <rollout start> --resume` counts each again
-    with N's census and re-runs the steps that own any residue.
+    `loom erasure-re-verify --completed-since <rollout start> --resume` deletes, in each
+    one's scope, the rows of those two tables whose memory has no live row (orphan row
+    links). It runs no saga step again and touches nothing else: data written in the
+    scope after the erasure finished, its links included, stays.
 
 ## What checks them
 

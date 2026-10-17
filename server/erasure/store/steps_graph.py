@@ -5,11 +5,18 @@ cache, precedents and communities that quote memory text."""
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.erasure.store.mutations import count_then_mutate, delete_scoped, tombstone_scoped
+from server.erasure.store.mutations import (
+    count_then_mutate,
+    delete_scoped,
+    namespaces_of,
+    tombstone_scoped,
+)
 from server.erasure.store.predicates import (
     NS_EQ,
+    NS_IN,
     UID,
     USER_COMMUNITY_ROWS,
     USER_CONFLICT_RECORD_IDS,
@@ -88,6 +95,61 @@ async def delete_graph_links_by_namespace(
         total += await delete_scoped(
             t, org=org, scope_where="namespace = {ns:String}", params={"ns": namespace}, ch=ch
         )
+    return total
+
+
+# The row-link tables a build before 039 did not know, so its erasures left them.
+# `loom erasure-re-verify --completed-since` checks a completed saga's scope for
+# links whose memory has no live row (rolling-upgrades rule 14). A link of a live
+# memory, such as one written after the erasure finished, is not an orphan.
+ROW_LINK_TABLES = ("loom.entity_triple_rows", "loom.entity_edge_rows")
+
+
+def _orphan_row_links(
+    scope_type: str, scope_value: str | Sequence[str]
+) -> tuple[str, dict[str, Any]]:
+    """The scope predicate of an orphan row link, and its params."""
+    if scope_type == "namespace":
+        live_ids = (
+            "SELECT memory_id FROM loom.memory FINAL WHERE org = {org:String} "
+            f"AND {NS_IN} AND tombstoned_at IS NULL"
+        )
+        return (f"{NS_IN} AND memory_id NOT IN ({live_ids})", {"ns": namespaces_of(scope_value)})
+    # A link carries its writer, and another user may own the memory now, so any
+    # live memory of the org keeps its link.
+    live_ids = (
+        "SELECT memory_id FROM loom.memory FINAL WHERE org = {org:String} AND tombstoned_at IS NULL"
+    )
+    return (f"{UID} AND memory_id NOT IN ({live_ids})", {"uid": str(scope_value)})
+
+
+async def count_orphan_row_links(
+    org: str, scope_type: str, scope_value: str | Sequence[str], *, ch: _CHClient | None = None
+) -> dict[str, int]:
+    """Orphan row links in scope, per table."""
+    ch = ch or _default_client()
+    where, params = _orphan_row_links(scope_type, scope_value)
+    out: dict[str, int] = {}
+    for table in ROW_LINK_TABLES:
+        # A memory written a moment ago on another replica must count as live.
+        row = await ch.query_one(
+            f"SELECT count() AS n FROM {table} WHERE org = {{org:String}} AND {where} "
+            "SETTINGS select_sequential_consistency = 1",
+            params={"org": org, **params},
+        )
+        out[table] = int((row or {}).get("n") or 0)
+    return out
+
+
+async def delete_orphan_row_links(
+    org: str, scope_type: str, scope_value: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """Delete the orphan row links in scope. The mutation reads the live memory
+    ids again when it runs, so a memory written since the count keeps its link."""
+    where, params = _orphan_row_links(scope_type, scope_value)
+    total = 0
+    for table in ROW_LINK_TABLES:
+        total += await delete_scoped(table, org=org, scope_where=where, params=params, ch=ch)
     return total
 
 

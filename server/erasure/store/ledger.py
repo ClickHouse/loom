@@ -125,8 +125,9 @@ async def list_completed_requests(
     ch: _CHClient | None = None,
 ) -> list[LedgerRow]:
     """Sagas the ledger holds as `completed` whose census ran at or after `since`
-    (naive UTC). After a rollout, `loom erasure-re-verify --completed-since` counts
-    them again: a build before N's tables completed without erasing them."""
+    (naive UTC). After a rollout, `loom erasure-re-verify --completed-since` looks
+    for the orphan row links they left: a build before N's tables completed without
+    erasing them."""
     ch = ch or _default_client()
     where = "status = 'completed' AND verified_at >= {since:DateTime}"
     params: dict[str, Any] = {"since": since}
