@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from server.code.domain.index import grep_sql
-from server.code.domain.index.grep_plan import content_predicate
+from server.code.domain.index.grep_plan import GREP_FINAL_SETTINGS, content_predicate
 from server.code.domain.search_scope import build_scope
 from tests.integration._resources import ch_client_from_env, unique_org
 
@@ -156,3 +156,69 @@ def test_the_engines_differ_where_the_planner_says_they_do(ch_client: Any) -> No
         parameters={"kelvin": "Kelvin"},
     ).result_rows[0]
     assert tuple(row) == (1, 1, 0)
+
+
+def _granules(reader: Any, sql: str, params: dict[str, Any]) -> dict[str, tuple[int, int]]:
+    """(kept, total) granules per EXPLAIN index block: `PrimaryKey` and the text index."""
+    lines = [
+        r[0].strip()
+        for r in reader.query("EXPLAIN indexes = 1 " + sql, parameters=params).result_rows
+    ]
+    assert "Name: idx_code_chunks_content_ng" in lines, "\n".join(lines)
+    out = {}
+    for key, header in (("pk", "PrimaryKey"), ("text", "Name: idx_code_chunks_content_ng")):
+        at = lines.index(header)
+        granules = next(line for line in lines[at:] if line.startswith("Granules:"))
+        kept, total = granules.removeprefix("Granules:").strip().split("/")
+        out[key] = (int(kept), int(total))
+    return out
+
+
+def test_a_case_insensitive_search_regex_still_prunes_on_the_text_index(
+    ch_client: Any, reader: Any
+) -> None:
+    """code.search's guard for a case-insensitive regex stays index-visible and
+    selective: EXPLAIN shows the n-gram index keeping only the granule with the
+    match, and the chunk that matches only through the Kelvin sign comes back."""
+    org, ns = unique_org("grep-explain"), "code-explain"
+    rows = [
+        [org, ns, "m", f"src/f{i:05d}.cpp", uuid.uuid4(), 1, 1, f"filler body {i}", [0.0] * 3072, 1]
+        for i in range(3072)  # paths sort in insert order
+    ]
+    # far enough apart to land in different granules however the table splits them
+    # (by row count, or by bytes: each row carries a 12 KB vector)
+    match, near_misses = 1664, (128, 2944)
+    # matches (?i)checkStackSize only through the Kelvin sign, which lower() leaves alone
+    rows[match][7] = "void chec\u212aStackSize();"
+    # every piece of the identifier, never the whole of it
+    rows[near_misses[0]][7] = "check the stack size"
+    rows[near_misses[1]][7] = "stackSize; check"
+    ch_client.insert(
+        "loom.code_chunks",
+        rows,
+        column_names=[
+            "org",
+            "namespace",
+            "embedding_model",
+            "path",
+            "chunk_id",
+            "start_line",
+            "end_line",
+            "content",
+            "embedding",
+            "version",
+        ],
+    )
+    for pattern in ("checkStackSize", r"getTotals\(\)|checkStackSize"):
+        cond, params = build_scope(pattern=pattern, regex=True).content_condition()
+        params.update(org=org, ns=ns)
+        sql = (
+            "SELECT path FROM loom.code_chunks FINAL WHERE org = {org:String} "
+            f"AND namespace = {{ns:String}} AND tombstoned_at IS NULL AND {cond} "
+            f"{GREP_FINAL_SETTINGS}"
+        )
+        granules = _granules(reader, sql, params)
+        _, total = granules["pk"]
+        assert total >= 3, granules  # the match and the near misses sit apart
+        assert granules["text"] == (1, total), (pattern, cond, granules)
+        assert _rows(reader, sql, params) == [(f"src/f{match:05d}.cpp",)], pattern
