@@ -35,6 +35,9 @@ WAIT_S = 10.0
 # after which its claim is taken over.
 CHANGE_S = 20.0
 _STATEMENT_S = 10
+# Every write of a change has landed this long after it starts: one cut off at
+# `CHANGE_S` may still finish its statement server-side.
+WRITES_LAND_S = CHANGE_S + _STATEMENT_S
 
 
 class NotClaimed(BackendUnavailableError):

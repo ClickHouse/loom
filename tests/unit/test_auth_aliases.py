@@ -63,6 +63,16 @@ async def test_canonical_subject_is_the_login_handle() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_invalidate_drops_every_read_naming_the_spellings() -> None:
+    ch = _ch([{"owner_email": "jdoe", "contact_email": "avery@example.com"}])
+    await al.subject_aliases("acme", "jdoe", ch=ch)
+    await al.subject_aliases("acme", "new@example.com", ch=_ch([]))
+    await al.subject_aliases("other", "jdoe", ch=ch)
+    al.invalidate("acme", ["Avery@Example.com", "new@example.com"])
+    assert set(al._CACHE) == {("other", "jdoe")}  # found by its spelling, or asked under it
+
+
 def test_fold_by_alias_makes_one_row_per_person_with_the_highest_role() -> None:
     rows = [
         {

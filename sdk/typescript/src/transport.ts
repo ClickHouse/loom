@@ -70,7 +70,7 @@ export interface TransportOptions {
   apiKey?: string;
   /** A credential fetched per request (a bot's `MachineLogin`); not with `apiKey`. */
   tokenProvider?: TokenProvider;
-  /** Per-call timeout; overridable per request. Default 60 s. */
+  /** Per-call timeout, on each attempt's wait for the token and for the response; overridable per request. Default 60 s. */
   timeoutMs?: number;
   /** The retry policy; every field optional, validated by name. */
   retry?: RetryOverride;
@@ -356,7 +356,7 @@ export class Transport {
   }
 
   /** The provider's token on this attempt's headers; after a 401, a fresh one. */
-  private async authorize(ctx: AttemptContext): Promise<void> {
+  private async authorize(ctx: AttemptContext, timeoutMs: number): Promise<void> {
     const provider = this.#provider;
     if (!provider) return;
     if (provider.origin && new URL(ctx.url).origin !== provider.origin)
@@ -364,8 +364,8 @@ export class Transport {
         op: ctx.op,
       });
     throwIfAborted(ctx);
-    // The caller may give up on its wait; a renewal other calls share goes on.
-    ctx.bearer = await untilAborted(provider.token(ctx.refused), ctx);
+    // The caller may give up on its wait, or time out; a renewal other calls share goes on.
+    ctx.bearer = await untilAborted(withinTimeout(provider.token(ctx.refused), timeoutMs, ctx), ctx);
     ctx.refused = undefined;
     ctx.headers.Authorization = `Bearer ${ctx.bearer}`;
   }
@@ -409,7 +409,7 @@ export class Transport {
       if (!ctx.resending) ctx.sent++;
       ctx.resending = false;
       headers["X-Loom-Retry-Count"] = String(ctx.sent - 1);
-      if (this.#provider) await this.authorize(ctx);
+      if (this.#provider) await this.authorize(ctx, timeoutMs);
       this.log.debug(
         `${op} → ${method} ${url} attempt ${attempt} timeout ${timeoutMs} ms bytes ${payload?.length ?? 0}`,
         redactHeaders(headers),
@@ -625,6 +625,18 @@ function untilAborted<T>(work: T | Promise<T>, ctx: AttemptContext): Promise<T> 
       .then(resolve, reject)
       .finally(() => signal.removeEventListener("abort", onAbort));
   });
+}
+
+/** `work`, or a TimeoutError once `ms` pass; `work` itself goes on for whoever else waits on it. */
+function withinTimeout<T>(work: T | Promise<T>, ms: number, ctx: AttemptContext): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const requestId = ctx.headers["X-Request-Id"] ?? "";
+      reject(new TimeoutError(`${ctx.op}: no token within ${ms} ms`, { op: ctx.op, requestId }));
+    }, ms);
+  });
+  return Promise.race([Promise.resolve(work), late]).finally(() => clearTimeout(timer));
 }
 
 /** Throws once the caller's signal has fired. */

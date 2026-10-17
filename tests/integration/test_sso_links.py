@@ -287,3 +287,28 @@ async def test_link_refuses_while_the_old_address_asks_to_join(ch: Any) -> None:
         "link", "--email", f"jo@corp-{org}.example", "--org", org, "--namespace", namespace
     )
     assert refused.returncode == 2 and "asked to join team" in refused.stderr
+
+
+async def test_a_link_rebinds_the_addresses_at_once(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Grants are written under the subject an address resolves to: the old
+    # address must stop reaching the person and the new one start, unwaited.
+    from server.auth import aliases
+    from server.identity.app import account_admin
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "oauth_login_provider", "oidc")
+    org = unique_org("sso")
+    personal, work = f"ash@home-{org}.example", f"ash@corp-{org}.example"
+    owner = f"ash-{uuid.uuid4().hex[:6]}"
+    namespace = await _password_account(ch, org, personal, owner=owner)
+    with own_write_reads():
+        assert await aliases.canonical_subject(org, personal) == owner
+        assert await aliases.canonical_subject(org, work) == work
+
+    await account_admin.link_account(work, org, namespace, by="op")
+    with own_write_reads():
+        assert await aliases.canonical_subject(org, work) == owner
+        assert await aliases.canonical_subject(org, personal) == personal
+        assert set(await aliases.subject_aliases(org, owner)) == {owner, work}

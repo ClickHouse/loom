@@ -196,6 +196,34 @@ def test_a_busy_server_is_retryable_not_a_refusal(monkeypatch) -> None:
         machine.MachineLogin("https://loom.example", "deploy").token()
 
 
+@pytest.mark.parametrize(("status", "error"), [(503, "BackendUnavailable"), (404, "AuthInvalid")])
+def test_a_failed_discovery_is_a_loom_error(monkeypatch, status: int, error: str) -> None:
+    def get(url: str, timeout: float) -> httpx.Response:
+        return httpx.Response(status, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(machine.httpx, "get", get)
+    login = machine.MachineLogin(
+        "https://loom.example", "deploy", key_source=("LOOM_CLIENT_KEY", "k")
+    )
+    with pytest.raises(getattr(machine, error)):
+        login.token()
+
+
+@pytest.mark.parametrize(("status", "error"), [(503, "BackendUnavailable"), (403, "AuthInvalid")])
+def test_a_failed_ci_proof_fetch_is_a_loom_error(
+    token_endpoint, monkeypatch, status: int, error: str
+) -> None:
+    def get(url: str, *, headers: dict[str, str], timeout: float) -> httpx.Response:
+        return httpx.Response(status, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(machine.httpx, "get", get)
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://ci.example/token")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "job-bearer")
+    with pytest.raises(getattr(machine, error)):
+        machine.MachineLogin("https://loom.example", "deploy", audience="loom").token()
+    assert token_endpoint == []
+
+
 def test_a_malformed_answer_keeps_the_token_in_hand(monkeypatch) -> None:
     answers = [
         httpx.Response(200, json={"access_token": "t1", "expires_in": 3600}),

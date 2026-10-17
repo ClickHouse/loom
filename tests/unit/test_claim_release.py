@@ -9,7 +9,7 @@ but the claim. Hermetic: ClickHouse and the classification are faked.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -82,7 +82,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def wait(cutoff: datetime) -> None:
         waited.append(cutoff)
 
-    monkeypatch.setattr(account_admin, "wait_out", wait)
+    monkeypatch.setattr(revocation, "wait_out", wait)
     state["waited"] = waited
 
     def run(token: str, row: dict[str, Any] | None = _ROW, org: str = "acme") -> tuple[Any, _CH]:
@@ -185,7 +185,7 @@ def test_the_cutoff_is_waited_out_after_the_claim_is_let_go(env: Any, monkeypatc
     async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
         return ["triage"]
 
-    async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
+    async def end_tokens(subject: str, **k: Any) -> datetime:
         return datetime(2026, 1, 3)
 
     async def wait(cutoff: datetime) -> None:
@@ -195,7 +195,7 @@ def test_the_cutoff_is_waited_out_after_the_claim_is_let_go(env: Any, monkeypatc
     monkeypatch.setattr(machines, "naming", naming)
     monkeypatch.setattr(machines, "forget_namespace", forget)
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
-    monkeypatch.setattr(account_admin, "wait_out", wait)
+    monkeypatch.setattr(revocation, "wait_out", wait)
     assert run(_tok(["org_admin"]))[0].released
     assert events == ["claimed", "let go", "waited"]
 
@@ -215,7 +215,7 @@ def test_a_release_whose_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeyp
         forgotten.append(ns)
         return ["triage"]
 
-    async def down(subject: str, *, by: str, reason: str) -> Any:
+    async def down(subject: str, **k: Any) -> Any:
         raise RuntimeError("ClickHouse away")
 
     monkeypatch.setattr(machines, "naming", naming)
@@ -226,86 +226,52 @@ def test_a_release_whose_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeyp
     assert forgotten == []  # the bots still name it
     ended: list[str] = []
 
-    async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
+    async def end_tokens(subject: str, *, by: str, reason: str, cutoff: Any) -> datetime:
         ended.append(subject)
-        return datetime(2026, 1, 3)
+        return cutoff
 
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
     out, _ = run(_tok(["org_admin"]))
     assert out.released and forgotten == ["repo-x"]
-    # Once before the row and bots change, once after, so no bot exchange in
-    # between outlives the release.
-    assert ended == ["sa:triage", "sa:triage"]
+    assert ended == ["sa:triage"]  # once, before the row and bots change
 
 
-def test_a_failed_second_cutoff_is_logged_and_the_release_stands(
-    env: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+def test_the_cutoff_covers_tokens_issued_until_the_slowest_release_ends(
+    env: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Once the bots are forgotten a retry finds nothing to end, so the release
-    # reports done, names the bots for a hand revoke and waits out the first cutoff.
-    from server.auth import machines
+    # The bots name the namespace until it is forgotten, which may land as late
+    # as the claim's deadline: a bot token minted just before must be cut off
+    # by what was written before the row changed, with nothing written after.
+    from server.auth import grant_claims, machines
 
-    run, state = env
-    first = datetime(2026, 1, 3)
-    forgotten: list[str] = []
-    invalidated: list[tuple[str, Any]] = []
+    run, _ = env
+    start = datetime(2026, 1, 3, 12, 0, 0, tzinfo=UTC)
+    clock = [start]
+    written: list[datetime] = []
+    issued: list[datetime] = []
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return clock[0]
 
     async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
         return ["triage"]
 
-    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
-        forgotten.append(ns)
+    async def slow_forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+        clock[0] = start + timedelta(seconds=grant_claims.WRITES_LAND_S)
+        # Minted on a replica ahead by the skew, the second the write lands.
+        issued.append(clock[0] + timedelta(seconds=revocation.CLOCK_SKEW_S))
         return ["triage"]
 
-    async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
-        if forgotten:
-            raise RuntimeError("ClickHouse away")
-        return first
+    async def cut_off(subject: str, *, issued_before: datetime, **k: Any) -> None:
+        if issued:
+            raise RuntimeError("ClickHouse away")  # nothing after the rewrite may be needed
+        written.append(issued_before)
 
+    monkeypatch.setattr(revocation, "datetime", _Clock)
     monkeypatch.setattr(machines, "naming", naming)
-    monkeypatch.setattr(machines, "forget_namespace", forget)
-    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
-
-    def invalidate(org: str, subjects: Any = None) -> None:
-        invalidated.append((org, subjects))
-
-    monkeypatch.setattr(cr.grant_cache, "invalidate", invalidate)
-    agent_row = {**_ROW, "tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
-    with caplog.at_level("WARNING", logger=cr.__name__):
-        out, _ = run(_tok(["org_admin"]), row=agent_row)
-    assert out.released
-    # Every subject the cutoff missed, the agent owner's too, and the command that exists.
-    assert "loom revoke-token --subject` for: sa:triage, sa:fleet:a1" in caplog.text
-    assert invalidated[-1] == ("acme", None)  # the whole org, not only the grantees
-    assert state["waited"] == [first]
-
-
-def test_a_second_cutoff_failing_part_way_waits_out_the_ones_it_wrote(
-    env: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    # The cutoff written before the failure is waited out; only the agent,
-    # not yet ended, is named for a hand revoke.
-    from server.auth import machines
-
-    run, state = env
-    later = datetime(2026, 1, 4)
-    results = iter([datetime(2026, 1, 3), datetime(2026, 1, 3), later])
-
-    async def bots(org: str, ns: str, *args: Any, ch: Any) -> list[str]:
-        return ["triage"]
-
-    async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
-        cutoff = next(results, None)
-        if cutoff is None:
-            raise RuntimeError("ClickHouse away")
-        return cutoff
-
-    monkeypatch.setattr(machines, "naming", bots)
-    monkeypatch.setattr(machines, "forget_namespace", bots)
-    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
-    agent_row = {**_ROW, "tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
-    with caplog.at_level("WARNING", logger=cr.__name__):
-        out, _ = run(_tok(["org_admin"]), row=agent_row)
-    assert out.released
-    assert "for: sa:fleet:a1" in caplog.text
-    assert state["waited"] == [later]
+    monkeypatch.setattr(machines, "forget_namespace", slow_forget)
+    monkeypatch.setattr(revocation, "cut_off", cut_off)
+    assert run(_tok(["org_admin"]))[0].released
+    assert written and all(issued[0] < cutoff for cutoff in written)

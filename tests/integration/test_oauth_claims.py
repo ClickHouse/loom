@@ -347,3 +347,29 @@ async def test_a_grant_put_back_wins_over_one_a_replica_ahead_wrote(store: Any) 
     await store._save_refresh_grant(rid, {**grant, "upstream_refresh": "rotated-upstream"})
     kept = await store._refresh_grant(rid)
     assert kept is not None and kept["upstream_refresh"] == "rotated-upstream"
+
+
+async def test_reseal_counts_a_sign_in_in_flight_under_the_previous_root(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.cli.secrets import in_flight
+    from server.core.ch import get_client
+    from server.core.secrets_at_rest import seal
+    from server.settings import settings
+
+    old, new = secrets.token_hex(16), secrets.token_hex(16)
+    monkeypatch.setattr(settings, "jwt_secret", old)
+    state = secrets.token_hex(8)
+    sealed = seal(oauth.UPSTREAM_PURPOSE, "idp-refresh")
+    await store.save_pending(state, {"kind": "connect", "upstream_refresh": sealed}, ttl=60)
+    try:
+        monkeypatch.setattr(settings, "jwt_secret", new)
+        monkeypatch.setattr(settings, "jwt_secret_previous", old)
+        pending, until = await in_flight(get_client())
+        assert pending == 1 and until >= int(time.time()) + 50
+    finally:
+        await _delete(
+            "ALTER TABLE loom.oauth_signin_state DELETE WHERE claim_key = {v:String}",
+            f"pending:{state}",
+        )
+    assert (await in_flight(get_client()))[0] == 0  # expired and swept

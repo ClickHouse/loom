@@ -211,7 +211,10 @@ reseal`, which seals the stored credentials, signing keys and rebuild recipes ag
   the new root (the publish Job checks first that it can, so a failing one publishes
   nothing). The previous root only opens sealed values; it never verifies a token. Remove
   it in a later upgrade once `kubectl exec deploy/loom -- loom secrets reseal --check`
-  exits 0. A value it lists as opening with neither root was lost before this rotation:
+  exits 0. Until then it also counts the SSO sign-ins in flight (a code, a device grant,
+  an approval or link awaiting its click) whose identity-provider token only the old root
+  opens: they are not rewritten, and expire within minutes; the check names when the last
+  one does. A value it lists as opening with neither root was lost before this rotation:
   enter it again. Without it, the stored credentials stop opening: enter them again.
   If the old root leaked, also rotate the signing keys and retire the old kids
   ([tokens and grants](../guides/tokens-and-grants.md#revoke-and-rotate)).

@@ -169,7 +169,7 @@
  ],
  "loom secrets reseal": [
   "usage: loom secrets reseal [-h] [--dry-run] [--check]",
-  "options: -h, --help show this help message and exit --dry-run Count, write nothing --check Write nothing; exit 1 while a value opens only with LOOM_JWT_SECRET_PREVIOUS"
+  "options: -h, --help show this help message and exit --dry-run Count, write nothing --check Write nothing; exit 1 while a value, or a sign-in in flight, opens only with LOOM_JWT_SECRET_PREVIOUS"
  ],
  "loom signing-key": [
   "usage: loom signing-key [-h] {rotate,import,retire,record-root,list} ...",
