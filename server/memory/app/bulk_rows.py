@@ -330,7 +330,7 @@ def _keep_row(state: _BulkWriteState, row: dict[str, Any]) -> None:
 
 def settle_batch_rows(
     state: _BulkWriteState, verdicts: dict[int, Any]
-) -> tuple[set[int], list[tuple[int, int, dict[str, Any]]], set[int]]:
+) -> tuple[set[int], list[tuple[int, int, dict[str, Any]]], set[int], set[int]]:
     """Replay the batch in entry order as serial memory.set calls would see it, once the
     `verdicts` (by memory-row index) are known.
 
@@ -342,12 +342,14 @@ def settle_batch_rows(
     An entry that repeated an earlier row's value takes that row's outcome: unchanged if
     it landed, pinned if it was refused, and the row's own merge or rejection, returned
     as (entry's result index, row's result index, row) to copy once the verdicts are
-    folded. Also returns the `id()` of each row whose verdict is stale.
+    folded. Also returns the `id()` of each row whose verdict is stale, and of each row
+    that lands (a stale merge or rejection among them).
     """
     sha = dict(state.existing_sha)
     pinned = dict(state.existing_pinned)
     rewritten: set[str] = set()  # ids of the stored rows an earlier landed row rewrote
     stale: set[int] = set()
+    landed: set[int] = set()
     outcome: dict[int, str] = {}  # id(row) -> landed | unchanged | pinned | verdict
     result_of: dict[int, int] = {}  # id(row) -> its result index
     steps: list[tuple[int, int, dict[str, Any]]] = [
@@ -385,10 +387,11 @@ def settle_batch_rows(
             outcome[id(row)] = "verdict"
         else:
             outcome[id(row)] = "landed"
+            landed.add(id(row))
             sha[key] = str(row["content_sha256"])
             pinned[key] = bool(row["pinned"])
             rewritten.add(str(row["memory_id"]))
-    return drop, copies, stale
+    return drop, copies, stale, landed
 
 
 def _drop_built_row(

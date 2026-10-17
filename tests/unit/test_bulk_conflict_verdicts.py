@@ -236,7 +236,7 @@ def test_a_pin_from_a_landed_bulk_row_refuses_a_later_value() -> None:
     from server.memory.app.bulk_rows import settle_batch_rows
 
     state = _batch("s0", ("s1", True), ("s2", False))
-    drop, _copies, _stale = settle_batch_rows(state, {})
+    drop, _copies, _stale, _landed = settle_batch_rows(state, {})
     assert drop == {1} and state.skipped_pinned == ["k"]
     assert [r.conflict_verdict for r in state.results] == ["", "pinned"]
 
@@ -246,7 +246,7 @@ def test_returning_to_the_stored_value_after_a_rejected_row_is_unchanged() -> No
     from server.memory.app.bulk_rows import settle_batch_rows
 
     state = _batch("s0", ("s1", False), ("s0", False))
-    drop, _copies, _stale = settle_batch_rows(state, {0: NS(verdict="rejected")})
+    drop, _copies, _stale, _landed = settle_batch_rows(state, {0: NS(verdict="rejected")})
     assert drop == {1} and state.results[1].version == 0
     assert state.skipped_unchanged == 1 and state.restated_ids == ["e1"]
 
@@ -294,3 +294,27 @@ def test_a_restatement_of_a_landed_entry_counts_once_as_unchanged() -> None:
     assert _bulk_skip_gate(NS(memory_key="k"), "s1", state, {})
     _apply_verdicts(state, [], {})
     assert state.skipped_unchanged == 1 and state.restated_ids == ["id1"]
+
+
+def test_a_peer_rewritten_by_a_stale_merge_that_lands_is_not_marked() -> None:
+    # Stored: k1 (X), k2 (Y, "b"), k3 (Z). Entry 0 rewrites X. Entry 1 sets k2 to "b2"
+    # and merges into X, whose bytes entry 0 replaced, so it lands and rewrites Y.
+    # Entry 2 contradicts or refines Y's old "b": marking Y would hit "b2".
+    from server.memory.app.bulk_set import _apply_verdicts
+
+    peer_y = ConflictPeer(
+        memory_id="Y", memory_key="k2", similarity=0.9, pinned=False, canonical=""
+    )
+    for verdict in ("conflict", "refines"):
+        state = _stored(k1=("X", "a"), k2=("Y", "b"), k3=("Z", "c"))
+        _entry(state, "k1", "X", "a2")
+        _entry(state, "k2", "Y", "b2")
+        _entry(state, "k3", "Z", "c2")
+        verdicts = {
+            1: NS(verdict="merge", existing_memory_id="X", peers=[]),
+            2: ConflictResult(verdict=verdict, peers=[peer_y], refined_peers=[peer_y]),
+        }
+        plan = _apply_verdicts(state, [], verdicts)
+        assert [x["memory_key"] for x in plan.memory_rows] == ["k1", "k2", "k3"]
+        assert plan.conflict_marks == [] and plan.refines == []
+        assert state.results[2].conflict_verdict == "clear"

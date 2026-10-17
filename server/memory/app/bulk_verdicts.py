@@ -159,41 +159,40 @@ def verdict_target(v: Any) -> str:
     return str(getattr(v, "existing_memory_id", "") or getattr(v, "duplicate_of_id", "") or "")
 
 
-def _without_rewritten_peers(v: Any, idx: int, first_row: dict[str, int]) -> Any:
-    """A refines or conflict verdict without the peers another row of the batch
+def _without_rewritten_peers(v: Any, landing_ids: set[str]) -> Any:
+    """A refines or conflict verdict without the peers a landing row of the batch
     rewrites. An earlier row replaced the bytes judged; a later one would have its new
-    value retired or flagged, since the marks run after the insert. Returns `v` itself
-    when no peer was dropped."""
+    value retired or flagged, since the marks run after the insert. A peer is never the
+    row's own id: the conflict check skips the writer's key. Returns `v` itself when no
+    peer was dropped."""
     if getattr(v, "verdict", "") not in ("refines", "conflict"):
         return v
     old_peers = list(getattr(v, "peers", None) or [])
     old_refined = list(getattr(v, "refined_peers", None) or [])
-    peers = [p for p in old_peers if first_row.get(str(p.memory_id), idx) == idx]
-    refined = [p for p in old_refined if first_row.get(str(p.memory_id), idx) == idx]
+    peers = [p for p in old_peers if str(p.memory_id) not in landing_ids]
+    refined = [p for p in old_refined if str(p.memory_id) not in landing_ids]
     if len(peers) == len(old_peers) and len(refined) == len(old_refined):
         return v
     return dataclasses.replace(v, peers=peers, refined_peers=refined)
 
 
-def _first_landing_rows(
-    memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]
-) -> dict[str, int]:
-    """Each memory_id's first row in the batch, counting only rows that land: a merged
-    or rejected row rewrites no peer. A stale merge that lands anyway still counts as
-    dropped here, which can miss a retirement but never makes a wrong one."""
-    first: dict[str, int] = {}
-    for i, r in enumerate(memory_rows):
-        if getattr(verdicts.get(i), "verdict", "") not in NOT_LANDING:
-            first.setdefault(str(r.get("memory_id") or ""), i)
-    return first
+def _landing_rows(
+    memory_rows: list[dict[str, Any]], verdicts: dict[int, Any], stale_rows: Collection[int]
+) -> set[int]:
+    """The `id()` of each row that lands when no batch replay said so: every row but a
+    merged or rejected one whose verdict is not stale."""
+    return {
+        id(r)
+        for i, r in enumerate(memory_rows)
+        if id(r) in stale_rows or getattr(verdicts.get(i), "verdict", "") not in NOT_LANDING
+    }
 
 
-def _settling_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) -> set[int]:
+def _settling_rows(memory_rows: list[dict[str, Any]], landed: Collection[int]) -> set[int]:
     """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
     versions of one row, so only the kept version's verdict may mark or retire
-    peers. A merged or rejected entry writes no row."""
-    dropped = {i for i, v in verdicts.items() if getattr(v, "verdict", "") in NOT_LANDING}
-    written = [r for i, r in enumerate(memory_rows) if i not in dropped]
+    peers. Only the `landed` rows are written."""
+    written = [r for r in memory_rows if id(r) in landed]
     return {id(r) for r in kept_versions(written).values()}
 
 
@@ -204,21 +203,25 @@ def apply_bulk_verdicts(
     results: list[Any],
     verdicts: dict[int, Any],
     stale_rows: Collection[int] = (),
+    landed_rows: Collection[int] | None = None,
 ) -> BulkVerdictPlan:
     """Pure: fold ConflictResults into the rows. `merge` and `rejected` drop
     the row (its result reports version 0); `duplicate` stamps status and
     duplicate_of on both rows; `conflict` keeps the row and records the peers
     to cross-link after the insert. Rows without a verdict pass through.
     `stale_rows` are the `id()` of the rows whose verdict is stale
-    (`settle_batch_rows`): they land as clear."""
+    (`settle_batch_rows`): they land as clear. `landed_rows` are the `id()` of the rows
+    that land (`settle_batch_rows`); a peer one of them rewrites is not marked or retired."""
     plan = BulkVerdictPlan()
     drop: set[int] = set()
     dup_idx: set[int] = set()
     stale = {i for i in verdicts if id(memory_rows[i]) in stale_rows}
-    landing_first_row = _first_landing_rows(memory_rows, verdicts)
+    if landed_rows is None:
+        landed_rows = _landing_rows(memory_rows, verdicts, stale_rows)
+    landing_ids = {str(r.get("memory_id") or "") for r in memory_rows if id(r) in landed_rows}
     verdicts = dict(verdicts)
     for i, v in list(verdicts.items()):
-        trimmed = _without_rewritten_peers(v, i, landing_first_row)
+        trimmed = _without_rewritten_peers(v, landing_ids)
         if trimmed is v:
             continue
         verdicts[i] = trimmed
@@ -226,7 +229,7 @@ def apply_bulk_verdicts(
         left = trimmed.refined_peers if trimmed.verdict == "refines" else trimmed.peers
         if not left:
             stale.add(i)
-    settling = _settling_rows(memory_rows, {i: v for i, v in verdicts.items() if i not in stale})
+    settling = _settling_rows(memory_rows, landed_rows)
     for idx, v in verdicts.items():
         verdict = getattr(v, "verdict", "clear")
         # A later entry of this key replaced the value judged: nothing to mark or retire.
