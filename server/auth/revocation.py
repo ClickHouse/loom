@@ -290,6 +290,32 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
     _remember("cut_off", subject, seconds)
 
 
+async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: str) -> bool:
+    """Turn the outright revocation of `key` that was written with `reason`
+    into one of the tokens issued before `issued_before`, so new tokens work
+    and old ones stay revoked. A revocation written for another reason (an
+    operator's) is left as it is. Returns whether it narrowed."""
+    from server.core.ch import get_client, own_write_reads
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            """
+            SELECT reason, issued_before FROM loom.revoked_tokens FINAL
+            WHERE jti = {j:String} AND expires_at > now()
+            """,
+            params={"j": key},
+        )
+    if row is None or row["issued_before"] is not None or row["reason"] != reason:
+        return False
+    # A refresh lays this process's recent writes back, and the outright one
+    # would win over the narrowing below.
+    _recent[:] = [w for w in _recent if not (w[0] == "revoke" and w[1] == key)]
+    await revoke(
+        key, issued_before=issued_before, reason=f"{reason}, lifted", revoked_by=revoked_by
+    )
+    return True
+
+
 def revoked_here(jti: str) -> None:
     """Refuse `jti` in this process now, for a revocation written elsewhere
     (an owed one) that the next snapshot will carry."""

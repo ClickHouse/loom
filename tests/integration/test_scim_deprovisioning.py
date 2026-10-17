@@ -1,0 +1,166 @@
+"""SCIM deprovisioning end to end: an identity provider deactivates a person
+over /scim/v2, and their session, the service account they made and their SSO
+sign-in all stop; reactivating lets them sign in again, old tokens still dead.
+
+Runs a Loom server against a fake OIDC provider, as test_cli_login_flow does.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import os
+import secrets
+import sys
+import time
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "sdk" / "python"))
+sys.path.insert(0, str(ROOT))
+
+from tests.integration._fake_idp import CLIENT_ID, CLIENT_SECRET, FakeIdP  # noqa: E402
+from tests.integration._ports import free_port  # noqa: E402
+from tests.integration._resources import unique_org  # noqa: E402
+from tests.integration._spawn import loom_server  # noqa: E402
+
+_JWT_SECRET = "scim-itest-secret-" + "0" * 32
+_SCIM_TOKEN = secrets.token_hex(32)
+_SCIM = {"Authorization": f"Bearer {_SCIM_TOKEN}", "Content-Type": "application/scim+json"}
+
+
+def _seed(ch_client: Any, org: str, email: str) -> str:
+    """An SSO-only account (no password) and its owner's admin grant."""
+    ns = f"scim-{uuid.uuid4().hex[:6]}"
+    now = _dt.datetime.now(_dt.UTC).replace(tzinfo=None, microsecond=0)
+    ch_client.insert(
+        "loom.namespaces",
+        [[org, ns, email, email, "", "scim e2e", [], True, "private", now, now]],
+        column_names=[
+            "org",
+            "namespace",
+            "owner_email",
+            "contact_email",
+            "password_hash",
+            "description",
+            "tags",
+            "active",
+            "visibility",
+            "created_at",
+            "updated_at",
+        ],
+    )
+    ch_client.insert(
+        "loom.namespace_grants",
+        [[org, ns, email, "admin", now, email, None, time.time_ns()]],
+        column_names=[
+            "org",
+            "namespace",
+            "subject",
+            "role",
+            "granted_at",
+            "granted_by",
+            "revoked_at",
+            "version",
+        ],
+    )
+    return ns
+
+
+@pytest.fixture
+def scim_server(ch_client) -> Iterator[tuple[str, str, str]]:
+    if os.environ.get("LOOM_CH_SECURE", "").lower() == "true":
+        pytest.skip("seeds local namespaces rows; skip against Cloud CH")
+    org = unique_org("scim")
+    email = f"scim-{uuid.uuid4().hex[:6]}@corp.example"
+    ns = _seed(ch_client, org, email)
+    idp = FakeIdP(email)
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    env = {
+        "LOOM_AUTH_REQUIRED": "true",
+        "LOOM_JWT_SECRET": _JWT_SECRET,
+        "LOOM_OAUTH_LOGIN_PROVIDER": "oidc",
+        "LOOM_OAUTH_ISSUER": base,
+        "LOOM_OIDC_ISSUER": idp.url,
+        "LOOM_OIDC_CLIENT_ID": CLIENT_ID,
+        "LOOM_OIDC_CLIENT_SECRET": CLIENT_SECRET,
+        "LOOM_SCIM_TOKEN": _SCIM_TOKEN,
+    }
+    with idp.running(), loom_server("scim", env, port=port):
+        yield base, email, ns
+
+
+def _sign_in(base: str) -> httpx.Response:
+    """The dashboard's SSO sign-in, through the fake provider and back."""
+    with httpx.Client() as browser:
+        to_idp = browser.get(f"{base}/oauth/sso")
+        return browser.get(browser.get(to_idp.headers["location"]).headers["location"])
+
+
+def _token(back: httpx.Response) -> str:
+    assert back.status_code == 302, back.text[:300]
+    return back.headers["location"].split("#token=", 1)[1]
+
+
+def _authenticated(base: str, token: str) -> bool:
+    r = httpx.get(f"{base}/v1/whoami", headers={"Authorization": f"Bearer {token}"})
+    return bool(r.json().get("authenticated"))
+
+
+def _set_active(base: str, uid: str, active: bool) -> dict[str, Any]:
+    r = httpx.patch(
+        f"{base}/scim/v2/Users/{uid}",
+        headers=_SCIM,
+        json={
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+            "Operations": [{"op": "replace", "value": {"active": active}}],
+        },
+    )
+    assert r.status_code == 200, r.text
+    out: dict[str, Any] = r.json()
+    return out
+
+
+def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
+    scim_server,
+) -> None:
+    base, email, ns = scim_server
+    session = _token(_sign_in(base))
+    made = httpx.post(
+        f"{base}/v1/me/service_accounts.create",
+        headers={"Authorization": f"Bearer {session}"},
+        json={"name": "ci-bot", "namespaces": [ns], "role": "viewer"},
+    )
+    assert made.status_code == 200, made.text
+    service_account = made.json()["token"]
+    assert _authenticated(base, session) and _authenticated(base, service_account)
+
+    assert httpx.get(f"{base}/scim/v2/Users").status_code == 401  # no token, no SCIM
+    created = httpx.post(f"{base}/scim/v2/Users", headers=_SCIM, json={"userName": email})
+    assert created.status_code == 201, created.text
+    uid = created.json()["id"]
+    found = httpx.get(
+        f"{base}/scim/v2/Users", headers=_SCIM, params={"filter": f'userName eq "{email}"'}
+    ).json()
+    assert [u["id"] for u in found["Resources"]] == [uid]
+
+    assert _set_active(base, uid, False)["active"] is False
+    assert _set_active(base, uid, False)["active"] is False  # a retry changes nothing
+    assert not _authenticated(base, session)
+    assert not _authenticated(base, service_account)
+    denied = _sign_in(base)
+    assert denied.status_code == 403 and "deactivated" in denied.text
+
+    assert _set_active(base, uid, True)["active"] is True
+    again = _token(_sign_in(base))
+    assert _authenticated(base, again)
+    assert not _authenticated(base, session)  # revoked tokens stay revoked
+    assert not _authenticated(base, service_account)
+    got = httpx.get(f"{base}/scim/v2/Users/{uid}", headers=_SCIM).json()
+    assert got["userName"] == email and got["active"] is True

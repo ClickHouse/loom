@@ -255,15 +255,77 @@ they do not stop with someone's offboarding.
   previewed without saving) lasts at most 30 days, so nothing a person cannot
   see outlives that. Disabling someone at the provider ends their
   sessions at the next refresh (within the hour) but not these tokens: only a
-  refresh asks the provider about a person. When offboarding, revoke the
-  person, which ends every token they made too:
-  `loom revoke-token --subject <their subject>`.
+  refresh asks the provider about a person. With
+  [SCIM](#deprovisioning-with-scim) set up, the provider tells Loom at once,
+  and Loom revokes the person and every token they made. Without it, revoke
+  the person when offboarding: `loom revoke-token --subject <their subject>`.
 - Every sign-in, device approval and denial, MCP consent, JIT account and
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
   `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`,
-  `auth.session_revoked`.
+  `auth.session_revoked`, `auth.scim_deactivated`, `auth.scim_reactivated`.
+
+## Deprovisioning with SCIM
+
+Identity providers push deactivations to apps over SCIM 2.0 (RFC 7643/7644).
+Loom accepts that push: a person deactivated at the provider is revoked in
+Loom within seconds, sessions and the tokens they made included. Set a long
+random token and restart:
+
+```bash
+LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
+```
+
+Empty (the default) leaves SCIM off and its routes unmounted. The token is the
+only credential `/scim/v2` takes, and nothing else; keep it with the client
+secret.
+
+In Okta, on the app integration from [Okta setup](#okta-setup):
+
+1. **General → App Settings → Edit**, set **Provisioning** to **SCIM**, and save.
+2. **Provisioning → Integration → Edit:**
+   - **SCIM connector base URL:** `<public Loom URL>/scim/v2`
+   - **Unique identifier field for users:** `userName`
+   - **Supported provisioning actions:** Push New Users and Push Profile Updates
+   - **Authentication Mode:** HTTP Header, with the `LOOM_SCIM_TOKEN` value as
+     the bearer token.
+
+   **Test Connector Configuration**, then save.
+
+3. **Provisioning → To App → Edit:** enable **Create Users** and
+   **Deactivate Users**, and save. Leave **Update User Attributes** off: Loom
+   keeps no attributes but the email.
+4. Under **General → Sign On**, set **Application username format** to
+   **Email**: Loom knows people by their email.
+
+People already assigned are pushed when you next assign or update them, or
+from **Assignments → Provision User**. Other providers (Microsoft Entra ID,
+OneLogin, …) take the same base URL and bearer token.
+
+What Loom does with each request:
+
+- **Creating a user** records the email and makes no account: the person's
+  first SSO sign-in makes it (JIT) or reaches the one they have, as without
+  SCIM. A second create of the same email answers 409.
+- **Deactivating** (`active: false` by `PATCH` or `PUT`, or a `DELETE`)
+  revokes the subject the email signs in to outright: every session, and every
+  service account and MCP token the person made. While it lasts, SSO sign-in
+  with the email is refused ("this account is deactivated"), even if it
+  reaches no account yet. The account, its grants and its data stay; this is
+  not erasure.
+- **Reactivating** (`active: true`) lets the person sign in again. Tokens from
+  before stay revoked; they make new ones. A subject an operator revoked
+  (`loom revoke-token --subject`) stays revoked through both.
+- **Deleting** deactivates and the user answers 404 from then on. The
+  provider creating them again reactivates them.
+
+A user is mapped to an account the way an SSO sign-in is (an SSO account, or
+a password account linked to the email), so an email whose accounts span orgs
+or owners reaches none: its sign-in is refused, and no subject is revoked.
+Requests are idempotent, so the provider's retries are safe. The only filter
+served is `userName eq "<email>"`; `GET /Users`, `GET /Users/{id}` and
+`GET /ServiceProviderConfig` answer as RFC 7644 says.
 
 ## Behind a proxy
 
@@ -288,7 +350,10 @@ session to end them, so they are not rotated. While the previous build still
 serves (a rolling upgrade, a rollback), it does not know sessions or operator
 cutoffs: an access token whose session ended still works there for its hour,
 and so do the tokens a bot disable or an adopt cut off. Finish the rollout
-before adopting accounts or relying on a logout or a bot disable.
+before adopting accounts or relying on a logout or a bot disable. The
+previous build serves no SCIM and does not read deactivations, but honours the
+revocation a deactivation writes: point the provider at Loom once the rollout
+is done.
 
 A browser sign-in whose steps land on both builds (a code exchanged, an
 identity provider's callback) fails and is started again. The SDK and `loom

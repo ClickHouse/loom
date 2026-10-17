@@ -28,7 +28,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server.auth import agents, claims, machines, shielded, sso_links
+from server.auth import agents, claims, machines, scim, shielded, sso_links
 from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.delegation import SESSION_TTL
 from server.auth.jwt import AuthInfo, mint_token, new_jti
@@ -770,6 +770,8 @@ async def _account_for(
     from server.auth.login import SignInUnavailable, resolve_identity_for_email
 
     try:
+        if await scim.deactivated(email):  # by the identity provider, over SCIM
+            return _Denied("this account is deactivated")
         await finish_unfinished_account(email)
         resolved = await resolve_identity_for_email(email)
         if resolved is not None:
