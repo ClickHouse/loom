@@ -1,0 +1,26 @@
+[
+  {
+    "query": "review PR 412",
+    "should_trigger": true
+  },
+  {
+    "query": "check this diff for cross-tenant reads and missing erasure coverage",
+    "should_trigger": true
+  },
+  {
+    "query": "review my branch against main and post the findings as PR comments",
+    "should_trigger": true
+  },
+  {
+    "query": "address the comments the reviewer left on my PR",
+    "should_trigger": false
+  },
+  {
+    "query": "file an issue for this bug",
+    "should_trigger": false
+  },
+  {
+    "query": "run make lint",
+    "should_trigger": false
+  }
+]
