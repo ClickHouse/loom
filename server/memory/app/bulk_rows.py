@@ -261,6 +261,15 @@ def _bulk_skip_gate(
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
         return True
     restated = state.existing_sha.get(entry.memory_key) == entry_sha
+    # A ttl_seconds asks to change the expiry, which a read_only lock refuses even when
+    # nothing else changes (memory.set: 423, refused_action 'expire').
+    if (
+        restated
+        and getattr(entry, "ttl_seconds", None) is not None
+        and _bulk_locked(state, entry.memory_key, "expire")
+    ):
+        _refuse_locked(state, entry.memory_key)
+        return True
     if batch_row is None and restated and _same_labels_as_stored(state, entry):
         state.skipped_unchanged += 1
         _note_restatement(state, state.existing_ids.get(entry.memory_key, ""))

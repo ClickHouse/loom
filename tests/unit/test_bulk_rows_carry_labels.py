@@ -216,3 +216,16 @@ async def test_a_relabelling_repeat_still_reinforces_the_row(monkeypatch) -> Non
         replay = settle_batch_rows(state, {})
         assert replay.drop == set() and len(replay.landed) == 1
         assert state.restated_ids == [STORED_ID]
+
+
+async def test_a_ttl_only_repeat_on_a_read_only_row_is_locked(monkeypatch) -> None:
+    # memory.set 423s any ttl_seconds on a read_only row, even with the same bytes and
+    # labels; bulk answers that entry locked, not unchanged.
+    value = "Alice lives in Berlin"
+    stored = _stored(value, lock_mode="read_only")
+    state = await _build(
+        monkeypatch, stored, {"memory_key": "k", "value": value, "ttl_seconds": 60}
+    )
+    assert state.memory_rows == [] and state.skipped_locked == ["k"]
+    assert state.skipped_unchanged == 0 and state.restated_ids == []
+    assert state.results[0].conflict_verdict == "locked"
