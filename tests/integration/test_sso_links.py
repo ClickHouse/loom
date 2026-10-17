@@ -139,7 +139,8 @@ async def test_link_points_an_account_from_another_address_at_the_provider_one(c
     # Registered with a personal address; the provider knows them by the company one.
     org = unique_org("sso")
     personal, work = f"nik@home-{org}.example", f"nik@corp-{org}.example"
-    namespace = await _password_account(ch, org, personal, owner="nik")
+    owner = f"nik-{uuid.uuid4().hex[:6]}"  # revoked_tokens outlives the org purge
+    namespace = await _password_account(ch, org, personal, owner=owner)
     assert await _resolve(work) is None
 
     assert "would sign in as" in _sso(
@@ -149,13 +150,13 @@ async def test_link_points_an_account_from_another_address_at_the_provider_one(c
     _sso("link", "--email", work, "--org", org, "--namespace", namespace, "--apply")
 
     subject, got_org, namespaces, _ = await _resolve(work)
-    assert (subject, got_org, namespaces) == ("nik", org, [namespace])  # same subject, same data
+    assert (subject, got_org, namespaces) == (owner, org, [namespace])  # same subject, same data
     again = _sso_refused("link", "--email", work, "--org", org, "--namespace", namespace)
     assert again.returncode == 2 and "linked to" in again.stderr  # a re-run says so
     with own_write_reads():
         revoked = await ch.query_one(
-            "SELECT count() AS n FROM loom.revoked_tokens WHERE jti LIKE {s:String}",
-            params={"s": "%nik%"},
+            "SELECT count() AS n FROM loom.revoked_tokens FINAL WHERE position(jti, {o:String}) > 0",
+            params={"o": owner},
         )
     assert revoked["n"] == 0  # its tokens, an agent's included, keep working
 
