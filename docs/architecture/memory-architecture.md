@@ -437,9 +437,11 @@ flips the status: it ends none of the row's edges or triples.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and
-an Undo of a retirement opens again those the restored row's current value holds by the
-same rule (another row's claim keeps a fact from closing, but never reopens one);
-either, when it fails, is recorded for `projection_repair` as `triples_reconcile`.
+an Undo of a retirement or of a delete opens again those the restored row's current value
+holds by the same rule (another row's claim keeps a fact from closing, but never reopens
+one); either, when it fails, is recorded for `projection_repair` as `triples_reconcile`.
+A delete closes none of its row's facts, so the only facts a delete's Undo opens again
+are ones another row's revision or retirement closed while the row was gone.
 
 A dropped fact still valid later ("until Dec 1") ends now, and so does one a retired row
 stated until later, or it ends when a winner dated ahead starts, as an open one closes
