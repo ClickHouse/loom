@@ -6,7 +6,8 @@ import { Tip } from "./Tooltip";
  * opens on focus as well as hover, so the content is focusable (`role="note"`: it is not an
  * action), and Radix ties the tip to it as its description. `underline` marks inline text
  * as having more to say. `className` replaces the default inline box, for content that
- * draws its own (a chip, a clamped block).
+ * draws its own (a chip, a clamped block). `disabled` keeps the same element with no tip,
+ * tab stop or role, for content that has more to say only sometimes (a clamped label).
  */
 export interface TipTargetProps {
   tip: ReactNode;
@@ -14,19 +15,19 @@ export interface TipTargetProps {
   underline?: boolean;
   className?: string;
   style?: CSSProperties;
+  disabled?: boolean;
 }
 
 export const TipTarget = forwardRef<HTMLSpanElement, TipTargetProps>(function TipTarget(
-  { tip, children, underline = false, className, style },
+  { tip, children, underline = false, className, style, disabled = false },
   ref,
 ) {
   return (
-    <Tip content={tip}>
+    <Tip content={tip} disabled={disabled}>
       <span
         ref={ref}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: focusable so keyboard users reach the tooltip; it is not an action
-        tabIndex={0}
-        role="note"
+        tabIndex={disabled ? undefined : 0}
+        role={disabled ? undefined : "note"}
         className={className ?? `inline-flex rounded ${underline ? "underline decoration-dotted" : ""}`}
         style={style}
       >

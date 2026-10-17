@@ -27,7 +27,7 @@ import { Chip, ExternalLink, PageHeader, SectionHeading } from "../components/ui
 import { Modal } from "../components/ui/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
-import { displayAgent, relativeTime, truncate, humanizeError, errorRequestId } from "../lib/format";
+import { absoluteTime, displayAgent, relativeTime, truncate, humanizeError, errorRequestId } from "../lib/format";
 import { useAbortableEffect, useKeyboard } from "../lib/hooks";
 import { CopyButton } from "../components/CopyButton";
 import { IconButton } from "../components/IconButton";
@@ -758,7 +758,7 @@ export function Conversations() {
                       )}
                       <time dateTime={m.ts} className="text-xs text-text-muted ml-auto tabular">
                         {relativeTime(m.ts)}
-                        <span className="sr-only"> ({m.ts})</span>
+                        <span className="sr-only"> ({absoluteTime(m.ts)})</span>
                       </time>
                     </div>
                     {m.reasoning ? <ReasoningDisclosure text={m.reasoning} /> : null}

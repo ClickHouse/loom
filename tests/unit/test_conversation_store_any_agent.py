@@ -214,3 +214,14 @@ async def test_a_shared_turns_first_copy_is_the_same_row_on_every_read() -> None
     await conversation_repo.search_substring("o", ["ns"], "*", "deploy", limit=5, ch=ch)
     inner = ch.calls[-1][0].partition("LIMIT 1 BY")[0]
     assert "ORDER BY ts ASC, agent ASC" in inner
+
+
+@pytest.mark.asyncio
+async def test_the_thread_list_counts_one_agents_rows_as_its_opened_thread_does() -> None:
+    # conversation.get counts a named agent's rows as stored (count_thread_msgs); the list
+    # counts them the same way, so a raced double append reads N+1 in both.
+    ch = StubCH([[{"thread_id": "t-1", "msg_count": 5}], [{"thread_id": "t-1", "n": 5}]])
+    await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, agent="bot", ch=ch)
+    counted = ch.calls[1][0]
+    assert "count() AS n" in counted
+    assert "uniqExact" not in counted

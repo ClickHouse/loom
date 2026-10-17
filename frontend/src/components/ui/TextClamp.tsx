@@ -90,9 +90,11 @@ export function TextClamp({ text, lines = 1, max, reach, mono = false, className
       </>
     );
   }
-  if (reach === "tooltip" && clamped) {
+  if (reach === "tooltip") {
+    // One element whether or not the text is cut off, so a resize that changes it keeps
+    // the focus; the tip and the tab stop come with the cut.
     return (
-      <TipTarget ref={setEl} tip={text} className={`${cls} rounded-sm`} style={clampStyle(lines)}>
+      <TipTarget ref={setEl} tip={text} disabled={!clamped} className={`${cls} rounded-sm`} style={clampStyle(lines)}>
         {shown}
       </TipTarget>
     );

@@ -15,14 +15,14 @@ export interface TipProps {
   content: ReactNode;
   children: ReactNode;
   side?: "top" | "right" | "bottom" | "left";
-  /** Render the child alone (no tooltip) — for callers that toggle it. */
+  /** Keep the tooltip shut, for callers that toggle it. The child stays mounted (and keeps
+   *  its focus) either way. */
   disabled?: boolean;
 }
 
 export function Tip({ content, children, side = "top", disabled = false }: TipProps) {
-  if (disabled) return <>{children}</>;
   return (
-    <Tooltip>
+    <Tooltip disabled={disabled}>
       <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
       <Tooltip.Content side={side} collisionPadding={8} maxWidth="320px" showArrow>
         {content}

@@ -514,12 +514,6 @@ async def handle_conversation_search(
     if query_vec is None:
         return await _search_substring_fallback(input, namespaces, skipped)
 
-    # Across agents the shared-turn copies are collapsed after the vector read (its ORDER
-    # BY must stay the bare distance for the vector index), so each namespace is asked for
-    # more rows than the page holds.
-    spans_agents = input.agent in ("*", "-")
-    per_namespace = input.top_k * 2 if spans_agents else input.top_k
-
     async def _search_one(ns: str) -> tuple[str, list[ConversationHit]]:
         return ns, await vector_search(
             ConversationVectorQuery(
@@ -528,7 +522,7 @@ async def handle_conversation_search(
                 agent=input.agent,
                 embedding_model=embedder.model_name,
                 query_vec=query_vec,
-                top_k=per_namespace,
+                top_k=input.top_k,
                 thread_id=input.thread_id or None,
                 role=input.role or None,
                 run_id=input.run_id,
@@ -558,7 +552,7 @@ async def handle_conversation_search(
             )
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return ConversationSearchOutput(
-        hits=_one_per_turn([h for _, h in scored])[: input.top_k], namespaces_skipped=skipped
+        hits=[h for _, h in scored[: input.top_k]], namespaces_skipped=skipped
     )
 
 
@@ -593,21 +587,6 @@ async def _search_substring_fallback(
         for r in rows
     ]
     return ConversationSearchOutput(hits=hits, namespaces_skipped=skipped)
-
-
-def _one_per_turn(hits: list[_ConversationHit]) -> list[_ConversationHit]:
-    """A turn two agents both logged once, as a thread read across agents shows it: the
-    first (best-ranked) copy of each namespace, thread, id and text. For the vector path,
-    whose embedding rows carry the excerpt only; the substring path collapses in SQL on
-    the full text, before its limit."""
-    seen: set[tuple[str, str, str, str]] = set()
-    kept: list[_ConversationHit] = []
-    for h in hits:
-        turn = (h.namespace, h.thread_id, h.msg_id, h.content_excerpt)
-        if turn not in seen:
-            seen.add(turn)
-            kept.append(h)
-    return kept
 
 
 def _safe_load_json(s: Any) -> dict[str, Any]:

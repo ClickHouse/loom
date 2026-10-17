@@ -1,5 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { installApi } from "./fixtures";
+
+// Radix drops a closed tooltip's dismiss layer a frame after it hides; an Escape that
+// lands sooner (no person types that fast) still reaches the tooltip, not the sheet.
+async function nextFrame(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r))));
+}
 
 // The task detail at every width. Under 1280 px it is a modal sheet: a dialog that takes
 // the focus, keeps it, closes on Escape (clearing ?task=) and hands the focus back to the
@@ -31,6 +37,7 @@ for (const width of [1000, 375]) {
     await expect(page.getByRole("tooltip")).toBeHidden();
     await expect(dialog).toBeVisible();
 
+    await nextFrame(page);
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await expect(page).not.toHaveURL(/[?&]task=/);
@@ -53,6 +60,7 @@ test("at 1400 px the task opens beside the list and Escape closes it", async ({ 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("tooltip")).toBeHidden();
   await expect(panel).toBeVisible();
+  await nextFrame(page);
   await page.keyboard.press("Escape");
   await expect(panel).toBeHidden();
   await expect(page).not.toHaveURL(/[?&]task=/);

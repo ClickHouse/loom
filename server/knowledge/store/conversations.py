@@ -634,9 +634,10 @@ async def recent_threads(
     # The count an opened thread shows (each thread whole, one per turn however many agents
     # logged it), for the page's threads only: an exact distinct count over the whole
     # window would hold every turn's key in memory to rank threads it then drops.
+    per_thread = "count()" if agent else f"uniqExact({TURN})"
     counted = await ch.query_all(
         f"""
-        SELECT thread_id, uniqExact({TURN}) AS n
+        SELECT thread_id, {per_thread} AS n
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
