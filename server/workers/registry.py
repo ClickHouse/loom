@@ -228,14 +228,6 @@ _WORKERS: tuple[_Worker, ...] = (
         "INTERVAL_SECONDS",
         interval_in_module=True,
     ),
-    # Always on: re-runs deferred conflict judges a dead replica left owed.
-    _Worker(
-        "conflict_sweep",
-        "server.memory.workers.conflict_sweep",
-        None,
-        "INTERVAL_SECONDS",
-        interval_in_module=True,
-    ),
     _Worker(
         "orphan_vector_reconcile",
         "server.memory.workers.orphan_vector_reconcile",

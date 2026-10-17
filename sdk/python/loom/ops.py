@@ -10071,8 +10071,6 @@ class BulkSetResult(TypedDict, total=False):
     peers: NotRequired[list["MemorySetPeer"]]
     next: NotRequired[str]
     pinned_blocker_id: NotRequired[str]
-    superseded_by: NotRequired[str]
-    retired: NotRequired[list[str]]
 
 
 class MemorySetPeer(TypedDict, total=False):
@@ -11514,7 +11512,6 @@ class MemorySetInput(TypedDict, total=False):
     char_limit: NotRequired[Optional[int]]
     sensitivity: NotRequired[Literal["", "low", "medium", "high"]]
     dry_run: NotRequired[bool]
-    await_verdict: NotRequired[bool]
     proposed: NotRequired[bool]
 
 
@@ -11548,7 +11545,6 @@ class MemorySetBody(TypedDict, total=False):
     char_limit: NotRequired[Optional[int]]
     sensitivity: NotRequired[Literal["", "low", "medium", "high"]]
     dry_run: NotRequired[bool]
-    await_verdict: NotRequired[bool]
     proposed: NotRequired[bool]
 
 
@@ -11567,7 +11563,6 @@ class MemorySetOutput(TypedDict, total=False):
     conflict_verdict: NotRequired[str]
     peers: NotRequired[list["MemorySetPeer"]]
     next: NotRequired[str]
-    verdict_at: NotRequired[str]
     noop: NotRequired[bool]
     dry_run: NotRequired[bool]
     advisories: NotRequired[list[str]]

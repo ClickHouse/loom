@@ -33,7 +33,6 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
-from server.memory.app import conflict_deferred as _cd
 from server.memory.app.drops import record_drop
 from server.memory.app.entity_projections import project_stated_relations
 from server.memory.app.high_fence import fence_high
@@ -368,7 +367,6 @@ async def _set_conflict_verdict(
     #   merge    → canonical-form match; return peer's id, no INSERT
     #   conflict → close-but-different peers; insert + flag both conflicted
     #   rejected → close-but-different pinned peer; raise 409
-    #   pending  → the judge is deferred: insert active, settle after
     from server.memory.app.conflicts import check_on_commit
 
     with traced("conflicts.check_on_commit", memory_type=input.memory_type):
@@ -383,7 +381,6 @@ async def _set_conflict_verdict(
             new_embedding=embedding,
             new_run_id=input.run_id,
             new_valid_at=getattr(input, "valid_at", None),
-            defer_judge=_cd.wanted(input),
             **_cfg.check_kwargs(),
         )
     # The rows the verdict was reached against ride the response so the caller can act on
@@ -600,9 +597,9 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     """Phase 12 of memory.set: the version row and its embedding row, then the peer links.
 
     Builds the full-column embedding row, inserts both rows concurrently,
-    schedules the deferred settle, then flags `conflict` peers or applies a
-    `refines` supersession — after the insert, so the new id exists. Returns the
-    verdict that landed: `clear` when no peer was left live to flag.
+    then flags `conflict` peers or applies a `refines` supersession — after the
+    insert, so the new id exists. Returns the verdict that landed: `clear` when no
+    peer was left live to flag.
     """
     from server.memory.app.conflicts import mark_peers_conflicted
     from server.observability.otel import traced
@@ -653,8 +650,6 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         # defaulted to `active` while loom.memory holds a `duplicate` verdict, the search
         # pool would keep serving the duplicate.
         status=str(memory_row.get("status") or "active"),
-        # The pending mark while a deferred judge is owed: every replica reads it.
-        conflict_checked_at=_cd.checked_at_for(conflict_result),
         content_sha256=str(memory_row.get("content_sha256") or ""),
         # The memory row's version, not one drawn now: a newer write's retire or fence
         # outranks this vector even when its embedding arrives late.
@@ -687,15 +682,6 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         await asyncio.gather(_insert_memory(), _insert_embedding())
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     await memory_repo.index_late_rows([embedding_row], ch=ch)
-    _cd.schedule_settle(
-        input,
-        conflict_result,
-        memory_id=memory_id,
-        version=int(memory_row["version"]),
-        created_at=embedding_row["created_at"],
-        content_sha256=embedding_row["content_sha256"],
-        cfg=_cfg,
-    )
 
     # Post-insert (so the new row's UUID exists for the cross-link): flag
     # both the new row and every close-but-different peer as conflicted.
@@ -711,8 +697,8 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
             # nothing was flagged.
             conflict_result = replace(conflict_result, verdict="clear", peers=[])
     elif conflict_result.verdict == "refines" and conflict_result.refined_peers:
-        # A judged elaboration supersedes the rows it refines and links to them; nothing is
-        # flagged, nothing is deleted.
+        # A templated substitution supersedes the rows it replaces and links to them;
+        # nothing is flagged, nothing is deleted.
         from server.memory.app.conflicts import apply_refines
 
         with traced("conflicts.apply_refines", peers=len(conflict_result.refined_peers)):
@@ -723,7 +709,6 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
                 new_memory_key=input.memory_key,
                 refined_peers=conflict_result.refined_peers,
                 ch=ch,
-                relation=conflict_result.refine_relation,
             )
     return conflict_result
 

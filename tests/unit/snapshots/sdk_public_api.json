@@ -2382,8 +2382,7 @@
           "valid_at",
           "valid_to",
           "char_limit",
-          "dry_run",
-          "await_verdict"
+          "dry_run"
         ],
         "promote": [
           "memory_key",
@@ -2516,8 +2515,7 @@
           "valid_at",
           "valid_to",
           "char_limit",
-          "dry_run",
-          "await_verdict"
+          "dry_run"
         ],
         "set_from_messages": [
           "messages",

@@ -48,13 +48,13 @@ async def test_the_event_names_rows_and_reason_never_value_text(emitted) -> None
         org="o",
         namespace="ns",
         retired=[_retired("m1", label="contradiction", superseded_by_key="user_city")],
-        reason=ar.SAME_KEY_JUDGE,
+        reason=ar.NEWEST_WINS_CONTRADICTION,
     )
     (ev,) = emitted
     assert (ev["event_type"], ev["org"], ev["namespace"]) == ("memory.auto_supersede", "o", "ns")
     assert ev["actor"] == "process:loom"
     assert ev["subject"] == {
-        "reason": "same_key_judge",
+        "reason": "newest_wins_contradiction",
         "count": 1,
         "retired": [
             {
@@ -391,61 +391,6 @@ async def test_the_real_store_reports_nothing_when_its_insert_fails(monkeypatch)
     assert tracker.retired(victims) == []
 
 
-async def test_same_key_judge_records_new_rows_and_peers_that_retired(monkeypatch, emitted) -> None:
-    from server.memory.app import bulk_set, key_supersession
-    from server.memory.app.bulk_rows import _BulkWriteState
-    from server.memory.app.bulk_verdicts import BulkVerdictPlan
-    from server.memory.app.key_supersession import JudgedRetirements, _victim
-
-    async def no_same_key(**kw):
-        return 0
-
-    async def retire(org, victims, *, ch):
-        # The locked peer stays live.
-        return [v for v in victims if v["memory_id"] != "locked"]
-
-    monkeypatch.setattr(key_supersession, "supersede_same_key_rows", no_same_key)
-    monkeypatch.setattr(key_supersession, "retire_judged_peers", retire)
-    state = _BulkWriteState()
-    state.memory_rows = [
-        {**_live("n1"), "status": "active"},
-        {**_live("n2", "user_job"), "status": "superseded", "superseded_by": "p9"},
-    ]
-    _index(state)
-
-    class Input:
-        org, namespace, detect_updates = "o", "ns", False
-
-    judged = JudgedRetirements(
-        new_rows=[("n2", "p9")],
-        peers=[
-            {**_victim(_live("o1"), "n1"), "label": "elaboration"},
-            {**_victim(_live("locked"), "n1"), "label": "contradiction"},
-        ],
-        new_row_labels={"n2": "contradiction"},
-    )
-    await bulk_set._bulk_post_insert_links(None, Input(), state, judged, BulkVerdictPlan())
-    (ev,) = emitted
-    assert ev["subject"]["reason"] == "same_key_judge"
-    by_id = {e["memory_id"]: e for e in ev["subject"]["retired"]}
-    assert set(by_id) == {"n2", "o1"}
-    assert by_id["n2"]["superseded_by"] == "p9" and by_id["n2"]["label"] == "contradiction"
-    assert by_id["o1"]["superseded_by"] == "n1" and by_id["o1"]["label"] == "elaboration"
-    assert "value" not in by_id["o1"]
-
-
-async def test_the_judge_labels_each_retirement() -> None:
-    from server.memory.app.key_supersession import judged_victims
-
-    def row(mid: str, day: int) -> dict:
-        return {**_live(mid), "status": "active", "updated_at": datetime(2026, 5, day)}
-
-    out = judged_victims([row("n1", 20)], {"n1": [row("o1", 10)]}, {("n1", "o1"): "elaboration"})
-    assert [(v["memory_id"], v["label"]) for v in out.peers] == [("o1", "elaboration")]
-    out = judged_victims([row("n1", 10)], {"n1": [row("p1", 20)]}, {("n1", "p1"): "contradiction"})
-    assert out.new_rows == [("n1", "p1")] and out.new_row_labels == {"n1": "contradiction"}
-
-
 class _Input:
     org, namespace, agent = "o", "ns", "a"
 
@@ -535,14 +480,14 @@ async def test_a_bulk_writes_one_record_for_all_its_refines_verdicts(monkeypatch
 
     async def refines(**kw):
         assert kw["record_into"] is not None
-        kw["record_into"].setdefault("refines", []).append(
+        kw["record_into"].setdefault("newest_wins_contradiction", []).append(
             {**_live(f"old-{kw['new_memory_id']}"), "superseded_by": kw["new_memory_id"]}
         )
         return 1
 
     monkeypatch.setattr(conflicts, "apply_refines", refines)
     plan = BulkVerdictPlan()
-    plan.refines = [(f"n{i}", f"k{i}", [], "refines", "v") for i in range(3)]
+    plan.refines = [(f"n{i}", f"k{i}", [], "v") for i in range(3)]
     await bulk_set._bulk_settle_verdicts(None, _Input(), _BulkWriteState(), plan)
     (ev,) = emitted
     assert _ids(ev) == ["old-n0", "old-n1", "old-n2"]
@@ -670,7 +615,7 @@ def _peer(mid: str, key: str = "user_city") -> Any:
     )
 
 
-async def _refines(monkeypatch, relation: str, **kw: Any) -> None:
+async def _refines(monkeypatch, **kw: Any) -> None:
     from server.memory import store
     from server.memory.app.conflicts import apply_refines
 
@@ -686,7 +631,6 @@ async def _refines(monkeypatch, relation: str, **kw: Any) -> None:
         new_memory_key="user_city",
         refined_peers=[_peer("o1"), _peer("locked"), _peer("retired")],
         ch=object(),
-        relation=relation,
         new_value="lives in a city by the sea",
         **kw,
     )
@@ -695,20 +639,14 @@ async def _refines(monkeypatch, relation: str, **kw: Any) -> None:
 _PEERS = {"o1": "active", "locked": "active", "retired": "superseded"}
 
 
-@pytest.mark.parametrize(
-    ("relation", "reason"),
-    [("refines", "refines"), ("supersedes", "newest_wins_contradiction")],
-)
-async def test_refines_records_the_victims_it_superseded(
-    monkeypatch, emitted, relation, reason
-) -> None:
+async def test_refines_records_the_victims_it_superseded(monkeypatch, emitted) -> None:
     wrote = _fake_supersede(monkeypatch, _PEERS)
     _lock(monkeypatch, "locked")
-    await _refines(monkeypatch, relation)
+    await _refines(monkeypatch)
     assert wrote == ["o1"]  # an already-retired peer is not re-pointed
     await _drain()
     (ev,) = emitted
-    assert ev["subject"]["reason"] == reason and _ids(ev) == ["o1"]
+    assert ev["subject"]["reason"] == "newest_wins_contradiction" and _ids(ev) == ["o1"]
     assert ev["subject"]["retired"][0]["superseded_by_key"] == "user_city"
 
 
@@ -716,10 +654,10 @@ async def test_refines_into_a_callers_record_emits_nothing_itself(monkeypatch, e
     _fake_supersede(monkeypatch, _PEERS)
     _lock(monkeypatch, "locked")
     into: dict[str, list[dict]] = {}
-    await _refines(monkeypatch, "refines", record_into=into)
+    await _refines(monkeypatch, record_into=into)
     await _drain()
     assert emitted == []
-    assert [e["memory_id"] for e in into["refines"]] == ["o1"]
+    assert [e["memory_id"] for e in into["newest_wins_contradiction"]] == ["o1"]
 
 
 @pytest.mark.parametrize(("fail", "recorded"), [("mirror", ["o1"]), ("insert", [])])
@@ -728,7 +666,7 @@ async def test_a_failed_refines_write_records_what_reached_the_table(
 ) -> None:
     _fake_supersede(monkeypatch, _PEERS, fail=fail)
     _lock(monkeypatch, "locked")
-    await _refines(monkeypatch, "refines")
+    await _refines(monkeypatch)
     await _drain()
     assert [m for ev in emitted for m in _ids(ev)] == recorded
 
@@ -931,23 +869,6 @@ async def test_an_unconfirmed_retirement_is_left_for_the_reconcile(monkeypatch) 
     assert Failing.reads == 2, "the head read is tried twice"
 
 
-def test_a_result_names_only_the_retirements_the_re_read_confirmed() -> None:
-    from server.memory.api.models_bulk import _BulkSetResult
-    from server.memory.app.bulk_rows import _BulkWriteState
-    from server.memory.app.bulk_set import _name_retired_rows
-
-    state = _BulkWriteState()
-    state.memory_rows = [{"memory_id": "n1", "memory_key": "k"}]
-    _index(state)
-    state.results = [_BulkSetResult(memory_key="k", version=5, memory_id="n1")]
-    retired = [
-        {"memory_id": "o1", "superseded_by": "n1"},
-        {"memory_id": "o2", "superseded_by": "n1", "unconfirmed": True},
-    ]
-    _name_retired_rows(state, retired)
-    assert state.results[0].retired == ["o1"]
-
-
 async def test_unconfirmed_rows_are_queued_one_failure_per_namespace(monkeypatch) -> None:
     from server.memory.app import projection_failures as pf
 
@@ -1052,62 +973,6 @@ async def test_an_unconfirmed_value_update_is_followed_but_not_counted(
     assert queued == ["o1"]
     (ev,) = emitted
     assert ev["subject"]["retired"][0]["unconfirmed"] == "true"
-
-
-def test_no_judged_retirement_keeps_a_conflict_mark() -> None:
-    # A mark would write `conflicted` over the retirement, confirmed or not; the result
-    # names only the confirmed one, and the follow takes both.
-    from server.memory.api.models_bulk import _BulkSetResult
-    from server.memory.api.models_common import MemorySetPeer
-    from server.memory.app.bulk_rows import _BulkWriteState
-    from server.memory.app.bulk_set import _apply_judged_retirements
-    from server.memory.app.bulk_verdicts import BulkVerdictPlan
-
-    state = _BulkWriteState()
-    state.memory_rows = [{"memory_id": "n1", "memory_key": "user_city"}]
-    _index(state)
-    peers = [MemorySetPeer(memory_id=p, memory_key="user_city") for p in ("p", "q", "r")]
-    state.results = [
-        _BulkSetResult(memory_key="user_city", version=1, conflict_verdict="conflict", peers=peers)
-    ]
-    plan = BulkVerdictPlan()
-    plan.conflicted = ["user_city"]
-    plan.conflict_marks = [("n1", ["p", "q", "r"])]
-    retired = [
-        {"memory_id": "p", "superseded_by": "n1"},
-        {"memory_id": "q", "superseded_by": "n1", "unconfirmed": True},
-    ]
-    _apply_judged_retirements(state, plan, retired)
-    (res,) = state.results
-    assert plan.conflict_marks == [("n1", ["r"])]
-    assert [p.memory_id for p in res.peers] == ["r"] and res.retired == ["p"]
-    assert state.judged_follow_pairs == [("p", "n1"), ("q", "n1")]
-
-
-def test_a_key_whose_only_peer_may_have_retired_answers_clear() -> None:
-    # Its result claims no retirement the re-read could not see, and keeps no mark.
-    from server.memory.api.models_bulk import _BulkSetResult
-    from server.memory.api.models_common import MemorySetPeer
-    from server.memory.app.bulk_rows import _BulkWriteState
-    from server.memory.app.bulk_set import _apply_judged_retirements
-    from server.memory.app.bulk_verdicts import BulkVerdictPlan
-
-    state = _BulkWriteState()
-    state.memory_rows = [{"memory_id": "n1", "memory_key": "user_city"}]
-    _index(state)
-    peer = MemorySetPeer(memory_id="q", memory_key="user_city")
-    state.results = [
-        _BulkSetResult(memory_key="user_city", version=1, conflict_verdict="conflict", peers=[peer])
-    ]
-    plan = BulkVerdictPlan()
-    plan.conflicted = ["user_city"]
-    plan.conflict_marks = [("n1", ["q"])]
-    _apply_judged_retirements(
-        state, plan, [{"memory_id": "q", "superseded_by": "n1", "unconfirmed": True}]
-    )
-    (res,) = state.results
-    assert (res.conflict_verdict, res.peers, res.retired) == ("clear", [], [])
-    assert plan.conflict_marks == [] and plan.conflicted == []
 
 
 async def _marks(

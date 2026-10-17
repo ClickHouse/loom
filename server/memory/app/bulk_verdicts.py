@@ -28,8 +28,8 @@ class BulkVerdictPlan:
         self.duplicates: list[str] = []
         self.conflicted: list[str] = []
         self.conflict_marks: list[tuple[str, list[str]]] = []
-        # (new memory_id, new key, refined peers) per judged elaboration.
-        self.refines: list[tuple[str, str, list[Any], str, str]] = []
+        # (new memory_id, new key, replaced peers, new value) per templated substitution.
+        self.refines: list[tuple[str, str, list[Any], str]] = []
         self.refined: list[str] = []
         self.reinforce_ids: list[str] = []
         # id() of a merged row -> the stored row it merged into. By row, not key: a key
@@ -37,12 +37,10 @@ class BulkVerdictPlan:
         self.merged_into: dict[int, str] = {}
         self.unchecked: int = 0
 
-    def add_refine(self, row: dict[str, Any], key: str, refined: list[Any], relation: str) -> None:
+    def add_refine(self, row: dict[str, Any], key: str, refined: list[Any]) -> None:
         """A refines verdict with the new row's text, so `apply_refines` can
         keep a peer the new statement would truncate."""
-        self.refines.append(
-            (str(row["memory_id"]), key, refined, relation, str(row.get("value") or ""))
-        )
+        self.refines.append((str(row["memory_id"]), key, refined, str(row.get("value") or "")))
 
 
 # The verdicts that keep an entry's row out of the insert.
@@ -128,9 +126,8 @@ def _fold_verdict(
     elif verdict == "refines":
         refined = list(getattr(v, "refined_peers", None) or [])
         if refined:
-            relation = str(getattr(v, "refine_relation", "refines") or "refines")
             _keep_first_event_date(row, embedding_rows, emb_idx_of, idx, refined)
-            plan.add_refine(row, key, refined, relation)
+            plan.add_refine(row, key, refined)
             plan.refined.append(key)
     elif verdict == "conflict":
         peers = [str(p.memory_id) for p in (getattr(v, "peers", None) or [])]

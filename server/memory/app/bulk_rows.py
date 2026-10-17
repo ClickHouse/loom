@@ -123,12 +123,6 @@ class _BulkWriteState:
     # Key -> the entry that built `batch_rows[key]`. Only an entry equal to it is a
     # restatement: one that changes a label (sensitivity, pin, tags, dates) builds its own row.
     batch_entries: dict[str, Any] = field(default_factory=dict)
-    # (retired id, the row it retired behind) per same-key retirement the judge decided
-    # (`key_supersession.judge_same_key_rows`), for the triple plane's follow step.
-    judged_follow_pairs: list[tuple[str, str]] = field(default_factory=list)
-    # Keys whose row FINAL keeps landed superseded by the judge: none of their results
-    # projects (results carry no status).
-    judged_retired_keys: set[str] = field(default_factory=set)
     memory_rows: list[dict[str, Any]] = field(default_factory=list)
     embedding_rows: list[dict[str, Any]] = field(default_factory=list)
     # Each landing row's id -> its key, built once the verdicts fix which rows land.

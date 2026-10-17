@@ -50,6 +50,8 @@
 "setting:audit_checkpoint_verify_windows" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:audit_verifier_enabled" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:audit_verifier_interval_seconds" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
+"setting:bulk_conflict_check_concurrency" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
+"setting:bulk_conflict_check_max_entries" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_ask_llm_model" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_backport_gaps_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_bisect_history_days" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
@@ -161,7 +163,6 @@
 "setting:memory_ask_when_evidence_top_k" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_bulk_contextualize_concurrency" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_bulk_contextualize_max_entries" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_conflict_judge_max_peers" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_expiry_demote_factor" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_expiry_demote_floor" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_expiry_sweep_batch_size" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }

@@ -18,7 +18,6 @@ from server.core.datetimes import parse_iso_dt
 from server.embedding import get_embedder
 from server.memory.api.models_bulk import (
     REFUSED,
-    SUPERSEDED,
     MemoryBulkSetInput,
     MemoryExtractionStatusInput,
     MemoryExtractionStatusOutput,
@@ -245,9 +244,8 @@ async def _set_record_from_messages(
             memory_keys=[r.memory_key for r in written],
             payload={"evidence_ids": evidence_ids},
         )
-    # The typed record follows the row: none for an unchanged entry (version 0), nor
-    # one that landed superseded behind a later row.
-    if any(r.version > 0 and r.conflict_verdict != SUPERSEDED for r in written):
+    # The typed record follows the row: none for an unchanged entry (version 0).
+    if any(r.version > 0 for r in written):
         try:
             projected = await _write_inline_record_projection(
                 input,

@@ -272,34 +272,6 @@ def test_same_key_supersession_reads_only_the_writers_rows() -> None:
     assert _scoped_to_u(ch)
 
 
-def test_the_same_key_judge_reads_only_the_writers_rows(monkeypatch) -> None:
-    from datetime import datetime
-
-    from server.memory.app import conflicts
-    from server.memory.app.key_supersession import judge_same_key_rows
-    from server.settings import settings
-
-    async def policy(org, namespace, ch=None):
-        return "auto_reinforce"
-
-    monkeypatch.setattr(settings, "memory_conflict_judge", True)
-    monkeypatch.setattr(conflicts, "namespace_conflict_policy", policy)
-    ch = _SqlCH()
-    rows = [{"memory_key": "k", "memory_id": "m", "user_id": "U", "status": "active"}]
-    _run_as(
-        _pinned("U"),
-        lambda: judge_same_key_rows(
-            org="o",
-            namespace="n",
-            memory_rows=rows,
-            embedding_rows=[],
-            ch=ch,
-            now=datetime(2026, 1, 1),
-        ),
-    )
-    assert _scoped_to_u(ch)
-
-
 def test_value_update_peers_are_the_writers_rows() -> None:
     from server.memory.app.value_updates import _peers, _peers_many
 

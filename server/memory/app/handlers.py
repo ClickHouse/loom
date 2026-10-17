@@ -40,7 +40,6 @@ from server.memory.api.models_crud import (
     MemoryUnpinInput,
     MemoryUnpinOutput,
 )
-from server.memory.app import conflict_deferred as _cd
 from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
@@ -313,6 +312,27 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
     return row if row is not None and same_user(row, identity) else None
 
 
+# What `memory.get` reports for a row from its lifecycle status.
+_STATUS_VERDICT = {
+    "active": "clear",
+    "conflicted": "conflict",
+    "duplicate": "duplicate",
+    "superseded": "superseded",
+    "rejected": "rejected",
+    "tombstoned": "tombstoned",
+}
+
+
+def _verdict_from_status(status: Any, duplicate_of: Any = "") -> str:
+    """The verdict a row shows on read, from its lifecycle status (`active` →
+    `clear`, `conflicted` → `conflict`, an active row pointing at its original →
+    `duplicate`, …)."""
+    s = str(status or "")
+    if s == "active" and str(duplicate_of or ""):
+        return "duplicate"
+    return _STATUS_VERDICT.get(s, s)
+
+
 async def handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     # Exact-key reads are still reads: apply the same token read-scope ceiling
     # as search before constructing the point-lookup identity. Without this,
@@ -466,8 +486,8 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     async def code() -> list[CodeLink]:
         return await links_of(input.org, head_of(row)) if wants_code else []
 
-    successors, links, judge_pending = await asyncio.gather(
-        shown_successors(input.org, input.namespace, [row]), code(), _cd.row_pending(row)
+    successors, links = await asyncio.gather(
+        shown_successors(input.org, input.namespace, [row]), code()
     )
     return MemoryGetOutput(
         found=True,
@@ -497,9 +517,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         status=getattr(row, "status", None),
         superseded_by=successors.get(str(row.memory_id), ""),
         duplicate_of=duplicate_of,
-        conflict_verdict=_cd.verdict_from_row(
-            str(row.memory_id), getattr(row, "status", None), duplicate_of, pending=judge_pending
-        ),
+        conflict_verdict=_verdict_from_status(getattr(row, "status", None), duplicate_of),
         content_sha256=sha,
         tags=list(getattr(row, "tags", None) or []),
         entities=public_entities(getattr(row, "entities", None)),

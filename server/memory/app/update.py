@@ -26,7 +26,6 @@ from server.memory.api.models_crud import (
     MemoryUpdateInput,
     MemoryUpdateOutput,
 )
-from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
 from server.memory.app.entity_projections import project_revised_edges, project_stated_relations
 from server.memory.app.high_fence import fence_high
@@ -57,23 +56,6 @@ async def _embed_value_and_key(
             return vectors[0], vectors[1]
     value_vec, key_vec = await asyncio.gather(embedder.embed(embed_text), embedder.embed(key_text))
     return value_vec, key_vec
-
-
-def _settle_identity(org: str, existing: Any, run_id: str) -> Any:
-    """What a deferred judge needs of a revised row: its identity, type and the revision's
-    run."""
-    from types import SimpleNamespace
-
-    return SimpleNamespace(
-        org=org,
-        namespace=existing.namespace,
-        agent=existing.agent,
-        user_id=existing.user_id,
-        session_id=existing.session_id,
-        memory_key=existing.memory_key,
-        memory_type=existing.memory_type,
-        run_id=run_id,
-    )
 
 
 def _pinned_conflict(op: str, existing: Any, conflict_result: Any) -> HTTPException:
@@ -274,7 +256,6 @@ def _update_embedding_row(
     key_embedding: list[float],
     *,
     has_key: bool,
-    conflict_checked_at: Any = None,
 ) -> dict[str, Any]:
     """The loom.memory_embeddings row mirroring an update's version row `memory_row`.
 
@@ -333,8 +314,6 @@ def _update_embedding_row(
             )
             in ("human", "process")
         ),
-        # The pending mark while a deferred judge is owed (`conflict_deferred.checked_at_for`).
-        conflict_checked_at=conflict_checked_at,
         content_sha256=str(memory_row["content_sha256"] or ""),
     )
 
@@ -467,9 +446,6 @@ async def _update_conflict_check(
             memory_key=existing.memory_key,
             new_value=serialized_value,
             new_embedding=embedding,
-            # The LLM judge settles after the write, as memory.set's does; deterministic
-            # tiers stay inline.
-            defer_judge=_cd.wanted(input),
             **(await cfg_task).check_kwargs(),
         )
     if conflict_result.verdict == "rejected":
@@ -496,7 +472,7 @@ def _status_columns(conflict_result: Any) -> tuple[str, dict[str, Any]]:
             duplicate_of_id = conflict_result.existing_memory_id or ""
         if duplicate_of_id:
             status_cols = {"status": "duplicate", "duplicate_of": duplicate_of_id}
-        elif conflict_result.verdict in ("clear", "refines", "conflict", _cd.PENDING):
+        elif conflict_result.verdict in ("clear", "refines", "conflict"):
             # `conflict` is stamped after the write by mark_peers_conflicted,
             # exactly as memory.set does; start from a clean row.
             status_cols = {"status": "active", "duplicate_of": "", "conflict_with": []}
@@ -514,8 +490,8 @@ def _revision_run_id(input: Any, existing: MemoryRow) -> str:
 
 async def _update_post_write(input: Any, existing: MemoryRow, conflict_result: Any, ch: Any) -> Any:
     """Post-write, as memory.set: a conflict flags both sides (the new version
-    exists, so the cross-link resolves); a judged elaboration supersedes the
-    rows it refines and links to them. Returns the verdict that landed: `clear`
+    exists, so the cross-link resolves); a templated substitution supersedes the
+    rows it replaces and links to them. Returns the verdict that landed: `clear`
     when the mark flagged nothing (no peer, or the new row, was left live)."""
     from server.observability.otel import traced
 
@@ -547,7 +523,6 @@ async def _update_post_write(input: Any, existing: MemoryRow, conflict_result: A
                 new_memory_key=existing.memory_key,
                 refined_peers=conflict_result.refined_peers,
                 ch=ch,
-                relation=conflict_result.refine_relation,
             )
     return conflict_result
 
@@ -681,7 +656,6 @@ async def _write_revision(
                 embedding,
                 key_embedding,
                 has_key=bool(key_text),
-                conflict_checked_at=_cd.checked_at_for(conflict_result),
             )
         ]
         if embedder is not None
@@ -705,16 +679,6 @@ async def _write_revision(
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     await memory_repo.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
-    if emb_rows:  # a deferred judge needs the vector
-        _cd.schedule_settle(
-            _settle_identity(input.org, existing, revision_run_id),
-            conflict_result,
-            memory_id=str(existing.memory_id),
-            version=new_version,
-            created_at=emb_rows[0]["created_at"],
-            content_sha256=emb_rows[0]["content_sha256"],
-            cfg=cfg,
-        )
 
     conflict_result = await _update_post_write(input, existing, conflict_result, ch)
 

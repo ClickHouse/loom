@@ -778,7 +778,6 @@ async def _verdict(rows: list[dict[str, Any]], value: str) -> Any:
         resolved_duplicate_threshold=0.9,
         resolved_policy="flag",
         allowlisted_keys=set(),
-        defer_judge=True,
     )
 
 

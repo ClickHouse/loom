@@ -236,21 +236,14 @@ async def test_merge_and_duplicate_are_written_as_a_duplicate_of_the_other_row(w
 
 
 @pytest.mark.asyncio
-async def test_refines_supersedes_the_refined_peers_with_the_relation(wired) -> None:
-    ch, calls = wired(
-        ConflictResult(
-            verdict="refines",
-            peers=[_peer()],
-            refined_peers=[_peer()],
-            refine_relation="supersedes",
-        )
-    )
+async def test_refines_supersedes_the_refined_peers(wired) -> None:
+    ch, calls = wired(ConflictResult(verdict="refines", peers=[_peer()], refined_peers=[_peer()]))
     out = await update_mod.handle_memory_update(_input())
     assert out.updated and out.conflict_verdict == "refines"
     assert ch.inserts[0][1][0]["status"] == "active"
     (kw,) = calls.refined
     assert kw["new_memory_id"] == _ID_A and kw["new_memory_key"] == "deploy_day"
-    assert kw["relation"] == "supersedes" and kw["namespace"] == "personal"
+    assert kw["namespace"] == "personal"
     assert not calls.marked
 
 

@@ -352,11 +352,6 @@ class MemorySetInput(_Identity):
     # For "would this be a new fact, a restatement or a contradiction?" before
     # committing to a key.
     dry_run: bool = False
-    # The conflict judge runs AFTER the row is written and the
-    # response says `conflict_verdict: pending`; pass true to wait for it in
-    # the response (one LLM call, ~+1 s). Deterministic verdicts
-    # (merge, duplicate, rejected) are never deferred.
-    await_verdict: bool = False
     # Write the fact as a PROPOSAL (`status='proposed'`): not
     # served by default, served to a read that passes `include_proposed`, and
     # accepted or rejected on the graded outcomes of the runs that used it
@@ -409,11 +404,6 @@ class MemorySetOutput(BaseModel):
     # A short machine hint naming the op to reach for: memory.update(key) on a
     # conflict, memory.pin on a merge the store has seen before, "" otherwise.
     next: str = ""
-    # `inline` when `conflict_verdict` was settled in this
-    # response, `deferred` when it is `pending` (the judge runs after the
-    # write; `memory.get` shows the settled `status` / `duplicate_of`), ""
-    # when no check ran.
-    verdict_at: str = ""
     # True when this call wrote nothing: a `merge` (the store already held the
     # fact; its row was reinforced instead) or a dry run.
     noop: bool = False

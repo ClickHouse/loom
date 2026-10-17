@@ -1,11 +1,8 @@
-"""Four small memory-plane defects.
+"""Three small memory-plane defects.
 
 (a) `memory.list(sort_by=score)` under agent `*` must not filter
     `agent = '*'` literally; the wildcard axes leave WHERE the way the
     recency path's do, and the writer columns are selected.
-(b) A deferred write's ledger `out_conflict_verdict` must not stay
-    `pending`; the settle writes one `memory.set.settle` row under the
-    write's `request_id` carrying the settled verdict and the judge's spend.
 (c) Synthetic evidence rows and boosted chunks must not rise above the pool
     (`pool_max + 1.0`); both lifts are bounded to the pool's ceiling + ε,
     order-preserving, itemised in `score_components`.
@@ -15,7 +12,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -104,147 +100,6 @@ async def test_list_by_score_drops_the_wildcard_axes_and_keeps_the_named_ones(mo
     assert "session_id = {sid:String}" in sql
     count_sql, _ = ch.calls[1]
     assert "agent = {agent:String}" in count_sql, "the total uses the same predicate"
-
-
-# ------------------------------------------------------------------ (b) settle ledger row
-
-
-class _Emitter:
-    def __init__(self) -> None:
-        self.events: list[Any] = []
-
-    def emit(self, ev: Any) -> None:
-        self.events.append(ev)
-
-
-def _ident(**kw: Any) -> SimpleNamespace:
-    base: dict[str, Any] = {
-        "org": "o",
-        "namespace": "n",
-        "agent": "reviewer",
-        "user_id": "-",
-        "session_id": "-",
-        "memory_key": "lesson_1",
-        "run_id": "run-7",
-        "consumer": "clickgap",
-    }
-    base.update(kw)
-    return SimpleNamespace(**base)
-
-
-@pytest.fixture
-def settle_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    from server.memory.app import conflict_deferred as cd
-    from server.memory.app import conflicts as cf
-    from server.memory.app import drops
-
-    em = _Emitter()
-    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: em)
-    e = SimpleNamespace(emitter=em, applied=[], result=None, raise_=False)
-
-    async def _judge(pj: Any) -> Any:
-        from server.observability import cost_accumulator
-
-        cost_accumulator.report_llm("gpt-4o-mini", 700, 60)
-        if e.raise_:
-            raise RuntimeError("judge down")
-        return e.result
-
-    async def _apply(ident: Any, result: Any, *, memory_id: str, cfg: Any = None, **_: Any) -> str:
-        e.applied.append((memory_id, result.verdict))
-        return str(result.verdict)
-
-    monkeypatch.setattr(cf, "settle_deferred_judgement", _judge)
-    monkeypatch.setattr(cd, "apply", _apply)
-    drops._reset_for_tests()
-    cd._reset_for_tests()
-    return e
-
-
-@pytest.mark.asyncio
-async def test_the_settle_writes_one_ledger_row_under_the_writes_request_id(settle_env) -> None:
-    from server.memory.app import conflict_deferred as cd
-    from server.observability import cost_accumulator
-
-    request_acc = cost_accumulator.begin_op()  # the request's accumulator, already on its row
-    settle_env.result = SimpleNamespace(
-        verdict="clear", existing_memory_id=None, duplicate_of_id=None
-    )
-    verdict = await cd.settle(
-        _ident(), object(), memory_id="m-1", version=1, created_at=_NOW, request_id="req-1"
-    )
-    assert verdict == "clear"
-    ev = settle_env.emitter.events[-1]
-    assert ev.operation == cd.SETTLE_OPERATION == "memory.set.settle"
-    assert ev.request_id == "req-1" and ev.kind == "settle" and ev.success is True
-    assert (ev.org, ev.namespace, ev.agent, ev.memory_key) == ("o", "n", "reviewer", "lesson_1")
-    assert ev.run_id == "run-7" and ev.consumer == "clickgap"
-    assert ev.args["out_conflict_verdict"] == "clear" and ev.args["out_verdict_at"] == "settled"
-    assert ev.args["out_memory_id"] == "m-1" and "out_duplicate_of" not in ev.args
-    assert ev.llm_calls == 1 and ev.model == "gpt-4o-mini" and ev.upstream_cost_usd > 0
-    assert request_acc.llm_calls == 0, "the judge's call bills the settle row, not the request's"
-    assert ev.latency_ms >= 0
-
-
-@pytest.mark.asyncio
-async def test_a_settled_duplicate_names_its_peer_and_a_failed_settle_says_so(settle_env) -> None:
-    from server.memory.app import conflict_deferred as cd
-
-    settle_env.result = SimpleNamespace(
-        verdict="duplicate", existing_memory_id=None, duplicate_of_id="p-9"
-    )
-    await cd.settle(
-        _ident(), object(), memory_id="m-2", version=1, created_at=_NOW, request_id="req-2"
-    )
-    ev = settle_env.emitter.events[-1]
-    assert ev.args["out_conflict_verdict"] == "duplicate" and ev.args["out_duplicate_of"] == "p-9"
-
-    settle_env.result = SimpleNamespace(
-        verdict="merge", existing_memory_id="p-3", duplicate_of_id=None
-    )
-    await cd.settle(
-        _ident(), object(), memory_id="m-3", version=1, created_at=_NOW, request_id="req-3"
-    )
-    assert settle_env.emitter.events[-1].args["out_duplicate_of"] == "p-3"
-
-    settle_env.raise_ = True
-    verdict = await cd.settle(
-        _ident(), object(), memory_id="m-4", version=1, created_at=_NOW, request_id="req-4"
-    )
-    ev = settle_env.emitter.events[-1]
-    assert verdict == "error" and ev.success is False and ev.error_code == "SETTLE_FAILED"
-    assert ev.args["out_conflict_verdict"] == "error" and ev.request_id == "req-4"
-    assert not cd.is_pending("m-4")
-
-
-@pytest.mark.asyncio
-async def test_schedule_settle_captures_the_requests_id_for_the_row(settle_env) -> None:
-    from server.core.logging_config import request_id_var
-    from server.memory.app import conflict_deferred as cd
-
-    settle_env.result = SimpleNamespace(
-        verdict="clear", existing_memory_id=None, duplicate_of_id=None
-    )
-    pending = SimpleNamespace(verdict="pending", pending_judge=object())
-    token = request_id_var.set("req-from-context")
-    try:
-        task = cd.schedule_settle(_ident(), pending, memory_id="m-5", version=1, created_at=_NOW)
-    finally:
-        request_id_var.reset(token)
-    assert task is not None and cd.is_pending("m-5")
-    await task
-    ev = settle_env.emitter.events[-1]
-    assert ev.request_id == "req-from-context" and ev.args["out_conflict_verdict"] == "clear"
-    assert (
-        cd.schedule_settle(
-            _ident(),
-            SimpleNamespace(verdict="clear", pending_judge=None),
-            memory_id="x",
-            version=1,
-            created_at=_NOW,
-        )
-        is None
-    )
 
 
 # ------------------------------------------------------------------ (c) bounded lifts
@@ -629,15 +484,6 @@ async def test_the_python_sdk_sends_follow_only_when_asked() -> None:
     await api.get("k")
     await api.get("k", follow=True)
     assert "follow" not in posts[0][1] and posts[1][1]["follow"] is True
-
-
-def test_event_loop_is_clean() -> None:
-    # Every scheduled settle in this module was awaited; nothing pending.
-    from server.memory.app import conflict_deferred as cd
-
-    assert cd.pending_count() == 0
-    assert not [t for t in cd._TASKS if not t.done()]
-    asyncio.get_event_loop_policy()
 
 
 @pytest.mark.asyncio

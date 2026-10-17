@@ -669,7 +669,6 @@ class MemoryClient:
         valid_to: datetime | None = None,
         char_limit: int | None = None,
         dry_run: bool = False,
-        await_verdict: bool = False,
     ) -> dict[str, Any]:
         """Write a memory entry.
 
@@ -720,9 +719,7 @@ class MemoryClient:
         or not.
 
         The response also carries the write-time conflict verdict
-        (`conflict_verdict`: clear | merge | duplicate | conflict | refines,
-        `pending` (below), and on a coalesced set `superseded` when a later
-        stored row of the same key contradicts it, `superseded_by` naming that row),
+        (`conflict_verdict`: clear | merge | duplicate | conflict | refines),
         the `peers` it was reached against (`memory_id`, `memory_key`,
         `excerpt`, `valid_at`, `similarity`), a `next` hint naming the op to
         reach for (`memory.update(key)` on a conflict, `memory.pin` on a
@@ -731,11 +728,6 @@ class MemoryClient:
         `dry_run=True` runs the check and returns the verdict, peers and
         `next` without writing anything — no row, no embedding, no audit
         hash; `version` is 0 and `noop` is true.
-
-        `conflict_verdict` may come back `pending` (`verdict_at:
-        "deferred"`): the row is written and the LLM conflict judge runs
-        after the call; `get()` shows the settled `status` / `duplicate_of`.
-        `await_verdict=True` waits for the judge in the response.
         """
         payload = self._set_payload(
             memory_key,
@@ -759,7 +751,6 @@ class MemoryClient:
             valid_to=valid_to,
             char_limit=char_limit,
             dry_run=dry_run,
-            await_verdict=await_verdict,
         )
         coalescer = self._set_coalescer()
         if coalescer is not None and set(payload) - set(_IDENTITY_KEYS) <= _BULK_ENTRY_KEYS:
@@ -874,7 +865,6 @@ class MemoryClient:
         valid_to: datetime | None = None,
         char_limit: int | None = None,
         dry_run: bool = False,
-        await_verdict: bool = False,
     ) -> dict[str, Any]:
         """Reinforce: `set` with `pinned=True`, taking the same arguments. A
         later write close to a pinned row is refused (409 PINNED_CONFLICT)
@@ -905,7 +895,6 @@ class MemoryClient:
             valid_to=valid_to,
             char_limit=char_limit,
             dry_run=dry_run,
-            await_verdict=await_verdict,
         )
         return await self._agent.transport.post("/v1/memory.pin", payload)
 

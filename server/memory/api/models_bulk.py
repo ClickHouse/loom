@@ -313,8 +313,6 @@ PINNED = "pinned"
 LOCKED = "locked"
 # The verdict of an entry close to a pinned peer (memory.set answers 409 PINNED_CONFLICT).
 REJECTED = "rejected"
-# The verdict of an entry that landed retired behind a later stored row.
-SUPERSEDED = "superseded"
 # The verdicts of an entry refused outright (version 0): the message produced no row,
 # so nothing it carries attaches to the stored one. A restatement of the stored value
 # is not among them.
@@ -328,8 +326,8 @@ class _BulkSetResult(BaseModel):
     memory_id: str = ""
     # The per-row verdict memory.set returns, so a caller of
     # bulk_set can act on one entry without decoding the aggregate lists, plus
-    # `superseded` (see `superseded_by`), and `blacklisted`, `pinned` or `locked`
-    # (refused, version 0; a restatement of a pinned or locked key's value is not).
+    # `blacklisted`, `pinned` or `locked` (refused, version 0; a restatement of a
+    # pinned or locked key's value is not).
     # Empty when the entry was not checked (non-searchable, past the cap).
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
@@ -337,16 +335,6 @@ class _BulkSetResult(BaseModel):
     # With `pinned` or `rejected`: the pinned row that refused the entry, as memory.set's
     # 409 names it ('' when it is outside the read scope).
     pinned_blocker_id: str = ""
-    # Set when the entry landed superseded: under `auto_reinforce` with the conflict judge
-    # on, a stored row of the same key and subject (the user; for the anonymous user `-`,
-    # the agent) is the later statement it contradicts, such as an old session ingested
-    # late. The id of that row; the entry's row is kept for history, recall serves the
-    # later one, and `conflict_verdict` is then `superseded` with no peers. Empty otherwise.
-    superseded_by: str = ""
-    # The ids of the stored rows of this key that the same-key judge retired behind
-    # this entry's row (auto_reinforce with the judge on). Other retirements are in
-    # the `memory.auto_supersede` audit record, not here.
-    retired: list[str] = Field(default_factory=list)
 
 
 def refused_facts(results: list[_BulkSetResult]) -> list[_RefusedFact]:
@@ -396,7 +384,7 @@ class MemoryBulkSetOutput(BaseModel):
     # The keeper was reinforced instead.
     identity_duplicates: dict[str, str] = Field(default_factory=dict)
     # Wall time per phase of the write (existing_lookup, entity_resolution,
-    # prepare, embed, verdicts, same_key_judge, insert, value_updates, projections, total) —
+    # prepare, embed, verdicts, insert, value_updates, projections, total) —
     # Diagnostic; readers tolerate unknown keys.
     stage_ms: dict[str, float] = Field(default_factory=dict)
 

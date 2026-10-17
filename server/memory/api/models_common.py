@@ -119,13 +119,6 @@ def set_next_hint(
             f"Revise it explicitly with memory.update(memory_key={p.memory_key!r}, value=...) "
             "or unpin it first; a plain memory.set will answer 409."
         )
-    if verdict == "pending":
-        # The row is in; the judge runs after this call.
-        return (
-            "verdict=pending: written; the conflict judge settles after this call. "
-            "memory.get(memory_key=<this key>) shows the settled status "
-            "(active | conflicted | duplicate); await_verdict=true waits inline."
-        )
     if verdict != "merge":
         return ""
     hints = []

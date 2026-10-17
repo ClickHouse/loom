@@ -20,7 +20,6 @@ from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_bulk import (
-    SUPERSEDED,
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
 )
@@ -44,7 +43,6 @@ from server.memory.app.entity_projections import (
     reconcile_row_facts,
 )
 from server.memory.app.high_fence import fence_high
-from server.memory.app.key_supersession import JudgedRetirements
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     bulk_source_resource_id,
@@ -334,87 +332,9 @@ async def _bulk_intra_batch_pairs(
     return _intra_pairs
 
 
-async def _bulk_judge_same_key(
-    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
-) -> JudgedRetirements:
-    """Phase 8b: the same-key judge, before the insert (auto_reinforce, judge on).
-    A new row that loses lands superseded and leaves the plan's marks and refines."""
-    from server.memory.app.key_supersession import judge_same_key_rows
-
-    if not state.memory_rows:
-        return JudgedRetirements()
-    judged = await judge_same_key_rows(
-        org=input.org,
-        namespace=input.namespace,
-        memory_rows=state.memory_rows,
-        embedding_rows=state.embedding_rows,
-        ch=ch,
-        now=naive_utc_now(),
-    )
-    # By key: a key written twice in the batch is two versions of one row, and the one
-    # FINAL keeps (the one judged) is now superseded, so neither version may mark,
-    # refine or report `conflicted` from here. The intra-batch pairs need no filter:
-    # they exist only under `newest_wins`, where the judge does not run.
-    retired_ids = {n for n, _w in judged.new_rows}
-    behind = {
-        str(r.get("memory_key") or ""): str(r["superseded_by"])
-        for r in state.memory_rows
-        if str(r.get("memory_id") or "") in retired_ids
-    }
-    state.judged_retired_keys = set(behind)
-    if behind:
-        key_of = state.key_of
-        plan.conflict_marks = [
-            (n, p) for n, p in plan.conflict_marks if key_of.get(n) not in behind
-        ]
-        plan.refines = [r for r in plan.refines if key_of.get(r[0]) not in behind]
-        _settle_results(state, plan, behind=behind)
-    return judged
-
-
-def _drop_retired_peers(plan: BulkVerdictPlan, retired: set[str]) -> None:
-    """Remove stored rows the judge retired from the settling steps' peers, and drop
-    an entry left with none, so no other verdict of this write re-emits them."""
-    if not retired:
-        return
-    plan.conflict_marks = [
-        (n, kept)
-        for n, peers in plan.conflict_marks
-        if (kept := [p for p in peers if str(p) not in retired])
-    ]
-    plan.refines = [
-        (n, k, kept, rel, v)
-        for n, k, refined, rel, v in plan.refines
-        if (kept := [p for p in refined if str(getattr(p, "memory_id", "")) not in retired])
-    ]
-
-
-def _apply_judged_retirements(
-    state: _BulkWriteState, plan: BulkVerdictPlan, retired: list[dict[str, Any]]
-) -> None:
-    """Settle the write on the stored rows the judge retired. A retirement the
-    re-read could not confirm has most likely landed (an overtaking write is not
-    left unconfirmed), so none keeps a conflict mark that would write over it, and
-    every one is followed. A result names only the confirmed ones."""
-    state.judged_follow_pairs += [(v["memory_id"], v["superseded_by"]) for v in retired]
-    ids = {str(v["memory_id"]) for v in retired}
-    _drop_retired_peers(plan, ids)
-    _settle_results(state, plan, retired_peers=ids)
-    _name_retired_rows(state, retired)
-
-
-def _settle_results(
-    state: _BulkWriteState,
-    plan: BulkVerdictPlan,
-    *,
-    behind: dict[str, str] | None = None,
-    retired_peers: set[str] | None = None,
-) -> None:
-    """Bring each result and the plan's lists in line with the judge: a key that
-    landed superseded answers `superseded`; a key left without a conflict mark or
-    refine answers `clear`; peers lose the retired rows."""
-    behind = behind or {}
-    retired_peers = retired_peers or set()
+def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
+    """Bring each result and the plan's lists in line with the marks that landed: a
+    key left without a conflict mark or refine answers `clear`."""
     key_of = state.key_of
     still_marked = {key_of.get(n, "") for n, _p in plan.conflict_marks}
     still_refined = {key_of.get(r[0], "") for r in plan.refines}
@@ -423,35 +343,12 @@ def _settle_results(
     plan.conflicted = [k for k in plan.conflicted if k not in unmarked]
     plan.refined = [k for k in plan.refined if k not in unrefined]
     for res in state.results:
-        if res.memory_key in behind and int(res.version) > 0:
-            res.superseded_by = behind[res.memory_key]
-            res.conflict_verdict, res.peers, res.next = SUPERSEDED, [], ""
-            continue
-        kept = [p for p in res.peers if str(p.memory_id) not in retired_peers]
         cleared = (res.conflict_verdict == "conflict" and res.memory_key in unmarked) or (
             res.conflict_verdict == "refines" and res.memory_key in unrefined
         )
-        if not cleared and len(kept) == len(res.peers):
-            continue
-        res.peers = kept
         if cleared:
             res.conflict_verdict = "clear"
-        res.next = _set_next(res.conflict_verdict, kept)
-
-
-def _name_retired_rows(state: _BulkWriteState, retired: list[dict[str, Any]]) -> None:
-    """Each entry's result lists the stored rows its row retired (confirmed ones:
-    a result never claims a retirement the re-read could not see)."""
-    by_key: dict[str, list[str]] = {}
-    for v in retired:
-        if v.get("unconfirmed"):
-            continue
-        by_key.setdefault(state.key_of.get(str(v["superseded_by"]), ""), []).append(
-            str(v["memory_id"])
-        )
-    for res in state.results:
-        if int(res.version) > 0 and res.memory_key in by_key:
-            res.retired = list(by_key[res.memory_key])
+            res.next = _set_next(res.conflict_verdict, res.peers)
 
 
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
@@ -517,19 +414,13 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
 
 
 async def _bulk_post_insert_links(
-    ch: Any,
-    input: MemoryBulkSetInput,
-    state: _BulkWriteState,
-    judged: JudgedRetirements,
-    plan: BulkVerdictPlan,
+    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState
 ) -> list[Any]:
-    """Phase 11, after the insert so the new ids exist: same-key supersession
-    (the judged peers too), then value-update linking; returns the value-update
-    links the triple plane follows."""
+    """Phase 11, after the insert so the new ids exist: same-key supersession, then
+    value-update linking; returns the value-update links the triple plane follows."""
     # Same-key supersession: under `newest_wins` the rows just written retire every older
-    # live row sharing their key, from any session; under `auto_reinforce` the stored rows
-    # the judge found older than a row of this write (decided before the insert). After the
-    # insert so the new ids are visible; fail-open.
+    # live row sharing their key, from any session. After the insert so the new ids are
+    # visible; fail-open.
     if state.memory_rows:
         from server.memory.app.key_supersession import supersede_same_key_rows
 
@@ -539,13 +430,6 @@ async def _bulk_post_insert_links(
             new_rows=state.memory_rows,
             ch=ch,
         )
-    _retired: list[dict[str, Any]] = []
-    if judged.peers:
-        from server.memory.app.key_supersession import retire_judged_peers
-
-        _retired = await retire_judged_peers(input.org, judged.peers, ch=ch)
-        _apply_judged_retirements(state, plan, _retired)
-    await _record_judged_retirements(input, state, judged, _retired)
 
     # Value-update supersession (memory.app.value_updates). Runs after the
     # insert so the new row's id exists for the cross-link; fail-open; off by
@@ -580,47 +464,6 @@ async def _bulk_post_insert_links(
             log.warning("bulk_set: value-update linking failed (non-fatal): %s", e)
     last_value_updates_linked.set(_n_value_links)
     return _value_links
-
-
-def _judged_new_row_entries(
-    memory_rows: list[dict[str, Any]], judged: JudgedRetirements
-) -> list[dict[str, Any]]:
-    """The audit entries for the rows of this write that landed superseded behind a
-    stored row the judge read as newer: one per id (a key sent twice is one row)."""
-    behind = dict(judged.new_rows)
-    out: dict[str, dict[str, Any]] = {}
-    for r in memory_rows:
-        mid = str(r.get("memory_id") or "")
-        if mid not in behind:
-            continue
-        out[mid] = {
-            **r,
-            "superseded_by": behind[mid],
-            # A same-key peer shares the key.
-            "superseded_by_key": r.get("memory_key"),
-            "label": judged.new_row_labels.get(mid, ""),
-        }
-    return list(out.values())
-
-
-async def _record_judged_retirements(
-    input: MemoryBulkSetInput,
-    state: _BulkWriteState,
-    judged: JudgedRetirements,
-    retired_peers: list[dict[str, Any]],
-) -> None:
-    """After the insert and the peers' retirement: one `memory.auto_supersede` row
-    for what the same-key judge retired, the new rows that landed superseded and the
-    stored rows whose retirement was written (never one skipped for a lock, or
-    overtaken by a later write)."""
-    from server.memory.app.auto_resolution import SAME_KEY_JUDGE, record_auto_supersessions
-
-    retired = _judged_new_row_entries(state.memory_rows, judged) + [
-        {**v, "superseded_by_key": v.get("memory_key")} for v in retired_peers
-    ]
-    await record_auto_supersessions(
-        org=input.org, namespace=input.namespace, retired=retired, reason=SAME_KEY_JUDGE
-    )
 
 
 async def _record_intra_batch_retirements(
@@ -685,7 +528,7 @@ async def _bulk_settle_verdicts(
 
         # One record per reason for the whole write, not one per verdict.
         refined_out: dict[str, list[dict[str, Any]]] = {}
-        for new_id, new_key, refined, relation, new_value in plan.refines:
+        for new_id, new_key, refined, new_value in plan.refines:
             try:
                 await apply_refines(
                     org=input.org,
@@ -694,7 +537,6 @@ async def _bulk_settle_verdicts(
                     new_memory_key=new_key,
                     refined_peers=refined,
                     ch=ch,
-                    relation=relation,
                     new_value=new_value,
                     record_into=refined_out,
                 )
@@ -792,9 +634,8 @@ def _projected(
     """The entries and results the graph projections see: only entries that wrote a
     live row that may hold graph facts. An entry that wrote nothing (refused, pinned,
     locked, a byte-identical restatement, an identity duplicate, a merge, a pinned
-    reject), whose key the same-key judge landed superseded, or whose row is 'high'
-    projects nothing, and so records nothing for a replay; a re-ingest of a fact
-    already stored no longer re-counts its edges."""
+    reject), or whose row is 'high' projects nothing, and so records nothing for a
+    replay; a re-ingest of a fact already stored no longer re-counts its edges."""
     # A row is its id and version: two entries of one key share the id.
     high = {
         (str(r["memory_id"]), int(r["version"]))
@@ -804,9 +645,7 @@ def _projected(
     kept = [
         (entry, res)
         for entry, res in zip(input.entries, state.results, strict=True)
-        if res.version
-        and (res.memory_id, res.version) not in high
-        and res.memory_key not in state.judged_retired_keys
+        if res.version and (res.memory_id, res.version) not in high
     ]
     return (
         input.model_copy(update={"entries": [e for e, _r in kept]}),
@@ -926,7 +765,6 @@ async def _bulk_follow_row_supersessions(
     value_links: list[Any],
     intra_pairs: list[tuple[str, str]],
     clock: StageClock,
-    judged_pairs: list[tuple[str, str]] | None = None,
 ) -> None:
     """Phase 14: the triple plane follows the rows this write retired."""
     # The triple plane follows the rows this write retired. The predecessor's open triples
@@ -935,7 +773,7 @@ async def _bulk_follow_row_supersessions(
     # Up to `_FOLLOW_MAX` pairs are followed in the request; the rest, those whose chain
     # was too long or circular to read, or all of them if the follow fails, are recorded for the
     # projection repair to follow later.
-    _pairs: list[tuple[str, str]] = [*(judged_pairs or []), *_supersede_pairs(plan)]
+    _pairs: list[tuple[str, str]] = _supersede_pairs(plan)
     _pairs += [(str(ln.older_id), str(ln.newer_id)) for ln in value_links]
     _pairs += intra_pairs
     if _pairs:
@@ -997,16 +835,13 @@ async def handle_memory_bulk_set(
     # After the verdicts: settling the batch moves entries to unchanged or pinned.
     _bulk_log_skips(state)
 
-    _judged = await _bulk_judge_same_key(ch, input, state, plan)
-    _bulk_clock.mark("same_key_judge")
-
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
 
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
     await _record_intra_batch_retirements(input, state, _intra_pairs)
 
-    _value_links = await _bulk_post_insert_links(ch, input, state, _judged, plan)
+    _value_links = await _bulk_post_insert_links(ch, input, state)
 
     _bulk_clock.mark("value_updates")
 
@@ -1023,7 +858,6 @@ async def handle_memory_bulk_set(
         _value_links,
         _intra_pairs,
         _bulk_clock,
-        judged_pairs=state.judged_follow_pairs,
     )
     _bulk_clock.finish()
 
@@ -1047,15 +881,14 @@ async def handle_memory_bulk_set(
 
 
 def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:
-    """(retired peer, new row) pairs of the plan's `supersedes` verdicts, for
+    """(retired peer, new row) pairs of the plan's `refines` verdicts, for
     the triple plane to follow — minus the peers `apply_refines` kept because
     the new row would truncate them."""
     from server.memory.app.conflicts import truncating_refinement
 
     return [
         (str(getattr(p, "memory_id", "") or ""), str(new_id))
-        for new_id, _new_key, refined, relation, new_value in plan.refines
-        if relation == "supersedes"
+        for new_id, _new_key, refined, new_value in plan.refines
         for p in refined
         if getattr(p, "memory_id", "")
         and not truncating_refinement(new_value, str(getattr(p, "value", "") or ""))

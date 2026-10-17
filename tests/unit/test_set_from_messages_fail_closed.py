@@ -288,7 +288,6 @@ async def test_a_scope_skipped_record_projection_leaves_provider_health_alone(
         _BulkSetResult(memory_key="rec1", version=0, conflict_verdict="blacklisted"),
         _BulkSetResult(memory_key="rec1", version=0, conflict_verdict="pinned"),
         _BulkSetResult(memory_key="rec1", version=0),  # the stored value, restated
-        _BulkSetResult(memory_key="rec1", version=7, conflict_verdict="superseded"),
     ],
 )
 async def test_a_record_the_write_kept_out_projects_no_typed_record(

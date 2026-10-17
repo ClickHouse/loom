@@ -350,7 +350,7 @@ Insert many memory entries in one batched CH insert.
 | `unchecked` | `int` | Entries past bulk_conflict_check_max_entries, written without a check. |
 | `retyped` | `list[str]` | Entries declared procedural whose value is not a procedure body, stored as semantic tagged retyped_from:procedural. |
 | `identity_duplicates` | `dict[str, str]` | Entries not written because a live row in the same identity already carries the same content: entry key -> the keeper's key. |
-| `stage_ms` | `dict[str, float]` | Wall time per phase of the write (existing_lookup, entity_resolution, prepare, embed, verdicts, same_key_judge, insert, value_updates, projections, total) — Diagnostic; readers tolerate unknown keys. |
+| `stage_ms` | `dict[str, float]` | Wall time per phase of the write (existing_lookup, entity_resolution, prepare, embed, verdicts, insert, value_updates, projections, total) — Diagnostic; readers tolerate unknown keys. |
 
 ## `memory.clear`
 
@@ -1262,7 +1262,6 @@ WHAT: Save a standing fact and protect it.
 | `char_limit` | `int \| None` | `None` | Server-enforced char cap on the stringified value (422 on exceed). |
 | `sensitivity` | `Literal['', 'low', 'medium', 'high']` | `''` | Sensitivity tier. 'high' = never embedded, never in any search leg or recency pack, readable by key only with an audit row. '' lets the server detect credential / contact shapes from the value. |
 | `dry_run` | `bool` | `False` | Run the conflict check and return its verdict, peers and `next` WITHOUT writing — no loom.memory row, no embedding row, no audit hash, no usage event, no supersession. |
-| `await_verdict` | `bool` | `False` | The conflict judge runs AFTER the row is written and the response says `conflict_verdict: pending`; pass true to wait for it in the response (one LLM call, ~+1 s). |
 | `proposed` | `bool` | `False` | Write the fact as a PROPOSAL (`status='proposed'`): not served by default, served to a read that passes `include_proposed`, and accepted or rejected on the graded outcomes of the runs that used it (`run.grade`, `memory.proposals`… |
 
 | Output field | Type | Meaning |
@@ -1281,7 +1280,6 @@ WHAT: Save a standing fact and protect it.
 | `conflict_verdict` | `str` | What the write-time conflict check decided about THIS write — clear \| merge \| duplicate \| conflict \| refines \| rejected (the last only on a dry run; a real write answers 409). |
 | `peers` | `list[MemorySetPeer]` | The rows the verdict was reached against (closest first, at most five): the key is the handle for memory.update, the excerpt what the store holds. |
 | `next` | `str` | A short machine hint naming the op to reach for: memory.update(key) on a conflict, memory.pin on a merge the store has seen before, "" otherwise. |
-| `verdict_at` | `str` | `inline` when `conflict_verdict` was settled in this response, `deferred` when it is `pending` (the judge runs after the write; `memory.get` shows the settled `status` / `duplicate_of`), "" when no check ran. |
 | `noop` | `bool` | True when this call wrote nothing: a `merge` (the store already held the fact; its row was reinforced instead) or a dry run. |
 | `dry_run` | `bool` | Echo of the request's dry_run so a tool-call transcript is unambiguous. |
 | `advisories` | `list[str]` | One line per thing the server noticed about the VALUE that the agent should fix on its side — currently only "base64-encoded". |
@@ -1924,7 +1922,6 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `char_limit` | `int \| None` | `None` | Server-enforced char cap on the stringified value (422 on exceed). |
 | `sensitivity` | `Literal['', 'low', 'medium', 'high']` | `''` | Sensitivity tier. 'high' = never embedded, never in any search leg or recency pack, readable by key only with an audit row. '' lets the server detect credential / contact shapes from the value. |
 | `dry_run` | `bool` | `False` | Run the conflict check and return its verdict, peers and `next` WITHOUT writing — no loom.memory row, no embedding row, no audit hash, no usage event, no supersession. |
-| `await_verdict` | `bool` | `False` | The conflict judge runs AFTER the row is written and the response says `conflict_verdict: pending`; pass true to wait for it in the response (one LLM call, ~+1 s). |
 | `proposed` | `bool` | `False` | Write the fact as a PROPOSAL (`status='proposed'`): not served by default, served to a read that passes `include_proposed`, and accepted or rejected on the graded outcomes of the runs that used it (`run.grade`, `memory.proposals`… |
 
 | Output field | Type | Meaning |
@@ -1943,7 +1940,6 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `conflict_verdict` | `str` | What the write-time conflict check decided about THIS write — clear \| merge \| duplicate \| conflict \| refines \| rejected (the last only on a dry run; a real write answers 409). |
 | `peers` | `list[MemorySetPeer]` | The rows the verdict was reached against (closest first, at most five): the key is the handle for memory.update, the excerpt what the store holds. |
 | `next` | `str` | A short machine hint naming the op to reach for: memory.update(key) on a conflict, memory.pin on a merge the store has seen before, "" otherwise. |
-| `verdict_at` | `str` | `inline` when `conflict_verdict` was settled in this response, `deferred` when it is `pending` (the judge runs after the write; `memory.get` shows the settled `status` / `duplicate_of`), "" when no check ran. |
 | `noop` | `bool` | True when this call wrote nothing: a `merge` (the store already held the fact; its row was reinforced instead) or a dry run. |
 | `dry_run` | `bool` | Echo of the request's dry_run so a tool-call transcript is unambiguous. |
 | `advisories` | `list[str]` | One line per thing the server noticed about the VALUE that the agent should fix on its side — currently only "base64-encoded". |

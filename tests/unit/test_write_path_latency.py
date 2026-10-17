@@ -3,9 +3,8 @@
 - memory.set's entity-graph projection runs beside the response (canonical
   read + insert + edge inserts, off the serial tail); supersession and the
   audit row share one round trip.
-- memory.update embeds value and key in one round trip, defers the LLM judge
-  like memory.set, writes its two rows concurrently, and a pending
-  verdict clears the old value's stale mark (the settle re-marks it).
+- memory.update embeds value and key in one round trip, writes its two rows
+  concurrently, and a clear verdict drops the old value's stale mark.
 - The HTTP transport's post-handler rows (budget violation, op audit,
   idempotency replay) are written concurrently.
 """
@@ -19,10 +18,9 @@ from typing import Any
 import pytest
 
 from server.memory.app import after_write
-from server.memory.app import conflict_deferred as cd
 from server.memory.app import set_commit as set_commit
 from server.memory.app import update as update_mod
-from server.memory.domain.conflicts import ConflictResult, PendingJudge
+from server.memory.domain.conflicts import ConflictResult
 from tests.unit.test_memory_update_conflict import _ID_A, _input, _row, wired  # noqa: F401
 
 # ---- after_write -------------------------------------------------------------
@@ -262,30 +260,13 @@ async def test_value_and_key_embed_in_one_round_trip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_defers_the_judge_and_clears_the_stale_mark(wired, monkeypatch) -> None:  # noqa: F811
-    pending = ConflictResult(
-        verdict=cd.PENDING, peers=[], pending_judge=PendingJudge.__new__(PendingJudge)
-    )
-    ch, calls = wired(pending)
-    scheduled: list[tuple[Any, str, int]] = []
-    monkeypatch.setattr(
-        cd,
-        "schedule_settle",
-        lambda ident, result, *, memory_id, version, created_at, cfg=None, **_: scheduled.append(
-            (ident, memory_id, version)
-        ),
-    )
+async def test_a_clear_revision_drops_the_stale_mark(wired) -> None:  # noqa: F811
+    ch, _calls = wired(ConflictResult(verdict="clear", peers=[]))
     out = await update_mod.handle_memory_update(_input(run_id="run-7"))
-    assert calls.check[0]["defer_judge"] is True
-    assert out.updated and out.conflict_verdict == cd.PENDING
-    # The old value's `conflicted` mark is not carried onto the new value:
-    # the settle re-marks the row if the new value still conflicts.
+    assert out.updated and out.conflict_verdict == "clear"
+    # The old value's `conflicted` mark is not carried onto the new value.
     ((_, rows),) = ch.inserts
     assert rows[0]["status"] == "active" and rows[0]["conflict_with"] == []
-    ((ident, memory_id, version),) = scheduled
-    assert memory_id == _ID_A and ident.memory_key == "deploy_day"
-    assert version == rows[0]["version"], "the settle stamps the revision it judged"
-    assert ident.memory_type == "semantic" and ident.run_id == "run-7" and ident.org == "test"
 
 
 @pytest.mark.asyncio

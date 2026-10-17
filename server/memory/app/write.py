@@ -22,7 +22,6 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
-from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
 from server.memory.app.set_commit import (
     _count_write,
@@ -174,8 +173,6 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     advisories = value_shape_advisories(input.value, input.memory_type)
     if advisories:
         out.advisories = [*out.advisories, *advisories]
-    if hasattr(out, "conflict_verdict"):  # a patched inner handler may return a bare object
-        out.verdict_at = _cd.verdict_at(out.conflict_verdict)
     return out
 
 

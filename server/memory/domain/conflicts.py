@@ -1,9 +1,7 @@
-"""The values a conflict check answers with (ConflictResult and its peers, a
-deferred judgement, the per-namespace write config) and the pure rules it
-applies: canonical text, same-content and templated-substitution tests,
-intra-batch supersession, quantity preservation, and folding a judge's
-verdicts into a result. The reads and the judge call are
-server/memory/app/conflicts.py."""
+"""The values a conflict check answers with (ConflictResult and its peers, the
+per-namespace write config) and the pure rules it applies: canonical text,
+same-content and templated-substitution tests, intra-batch supersession and
+quantity preservation. The reads are server/memory/app/conflicts.py."""
 
 from __future__ import annotations
 
@@ -11,8 +9,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
-
-from server.settings import settings
 
 
 @dataclass(frozen=True)
@@ -22,9 +18,8 @@ class ConflictPeer:
     similarity: float
     pinned: bool
     canonical: str
-    # Embedding identity + raw value: the judge reads the value, and a `refines` verdict
-    # supersedes the peer through the embedding identity the same way same-key
-    # supersession does.
+    # Embedding identity + raw value: a `refines` verdict supersedes the peer through
+    # the embedding identity the same way same-key supersession does.
     agent: str = ""
     user_id: str = ""
     session_id: str = ""
@@ -32,37 +27,10 @@ class ConflictPeer:
     # The run that wrote the peer ('-' = none). A canonical match across run scopes is a
     # duplicate, not a merge.
     run_id: str = "-"
-    # When the peer's fact held: a judged contradiction under
-    # `newest_wins` retires the peer only if this is not later than the new
-    # row's own valid_at — arrival order is the clock only when the calendar
-    # cannot tell.
+    # When the peer's fact held: a templated substitution under `newest_wins`
+    # retires the peer only if this is not later than the new row's own valid_at —
+    # arrival order is the clock only when the calendar cannot tell.
     valid_at: datetime | None = None
-
-
-@dataclass(frozen=True)
-class PendingJudge:
-    """The judge's input, captured at the point `check_on_commit` would have
-    called it. A write that defers the judge inserts its row
-    first and settles this afterwards through `settle_deferred_judgement`,
-    which runs the very same call and fold the inline path runs — parity by
-    construction, not by a second implementation.
-
-    `candidates` are the peers the judge labels (flagged + band, closest
-    first); `cosine_peers` the peers the cosine flag alone named ([] on a
-    band-only check); `fallback_verdict` what the cosine path answers when the
-    judge does not run or cannot be parsed: `clear` for a band-only check,
-    `conflict` for a flagged pair."""
-
-    org: str
-    namespace: str
-    new_value: str
-    candidates: list[ConflictPeer]
-    cosine_peers: list[ConflictPeer]
-    fallback_verdict: str
-    new_valid_at: datetime | None = None
-    new_run_id: str = "-"
-    # The namespace conflict policy when the caller prefetched it; None reads.
-    policy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,12 +42,9 @@ class ConflictResult:
     - "duplicate": similarity ≥ duplicate_threshold, canonical differs; insert
                    with status='duplicate' + duplicate_of pointer
     - "conflict":  peer close-but-different; insert + flag both conflicted
-    - "refines":   judged elaboration; insert active, supersede
-                   refined_peers, link with a `refines` edge
+    - "refines":   templated substitution under `newest_wins`; insert active,
+                   supersede refined_peers, link with a `supersedes` edge
     - "rejected":  peer pinned and close-but-different; raise 409 PINNED_CONFLICT
-    - "pending":   the judge was deferred: insert the row active,
-                   schedule `pending_judge`; the settled verdict lands
-                   on the row's status / duplicate_of afterwards
     """
 
     verdict: str
@@ -91,18 +56,9 @@ class ConflictResult:
     # "unscoped" (no run on the write), or "cross_run" (must not happen; the
     # write path records it as a drop so a regression shows on the dashboard).
     merge_scope: str = ""
-    # verdict=='refines': the peers the new row elaborates; the caller inserts the row
-    # active, supersedes these and links them.
+    # verdict=='refines': the peers the new row replaces; the caller inserts the row
+    # active, supersedes these and links them with a `supersedes` edge.
     refined_peers: list[ConflictPeer] = field(default_factory=list)
-    # The edge written from the new row to each refined peer: `refines` for a
-    # judged elaboration, `supersedes` when a judged contradiction folds to
-    # supersession under the namespace's newest_wins policy.
-    refine_relation: str = "refines"
-    # The judge's per-peer labels when it ran ({memory_id: label}); empty
-    # when the verdict came from cosine alone.
-    judged: dict[str, str] = field(default_factory=dict)
-    # verdict=='pending': what the deferred judge will run.
-    pending_judge: PendingJudge | None = None
 
 
 # The namespace conflict policy under which the gate never reaches a verdict against a
@@ -344,13 +300,8 @@ def canonical(text: str) -> str:
 
 
 def query_max_distance(threshold: float) -> float:
-    """The cosine-distance ceiling the peer statement filters on. With the
-    judge on, the statement reaches down to the judge's band
-    floor so band peers (candidates for the judge only) are fetched too."""
-    judge_on = bool(settings.memory_conflict_judge)
-    band_floor = float(settings.memory_conflict_judge_min_similarity)
-    query_floor = min(threshold, band_floor) if judge_on else threshold
-    return 1.0 - query_floor
+    """The cosine-distance ceiling the peer statement filters on."""
+    return 1.0 - threshold
 
 
 def _as_datetime(v: Any) -> datetime | None:
@@ -378,26 +329,22 @@ def merge_or_run_duplicate(
     peers: list[ConflictPeer],
     *,
     new_run_id: str = "-",
-    judged: Any = None,
 ) -> ConflictResult:
     """The one place a restatement becomes a verdict:
     under a run, a restatement of a row another scope wrote — another run,
     or no run — is `duplicate` (insert, `duplicate_of` the peer) so the run's
     reads find what the run wrote; a same-run restatement, or any unscoped
-    write, is `merge` (no insert). Every `merge` in this module comes through
-    here, whichever tier noticed the restatement."""
+    write, is `merge` (no insert)."""
     if new_run_id not in ("", "-") and peer.run_id != new_run_id:
         return ConflictResult(
             verdict="duplicate",
             peers=peers,
             duplicate_of_id=peer.memory_id,
-            judged=judged or {},
         )
     return ConflictResult(
         verdict="merge",
         peers=peers,
         existing_memory_id=peer.memory_id,
-        judged=judged or {},
         merge_scope=merge_scope(new_run_id, peer.run_id),
     )
 
@@ -443,74 +390,31 @@ def preserves_quantities(new_value: str, old_value: str) -> bool:
     return not missing
 
 
-def _fold_judged(
-    judged: Any,
-    candidates: list[ConflictPeer],
-    cosine_peers: list[ConflictPeer] | None = None,
-    policy: str = "",
+def substitution_result(
+    subst: list[ConflictPeer],
+    peers: list[ConflictPeer],
+    *,
+    new_value: str,
     new_valid_at: datetime | None = None,
-    new_run_id: str = "-",
-    new_value: str = "",
 ) -> ConflictResult:
-    """Turn a Judgement over `candidates` into a ConflictResult. `cosine_peers`
-    are the ones the flag alone would have named; a `conflict` verdict with
-    no contradicted peer falls back to them (never to band peers).
-
-    Under the namespace's `newest_wins` policy a judged CONTRADICTION
-    is not a conflict to review but a predecessor to retire: the row being
-    written is the newest statement of the attribute, so the contradicted
-    peers are superseded through the `refines` machinery with a
+    """The verdict for peers that are templated substitutions of the new value
+    under `newest_wins`: the row being written is the newest statement of the
+    attribute, so the peers are superseded through `apply_refines` with a
     `supersedes` edge. This is what reaches the attribute stated under two
-    coined keys (`x_module_assignment` vs `x_assigned_module`), which
-    same-key supersession cannot bridge.
+    coined keys (`x_module_assignment` vs `x_assigned_module`), which same-key
+    supersession cannot bridge.
 
-    The clock is the calendar before it is the arrival: when
-    the new row and a contradicted peer both carry a `valid_at` and the
-    peer's is later, the row being written is the OLDER statement, and
-    retiring the peer would put the store back in time. That pair stays a
-    `conflict` to review; the other contradicted peers still fold."""
-    by_id = {p.memory_id: p for p in candidates}
-    kept = [by_id[i] for i in judged.keep if i in by_id]
-    if judged.verdict == "conflict" and policy == "newest_wins" and kept:
-        later = later_valid_peers(kept, new_valid_at)
-        if later:
-            return ConflictResult(verdict="conflict", peers=kept, judged=judged.labels)
-        # A peer whose amounts the new row does not carry stays.
-        kept = [p for p in kept if preserves_quantities(new_value, p.value)]
-        if not kept:
-            return ConflictResult(verdict="conflict", peers=candidates, judged=judged.labels)
-        return ConflictResult(
-            verdict="refines",
-            peers=candidates,
-            refined_peers=kept,
-            judged=judged.labels,
-            refine_relation="supersedes",
-        )
-    if judged.verdict == "clear":
-        return ConflictResult(verdict="clear", peers=[], judged=judged.labels)
-    if judged.verdict == "merge" and kept:
-        # A judged restatement obeys the run rule the canonical match obeys;
-        # merging across runs would lose a run's writes to other runs' rows.
-        return merge_or_run_duplicate(
-            kept[0], candidates, new_run_id=new_run_id, judged=judged.labels
-        )
-    if judged.verdict == "refines" and kept:
-        # The same clock guards an elaboration: a row that holds on an earlier date
-        # cannot retire a peer that holds on a later one, whatever the judge called the
-        # pair ("considering attending" on 05-20 must not retire "attended" on 05-21).
-        # Those peers stay; the rest refine.
-        later_ids = {p.memory_id for p in later_valid_peers(kept, new_valid_at)}
-        kept = [p for p in kept if p.memory_id not in later_ids]
-        # An elaboration that drops a stated amount is not one;
-        # the peer that carries the amount stays active beside the new row.
-        kept = [p for p in kept if preserves_quantities(new_value, p.value)]
-        if not kept:
-            return ConflictResult(verdict="clear", peers=[], judged=judged.labels)
-        return ConflictResult(
-            verdict="refines", peers=candidates, refined_peers=kept, judged=judged.labels
-        )
-    fallback = list(cosine_peers or [])
-    return ConflictResult(verdict="conflict", peers=kept or fallback, judged=judged.labels)
+    The clock is the calendar before it is the arrival: when the new row and a
+    peer both carry a `valid_at` and the peer's is later, the row being written
+    is the OLDER statement, and retiring the peer would put the store back in
+    time. Then the pair stays a `conflict` to review."""
+    if later_valid_peers(subst, new_valid_at):
+        return ConflictResult(verdict="conflict", peers=subst)
+    # A peer whose amounts the new row does not carry stays.
+    kept = [p for p in subst if preserves_quantities(new_value, p.value)]
+    if not kept:
+        return ConflictResult(verdict="conflict", peers=peers)
+    return ConflictResult(verdict="refines", peers=peers, refined_peers=kept)
 
 
 @dataclass(frozen=True)

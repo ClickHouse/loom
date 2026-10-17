@@ -3838,8 +3838,6 @@ export interface BulkSetResult {
   peers?: MemorySetPeer[];
   next?: string;
   pinned_blocker_id?: string;
-  superseded_by?: string;
-  retired?: string[];
 }
 
 export interface MemorySetPeer {
@@ -4867,7 +4865,6 @@ export interface MemorySetInput {
   char_limit?: number | null;
   sensitivity?: "" | "low" | "medium" | "high";
   dry_run?: boolean;
-  await_verdict?: boolean;
   proposed?: boolean;
 }
 
@@ -4886,7 +4883,6 @@ export interface MemorySetOutput {
   conflict_verdict?: string;
   peers?: MemorySetPeer[];
   next?: string;
-  verdict_at?: string;
   noop?: boolean;
   dry_run?: boolean;
   advisories?: string[];

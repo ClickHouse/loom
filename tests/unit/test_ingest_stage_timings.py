@@ -201,9 +201,7 @@ async def test_bulk_write_step_carries_bulk_phases_onto_the_state(
         org="o", namespace="n", extracted_facts=[{"key": "home", "value": "Lisbon"}]
     )
     state = await pipe._step_bulk_write(state, {})
-    assert [(w["memory_key"], w["version"], w["superseded_by"]) for w in state.written] == [
-        ("home", 1, "")
-    ]
+    assert [(w["memory_key"], w["version"]) for w in state.written] == [("home", 1)]
     # The whole result rides along, so set_from_messages reports the verdict too.
     assert {"conflict_verdict", "peers", "next"} <= set(state.written[0])
     assert state.stage_ms["bulk.embed"] == 12.5 and state.stage_ms["bulk.total"] == 40.0

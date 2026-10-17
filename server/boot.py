@@ -550,14 +550,11 @@ async def drain_writes() -> None:
     the service-side tasks, then the drop ledger (last of the services: the
     side effects before it record their drops too), the events stream and
     the buffered write marks."""
-    # In-flight deferred conflict judges settle first.
-    from server.memory.app import conflict_deferred, drops
-
-    await conflict_deferred.drain(timeout_s=15.0)
     # Restricted-access audit rows and policy decision rows (an enforced
     # denial among them) still being written land first.
     from server.identity.app import policy_gate as _policy_gate
     from server.identity.app import restricted_access as _restricted_access
+    from server.memory.app import drops
 
     await _restricted_access.drain(timeout_s=5.0)
     await _policy_gate.drain(timeout_s=5.0)

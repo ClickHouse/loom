@@ -627,9 +627,6 @@ Source: `server/settings/_memory.py`
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `LOOM_CONFLICT_THRESHOLD` | `float` | `0.85` | memory.set flags a write `conflicted` when an active peer in the same (org, namespace, memory_type) sits at cosine ≥ this. Tuned for text-embedding-3-*; 1.0 disables. Per-namespace override: loom.namespaces.conflict_threshold. |
-| `LOOM_MEMORY_CONFLICT_JUDGE` | `bool` | `False` | When the cosine check would flag a write, one cheap LLM call labels the closest peers (contradiction / elaboration / restatement / unrelated) and the verdict follows: conflict / refines (supersedes with a `refines` edge) / merge / clear. One call per flagged write. |
-| `LOOM_MEMORY_CONFLICT_JUDGE_MAX_PEERS` | `int` | `3` | Closest peers the conflict judge labels in its one call per flagged write. |
-| `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY` | `float` | `0.7` | With the judge on, peers down to this cosine are judged too (never flagged on cosine alone), catching knowledge updates filed under a different key. |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. |
 | `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` | Bulk-path conflict checks run at once (at least 1). |
 | `LOOM_MEMORY_WRITE_CANDIDATE_BATCH` | `int` | `6` | Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact. |

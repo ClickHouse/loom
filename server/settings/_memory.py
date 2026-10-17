@@ -80,17 +80,6 @@ class MemorySettings(BaseModel):
     # for text-embedding-3-*; 1.0 disables. Per-namespace override:
     # loom.namespaces.conflict_threshold.
     conflict_threshold: float = 0.85
-    # When the cosine check would flag a write, one cheap LLM call labels the
-    # closest peers (contradiction / elaboration / restatement / unrelated) and
-    # the verdict follows: conflict / refines (supersedes with a `refines`
-    # edge) / merge / clear. One call per flagged write.
-    memory_conflict_judge: bool = False
-    # Closest peers the conflict judge labels in its one call per flagged write.
-    memory_conflict_judge_max_peers: int = Field(default=3, ge=1)
-    # With the judge on, peers down to this cosine are judged too (never
-    # flagged on cosine alone), catching knowledge updates filed under a
-    # different key.
-    memory_conflict_judge_min_similarity: float = Field(default=0.70, gt=0.0, le=1.0)
     # Entries per bulk call that get the conflict check; later entries are written unchecked
     # and counted. 0 = none are checked.
     bulk_conflict_check_max_entries: int = 200

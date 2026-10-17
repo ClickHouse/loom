@@ -1,5 +1,6 @@
-"""The same-key judge against ClickHouse: the peer read, its limits and the winner
-re-read run as SQL on real `loom.memory` rows; only the LLM is stubbed."""
+"""Automatic retirements against ClickHouse: rows of one key retired behind a
+later row, their Undo, the record of what retired, and the triple plane following
+the rows, all as SQL on real `loom.memory` rows."""
 
 from __future__ import annotations
 
@@ -64,129 +65,22 @@ def _row(org: str, session: str, value: str, valid_at: datetime, **extra: Any) -
     )
 
 
-@pytest.fixture
-def judge(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """The judge on under auto_reinforce, labelling every peer `label`; `during`
-    runs inside the judge's call, while the LLM would be thinking."""
-    from server.memory.app import conflicts
-    from server.memory.app.conflict_judge import Judgement
-    from server.settings import settings
-
-    state: dict[str, Any] = {"label": "contradiction", "calls": [], "during": None}
-
-    async def judge_peers(new_value: str, peers: list[Any]) -> Judgement:
-        state["calls"].append([p.memory_id for p in peers])
-        if state["during"] is not None:
-            await state["during"]()
-        labels = {p.memory_id: state["label"] for p in peers}
-        return Judgement(verdict="conflict", ran=True, labels=labels, stated=labels)
-
-    async def policy(org: str, namespace: str, ch: Any = None) -> str:
-        return "auto_reinforce"
-
-    monkeypatch.setattr(settings, "memory_conflict_judge", True)
-    monkeypatch.setattr(conflicts, "judge_peers", judge_peers)
-    monkeypatch.setattr(conflicts, "namespace_conflict_policy", policy)
-    return state
-
-
-async def _judge(ch: Any, org: str, new: dict[str, Any]) -> Any:
-    from server.memory.app.key_supersession import judge_same_key_rows
-
-    return await judge_same_key_rows(
-        org=org,
-        namespace=NS,
-        memory_rows=[new],
-        embedding_rows=[],
-        ch=ch,
-        now=datetime.now(UTC).replace(tzinfo=None),
-    )
-
-
-async def test_a_late_old_session_lands_superseded_behind_the_stored_row(ch, org, judge) -> None:
-    from server.memory import store as M
-
-    stored = _row(org, "s2", "User has mixed Irish and Italian ethnicity", datetime(2023, 5, 30))
-    await M.insert_memory_versions([stored], ch=ch)
-    late = _row(org, "s1", "User is Asian American", datetime(2023, 5, 23))
-    out = await _judge(ch, org, late)
-    assert out.new_rows == [(late["memory_id"], stored["memory_id"])]
-    assert late["status"] == "superseded"
-
-
-async def test_rows_that_are_not_current_or_not_the_writers_are_never_read(ch, org, judge) -> None:
-    from server.memory import store as M
-
-    past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
-    await M.insert_memory_versions(
-        [
-            _row(org, "s2", "expired", datetime(2023, 5, 30), expires_at=past),
-            _row(org, "s3", "closed", datetime(2023, 5, 30), valid_to=past),
-            _row(org, "s4", "another user's", datetime(2023, 5, 30), user_id="u2"),
-            _row(org, "s5", "pinned", datetime(2023, 5, 30), pinned=1),
-        ],
-        ch=ch,
-    )
-    out = await _judge(ch, org, _row(org, "s1", "new", datetime(2023, 5, 23)))
-    assert judge["calls"] == [] and out.new_rows == [] and out.peers == []
-
-
-async def test_a_winner_revised_while_the_judge_ran_keeps_the_new_row_live(ch, org, judge) -> None:
-    from server.memory import store as M
-
-    stored = _row(org, "s2", "User lives in London", datetime(2023, 5, 30))
-    await M.insert_memory_versions([stored], ch=ch)
-
-    async def revise() -> None:
-        head = await M.get_by_id(stored["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE)
-        await M.insert_memory_versions(
-            [M.build_memory_version_row(head, version=M.next_version(), value='"unrelated"')],
-            ch=ch,
-        )
-
-    judge["during"] = revise
-    late = _row(org, "s1", "User lives in Paris", datetime(2023, 5, 23))
-    out = await _judge(ch, org, late)
-    assert judge["calls"] == [[stored["memory_id"]]]
-    head = await M.get_by_id(stored["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE)
-    assert head is not None and head.version > stored["version"], "the revision landed"
-    assert out.new_rows == [] and late["status"] == "active"
-
-
-async def test_a_stored_loser_retires_unless_it_is_locked(ch, org, judge) -> None:
-    from server.memory import store as M
-    from server.memory.app.key_supersession import retire_judged_peers
-
-    old = _row(org, "s2", "User lives in Paris", datetime(2023, 5, 1))
-    locked = _row(org, "s3", "User lives in Rome", datetime(2023, 5, 2), lock_mode="no_delete")
-    await M.insert_memory_versions([old, locked], ch=ch)
-    new = _row(org, "s1", "User lives in London", datetime(2023, 5, 30))
-    out = await _judge(ch, org, new)
-    assert {v["memory_id"] for v in out.peers} == {old["memory_id"], locked["memory_id"]}
-    await M.insert_memory_versions([new], ch=ch)
-
-    retired = await retire_judged_peers(org, out.peers, ch=ch)
-    assert [v["memory_id"] for v in retired] == [old["memory_id"]]
-    rows = await ch.query_all(
-        "SELECT toString(memory_id) AS id, status, superseded_by FROM loom.memory FINAL "
-        "WHERE org = {org:String} AND namespace = {ns:String}",
-        params={"org": org, "ns": NS},
-    )
-    status = {r["id"]: (r["status"], r["superseded_by"]) for r in rows}
-    assert status[old["memory_id"]] == ("superseded", new["memory_id"])
-    assert status[locked["memory_id"]] == ("active", "")
-
-
 async def _retire(ch: Any, org: str, value: str, valid_at: datetime, session: str) -> str:
-    """Write `value` from `session`, which the judge reads as the later statement;
-    returns the new row's id, the memory the older rows now retire behind."""
+    """Write `value` from `session` and retire every other live row of the key behind
+    it, as an automatic retirement does; returns the new row's id."""
     from server.memory import store as M
-    from server.memory.app.key_supersession import retire_judged_peers
 
     new = _row(org, session, value, valid_at)
-    out = await _judge(ch, org, new)
     await M.insert_memory_versions([new], ch=ch)
-    await retire_judged_peers(org, out.peers, ch=ch)
+    live = await ch.query_all(
+        "SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id, "
+        "memory_key FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND memory_key = {k:String} AND status = 'active' AND tombstoned_at IS NULL "
+        "AND toString(memory_id) != {id:String} SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "ns": NS, "k": KEY, "id": str(new["memory_id"])},
+    )
+    victims = [{**r, "superseded_by": str(new["memory_id"])} for r in live]
+    await M.supersede_duplicates(org, victims, ch=ch, strong=True)
     return str(new["memory_id"])
 
 
@@ -204,7 +98,7 @@ def _undo(org: str, superseded_by: str) -> Any:
     )
 
 
-async def test_undo_restores_only_the_retirement_it_lists(ch, org, judge) -> None:
+async def test_undo_restores_only_the_retirement_it_lists(ch, org) -> None:
     # Irish retired behind Japanese, rewritten by its own session, then retired again
     # behind Korean: the first record no longer describes it.
     from server.memory import store as M
@@ -237,7 +131,7 @@ async def test_undo_restores_only_the_retirement_it_lists(ch, org, judge) -> Non
 # refuses; or it starts during the Undo's read under the lock, and waits for the Undo.
 @pytest.mark.parametrize("revised", ["before_the_lock", "under_the_lock"])
 async def test_an_undo_never_overwrites_a_conditional_revision_made_while_it_ran(
-    ch, org, judge, monkeypatch, revised
+    ch, org, monkeypatch, revised
 ) -> None:
     import contextlib
 
@@ -298,7 +192,7 @@ async def test_an_undo_never_overwrites_a_conditional_revision_made_while_it_ran
     assert not undone.restored or undone.version < head.version
 
 
-async def test_undo_survives_a_re_emit_and_refuses_a_later_delete(ch, org, judge) -> None:
+async def test_undo_survives_a_re_emit_and_refuses_a_later_delete(ch, org) -> None:
     from server.memory import store as M
     from server.memory.app.restore import handle_memory_restore
 
@@ -830,9 +724,7 @@ async def test_a_verdict_on_a_value_the_same_bulk_replaced_settles_nothing(
         session_id="s1",
         value="Bob likes Paris",
     )
-    judged = SimpleNamespace(
-        verdict=verdict, peers=[peer], refined_peers=[peer], refine_relation="refines"
-    )
+    judged = SimpleNamespace(verdict=verdict, peers=[peer], refined_peers=[peer])
 
     async def first_entry_judged(*a: Any, **k: Any) -> dict[int, Any]:
         return {0: judged}
@@ -4845,32 +4737,6 @@ async def test_a_bulk_revision_to_high_closes_what_its_row_held(ch, org) -> None
     assert await _open_cities(ch, org, set()) == set()
 
 
-async def test_a_stored_row_revised_into_a_superseded_value_closes_what_it_held(
-    ch, org, judge
-) -> None:
-    # s1's row is revised in place by a late bulk and lands superseded behind s2's
-    # later row: the facts it held close, as they would for any revision.
-    from server.memory import store as M
-    from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app.bulk_set import handle_memory_bulk_set
-
-    jazz = await _stated(ch, org, "s1", "I like jazz", triple=("user", "likes", "jazz"))
-    rock = _row(org, "s2", "I like rock", datetime(2026, 6, 1))
-    await M.insert_memory_versions([rock], ch=ch)
-    assert await _open_cities(ch, org, {"jazz"}) == {"jazz"}
-    entry = {"memory_key": KEY, "value": "I like blues", "valid_at": datetime(2026, 5, 1)}
-    out = await handle_memory_bulk_set(
-        MemoryBulkSetInput(
-            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=[entry]
-        )
-    )
-    (written,) = out.written
-    assert written.memory_id == str(jazz["memory_id"])
-    assert written.superseded_by == str(rock["memory_id"])
-    await _mutations_done(ch, org)
-    assert await _open_cities(ch, org, set()) == set()
-
-
 async def test_an_undo_stays_newer_than_a_value_dated_before_it(ch, org) -> None:
     # London (May) retires behind Paris (June); an Undo brings London back now. Rome,
     # dated July and imported after the Undo, is older than the Undo's assertion.
@@ -5120,43 +4986,6 @@ async def test_a_fallback_leaves_out_a_row_revised_before_its_markers_land(
     await _mutations_done(ch, org)
     want = {("like", "rome"), ("like", "jazz")}
     assert await _open_facts(ch, org, want) == want
-
-
-async def test_a_fallback_leaves_out_a_row_retired_before_its_markers_land(
-    ch, org, judge, monkeypatch
-) -> None:
-    # As above, but a bulk write of Berlin retires the Paris row (and the Rome one)
-    # before the markers land. The row keeps its value, so only its status says it no
-    # longer holds Paris: Berlin is current, not Paris.
-    from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app import graph_undo
-    from server.memory.app.bulk_set import handle_memory_bulk_set
-
-    london = await _london_undone_over_paris(ch, org, "live_in")
-    restate, retired = graph_undo.restate_facts, []
-
-    async def _paris_retired_first(*a: Any, **k: Any) -> Any:
-        monkeypatch.setattr(graph_undo, "restate_facts", restate)
-        entry = {
-            "memory_key": KEY,
-            "value": "I live in Berlin",
-            "relations": [("user", "live_in", "berlin")],
-            "valid_at": datetime(2026, 7, 1),
-        }
-        out = await handle_memory_bulk_set(
-            MemoryBulkSetInput(
-                org=org, namespace=NS, agent="bot", user_id=USER, session_id="s3", entries=[entry]
-            )
-        )
-        retired.extend(out.written)
-        await _mutations_done(ch, org)
-        return await restate(*a, **k)
-
-    monkeypatch.setattr(graph_undo, "restate_facts", _paris_retired_first)
-    await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
-    await _mutations_done(ch, org)
-    assert retired
-    assert await _open_facts(ch, org, {("live_in", "berlin")}) == {("live_in", "berlin")}
 
 
 async def test_a_replayed_fallback_dates_its_triple_as_its_edge(ch, org, monkeypatch) -> None:
