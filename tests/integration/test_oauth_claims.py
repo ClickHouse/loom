@@ -32,12 +32,11 @@ async def store() -> Any:
     await ch.disconnect()
 
 
-async def _delete(table: str, where_key: str, value: str) -> None:
+async def _delete(sql: str, value: str) -> None:
+    """Rows a test wrote where the session purge cannot reach: `sql` binds `{v:String}`."""
     from server.core.ch import get_client
 
-    await get_client().execute(
-        f"DELETE FROM {table} WHERE {where_key} = {{v:String}}", {"v": value}
-    )
+    await get_client().execute(sql, {"v": value})
 
 
 def _grant(client_id: str) -> Grant:
@@ -56,7 +55,7 @@ def _grant(client_id: str) -> Grant:
     }
 
 
-def _device(status: str = "pending") -> tuple[Device, str]:
+def _device() -> tuple[Device, str]:
     user_code = "".join(secrets.choice("BCDFGHJKLMNPQRSTVWXZ") for _ in range(8))
     d: Device = {
         "id": token_id(secrets.token_urlsafe(32)),
@@ -69,7 +68,7 @@ def _device(status: str = "pending") -> tuple[Device, str]:
         "family": "",
         "upstream_refresh": "",
         "user_code": device._user_code_id(user_code),
-        "status": status,  # type: ignore[typeddict-item]
+        "status": "pending",
         "address": "127.0.0.1",
         "ticket": "",
     }
@@ -264,9 +263,9 @@ async def test_polling_a_pending_device_grant_writes_nothing(
     swaps: list[str] = []
     real = store._swap
 
-    async def swap(key: str, old: str | None, new: str) -> str | None:
+    async def swap(key: str, old: str | None, new: str, expires_at: int) -> str | None:
         swaps.append(key)
-        return await real(key, old, new)
+        return await real(key, old, new, expires_at)
 
     monkeypatch.setattr(store, "_swap", swap)
     polled = await store.take_device(code)
@@ -283,7 +282,10 @@ async def test_an_owed_revocation_counts_in_every_process(store: Any) -> None:
         await revocation.refresh()  # what every process loads, at boot and on its cadence
         assert revocation.is_revoked(family)
     finally:  # an owed row has no org for the session purge to find
-        await _delete("loom.oauth_state", "record_type = 'revocation_owed' AND id", family)
+        await _delete(
+            "DELETE FROM loom.oauth_state WHERE record_type = 'revocation_owed' AND id = {v:String}",
+            family,
+        )
 
 
 async def test_a_session_another_process_ended_reads_as_ended(
@@ -298,7 +300,7 @@ async def test_a_session_another_process_ended_reads_as_ended(
         monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())  # this process lags
         assert await revocation.revoked_outright(family)
     finally:  # revoked_tokens has no org column for the session purge to match
-        await _delete("loom.revoked_tokens", "jti", family)
+        await _delete("DELETE FROM loom.revoked_tokens WHERE jti = {v:String}", family)
 
 
 async def test_the_sweep_worker_drops_keys_once_their_credential_expired(store: Any) -> None:

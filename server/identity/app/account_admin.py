@@ -244,9 +244,9 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
         row, was = plan["row"], str(plan["was"])
         carried = await _carry_revoked(plan["revoked"], str(row["owner_email"]), by)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-        # Insert-as-replace carrying every other column forward.
         if was:  # first, so a link stopped part way leaves no link a re-run can't redo
             await sso_links.unlink(was, [(org, namespace)], by)
+        # Insert-as-replace carrying every other column forward.
         await get_client().insert(
             "loom.namespaces",
             [{**row, "contact_email": email, "updated_at": max(now, row["updated_at"])}],
