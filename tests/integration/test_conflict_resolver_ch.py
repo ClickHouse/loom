@@ -1000,3 +1000,35 @@ async def test_a_retirement_clears_the_winners_flag_against_the_retired_row(ch, 
     assert [r["status"] for r in status] == ["active"]
     (acted,) = await _audit(ch, org, "memory.conflict_resolver")
     assert [(p["action"], p.get("flag_cleared")) for p in acted["pairs"]] == [("retire", True)]
+
+
+@pytest.mark.parametrize("cut_times", [1, 2])
+async def test_an_answer_cut_at_the_cap_is_asked_again_then_left_owed(
+    ch, wired, monkeypatch, cut_times: int
+) -> None:
+    """The provider stops at the output cap: the call is made once more with twice
+    the room; cut again, the row stays owed and counts errored."""
+    from types import SimpleNamespace
+
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 76)
+    real = llm.complete
+    caps: list[int] = []
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        caps.append(int(kw["max_tokens"]))
+        if len(caps) <= cut_times:
+            return SimpleNamespace(text='{"peers": [{"peer_id": "p1", "rea', stop_reason="length")
+        return await real(system, user, **kw)
+
+    monkeypatch.setattr(llm, "complete", complete)
+    out = await run_pass()
+    assert caps[1] == 2 * caps[0] and len(caps) == 2
+    status = (await _rows(ch, org))["office_city"]["status"]
+    mark = (await _marks(ch, org))["office_location"]
+    if cut_times == 1:
+        assert (status, mark, out["errored"]) == ("superseded", 2, 0)
+    else:
+        assert (status, mark, out["errored"]) == ("active", 1, 1)

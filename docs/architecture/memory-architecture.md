@@ -260,7 +260,9 @@ actions, verdicts and confidences, never the text.
 - A provider that refuses the model or the key (401, 403, 404) gets one warning per
   pass and no further call; the rows stay owed. A transient failure (408, 409, 429, 5xx,
   a timeout) leaves the row owed. Any other 4xx refuses this row's request, and asking
-  again gets the same answer: the row is stamped judged and counted `errored`.
+  again gets the same answer: the row is stamped judged and counted `errored`. An
+  answer cut at the output cap (`length`, `max_tokens`) is asked once more with twice
+  the room; cut again, the row stays owed and is counted `errored`.
 
 **Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written
 version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged.

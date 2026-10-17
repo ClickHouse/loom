@@ -56,6 +56,14 @@ class ModelUnavailable(RuntimeError):
     answer for every row, so the pass stops and the rows stay owed."""
 
 
+class CutOff(RuntimeError):
+    """The answer stopped at the output cap twice: no judgement, the row stays owed."""
+
+
+# The stop reasons of an answer cut at the output cap (OpenAI, Anthropic).
+_CUT = ("length", "max_tokens")
+
+
 class Unjudgeable(RuntimeError):
     """The provider refused this row's request for a reason of its own (a 4xx other
     than 408, 409 and 429): asking again gets the same answer."""
@@ -94,7 +102,8 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
     """One call over the cluster: ({peer memory_id: verdict}, the model that answered).
     Malformed output is {}. Never answered by the fallback model: the thresholds are
     this model's. Raises `ModelUnavailable` when the provider refuses the
-    model or the key, `Unjudgeable` when it refuses this request, and any other failure
+    model or the key, `Unjudgeable` when it refuses this request, `CutOff` when the
+    answer is cut at the output cap even with twice the room, and any other failure
     as it came."""
     import httpx
 
@@ -108,14 +117,23 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
     if isinstance(llm, FakeLLMClient):
         # The stand-in for a missing key: its echo is no judgement. The rows stay owed.
         raise ModelUnavailable(f"no key for {settings.conflict_resolver_model}")
+    cap = cr.max_output_tokens(len(peers))
     try:
         with llm_stage("conflict_resolver"):
             res = await llm.complete(
                 cr.SYSTEM_PROMPT,
                 cr.user_prompt(new, peers),
-                max_tokens=cr.max_output_tokens(len(peers)),
+                max_tokens=cap,
                 response_format=cr.RESPONSE_FORMAT,
             )
+            if str(getattr(res, "stop_reason", "") or "") in _CUT:
+                # Cut at the cap: a cut JSON answer parses to nothing. Once more with room.
+                res = await llm.complete(
+                    cr.SYSTEM_PROMPT,
+                    cr.user_prompt(new, peers),
+                    max_tokens=2 * cap,
+                    response_format=cr.RESPONSE_FORMAT,
+                )
     except httpx.HTTPStatusError as e:
         status, reason = e.response.status_code, str(e).splitlines()[0]
         if status in (401, 403, 404):
@@ -123,6 +141,8 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
         if 400 <= status < 500 and status not in (408, 409, 429):
             raise Unjudgeable(reason) from e
         raise  # 408, 409, 429, 5xx: transient, the row stays owed
+    if str(getattr(res, "stop_reason", "") or "") in _CUT:
+        raise CutOff(f"the answer stopped at the output cap ({2 * cap} tokens) twice")
     answered = str(getattr(res, "model", "") or settings.conflict_resolver_model)
     return cr.parse_verdicts(str(getattr(res, "text", "") or ""), peers), answered
 
