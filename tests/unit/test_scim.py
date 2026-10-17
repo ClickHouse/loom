@@ -593,6 +593,20 @@ async def test_tokens_made_by_the_persons_tokens_read_revoked_too(world) -> None
     assert world.table.live_tokens() == [_saved_token("ci", "admin")]
 
 
+async def test_a_token_the_person_revoked_still_takes_its_children(world) -> None:
+    # Dead by the store whoever listed it revoked, so what it made is listed revoked too.
+    world.person("lee@example.com", "lee")
+    parent = {
+        **_saved_token("parent-bot", "lee"),
+        "revoked_at": datetime(2026, 2, 1),
+        "revoked_by": "lee",
+    }
+    world.table.tokens += [parent, _saved_token("child-bot", parent["sa_subject"])]
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    assert world.table.live_tokens() == []
+
+
 async def test_many_tokens_are_revoked_in_one_request_a_few_names_held_at_once(world) -> None:
     world.person("lee@example.com", "lee")
     world.table.tokens += [_saved_token(f"bot-{i:04}", "lee") for i in range(2000)]
