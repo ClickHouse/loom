@@ -625,26 +625,43 @@ async def _act_on_verdicts(
     acting: asyncio.Lock,
 ) -> None:
     """Settle each pair the answer acts on, then one audit row for the row, all under
-    `acting` (held here, inside the shield, so it is held for as long as this runs)."""
+    `acting` (held here, inside the shield, so it is held for as long as this runs).
+    The audit row is written even when a later pair fails, for the pairs done."""
     acted: list[dict[str, Any]] = []
     judged = (str(row.memory_id), str(row.content_sha256 or ""))
     async with acting:
-        for peer in peers:
-            v = verdicts.get(str(peer["memory_id"]))
-            action = cr.NOTHING if v is None else _action(v, policy)
-            if v is None or action == cr.NOTHING:
-                # Unsure, or a peer the answer left out: the pair stays as it is.
-                counts.skipped_low_confidence += 1
-                continue
-            taken = await _settle_pair(org, namespace, judged, peer, action, counts)
-            if taken is not None:
-                acted.append(
-                    {
-                        "peer_id": str(peer["memory_id"]),
-                        **taken,
-                        "verdict": v.verdict,
-                        "confidence": v.confidence,
-                    }
-                )
-        if acted:
-            await _audit(org, namespace, row, acted, model)
+        try:
+            await _settle_pairs(org, namespace, judged, peers, verdicts, policy, counts, acted)
+        finally:
+            if acted:
+                await _audit(org, namespace, row, acted, model)
+
+
+async def _settle_pairs(
+    org: str,
+    namespace: str,
+    judged: tuple[str, str],
+    peers: list[dict[str, Any]],
+    verdicts: dict[str, cr.PeerVerdict],
+    policy: str,
+    counts: Counts,
+    acted: list[dict[str, Any]],
+) -> None:
+    """Settle each pair the answer acts on, appending what was done to `acted`."""
+    for peer in peers:
+        v = verdicts.get(str(peer["memory_id"]))
+        action = cr.NOTHING if v is None else _action(v, policy)
+        if v is None or action == cr.NOTHING:
+            # Unsure, or a peer the answer left out: the pair stays as it is.
+            counts.skipped_low_confidence += 1
+            continue
+        taken = await _settle_pair(org, namespace, judged, peer, action, counts)
+        if taken is not None:
+            acted.append(
+                {
+                    "peer_id": str(peer["memory_id"]),
+                    **taken,
+                    "verdict": v.verdict,
+                    "confidence": v.confidence,
+                }
+            )

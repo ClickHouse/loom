@@ -386,6 +386,30 @@ async def test_an_erasure_requested_during_the_call_leaves_everything_owed(row_e
     assert counts.retired == 0
 
 
+async def test_a_pair_that_fails_leaves_the_audit_row_of_the_pairs_done_before_it(
+    row_env: NS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    row_env.peers.append(
+        _peer_row("m3", "s3", "office_town", '"Office is in Lyon"') | {"similarity": 0.7}
+    )
+    row_env.heads["m3"] = _mem("m3", session_id="s3", content_sha256="sha-m3")
+    row_env.asserted["m3"] = 1_000
+    row_env.answer = _answer(
+        _entry("p1", "contradiction", 0.95), _entry("p2", "contradiction", 0.95)
+    )
+
+    async def act(action: str, org: str, namespace: str, row: Any, peer: Any) -> bool:
+        if peer.memory_id == "m3":
+            raise RuntimeError("ClickHouse went away")
+        row_env.acted.append((action, row.memory_id, peer.memory_id))
+        return True
+
+    monkeypatch.setattr(resolver, "_act", act)
+    with pytest.raises(RuntimeError):
+        await _resolve()
+    assert [p["peer_id"] for p in row_env.audits[0]] == ["m2"]
+
+
 @pytest.mark.parametrize("peer_at", [2_000, 3_000])
 async def test_an_update_whose_peer_was_not_asserted_first_is_flagged(
     row_env: NS, peer_at: int
