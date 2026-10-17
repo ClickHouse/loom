@@ -5818,6 +5818,51 @@ async def test_a_row_naming_the_pair_while_its_edge_ends_keeps_it_open(ch, org) 
     assert await _walks_to(org, "london")
 
 
+@pytest.mark.parametrize("racing", [True, False])
+async def test_a_row_naming_the_pair_while_its_edge_ends_keeps_its_stated_end(
+    ch, org, racing: bool
+) -> None:
+    # The edge is stated to hold until next year. The trip row names the pair while the
+    # close runs: the edge keeps that end, it is neither cut short nor opened forever.
+    # With no row naming it, the close ends it now.
+    from server.memory.app.projections import end_edges, entity_edge_row
+
+    trip = await _stated(
+        ch, org, "s2", "Alice's trip to London", extracted=False, memory_key="trip"
+    )
+    until = naive_utc_now().replace(microsecond=0) + timedelta(days=365)
+    edge = entity_edge_row(org, NS, "alice", "london", last_seen=naive_utc_now())
+    edge["valid_to"] = until
+    await ch.insert("loom.entity_edges", [edge], settings={"wait_for_async_insert": 1})
+
+    class _Racing:
+        """`ch`, with the trip row written right after the first read."""
+
+        def __init__(self) -> None:
+            self.reads = 0
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(ch, name)
+
+        async def query_all(self, *a: Any, **k: Any) -> Any:
+            found = await ch.query_all(*a, **k)
+            self.reads += 1
+            if self.reads == 1 and racing:
+                await _mentions(ch, org, trip, "alice", "london")
+            return found
+
+    now = naive_utc_now().replace(microsecond=0)
+    await end_edges(_Racing(), org=org, namespace=NS, ends=[("alice", "london", now)])
+    await _mutations_done(ch, org)
+    rows = await ch.query_all(
+        "SELECT valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " AND entity_a = 'alice' AND entity_b = 'london' AND valid_to IS NOT NULL"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert [r["valid_to"] for r in rows] == [until if racing else now]
+
+
 async def test_a_fact_that_ended_keeps_no_edge_of_a_dropped_one_open(ch, org) -> None:
     # A live row says London was home until 2020. London's liked row is revised
     # away: the pair's only fact valid now is gone, so the edge ends.

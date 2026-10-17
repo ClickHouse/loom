@@ -1154,8 +1154,9 @@ async def end_edges(
     the revised or retired rows included, as the edge is its co-occurrence too. A row
     written before rows were linked to edges keeps it through its key's link
     (`entity_edge_memories`). No `invalid_at`: the edge walk never walks a retired edge,
-    and the fact did hold until then. One read, and an UPDATE only when it finds an edge
-    to end, then a check for a row written meanwhile (`reopen_held_edges`)."""
+    and the fact did hold until then. One read, and an UPDATE only when it finds an open
+    edge to end, then a check for a row written meanwhile (`reopen_held_edges`), then one
+    for the edges with a stated later end of the pairs no row named."""
     if not ends:
         return
     params = {
@@ -1169,16 +1170,35 @@ async def end_edges(
     found = await ch.query_all(
         f"""
         WITH {_HELD_PAIRS_CTES}
-        SELECT DISTINCT entity_a, entity_b FROM loom.entity_edges
+        SELECT entity_a, entity_b,
+               countIf(valid_to IS NULL) > 0 AS open, countIf(valid_to IS NOT NULL) > 0 AS later
+        FROM loom.entity_edges
         WHERE {where}
           AND (entity_a, entity_b) NOT IN (SELECT entity_a, entity_b FROM held)
+        GROUP BY entity_a, entity_b
         SETTINGS select_sequential_consistency = 1
         """,
         params=params,
     )
-    ending = sorted((str(r["entity_a"]), str(r["entity_b"])) for r in found)
-    if not ending:
+    if not found:
         return
+    pairs = {(str(r["entity_a"]), str(r["entity_b"])): r for r in found}
+    # The open edges first: if a row names the pair meanwhile, the check after opens them
+    # again. An edge with a stated later end ("until Dec 2026") ends after that check,
+    # only for the pairs it found no row for: opening it again would lose its end.
+    opened = sorted(p for p, r in pairs.items() if r["open"])
+    if opened:
+        await _end_edge_rows(ch, _STILL_OPEN_EDGES_WHERE, params, opened)
+    held = await reopen_held_edges(ch, params=params, ending=sorted(pairs))
+    later = sorted(p for p, r in pairs.items() if r["later"] and p not in held)
+    if later:
+        await _end_edge_rows(ch, f"{_OPEN_EDGES_WHERE} AND valid_to IS NOT NULL", params, later)
+
+
+async def _end_edge_rows(
+    ch: Any, where: str, params: dict[str, Any], ending: list[tuple[str, str]]
+) -> None:
+    """End the edge rows of the `ending` pairs that `where` matches."""
     await ch.execute(
         f"""
         ALTER TABLE loom.entity_edges
@@ -1190,17 +1210,17 @@ async def end_edges(
     )
     from server.memory.app import graph_write_marks as _graph_marks
 
-    _graph_marks.note_write(org, namespace)
-    await reopen_held_edges(ch, params=params, ending=ending)
+    _graph_marks.note_write(params["org"], params["ns"])
 
 
 async def reopen_held_edges(
     ch: Any, *, params: dict[str, Any], ending: list[tuple[str, str]]
-) -> None:
-    """Undo `end_edges`'s UPDATE (its `params`) for the `ending` pairs a live row names
-    now. A row written while the close ran may name a pair it ended: every writer
-    lands an edge's row links first, so once the UPDATE is queued they are found here.
-    Mutations run in order, so this one lands after the close."""
+) -> set[tuple[str, str]]:
+    """Undo `end_edges`'s UPDATE of the open edges (its `params`) for the `ending` pairs
+    a live row names now, and return those pairs. A row written while the close ran may
+    name a pair it ended: every writer lands an edge's row links first, so once the
+    UPDATE is queued they are found here. Mutations run in order, so this one lands
+    after the close."""
     held = await ch.query_all(
         f"""
         WITH {_HELD_PAIRS_CTES}
@@ -1210,7 +1230,7 @@ async def reopen_held_edges(
         params={**params, "pairs": ending},
     )
     if not held:
-        return
+        return set()
     await ch.execute(
         f"""
         ALTER TABLE loom.entity_edges
@@ -1224,6 +1244,7 @@ async def reopen_held_edges(
     from server.memory.app import graph_write_marks as _graph_marks
 
     _graph_marks.note_write(params["org"], params["ns"])
+    return {(str(r["entity_a"]), str(r["entity_b"])) for r in held}
 
 
 async def open_triples_among(
