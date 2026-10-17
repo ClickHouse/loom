@@ -163,8 +163,14 @@ schema. These rules keep that safe. The operator procedure is in
 15. **A marker N writes in a column N-1 reads is not one N-1 reads as its own.** The
     conflict resolver's queue lives on `memory_embeddings.conflict_checked_at`, where an
     N-1 with the per-write judge on reads the epoch itself as a judgement it owes and
-    re-runs it. N writes `00:00:01` (owed) and `00:00:02` (judged), which N-1 reads as
-    settled; N treats N-1's epoch marks as owed once N-1's own settle had a minute. While
+    re-runs it. N writes `00:00:01` (owed) and `00:00:02` (judged), which N-1's
+    statements read as settled (they match the epoch exactly); N treats N-1's epoch
+    marks as owed once N-1's own settle had a minute. N-1's Python is wider: its
+    `is_mark` takes any time before 2000 as its pending mark, so where N-1 runs its
+    per-write judge (`LOOM_MEMORY_CONFLICT_JUDGE`, off by default) its settle of a row it
+    wrote can stamp its settle time over N's mark on that row; N then reads an older
+    build's verdict, owed again only while the row is `conflicted`, and that one row may
+    go unjudged. While
     N-1 holds the worker lease (a code-only release keeps it until it stops) N's marks
     wait, and the first N leader judges them.
 
