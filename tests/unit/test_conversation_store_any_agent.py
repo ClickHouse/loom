@@ -173,3 +173,19 @@ async def test_one_agents_count_is_the_rows_its_list_pages_through() -> None:
     await conversation_repo.count_thread_msgs("o", "ns", "bot", "t-1", ch=ch)
     sql, _ = ch.calls[-1]
     assert "count() AS n" in sql
+
+
+@pytest.mark.asyncio
+async def test_a_substring_search_across_agents_collapses_before_its_limit() -> None:
+    # Collapsing after the limit would fill the page with copies and return fewer turns
+    # than match; the turn key is the full text, as the thread read's.
+    ch = StubCH()
+    await conversation_repo.search_substring("o", ["ns"], "*", "deploy", limit=5, ch=ch)
+    sql, _ = ch.calls[-1]
+    assert sql.index("LIMIT 1 BY namespace, thread_id, msg_id, cityHash64(content)") < sql.index(
+        "LIMIT {limit:UInt32}"
+    )
+
+    await conversation_repo.search_substring("o", ["ns"], "bot", "deploy", limit=5, ch=ch)
+    sql, _ = ch.calls[-1]
+    assert "LIMIT 1 BY" not in sql

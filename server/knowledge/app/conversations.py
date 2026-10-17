@@ -586,12 +586,14 @@ async def _search_substring_fallback(
         )
         for r in rows
     ]
-    return ConversationSearchOutput(hits=_one_per_turn(hits), namespaces_skipped=skipped)
+    return ConversationSearchOutput(hits=hits, namespaces_skipped=skipped)
 
 
 def _one_per_turn(hits: list[_ConversationHit]) -> list[_ConversationHit]:
     """A turn two agents both logged once, as a thread read across agents shows it: the
-    first (best-ranked) copy of each namespace, thread, id and text."""
+    first (best-ranked) copy of each namespace, thread, id and text. For the vector path,
+    whose embedding rows carry the excerpt only; the substring path collapses in SQL on
+    the full text, before its limit."""
     seen: set[tuple[str, str, str, str]] = set()
     kept: list[_ConversationHit] = []
     for h in hits:

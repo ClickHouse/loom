@@ -682,33 +682,55 @@ async def test_the_latest_writer_is_read_from_the_page_returned(
 
 
 @pytest.mark.asyncio
-async def test_search_returns_a_turn_two_agents_logged_once(
+async def test_vector_search_returns_a_turn_two_agents_logged_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app import conversation_search
     from server.knowledge.app import conversations as app
-    from server.knowledge.store import conversations as conversation_repo
 
-    class NoEmbedder:
-        model_name = "none"
+    class Embedder:
+        model_name = "test"
 
         async def embed(self, text):
-            raise RuntimeError("down")
+            return [0.1, 0.2]
 
     async def fake_namespaces(org, namespace, scope):
         return [namespace], []
 
-    async def fake_substring(*a, **kw):
+    async def fake_vector(q, **kw):
         same = datetime(2026, 6, 1, 9, 0)
+        hit = conversation_search.ConversationHit
         return [
-            _msg(msg_id="m1", role="user", content="hello", ts=same, agent="claude"),
-            _msg(msg_id="m1", role="user", content="hello", ts=same, agent="codex"),
-            _msg(msg_id="m2", role="user", content="hello again", ts=same, agent="codex"),
+            hit(
+                thread_id="t1",
+                msg_id="m1",
+                role="user",
+                content_excerpt="hello",
+                ts=same,
+                distance=0.1,
+            ),
+            hit(
+                thread_id="t1",
+                msg_id="m1",
+                role="user",
+                content_excerpt="hello",
+                ts=same,
+                distance=0.1,
+            ),
+            hit(
+                thread_id="t1",
+                msg_id="m2",
+                role="user",
+                content_excerpt="hello again",
+                ts=same,
+                distance=0.2,
+            ),
         ]
 
-    monkeypatch.setattr(app, "get_embedder", lambda: NoEmbedder())
+    monkeypatch.setattr(app, "get_embedder", lambda: Embedder())
     monkeypatch.setattr(app, "namespaces_to_search", fake_namespaces)
-    monkeypatch.setattr(conversation_repo, "search_substring", fake_substring)
+    monkeypatch.setattr(conversation_search, "vector_search", fake_vector)
 
     out = await app.handle_conversation_search(
         ConversationSearchInput(org="clickhouse", namespace="finance", agent="*", query="hello")

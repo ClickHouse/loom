@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ComponentPropsWithoutRef, type FocusEvent, type ReactNode } from "react";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Dialog } from "@clickhouse/click-ui/Dialog";
 import { Icon } from "@clickhouse/click-ui/Icon";
@@ -49,6 +49,10 @@ function focusDialog(e: Event) {
   e.currentTarget.focus();
 }
 
+function keepFocusInView(e: FocusEvent<HTMLDivElement>) {
+  if (e.target !== e.currentTarget) e.target.scrollIntoView?.({ block: "nearest" });
+}
+
 function focusBodyOrDialog(e: Event) {
   const content = e.currentTarget;
   if (!(content instanceof HTMLElement)) return;
@@ -97,6 +101,9 @@ export function Modal({
         className={`${LAYER[layer]} ${className}`}
         onOpenAutoFocus={initialFocus === "dialog" ? focusDialog : focusBodyOrDialog}
         onCloseAutoFocus={returnFocus}
+        // Radix's focus trap moves focus without scrolling (its wrap from the last control
+        // to the first, too), so a long dialog keeps the focused control in view itself.
+        onFocus={keepFocusInView}
         {...handlers}
       >
         {/* First in the DOM, as it is drawn in the header, so Tab follows what is seen.

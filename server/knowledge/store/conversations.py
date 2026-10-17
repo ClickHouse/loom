@@ -377,6 +377,15 @@ async def tombstone_thread(
     return counts
 
 
+# One turn of a thread, however many agents logged it: its id and its content, since a
+# msg_id is unique per agent only and a client may number its own turns. The content hash
+# also orders two turns that share a millisecond and an id; the page cursor carries only
+# (ts, msg_id), a format the previous release reads, so a page boundary that falls
+# between two such turns skips the second. Carrying the hash in the cursor is the next
+# release's change (docs/architecture/rolling-upgrades.md, rule 4).
+TURN = "msg_id, cityHash64(content)"
+
+
 async def search_substring(
     org: str,
     namespaces: list[str],
@@ -423,6 +432,9 @@ async def search_substring(
         where.append("run_id = {run_id:String}")
         params["run_id"] = run_id
 
+    # Across agents a turn two agents logged comes back once, collapsed before the limit
+    # so the page holds `limit` turns, on the thread read's key (`TURN`).
+    one_per_turn = f"LIMIT 1 BY namespace, thread_id, {TURN}" if agent in ("*", "-") else ""
     rows = await ch.query_all(
         f"""
         SELECT org, namespace, agent, thread_id, msg_id, role, content,
@@ -431,20 +443,12 @@ async def search_substring(
         FROM loom.conversations
         WHERE {" AND ".join(where)}
         ORDER BY ts DESC
+        {one_per_turn}
         LIMIT {{limit:UInt32}}
         """,
         params=params,
     )
     return [_hydrate(r) for r in rows]
-
-
-# One turn of a thread, however many agents logged it: its id and its content, since a
-# msg_id is unique per agent only and a client may number its own turns. The content hash
-# also orders two turns that share a millisecond and an id; the page cursor carries only
-# (ts, msg_id), a format the previous release reads, so a page boundary that falls
-# between two such turns skips the second. Carrying the hash in the cursor is the next
-# release's change (docs/architecture/rolling-upgrades.md, rule 4).
-TURN = "msg_id, cityHash64(content)"
 
 
 async def list_thread(

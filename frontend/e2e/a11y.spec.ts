@@ -366,6 +366,53 @@ test.describe("open overlays", () => {
     }
   });
 
+  test("a long dialog scrolls the control Tab wraps to into view", async ({ page }) => {
+    const now = new Date().toISOString();
+    const turn = (i: number) => ({ msg_id: `m${i}`, agent: "cursor", role: "user", content: `turn ${i}`, ts: now });
+    await installApi(page);
+    await page.route("**/v1/conversation.threads", (route) =>
+      route.fulfill({
+        json: {
+          threads: [
+            {
+              thread_id: "t-long",
+              agent: "cursor",
+              msg_count: 200,
+              first_seen: now,
+              last_seen: now,
+              last_role: "user",
+              last_content_excerpt: "x",
+              title: "Long thread",
+            },
+          ],
+        },
+      }),
+    );
+    await page.route("**/v1/conversation.get", (route) =>
+      route.fulfill({
+        json: {
+          found: true,
+          thread_id: "t-long",
+          title: "Long thread",
+          agent: "cursor",
+          msg_count: 200,
+          created_at: null,
+          updated_at: null,
+          messages: Array.from({ length: 200 }, (_, i) => turn(i)),
+        },
+      }),
+    );
+    await page.goto("/conversations");
+    await page.getByText("Long thread").first().click();
+    const dialog = page.getByRole("dialog");
+    // The transcript is the dialog's last stop; Tab wraps from it to Close at the top.
+    await dialog.getByRole("region", { name: "Transcript" }).focus();
+    await page.keyboard.press("Tab");
+    const close = dialog.getByRole("button", { name: "Close" });
+    await expect(close).toBeFocused();
+    await expect(close).toBeInViewport();
+  });
+
   test("Conversations with recent threads", async ({ page }) => {
     const now = new Date().toISOString();
     await installApi(page);
