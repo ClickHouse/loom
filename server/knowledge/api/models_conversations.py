@@ -278,7 +278,7 @@ class ConversationSearchOutput(BaseModel):
 class ConversationThreadsInput(BaseModel):
     org: str
     namespace: str
-    agent: str = "*"  # "*" drops the agent filter
+    agent: str = "*"  # "*" or "-" lists every agent's threads
     # Only threads with a live message in the last this many days (1-365).
     window_days: int = Field(default=30, ge=1, le=365)
     # At most this many threads (1-200).

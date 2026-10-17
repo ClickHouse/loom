@@ -552,7 +552,7 @@ async def handle_conversation_search(
             )
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return ConversationSearchOutput(
-        hits=[h for _, h in scored[: input.top_k]], namespaces_skipped=skipped
+        hits=_one_per_turn([h for _, h in scored])[: input.top_k], namespaces_skipped=skipped
     )
 
 
@@ -586,7 +586,20 @@ async def _search_substring_fallback(
         )
         for r in rows
     ]
-    return ConversationSearchOutput(hits=hits, namespaces_skipped=skipped)
+    return ConversationSearchOutput(hits=_one_per_turn(hits), namespaces_skipped=skipped)
+
+
+def _one_per_turn(hits: list[_ConversationHit]) -> list[_ConversationHit]:
+    """A turn two agents both logged once, as a thread read across agents shows it: the
+    first (best-ranked) copy of each namespace, thread, id and text."""
+    seen: set[tuple[str, str, str, str]] = set()
+    kept: list[_ConversationHit] = []
+    for h in hits:
+        turn = (h.namespace, h.thread_id, h.msg_id, h.content_excerpt)
+        if turn not in seen:
+            seen.add(turn)
+            kept.append(h)
+    return kept
 
 
 def _safe_load_json(s: Any) -> dict[str, Any]:
@@ -613,7 +626,7 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
         input.namespace,
         window_days=int(input.window_days),
         limit=int(input.limit),
-        agent=input.agent if input.agent and input.agent != "*" else None,
+        agent=_thread_reader(input.agent) if input.agent else None,
         count_turns=not input.fields or "msg_count" in input.fields,
     )
     # Titles live on the conversation_threads metadata table (set by

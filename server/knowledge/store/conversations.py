@@ -508,7 +508,8 @@ async def list_thread(
     columns = """org, namespace, agent, thread_id, msg_id, role, content,
                reasoning, user_id, run_id, metadata, tokens, ts"""
     if agent is not None:
-        # One agent never logs a turn twice, so its page filters in the one WHERE.
+        # One agent's read pages its own rows as stored, in the one WHERE; its count is
+        # the same rows (count_thread_msgs).
         where += page_where
         page_where = []
     source = f"loom.conversations WHERE {' AND '.join(where)}"
@@ -544,9 +545,10 @@ async def count_thread_msgs(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Turns in one (org, ns, agent, thread_id); `agent=None` counts every
-    agent's. Distinct turns (`TURN`): two agents logging the same turn store it
-    under one content-hashed id, which a reader shows once.
+    """Turns in one (org, ns, agent, thread_id): the rows its list pages
+    through. `agent=None` counts every agent's distinct turns (`TURN`): two
+    agents logging the same turn store it under one content-hashed id, which a
+    read across agents shows once.
 
     Used by `conversation.get` to populate `msg_count` whether or not
     the caller asked for the messages payload.
@@ -557,9 +559,10 @@ async def count_thread_msgs(
     if agent is not None:
         agent_clause = "AND agent = {agent:String}"
         params["agent"] = agent
+    turns = "count()" if agent is not None else f"uniqExact({TURN})"
     row = await ch.query_one(
         f"""
-        SELECT uniqExact({TURN}) AS n
+        SELECT {turns} AS n
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}

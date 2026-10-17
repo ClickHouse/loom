@@ -679,3 +679,64 @@ async def test_the_latest_writer_is_read_from_the_page_returned(
         )
     )
     assert out.agent == "planner"
+
+
+@pytest.mark.asyncio
+async def test_search_returns_a_turn_two_agents_logged_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app import conversations as app
+    from server.knowledge.store import conversations as conversation_repo
+
+    class NoEmbedder:
+        model_name = "none"
+
+        async def embed(self, text):
+            raise RuntimeError("down")
+
+    async def fake_namespaces(org, namespace, scope):
+        return [namespace], []
+
+    async def fake_substring(*a, **kw):
+        same = datetime(2026, 6, 1, 9, 0)
+        return [
+            _msg(msg_id="m1", role="user", content="hello", ts=same, agent="claude"),
+            _msg(msg_id="m1", role="user", content="hello", ts=same, agent="codex"),
+            _msg(msg_id="m2", role="user", content="hello again", ts=same, agent="codex"),
+        ]
+
+    monkeypatch.setattr(app, "get_embedder", lambda: NoEmbedder())
+    monkeypatch.setattr(app, "namespaces_to_search", fake_namespaces)
+    monkeypatch.setattr(conversation_repo, "search_substring", fake_substring)
+
+    out = await app.handle_conversation_search(
+        ConversationSearchInput(org="clickhouse", namespace="finance", agent="*", query="hello")
+    )
+    assert [h.msg_id for h in out.hits] == ["m1", "m2"]
+
+
+@pytest.mark.asyncio
+async def test_threads_reads_dash_as_every_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+    from server.knowledge.app.conversations import handle_conversation_threads
+    from server.knowledge.store import conversations as conversation_repo
+
+    seen: list[str | None] = []
+
+    async def fake_recent(org, namespace, *, agent=None, **kw):
+        seen.append(agent)
+        return []
+
+    async def fake_titles(*a, **kw):
+        return {}
+
+    monkeypatch.setattr(conversation_repo, "recent_threads", fake_recent)
+    monkeypatch.setattr(conversation_repo, "thread_titles", fake_titles)
+    for sentinel in ("*", "-"):
+        await handle_conversation_threads(
+            ConversationThreadsInput(org="clickhouse", namespace="finance", agent=sentinel)
+        )
+    assert seen == [None, None]

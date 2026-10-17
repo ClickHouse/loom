@@ -234,8 +234,9 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(await screen.findByText("body of thread-y")).toBeInTheDocument();
     expect(getConversationThread.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
     fireEvent.click(screen.getByRole("button", { name: /Load more/ }));
-    await waitFor(() => expect(listConversationMessages).toHaveBeenCalledTimes(1));
-    expect(listConversationMessages.mock.calls[0][1]).toBe("claude-code");
+    // Each page asks for every agent first; only an empty answer retries as the listed agent.
+    await waitFor(() => expect(listConversationMessages).toHaveBeenCalledTimes(2));
+    expect(listConversationMessages.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
     expect(listConversationMessages.mock.calls[0][3]).toMatchObject({ cursor: "c-1" });
   });
 
@@ -297,26 +298,35 @@ describe("Conversations: answers follow the current thread and namespace", () =>
 
     render(<Conversations />);
     fireEvent.click(await screen.findByText("Title Y"));
-    expect(await screen.findByText("Showing 1 of 260 turns.")).toBeInTheDocument();
+    expect(await screen.findByText("Showing 1 of 260 messages.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Load more/ })).toBeNull();
   });
 
   it("pages under the listed agent when a '*' page comes back empty", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
-    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2, next_cursor: "c-1" });
+    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 3, next_cursor: "c-1" });
     listMemories.mockResolvedValue(noMemories);
     const now = new Date().toISOString();
-    listConversationMessages.mockResolvedValueOnce({ rows: [], next_cursor: null }).mockResolvedValueOnce({
-      rows: [{ msg_id: "y-2", role: "user", content: "second turn", ts: now }],
-      next_cursor: null,
-    });
+    listConversationMessages
+      .mockResolvedValueOnce({ rows: [], next_cursor: null })
+      .mockResolvedValueOnce({
+        rows: [{ msg_id: "y-2", role: "user", content: "second turn", ts: now }],
+        next_cursor: "c-2",
+      })
+      .mockResolvedValueOnce({
+        rows: [{ msg_id: "y-3", role: "user", content: "third turn", ts: now }],
+        next_cursor: null,
+      });
 
     render(<Conversations />);
     fireEvent.click(await screen.findByText("Title Y"));
     fireEvent.click(await screen.findByRole("button", { name: /Load more/ }));
     expect(await screen.findByText("second turn")).toBeInTheDocument();
-    expect(listConversationMessages.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
+    // The next page, which a current replica may serve, asks for every agent again.
+    fireEvent.click(screen.getByRole("button", { name: /Load more/ }));
+    expect(await screen.findByText("third turn")).toBeInTheDocument();
+    expect(listConversationMessages.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code", "*"]);
   });
 
   it("keeps two agents' turns that share an id apart", async () => {

@@ -166,7 +166,6 @@ export function Conversations() {
   // `knownAgent`: the agent the opener named, for a replica of the previous release.
   const [openThread, setOpenThread] = useState<{
     thread_id: string;
-    agent: string;
     namespace: string;
     knownAgent?: string;
   } | null>(null);
@@ -321,8 +320,8 @@ export function Conversations() {
       const { signal } = ctl;
       const namespace = opts.namespace || identity.namespace;
       const targetMsgId = opts.msgId;
-      // "*" reads every agent's turns in the thread, however it was opened.
-      setOpenThread({ thread_id, agent: "*", namespace, knownAgent: opts.knownAgent });
+      // Every read asks for "*", every agent's turns, however the thread was opened.
+      setOpenThread({ thread_id, namespace, knownAgent: opts.knownAgent });
       setThreadDetail(null);
       setMoreCursor(null);
       setLoadingMore(false);
@@ -350,8 +349,6 @@ export function Conversations() {
         if (!d.found && opts.knownAgent && !signal.aborted) {
           const agent = opts.knownAgent;
           d = await read(agent);
-          if (signal.aborted) return;
-          if (d.found) setOpenThread((t) => t && { ...t, agent });
         }
         if (signal.aborted) return;
         setThreadDetail(d);
@@ -397,7 +394,7 @@ export function Conversations() {
     const reads = threadReads.current;
     if (!reads || !openThread || !threadDetail || !moreCursor || loadingMore) return;
     const { signal } = reads;
-    const { thread_id, agent, namespace, knownAgent } = openThread;
+    const { thread_id, namespace, knownAgent } = openThread;
     setLoadingMore(true);
     try {
       const page = (as: string) =>
@@ -406,13 +403,12 @@ export function Conversations() {
           limit: 200,
           signal,
         });
-      let r = await page(agent);
+      let r = await page("*");
       // A replica of the previous release answers "*" with no rows; the opener's agent
       // still pages there. Drop with the next release.
-      if (r.rows.length === 0 && agent === "*" && knownAgent && !signal.aborted) {
+      if (r.rows.length === 0 && knownAgent && !signal.aborted) {
+        // For this page only: the next may reach a current replica, which reads "*" whole.
         r = await page(knownAgent);
-        if (signal.aborted) return;
-        setOpenThread((t) => t && { ...t, agent: knownAgent });
       }
       if (signal.aborted) return;
       // Merge into the detail as it is now, and only if it is still this thread's. New
@@ -760,7 +756,7 @@ export function Conversations() {
               {/* No cursor though turns remain: a replica of the previous release read it. */}
               {!moreCursor && threadDetail.msg_count > threadDetail.messages.length && (
                 <p className="pt-3 text-center text-xs text-text-muted">
-                  {`Showing ${threadDetail.messages.length} of ${threadDetail.msg_count} turns.`}
+                  {`Showing ${threadDetail.messages.length} of ${threadDetail.msg_count} messages.`}
                 </p>
               )}
             </section>

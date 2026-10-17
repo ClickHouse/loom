@@ -164,3 +164,12 @@ async def test_a_paged_read_for_one_agent_is_one_statement() -> None:
     assert sql.count("WHERE") == 1
     assert "(ts, msg_id) >" in sql
     assert params["agent"] == "bot"
+
+
+@pytest.mark.asyncio
+async def test_one_agents_count_is_the_rows_its_list_pages_through() -> None:
+    # A named agent's list does not collapse copies, so its count does not either.
+    ch = StubCH()
+    await conversation_repo.count_thread_msgs("o", "ns", "bot", "t-1", ch=ch)
+    sql, _ = ch.calls[-1]
+    assert "count() AS n" in sql

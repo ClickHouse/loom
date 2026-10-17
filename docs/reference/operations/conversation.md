@@ -206,7 +206,7 @@ Recent conversation threads of a namespace, newest first.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | `'*'` | "*" drops the agent filter |
+| `agent` | `str` | `'*'` | "*" or "-" lists every agent's threads |
 | `window_days` | `int` | `30` | Only threads with a live message in the last this many days (1-365). |
 | `limit` | `int` | `30` | At most this many threads (1-200). |
 | `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |
