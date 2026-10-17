@@ -7,6 +7,8 @@ returns a per-client MCP config block.
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -26,6 +28,15 @@ async def _auth_on(control_plane_url: str) -> bool:
     return r.status_code == 401
 
 
+async def _server_default_namespace(control_plane_url: str) -> str | None:
+    """The server's LOOM_DEFAULT_NAMESPACE, read from the dashboard page's boot
+    snippet; None when the dashboard is not built."""
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=10.0) as c:
+        r = await c.get("/")
+    match = re.search(r"window\.__LOOM_DEFAULT_NAMESPACE = (\"[^\"]*\");", r.text)
+    return json.loads(match.group(1)) if r.status_code == 200 and match else None
+
+
 async def _post(control_plane_url: str, token: str | None, body: dict) -> httpx.Response:
     headers: dict[str, str] = {}
     if token:
@@ -37,7 +48,6 @@ async def _post(control_plane_url: str, token: str | None, body: dict) -> httpx.
 @pytest.mark.asyncio
 async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
     from server.auth.jwt import mint_token
-    from server.settings import settings
 
     token = mint_token(
         subject="alice",
@@ -53,12 +63,16 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
     assert body["client"] == "claude-desktop"
     assert body["subject"] == "alice"
     assert body["org"] == "clickhouse"
-    # With auth off the token isn't delegated from the bearer, so the response
-    # names no namespace of the bearer's.
+    # With auth off (single-user) the token isn't delegated from the bearer and
+    # writes to the server's default namespace.
     if await _auth_on(control_plane_url):
         assert body["namespace"] == "personal-alice"
     else:
-        assert body["namespace"] == settings.default_namespace
+        default_namespace = await _server_default_namespace(control_plane_url)
+        if default_namespace is None:
+            assert body["namespace"] != "personal-alice"
+        else:
+            assert body["namespace"] == default_namespace
     assert body["mcp_url"].endswith("/mcp")
     assert body["config_key"] == "mcpServers"
     # `namespace` in the response is the write target; reads

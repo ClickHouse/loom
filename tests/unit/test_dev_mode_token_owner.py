@@ -151,7 +151,35 @@ def test_a_wildcard_setup_token_names_the_default_namespace(
     monkeypatch.setattr(settings, "default_namespace", "shared-dev")
     r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=_alice())
     assert r.status_code == 200, r.text
-    assert r.json()["namespace"] == settings.default_namespace
+    assert r.json()["namespace"] == "shared-dev"
+    assert r.json()["namespace"] != "home"
+
+
+def test_a_wildcard_setup_token_with_auth_off_outside_single_user_names_the_personal_namespace(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only single-user writes to the default namespace; MCP falls back to personal-<sub>.
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(settings, "identity_provider", "trust-network")
+    monkeypatch.setattr(settings, "default_namespace", "shared-dev")
+    r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=_alice())
+    assert r.status_code == 200, r.text
+    assert r.json()["namespace"] == "personal-alice"
+
+
+def test_a_wildcard_setup_token_from_a_wildcard_bearer_names_the_personal_namespace(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "identity_provider", "")
+    monkeypatch.setattr(settings, "default_namespace", "shared-dev")
+    token = mint_token(
+        subject="alice", org="acme", namespaces=["*"], roles=["writer"], ttl_seconds=300
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["namespace"] == "personal-alice"
 
 
 def test_a_bearers_token_mint_token_is_its_own_and_revoked_by_it(client: TestClient) -> None:

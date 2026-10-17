@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
+from server.auth.personal_namespace import derive_personal_slug
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.app import me_callers, token_grants
 from server.identity.app.me_service_accounts import (
@@ -316,10 +317,14 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         displayed_namespace = str(namespace_payload)
     else:
         requested = {"*": None}
-        # A `*` token with auth off writes to the deployment's default namespace.
-        displayed_namespace = next(
-            (ns for ns in parent.namespaces if ns != "*"), settings.default_namespace
-        )
+        # Where an unaddressed MCP call from a `*` token lands: single-user mode
+        # writes to the default namespace, any other mode falls back to the
+        # caller's personal namespace.
+        if settings.effective_identity_provider() == "single-user":
+            fallback = settings.default_namespace
+        else:
+            fallback = derive_personal_slug(subject)
+        displayed_namespace = next((ns for ns in parent.namespaces if ns != "*"), fallback)
     # Restricted namespaces the token should read are named in the claim and, once the token
     # has a subject, granted to it directly.
     restricted_names = await _validate_restricted_request(
