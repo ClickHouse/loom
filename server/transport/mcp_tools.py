@@ -328,8 +328,8 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     list_code = code_tools or bool(set(toolset_parts(toolset)) & {"coding", "tracker"})
     out: list[Operation] = []
     for op in ALL_OPERATIONS:
-        if op.name in _MCP_HIDDEN_OPS or op.name in SYNTHETIC_TOOL_OPS:
-            continue  # hidden, or listed by its synthetic descriptor below
+        if op.name in _MCP_HIDDEN_OPS or op.name in SYNTHETIC_TOOL_OPS or not op.available:
+            continue  # hidden, listed by its synthetic descriptor below, or its feature is off
         if core_only and op.name not in core_ops:
             continue
         if not core_only and not listed_under_all(op):

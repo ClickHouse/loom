@@ -121,6 +121,14 @@ class Operation:
     # through a hand-written synthetic descriptor under a name clients already
     # hold (`search.query` is the `loom_search` tool).
     mcp_tool: str = ""
+    # Whether the deployment serves the op now (a feature it belongs to may be off,
+    # `feature_modes.temporal_on`); None = always. Off, the op answers as one that
+    # does not exist and no listing names it.
+    enabled: Callable[[], bool] | None = None
+
+    @property
+    def available(self) -> bool:
+        return self.enabled is None or self.enabled()
 
     @property
     def read_only(self) -> bool:

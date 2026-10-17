@@ -395,6 +395,8 @@ async def _resolve_tool(
         )
 
     op = _TOOLS_BY_NAME.get(name)
+    if op is not None and not op.available:
+        op = None  # a feature that is off: no such tool
     if op is None or op.name in _MCP_HIDDEN_OPS:
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as

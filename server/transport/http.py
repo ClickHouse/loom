@@ -671,6 +671,8 @@ async def _finish_success(
 
 def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any]]:
     async def endpoint(request: Request, response: Response) -> Any:
+        if not op.available:  # a feature that is off: the route does not exist
+            raise HTTPException(status_code=404, detail="Not Found")
         # The phases run in this order and each refusal raises its own HTTP
         # error: token, body, validation, authorization, policy, rate limit,
         # idempotency replay, then the handler. Nothing after a gate runs

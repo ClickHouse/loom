@@ -61,7 +61,7 @@ DESCRIPTOR: dict[str, Any] = {
 def _ops() -> list[Any]:
     from server.operations.registry import ALL_OPERATIONS
 
-    return [op for op in ALL_OPERATIONS if op.name not in _MCP_HIDDEN_OPS]
+    return [op for op in ALL_OPERATIONS if op.name not in _MCP_HIDDEN_OPS and op.available]
 
 
 def _purpose(op: Any) -> str:

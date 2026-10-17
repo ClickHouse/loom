@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from server.core.feature_modes import temporal_on
 from server.memory.api.models_temporal import (
     MemoryAmendInput,
     MemoryAmendOutput,
@@ -149,6 +150,7 @@ memory_outcome_run = Operation(
 memory_amend = Operation(
     name="memory.amend",
     maturity="experimental",
+    enabled=temporal_on,
     input_model=MemoryAmendInput,
     output_model=MemoryAmendOutput,
     handler=handle_memory_amend,
@@ -161,6 +163,7 @@ memory_amend = Operation(
 memory_intervals = Operation(
     name="memory.intervals",
     maturity="experimental",
+    enabled=temporal_on,
     input_model=MemoryIntervalsInput,
     output_model=MemoryIntervalsOutput,
     handler=handle_memory_intervals,
@@ -173,6 +176,7 @@ memory_intervals = Operation(
 memory_temporal_diff = Operation(
     name="memory.temporal_diff",
     maturity="experimental",
+    enabled=temporal_on,
     input_model=MemoryTemporalDiffInput,
     output_model=MemoryTemporalDiffOutput,
     handler=handle_memory_temporal_diff,
@@ -185,6 +189,7 @@ memory_temporal_diff = Operation(
 memory_temporal_status = Operation(
     name="memory.temporal_status",
     maturity="experimental",
+    enabled=temporal_on,
     input_model=MemoryTemporalStatusInput,
     output_model=MemoryTemporalStatusOutput,
     handler=handle_memory_temporal_status,

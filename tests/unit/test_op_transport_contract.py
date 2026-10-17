@@ -53,6 +53,16 @@ from server.settings import settings
 from server.transport.mcp_config import _LOOM_ACTIVATE_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME
 from server.transport.mcp_op import _MCP_HIDDEN_OPS
 
+
+@pytest.fixture(autouse=True)
+def _every_feature_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The contract covers every op the registry holds: a feature that is off
+    (the journal's ops) is served here."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+
+
 ORG = "acme"
 NAMESPACE = "team"
 _HEX = "abcdef0123456789"  # a commit sha, a batch id and a plain string at once
