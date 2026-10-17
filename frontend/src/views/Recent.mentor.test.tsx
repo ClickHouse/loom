@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, MentorBriefResult, MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { setFoldOpen } from "../lib/folds";
 import { Recent } from "./Recent";
 import { humanizeHintCode, planeState, sortHints } from "../components/MentorPanel";
 
@@ -108,6 +109,8 @@ async function openMemories() {
 
 describe("Memories: mentor panel", () => {
   beforeEach(() => {
+    // The panel starts folded; these tests are about what it shows once opened.
+    setFoldOpen("mentor", true);
     vi.clearAllMocks();
     resetNamespaceRoleCache();
     useStore.setState({

@@ -217,6 +217,7 @@ test.describe("open overlays", () => {
       await new Promise((r) => setTimeout(r, 300));
       await route.fulfill({ status: 503, json: { detail: "audit unavailable", code: "UNAVAILABLE" } });
     });
+    await page.getByRole("button", { name: "Usage audit", exact: true }).click();
     const run = page.getByRole("button", { name: "Run audit" });
     await run.focus();
     await page.keyboard.press("Enter");

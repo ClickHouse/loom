@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, MyNamespaceEntry, NamespaceAuditResult, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { setFoldOpen } from "../lib/folds";
 import { Recent } from "./Recent";
 
 // The Memories view carries a "Usage audit" panel. One click runs `namespace.audit` for
@@ -125,6 +126,8 @@ async function openMemories() {
 
 describe("Memories: usage audit panel", () => {
   beforeEach(() => {
+    // The panel starts folded; these tests are about what it shows once opened.
+    setFoldOpen("usage-audit", true);
     vi.clearAllMocks();
     resetNamespaceRoleCache();
     useStore.setState({
