@@ -164,16 +164,18 @@ class _SetCoalescer:
                 if not fut.done():
                     fut.set_exception(e)
             return
-        written = list(res.get("written") or [])
-        for i, (entry, fut) in enumerate(batch):
+        # Results are matched by key, in order, not by position: an older server leaves
+        # a blacklisted entry out of `written`, which would shift every later result.
+        rows_by_key: dict[str, list[dict[str, Any]]] = {}
+        for written_row in res.get("written") or []:
+            rows_by_key.setdefault(str(written_row.get("memory_key")), []).append(written_row)
+        for entry, fut in batch:
+            rows = rows_by_key.get(str(entry["memory_key"])) or []
             if fut.done():
+                if rows:
+                    rows.pop(0)  # keep the next entry of this key on its own row
                 continue
-            row = (
-                dict(written[i])
-                if i < len(written)
-                else {"memory_key": entry["memory_key"], "version": 0}
-            )
-            row.setdefault("memory_key", entry["memory_key"])
+            row = dict(rows.pop(0)) if rows else {"memory_key": entry["memory_key"], "version": 0}
             row["coalesced"] = True
             # Only the verdict the server stamped on this row counts. The key
             # lists can name a key for another entry of the same key, so an

@@ -26,6 +26,8 @@ class _FakeTransport:
         self.unchanged_values: set[str] = set()
         # More fields on one entry's result row, by key.
         self.row_extra: dict[str, dict[str, Any]] = {}
+        # Values that get no result row at all, as N-1 answers a blacklisted entry.
+        self.dropped_values: set[str] = set()
 
     async def post(
         self, op_path: str, payload: dict[str, Any], idempotency_key=None, *, timeout_s=None
@@ -55,6 +57,7 @@ class _FakeTransport:
                         **self.row_extra.get(e["memory_key"], {}),
                     }
                     for i, e in enumerate(payload["entries"])
+                    if str(e["value"]) not in self.dropped_values
                 ],
                 **self.bulk_extra,
             }
@@ -242,6 +245,31 @@ async def test_a_restatement_does_not_take_a_rejected_siblings_verdict(agent: Ag
     )
     assert isinstance(same, dict) and same["conflict_verdict"] == "clear" and same["noop"] is True
     assert isinstance(changed, PreconditionFailed) and changed.code == "PINNED_CONFLICT"
+
+
+async def test_a_missing_result_row_shifts_no_other_sets_result(agent: Agent) -> None:
+    # An N-1 server leaves a blacklisted entry out of `written`: the sets after it still
+    # get their own rows, and the one left out gets the version-0 placeholder.
+    t: Any = agent.transport
+    t.dropped_values = {"D"}
+    results = await asyncio.gather(*[agent.memory.set(k, k.upper()) for k in "abcde"])
+    by_key = {r["memory_key"]: r for r in results if r.get("coalesced")}
+    assert by_key["c"]["version"] == 100
+    assert by_key["d"]["version"] == 0 and by_key["d"]["noop"] is True
+    assert by_key["e"]["version"] == 102
+
+
+async def test_repeated_keys_in_one_batch_take_their_rows_in_order(agent: Agent) -> None:
+    t: Any = agent.transport
+    t.dropped_values = {"D"}
+    results = await asyncio.gather(
+        agent.memory.set("a", 1),
+        agent.memory.set("b", 2),
+        agent.memory.set("k", "V"),
+        agent.memory.set("d", "D"),
+        agent.memory.set("k", "W"),
+    )
+    assert [r["version"] for r in results[2:]] == [100, 0, 102]
 
 
 async def test_a_set_with_point_only_fields_is_never_coalesced(agent: Agent) -> None:
