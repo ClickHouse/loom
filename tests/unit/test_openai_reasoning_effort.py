@@ -212,3 +212,28 @@ def test_a_starved_400_is_resent_with_room_for_the_reasoning(monkeypatch) -> Non
     sent = _complete("gpt-thinks", monkeypatch, [_Resp(400, body), _Resp(200, _OK)])
     assert len(sent) == 2
     assert sent[1]["max_completion_tokens"] >= 100 + 2 * traits.STARVED_FLOOR
+
+
+def test_a_client_effort_replaces_the_pin_but_not_the_models_floor(monkeypatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_openai_reasoning_effort", "none")
+    assert oa._payload("gpt-x", "s", "u", 10, None, 0.0, "low")["reasoning_effort"] == "low"
+    assert oa._payload("gpt-x", "s", "u", 10, None, 0.0)["reasoning_effort"] == "none"
+    traits.traits("gpt-x").effort = "medium"
+    assert oa._payload("gpt-x", "s", "u", 10, None, 0.0, "low")["reasoning_effort"] == "medium"
+
+
+def test_the_resolver_client_asks_an_openai_model_for_its_effort(monkeypatch) -> None:
+    import server.llm.client as llm_client
+
+    monkeypatch.setattr(llm_client, "provider_key_missing", lambda p: False)
+    monkeypatch.setattr(oa, "provider_key", lambda p: "k")
+    llm_client.reset()
+    try:
+        c = llm_client.get_llm_client_without_fallback("gpt-6.1-sol", reasoning_effort="low")
+        assert isinstance(c, oa.OpenAILLMClient) and c.reasoning_effort == "low"
+        plain = llm_client.get_llm_client_without_fallback("gpt-6.1-sol")
+        assert plain.reasoning_effort == ""
+    finally:
+        llm_client.reset()

@@ -214,11 +214,17 @@ def get_llm_client_for_model(model: str | None) -> LLMClient:
     return _remember(_wrapped_cache, wkey, _with_fallback(_override_client(model), model))
 
 
-def get_llm_client_without_fallback(model: str) -> LLMClient:
+def get_llm_client_without_fallback(model: str, *, reasoning_effort: str = "") -> LLMClient:
     """The client for `model` alone, never wrapped in LOOM_LLM_FALLBACK_MODEL: for a
     stage whose thresholds were measured on this model, where another model's answer
-    would be acted on as if it were this one's."""
-    return _override_client(model)
+    would be acted on as if it were this one's. `reasoning_effort` asks an OpenAI
+    model for that effort (at least); other providers have no such field."""
+    client = _override_client(model)
+    if reasoning_effort and client.provider == "openai":
+        from server.llm.openai import OpenAILLMClient
+
+        return OpenAILLMClient(model=model, reasoning_effort=reasoning_effort)
+    return client
 
 
 # Wrapped (fallback-aware) override clients, keyed by (model, fallback_model).

@@ -42,6 +42,8 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 AUDIT_EVENT = "memory.conflict_resolver"
+# The judge's thresholds were measured at this reasoning effort (OpenAI models).
+REASONING_EFFORT = "low"
 _LIVE = ("active", "conflicted")
 
 
@@ -92,7 +94,9 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
     from server.llm.client import get_llm_client_without_fallback
     from server.observability.genai import llm_stage
 
-    llm = get_llm_client_without_fallback(settings.conflict_resolver_model)
+    llm = get_llm_client_without_fallback(
+        settings.conflict_resolver_model, reasoning_effort=REASONING_EFFORT
+    )
     try:
         with llm_stage("conflict_resolver"):
             res = await llm.complete(

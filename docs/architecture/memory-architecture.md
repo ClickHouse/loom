@@ -184,7 +184,10 @@ a peer, so its value never reaches the LLM.
 to 700 characters, and asks for a strict JSON schema: per peer a reason, `same_entity`,
 `same_attribute`, a verdict (`update`, `contradiction`, `elaboration`, `restatement`,
 `related`, `unrelated`) and a confidence. An answer may name a peer as `p2`, `[p2]`, its
-key, `key <key>` or its id. The model is `LOOM_CONFLICT_RESOLVER_MODEL`.
+key, `key <key>` or its id. The model is `LOOM_CONFLICT_RESOLVER_MODEL`, asked at
+reasoning effort `low`, where the thresholds below were measured, whatever
+`LOOM_LLM_OPENAI_REASONING_EFFORT` pins for other calls; `LOOM_LLM_FALLBACK_MODEL` never
+answers for it, so rows stay owed while the model is down.
 
 **The fold** (`memory/domain/conflict_resolution.py`), precision first:
 

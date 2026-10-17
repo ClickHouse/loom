@@ -659,7 +659,7 @@ async def test_the_judge_maps_a_404_to_model_unavailable(monkeypatch) -> None:
                 "404 model_not_found", request=req, response=httpx.Response(404, request=req)
             )
 
-    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m: Missing())
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: Missing())
     with pytest.raises(resolver.ModelUnavailable):
         await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
 
@@ -676,10 +676,12 @@ async def test_the_judge_sends_the_schema_and_the_model(monkeypatch) -> None:
 
     models: list[str] = []
     monkeypatch.setattr(
-        llm_client, "get_llm_client_without_fallback", lambda m: models.append(m) or LLM()
+        llm_client,
+        "get_llm_client_without_fallback",
+        lambda m, **kw: models.append((m, kw["reasoning_effort"])) or LLM(),
     )
     got, answered = await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
-    assert models == [settings.conflict_resolver_model] == ["gpt-6.1-sol"]
+    assert models == [(settings.conflict_resolver_model, "low")] == [("gpt-6.1-sol", "low")]
     assert seen["system"] == cr.SYSTEM_PROMPT and seen["response_format"] == cr.RESPONSE_FORMAT
     assert seen["max_tokens"] == 120 + 90 * 2 and list(got) == [_PEERS[1].memory_id]
     assert answered == "gpt-6.1-sol-2026-09-01", "the audit names the model that answered"

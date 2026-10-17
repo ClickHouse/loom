@@ -168,7 +168,7 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
 
     org = unique_org("resolver")
     llm = _ScriptedLLM()
-    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m: llm)
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: llm)
     monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", True)
 
     async def newest_wins(org: str, namespace: str, ch: Any = None) -> str:
@@ -387,7 +387,7 @@ async def test_two_rows_judged_at_once_retire_their_shared_peer_once(
 
     org, _ = wired
     llm = _SlowLLM()
-    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m: llm)
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: llm)
 
     async def clear(**kw: Any) -> ConflictResult:
         return ConflictResult(verdict="clear", peers=[])
