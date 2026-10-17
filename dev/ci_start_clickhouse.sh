@@ -5,6 +5,9 @@
 # `services:` start BEFORE checkout and can't mount repo files, so CI runs the
 # container as a post-checkout step via this script. The same image as
 # compose.yaml, the latest release, so CI validates what a default install runs.
+#
+# A second ClickHouse beside a running one (one per worktree) takes its own
+# name and host ports: LOOM_CH_CONTAINER, LOOM_CH_HOST_PORT, LOOM_CH_NATIVE_HOST_PORT.
 set -euo pipefail
 
 ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
@@ -17,8 +20,21 @@ case "$IMAGE" in
   *) PULL=missing ;;
 esac
 
-docker run -d --pull "$PULL" --name loom-ch \
-  -p 8123:8123 -p 9000:9000 \
+NAME="${LOOM_CH_CONTAINER:-loom-ch}"
+HTTP_PORT="${LOOM_CH_HOST_PORT:-8123}"
+NATIVE_PORT="${LOOM_CH_NATIVE_HOST_PORT:-9000}"
+
+# A failed start must not fall through to the readiness probe: another
+# server already on the port would answer it.
+for port in "$HTTP_PORT" "$NATIVE_PORT"; do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+    echo "port $port is already in use; set LOOM_CH_HOST_PORT / LOOM_CH_NATIVE_HOST_PORT" >&2
+    exit 1
+  fi
+done
+
+docker run -d --pull "$PULL" --name "$NAME" \
+  -p "$HTTP_PORT:8123" -p "$NATIVE_PORT:9000" \
   -e CLICKHOUSE_DB=loom \
   -e CLICKHOUSE_USER=loom \
   -e CLICKHOUSE_PASSWORD=loomdev \
@@ -35,12 +51,12 @@ docker run -d --pull "$PULL" --name loom-ch \
 
 echo "Waiting for ClickHouse to accept connections…"
 for _ in $(seq 1 40); do
-  if curl -fsS http://localhost:8123/ping >/dev/null 2>&1; then
+  if curl -fsS "http://localhost:$HTTP_PORT/ping" >/dev/null 2>&1; then
     echo "ClickHouse is up."
     exit 0
   fi
   sleep 2
 done
 echo "ClickHouse did not become healthy in time; dumping container logs:" >&2
-docker logs loom-ch >&2 || true
+docker logs "$NAME" >&2 || true
 exit 1

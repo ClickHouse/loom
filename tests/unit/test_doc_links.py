@@ -1,7 +1,8 @@
 """Every relative link in the Markdown docs resolves, anchors included.
 
-Covers the repo-root docs, docs/ and the integration READMEs; external URLs are not
-fetched. An anchor is checked against the GitHub slugs of the target's headings.
+Covers the repo-root docs, docs/, the integration READMEs and the agent skills, rules
+and subagents under .claude/. External URLs are not fetched. An anchor is checked
+against the GitHub slugs of the target's headings.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.tracked_files import tracked
+
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = sorted(
     {
@@ -19,6 +22,8 @@ DOCS = sorted(
         *(ROOT / "integrations").glob("*/README.md"),
         ROOT / "integrations" / "README.md",
         ROOT / "sdk" / "python" / "README.md",
+        *(ROOT / p for p in tracked(".claude/skills") if p.endswith(".md")),
+        *(ROOT / p for p in tracked(".claude/rules", ".claude/agents") if p.endswith(".md")),
     }
 )
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")

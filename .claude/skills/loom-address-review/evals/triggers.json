@@ -1,0 +1,30 @@
+[
+  {
+    "query": "The reviewer left six comments on PR 412, work through them",
+    "should_trigger": true
+  },
+  {
+    "query": "address the review on my loom PR and reply to each thread",
+    "should_trigger": true
+  },
+  {
+    "query": "CodeRabbit flagged three things on #388, fix what's real and answer the rest",
+    "should_trigger": true
+  },
+  {
+    "query": "the PR got 'changes requested', handle it",
+    "should_trigger": true
+  },
+  {
+    "query": "review PR 412 for bugs before I merge it",
+    "should_trigger": false
+  },
+  {
+    "query": "CI is red on my PR, what broke",
+    "should_trigger": false
+  },
+  {
+    "query": "open a PR for this branch",
+    "should_trigger": false
+  }
+]
