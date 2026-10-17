@@ -556,6 +556,9 @@ body {
 *:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
+  /* Shown at once, as Click UI's is: Tailwind's transition-colors also eases
+     outline-color, which would fade the ring in from the text colour. */
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
 }
 /* A text field shows focus the Click UI way, a dark border on the field, not a
    ring inside it. */

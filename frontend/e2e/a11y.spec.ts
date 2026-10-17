@@ -312,6 +312,59 @@ test.describe("open overlays", () => {
     expect(await dialog.evaluate((d) => d.contains(document.activeElement))).toBe(true);
   });
 
+  test("a loading button inside a dialog keeps focus inside the dialog", async ({ page }) => {
+    const now = new Date().toISOString();
+    const turn = (i: number) => ({ msg_id: `m${i}`, agent: "cursor", role: "user", content: `turn ${i}`, ts: now });
+    await installApi(page);
+    await page.route("**/v1/conversation.threads", (route) =>
+      route.fulfill({
+        json: {
+          threads: [
+            {
+              thread_id: "t-long",
+              agent: "cursor",
+              msg_count: 3,
+              first_seen: now,
+              last_seen: now,
+              last_role: "user",
+              last_content_excerpt: "x",
+              title: "Long thread",
+            },
+          ],
+        },
+      }),
+    );
+    await page.route("**/v1/conversation.get", (route) =>
+      route.fulfill({
+        json: {
+          found: true,
+          thread_id: "t-long",
+          title: "Long thread",
+          agent: "cursor",
+          msg_count: 3,
+          created_at: null,
+          updated_at: null,
+          messages: [turn(0), turn(1)],
+          next_cursor: "c-1",
+        },
+      }),
+    );
+    await page.route("**/v1/conversation.list", async (route) => {
+      await new Promise((r) => setTimeout(r, 3000));
+      await route.fulfill({ json: { rows: [turn(2)], next_cursor: null } });
+    });
+    await page.goto("/conversations");
+    await page.getByText("Long thread").first().click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: /Load more/ }).focus();
+    await page.keyboard.press("Enter");
+    // Click UI disables a loading button, which drops its focus; Tab must not leave the dialog.
+    for (let i = 0; i < 5; i++) {
+      await page.keyboard.press("Tab");
+      expect(await dialog.evaluate((d) => d.contains(document.activeElement))).toBe(true);
+    }
+  });
+
   test("an open Select list", async ({ page }) => {
     await open(page, "/settings");
     await page.getByRole("button", { name: /Home namespace/ }).click();
@@ -379,6 +432,23 @@ test("a fast Tab walk through header search leaves nothing open behind it", asyn
     expect(await page.evaluate(() => document.querySelectorAll("[data-radix-focus-guard]").length)).toBe(0);
     await expect(page.getByRole("dialog", { name: "Search results" })).toHaveCount(0);
   }
+});
+
+// Click UI's focus ring shows at once; Tailwind's transition-colors would fade it in.
+test("the focus ring is the focus colour from the first frame", async ({ page }) => {
+  await open(page, "/memories");
+  const trigger = page.getByRole("button", { name: /^Namespace: / });
+  await page.keyboard.press("Tab");
+  await trigger.focus();
+  const ring = await trigger.evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--color-focus)";
+    document.body.append(probe);
+    const focus = getComputedStyle(probe).color;
+    probe.remove();
+    return { outline: getComputedStyle(el).outlineColor, focus };
+  });
+  expect(ring.outline).toBe(ring.focus);
 });
 
 // WCAG 2.1.4: the one-key shortcuts can be turned off, and ? then types nothing.

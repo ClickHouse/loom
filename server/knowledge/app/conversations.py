@@ -614,6 +614,7 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
         window_days=int(input.window_days),
         limit=int(input.limit),
         agent=input.agent if input.agent and input.agent != "*" else None,
+        count_turns=not input.fields or "msg_count" in input.fields,
     )
     # Titles live on the conversation_threads metadata table (set by
     # conversation.create).

@@ -575,11 +575,14 @@ async def recent_threads(
     window_days: int,
     limit: int,
     agent: str | None = None,
+    count_turns: bool = True,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The namespace's threads with a live message in the window, most recent
     first: message count, first/last seen and the latest message's agent
-    (`last_agent`), role and 240-character excerpt."""
+    (`last_agent`), role and 240-character excerpt. `count_turns`: the message
+    count is the thread's distinct turns, as an opened thread shows; off, the
+    window's raw row count (for a caller that does not read the count)."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace, "wd": window_days, "lim": limit}
     # The aggregate is aliased `last_agent`, not `agent`: the analyzer would resolve a bare
@@ -610,11 +613,11 @@ async def recent_threads(
         """,
         params=params,
     )
-    if not rows:
+    if not rows or not count_turns:
         return rows
-    # The count an opened thread shows (one per turn, however many agents logged it), for
-    # the page's threads only: an exact distinct count over the whole window would hold
-    # every turn's key in memory to rank threads it then drops.
+    # The count an opened thread shows (each thread whole, one per turn however many agents
+    # logged it), for the page's threads only: an exact distinct count over the whole
+    # window would hold every turn's key in memory to rank threads it then drops.
     counted = await ch.query_all(
         f"""
         SELECT thread_id, uniqExact({TURN}) AS n
@@ -622,7 +625,6 @@ async def recent_threads(
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
           AND thread_id IN {{tids:Array(String)}}
-          AND ts > now() - toIntervalDay({{wd:UInt32}})
           AND tombstoned_at IS NULL
           {agent_clause}
         GROUP BY thread_id

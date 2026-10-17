@@ -63,6 +63,21 @@ describe("keepFocusThroughLoading", () => {
     expect(lastPressed()).toBe(run);
   });
 
+  it("keeps focus on the dialog while a button inside it loads", async () => {
+    stop = keepFocusThroughLoading();
+    document.body.innerHTML = `<div role="dialog" tabindex="-1"><button type="button">Load more</button></div>`;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]') as HTMLElement;
+    const more = document.querySelector("button") as HTMLButtonElement;
+    more.focus();
+    fireEvent.keyDown(more, { key: "Enter" });
+    more.disabled = true;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(dialog).toHaveFocus();
+    more.disabled = false;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(more).toHaveFocus();
+  });
+
   it("leaves focus alone when the user has moved on", async () => {
     stop = keepFocusThroughLoading();
     document.body.innerHTML = `<button type="button">Run audit</button><input aria-label="Search" />`;

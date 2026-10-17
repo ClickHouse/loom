@@ -700,12 +700,7 @@ export function Conversations() {
               <SectionHeading label="Memories this thread produced" count={threadMemories.length} />
               <div className="flex flex-wrap gap-1.5">
                 {threadMemories.map((m) => (
-                  <Chip
-                    key={m.memory_key}
-                    label={m.memory_key}
-                    mono
-                    tip={typeof m.value === "string" ? m.value : JSON.stringify(m.value ?? "")}
-                  />
+                  <Chip key={m.memory_key} label={m.memory_key} mono />
                 ))}
               </div>
             </div>

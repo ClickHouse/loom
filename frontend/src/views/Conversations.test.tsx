@@ -136,6 +136,8 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     const dialog = await screen.findByRole("dialog");
     expect(await screen.findByText("body of thread-b")).toBeInTheDocument();
     expect(await screen.findByText("from/b")).toBeInTheDocument();
+    // A produced memory is a label, not a tab stop: twenty of them stood before the transcript.
+    expect(screen.getByText("from/b").closest("[tabindex]")).not.toHaveAttribute("role", "note");
 
     await act(async () => {
       detailA.resolve(detail("thread-a", "Title A"));
