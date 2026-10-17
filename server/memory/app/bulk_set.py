@@ -602,8 +602,8 @@ async def _record_intra_batch_retirements(
         record_auto_supersessions,
     )
 
-    # A key sent twice is two versions of one row (one id, when the key already
-    # existed): only a kept version that landed superseded retired its row.
+    # A key sent twice is two versions of one row, under one id: only a kept
+    # version that landed superseded retired its row.
     kept = kept_versions(state.memory_rows)
     # The kept version names the row it retired behind: one id can be the older row of
     # two pairs.
@@ -766,7 +766,7 @@ def _projected(
     reject), whose key the same-key judge landed superseded, or whose row is 'high'
     projects nothing, and so records nothing for a replay; a re-ingest of a fact
     already stored no longer re-counts its edges."""
-    # A row is its id and version: two entries of one stored key share the id.
+    # A row is its id and version: two entries of one key share the id.
     high = {
         (str(r["memory_id"]), int(r["version"]))
         for r in state.memory_rows
