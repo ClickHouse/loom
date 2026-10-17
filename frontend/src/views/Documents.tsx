@@ -17,7 +17,7 @@ import {
   type KnowledgeDocument,
   type InlinePreview,
 } from "../api";
-import { useStore, useIdentity } from "../lib/state";
+import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { toast, toastError } from "../components/Toast";
@@ -169,6 +169,9 @@ export function Documents() {
     if (!pendingDocSourceUri || !rows) return;
     const target = rows.find((r) => r.source_uri === pendingDocSourceUri);
     if (target) void onOpenRef.current(target);
+    // A `?doc=` link to a document this page does not hold opens nothing; the URL stops
+    // naming it.
+    else setViewParam("doc", null);
     clearPendingDoc();
   }, [pendingDocSourceUri, rows, clearPendingDoc]);
 
@@ -205,6 +208,8 @@ export function Documents() {
   };
 
   const onOpen = async (r: KnowledgeEntry) => {
+    // The open document is the page's URL (`?doc=`): a reload or Back reopens it.
+    setViewParam("doc", r.source_uri);
     setPreviewEntry(r);
     setPreviewDoc(null);
     setShowText(false);
@@ -248,6 +253,7 @@ export function Documents() {
     setPreviewEntry(null);
     setPreviewDoc(null);
     setShowText(false);
+    setViewParam("doc", null);
   };
 
   // The first screen mounts with the page, the rest of the rows in a transition after the

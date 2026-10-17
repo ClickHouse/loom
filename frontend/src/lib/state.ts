@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { hasToken, isProxyMode } from "../api";
+import { patchEntry, rememberPlace, type Place } from "./place";
 
 export type View =
   | "memories"
@@ -86,29 +87,97 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   tasks: ["inbox", "task"],
   // Settings carries its open tab (`?tab=memory|system`).
   setup: ["tab"],
+  // The object open on a page rides its URL, so a deep link, a reload and Back reopen it:
+  // the memory in the drawer, the document in the preview, the thread in the replay.
+  memories: ["memory"],
+  knowledge: ["doc"],
+  sessions: ["thread"],
 };
 
-/** The URL for `v`, keeping only the current query keys `v` owns. */
-export function navigationHref(v: View): string {
+/** How a navigation goes. `query`: the keys the destination opens on (`{ seed }` for a
+ *  walk), in place of the ones the current URL carries.
+ *  `back`: what the person left, when the jump offers a way back to it ("memory
+ *  api/rate-limit") — the destination shows "Back to <back>". `focusKey`: the element Back
+ *  focuses when it is not the focused one. `note`: what the arrival says, in place of the
+ *  page's title. */
+export interface NavOptions {
+  query?: Record<string, string>;
+  back?: string;
+  focusKey?: string;
+  note?: string;
+}
+
+/** The URL for `v`: with `query`, exactly those keys; else only the current query keys `v`
+ *  owns. */
+export function navigationHref(v: View, query?: Record<string, string>): string {
   const want = viewHref(v);
   if (typeof window === "undefined") return want;
-  const owned = VIEW_QUERY_KEYS[v] ?? [];
-  const current = new URLSearchParams(window.location.search);
-  const kept = new URLSearchParams();
-  for (const key of owned) {
-    const value = current.get(key);
-    if (value != null) kept.set(key, value);
+  const kept = new URLSearchParams(query);
+  if (!query) {
+    const current = new URLSearchParams(window.location.search);
+    for (const key of VIEW_QUERY_KEYS[v] ?? []) {
+      const value = current.get(key);
+      if (value != null) kept.set(key, value);
+    }
   }
   const qs = kept.toString();
   return qs ? `${want}?${qs}` : want;
 }
 
-function pushView(v: View): void {
+/** A new history entry for `v`. The entry being left first remembers the place (scroll,
+ *  focus, the open memory) so Back can restore it; skipped for a no-op. */
+function pushView(v: View, opts: NavOptions = {}, remember = true): void {
   if (typeof window === "undefined") return;
-  const want = navigationHref(v);
+  const want = navigationHref(v, opts.query);
   if (window.location.pathname + window.location.search !== want) {
-    history.pushState(null, "", want);
+    if (remember) {
+      const s = useStore.getState();
+      rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent }, opts.focusKey);
+    }
+    history.pushState(opts.back ? { loomBack: opts.back } : null, "", want);
   }
+}
+
+function urlParam(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get(key);
+}
+
+/** Set (or with null, drop) one query key of the current entry, without a new entry: opening
+ *  and closing the object a page shows is not a navigation. `state` merges into the
+ *  entry's state. */
+export function setViewParam(key: string, value: string | null, state: Record<string, unknown> = {}): void {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search);
+  if (value === null) params.delete(key);
+  else params.set(key, value);
+  const qs = params.toString();
+  patchEntry(state, `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`);
+}
+
+/** The writer agent a `?memory=` link opens under: the one the entry remembers (a reload
+ *  keeps history.state), else every agent ("*", as Runs opens a key it only knows by name). */
+function linkedAgent(key: string): string {
+  const s: unknown = typeof history === "undefined" ? null : history.state;
+  const remembered = s && typeof s === "object" ? (s as Record<string, unknown>).loomInspect : null;
+  if (remembered && typeof remembered === "object") {
+    const r = remembered as Record<string, unknown>;
+    if (r.key === key && typeof r.agent === "string") return r.agent;
+  }
+  return "*";
+}
+
+/** What the URL opens on view `v`: the memory, document or thread its query names. */
+function openedByUrl(v: View): Partial<AppState> {
+  const memory = v === "memories" ? urlParam("memory") : null;
+  const doc = v === "knowledge" ? urlParam("doc") : null;
+  const thread = v === "sessions" ? urlParam("thread") : null;
+  return {
+    inspectedMemoryKey: memory,
+    inspectedAgent: memory ? linkedAgent(memory) : "",
+    ...(doc ? { pendingDocSourceUri: doc } : {}),
+    ...(thread ? { pendingConversationThread: { threadId: thread, agent: "" } } : {}),
+  };
 }
 
 /** Resolve the current view from window.location.pathname; null for the bare root. */
@@ -135,8 +204,11 @@ interface AppState {
   myNamespaces: MyNamespaceEntry[] | null;
   view: View;
   /** Counts user navigations (setView and the open-X helpers), never the boot's
-   *  application of the URL's view; the shell's scroll reset keys on it. */
+   *  application of the URL's view nor Back/Forward; the shell's scroll reset and its
+   *  focus move key on it. */
   navSeq: number;
+  /** What the latest navigation's arrival says, when not just the page's title. */
+  navNote: string | null;
   inspectedMemoryKey: string | null;
   // Writer-identity override for the inspected memory: when the list ran
   // with agent="*", the writer's agent may differ from identity.agent and
@@ -163,8 +235,13 @@ interface AppState {
   setWhoami: (w: WhoAmI | null) => void;
   setIdentity: (i: Identity | null) => void;
   setView: (v: View) => void;
+  /** A navigation to `v` with a query, a way back or an arrival note (see NavOptions). */
+  navigate: (v: View, opts?: NavOptions) => void;
   /** The boot applying the view the URL names (or a fallback) — not a navigation. */
   bootView: (v: View) => void;
+  /** Back or Forward reached `v`: the view, and the memory the entry had open — from its
+   *  remembered place, else from its URL. Not a navigation: nothing is pushed. */
+  arriveFromHistory: (v: View, place: Place | null) => void;
   /** Ask the header's namespace picker to open (the no-namespace landing opens it so the
    *  user picks one). The picker clears the flag once it has opened. */
   namespacePickerOpen: boolean;
@@ -204,7 +281,7 @@ interface AppState {
   notePaletteOpened: () => void;
 }
 
-export const useStore = create<AppState>((set) => ({
+export const useStore = create<AppState>((set, get) => ({
   // Seed from auth-presence so a refresh skips the login gate: a stored token
   // (or proxy mode) means "probably authed" → first paint shows the app's
   // "Loading…" splash, not TokenGate, while whoami confirms. whoami still
@@ -216,6 +293,7 @@ export const useStore = create<AppState>((set) => ({
   myNamespaces: null,
   view: "memories",
   navSeq: 0,
+  navNote: null,
   inspectedMemoryKey: null,
   inspectedAgent: "",
   memoryTagFilter: null,
@@ -230,59 +308,65 @@ export const useStore = create<AppState>((set) => ({
   setMyNamespaces: (myNamespaces) => set({ myNamespaces }),
   setWhoami: (whoami) => set({ whoami }),
   setIdentity: (identity) => set({ identity }),
-  setView: (view) => {
-    set((s) => ({ view, inspectedMemoryKey: null, navSeq: s.navSeq + 1 }));
-    // Mirror the view into the URL; skip no-op pushes.
-    pushView(view);
+  setView: (view) => get().navigate(view),
+  navigate: (view, opts = {}) => {
+    // Mirror the view into the URL first (skipping no-op pushes): the entry being left
+    // remembers the open memory before it is cleared.
+    pushView(view, opts);
+    set((s) => ({ view, inspectedMemoryKey: null, navSeq: s.navSeq + 1, navNote: opts.note ?? null }));
   },
   bootView: (view) => {
-    set({ view, inspectedMemoryKey: null });
-    pushView(view);
+    pushView(view, {}, false);
+    set({ view, ...openedByUrl(view) });
+  },
+  arriveFromHistory: (view, place) => {
+    const opened = openedByUrl(view);
+    set({
+      view,
+      ...opened,
+      inspectedMemoryKey: place?.inspected ?? opened.inspectedMemoryKey ?? null,
+      inspectedAgent: place?.inspected ? place.inspectedAgent : (opened.inspectedAgent ?? ""),
+    });
   },
   namespacePickerOpen: false,
   openNamespacePicker: (namespacePickerOpen) => set({ namespacePickerOpen }),
-  inspect: (inspectedMemoryKey, opts) => set({ inspectedMemoryKey, inspectedAgent: opts?.agent || "" }),
+  inspect: (inspectedMemoryKey, opts) => {
+    const agent = opts?.agent || "";
+    set({ inspectedMemoryKey, inspectedAgent: agent });
+    // On Memories the open memory is the page's URL (`?memory=`), with the agent it was
+    // read as in the entry's state for a reload.
+    if (get().view === "memories") {
+      setViewParam("memory", inspectedMemoryKey, {
+        loomInspect: inspectedMemoryKey ? { key: inspectedMemoryKey, agent } : null,
+      });
+    }
+  },
   helpOpen: false,
   openHelp: (helpOpen) => set({ helpOpen }),
   searchByTag: (tag) => {
-    set((s) => ({
-      view: "memories",
-      inspectedMemoryKey: null,
-      memoryTagFilter: tag,
-      navSeq: s.navSeq + 1,
-    }));
-    pushView("memories");
+    get().navigate("memories");
+    set({ memoryTagFilter: tag });
   },
   setMemoryTagFilter: (tag) => set({ memoryTagFilter: tag }),
   openDocument: (sourceUri) => {
-    set((s) => ({ view: "knowledge", pendingDocSourceUri: sourceUri, navSeq: s.navSeq + 1 }));
-    pushView("knowledge");
+    get().navigate("knowledge", { query: { doc: sourceUri } });
+    set({ pendingDocSourceUri: sourceUri });
   },
   clearPendingDoc: () => set({ pendingDocSourceUri: null }),
   openConversationThread: (threadId, agent = "") => {
-    set((s) => ({
-      view: "sessions",
-      pendingConversationThread: { threadId, agent },
-      inspectedMemoryKey: null,
-      navSeq: s.navSeq + 1,
-    }));
-    pushView("sessions");
+    get().navigate("sessions", { query: { thread: threadId } });
+    set({ pendingConversationThread: { threadId, agent } });
   },
   clearPendingConversationThread: () => set({ pendingConversationThread: null }),
   inspectProfile: (inspectedProfileLabel) => set({ inspectedProfileLabel }),
   openRecallForRun: (runId) => {
-    set((s) => ({ view: "recall", recallRunFilter: runId, inspectedMemoryKey: null, navSeq: s.navSeq + 1 }));
-    pushView("recall");
+    get().navigate("recall");
+    set({ recallRunFilter: runId });
   },
   setRecallRunFilter: (recallRunFilter) => set({ recallRunFilter }),
   requestEditProfile: (pendingEditProfileLabel) => {
-    set((s) => ({
-      pendingEditProfileLabel,
-      inspectedProfileLabel: null,
-      view: "profile",
-      navSeq: s.navSeq + 1,
-    }));
-    pushView("profile");
+    get().navigate("profile");
+    set({ pendingEditProfileLabel, inspectedProfileLabel: null });
   },
   memoriesVersion: 0,
   bumpMemoriesVersion: () => set((s) => ({ memoriesVersion: s.memoriesVersion + 1 })),

@@ -23,6 +23,7 @@ import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
 import { useStore, pathnameView } from "./lib/state";
+import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
 import { NetworkProgress } from "./components/NetworkProgress";
 import { Sidebar } from "./layout/Sidebar";
@@ -80,10 +81,13 @@ export default function App() {
   // Only a navigation scrolls. The boot applying the URL's view is not one — a fresh
   // document is at the top, and a scrollTo there would flush layout for nothing (42 ms at
   // 4x on the Repositories, Graph and Profile boots). `navSeq` counts navigations.
+  // Back and Forward do not count: they restore the place the entry remembers (below).
+  // A navigation also moves the focus to the new page's h1 and says where it went.
   const navSeq = useStore((s) => s.navSeq);
   useEffect(() => {
     if (navSeq === 0) return;
     mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    arriveAt(useStore.getState().navNote);
   }, [navSeq]);
   // The dashboard reports its own paint — one ui.vitals row per view, posted when the
   // view ends (a navigation, the page hiding), never inside the view's own measured
@@ -130,6 +134,7 @@ export default function App() {
   const setWhoami = useStore((s) => s.setWhoami);
   const setIdentity = useStore((s) => s.setIdentity);
   const setView = useStore((s) => s.setView);
+  const arriveFromHistory = useStore((s) => s.arriveFromHistory);
   const bootView = useStore((s) => s.bootView);
   const helpOpen = useStore((s) => s.helpOpen);
   const inspectedProfileLabel = useStore((s) => s.inspectedProfileLabel);
@@ -153,16 +158,23 @@ export default function App() {
     authed,
   );
 
-  // Browser back/forward: sync view from URL.
+  // Browser back/forward: the view from the URL, then the place the entry remembers — the
+  // scroll of <main>, the memory in the drawer, the focused element. A move inside one
+  // view (the Graph's walks) restores only what the entry remembers.
   useEffect(() => {
     if (!authed) return;
-    const sync = () => {
+    const sync = (e: PopStateEvent) => {
       const v = pathnameView();
-      if (v && v !== useStore.getState().view) setView(v);
+      if (!v) return;
+      const changed = v !== useStore.getState().view;
+      const place = readPlace(e.state);
+      if (!changed && !place) return;
+      arriveFromHistory(v, place);
+      restorePlace(place, changed);
     };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
-  }, [authed, setView]);
+  }, [authed, arriveFromHistory]);
 
   // Goto-prefix: `g` then a letter within 1.2s jumps view (vim/Gmail convention).
   useEffect(() => {
@@ -455,6 +467,8 @@ export default function App() {
           <MobileNav />
         </div>
       </div>
+      {/* Where a navigation went, said once (lib/place.ts `announce`). */}
+      <p id="loom-nav-status" role="status" className="sr-only" />
 
       {inspectedKey && inspectorIdentity && (
         <Suspense fallback={null}>

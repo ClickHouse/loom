@@ -11,6 +11,7 @@ import {
   type TrackerBinding,
   type TaxonomyResponse,
 } from "../../api";
+import { BackLink } from "../../components/BackLink";
 import { MemoryInspector } from "../../components/MemoryInspector";
 import { toast } from "../../components/Toast";
 import { Loading } from "../../components/ui";
@@ -124,7 +125,11 @@ function writePatternsUrl(on: boolean, pq: PatternsQuery | null): void {
     const qs = params.toString();
     const prev = readHistoryState(history.state);
     history.replaceState(
-      { ...(prev ?? { graphSeed: "", graphSelected: null, graphPath: null }), graphPatterns: on },
+      {
+        ...ownState(),
+        ...(prev ?? { graphSeed: "", graphSelected: null, graphPath: null }),
+        graphPatterns: on,
+      },
       "",
       `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`,
     );
@@ -157,6 +162,12 @@ function pushEntry(seed: string, path: [string, string] | null): void {
   }
 }
 
+/** The keys other code keeps in this entry's state (the way back a jump into the Graph
+ *  offers, lib/place.ts): rewriting the walk keeps them. */
+function ownState(): Record<string, unknown> {
+  return isRecord(history.state) ? history.state : {};
+}
+
 function rememberInEntry(seed: string, selected: string | null, path: [string, string] | null): void {
   try {
     const prev = readHistoryState(history.state);
@@ -166,7 +177,7 @@ function rememberInEntry(seed: string, selected: string | null, path: [string, s
       graphPath: path,
       graphPatterns: prev?.graphPatterns === true,
     };
-    history.replaceState(state, "", graphUrl(seed, path));
+    history.replaceState({ ...ownState(), ...state }, "", graphUrl(seed, path));
   } catch {
     /* history unavailable */
   }
@@ -603,6 +614,9 @@ export function Explorer() {
 
   return (
     <div className="lg:h-full min-h-0 flex flex-col px-6 py-5 gap-3">
+      {/* A jump in from something being read (an entity on a memory) offers the way back,
+          above the toolbar; a walk taken here is a new entry without one. */}
+      <BackLink />
       <Bar
         identity={identity}
         entities={taxonomy ? taxonomy.entities : null}
@@ -831,6 +845,11 @@ export function Explorer() {
           onClose={() => setInspectKey(null)}
           onChanged={() => {
             /* the graph is a projection of the rows; a re-walk picks changes up */
+          }}
+          // Already on the Graph: an entity's "Open in Graph" walks from it here.
+          onWalkEntity={(entity) => {
+            setInspectKey(null);
+            walkFrom(entity);
           }}
         />
       )}

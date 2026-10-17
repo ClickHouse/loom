@@ -391,7 +391,7 @@ describe("RepositoryCard", () => {
     expect(
       screen.getByText("schema failing — Reads are paused until the views match: missing tables: github_checks."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Check, rotate or retire in Trackers ↓" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Check, rotate or retire in Trackers" })).toHaveAttribute(
       "href",
       "#tracker-qa",
     );

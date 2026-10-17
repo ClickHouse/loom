@@ -1,22 +1,23 @@
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
-import { Table } from "@clickhouse/click-ui/Table";
+import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { listAuditLog, listErasures, type AuditEntry, type ErasureListRow } from "../../api";
 import { useStore, useIdentity } from "../../lib/state";
 import { hasOrgAdminClaim } from "../../lib/role";
-import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
+import { toastError } from "../../components/Toast";
+import { IconButton } from "../../components/IconButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { PageContainer } from "../../layout/PageContainer";
-import { LoadingSkeleton, PageHeader, TabTrigger, TipTarget } from "../../components/ui";
+import { PageHeader, TabTrigger, TipTarget } from "../../components/ui";
 
 // Events recorded by the control plane that don't represent a user
 // or agent action — operator observability that pollutes the user-
@@ -177,6 +178,9 @@ export function Audit() {
   const [tab, setTab] = useState<ActivityTab>("events");
   const whoami = useStore((s) => s.whoami);
   const [rows, setRows] = useState<AuditEntry[] | null>(null);
+  // The next, older page's cursor; null once the last page is shown.
+  const [older, setOlder] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [showSystem, setShowSystem] = useState(false);
   const [onlyMe, setOnlyMe] = useState(false);
   // Free-text filter — matches against actor (email / agent name)
@@ -191,17 +195,19 @@ export function Audit() {
   // namespace=undefined → handler self-scopes via resolve_org_scope, which
   // widens to the whole org only at ORG_ADMIN.
   const isPlatformAdmin = hasOrgAdminClaim(whoami);
+  const scope = isPlatformAdmin ? { org: identity.org } : { org: identity.org, namespace: identity.namespace };
+  // The window the first page read; older pages keep to it.
+  const since = useRef("");
   useAbortableEffect(
     (signal, live) => {
       setRows(null);
-      listAuditLog(isPlatformAdmin ? { org: identity.org } : { org: identity.org, namespace: identity.namespace }, {
-        limit: 100,
-        since: new Date(Date.now() - AUDIT_WINDOW_MS).toISOString(),
-        signal,
-        fields: ACTIVITY_FIELDS,
-      })
+      setOlder(null);
+      since.current = new Date(Date.now() - AUDIT_WINDOW_MS).toISOString();
+      listAuditLog(scope, { limit: 100, since: since.current, signal, fields: ACTIVITY_FIELDS })
         .then((r) => {
-          if (live()) setRows(r.rows || []);
+          if (!live()) return;
+          setRows(r.rows || []);
+          setOlder(r.next_cursor ?? null);
         })
         .catch(() => {
           if (live()) setRows([]);
@@ -209,6 +215,21 @@ export function Audit() {
     },
     [identity.org, identity.namespace, isPlatformAdmin],
   );
+
+  // 100 more, older than the last row shown; the rows already shown stay.
+  const loadOlder = async () => {
+    if (!older) return;
+    setLoadingOlder(true);
+    try {
+      const r = await listAuditLog(scope, { limit: 100, since: since.current, cursor: older, fields: ACTIVITY_FIELDS });
+      setRows((prev) => [...(prev ?? []), ...(r.rows || [])]);
+      setOlder(r.next_cursor ?? null);
+    } catch (e) {
+      toastError("Loading older events failed", e);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   const me = whoami?.subject || "";
   const q = filterQuery.trim().toLowerCase();
@@ -240,12 +261,17 @@ export function Audit() {
         <PageHeader title="Activity" tab={ACTIVITY_TABS[tab]}>
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </PageHeader>
-        <p className="text-sm text-text-muted max-w-2xl leading-relaxed">
-          Audit trail of every meaningful write — deletes, promotions, conflict resolutions, erasures, redactions. Each
-          row is content-hashed, and hourly checkpoints chain each closed window's row count and digest to the previous
-          one, so edits and deletions are detectable. Use this when you need to answer "who did what and when" or trace
-          a memory's lifecycle.
-        </p>
+        <div className="text-sm text-text-muted max-w-[72ch]">
+          Who did what and when: every delete, promotion, conflict resolution, erasure and redaction.{" "}
+          <span className="inline-flex align-middle">
+            <IconButton
+              icon="info-in-circle"
+              size="xs"
+              label="About activity"
+              tooltip="Each row is content-hashed, and hourly checkpoints chain each closed window's row count and digest to the previous one, so edits and deletions are detectable."
+            />
+          </span>
+        </div>
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as ActivityTab)}>
@@ -288,11 +314,7 @@ export function Audit() {
             </>
           )}
 
-          {rows === null && (
-            <LoadingSkeleton label="Loading audit events">
-              <Skeleton className="h-40 w-full" />
-            </LoadingSkeleton>
-          )}
+          {rows === null && <EventsTable rows={[]} loading />}
           {rows !== null && rows.length === 0 && (
             <EmptyState
               icon="history"
@@ -306,10 +328,13 @@ export function Audit() {
             </div>
           )}
           {rows !== null && visibleRows.length > 0 && (
-            <div className="space-y-1">
-              {(firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows).map((r, i) => (
-                <AuditRow key={`${r.ts}-${i}`} row={r} />
-              ))}
+            <EventsTable rows={firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows} />
+          )}
+          {rows !== null && older && (
+            <div className="mt-4 flex justify-center">
+              <Button type="secondary" htmlType="button" loading={loadingOlder} onClick={loadOlder}>
+                Load older
+              </Button>
             </div>
           )}
         </Tabs.Content>
@@ -349,17 +374,7 @@ function ErasuresPanel({ org }: { org: string }) {
   if (error) {
     return <EmptyState icon="trash" title="Couldn't load" description={error} />;
   }
-  if (rows === null) {
-    return (
-      <LoadingSkeleton label="Loading erasures">
-        <div className="space-y-2">
-          <Skeleton className="h-12" />
-          <Skeleton className="h-12" />
-        </div>
-      </LoadingSkeleton>
-    );
-  }
-  if (rows.length === 0) {
+  if (rows !== null && rows.length === 0) {
     return (
       <EmptyState
         icon="trash"
@@ -369,8 +384,12 @@ function ErasuresPanel({ org }: { org: string }) {
     );
   }
 
+  // The first read is Click UI's own loading table.
   return (
     <Table
+      aria-label="Erasures"
+      aria-busy={rows === null || undefined}
+      loading={rows === null}
       size="sm"
       headers={[
         { label: "Scope" },
@@ -380,7 +399,7 @@ function ErasuresPanel({ org }: { org: string }) {
         { label: "Requested", width: "120px" },
         { label: "Completed", width: "120px" },
       ]}
-      rows={rows.map((r) => ({
+      rows={(rows ?? []).map((r) => ({
         id: r.erasure_id,
         title: r.failure_reason || r.erasure_id,
         items: [
@@ -418,7 +437,53 @@ function ErasuresPanel({ org }: { org: string }) {
 
 const ERASURE_STATE: Record<string, BadgeState> = { completed: "success", failed: "danger" };
 
-function AuditRow({ row }: { row: AuditEntry }) {
+const EVENT_HEADERS = [{ label: "Event" }, { label: "By", width: "220px" }, { label: "When", width: "120px" }];
+
+/** The events, one row each: what happened, who did it and when. The first read is Click
+ *  UI's own loading table. */
+function EventsTable({ rows, loading = false }: { rows: AuditEntry[]; loading?: boolean }) {
+  return (
+    <Table
+      aria-label="Audit events"
+      aria-busy={loading || undefined}
+      loading={loading}
+      size="sm"
+      headers={EVENT_HEADERS}
+      rows={rows.map(eventRow)}
+    />
+  );
+}
+
+function eventRow(row: AuditEntry, i: number): TableRowType {
+  return {
+    id: `${row.ts}-${i}`,
+    items: [
+      { label: <AuditEvent row={row} />, overflowMode: "wrap" },
+      {
+        // The column says this is the ACTOR. Subjects and namespaces share a naming space
+        // (a user `san` and a namespace `san`), so a bare name on a namespace-scoped row
+        // could read as "activity from namespace san"; Click UI prints the column's name
+        // beside the cell on a phone too.
+        label: (
+          <span className="inline-flex min-w-0 items-center gap-1 text-xs text-text-muted">
+            <Icon name="user" size="xs" aria-hidden="true" className="shrink-0" />
+            <span className="truncate">{row.actor || "—"}</span>
+          </span>
+        ),
+      },
+      {
+        label: (
+          <time dateTime={row.ts} className="tabular text-xs text-text-muted">
+            {relativeTime(row.ts)}
+          </time>
+        ),
+      },
+    ],
+  };
+}
+
+/** One event's summary and type, and its parsed input behind "Details". */
+function AuditEvent({ row }: { row: AuditEntry }) {
   const [expanded, setExpanded] = useState(false);
   // Parsed once, so the summary and the "Details" expansion read the same structured data.
   const parsed = subjectRecord(row.subject);
@@ -426,47 +491,27 @@ function AuditRow({ row }: { row: AuditEntry }) {
   const hasDetails = Object.keys(parsed).length > 0;
 
   return (
-    <div className="rounded-xl border border-border bg-surface">
-      <div className="flex items-start gap-3 p-3">
-        <div className="w-2 h-2 rounded-full bg-accent mt-1.5 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-text">{summary}</span>
-            <span className="text-text-muted ml-auto tabular text-xs">{relativeTime(row.ts)}</span>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-text-muted mt-0.5">
-            <span className="font-mono">{row.event_type}</span>
-            <span>·</span>
-            {/* "by" is load-bearing. This column is the ACTOR, but subjects and
-                  namespaces share a naming space (a user `san` and a namespace
-                  `san`), so a bare chip on a namespace-scoped row reads as
-                  "activity from namespace san" — easily mistaken for a
-                  cross-tenant leak when it is a correctly scoped
-                  `namespace.join` by that user. The User icon alone does not
-                  carry the distinction at 11px. */}
-            <span className="inline-flex items-center gap-1">
-              <Icon name="user" size="xs" aria-hidden="true" /> by {row.actor || "—"}
-            </span>
-            {hasDetails && (
-              <Button
-                type="empty"
-                htmlType="button"
-                className="ml-auto"
-                iconLeft={expanded ? "chevron-down" : "chevron-right"}
-                onClick={() => setExpanded((v) => !v)}
-                aria-expanded={expanded}
-              >
-                {expanded ? "Hide" : "Details"}
-              </Button>
-            )}
-          </div>
-          {expanded && hasDetails && (
-            <pre className="mt-2 p-2 text-xs font-mono text-text-muted bg-surface-2 rounded overflow-x-auto leading-relaxed">
-              {JSON.stringify(parsed, null, 2)}
-            </pre>
-          )}
-        </div>
+    <div className="min-w-0">
+      <div className="text-sm text-text">{summary}</div>
+      <div className="flex items-center gap-2 text-xs text-text-muted">
+        <span className="font-mono">{row.event_type}</span>
+        {hasDetails && (
+          <Button
+            type="empty"
+            htmlType="button"
+            iconLeft={expanded ? "chevron-down" : "chevron-right"}
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+          >
+            {expanded ? "Hide" : "Details"}
+          </Button>
+        )}
       </div>
+      {expanded && hasDetails && (
+        <pre className="mt-2 max-w-full p-2 text-xs font-mono text-text-muted bg-surface-2 rounded overflow-x-auto leading-relaxed">
+          {JSON.stringify(parsed, null, 2)}
+        </pre>
+      )}
     </div>
   );
 }

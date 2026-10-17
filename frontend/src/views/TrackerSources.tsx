@@ -18,6 +18,7 @@
  * first open.
  */
 import { useCallback, useRef, useState } from "react";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/format";
@@ -37,6 +38,7 @@ import {
 
 import { MetaList, MetaRow, TextClamp } from "../components/ui";
 import { confirmAction } from "../components/ConfirmDialog";
+import { toast } from "../components/Toast";
 import { RECORD_NOUN } from "../lib/repositoryCard";
 
 export const TRACKER_SOURCES_ABSENT = "Trackers are not available on this deployment yet.";
@@ -131,7 +133,7 @@ interface RecordActions {
 export function useRecordActions(org: string, refresh: () => Promise<void>): RecordActions {
   const identity = useStore((s) => s.identity);
   const setIdentity = useStore((s) => s.setIdentity);
-  const setView = useStore((s) => s.setView);
+  const navigate = useStore((s) => s.navigate);
   const [busy, setBusy] = useState<string | null>(null);
   const target = (ns: TrackerSourceNamespace): JoinTarget => ({
     org,
@@ -189,20 +191,15 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
       setBusy(null);
     }
   };
-  /** Open = the picker on that tracker namespace and the Graph view in Patterns
-   * mode: the mode key is written into the current entry first, so the navigation carries
-   *  it (`navigationHref` keeps `mode` for the graph view) and drops this page's `repo`.
-   *  */
+  /** Open = the picker on that tracker namespace and the Graph view in Patterns mode, as
+   *  a new history entry with a way back to Repositories. The namespace switch is said in
+   *  a toast, so the side effect of the jump is never silent. */
   const open = (ns: TrackerSourceNamespace) => {
     if (!identity) return;
     setIdentity({ ...identity, namespace: ns.namespace });
     setSavedNamespace(ns.namespace);
-    try {
-      history.replaceState(null, "", `${window.location.pathname}?mode=patterns`);
-    } catch {
-      /* history unavailable */
-    }
-    setView("graph");
+    navigate("graph", { query: { mode: "patterns" }, back: "Repositories" });
+    toast(`Switched to ${ns.namespace}`, "info");
   };
   return { busy, open, join, request, cancel, leave };
 }
@@ -255,7 +252,8 @@ export function RecordSourceDetails({
           href={`#${trackerAnchor(s.name)}`}
           className="mt-1 inline-flex min-h-8 items-center text-xs pointer-coarse:min-h-11"
         >
-          Check, rotate or retire in Trackers ↓
+          Check, rotate or retire in Trackers
+          <Icon name="arrow-down" size="xs" aria-hidden="true" className="ml-1" />
         </a>
       )}
     </div>

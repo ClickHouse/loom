@@ -24,6 +24,8 @@ import { useStore, viewHref } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { relativeTime } from "../lib/format";
 import { Kbd, Loading } from "./ui";
+import { toast } from "./Toast";
+import { paletteShortcut } from "../lib/platform";
 
 /** The memory group is server-side memory.search: a debounced call per settled query,
  *  aborted by the next keystroke. */
@@ -305,11 +307,13 @@ export function HeaderSearch({
   const yourProfileShown = q.length === 0 ? profileSections.slice(0, 3) : [];
   const documentsShown = matchedDocuments.slice(0, PER_GROUP_CAP);
 
+  // A namespace switch keeps the page: the view re-reads under the new namespace, and the
+  // toast says what changed (a switch never also moves the person to another view).
   const switchNs = (ns: string) => {
     if (!identity) return;
     setIdentity({ ...identity, namespace: ns });
     setSavedNamespace(ns);
-    setView("memories");
+    toast(`Switched to ${ns}`, "info");
     setOpen(false);
     setQ("");
   };
@@ -431,7 +435,7 @@ export function HeaderSearch({
   return (
     <Popover open={popoverOpen} onOpenChange={setOpen}>
       <RadixPopover.Anchor asChild>
-        <div ref={anchorRef} className="relative w-full">
+        <div ref={anchorRef} className="group relative w-full">
           <SearchField
             ref={inputRef}
             value={q}
@@ -470,9 +474,11 @@ export function HeaderSearch({
             // the entity box, not a look-alike search.
             tabIndex={view === "graph" ? -1 : undefined}
           />
+          {/* Platform-correct (⌘K / Ctrl K); the hint leaves once the field has the focus or
+              any text, as on the placeholder field it replaces (layout/Header.tsx). */}
           {!q && (
-            <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex">
-              ⌘K
+            <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex sm:group-focus-within:hidden">
+              {paletteShortcut()}
             </Kbd>
           )}
         </div>
@@ -500,7 +506,6 @@ export function HeaderSearch({
                 .filter(Boolean)
                 .join(" · ")}
             </span>
-            <span className="font-mono">↑↓ navigate · ↵ open</span>
           </div>
         )}
 

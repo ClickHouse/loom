@@ -1067,6 +1067,8 @@ export function Recent() {
                   <ListRow
                     key={e.memory_key}
                     data-card=""
+                    // Back to this page focuses the card that had the focus.
+                    data-focus-key={`memory:${e.memory_key}`}
                     checked={isSelected}
                     active={isActive}
                     deleted={isTombstoned}

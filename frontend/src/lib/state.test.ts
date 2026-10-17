@@ -161,3 +161,107 @@ describe("useIdentity", () => {
     consoleError.mockRestore();
   });
 });
+
+describe("the object a page shows is in its URL", () => {
+  const identity = { org: "acme", namespace: "team", agent: "loom-ui" };
+  beforeEach(() => {
+    useStore.setState({ identity, view: "memories", inspectedMemoryKey: null, inspectedAgent: "" });
+  });
+
+  it("Memories, Library and Conversations own ?memory=, ?doc= and ?thread=", () => {
+    setLocation("/memories?memory=a%2Fb&doc=x&thread=t");
+    expect(navigationHref("memories")).toBe("/memories?memory=a%2Fb");
+    expect(navigationHref("knowledge")).toBe("/library?doc=x");
+    expect(navigationHref("sessions")).toBe("/conversations?thread=t");
+    expect(navigationHref("graph")).toBe("/graph");
+  });
+
+  it("inspecting on Memories writes ?memory= into the entry, without a new one; closing drops it", () => {
+    setLocation("/memories");
+    const before = window.history.length;
+    useStore.getState().inspect("api/rate-limit", { agent: "claude-code" });
+    expect(window.location.search).toBe("?memory=api%2Frate-limit");
+    expect(window.history.length).toBe(before);
+    useStore.getState().inspect(null);
+    expect(window.location.search).toBe("");
+  });
+
+  it("a deep link opens what it names on boot: the memory, the document, the thread", () => {
+    setLocation("/memories?memory=api%2Frate-limit");
+    useStore.getState().bootView("memories");
+    // No remembered writer: every agent's row, as Runs opens a key it knows by name.
+    expect(useStore.getState()).toMatchObject({ inspectedMemoryKey: "api/rate-limit", inspectedAgent: "*" });
+    expect(window.location.search).toBe("?memory=api%2Frate-limit");
+    setLocation("/library?doc=docs%2Fa.md");
+    useStore.getState().bootView("knowledge");
+    expect(useStore.getState().pendingDocSourceUri).toBe("docs/a.md");
+    setLocation("/conversations?thread=t-1");
+    useStore.getState().bootView("sessions");
+    expect(useStore.getState().pendingConversationThread).toEqual({ threadId: "t-1", agent: "" });
+  });
+
+  it("a reload keeps the writer agent the memory was opened as", () => {
+    setLocation("/memories");
+    useStore.getState().inspect("api/rate-limit", { agent: "claude-code" });
+    useStore.setState({ inspectedMemoryKey: null, inspectedAgent: "" });
+    useStore.getState().bootView("memories");
+    expect(useStore.getState().inspectedAgent).toBe("claude-code");
+  });
+
+  it("opening a document or a thread from elsewhere pushes its URL", () => {
+    setLocation("/memories");
+    useStore.getState().openDocument("docs/a.md");
+    expect(window.location.pathname + window.location.search).toBe("/library?doc=docs%2Fa.md");
+    useStore.getState().openConversationThread("t-1");
+    expect(window.location.pathname + window.location.search).toBe("/conversations?thread=t-1");
+  });
+});
+
+describe("a navigation leaves a place for Back to restore", () => {
+  const identity = { org: "acme", namespace: "team", agent: "loom-ui" };
+  beforeEach(() => {
+    document.body.innerHTML = '<main id="main"><button data-focus-key="memory:k">k</button></main>';
+    setLocation("/memories?memory=k");
+    useStore.setState({ identity, view: "memories", inspectedMemoryKey: "k", inspectedAgent: "bot" });
+  });
+
+  it("the entry being left remembers the open memory and the focused key; the new one counts", () => {
+    const main = document.getElementById("main")!;
+    Object.defineProperty(main, "scrollTop", { value: 420, configurable: true });
+    document.querySelector<HTMLElement>("[data-focus-key]")!.focus();
+    let left: unknown = null;
+    const push = history.pushState.bind(history);
+    const spy = vi.spyOn(history, "pushState").mockImplementation((d, u, url) => {
+      left = history.state;
+      push(d, u, url);
+    });
+    const seq = useStore.getState().navSeq;
+    useStore.getState().navigate("graph", { query: { seed: "x" }, back: "memory k", note: "Graph, walked from x" });
+    spy.mockRestore();
+    expect(left).toMatchObject({
+      loomPlace: { scrollTop: 420, focusKey: "memory:k", inspected: "k", inspectedAgent: "bot" },
+    });
+    expect(history.state).toEqual({ loomBack: "memory k" });
+    expect(window.location.pathname + window.location.search).toBe("/graph?seed=x");
+    expect(useStore.getState()).toMatchObject({
+      view: "graph",
+      inspectedMemoryKey: null,
+      navSeq: seq + 1,
+      navNote: "Graph, walked from x",
+    });
+  });
+
+  it("Back reopens the memory the entry remembers, and is not a navigation", () => {
+    useStore.setState({ view: "graph", inspectedMemoryKey: null });
+    const seq = useStore.getState().navSeq;
+    useStore
+      .getState()
+      .arriveFromHistory("memories", { scrollTop: 420, focusKey: null, inspected: "k", inspectedAgent: "bot" });
+    expect(useStore.getState()).toMatchObject({
+      view: "memories",
+      inspectedMemoryKey: "k",
+      inspectedAgent: "bot",
+      navSeq: seq,
+    });
+  });
+});
