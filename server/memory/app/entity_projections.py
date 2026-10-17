@@ -1694,6 +1694,8 @@ async def _unlinked_holders(
         )
           -- ...and first written before rows were linked, or by a build that links only
           -- keys: a key link no older than the value, that no linked row of the key wrote.
+          -- The cutoff assumes one ledger row per migration (migrate inserts it once):
+          -- a re-applied row would move it to the later time once the two merge.
           AND (
               f.at < (
                   SELECT min(applied_at) FROM loom._migrations
