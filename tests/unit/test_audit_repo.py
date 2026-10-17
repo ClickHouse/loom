@@ -208,3 +208,17 @@ def test_both_cursor_formats_keep_any_request_id(request_id: str) -> None:
     for row_hash in ("a" * 64, ""):
         v2 = _encode_cursor_v2(ts, request_id, row_hash)
         assert _decode_page_cursor(v2) == (ts, request_id, row_hash)
+
+
+@pytest.mark.parametrize(
+    "row_hash", ["a" * 63, "a" * 65, "é" * 64], ids=["short", "long", "multibyte"]
+)
+def test_a_v2_cursor_with_a_malformed_hash_is_a_validation_error(row_hash: str) -> None:
+    # The hash binds as FixedString(64) bytes: a longer one would fail the query with a
+    # 500. A legacy row's empty hash stays valid.
+    from server.core.errors import ValidationError
+    from server.insights.app.audit import _decode_page_cursor, _encode_cursor_v2
+
+    v2 = _encode_cursor_v2(datetime(2026, 5, 16, 12, 0, tzinfo=UTC), "req-1", row_hash)
+    with pytest.raises(ValidationError):
+        _decode_page_cursor(v2)

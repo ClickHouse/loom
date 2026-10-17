@@ -49,9 +49,13 @@ def _decode_page_cursor(cursor: str) -> tuple[datetime, str, str | None]:
         return ts, request_id, None
     try:
         ts_str, row_hash, request_id = raw[len(_V2) :].split("|", 2)
-        return datetime.fromisoformat(ts_str), request_id, row_hash
+        ts = datetime.fromisoformat(ts_str)
     except ValueError:
         raise ValidationError("cursor is not one this op issued") from None
+    # The hash binds as FixedString(64): a SHA-256 hex, or empty for a legacy row.
+    if len(row_hash.encode("utf-8")) not in (0, 64):
+        raise ValidationError("cursor is not one this op issued")
+    return ts, request_id, row_hash
 
 
 def _same_write(a: audit_repo.AuditRow, b: audit_repo.AuditRow) -> bool:
