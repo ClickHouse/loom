@@ -83,9 +83,10 @@ entry that would answer 403.
 
 Badges draw attention without a rail entry: the Review queue appears with its conflict
 count, or with no count when there is no open conflict but Loom retired a memory on its
-own in the last 30 days (the Auto-resolved tab), Usage warns when the namespace is over its 24-hour cap, Agents counts clients new
-in the last 24 hours. The header carries a task bell (triage and blocked-on-person items)
-and a pending-approvals bell (grant requests the person can decide).
+own in the last 30 days (the Auto-resolved tab), Usage warns when the namespace is over
+its 24-hour cap, Agents counts clients new in the last 24 hours. The header carries a task
+bell (triage and blocked-on-person items) and a pending-approvals bell (grant requests the
+person can decide).
 
 ## Operations the dashboard uses
 
