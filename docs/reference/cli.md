@@ -216,8 +216,8 @@ python scripts/codegen/docs_reference.py
 | `loom code repack` | Regenerate context packs for recently merged PRs in the current pack shape. | `--org`, `--namespace`, `--days`, `--limit`, `--dry-run` |
 | `loom code describe` | LLM contextual one-liners for top-PageRank chunks. | `--org`, `--namespace`, `--top-pct`, `--limit`, `--suffix`, `--concurrency` |
 | `loom code answers-purge` | Tombstone cached code.ask answers (after a synthesis-model upgrade, stale weaker-model answers would otherwise be served forever — the cache only self-invalidates on cited-file change). | `--llm-model`, `--all`, `--apply`, `--dry-run`, `--org`, `--namespace` |
-| `loom code scip-full` | Full compiler-tier re-index by hand (the code_scip_full worker runs it weekly: heals the TU-cap degrades of per-merge deltas and any drift). | `--checkout`, `--jobs`, `--keep-delta`, `--apply-delta`, `--org`, `--namespace` |
-| `loom code scip-lock-path` | Print the entry's compiler-tier lock file, the host half of `entry-lock`; wrap a manual run in `loom code entry-lock`, which also takes the deployment lease. | `--org`, `--namespace` |
+| `loom code scip-full` | Full compiler-tier re-index by hand (the code_scip_full worker runs it weekly by default: heals the TU-cap degrades of per-merge deltas and any drift). | `--checkout`, `--jobs`, `--keep-delta`, `--apply-delta`, `--org`, `--namespace` |
+| `loom code scip-lock-path` | Print the entry's compiler-tier lock file on this host. | `--org`, `--namespace` |
 | `loom code entry-lock` | Run a command under the entry's compiler-tier lock (this host's file and the deployment's lease): exit 75 when another pass holds it, 3 when the lease is lost mid-run (the command is stopped). | `--org`, `--namespace`, `<command>` |
 | `loom code scip-delta` | One compiler-tier delta pass (same code as the code_scip_delta worker), by hand: git_head vs scip_commit per configured repo, scip-clang over the changed TUs, apply. |  |
 | `loom code entries` | One line per configured repository, for scripts: org namespace checkout lock-file (the lock path resolved). |  |

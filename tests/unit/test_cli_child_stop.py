@@ -81,8 +81,9 @@ async def test_a_finished_child_returns_its_exit_code() -> None:
 
 
 def test_sigterm_unwinds_a_code_subcommand_and_exits_143(tmp_path: Path) -> None:
-    """`timeout` (a wrapper's) and `kill` send SIGTERM: the command's child
-    group is stopped, its `finally` runs, and the exit code says why."""
+    """A wrapper's `timeout` and an operator's `kill` send SIGTERM: the
+    command's child group is stopped, its `finally` runs, and the exit code
+    says why."""
     pidfile = tmp_path / "grandchild.pid"
     marker = tmp_path / "finally.ran"
     script = textwrap.dedent(
