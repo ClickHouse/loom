@@ -82,20 +82,20 @@ account keeps its subject, grants, namespaces and data; no new one is made.
   account's Loom password once; it then links. Wrong passwords count against
   the usual sign-in limits.
 - An account registered under another address (a personal one, a `+tag`) is
-  not at the domain, or not under the address the provider verifies:
-  `loom sso link --email <their provider address> --org <org> --namespace <ns>`
-  shows the account, and `--apply` makes that address its contact and links
-  it, so their next SSO sign-in lands on it with its subject, grants, data and
-  tokens (none are revoked). It needs SSO on, as adopt does: with self-signup
-  closed, nobody can register the freed address and inherit what it named.
-  The old address's links go, and a grant once revoked under it is carried to
-  the account's subject, revoked, so it goes on capping the person's tokens.
-  It refuses an old address that still holds live grants of its own (grant
-  them to the account's subject and revoke them first) or a pending request to
-  join (reject it), and an address another account already names. When that is a JIT account an earlier SSO sign-in
-  made, `loom claim-release` it first: its memories stay behind in it (carry
-  them over with `namespace.snapshot` and `namespace.restore`), and grants made
-  to it must be made again.
+  not at the domain, or not under the address the provider verifies: `loom sso
+link --email <their provider address> --org <org> --namespace <ns>` shows
+  the account, and `--apply` makes that address its contact and links it, so
+  their next SSO sign-in lands on it with its subject, grants, data and tokens
+  (none are revoked). It needs SSO on, as adopt does: with self-signup closed,
+  nobody can register the freed address and inherit what it named. The old
+  address's links go, and a grant once revoked under it is carried to the
+  account's subject, revoked, so it goes on capping the person's tokens. It
+  refuses an old address that still holds live grants of its own (grant them
+  to the account's subject and revoke them first) or a pending request to join
+  (reject it), and an address another account already names. When that is a
+  JIT account an earlier SSO sign-in made, `loom claim-release` it first: its
+  memories stay behind in it (carry them over with `namespace.snapshot` and
+  `namespace.restore`), and grants made to it must be made again.
 - `loom sso unlink --email <email> --apply` takes a link back. Sessions already
   open are not ended; revoke them with `loom revoke-token --subject`.
 - Someone who says a password account naming their address is not theirs goes
@@ -216,7 +216,7 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   `"generate_key": true` the answer carries the private key, once, and a
   `warning` to send the request again if saving it may not have finished),
   `/v1/admin/bots.list` and `/v1/admin/bots.disable`; `/v1/admin/sso.adopt`,
-  `sso.unlink` and `sso.password_link` mirror `loom sso`.
+  `sso.link`, `sso.unlink` and `sso.password_link` mirror `loom sso`.
 - Replacing or disabling a bot revokes its tokens up to the next second plus
   5 s, and both wait that out (about 6 s) before they return. Replica clocks
   must agree within 5 s (NTP does): a replica ahead could issue a token from

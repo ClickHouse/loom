@@ -116,13 +116,17 @@ def _cmd_link(args: argparse.Namespace) -> int:
                 f"{args.org}/{args.namespace} (owner {row['owner_email']}, email "
                 f"{plan['was'] or '-'}) would sign in as {args.email.strip().lower()}"
             )
-            if plan["revoked"]:
-                names = ", ".join(sorted({g["namespace"] for g in plan["revoked"]}))
-                owner = row["owner_email"]
-                print(f"  revoked under {plan['was']}, so revoked for {owner} too: {names}")
+            owner = row["owner_email"]
             if args.dry_run:
+                if plan["revoked"]:
+                    names = ", ".join(sorted({g["namespace"] for g in plan["revoked"]}))
+                    print(f"  revoked under {plan['was']}, so revoked for {owner} too: {names}")
                 return 0
-            await account_admin.link_account(args.email, args.org, args.namespace, by=_by())
+            _, carried = await account_admin.link_account(
+                args.email, args.org, args.namespace, by=_by()
+            )
+            if carried:  # what it carried under the grant claims, not what the plan read
+                print(f"  revoked for {owner} too: {', '.join(carried)}")
         except (ValueError, LoomServerError) as e:  # refused (fix what it names) or busy (rerun)
             print(f"  ✗ {e}", file=sys.stderr)
             return 2
