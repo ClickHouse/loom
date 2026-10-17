@@ -363,6 +363,9 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
     await M.get_canonical_row(ORG, "00000000-0000-0000-0000-000000000001", ch=ch)
     await M.consolidated_dependents_of(ORG, NS, "k1", ch=ch)
     await M.live_source_count(ORG, NS, ["k1"], ch=ch)
+    await M.earliest_version_in_namespace(ORG, NS, ch=ch)
+    await M.fetch_version_rows(ORG, NS, [("k1", 1)], ch=ch)
+    await M.rollback_change_rows(ORG, NS, 5, memory_keys=["k1"] if c["vector"] else None, ch=ch)
     await M.find_duplicate_clusters(ORG, NS, ch=ch)
     await M.find_orphan_duplicates(ORG, NS, ch=ch)
     # The served-duplicate truth read, the canonical read, the collapse worklist
