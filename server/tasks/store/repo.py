@@ -361,8 +361,9 @@ async def insert_created_task(row: TaskRow, *, ch: _CHClient | None = None) -> T
     its insert can still race the next one, so both insert under the key's dedup
     token and storage drops the later row. An erased task's token can outlive it
     and drop this row too: with no task under the key, it goes in under a fresh
-    token. The previous build sends a random token, so a create of each build can
-    both land (docs/architecture/rolling-upgrades.md, rule 10)."""
+    token. The previous build's insert carries a random token whatever its caller
+    asked for (its `dedup_settings` overwrote every caller's token with one), so a
+    create of each build can both land (docs/architecture/rolling-upgrades.md, rule 10)."""
     org, inbox, key = row["org"], row["inbox"], row["idempotency_key"]
     token = f"task.create:{org}:{inbox}:{key}"
     await insert_task_version(row, dedup_token=token, ch=ch)
