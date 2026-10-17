@@ -76,7 +76,8 @@ account keeps its subject, grants, namespaces and data; no new one is made.
   below). `--keep-tokens` keeps them, and with them any tokens a squatter made.
   A bot that signed up with a password at the domain is in the list too:
   leave it out with `--skip <its email>` (repeatable), so it keeps the tokens
-  it runs on until it moves to `loom bot`.
+  it runs on until it moves to `loom bot`. A `--skip` that matches no unlinked
+  account there refuses the whole run, so a typo never adopts the bot.
 - **Anyone not adopted** is asked, at their first SSO sign-in, for their
   account's Loom password once; it then links. Wrong passwords count against
   the usual sign-in limits.

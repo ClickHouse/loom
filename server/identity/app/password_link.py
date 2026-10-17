@@ -45,7 +45,7 @@ _SSO_ACCOUNTS = """
 
 async def sso_accounts(email: str, org: str = "") -> list[dict[str, Any]]:
     email = email.strip().lower()
-    if not email:  # every agent's row matches no email
+    if not email:  # agents' rows name no email: "" would match each of them
         return []
     return await get_client().query_all(_SSO_ACCOUNTS, params={"email": email, "org": org})
 

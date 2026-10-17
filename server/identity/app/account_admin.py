@@ -58,8 +58,10 @@ async def adopt_plan(domain: str, org: str = "", skip: Iterable[str] = ()) -> li
     """Every unlinked password account at `domain`, with why it would be
     skipped ('' to adopt). `skip` names emails the operator leaves out, such
     as a bot's: no person signs in as it, and adopting it would revoke the
-    tokens it runs on."""
+    tokens it runs on. Raises ValueError when a skip matches no account."""
     left_out = {e.strip().lower() for e in skip}
+    if "" in left_out:
+        raise ValueError("a skip needs an email")
     rows = await sso_links.unlinked_in_domain(domain, org)
     by_email: dict[str, list[dict[str, Any]]] = {}
     for r in rows:

@@ -7,7 +7,7 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from server.auth import machines, oauth
 from server.auth.grant_claims import NotClaimed
@@ -31,6 +31,9 @@ def _invalid(e: ValueError) -> HTTPException:
 
 
 class AdoptInput(BaseModel):
+    # A misspelled `skip` would adopt the bot it meant to leave out.
+    model_config = ConfigDict(extra="forbid")
+
     domain: str
     org: str = ""
     skip: list[str] = []  # emails left out, e.g. bots'

@@ -21,6 +21,8 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
 
     async def adopt_plan(domain: str, org: str = "", skip: Any = ()) -> list[dict[str, Any]]:
         seen.append(("plan", (domain, list(skip))))
+        if "typo@acme.io" in skip:
+            raise ValueError("no unlinked account at acme.io has email typo@acme.io")
         return [{"email": "lee@acme.io", "skip": ""}]
 
     async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> int:
@@ -218,3 +220,16 @@ def test_a_bot_whose_claim_was_never_had_hands_out_no_key(calls, monkeypatch) ->
                     "generate_key": True,
                 },
             )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"domain": "acme.io", "skip": ["typo@acme.io"], "apply": True},  # matches nothing
+        {"domain": "acme.io", "skips": ["ci-bot@acme.io"], "apply": True},  # a misspelled field
+    ],
+)
+def test_an_adoption_whose_skip_cannot_hold_applies_nothing(calls, body: dict[str, Any]) -> None:
+    r = _client().post("/v1/admin/sso.adopt", json=body)
+    assert r.status_code == 422
+    assert "adopt" not in [name for name, _ in calls]

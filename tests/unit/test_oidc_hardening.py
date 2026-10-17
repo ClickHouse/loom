@@ -431,3 +431,5 @@ def test_no_email_resolves_to_nobody_whatever_rows_have_none(
     assert asyncio.run(login.resolve_identity_for_email(email)) is None
     assert asyncio.run(password_link.sso_accounts(email)) == []
     assert asyncio.run(sso_links.unlinked_accounts(email)) == []
+    # Nor a blank sign-in identifier: unclaimed agents hold claim-code passwords.
+    assert asyncio.run(login.resolve_user_credentials(email, "a-claim-code")) is None

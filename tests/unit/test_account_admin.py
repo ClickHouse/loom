@@ -451,3 +451,26 @@ def test_an_operator_can_leave_a_bots_account_out_of_adoption(monkeypatch) -> No
     }
     with pytest.raises(ValueError, match="ci-bot@acme.co"):  # mistyped: the bot would be in
         asyncio.run(account_admin.adopt_plan("acme.io", skip=["ci-bot@acme.co"]))
+    with pytest.raises(ValueError, match="needs an email"):
+        asyncio.run(account_admin.adopt_plan("acme.io", skip=[" "]))
+
+
+def test_the_cli_refuses_an_adoption_whose_skip_matches_nothing(monkeypatch, capsys) -> None:
+    import argparse
+
+    from server.cli import sso
+
+    async def plan(domain: str, org: str = "", skip: Any = ()) -> list[dict[str, Any]]:
+        raise ValueError("no unlinked account at acme.io has email typo@acme.io")
+
+    async def adopt(*a: Any, **k: Any) -> int:
+        raise AssertionError("nothing may be adopted")
+
+    monkeypatch.setattr(account_admin, "adopt_plan", plan)
+    monkeypatch.setattr(account_admin, "adopt", adopt)
+    monkeypatch.setattr(sso, "run_connected", lambda run: asyncio.run(run(None)))
+    args = argparse.Namespace(
+        domain="acme.io", org="", skip=["typo@acme.io"], keep_tokens=False, dry_run=False
+    )
+    assert sso._cmd_adopt(args) == 2
+    assert "typo@acme.io" in capsys.readouterr().err

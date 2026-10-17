@@ -68,7 +68,7 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
             print(f"  ✗ {e}", file=sys.stderr)
             return 2
         print(f"{len(plan)} password account(s) at {args.domain} not linked to SSO:")
-        if plan and not args.keep_tokens:
+        if any(not a["skip"] for a in plan) and not args.keep_tokens:
             print(
                 "  --apply revokes every token each adopted subject holds, the service-account "
                 "and MCP tokens people made from their sessions too (--keep-tokens keeps them)"

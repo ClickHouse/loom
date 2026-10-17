@@ -132,6 +132,11 @@ async def _release_quietly(admitted: attempts.Admission) -> None:
 
 
 async def _check_credentials(ident: str, password: str) -> Identity | None:
+    if not ident:
+        # Unclaimed agents' rows name no email: a blank identifier would test
+        # the password against every one of them. Timed as an unknown account.
+        await verify_password_off_loop(await asyncio.to_thread(_unknown_account_hash), password)
+        return None
     ch = get_client()
     # Email first (one email may own several namespaces → mint with all of them).
     rows = await ch.query_all(
