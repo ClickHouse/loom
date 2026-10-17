@@ -183,16 +183,16 @@ async def _release(
     # Again, now the row and bots no longer name it: a bot token minted during
     # the first cutoffs is older than these.
     subjects = _token_subjects(existing, bots)
-    first = len(cutoffs)
+    written = len(cutoffs)
     try:
         await _end_tokens(subjects, actor_subject, cutoffs)
-    except Exception as e:  # noqa: BLE001 — a retry finds nothing to redo; the first cutoff stands
+    except Exception as e:  # noqa: BLE001 — a retry finds nothing to redo; the cutoffs written stand
         log.warning(
             "claim_release: %s released, but the second token cutoff failed (%s); "
             "revoke by hand with `loom revoke-token --subject` for: %s",
             namespace,
             e,
-            ", ".join(subjects[len(cutoffs) - first :]) or "-",
+            ", ".join(subjects[len(cutoffs) - written :]) or "-",
         )
 
     log.info(

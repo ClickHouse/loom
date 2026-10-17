@@ -283,20 +283,22 @@ def test_a_failed_second_cutoff_is_logged_and_the_release_stands(
 def test_a_second_cutoff_failing_part_way_waits_out_the_ones_it_wrote(
     env: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    # The cutoff written before the failure is waited out; only the agent,
+    # not yet ended, is named for a hand revoke.
     from server.auth import machines
 
     run, state = env
     later = datetime(2026, 1, 4)
-    ended: list[str] = []
+    results = iter([datetime(2026, 1, 3), datetime(2026, 1, 3), later])
 
     async def bots(org: str, ns: str, *args: Any, ch: Any) -> list[str]:
         return ["triage"]
 
     async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
-        if len(ended) == 3:
+        cutoff = next(results, None)
+        if cutoff is None:
             raise RuntimeError("ClickHouse away")
-        ended.append(subject)
-        return later if len(ended) == 3 else datetime(2026, 1, 3)
+        return cutoff
 
     monkeypatch.setattr(machines, "naming", bots)
     monkeypatch.setattr(machines, "forget_namespace", bots)
