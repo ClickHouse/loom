@@ -163,8 +163,9 @@ def substituted_spans(old: str, new: str) -> tuple[str, str] | None:
 
 _COPULA = frozenset({"is", "are", "was", "were", "be", "been", "has", "have", "had"})
 # Words that make the phrase before a copula an attribute of something ("the
-# capital of Italy", "Italy's capital") rather than a bare name.
-_ATTRIBUTE_PHRASE_WORDS = frozenset({"the", "of", "s", "for", "in", "at", "on", "a", "an"})
+# capital of Italy") rather than a bare name. A possessive does too ("Italy's
+# capital"): see `_names_an_attribute`.
+_ATTRIBUTE_PHRASE_WORDS = frozenset({"the", "of", "for", "in", "at", "on", "a", "an"})
 _PREPOSITIONS = frozenset({"in", "at", "on", "of", "for", "to", "from", "with", "by", "near"})
 # The words an object follows ("lives in | London", "is | Rome").
 _BEFORE_AN_OBJECT = _PREPOSITIONS | _COPULA
@@ -179,6 +180,11 @@ _ANY_COPULA = _COPULA | frozenset(
         "есть", "является", "являются",
     }
 )  # fmt: skip
+
+
+def _names_an_attribute(words: list[str]) -> bool:
+    # A possessive is one word ("italy's"): curly apostrophes are straight by now.
+    return any(w in _ATTRIBUTE_PHRASE_WORDS or w.endswith("'s") for w in words)
 
 
 def object_substitution(old: str, new: str) -> tuple[str, str] | None:
@@ -225,7 +231,7 @@ def object_substitution(old: str, new: str) -> tuple[str, str] | None:
     # attributes, not an update, unless both are a value of one kind (numbers).
     if (
         a[i - 1] in _ANY_COPULA
-        and not (_ATTRIBUTE_PHRASE_WORDS & set(a[: i - 1]))
+        and not _names_an_attribute(a[: i - 1])
         and not (old_mid[0][:1].isdigit() and new_mid[0][:1].isdigit())
     ):
         return None
