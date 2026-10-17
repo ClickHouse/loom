@@ -1092,6 +1092,24 @@ _EDGE_OBSERVATION = (
     " ifNull(toUnixTimestamp(valid_from), 0), co_occur)"
 )
 _EDGE_OBSERVATIONS_PARAM = "{closed:Array(Tuple(String, String, UInt32, UInt32, UInt32))}"
+# The server refuses a query parameter over 128 KiB by default (http_max_field_value_size),
+# and a pair seen often has thousands of open edge rows: send them in parts of about half that.
+_EDGE_OBSERVATIONS_PART_BYTES = 64 * 1024
+
+
+def _edge_observation_parts(observations: list[tuple[Any, ...]]) -> list[list[tuple[Any, ...]]]:
+    """Split `observations` into lists that each fit one query parameter."""
+    parts: list[list[tuple[Any, ...]]] = []
+    size = 0
+    for observation in observations:
+        width = len(repr(observation)) + 1
+        if not parts or size + width > _EDGE_OBSERVATIONS_PART_BYTES:
+            parts.append([])
+            size = 0
+        parts[-1].append(observation)
+        size += width
+    return parts
+
 
 # The migration that started linking rows to edges: a value first written before it
 # was applied has no edge links of its own.
@@ -1204,8 +1222,9 @@ async def end_edges(
     closed = sorted(tuple(o) for r in found for o in r["open_rows"])
     if closed:
         where = f"{_STILL_OPEN_EDGES_WHERE} AND {_EDGE_OBSERVATION} IN {_EDGE_OBSERVATIONS_PARAM}"
-        opened = sorted({(str(o[0]), str(o[1])) for o in closed})
-        await _end_edge_rows(ch, where, {**params, "closed": closed}, opened)
+        for part in _edge_observation_parts(closed):
+            opened = sorted({(str(o[0]), str(o[1])) for o in part})
+            await _end_edge_rows(ch, where, {**params, "closed": part}, opened)
     held = await reopen_held_edges(ch, params=params, ending=sorted(pairs), closed=closed)
     later = sorted(p for p, r in pairs.items() if r["later"] and p not in held)
     if later:
@@ -1253,21 +1272,21 @@ async def reopen_held_edges(
     )
     held_pairs = {(str(r["entity_a"]), str(r["entity_b"])) for r in held}
     reopen = [o for o in closed if (str(o[0]), str(o[1])) in held_pairs]
-    if not reopen:
-        return held_pairs
-    await ch.execute(
-        f"""
-        ALTER TABLE loom.entity_edges
-        UPDATE valid_to = NULL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND {_EDGE_OBSERVATION} IN {_EDGE_OBSERVATIONS_PARAM}
-          AND invalid_at IS NULL AND valid_to = {_EDGE_CLOSED_VALID_TO}
-        """,
-        params={**params, "closed": reopen},
-    )
-    from server.memory.app import graph_write_marks as _graph_marks
+    for part in _edge_observation_parts(reopen):
+        await ch.execute(
+            f"""
+            ALTER TABLE loom.entity_edges
+            UPDATE valid_to = NULL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND {_EDGE_OBSERVATION} IN {_EDGE_OBSERVATIONS_PARAM}
+              AND invalid_at IS NULL AND valid_to = {_EDGE_CLOSED_VALID_TO}
+            """,
+            params={**params, "closed": part},
+        )
+    if reopen:
+        from server.memory.app import graph_write_marks as _graph_marks
 
-    _graph_marks.note_write(params["org"], params["ns"])
+        _graph_marks.note_write(params["org"], params["ns"])
     return held_pairs
 
 

@@ -6257,3 +6257,38 @@ async def test_a_racing_holder_reopens_only_the_edges_the_close_ended(
     assert got[1] == (datetime(2026, 5, 1), end + timedelta(days=30))
     if with_open_edge:
         assert got[2] == (datetime(2026, 5, 15), None)
+
+
+@pytest.mark.parametrize("racing", [False, True], ids=["no-holder", "racing-holder"])
+async def test_end_edges_closes_a_pair_seen_thousands_of_times(ch, org, racing) -> None:
+    # One edge row per observation: a pair seen 3000 times has 3000 open rows, more
+    # than one query parameter holds. The close ends all of them, and a row naming
+    # the pair that lands during the close opens all of them again.
+    from server.memory import store as M
+    from server.memory.app.projections import end_edges
+
+    end = datetime(2026, 6, 1, 12, 0, 0)
+    edge = {"org": org, "namespace": NS, "entity_a": "london", "entity_b": "user"}
+    start = datetime(2026, 1, 1)
+    await ch.insert(
+        "loom.entity_edges",
+        [{**edge, "valid_from": start + timedelta(minutes=i)} for i in range(3000)],
+    )
+    holder = _row(org, "s9", "I live in London", datetime(2026, 5, 20), memory_key="home")
+
+    async def lands() -> None:
+        await M.insert_memory_versions([holder], ch=ch)
+        link = {k: holder[k] for k in ("org", "namespace", "memory_id", "user_id")}
+        sha = holder["content_sha256"]
+        await ch.insert("loom.entity_edge_rows", [{**link, "content_sha256": sha, **edge}])
+
+    closing = _HolderLandsAfterTheRead(ch, lands) if racing else ch
+    await end_edges(closing, org=org, namespace=NS, ends=[("london", "user", end)])
+    await _mutations_done(ch, org)
+    (row,) = await ch.query_all(
+        "SELECT countIf(valid_to IS NULL) AS open, countIf(valid_to = {end:DateTime}) AS ended"
+        " FROM loom.entity_edges WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "end": end},
+    )
+    assert (row["open"], row["ended"]) == ((3000, 0) if racing else (0, 3000))
