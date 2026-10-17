@@ -61,6 +61,7 @@ from server.memory.app.projections import (
     write_entity_vectors,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.app.set_commit import _set_next
 from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 
@@ -414,8 +415,6 @@ def _settle_results(
     """Bring each result and the plan's lists in line with the judge: a key that
     landed superseded answers `superseded`; a key left without a conflict mark or
     refine answers `clear`; peers lose the retired rows."""
-    from server.memory.app.set_commit import _set_next
-
     behind = behind or {}
     retired_peers = retired_peers or set()
     key_of = state.key_of
