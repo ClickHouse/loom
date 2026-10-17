@@ -77,6 +77,8 @@ class _BulkWriteState:
     `handle_memory_bulk_set`; created at the top of the call, never shared."""
 
     existing_ids: dict[str, str] = field(default_factory=dict)
+    # Ids minted for keys with no row yet: a key written twice in one batch is one row.
+    new_ids: dict[str, str] = field(default_factory=dict)
     # Live key -> denormalized content_sha256: lets the
     # per-entry loop skip rewrite+re-embed+re-project of a byte-identical
     # re-ingest.
@@ -286,6 +288,13 @@ def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: s
     )
 
 
+def _row_id(state: _BulkWriteState, memory_key: str) -> str:
+    """The key's live row id, else one minted once per batch for it."""
+    return state.existing_ids.get(memory_key) or state.new_ids.setdefault(
+        memory_key, str(_uuid.uuid4())
+    )
+
+
 async def _bulk_build_rows(
     input: MemoryBulkSetInput,
     state: _BulkWriteState,
@@ -441,7 +450,7 @@ async def _bulk_build_rows(
             # KeyError or drop the carried values — rotating memory_id / resetting
             # creation on overwrite. Mirror the point path: existing when live,
             # fresh uuid4 / insert-time otherwise.
-            "memory_id": (state.existing_ids.get(entry.memory_key) or str(_uuid.uuid4())),
+            "memory_id": _row_id(state, entry.memory_key),
             # status / duplicate_of MUST be on every row too: the bulk verdict step stamps
             # them on the duplicate rows only, and a batch whose rows disagree on their keys
             # fails ch.insert with KeyError('status'). Schema defaults, overwritten by the

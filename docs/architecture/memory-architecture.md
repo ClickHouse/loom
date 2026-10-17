@@ -549,7 +549,8 @@ no longer holds.
 
 A replay of a failed triple, edge or entity-vector write writes only for the entries
 whose row still has the value the entry wrote (its id and `content_sha256`, the version
-the triple links carry) and may still hold facts (above), so a revision since stays
+the triple links carry) and still holds it (not deleted, retired or `high`: a proposal
+or a fact dated in the past still projects, as the write did), so a revision since stays
 current; with none left the failure resolves with nothing to do. A `memory.bulk_set`
 entry whose row is `high` projects nothing into the graph and records nothing for a
 replay.

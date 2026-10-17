@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import Counter
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -855,9 +856,10 @@ async def _bulk_run_projections(
     await asyncio.gather(*(leg() for leg in _legs))
     # A row revised in place keeps its id: what it held before is judged against its
     # new value, once its new links are in ('high' and judged-superseded included: it
-    # now holds none). A brand-new row held nothing.
+    # now holds none). A brand-new row held nothing, unless this batch wrote it twice.
+    written = Counter(r.memory_id for r in state.results if r.version)
     existed = set(state.existing_ids.values())
-    revised = [r.memory_id for r in state.results if r.version and r.memory_id in existed]
+    revised = [m for m, n in written.items() if m in existed or n > 1]
     if revised:
         await _close_overtaken_edges(
             p_input, p_results, set(revised), entity_map=entity_resolution, ch=ch

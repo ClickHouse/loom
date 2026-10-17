@@ -2281,6 +2281,36 @@ async def test_an_update_by_ids_edges_landing_after_the_next_revision_end_with_i
     )
 
 
+async def test_a_new_key_written_twice_in_a_bulk_keeps_one_row_and_one_edge(ch, org) -> None:
+    # A key with no row yet, written twice in one bulk: one row, revised in the batch,
+    # and the first value's edge ends with it.
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write, bulk_set
+
+    def _entry(city: str) -> dict[str, Any]:
+        return {
+            "memory_key": "alice",
+            "value": f"Alice likes {city}",
+            "entities": ["alice", city.lower()],
+        }
+
+    out = await bulk_set.handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            entries=[_entry("London"), _entry("Rome")],
+        )
+    )
+    await after_write.drain()
+    assert len({r.memory_id for r in out.written if r.version}) == 1
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # past the second the edge ended in
+    walked = await _walked(org, ["rome"], labeled=False, seed="alice", until=lambda w: "rome" in w)
+    assert "rome" in walked and "london" not in walked
+
+
 async def test_an_overtaken_version_ends_its_edge_though_its_row_holds_another(ch, org) -> None:
     # A bulk can revise one row twice: asked about both versions while the row holds
     # the second, the check must still end the first's edge (it asks by value, not by row).
