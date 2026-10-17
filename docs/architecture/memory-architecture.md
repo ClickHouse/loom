@@ -155,13 +155,13 @@ to 0.44 on the hard band. That call takes 5.6 s at the median, so it runs on the
 **The queue** is `loom.memory_embeddings.conflict_checked_at`, which every write already
 emits (`memory/store/conflict_resolver.py`):
 
-| Value                 | Meaning                                                                                                                            |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| NULL                  | Nothing owed: no peer at the resolver floor when written.                                                                          |
+| Value                 | Meaning                                                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| NULL                  | Nothing owed: no peer at the resolver floor when written.                                                                                                                      |
 | `1970-01-01 00:00:01` | Owed: a peer at the floor, a `conflict` verdict, or (outside `newest_wins`) a key another session of the same subject holds, or an earlier row of its bulk batch at the floor. |
-| `1970-01-01 00:00:02` | Judged.                                                                                                                            |
-| `1970-01-01 00:00:00` | A judgement an older build deferred and lost: owed after 60 s.                                                                     |
-| any real time         | Stamped by an older build: owed again only while the row is `conflicted`.                                                          |
+| `1970-01-01 00:00:02` | Judged.                                                                                                                                                                        |
+| `1970-01-01 00:00:00` | A judgement an older build deferred and lost: owed after 60 s.                                                                                                                 |
+| any real time         | Stamped by an older build: owed again only while the row is `conflicted`.                                                                                                      |
 
 A mark belongs to the write that set it: a revision emits a new vector row with its own.
 Each pass reads `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` (40) owed rows and then

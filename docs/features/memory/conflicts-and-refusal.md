@@ -288,18 +288,18 @@ not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md
 
 ## Settings
 
-| Setting                                           | Default                          | Effect                                                                              |
-| ------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
-| `LOOM_CONFLICT_THRESHOLD`                         | 0.85                             | Fallback conflict cosine; 1.0 disables flagging.                                    |
-| `LOOM_DUPLICATE_THRESHOLD`                        | 0.97                             | Fallback duplicate cosine.                                                          |
-| `LOOM_ADAPTIVE_THRESHOLDS`                        | true                             | Calibrate both thresholds from the live embedder.                                   |
+| Setting                                           | Default                          | Effect                                                                                               |
+| ------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `LOOM_CONFLICT_THRESHOLD`                         | 0.85                             | Fallback conflict cosine; 1.0 disables flagging.                                                     |
+| `LOOM_DUPLICATE_THRESHOLD`                        | 0.97                             | Fallback duplicate cosine.                                                                           |
+| `LOOM_ADAPTIVE_THRESHOLDS`                        | true                             | Calibrate both thresholds from the live embedder.                                                    |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`           | real provider: true; fake: false | The background conflict resolver; an explicit value wins. Without its model's key, writes wait owed. |
-| `LOOM_CONFLICT_RESOLVER_MODEL`                    | gpt-6.1-sol                      | The resolver's judge.                                                               |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY`    | 0.60                             | Lowest cosine that marks a write and joins its cluster.                             |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | 0.95                             | An update retires its predecessor (`newest_wins`) at this confidence.               |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE`  | 0.90                             | Below it nothing changes; at it a compatible pair clears and a contradiction flags. |
-| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`            | 200                              | Entries per `memory.bulk_set` checked; 0 = none.                                    |
-| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS`   | 2.0                              | Cross-replica pattern refresh bound.                                                |
+| `LOOM_CONFLICT_RESOLVER_MODEL`                    | gpt-6.1-sol                      | The resolver's judge.                                                                                |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY`    | 0.60                             | Lowest cosine that marks a write and joins its cluster.                                              |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | 0.95                             | An update retires its predecessor (`newest_wins`) at this confidence.                                |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE`  | 0.90                             | Below it nothing changes; at it a compatible pair clears and a contradiction flags.                  |
+| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`            | 200                              | Entries per `memory.bulk_set` checked; 0 = none.                                                     |
+| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS`   | 2.0                              | Cross-replica pattern refresh bound.                                                                 |
 
 See the [configuration reference](../../reference/configuration.md#conflict-detection).
 
