@@ -27,7 +27,7 @@ async def ch() -> Any:
     await client.disconnect()
 
 
-async def _password_account(ch: Any, org: str, email: str) -> str:
+async def _password_account(ch: Any, org: str, email: str, owner: str = "") -> str:
     namespace = f"pw-{uuid.uuid4().hex[:8]}"
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     await ch.insert(
@@ -36,7 +36,7 @@ async def _password_account(ch: Any, org: str, email: str) -> str:
             {
                 "org": org,
                 "namespace": namespace,
-                "owner_email": email,
+                "owner_email": owner or email,
                 "contact_email": email,
                 "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
                 "description": "",
@@ -60,6 +60,15 @@ def _sso(*args: str) -> str:
         check=True,
     )
     return out.stdout
+
+
+def _sso_refused(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "server.cli", "sso", *args, "--apply"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 async def _resolve(email: str) -> Any:
@@ -122,3 +131,33 @@ async def test_a_link_skips_an_account_released_since_it_was_found(ch: Any) -> N
     assert linked == [(org, kept)]
     with own_write_reads():
         assert await sso_links.linked(email) == [(org, kept)]
+
+
+async def test_link_points_an_account_from_another_address_at_the_provider_one(ch: Any) -> None:
+    # Registered with a personal address; the provider knows them by the company one.
+    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    personal, work = f"nik@home-{org}.example", f"nik@corp-{org}.example"
+    namespace = await _password_account(ch, org, personal, owner="nik")
+    assert await _resolve(work) is None
+
+    assert "would sign in as" in _sso(
+        "link", "--email", work, "--org", org, "--namespace", namespace
+    )
+    assert await _resolve(work) is None  # the dry run writes nothing
+    _sso("link", "--email", work, "--org", org, "--namespace", namespace, "--apply")
+
+    subject, got_org, namespaces, _ = await _resolve(work)
+    assert (subject, got_org, namespaces) == ("nik", org, [namespace])  # same subject, same data
+    with own_write_reads():
+        revoked = await ch.query_one(
+            "SELECT count() AS n FROM loom.revoked_tokens WHERE jti LIKE {s:String}",
+            params={"s": "%nik%"},
+        )
+    assert revoked["n"] == 0  # its tokens, an agent's included, keep working
+
+    # An address another account names already would leave the sign-in reaching neither.
+    other = await _password_account(ch, org, f"lee@corp-{org}.example")
+    refused = _sso_refused(
+        "link", "--email", f"lee@corp-{org}.example", "--org", org, "--namespace", namespace
+    )
+    assert refused.returncode == 2 and other in refused.stderr

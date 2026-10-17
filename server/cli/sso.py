@@ -40,6 +40,19 @@ def register_sso_cli(sub: Any) -> None:
     )
     add_apply_flags(p_adopt, writes="link the accounts")
     p_adopt.set_defaults(func=_cmd_adopt)
+    p_link = sso.add_parser(
+        "link",
+        help="Let one person's SSO sign-ins reach their password account registered under "
+        "another address (a personal one, a +tag). The account keeps its subject, grants, "
+        "namespaces and tokens; its contact email becomes --email.",
+    )
+    p_link.add_argument(
+        "--email", required=True, help="the address they sign in with at the provider"
+    )
+    p_link.add_argument("--org", required=True)
+    p_link.add_argument("--namespace", required=True, help="the account's namespace")
+    add_apply_flags(p_link, writes="change its email and link it")
+    p_link.set_defaults(func=_cmd_link)
     p_unlink = sso.add_parser("unlink", help="Undo the links of one email.")
     p_unlink.add_argument("--email", required=True)
     add_apply_flags(p_unlink, writes="remove the links")
@@ -86,6 +99,32 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
             print(f"  ✗ {e}", file=sys.stderr)
             return 2
         print(f"linked {linked} account(s)")
+        return 0
+
+    return run_connected(_run)
+
+
+def _cmd_link(args: argparse.Namespace) -> int:
+    from server.identity.app import account_admin
+    from server.identity.store import namespaces
+
+    async def _run(ch: Any) -> int:
+        row = await namespaces.fetch_row(args.org, args.namespace)
+        if row is None:
+            print(f"  ✗ no account {args.org}/{args.namespace}", file=sys.stderr)
+            return 2
+        print(
+            f"{args.org}/{args.namespace} (owner {row['owner_email']}, email "
+            f"{row['contact_email'] or '-'}) would sign in as {args.email.strip().lower()}"
+        )
+        if args.dry_run:
+            return 0
+        try:
+            await account_admin.link_account(args.email, args.org, args.namespace, by=_by())
+        except ValueError as e:
+            print(f"  ✗ {e}", file=sys.stderr)
+            return 2
+        print("linked: their next SSO sign-in lands on this account")
         return 0
 
     return run_connected(_run)

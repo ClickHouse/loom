@@ -71,6 +71,24 @@ class EmailInput(_Input):
     org: str = ""
 
 
+class LinkInput(_Input):
+    email: str
+    org: str
+    namespace: str
+
+
+@router.post("/v1/admin/sso.link")
+async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
+    """Point one password account at the address its owner signs in with (see `loom sso link`)."""
+    try:
+        was = await account_admin.link_account(
+            input.email, input.org, input.namespace, by=_by(info)
+        )
+    except ValueError as e:
+        raise _invalid(e) from None
+    return {"linked": {"org": input.org, "namespace": input.namespace}, "was": was}
+
+
 @router.post("/v1/admin/sso.unlink")
 async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
     accounts = await account_admin.unlink(input.email, input.org, by=_by(info))

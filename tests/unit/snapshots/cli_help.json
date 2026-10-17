@@ -284,13 +284,17 @@
   "options: -h, --help show this help message and exit --jti JTI The `jti` claim: retires exactly one token. Every token from `loom mint- token` (printed with --json / --save) and the admin endpoint carries one; older tokens may not — use --subject. --subject SUBJECT The `sub` claim: retires EVERY token minted for this principal, in every org (verification checks sub against the revoked set); narrow it with --issued-before. --list Print the unexpired revocations. --issued-before ISO-8601 With --subject: revoke only the tokens issued (`iat`) before this instant, so a token re-minted after a leak keeps working. --reason REASON Free text stored on the row (audit trail). --expires-at ISO8601 When the revocation may lapse — the token's own exp. Omit for a token without exp: the row is kept for good (to 2105). --json Machine-readable output."
  ],
  "loom sso": [
-  "usage: loom sso [-h] {adopt,unlink,password-link} ...",
-  "positional arguments: {adopt,unlink,password-link} adopt Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. Vouches that the domain's addresses are the provider's people. Dry run unless --apply. unlink Undo the links of one email. password-link Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off.",
+  "usage: loom sso [-h] {adopt,link,unlink,password-link} ...",
+  "positional arguments: {adopt,link,unlink,password-link} adopt Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. Vouches that the domain's addresses are the provider's people. Dry run unless --apply. link Let one person's SSO sign-ins reach their password account registered under another address (a personal one, a +tag). The account keeps its subject, grants, namespaces and tokens; its contact email becomes --email. unlink Undo the links of one email. password-link Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off.",
   "options: -h, --help show this help message and exit"
  ],
  "loom sso adopt": [
   "usage: loom sso adopt [-h] --domain DOMAIN [--org ORG] [--skip EMAIL] [--keep-tokens] [--apply | --dry-run]",
   "options: -h, --help show this help message and exit --domain DOMAIN Email domain, e.g. example.com --org ORG Only accounts in this org --skip EMAIL Leave this email's accounts out, e.g. a bot's (repeatable) --keep-tokens Keep the tokens the accounts already hold (by default they are revoked: whoever registered an address may hold some) --apply link the accounts (default: dry run) --dry-run report what --apply would write, write nothing (the default)"
+ ],
+ "loom sso link": [
+  "usage: loom sso link [-h] --email EMAIL --org ORG --namespace NAMESPACE [--apply | --dry-run]",
+  "options: -h, --help show this help message and exit --email EMAIL the address they sign in with at the provider --org ORG --namespace NAMESPACE the account's namespace --apply change its email and link it (default: dry run) --dry-run report what --apply would write, write nothing (the default)"
  ],
  "loom sso unlink": [
   "usage: loom sso unlink [-h] --email EMAIL [--apply | --dry-run]",

@@ -81,6 +81,14 @@ account keeps its subject, grants, namespaces and data; no new one is made.
 - **Anyone not adopted** is asked, at their first SSO sign-in, for their
   account's Loom password once; it then links. Wrong passwords count against
   the usual sign-in limits.
+- An account registered under another address (a personal one, a `+tag`) is
+  not at the domain, or not under the address the provider verifies:
+  `loom sso link --email <their provider address> --org <org> --namespace <ns>`
+  shows the account, and `--apply` makes that address its contact and links
+  it, so their next SSO sign-in lands on it with its subject, grants, data and
+  tokens (none are revoked). It refuses an address another account already
+  names: a JIT account made at an earlier sign-in is released first. Grants
+  someone made to the old address by name no longer reach them; grant again.
 - `loom sso unlink --email <email> --apply` takes a link back. Sessions already
   open are not ended; revoke them with `loom revoke-token --subject`.
 - Someone who says a password account naming their address is not theirs goes

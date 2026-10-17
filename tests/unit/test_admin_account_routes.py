@@ -64,7 +64,14 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
             }
         ]
 
+    async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
+        seen.append(("link", (email, org, namespace)))
+        if email == "taken@acme.io":
+            raise ValueError("taken@acme.io is already acme/lee's; release that one first")
+        return "lee@home.example"
+
     for name, fake in [
+        ("link_account", link_account),
         ("adopt_plan", adopt_plan),
         ("adopt", adopt),
         ("unlink", unlink),
@@ -240,3 +247,12 @@ def test_an_unlink_with_a_misspelled_org_is_refused(calls) -> None:
     r = _client().post("/v1/admin/sso.unlink", json={"email": "lee@acme.io", "orgs": "acme"})
     assert r.status_code == 422
     assert calls == []
+
+
+def test_a_link_points_one_account_at_the_providers_address(calls) -> None:
+    c = _client()
+    body = {"email": "lee@acme.io", "org": "acme", "namespace": "lee"}
+    out = c.post("/v1/admin/sso.link", json=body).json()
+    assert out == {"linked": {"org": "acme", "namespace": "lee"}, "was": "lee@home.example"}
+    refused = c.post("/v1/admin/sso.link", json={**body, "email": "taken@acme.io"})
+    assert refused.status_code == 422 and "release that one first" in refused.text

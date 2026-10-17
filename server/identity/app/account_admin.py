@@ -143,6 +143,51 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
     return linked
 
 
+async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
+    """Let SSO sign-ins with `email` reach the password account (org, namespace)
+    registered under another address (a personal one, a `+tag`): its contact
+    becomes `email` and it is linked, so the person keeps its subject, grants,
+    namespaces and tokens. The operator vouches that `email` is theirs. Returns
+    the address it had. Raises ValueError when the account cannot take it."""
+    from server.core.ch import get_client
+    from server.identity.store import namespaces
+
+    email = email.strip().lower()
+    if "@" not in email:
+        raise ValueError(f"{email!r} is not an email address")
+    async with account_change(org, namespace):
+        row = await namespaces.fetch_row(org, namespace)
+        if row is None or not row["active"] or not row["password_hash"]:
+            raise ValueError(f"{org}/{namespace} is not an active password account")
+        if row["contact_email"] == email:
+            raise ValueError(f"{org}/{namespace} already names {email}: adopt or let it link")
+        others = await get_client().query_one(
+            "SELECT org, namespace FROM loom.namespaces FINAL "
+            "WHERE contact_email = {email:String} AND active = 1 LIMIT 1",
+            params={"email": email},
+        )
+        if others is not None:
+            # Two accounts naming the address: its sign-in would reach neither.
+            taken = f"{others['org']}/{others['namespace']}"
+            raise ValueError(f"{email} is already {taken}'s; release that one first")
+        was = str(row["contact_email"])
+        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+        # Insert-as-replace carrying every other column forward.
+        await get_client().insert(
+            "loom.namespaces",
+            [{**row, "contact_email": email, "updated_at": max(now, row["updated_at"])}],
+        )
+        await sso_links.link(email, [(org, namespace)], by)
+    await audit.emit(
+        "auth.sso_linked",
+        org=org,
+        namespace=namespace,
+        actor=by,
+        subject={"email": email, "was": was, "by": by, "subject": row["owner_email"]},
+    )
+    return was
+
+
 async def unlink(email: str, org: str = "", *, by: str) -> list[tuple[str, str]]:
     """Stop new SSO sign-ins with `email` reaching its linked accounts (in `org`)."""
     accounts = [a for a in await sso_links.linked(email) if org in ("", a[0])]

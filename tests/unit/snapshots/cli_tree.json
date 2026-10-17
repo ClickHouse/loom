@@ -8435,6 +8435,141 @@
           }
          ]
         },
+        "link": {
+         "prog": "loom sso link",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "dry_run": true,
+          "apply_gated": true,
+          "func": "server.cli.sso:_cmd_link"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "email",
+            "org",
+            "namespace",
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--email"
+           ],
+           "dest": "email",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "the address they sign in with at the provider",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespace"
+           ],
+           "dest": "namespace",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "the account's namespace",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--apply"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreFalseAction",
+           "default": true,
+           "const": false,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "change its email and link it (default: dry run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": true,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "report what --apply would write, write nothing (the default)",
+           "metavar": null
+          }
+         ]
+        },
         "unlink": {
          "prog": "loom sso unlink",
          "usage": null,
@@ -8618,6 +8753,7 @@
        },
        "aliases_of": {
         "adopt": "loom sso adopt",
+        "link": "loom sso link",
         "unlink": "loom sso unlink",
         "password-link": "loom sso password-link"
        },
@@ -8626,6 +8762,11 @@
          "dest": "adopt",
          "help": "Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. Vouches that the domain's addresses are the provider's people. Dry run unless --apply.",
          "metavar": "adopt"
+        },
+        {
+         "dest": "link",
+         "help": "Let one person's SSO sign-ins reach their password account registered under another address (a personal one, a +tag). The account keeps its subject, grants, namespaces and tokens; its contact email becomes --email.",
+         "metavar": "link"
         },
         {
          "dest": "unlink",
