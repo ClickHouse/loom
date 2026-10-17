@@ -131,6 +131,13 @@ def dormant_names(mig_dir: Path | None = None) -> list[str]:
     return out
 
 
+async def unapplied_dormant() -> set[str]:
+    """The dormant migrations the ledger lacks: their objects are not expected. One a
+    past run applied (its setting since turned off) still is."""
+    await schema_status()
+    return set(dormant_names()) - set(_cache.get("ledger") or frozenset())
+
+
 def feature_migrated_cached(field: str, mig_dir: Path | None = None) -> bool:
     """`feature_migrated` from the ledger as last cached (no read; False before one)."""
     from server.core.schema.journal import required_setting

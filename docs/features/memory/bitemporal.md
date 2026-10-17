@@ -32,16 +32,19 @@ spans, or a rollback planned from the journal.
 
 ## Why it is off by default
 
-| Cost                      | Journal off           | Journal on                                                   |
-| ------------------------- | --------------------- | ------------------------------------------------------------ |
-| `memory.set` p50          | {{SET_P50_OFF}} ms    | {{SET_P50_ON}} ms ({{SET_RATIO}}×)                           |
-| Storage per write         | the row and its index | about {{BYTES_PER_WRITE}} bytes of journal on top of the row |
-| `memory.search` p50 (now) | {{SEARCH_P50}} ms     | {{SEARCH_P50}} ms                                            |
+| Cost                      | Journal off                             | Journal on                                                                                                      |
+| ------------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `memory.set` p50          | {{SET_P50_OFF}} ms                      | {{SET_P50_ON}} ms ({{SET_RATIO}}×)                                                                              |
+| Storage per revision      | a `memory_versions` row (about 0.15 KB) | about 0.6 KB of commit and assertion, plus a historical vector (about 6 KB at 1,024 dimensions, 18 KB at 3,072) |
+| `memory.search` p50 (now) | {{SEARCH_P50}} ms                       | {{SEARCH_P50}} ms                                                                                               |
 
 - **Write latency.** A journaled write makes about 10 more ClickHouse round trips: the
   plan reads, a deployment-wide per-namespace lease in Keeper, the commit insert and its
   read-backs, the erasure fence and the projection.
-- **Storage.** The journal keeps commits, assertions and historical vectors.
+- **Storage.** The journal keeps every revision searchable as it was: commits,
+  assertions and a vector per revision (the current-state embedding is one row per key,
+  replaced on each write). Measured over 200 writes to 50 keys with a 1,024-dimension
+  embedder; the vector scales with the embedder's width.
 - **Reads.** A read that does not ask for a past time costs the same in both modes.
 
 ## What changes on the wire

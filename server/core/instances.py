@@ -83,11 +83,21 @@ def _host() -> str:
 
 @cache
 def schema_version() -> int:
-    """This build's last migration number."""
+    """This build's last migration number: of the migrations it applies, so a dormant
+    one (its setting off) does not make it read as a newer schema than it runs."""
     from server.core.paths import MIGRATIONS_DIR
     from server.core.schema.journal import migration_number
+    from server.core.schema.status import dormant_names
 
-    return max((migration_number(f.name) or 0 for f in MIGRATIONS_DIR.glob("*.sql")), default=0)
+    dormant = set(dormant_names())
+    return max(
+        (
+            migration_number(f.name) or 0
+            for f in MIGRATIONS_DIR.glob("*.sql")
+            if f.name not in dormant
+        ),
+        default=0,
+    )
 
 
 def row(*, stopped: bool = False) -> dict[str, Any]:

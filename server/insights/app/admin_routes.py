@@ -121,8 +121,12 @@ async def admin_schema_status() -> SchemaStatusOutput:
 
     from server.core.schema.journal import live_objects
     from server.core.schema.migrate_lease import RUNNER_TABLES
+    from server.core.schema.status import unapplied_dormant
 
-    expected = live_objects(MIGRATIONS_DIR.glob("*.sql")) if MIGRATIONS_DIR.exists() else set()
+    # A dormant migration (its setting off, never applied) is not expected to have run.
+    skip = await unapplied_dormant()
+    files = [f for f in MIGRATIONS_DIR.glob("*.sql") if f.name not in skip]
+    expected = live_objects(files) if MIGRATIONS_DIR.exists() else set()
     expected |= RUNNER_TABLES
 
     # Skip internal MV inner_id.* tables — repo helper filters them.

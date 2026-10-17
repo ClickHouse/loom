@@ -64,3 +64,32 @@ def test_the_operation_catalogue_lists_no_journal_op_while_off(off: None) -> Non
 
     names = {r["name"] for r in operation_rows()}
     assert "memory.set" in names and "memory.amend" not in names
+
+
+def test_a_dormant_migration_is_neither_this_builds_schema_nor_expected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from server.core import instances
+    from server.core.schema import status
+
+    instances.schema_version.cache_clear()
+    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+    off = instances.schema_version()
+    instances.schema_version.cache_clear()
+    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
+    assert instances.schema_version() == off + 1  # the journal's migration is the last
+    instances.schema_version.cache_clear()
+    monkeypatch.setattr(settings, "memory_temporal_enabled", False)
+
+    async def ledger(**_k: object) -> dict[str, object]:
+        status._cache["ledger"] = frozenset(applied)
+        return {}
+
+    monkeypatch.setattr(status, "schema_status", ledger)
+    applied: set[str] = set()
+    assert "039_bitemporal_memory.sql" in asyncio.run(status.unapplied_dormant())
+    applied.add("039_bitemporal_memory.sql")  # applied while on, since turned off
+    assert asyncio.run(status.unapplied_dormant()) == set()
+    status.reset_cache()
