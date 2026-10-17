@@ -32,6 +32,7 @@ import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog"
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
+import { parseSearchQuery, removeQueryToken, toggleQueryToken } from "../lib/memoriesSearch";
 
 const FIRST_SCREEN_ROWS = 12;
 type SortBy = "recency" | "title" | "chunks" | "size";
@@ -90,11 +91,32 @@ export function Documents() {
   const [loadingMore, setLoadingMore] = useState(false);
   const scopeRef = useRef(0);
 
+  // A tag filter is asked of the server (rows with any of the tags; the list then needs
+  // every one), so it covers documents past the pages loaded so far. Debounced, so typing
+  // `tag:…` sends one read.
+  const queryTags = useMemo(() => parseSearchQuery(query).tags, [query]);
+  const tagKey = JSON.stringify(queryTags);
+  const [serverTags, setServerTags] = useState(tagKey);
+  useEffect(() => {
+    const t = setTimeout(() => setServerTags(tagKey), 250);
+    return () => clearTimeout(t);
+  }, [tagKey]);
+  const shownScope = useRef("");
+
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
     scopeRef.current += 1;
-    setRows(null);
+    // Blank only for a new namespace; a new filter keeps the rows until the next land.
+    const scope = `${identity.org}/${identity.namespace}`;
+    if (shownScope.current !== scope) {
+      shownScope.current = scope;
+      setRows(null);
+    }
     setNextCursor(null);
-    listKnowledge({ org: identity.org, namespace: identity.namespace }, { signal, fields: LIBRARY_LIST_FIELDS })
+    const tags = (JSON.parse(serverTags) as string[]).flatMap((t) => [t, t.toLowerCase()]);
+    listKnowledge(
+      { org: identity.org, namespace: identity.namespace },
+      { signal, fields: LIBRARY_LIST_FIELDS, ...(tags.length ? { tags: [...new Set(tags)], limit: 500 } : {}) },
+    )
       .then((r) => {
         if (live()) {
           setRows(r.rows || []);
@@ -107,7 +129,7 @@ export function Documents() {
   };
 
   // A memory write cannot change the document list.
-  useAbortableEffect(load, [identity.org, identity.namespace]);
+  useAbortableEffect(load, [identity.org, identity.namespace, serverTags]);
 
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
@@ -116,7 +138,13 @@ export function Documents() {
     try {
       const r = await listKnowledge(
         { org: identity.org, namespace: identity.namespace },
-        { cursor: nextCursor, fields: LIBRARY_LIST_FIELDS },
+        {
+          cursor: nextCursor,
+          fields: LIBRARY_LIST_FIELDS,
+          ...(queryTags.length
+            ? { tags: [...new Set(queryTags.flatMap((t) => [t, t.toLowerCase()]))], limit: 500 }
+            : {}),
+        },
       );
       if (scopeRef.current !== scope) return;
       setRows((prev) => [...(prev || []), ...(r.rows || [])]);
@@ -238,7 +266,7 @@ export function Documents() {
     if (requiredTags.length > 0) {
       r = r.filter((row) => {
         const lower = (row.tags || []).map((t) => t.toLowerCase());
-        return requiredTags.every((t) => lower.some((x) => x.includes(t)));
+        return requiredTags.every((t) => lower.includes(t));
       });
     }
     if (freeText.length > 0) {
@@ -348,14 +376,44 @@ export function Documents() {
 
       {rows !== null && rows.length > 0 && (
         <>
-          <div className="mb-3">
+          {/* The search and the filters in force stay at the top as the list scrolls, so a
+              tag picked from a row further down is seen to apply. */}
+          <search aria-label="Search and filters" className="sticky top-0 z-[2] -mx-2 mb-3 bg-bg px-2 py-2">
             <SearchField
               value={query}
               onChange={(value) => setQuery(value)}
               placeholder="Search title, filename, description, or tag — try `tag:specs` or `tag:specs onboarding`"
               aria-label="Search library"
             />
-          </div>
+            {queryTags.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="text-text-muted">Filtering:</span>
+                {queryTags.map((t) => (
+                  <Chip
+                    key={t}
+                    label={`tag:${t}`}
+                    mono
+                    onRemove={() => setQuery((q) => removeQueryToken(q, `tag:${t}`))}
+                  />
+                ))}
+                <Button type="empty" htmlType="button" onClick={() => setQuery(parseSearchQuery(query).text)}>
+                  Clear filters
+                </Button>
+              </div>
+            )}
+            {selected.size > 0 && (
+              <div className="mt-2 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
+                <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
+                <div className="flex-1" />
+                <Button type="secondary" htmlType="button" iconLeft="cross" onClick={clearSelection}>
+                  Clear
+                </Button>
+                <Button type="danger" htmlType="button" iconLeft="trash" loading={bulkBusy} onClick={onBulkDelete}>
+                  Delete all
+                </Button>
+              </div>
+            )}
+          </search>
           <div className="mb-5 flex justify-end">
             <Select
               value={sortBy}
@@ -377,19 +435,6 @@ export function Documents() {
             </Select>
           </div>
         </>
-      )}
-
-      {selected.size > 0 && (
-        <div className="sticky top-0 z-[2] mb-3 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
-          <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
-          <div className="flex-1" />
-          <Button type="secondary" htmlType="button" iconLeft="cross" onClick={clearSelection}>
-            Clear
-          </Button>
-          <Button type="danger" htmlType="button" iconLeft="trash" loading={bulkBusy} onClick={onBulkDelete}>
-            Delete all
-          </Button>
-        </div>
       )}
 
       {/* Mounted while open, not on every render. */}
@@ -522,10 +567,8 @@ export function Documents() {
                           key={t}
                           label={`#${t}`}
                           ariaLabel={`Filter by tag ${t}`}
-                          onClick={() => {
-                            const tagToken = `tag:${t}`;
-                            setQuery((cur) => (cur.includes(tagToken) ? cur : cur ? `${cur} ${tagToken}` : tagToken));
-                          }}
+                          selected={queryTags.some((q) => q.toLowerCase() === t.toLowerCase())}
+                          onClick={() => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`))}
                         />
                       ))}
                     </span>

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./errors";
 import {
   _formatterCacheSize,
@@ -162,7 +162,7 @@ describe("date formatters are built once", () => {
     dayLabel("2025-02-03T10:00:00Z");
     relativeTime("2020-01-01T00:00:00Z");
     relativeTime("2019-06-01T00:00:00Z");
-    // three shapes at most were added by dayLabel (weekday / month-day / month-day-year) and one by relativeTime
+    // two shapes at most were added by dayLabel (month-day / month-day-year) and one by relativeTime
     expect(_formatterCacheSize() - afterTime).toBeLessThanOrEqual(4);
     const n = _formatterCacheSize();
     for (let i = 0; i < 50; i++) {
@@ -195,5 +195,19 @@ describe("refreshDetail", () => {
     expect(refreshDetail("agent=catchup expected_head=")).toBe("agent=catchup");
     expect(refreshDetail("agent=ci expected_head=4645c25c46fc")).toBe("agent=ci expected_head=4645c25c46fc");
     expect(refreshDetail("")).toBe("");
+  });
+});
+
+// A day heading over the memories is a date, so it can be told apart from last week's:
+// "Today" and "Yesterday" carry theirs, and an earlier day is its date, never a weekday.
+describe("dayLabel", () => {
+  afterEach(() => vi.useRealTimers());
+  it("names the date of every day", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 17, 12));
+    expect(dayLabel(new Date(2026, 9, 17, 9).toISOString())).toBe("Today · Oct 17");
+    expect(dayLabel(new Date(2026, 9, 16, 9).toISOString())).toBe("Yesterday · Oct 16");
+    expect(dayLabel(new Date(2026, 9, 15, 9).toISOString())).toBe("Oct 15");
+    expect(dayLabel(new Date(2025, 11, 31, 9).toISOString())).toBe("Dec 31, 2025");
   });
 });

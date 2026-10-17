@@ -59,15 +59,13 @@ export function dayLabel(iso: string): string {
   const yesterday = new Date(today.getTime() - 86400000);
   const dDate = new Date(d.getTime());
   dDate.setHours(0, 0, 0, 0);
-  if (dDate.getTime() === today.getTime()) return "Today";
-  if (dDate.getTime() === yesterday.getTime()) return "Yesterday";
-  const diff = Math.floor((today.getTime() - dDate.getTime()) / 86400000);
-  if (diff < 7) {
-    return fmt("weekday", { weekday: "long" }).format(dDate);
-  }
-  return dDate.getFullYear() === today.getFullYear()
-    ? fmt("month-day", { month: "short", day: "numeric" }).format(dDate)
-    : fmt("month-day-year", { month: "short", day: "numeric", year: "numeric" }).format(dDate);
+  const date =
+    dDate.getFullYear() === today.getFullYear()
+      ? fmt("month-day", { month: "short", day: "numeric" }).format(dDate)
+      : fmt("month-day-year", { month: "short", day: "numeric", year: "numeric" }).format(dDate);
+  if (dDate.getTime() === today.getTime()) return `Today · ${date}`;
+  if (dDate.getTime() === yesterday.getTime()) return `Yesterday · ${date}`;
+  return date;
 }
 
 export function formatValue(v: unknown): string {
