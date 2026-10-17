@@ -12,7 +12,7 @@ owner = "compiler tier: SCIP upload, apply and the delta workers"
 
 [[files]]
 match = "tests/unit/test_scip_*.py"
-owner = "compiler tier: SCIP harness, locks and cron scripts"
+owner = "compiler tier: SCIP harness, locks and the entry-lock wrapper"
 
 [[files]]
 match = "tests/unit/test_code_ingest_*.py"

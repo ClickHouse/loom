@@ -435,7 +435,7 @@ def test_entry_lock_wrapper_runs_nothing_without_the_lease(no_clickhouse, tmp_pa
 def test_entry_lock_wrapper_kills_the_command_group_when_the_lease_is_lost(
     keeper, monkeypatch, tmp_path
 ) -> None:
-    """The command's own children die with it: a cron step's scip-python and its
+    """The command's own children die with it: a harness's scip-python and its
     uploader must write nothing after the wrapper reports the loss."""
     import threading
     import time

@@ -102,8 +102,9 @@ def _cmd_backfill_chunks(args: argparse.Namespace) -> int:
 def _cmd_recalibrate(args: argparse.Namespace) -> int:
     """Manually trigger the recalibration worker pass.
 
-    Same logic as the weekly recalibration worker, but immediate. Use after shipping a
-    new corpus so per-NS thresholds activate without waiting up to a week.
+    Same logic as the weekly recalibration worker, but immediate. Use after
+    shipping a new corpus so per-NS thresholds activate without waiting up to
+    a week.
     Exit 0 on success, 1 on probe failure.
     """
     import sys
