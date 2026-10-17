@@ -946,3 +946,29 @@ async def test_a_flagged_peer_of_another_user_is_never_judged_or_retired(
     assert not any("Paris" in p for p in prompts)
     after = await _rows(ch, org)
     assert after["office_city"]["status"] == "conflicted", "u2's row is not retired"
+
+
+async def test_a_retirement_waits_for_a_conditional_revision_of_the_peer(ch, wired) -> None:
+    """A conditional revision of the peer holds its key from its read to its insert.
+    The resolver does not retire the peer meanwhile; it then sees the revision and
+    leaves the pair alone, so the revision is what FINAL serves."""
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app.update import handle_memory_update_by_id
+    from server.memory.store.key_write_lock import key_write_locks
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 72)
+    peer = (await _rows(ch, org))["office_city"]
+    async with key_write_locks.hold(org, NS, "bot", USER, "s1", "office_city"):
+        resolving = asyncio.create_task(run_pass())
+        await asyncio.sleep(2)
+        assert (await _rows(ch, org))["office_city"]["status"] == "active"
+        # The revision's insert, inside the lock (the lock itself is held by the test).
+        await handle_memory_update_by_id(
+            MemoryUpdateByIdInput(org=org, memory_id=peer["id"], value="The office is in Lyon")
+        )
+    out = await resolving
+    after = (await _rows(ch, org))["office_city"]
+    assert after["status"] == "active" and after["version"] > peer["version"]
+    assert out["retired"] == 0 and out["skipped_changed"] == 1

@@ -368,7 +368,32 @@ async def _settle_pair(
     counts: Counts,
 ) -> str | None:
     """Act on one pair after re-reading both rows; the action taken when something
-    changed, else None."""
+    changed, else None.
+
+    Under the peer's key write lock: a conditional revision holds it from its read to
+    its insert, and a retirement written in between would land over that revision.
+    The lock is taken under the pass's `acting` lock; no writer takes `acting`."""
+    from server.memory.store.key_write_lock import key_write_locks
+
+    async with key_write_locks.hold(
+        org,
+        namespace,
+        str(peer["agent"]),
+        str(peer["user_id"]),
+        str(peer["session_id"]),
+        str(peer["memory_key"]),
+    ):
+        return await _settle_locked_pair(org, namespace, judged, peer, action, counts)
+
+
+async def _settle_locked_pair(
+    org: str,
+    namespace: str,
+    judged: tuple[str, str],
+    peer: Mapping[str, Any],
+    action: str,
+    counts: Counts,
+) -> str | None:
     row_id, row_sha = judged
     row, head = await _head(org, row_id), await _head(org, str(peer["memory_id"]))
     if not (
@@ -505,6 +530,9 @@ async def _newest_as_new(
         return row, peers  # changed since the cluster read: judged as queued
     as_peer = {
         "memory_id": str(row.memory_id),
+        "agent": str(row.agent),
+        "user_id": str(row.user_id),
+        "session_id": str(row.session_id),
         "memory_key": str(row.memory_key),
         "value": memory_repo.stored_value_text(row),
         "content_sha256": str(row.content_sha256 or ""),

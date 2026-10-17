@@ -17,6 +17,15 @@ from server.memory.domain import conflict_resolution as cr
 from server.memory.store import conflict_resolver as queue
 from server.settings import Settings, settings
 
+
+@pytest.fixture(autouse=True)
+def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A pair is settled under the peer's key write lock (a Keeper lease, faked here).
+    from tests.unit.claims_fake import fake_key_locks
+
+    fake_key_locks(monkeypatch)
+
+
 # --- the fold ------------------------------------------------------------------------
 
 
