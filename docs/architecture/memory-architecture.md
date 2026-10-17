@@ -185,8 +185,9 @@ prompt is built: a row relabelled `high` since it was read is not sent.
 **The call.** The prompt names each peer `p1`..`p8` with its key and cosine, values cut
 to 700 characters, and asks for a strict JSON schema: per peer a reason, `same_entity`,
 `same_attribute`, a verdict (`update`, `contradiction`, `elaboration`, `restatement`,
-`related`, `unrelated`) and a confidence. An answer may name a peer as `p2`, `[p2]`, its
-key, `key <key>` or its id. The model is `LOOM_CONFLICT_RESOLVER_MODEL`, asked at
+`related`, `unrelated`) and a confidence; an entry with a field missing or mistyped is
+dropped and its peer left unresolved. An answer may name a peer as `p2`, `[p2]`, its id,
+or its key (`key <key>`) when no other peer shares it. The model is `LOOM_CONFLICT_RESOLVER_MODEL`, asked at
 reasoning effort `low`, where the thresholds below were measured, whatever
 `LOOM_LLM_OPENAI_REASONING_EFFORT` pins for other calls; `LOOM_LLM_FALLBACK_MODEL` never
 answers for it, so rows stay owed while the model is down.

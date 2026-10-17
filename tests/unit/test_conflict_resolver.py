@@ -99,6 +99,14 @@ def test_a_peer_id_is_accepted_in_every_spelling_a_model_uses(spelled: str) -> N
     assert list(got) == [_PEERS[0].memory_id] and got[_PEERS[0].memory_id].verdict == "update"
 
 
+def test_a_key_two_peers_share_names_neither() -> None:
+    peers = [cr.Note("m2", "office_city", "Paris"), cr.Note("m3", "office_city", "Lyon")]
+    assert cr.parse_verdicts(_answer(_entry("office_city")), peers) == {}
+    assert cr.parse_verdicts(_answer(_entry("key office_city")), peers) == {}
+    assert list(cr.parse_verdicts(_answer(_entry("p2")), peers)) == ["m3"]
+    assert list(cr.parse_verdicts(_answer(_entry("m3")), peers)) == ["m3"]
+
+
 @pytest.mark.parametrize(
     "text",
     [

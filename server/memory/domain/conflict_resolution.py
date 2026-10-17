@@ -155,8 +155,9 @@ _JSON_RE = re.compile(r"\{.*\}", re.S)
 
 
 def _peer_of(raw_id: str, peers: list[Note]) -> Note | None:
-    """The peer an answer's `peer_id` names: `p2`, `[p2]`, the memory key,
-    `key <memory_key>` or the memory id."""
+    """The peer an answer's `peer_id` names: `p2`, `[p2]`, the memory id, or the
+    memory key (`key <memory_key>`) when no other peer has that key: two sessions'
+    rows can share one."""
     pid = raw_id.strip().strip("[]").strip()
     if pid.lower().startswith("key "):
         pid = pid[4:].strip()
@@ -164,9 +165,10 @@ def _peer_of(raw_id: str, peers: list[Note]) -> Note | None:
     if m and 1 <= int(m.group(1)) <= len(peers):
         return peers[int(m.group(1)) - 1]
     for p in peers:
-        if pid in (p.memory_id, p.memory_key):
+        if pid == p.memory_id:
             return p
-    return None
+    keyed = [p for p in peers if pid == p.memory_key]
+    return keyed[0] if len(keyed) == 1 else None
 
 
 def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
