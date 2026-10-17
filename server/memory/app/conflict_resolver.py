@@ -76,7 +76,7 @@ def _plain(stored: str) -> str:
 
 
 def _row_dict(row: Any) -> dict[str, Any]:
-    """The fields `older_statement` orders a `MemoryRow` by."""
+    """The fields `statement_rank` orders a `MemoryRow` by."""
     return {f: getattr(row, f, None) for f in ("memory_id", "valid_at", "created_at", "updated_at")}
 
 
@@ -135,13 +135,17 @@ def _conflict_peer(row: Any) -> ConflictPeer:
     )
 
 
-async def _retire(org: str, namespace: str, a: Any, b: Any) -> bool:
-    """Supersede the older of the pair behind the newer, recorded and followed."""
+async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
+    """Supersede the older of the pair behind the newer, recorded and followed.
+    `row` is the judged row: the judge read it as the newer one, so it wins when
+    both were stated in the same second."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
     from server.memory.app.conflicts import apply_refines
-    from server.memory.app.key_supersession import older_statement
+    from server.memory.app.key_supersession import statement_rank
 
-    loser, winner = (a, b) if older_statement(_row_dict(a), _row_dict(b)) else (b, a)
+    # Only the times: the rank's last tie-break is the random memory_id.
+    row_older = statement_rank(_row_dict(row))[:2] < statement_rank(_row_dict(peer))[:2]
+    loser, winner = (row, peer) if row_older else (peer, row)
     loser_sha = str(loser.content_sha256 or "")
     into: dict[str, list[dict[str, Any]]] = {}
     await apply_refines(

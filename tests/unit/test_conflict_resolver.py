@@ -480,6 +480,26 @@ async def test_a_retirement_behind_the_newer_row_of_the_pair(monkeypatch) -> Non
     assert followed == [("m1", "m2")]
 
 
+@pytest.mark.parametrize("peer_id", ["m0", "m9"])
+async def test_two_rows_written_in_the_same_second_retire_the_peer(monkeypatch, peer_id) -> None:
+    # The times tie to the second; the memory_id must not decide, whichever way it sorts.
+    from server.memory.app import auto_resolution, conflicts
+
+    seen: dict[str, Any] = {}
+
+    async def refines(**kw: Any) -> int:
+        seen.update(kw)
+        return 0
+
+    monkeypatch.setattr(conflicts, "apply_refines", refines)
+    monkeypatch.setattr(auto_resolution, "record_auto_supersessions", lambda **kw: None)
+    judged = _mem("m5", session_id="s2", content_sha256="sha-judged")
+    peer = _mem(peer_id, content_sha256="sha-peer")
+    await resolver._retire("o", "ns", judged, peer)
+    assert seen["new_memory_id"] == "m5"
+    assert [p.memory_id for p in seen["refined_peers"]] == [peer_id]
+
+
 # --- the pass ---------------------------------------------------------------------------------
 
 

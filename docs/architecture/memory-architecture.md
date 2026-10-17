@@ -199,8 +199,9 @@ precision was 0.98 to 1.00 at 0.95, and clear precision 0.96 to 0.98 at 0.90; th
 0.90 to 0.95 band was only 80% right, so an update there goes to review. A peer the
 answer leaves out, or an answer that cannot be parsed, changes nothing.
 
-**Acting.** Which row of an update pair is older follows `key_supersession.older_statement`
-(below). A retirement goes through `apply_refines`: the older row is superseded behind the
+**Acting.** Which row of an update pair is older follows `key_supersession.statement_rank`
+(below), by its times only: when both rows were stated in the same second, the judged row
+is the newer, as the judge read it, and the peer retires. A retirement goes through `apply_refines`: the older row is superseded behind the
 newer, a `supersedes` edge records why, one `memory.auto_supersede` record names it
 (reason `conflict_resolver`, so `memory.restore` undoes it), and the triple plane follows
 (`follow_row_supersessions`, left for the repair on failure). A flag is
