@@ -54,3 +54,27 @@ async def test_an_error_inside_the_undo_is_not_reworded(monkeypatch) -> None:
     monkeypatch.setattr(restore, "_read_restorable", read)
     with pytest.raises(PreconditionFailedError, match="from the body"):
         await restore._restore_superseded(_UNDO, ch=None)
+
+
+async def test_the_undo_of_a_delete_takes_the_keys_write_lock(monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    class CH:
+        async def query_one(self, sql: str, params: object = None) -> dict:
+            # The key's head: deleted a minute ago.
+            return {
+                "memory_key": "k",
+                "memory_type": "semantic",
+                "memory_id": "m1",
+                "tombstoned_at": datetime.now(UTC),
+                "version": 3,
+                "status": "active",
+                "superseded_by": "",
+            }
+
+    monkeypatch.setattr(restore, "get_client", lambda: CH())
+    _lock_failing_with(monkeypatch, key_write_lock._busy())
+    undo = MemoryRestoreInput(org="o", namespace="ns", agent="a", memory_key="k")
+    with pytest.raises(PreconditionFailedError) as e:
+        await restore.handle_memory_restore(undo)
+    assert e.value.status_code == 409 and "retry the undo" in str(e.value).lower()

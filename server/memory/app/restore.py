@@ -405,54 +405,58 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         if age.days >= 14:
             return MemoryRestoreOutput(restored=False, expired=True)
 
-    new_version = next_version()
-    # Full-column get_by_key so the restore mirrors every persisted column.
-    restore_identity = memory_repo.Identity(
-        org=input.org,
-        namespace=input.namespace,
-        agent=input.agent,
-        user_id=input.user_id,
-        session_id=input.session_id,
-    )
-    existing = await memory_repo.get_by_key(
-        restore_identity,
-        input.memory_key,
-        include_tombstoned=True,
-        fresh=True,
-        strong=True,  # restore follows delete; read the latest head (no miss)
-        scope=WHOLE_NAMESPACE,
-    )
-    if existing is None or existing.tombstoned_at is None:
-        # Race: tombstone vanished between the SELECT above and here.
-        return MemoryRestoreOutput(
-            restored=False,
-            memory_id=str(row.get("memory_id") or ""),
-            version=int(row.get("version") or 0),
+    # The key's write lock, as the Undo of a retirement takes it: a conditional revision
+    # holds it from its read to its insert, and this must not write over that revision.
+    async with _undo_lock(input):
+        new_version = next_version()
+        # Full-column get_by_key so the restore mirrors every persisted column.
+        restore_identity = memory_repo.Identity(
+            org=input.org,
+            namespace=input.namespace,
+            agent=input.agent,
+            user_id=input.user_id,
+            session_id=input.session_id,
         )
-    restored_at = naive_utc_now()
-    restore_row = memory_repo.build_memory_version_row(
-        existing,
-        version=new_version,
-        updated_at=memory_repo.written_now(),
-        tombstoned_at=None,
-        invalid_at=_invalid_at_after_restore(existing),
-        expires_at=None,
-    )
-    await insert_memory_versions([restore_row], ch=ch)
-    if existing.sensitivity == "high":
-        # The key is high again: a plain write still embedding lands below the fence.
-        from server.memory.app.high_fence import fence_high
-
-        await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
-
-    # Propagate restore to memory_embeddings — mirror delete's logic, for every memory type.
-    try:
-        await _restore_embedding_mirror(ch, input, existing, row["memory_type"])
-    except Exception as e:  # noqa: BLE001 — the memory row restore already landed; mirror is best-effort
-        logging.getLogger(__name__).warning(
-            "memory_embeddings restore failed (non-fatal): %s",
-            e,
+        existing = await memory_repo.get_by_key(
+            restore_identity,
+            input.memory_key,
+            include_tombstoned=True,
+            fresh=True,
+            strong=True,  # restore follows delete; read the latest head (no miss)
+            scope=WHOLE_NAMESPACE,
         )
+        if existing is None or existing.tombstoned_at is None:
+            # Race: tombstone vanished between the SELECT above and here.
+            return MemoryRestoreOutput(
+                restored=False,
+                memory_id=str(row.get("memory_id") or ""),
+                version=int(row.get("version") or 0),
+            )
+        restored_at = naive_utc_now()
+        restore_row = memory_repo.build_memory_version_row(
+            existing,
+            version=new_version,
+            updated_at=memory_repo.written_now(),
+            tombstoned_at=None,
+            invalid_at=_invalid_at_after_restore(existing),
+            expires_at=None,
+        )
+        await insert_memory_versions([restore_row], ch=ch)
+        if existing.sensitivity == "high":
+            # The key is high again: a plain write still embedding lands below the fence.
+            from server.memory.app.high_fence import fence_high
+
+            await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
+
+        # Propagate restore to memory_embeddings — mirror delete's logic, for every memory type.
+        try:
+            await _restore_embedding_mirror(ch, input, existing, row["memory_type"])
+        except Exception as e:  # noqa: BLE001 — the memory row restore already landed; mirror is best-effort
+            logging.getLogger(__name__).warning(
+                "memory_embeddings restore failed (non-fatal): %s",
+                e,
+            )
+
     # A fact the row states may have closed while it was deleted.
     await _reopen_facts(input, existing, restored_at, ch=ch)
 
