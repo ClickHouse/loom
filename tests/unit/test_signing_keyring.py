@@ -297,8 +297,6 @@ def test_a_former_default_key_keeps_its_tokens_verifying_and_never_signs() -> No
         headers={"kid": "default"},
     )
     ch = _CH()
-    with pytest.raises(ValueError, match="not LOOM_JWT_SECRET"):
-        asyncio.run(keyring.import_keys({"default": "i" * 40}, "default", "HS256", ch=ch))
     done = asyncio.run(
         keyring.import_keys({"default": "i" * 40, "k1": "o" * 40}, "k1", "HS256", ch=ch)
     )
@@ -321,10 +319,26 @@ def test_import_skips_a_default_kid_that_is_the_root_secret() -> None:
         keyring.import_keys({"default": settings.jwt_secret, "k1": "o" * 40}, "k1", "HS256", ch=ch)
     )
     assert done == ["k1"]
+
+
+def test_an_active_former_default_only_verifies() -> None:
+    """The old build's usual map, `{"default": X}` active: the root secret
+    goes on signing `default`, and X verifies what it signed."""
+    ch = _CH()
+    done = asyncio.run(keyring.import_keys({"default": "i" * 40}, "default", "HS256", ch=ch))
+    assert done == ["default-hs256"]
+    assert [r["activate_at"] for r in ch.inserted if r["kid"] != "default"] == [keyring.VERIFY_ONLY]
+    ch.rows = [{**r, "retired": False} for r in ch.inserted]
+    asyncio.run(keyring.refresh(ch=ch))
+    assert keyring.signing_key().kid == "default"
+    assert keyring.verification_keys("default", "HS256") == [settings.jwt_secret, "i" * 40]
+
+
+def test_import_refuses_default_beside_default_hs256() -> None:
     with pytest.raises(ValueError, match="both"):
         asyncio.run(
             keyring.import_keys(
-                {"default": "i" * 40, "default-hs256": "o" * 40}, "default-hs256", "HS256", ch=ch
+                {"default": "i" * 40, "default-hs256": "o" * 40}, "default-hs256", "HS256", ch=_CH()
             )
         )
 

@@ -134,9 +134,10 @@ After upgrading:
   ([tokens and grants](../guides/tokens-and-grants.md#revoke-and-rotate)).
   - **HS256.** A `default` entry in the map that is not `LOOM_JWT_SECRET` is stored as
     kid `default-hs256`: it verifies the old tokens of `default` after the root secret
-    and never signs, so `--active` must name another kid. Retire `default-hs256` once
-    those tokens are replaced. A deployment that upgraded without it can run the import
-    again with the old variables: kids already in the keyring are left as they are.
+    and never signs. With `--active default`, `LOOM_JWT_SECRET` signs `default` from
+    then on. Retire `default-hs256` once those tokens are replaced. A deployment that
+    upgraded without it can run the import again with the old variables: kids already in
+    the keyring are left as they are.
   - **RS256** (`LOOM_JWT_ALGORITHM=RS256`, a PEM `LOOM_JWT_SECRET` or PEM keys in the
     map). Add `--algorithm RS256`. The map's `default` key is stored as kid
     `default-rs256`: it signs from then on, as kid `default` so the old build's

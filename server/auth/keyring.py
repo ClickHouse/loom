@@ -333,7 +333,8 @@ def status(rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
 def verification_keys(kid: str, algorithm: str) -> list[str]:
     """The keys that may verify a token of `kid` signed with `algorithm`, in
     order: a keyring key or the root secret, then a gateway's public key of
-    that kid (`jwt_public_keys_json`). An RS256 token of kid `default` (an
+    that kid (`jwt_public_keys_json`). An HS256 token of kid `default` tries
+    the root secret, then `ROOT_HS256_KID`. An RS256 token of kid `default` (an
     earlier RS256 build's, or a gateway's without a kid) tries `ROOT_RS256_KID`
     (imported, or the PEM root) and the gateway's `default` both. A retire
     stops this deployment's keys only: the gateway's are its operator's."""
@@ -345,7 +346,9 @@ def verification_keys(kid: str, algorithm: str) -> list[str]:
                 return []
             former = keys.get(ROOT_HS256_KID)
             root = [_root().secret] if root_is_hmac_key() else []
-            return root + [former.secret] if former and former.algorithm == "HS256" else root
+            if former and former.algorithm == "HS256":
+                root.append(former.secret)
+            return root
         if ROOT_KID not in _view.retired:
             key = keys.get(ROOT_RS256_KID)
     out: list[str] = []
@@ -713,10 +716,10 @@ async def import_keys(
     """Copy a deployment's existing kid → key map in (the former
     LOOM_JWT_SECRETS_JSON): `active` signs from `activate_in_s` from now, the
     others only verify (`VERIFY_ONLY`). A kid the keyring already has is left
-    as it is (a re-run must not bring back a retired key). Kid `default` signs
-    with the root secret only: an HS256 map's that is not it is stored as
-    `ROOT_HS256_KID` and an RS256 map's as `ROOT_RS256_KID`, and either then
-    verifies the tokens of `default` it signed. Returns the kids imported."""
+    as it is (a re-run must not bring back a retired key). An HS256 map's
+    `default` that is not the root secret is stored as `ROOT_HS256_KID`, which
+    only verifies (an active `default` goes on signing with the root secret);
+    an RS256 map's as `ROOT_RS256_KID`. Returns the kids imported."""
     if active not in keys:
         raise ValueError(f"the active kid {active!r} is not in the map")
     if algorithm not in ALGORITHMS:
@@ -729,20 +732,16 @@ async def import_keys(
         alias = ROOT_RS256_KID if algorithm == "RS256" else ROOT_HS256_KID
         if alias in keys:
             raise ValueError(f"the map holds both {ROOT_KID!r} and {alias!r}")
-        if algorithm == "HS256" and active == ROOT_KID:
-            raise ValueError(
-                f"the active kid {ROOT_KID!r} is not LOOM_JWT_SECRET, and this build signs "
-                f"{ROOT_KID!r} with LOOM_JWT_SECRET only: name another active kid, or set "
-                "LOOM_JWT_SECRET to it everywhere (which re-keys every sealed credential)"
-            )
         keys = {alias if k == ROOT_KID else k: v for k, v in keys.items()}
-        active = alias if active == ROOT_KID else active
+        # An HS256 `default` stays signed by the root secret; its former key only verifies.
+        if algorithm == "RS256" and active == ROOT_KID:
+            active = alias
     await _same_root(ch)
     existing = {str(r["kid"]) for r in await listing(ch=ch)}
     now = await _ch_now(ch)
     rows = []
     for kid, secret in keys.items():
-        if kid in existing or kid == ROOT_KID:
+        if kid in existing:
             continue
         public = ""
         if algorithm == "RS256":
