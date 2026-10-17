@@ -1,0 +1,26 @@
+[
+  {
+    "query": "does the new rerank raise recall@10 on LongMemEval? run the paired bench",
+    "should_trigger": true
+  },
+  {
+    "query": "A/B the trust weight setting and tell me if it helps answer accuracy",
+    "should_trigger": true
+  },
+  {
+    "query": "update docs/benchmarks/results.md with the latest numbers for the new embedder",
+    "should_trigger": true
+  },
+  {
+    "query": "the unit tests are slow, speed them up",
+    "should_trigger": false
+  },
+  {
+    "query": "why is the integration job taking 40 minutes in CI",
+    "should_trigger": false
+  },
+  {
+    "query": "memory.search returns the wrong row for this query, find out why",
+    "should_trigger": false
+  }
+]

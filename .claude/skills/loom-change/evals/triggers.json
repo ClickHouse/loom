@@ -1,0 +1,30 @@
+[
+  {
+    "query": "I'm adding a new op memory.archive, what else do I need to touch",
+    "should_trigger": true
+  },
+  {
+    "query": "add a column valid_to to loom.memory",
+    "should_trigger": true
+  },
+  {
+    "query": "add a setting LOOM_SEARCH_MAX_HOPS",
+    "should_trigger": true
+  },
+  {
+    "query": "what else does renaming this CLI flag need",
+    "should_trigger": true
+  },
+  {
+    "query": "run the checks before I push",
+    "should_trigger": false
+  },
+  {
+    "query": "set up a worktree for fix/search-floor",
+    "should_trigger": false
+  },
+  {
+    "query": "fix this off-by-one in the cursor loop",
+    "should_trigger": false
+  }
+]

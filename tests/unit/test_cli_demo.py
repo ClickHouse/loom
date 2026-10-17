@@ -19,27 +19,27 @@ ROOT = Path(__file__).resolve().parents[2]
 
 HITS = [
     {
-        "source_uri": "file:///r/CLAUDE.md",
+        "source_uri": "file:///r/AGENTS.md",
         "chunk_idx": 4,
         "content": "Identity tuple on every row: "
-        "(org, namespace, agent, user_id, session_id) — first three required, rest default to '-'.",
-        "section": "Conventions that aren't obvious",
+        "(org, namespace, agent, user_id, session_id), the last two defaulting to '-'.",
+        "section": "Invariants",
         "score": 0.912,
         "similarity": 0.81,
     },
     {
-        "source_uri": "file:///r/CLAUDE.md",
+        "source_uri": "file:///r/AGENTS.md",
         "chunk_idx": 9,
-        "content": "Two more columns are stamped "
-        "by the server, never read from the body: actor and source_class.",
+        "content": "The server sets actor from the token "
+        "and source_class from the op and its source_trace.",
         "section": "",
         "score": 0.4,
     },
     {
-        "source_uri": "file:///r/CLAUDE.md",
+        "source_uri": "file:///r/AGENTS.md",
         "chunk_idx": 1,
-        "content": "Repo orientation …",
-        "section": "Repo orientation",
+        "content": "server/ — FastAPI control plane …",
+        "section": "Rules by area and layout",
         "score": 0.0,
         "similarity": 0.33,
     },
@@ -83,11 +83,11 @@ class FakeServer:
 
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A checkout-shaped directory: CLAUDE.md plus the real dev/loom_ingest.py."""
+    """A checkout-shaped directory: AGENTS.md plus the real dev/loom_ingest.py."""
     (tmp_path / "dev").mkdir()
     (tmp_path / "dev" / "loom_ingest.py").write_text((ROOT / "dev" / "loom_ingest.py").read_text())
-    (tmp_path / "CLAUDE.md").write_text(
-        "# Loom\n\n## Conventions\n\n- **Identity tuple on every row:** `(org, namespace, agent, "
+    (tmp_path / "AGENTS.md").write_text(
+        "# Loom\n\n## Invariants\n\n- **Identity tuple on every row:** `(org, namespace, agent, "
         "user_id, session_id)`\n"
     )
     monkeypatch.delenv("LOOM_API_KEY", raising=False)
@@ -136,18 +136,19 @@ def test_demo_fake_llm_ingests_then_prints_hits_and_hint(repo: Path, serve, caps
     assert ops == ["knowledge.upsert", "knowledge.search"]  # no synthesize on a fake LLM
     upsert = fake.posts[0][1]
     assert upsert["org"] == "dev" and upsert["namespace"] == "local"
-    assert upsert["source_uri"] == f"file://{(repo / 'CLAUDE.md').resolve()}"
-    assert upsert["title"] == "CLAUDE" and upsert["tags"] == ["loom", "project-memory"]
+    assert upsert["source_uri"] == f"file://{(repo / 'AGENTS.md').resolve()}"
+    assert upsert["title"] == "AGENTS" and upsert["tags"] == ["loom", "project-memory"]
     assert "Identity tuple on every row" in upsert["content"]
     assert upsert["metadata"]["ingested_format"] == ".md"
     search = fake.posts[1][1]
     assert search["query"] == demo.DEFAULT_QUESTION and search["top_k"] == 3
     assert search["uri_prefix"] == [upsert["source_uri"]]
     assert fake.posts[0][2] == ""  # tokenless single-user call
-    assert "ingested CLAUDE.md → doc_id=doc-1 chunks=12" in out
+    assert "ingested AGENTS.md → doc_id=doc-1 chunks=12" in out
     assert "Top 3 knowledge hits" in out
-    assert "0.912" in out and "CLAUDE.md#4 (Conventions th…" in out  # source column is 28 wide
+    assert "0.912" in out and "AGENTS.md#4 (Invariants)" in out
     assert "0.330" in out  # falls back to similarity when score is 0
+    assert "AGENTS.md#1 (Rules by area …" in out  # the source column is 28 wide
     assert "synthesis needs a real LLM: set LOOM_LLM_PROVIDER=openai and OPENAI_API_KEY" in out
 
 
@@ -159,8 +160,8 @@ def test_demo_real_llm_prints_answer_and_evidence(repo: Path, serve, capsys) -> 
         fake_llm=False,
         synth={
             "answer": "Every row carries (org, namespace, agent, user_id, session_id) "
-            "[file:///r/CLAUDE.md#4].",
-            "citations": ["file:///r/CLAUDE.md#4"],
+            "[file:///r/AGENTS.md#4].",
+            "citations": ["file:///r/AGENTS.md#4"],
             "chunks_read": 12,
             "windows": 1,
             "model": "gpt-4o-mini",
@@ -179,9 +180,9 @@ def test_demo_real_llm_prints_answer_and_evidence(repo: Path, serve, capsys) -> 
     assert "[12 chunks read, 1 window(s), gpt-4o-mini]" in out
     assert "Evidence (* = cited by the answer):" in out
     table = out.split("Evidence (* = cited by the answer):", 1)[1].splitlines()
-    cited_row = next(line for line in table if "CLAUDE.md#4 (" in line)
+    cited_row = next(line for line in table if "AGENTS.md#4 (" in line)
     assert cited_row.startswith("*  1  0.912")
-    uncited_row = next(line for line in table if "CLAUDE.md#9" in line)
+    uncited_row = next(line for line in table if "AGENTS.md#9" in line)
     assert uncited_row.startswith("   2  0.400")
     assert "synthesis needs a real LLM" not in out
 
@@ -220,8 +221,8 @@ def test_demo_missing_file_is_actionable(repo: Path, serve, capsys) -> None:
     assert fake.posts == []  # nothing was ingested
 
 
-def test_demo_no_claude_md_in_cwd_is_actionable(repo: Path, serve, capsys, monkeypatch) -> None:
-    (repo / "CLAUDE.md").unlink()
+def test_demo_no_agents_md_in_cwd_is_actionable(repo: Path, serve, capsys, monkeypatch) -> None:
+    (repo / "AGENTS.md").unlink()
     monkeypatch.setattr(demo, "load_loom_ingest", lambda root=None: None)
     serve(fake_llm=True)
     assert demo._cmd_demo(_args()) == 2
@@ -289,7 +290,7 @@ def test_loom_demo_is_registered_on_the_cli(monkeypatch: pytest.MonkeyPatch) -> 
 def test_knowledge_body_is_the_make_ingest_shape(repo: Path) -> None:
     mod = demo.load_loom_ingest(str(repo))
     assert mod is not None
-    path = repo / "CLAUDE.md"
+    path = repo / "AGENTS.md"
     body = mod.knowledge_body(
         local_path=path,
         source_uri="file://x",

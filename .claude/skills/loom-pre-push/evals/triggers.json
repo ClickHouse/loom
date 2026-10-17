@@ -1,0 +1,26 @@
+[
+  {
+    "query": "run the checks before I push",
+    "should_trigger": true
+  },
+  {
+    "query": "is this branch ready to push",
+    "should_trigger": true
+  },
+  {
+    "query": "I rebased onto main, run what CI runs for this diff",
+    "should_trigger": true
+  },
+  {
+    "query": "open the pull request and watch CI",
+    "should_trigger": false
+  },
+  {
+    "query": "CI failed on lint, why",
+    "should_trigger": false
+  },
+  {
+    "query": "add a new op for archiving memories",
+    "should_trigger": false
+  }
+]

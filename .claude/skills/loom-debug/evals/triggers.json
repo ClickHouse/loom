@@ -1,0 +1,30 @@
+[
+  {
+    "query": "memory.search drops pinned rows when limit is 2, find out why",
+    "should_trigger": true
+  },
+  {
+    "query": "why does namespace.restore lose verified_by on some rows",
+    "should_trigger": true
+  },
+  {
+    "query": "the consolidation worker writes duplicate rows after a restart, root-cause it",
+    "should_trigger": true
+  },
+  {
+    "query": "request id 7f3c returned 500, what happened",
+    "should_trigger": true
+  },
+  {
+    "query": "the schema.sql check is red on my PR",
+    "should_trigger": false
+  },
+  {
+    "query": "review this diff for tenant leaks",
+    "should_trigger": false
+  },
+  {
+    "query": "benchmark recall after this change",
+    "should_trigger": false
+  }
+]

@@ -1,0 +1,30 @@
+[
+  {
+    "query": "file an issue: memory.search ignores the namespace filter on the HTTP transport",
+    "should_trigger": true
+  },
+  {
+    "query": "open a bug report for the migration 041 failure on ClickHouse 25.8",
+    "should_trigger": true
+  },
+  {
+    "query": "raise a feature request for per-namespace retention",
+    "should_trigger": true
+  },
+  {
+    "query": "add what we found to the existing recall issue",
+    "should_trigger": true
+  },
+  {
+    "query": "I found a token leak in the auth path, report it",
+    "should_trigger": false
+  },
+  {
+    "query": "leave review comments on PR 57",
+    "should_trigger": false
+  },
+  {
+    "query": "fix the bug in the timeline cursor",
+    "should_trigger": false
+  }
+]

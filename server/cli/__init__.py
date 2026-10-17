@@ -6,7 +6,7 @@
   loom mint-token    # issue a JWT locally (operator-side; needs LOOM_JWT_SECRET)
   loom revoke-token  # revoke one token by jti or subject (writes loom.revoked_tokens)
   loom install       # write the MCP client config (Claude Desktop / Cursor / …)
-  loom demo          # ingest this repo's CLAUDE.md and ask it a question
+  loom demo          # ingest this repo's AGENTS.md and ask it a question
   loom doctor        # diagnose common pre-boot misconfigurations
 
 Ships in the server package (bundled in the Docker image), not on PyPI:

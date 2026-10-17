@@ -2,8 +2,8 @@
 
 `build_brief_row` is the single source of truth for the column set: every
 write — a new revision, a model-written overlay, a tombstone — goes through
-it, so a version row never zeros a column under FINAL (CLAUDE.md, "RMT write
-paths MUST mirror every column"). The revisions table is filled by
+it, so a version row never zeros a column under FINAL
+(`docs/architecture/clickhouse.md`). The revisions table is filled by
 `session_brief_revisions_mv` from the same INSERT; nothing writes it
 directly.
 

@@ -1,0 +1,26 @@
+[
+  {
+    "query": "set up a worktree and a private ClickHouse for fix/search-floor",
+    "should_trigger": true
+  },
+  {
+    "query": "I want to run the integration tests locally",
+    "should_trigger": true
+  },
+  {
+    "query": "start a loom server from source on my branch",
+    "should_trigger": true
+  },
+  {
+    "query": "deploy this to production",
+    "should_trigger": false
+  },
+  {
+    "query": "lint is failing, fix it",
+    "should_trigger": false
+  },
+  {
+    "query": "write the PR description",
+    "should_trigger": false
+  }
+]
