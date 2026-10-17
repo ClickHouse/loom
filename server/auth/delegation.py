@@ -85,10 +85,6 @@ def _refuse(message: str) -> HTTPException:
     return HTTPException(status_code=403, detail={"code": "AUTH_INSUFFICIENT", "message": message})
 
 
-# A refresh token's lifetime (server/auth/oauth.py). It rolls: each refresh
-# issues one good for this long, so a session used at least this often has no
-# fixed end. It is the cap on a token a session mints that is not recorded.
-SESSION_TTL = 30 * 86400
 # Asks for a token that never expires: 0, in seconds and in days alike.
 NEVER = 0
 
@@ -101,16 +97,15 @@ async def delegate(
     scoped: bool,
     ttl_seconds: int | None,
     is_service_account: bool,
-    recorded: bool,
 ) -> Delegated:
     """The child `parent` may mint in `org`. `requested` maps each namespace,
     in read-priority order, to the role asked for there; None asks for the
     highest the parent and the creator allow. `"*"` (flat only) asks for
     whatever the creator holds live. `scoped` mints an `ns_roles` token;
     otherwise a flat token whose one role is the lowest role allowed on any
-    requested namespace. `recorded`: the caller lists the child where its owner
-    can revoke it (`loom.service_accounts`). Raises 403 AUTH_INSUFFICIENT naming
-    what was refused."""
+    requested namespace. The caller lists the child where its owner can revoke
+    it (`loom.service_accounts`). Raises 403 AUTH_INSUFFICIENT naming what was
+    refused."""
     child_org = _child_org(parent, org)
     if parent.is_service_account and not is_service_account:
         raise _refuse("a service-account token can only mint service-account tokens")
@@ -138,7 +133,7 @@ async def delegate(
         write_namespaces=list(parent.write_namespaces) if parent.write_namespaces else None,
         read_scope=parent.read_scope,
         read_user_id=parent.read_user_id,
-        ttl_seconds=_child_ttl(parent, ttl_seconds, recorded=recorded),
+        ttl_seconds=_child_ttl(parent, ttl_seconds),
         parents=parents,
         parent_subjects=[*parent.parent_subjects, parent.subject],
         parent_iats=[*parent.parent_iats, parent.issued_at],
@@ -154,26 +149,16 @@ def _child_org(parent: AuthInfo, org: str) -> str:
     return org
 
 
-def _child_ttl(parent: AuthInfo, ttl_seconds: int | None, *, recorded: bool) -> int | None:
+def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int | None:
     """The child's TTL in seconds (None: never expires): the one asked for,
     else the default. A child never outlives its parent. A sign-in session's
     access token lives an hour and the next refresh replaces it, so its
-    recorded children take what was asked: they are what the person made for
-    agents and CI, outlive the session (a logout, a lost refresh answer), and
-    are revoked one by one or with the person. One not recorded is listed
-    nowhere, so it lasts at most SESSION_TTL."""
+    children take what was asked: they are what the person made for agents
+    and CI, outlive the session (a logout, a lost refresh answer), and are
+    revoked one by one or with the person."""
     ttl = DEFAULT_TTL_DAYS * 86400 if ttl_seconds is None else ttl_seconds
     never = ttl == NEVER
-    if parent.session_id:
-        if recorded:
-            return None if never else ttl
-        if never:
-            raise _refuse(
-                "a token that never expires must be saved to your token list "
-                "(persist=true), so it can be revoked"
-            )
-        return min(ttl, SESSION_TTL)
-    if parent.expires_at is None:
+    if parent.session_id or parent.expires_at is None:
         return None if never else ttl
     left = parent.expires_at - int(time.time())
     if left <= 0:

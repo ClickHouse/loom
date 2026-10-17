@@ -30,7 +30,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from server.auth import agents, claims, machines, shielded, sso_links
 from server.auth.attempts import Attempts, address_key, client_address
-from server.auth.delegation import SESSION_TTL
 from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.auth.oauth_store import (
     PENDING_TTL,
@@ -94,7 +93,7 @@ def oauth_error_response(request: Request, exc: Exception) -> JSONResponse:
 
 _ACCESS_TTL = 3600  # 1h access token
 _CODE_TTL = 60  # auth code: short-lived, single-use
-_REFRESH_TTL = SESSION_TTL  # 30d refresh token: a session's horizon
+_REFRESH_TTL = 30 * 86400  # 30d refresh token; each refresh issues a new one
 store: OAuthStore = ClickHouseStore()
 
 

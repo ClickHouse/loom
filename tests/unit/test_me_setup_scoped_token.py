@@ -1,6 +1,7 @@
 """The dashboard's Settings page mints through the one delegation policy: the default `*` token
 follows the caller's live grants, a scoped caller's `*` becomes its own namespace list,
-the token never carries an org-wide role, and it expires (90 days by default)."""
+the token never carries an org-wide role, it expires (90 days by default), and it is
+saved to the caller's token list."""
 
 from __future__ import annotations
 
@@ -17,6 +18,14 @@ from server.identity.app import me_setup as me
 from server.operations.base import Role
 from server.settings import settings
 
+saved: list[dict[str, Any]] = []
+
+
+class _CH:
+    async def insert(self, table: str, rows: list[dict[str, Any]], **kw: Any) -> None:
+        assert table == "loom.service_accounts"
+        saved.extend(rows)
+
 
 @pytest.fixture
 def grants(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str, str], Role]:
@@ -26,8 +35,10 @@ def grants(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str, str], Role]:
         return held.get((org, ns, subject))
 
     monkeypatch.setattr(authz, "grant_role_for", grant_role_for)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
+    saved.clear()
     return held
 
 
@@ -76,14 +87,25 @@ async def test_a_scoped_caller_gets_its_own_list_not_the_org(
 
 
 @pytest.mark.asyncio
-async def test_a_service_account_cannot_mint_an_unrecorded_personal_token(
+async def test_every_token_is_saved_under_its_own_subject(
+    monkeypatch: pytest.MonkeyPatch, grants: dict
+) -> None:
+    out = await _setup(monkeypatch, _caller(), {"persist": False})  # retired: still saved
+    token = verify_token(out["token"])
+    [row] = saved
+    assert token.subject == row["sa_subject"] == out["sa_subject"]
+    assert token.is_service_account and row["created_by"] == "alice"
+    assert out["ignored_args"] == ["persist"]
+
+
+@pytest.mark.asyncio
+async def test_a_service_account_mints_a_saved_service_account_token(
     monkeypatch: pytest.MonkeyPatch, grants: dict
 ) -> None:
     sa = _caller(subject="sa:bot", is_service_account=True, creator="alice", namespaces=("*",))
-    with pytest.raises(HTTPException) as err:
-        await _setup(monkeypatch, sa, {"persist": False})
-    assert err.value.status_code == 403
-    assert "persist=true" in err.value.detail["message"]
+    out = await _setup(monkeypatch, sa, {})
+    assert verify_token(out["token"]).is_service_account and "ignored_args" not in out
+    assert [row["created_by"] for row in saved] == ["sa:bot"]
 
 
 @pytest.mark.asyncio

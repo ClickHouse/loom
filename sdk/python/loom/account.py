@@ -55,13 +55,11 @@ class AccountClient:
         namespace: str | None = None,
         restricted_namespaces: list[str] | None = None,
         ttl_days: int | None = None,
-        persist: bool = True,
     ) -> dict[str, Any]:
         """A fresh token and the config block to paste into an MCP client
-        (one of the Setup tab's client keys), saved to your token list as the
-        Setup tab saves it. With `persist=False` it is listed nowhere, so it
-        lasts at most 30 days and cannot be made never to expire (`ttl_days=0`)."""
-        body: dict[str, Any] = {"client": client, "persist": persist}
+        (one of the Setup tab's client keys), saved to your token list, where
+        you revoke it. `ttl_days`: None for 90 days, 0 for never."""
+        body: dict[str, Any] = {"client": client}
         if namespace is not None:
             body["namespace"] = namespace
         if restricted_namespaces is not None:

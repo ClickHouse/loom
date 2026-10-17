@@ -128,8 +128,7 @@
           "client",
           "namespace",
           "restricted_namespaces",
-          "ttl_days",
-          "persist"
+          "ttl_days"
         ],
         "revoke_service_account": [
           "name"

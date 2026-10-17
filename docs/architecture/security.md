@@ -290,10 +290,8 @@ the subject are never touched by it, and nothing automatic writes a subject-wide
 nothing.
 
 Tokens delegated from a session are not clipped to the session's hour, and they outlive
-logout. One the person can see and revoke in their service-account list lasts what they
-asked for, never expiring included; one a session makes that is listed nowhere (an unsaved
-MCP config, an admin mint from a sign-in) lasts at most 30 days (the refresh tokens'
-lifetime) and can never be made to last for ever. Any other parent bounds its children by
+logout. Every one is saved to the person's token list, where they see and revoke it, and
+lasts what they asked for (blank 90 days, 0 never). Any other parent bounds its children by
 its own expiry. Under OIDC each refresh first spends the provider's refresh token, so a user
 deactivated there loses their sessions within the hour. Their machine tokens are not
 re-checked at the provider: offboarding, or a session found stolen, revokes them (by

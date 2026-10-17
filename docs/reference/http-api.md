@@ -86,7 +86,7 @@ another org, for example) needs `platform_admin`.
 
 | Method and path                    | What it is                                                                                                        |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/admin/token.mint`        | Mint a token over HTTP (the server-side twin of `loom mint-token`).                                               |
+| `POST /v1/admin/token.mint`        | Mint a service-account token delegated from the caller's, saved to their token list under `name`.                 |
 | `POST /v1/admin/namespace.adopt`   | Give a namespace that holds data but no registry row an owner.                                                    |
 | `POST /v1/admin/claim_release`     | Release a self-signup claim: revoke its grants, clear the owner, deactivate it (`org_admin` or `platform_admin`). |
 | `GET /v1/admin/schema.status`      | The gap between the migrations this build carries and what the database has applied.                              |

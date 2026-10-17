@@ -167,15 +167,13 @@ export interface McpConfigResponse {
   /** Restricted namespaces this token reads by name. */
   restricted_namespaces?: string[];
   mcp_url: string;
-  /** With persist=true, the token also lives in service_accounts
-   *  (kind="mcp") and shows up in the unified Tokens list. */
-  persisted?: boolean;
+  /** The token's subject in the Tokens list (service_accounts, kind="mcp"). */
   sa_subject?: string;
 }
 
 export async function generateMcpConfig(
   client: McpClient,
-  opts: { namespace?: string; ttl_days?: number | null; persist?: boolean; restricted_namespaces?: string[] } = {},
+  opts: { namespace?: string; ttl_days?: number | null; restricted_namespaces?: string[] } = {},
 ): Promise<McpConfigResponse> {
   const body: Record<string, unknown> = { client };
   if (opts.namespace) body["namespace"] = opts.namespace;
@@ -184,6 +182,5 @@ export async function generateMcpConfig(
   if (opts.restricted_namespaces && opts.restricted_namespaces.length > 0)
     body["restricted_namespaces"] = opts.restricted_namespaces;
   if (opts.ttl_days !== undefined) body["ttl_days"] = opts.ttl_days;
-  if (opts.persist) body["persist"] = true;
   return post<McpConfigResponse>("/v1/me/setup/mcp_config", body);
 }
