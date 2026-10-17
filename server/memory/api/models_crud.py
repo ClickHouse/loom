@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
@@ -19,7 +20,12 @@ from pydantic import (
 
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
-from server.memory.domain.graph_quality import MAX_TRIPLES_PER_ROW
+from server.memory.domain.graph_quality import (
+    MAX_TRIPLES_PER_ROW,
+    canonical_entity_text,
+    canonical_relation,
+)
+from server.memory.domain.search_text import canonicalize_verb
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.operations.read_projection import project as _project_fields
@@ -212,12 +218,27 @@ class MemoryGetOutput(ProjectedRow):
 
 
 # A (subject, relation, object) fact a point write names: at most MAX_TRIPLES_PER_ROW a
-# row, names of two characters or more as the triple writer keeps them, each part
-# capped at 256. A bulk entry's `relations` stay unchecked: an extractor's surplus is
-# cut, not refused.
-_FactName = Annotated[str, Field(min_length=2, max_length=256)]
-_FactObject = Annotated[str, Field(min_length=1, max_length=256)]
-Fact = tuple[_FactName, _FactName, _FactObject]
+# row, each part capped at 256. The lengths the triple writer needs are checked on the
+# canonical form it stores, so "I" (stored as "user") is a subject and "  " is refused
+# rather than dropped. A bulk entry's `relations` stay unchecked: an extractor's surplus
+# is cut, not refused.
+def _canonical_at_least(min_chars: int, canonical: Any) -> AfterValidator:
+    def check(raw: str) -> str:
+        if len(canonical(raw)) < min_chars:
+            raise ValueError(f"needs at least {min_chars} characters once canonicalised")
+        return raw
+
+    return AfterValidator(check)
+
+
+def _relation_verb(raw: str) -> str:
+    return canonical_relation(canonicalize_verb(raw)).verb
+
+
+_FactSubject = Annotated[str, Field(max_length=256), _canonical_at_least(2, canonical_entity_text)]
+_FactRelation = Annotated[str, Field(max_length=256), _canonical_at_least(2, _relation_verb)]
+_FactObject = Annotated[str, Field(max_length=256), _canonical_at_least(1, canonical_entity_text)]
+Fact = tuple[_FactSubject, _FactRelation, _FactObject]
 
 
 class MemorySetInput(_Identity):
