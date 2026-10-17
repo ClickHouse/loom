@@ -9,7 +9,17 @@ import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { getRun, listRuns, type RunGetResponse, type RunRow, type RunStatus } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { Chip, PageHeader, Panel, SectionHeading, Tip, TipTarget, useClamped } from "../components/ui";
+import {
+  Chip,
+  Loading,
+  LoadingSkeleton,
+  PageHeader,
+  Panel,
+  SectionHeading,
+  Tip,
+  TipTarget,
+  useClamped,
+} from "../components/ui";
 import { IconButton } from "../components/IconButton";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -464,11 +474,13 @@ export function Runs() {
       </div>
 
       {rows === null && (
-        <div className="space-y-3">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
+        <LoadingSkeleton label="Loading runs">
+          <div className="space-y-3">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </LoadingSkeleton>
       )}
       {rows !== null && error && <div className="text-sm text-danger mb-4">{error}</div>}
       {rows !== null && !error && rows.length === 0 && !hideConn && (
@@ -601,7 +613,7 @@ export function Runs() {
             <KeyChipButtons keys={detail?.memories_written || open?.memories_written || []} empty={EMPTY_WHY.written} />
           </Section>
           <Section title="Recalled, observed, cost">
-            {detailLoading && <div className="text-xs text-text-muted">Loading…</div>}
+            {detailLoading && <Loading layout="inline" label="Loading the run's figures" />}
             {!detailLoading &&
               detail &&
               open &&

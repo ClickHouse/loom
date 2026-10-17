@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
@@ -18,7 +18,7 @@ import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { fieldError, Tip } from "../components/ui";
+import { fieldError, Loading, Tip } from "../components/ui";
 import { relativeTime, humanizeError } from "../lib/format";
 import { oneOf } from "../lib/oneOf";
 
@@ -78,17 +78,28 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
   // response for a namespace the dialog has left is dropped instead of shown.
   const [reloadSeq, setReloadSeq] = useState(0);
   const load = () => setReloadSeq((n) => n + 1);
+  // The re-read after a change keeps the members on screen, marked busy; another
+  // namespace's members are not this one's, so a new namespace starts from the loader.
+  const [refreshing, setRefreshing] = useState(false);
+  const rowsFor = useRef("");
 
   useEffect(() => {
     if (!open) return;
     let live = true;
-    setRows(null);
+    if (rowsFor.current !== `${org}/${namespace}`) {
+      rowsFor.current = `${org}/${namespace}`;
+      setRows(null);
+    }
+    setRefreshing(true);
     listGrants({ org, namespace })
       .then((r) => {
         if (live) setRows(r.rows || []);
       })
       .catch(() => {
         if (live) setRows([]);
+      })
+      .finally(() => {
+        if (live) setRefreshing(false);
       });
     return () => {
       live = false;
@@ -214,8 +225,8 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
       description={label ? namespace : undefined}
       className="w-full max-w-[600px]"
     >
-      <div>
-        {rows === null && <div className="py-8 text-center text-sm text-text-muted">Loading…</div>}
+      <div data-testid="members-body" aria-busy={(rows !== null && refreshing) || undefined}>
+        {rows === null && <Loading label={isCode ? "Loading readers" : "Loading members"} />}
         {rows !== null && rows.length === 0 && (
           <div className="py-8 text-center text-sm text-text-muted">
             No members yet.{canManage && ` Click ${addLabel} below to invite the first one.`}

@@ -39,7 +39,7 @@ import {
 import { humanizeError } from "../../lib/format";
 import { toast } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
-import { Alert, ExternalLink, Stat, Tip, TipTarget } from "../../components/ui";
+import { Alert, ExternalLink, Loading, Stat, Tip, TipTarget } from "../../components/ui";
 import { KindTag, PriorityBadge, StatusPill } from "./TaskBits";
 import { MenuTrigger } from "../../components/ui/Menu";
 
@@ -156,7 +156,7 @@ function Track({
   const ev = policy ? evidenceStatus(policy.require_evidence, task.brief) : null;
   return (
     <Section title="Poster's record in this inbox">
-      {record === undefined && <div className="text-xs text-text-muted">counting…</div>}
+      {record === undefined && <Loading layout="inline" label="Loading the poster's record" />}
       {record === null && <div className="text-xs text-text-muted">not readable</div>}
       {record && (
         // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of counts, not form fields
@@ -217,7 +217,7 @@ function Track({
 }
 
 function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) {
-  if (events === null) return <div className="text-xs text-text-muted">Loading…</div>;
+  if (events === null) return <Loading layout="inline" label="Loading the timeline" />;
   if (events.length === 0) return <div className="text-xs text-text-muted">No events recorded.</div>;
   const asc = [...events].sort((a, b) => a.seq - b.seq);
   const rows = collapseHeartbeats(asc).reverse();
@@ -437,7 +437,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
                   {brief.objective || <span className="text-text-muted">The poster left the objective empty.</span>}
                 </p>
               ) : (
-                <div className="text-xs text-text-muted">Loading…</div>
+                <Loading layout="inline" label="Loading the brief" />
               )}
             </Section>
             {brief.criteria.length > 0 && (

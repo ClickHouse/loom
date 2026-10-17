@@ -13,7 +13,7 @@ import { useStore } from "../lib/state";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { humanizeError } from "../lib/format";
-import { Panel, SectionHeading } from "./ui";
+import { Loading, Panel, SectionHeading } from "./ui";
 import { useFold } from "../lib/folds";
 import { toast } from "./Toast";
 import { IconButton } from "./IconButton";
@@ -203,11 +203,7 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
           </p>
         )}
 
-        {running && !result && (
-          <p role="status" className="text-sm text-text-muted">
-            Reading the ledger and the memory tables…
-          </p>
-        )}
+        {running && !result && <Loading layout="inline" label="Loading the audit" />}
 
         {error && (
           <p role="alert" className="text-sm text-danger">
@@ -216,7 +212,7 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
         )}
 
         {result && s && (
-          <div className="space-y-3" aria-busy={running}>
+          <div className="space-y-3" aria-busy={running || undefined}>
             <p className="text-sm text-text leading-relaxed" data-testid="audit-summary">
               <span className={`font-semibold ${result.healthy ? "text-success" : "text-danger"}`}>
                 {result.healthy ? "Healthy" : "Needs attention"}

@@ -39,11 +39,11 @@ import {
 import { useStore } from "../lib/state";
 import { graphSeedHref, onGraphLinkClick } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
-import { SkeletonText } from "./Skeleton";
 import { DiffView } from "./DiffView";
 import { toast } from "./Toast";
 import { IconButton } from "./IconButton";
-import { Chip, ExternalLink, Tip } from "./ui";
+import { SkeletonText } from "./Skeleton";
+import { Chip, ExternalLink, LoadingSkeleton, Tip } from "./ui";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
 import { relativeTime, formatValue, humanizeError, SENTINEL_AGENTS } from "../lib/format";
@@ -609,7 +609,11 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
 
           {/* Body */}
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-6">
-            {loading && <SkeletonText lines={5} />}
+            {loading && (
+              <LoadingSkeleton label="Loading memory">
+                <SkeletonText lines={5} />
+              </LoadingSkeleton>
+            )}
 
             {!loading && detail && !detail.found && (
               <div className="text-sm text-text-muted">Memory not found. It may have been deleted.</div>
@@ -786,7 +790,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                   onToggle={toggleSection}
                 >
                   {!done.has("provenance") ? (
-                    <SkeletonText lines={2} />
+                    <LoadingSkeleton label="Loading provenance">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
                   ) : provenance && provenance.found ? (
                     <ProvenanceSection
                       provenance={provenance}
@@ -808,7 +814,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                   count={related ? related.length : undefined}
                 >
                   {!done.has("related") || related === null ? (
-                    <SkeletonText lines={2} />
+                    <LoadingSkeleton label="Loading related memories">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
                   ) : related.length === 0 ? (
                     <SectionEmpty>No memory shares an entity with this one.</SectionEmpty>
                   ) : (
@@ -847,7 +855,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                   count={history && history.length > 1 ? `${history.length} versions` : undefined}
                 >
                   {!done.has("history") || history === null ? (
-                    <SkeletonText lines={2} />
+                    <LoadingSkeleton label="Loading history">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
                   ) : history.length <= 1 ? (
                     <SectionEmpty>Only this version.</SectionEmpty>
                   ) : (
@@ -924,7 +934,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                   onToggle={toggleSection}
                 >
                   {!done.has("lineage") || lineage === null ? (
-                    <SkeletonText lines={2} />
+                    <LoadingSkeleton label="Loading lineage">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
                   ) : lineage.length === 0 ? (
                     <SectionEmpty>No lineage steps.</SectionEmpty>
                   ) : (

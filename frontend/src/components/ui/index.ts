@@ -1,6 +1,8 @@
 // Loom's primitives, on Click UI: the ones Click UI has no component for (chip, panel,
 // section heading, label/value grid) and the wrappers that work around its gaps
-// (docs/development/dashboard-design.md).
+// (docs/development/dashboard-design.md). ListToolbar and ListPager are imported by path,
+// not from here: they bring Click UI's Dropdown and Pagination, and an export here would
+// put them in the boot chunk for every page (scripts/bundle_budget.mjs).
 export { Chip, type ChipProps } from "./Chip";
 export { ExternalLink } from "./ExternalLink";
 export { Kbd } from "./Kbd";
@@ -18,7 +20,5 @@ export { fieldError } from "./fieldError";
 export { Alert, type AlertProps } from "./Alert";
 export { Stat, type StatProps } from "./Stat";
 export { Loading, LoadingSkeleton, Spinner } from "./Loading";
-export { ListToolbar, type ListToolbarAction, type ListToolbarProps } from "./ListToolbar";
 export { ListRow, type ListRowProps } from "./ListRow";
 export { TagList, type TagListProps } from "./TagList";
-export { ListPager, usePageSize, type ListPagerProps } from "./ListPager";

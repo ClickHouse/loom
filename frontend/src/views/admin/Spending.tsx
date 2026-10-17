@@ -28,7 +28,7 @@ import { Tip } from "../../components/ui/Tooltip";
 import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
-import { Alert, PageHeader, Stat } from "../../components/ui";
+import { Alert, LoadingSkeleton, PageHeader, Stat } from "../../components/ui";
 
 /**
  * Usage — LLM operations / cost rollup view.
@@ -243,7 +243,11 @@ export function Spending() {
         </div>
       )}
 
-      {rows === null && <Skeleton className="h-40 w-full" />}
+      {rows === null && (
+        <LoadingSkeleton label="Loading spending">
+          <Skeleton className="h-40 w-full" />
+        </LoadingSkeleton>
+      )}
       {rows !== null && rows.length === 0 && (
         <EmptyState
           icon="dollar"

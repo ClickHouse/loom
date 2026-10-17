@@ -11,7 +11,7 @@ import {
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { PathResponse, TaxonomyEntry } from "../../api";
 import { EmptyState } from "../../components/EmptyState";
-import { Chip } from "../../components/ui";
+import { Chip, LoadingSkeleton } from "../../components/ui";
 import { Skeleton } from "../../components/Skeleton";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
 
@@ -614,12 +614,12 @@ export function Canvas({
       className={`relative rounded-xl border border-border bg-surface aspect-[820/560] max-h-[560px] w-full ${emptyShown ? "flex flex-col" : "overflow-hidden"}`}
     >
       {loading && (
-        <div className="absolute inset-0 grid place-items-center" role="status" aria-label={loadingLabel}>
+        <LoadingSkeleton label={loadingLabel} className="absolute inset-0 grid place-items-center">
           <div className="flex flex-col items-center gap-3">
             <Skeleton className="w-40 h-40 rounded-full" />
             <Skeleton className="h-3 w-32" />
           </div>
-        </div>
+        </LoadingSkeleton>
       )}
       {error && <div className="absolute inset-0 grid place-items-center p-6 text-sm text-danger">{error}</div>}
       {!loading && !error && !model && mode === "walk" && !seedTyped && (
@@ -641,11 +641,13 @@ export function Canvas({
                 <span className="font-mono">a → b</span> for a path, or start from one the memories mention most.
               </p>
               {starters === null ? (
-                <div className="mt-5 flex flex-wrap justify-center gap-1.5">
-                  {["w-20", "w-14", "w-24", "w-16", "w-12", "w-20"].map((w, i) => (
-                    <Skeleton key={i} className={`h-6 rounded-full ${w}`} />
-                  ))}
-                </div>
+                <LoadingSkeleton label="Loading starting points" className="mt-5">
+                  <div className="flex flex-wrap justify-center gap-1.5">
+                    {["w-20", "w-14", "w-24", "w-16", "w-12", "w-20"].map((w, i) => (
+                      <Skeleton key={i} className={`h-6 rounded-full ${w}`} />
+                    ))}
+                  </div>
+                </LoadingSkeleton>
               ) : (
                 <div className="mt-5 flex flex-wrap justify-center gap-1.5 max-w-lg">
                   {starters.map((e) => (

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -25,7 +25,7 @@ import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
-import { Alert, PageHeader, Stat, TabTrigger } from "../../components/ui";
+import { Alert, LoadingSkeleton, PageHeader, Stat, TabTrigger } from "../../components/ui";
 
 // Friendly label + blurb per worker; unknown workers fall through to
 // a default rendering (raw name + "background worker").
@@ -285,15 +285,17 @@ export function WorkersPanel() {
   // never issues a request the token cannot make).
   const whoami = useStore((s) => s.whoami);
   const canReadWorkers = canCall("admin/workers.status", null, whoami);
+  // Refresh keeps the workers on screen, marked busy, until the read answers.
+  const [refreshing, setRefreshing] = useState(false);
 
   useAbortableEffect(
     (signal, live) => {
-      setRows(null);
       if (!canReadWorkers) {
         setRows([]);
         setStore(null);
         return;
       }
+      setRefreshing(true);
       getJson<unknown>("/v1/admin/workers.status", { signal })
         .then((d) => {
           if (!live()) return;
@@ -306,6 +308,9 @@ export function WorkersPanel() {
             setRows([]);
             setStore(null);
           }
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
     [refreshKey, canReadWorkers],
@@ -359,11 +364,21 @@ export function WorkersPanel() {
             </span>
           )}
         </div>
-        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => setRefreshKey((k) => k + 1)}>
+        <Button
+          type="secondary"
+          htmlType="button"
+          iconLeft="refresh"
+          onClick={() => setRefreshKey((k) => k + 1)}
+          loading={refreshing}
+        >
           Refresh
         </Button>
       </div>
-      {rows === null && <Skeleton className="h-40 w-full" />}
+      {rows === null && (
+        <LoadingSkeleton label="Loading workers">
+          <Skeleton className="h-40 w-full" />
+        </LoadingSkeleton>
+      )}
       {rows !== null && (rows.length === 0 || visible.length === 0) && (
         <EmptyState
           icon="settings"
@@ -391,7 +406,7 @@ export function WorkersPanel() {
         />
       )}
       {rows !== null && visible.length > 0 && (
-        <div className="space-y-1.5">
+        <div className="space-y-1.5" data-testid="workers-list" aria-busy={refreshing || undefined}>
           {visible.map((w) => {
             const status = statusOf(w);
             const info = WORKER_INFO[w.name] || {
@@ -556,10 +571,18 @@ export function OpMixPanel() {
   const identity = useIdentity();
   const [op, setOp] = useState<{ check: OpsHealthCheck; data: OpMixData | null } | null | undefined>(undefined);
   const [scope, setScope] = useState<"namespace" | "org">("namespace");
+  // A scope toggle keeps the mix (and the toggle) on screen, marked busy, until it answers;
+  // another namespace starts over.
+  const [refreshing, setRefreshing] = useState(false);
+  const opFor = useRef("");
 
   useAbortableEffect(
     (signal, live) => {
-      setOp(undefined);
+      if (opFor.current !== `${identity.org}/${identity.namespace}`) {
+        opFor.current = `${identity.org}/${identity.namespace}`;
+        setOp(undefined);
+      }
+      setRefreshing(true);
       getOpsHealth(
         { org: identity.org, namespace: identity.namespace },
         { namespace: scope === "namespace" ? identity.namespace : null, signal },
@@ -571,12 +594,20 @@ export function OpMixPanel() {
         })
         .catch(() => {
           if (live()) setOp(null);
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
     [identity.org, identity.namespace, scope],
   );
 
-  if (op === undefined) return <Skeleton className="h-40 w-full" />;
+  if (op === undefined)
+    return (
+      <LoadingSkeleton label="Loading the operation mix">
+        <Skeleton className="h-40 w-full" />
+      </LoadingSkeleton>
+    );
   if (op === null) {
     return (
       <EmptyState
@@ -603,7 +634,7 @@ export function OpMixPanel() {
   const tone = check.status === "ok" ? "bg-success" : check.status === "warn" ? "bg-warn" : "bg-danger";
   const fmt = (n: number) => n.toLocaleString();
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="flex flex-wrap items-center gap-3">
         {scope === "namespace" ? (
           <ScopeBadge kind="namespace" value={identity.namespace} />
@@ -721,7 +752,12 @@ function ConsolidationsPanel() {
     [identity.org, identity.namespace],
   );
 
-  if (rows === null) return <Skeleton className="h-40 w-full" />;
+  if (rows === null)
+    return (
+      <LoadingSkeleton label="Loading consolidations">
+        <Skeleton className="h-40 w-full" />
+      </LoadingSkeleton>
+    );
   return (
     <div>
       <div className="mb-3">
@@ -778,17 +814,23 @@ function ExtractionQualityPanel() {
   // Refresh re-runs the effect, so a refresh superseded by an org switch is aborted and its
   // answer dropped like any other stale read.
   const [refreshKey, setRefreshKey] = useState(0);
+  // Refresh keeps the figures on screen, marked busy, until the read answers.
+  const [refreshing, setRefreshing] = useState(false);
 
   useAbortableEffect(
     (signal, live) => {
       if (!identity) return;
       setError(null);
+      setRefreshing(true);
       getExtractionQuality({ org: identity.org }, { signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
         .catch((e: unknown) => {
           if (live()) setError(humanizeError(e));
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
     [identity?.org, refreshKey],
@@ -800,10 +842,12 @@ function ExtractionQualityPanel() {
   }
   if (rows === null) {
     return (
-      <div className="space-y-2">
-        <Skeleton className="h-10" />
-        <Skeleton className="h-10" />
-      </div>
+      <LoadingSkeleton label="Loading extraction quality">
+        <div className="space-y-2">
+          <Skeleton className="h-10" />
+          <Skeleton className="h-10" />
+        </div>
+      </LoadingSkeleton>
     );
   }
   if (rows.length === 0) {
@@ -824,7 +868,7 @@ function ExtractionQualityPanel() {
   const orgRatio = totalDecided > 0 ? totalPromoted / totalDecided : 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="grid grid-cols-4 gap-3">
         <Stat label="Pending" value={totalPending} hint="awaiting review" />
         <Stat label="Promoted" value={totalPromoted} hint="approved → memory" />
@@ -838,7 +882,13 @@ function ExtractionQualityPanel() {
       </div>
       <div className="flex items-center justify-between">
         <div className="text-xs text-text-muted">By namespace, org={identity.org}</div>
-        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => setRefreshKey((k) => k + 1)}>
+        <Button
+          type="secondary"
+          htmlType="button"
+          iconLeft="refresh"
+          onClick={() => setRefreshKey((k) => k + 1)}
+          loading={refreshing}
+        >
           Refresh
         </Button>
       </div>

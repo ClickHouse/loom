@@ -93,6 +93,8 @@ import {
   Chip,
   ExternalLink,
   fieldError,
+  Loading,
+  LoadingSkeleton,
   PageHeader,
   Stat,
   TabTrigger,
@@ -597,10 +599,12 @@ function RepositoriesHome({
       )}
 
       {repos === null && !error && (
-        <div className="space-y-3">
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
+        <LoadingSkeleton label="Loading repositories">
+          <div className="space-y-2">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </LoadingSkeleton>
       )}
       {error && <EmptyState icon="code" title="Couldn't load repositories" description={error} />}
 
@@ -1746,14 +1750,15 @@ function StageCard({
   );
 }
 
-function HealthTab({ id }: { id: CodeId }) {
+export function HealthTab({ id }: { id: CodeId }) {
   const [st, setSt] = useState<CodeIndexStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showState, setShowState] = useState(false);
-  const [cov, setCov] = useState<CodeCoverage | null>(null);
+  // undefined while the first read is out, null once a read failed.
+  const [cov, setCov] = useState<CodeCoverage | null | undefined>(undefined);
   const [recent, setRecent] = useState<CodeRecentCommitRow[] | null>(null);
-  const [errs, setErrs] = useState<{ rows: CodeIndexErrorRow[]; total: number } | null>(null);
+  const [errs, setErrs] = useState<{ rows: CodeIndexErrorRow[]; total: number } | null | undefined>(undefined);
   const [showErrs, setShowErrs] = useState(false);
   const [spend, setSpend] = useState<{ usd: number; ops: number } | null | undefined>(undefined);
 
@@ -1825,13 +1830,7 @@ function HealthTab({ id }: { id: CodeId }) {
   };
 
   if (error) return <EmptyState icon="activity" title="Couldn't load index status" description={error} />;
-  if (!st)
-    return (
-      <div className="space-y-3">
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-24 w-full" />
-      </div>
-    );
+  if (!st) return <Loading label="Loading the index health" />;
 
   const W = st.workers;
   const gitHeadAt = st.state.git_head?.updated_at;
@@ -1939,8 +1938,10 @@ function HealthTab({ id }: { id: CodeId }) {
 
       <div>
         <div className="section-label mb-2">Coverage by language · when each part was last written</div>
-        {!cov ? (
-          <Skeleton className="h-24 w-full" />
+        {cov === undefined ? (
+          <Loading layout="inline" label="Loading coverage" />
+        ) : cov === null ? (
+          <div className="text-xs text-text-muted">Couldn't load coverage.</div>
         ) : (
           <div className="space-y-2">
             <Table
@@ -2052,7 +2053,7 @@ function HealthTab({ id }: { id: CodeId }) {
             <Icon name="history" size="sm" aria-hidden="true" /> Recently ingested commits
           </div>
           {recent === null ? (
-            <Skeleton className="h-20 w-full" />
+            <Loading layout="inline" label="Loading recent commits" />
           ) : recent.length === 0 ? (
             <div className="text-xs text-text-muted">No commits recorded yet.</div>
           ) : (
@@ -2098,7 +2099,8 @@ function HealthTab({ id }: { id: CodeId }) {
             Files with index errors{" "}
             {errs ? <span className="tabular text-text-muted">({fmtInt(errs.total)})</span> : null}
           </button>
-          {errs === null && <Skeleton className="h-6 w-full mt-2" />}
+          {errs === undefined && <Loading layout="inline" label="Loading the index errors" className="mt-2" />}
+          {errs === null && <div className="mt-2 text-xs text-text-muted">Couldn't load the index errors.</div>}
           {errs && errs.total === 0 && (
             <div className="mt-2 text-xs text-text-muted">
               Every file under the indexed prefixes parsed and chunked.
@@ -2348,6 +2350,7 @@ function ExploreTab({ id }: { id: CodeId }) {
   const [res, setRes] = useState<Awaited<ReturnType<typeof codeSearch>> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [map, setMap] = useState<string | null>(null);
+  const [mapBusy, setMapBusy] = useState(false);
   const [sym, setSym] = useState<{
     name: string;
     defs: CodeUnit[];
@@ -2388,10 +2391,13 @@ function ExploreTab({ id }: { id: CodeId }) {
   };
 
   const loadMap = async () => {
+    setMapBusy(true);
     try {
       setMap((await codeMap(id, { token_budget: 1500 })).map);
     } catch (e) {
       toast(`Map failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setMapBusy(false);
     }
   };
 
@@ -2420,7 +2426,7 @@ function ExploreTab({ id }: { id: CodeId }) {
             placeholder="path prefix (optional)"
           />
         </div>
-        <Button type="primary" htmlType="submit" iconLeft="search" disabled={busy || !q.trim()}>
+        <Button type="primary" htmlType="submit" iconLeft="search" disabled={busy || !q.trim()} loading={busy}>
           Search
         </Button>
       </form>
@@ -2454,17 +2460,20 @@ function ExploreTab({ id }: { id: CodeId }) {
           </div>
         </div>
       )}
-      {symBusy && <Skeleton className="h-16 w-full" />}
+      {symBusy && <Loading layout="inline" label="Loading the symbol" />}
 
-      {busy && (
-        <div className="space-y-2">
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
+      {busy && !res && (
+        <LoadingSkeleton label="Loading search results">
+          <div className="space-y-2">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </LoadingSkeleton>
       )}
 
-      {res && !busy && (
-        <div className="space-y-2">
+      {/* A new search keeps the last results on screen, marked busy, until it answers. */}
+      {res && (
+        <div className="space-y-2" aria-busy={busy || undefined}>
           <div className="flex items-center gap-3 text-xs text-text-muted tabular flex-wrap">
             <span>
               route <Mono>{res.route}</Mono>
@@ -2545,7 +2554,7 @@ function ExploreTab({ id }: { id: CodeId }) {
               Not sure where to start? Load the repo orientation map agents get from{" "}
               <span className="font-mono">code.map</span>.
             </div>
-            <Button type="secondary" htmlType="button" onClick={loadMap}>
+            <Button type="secondary" htmlType="button" onClick={loadMap} loading={mapBusy}>
               Show map
             </Button>
           </div>
@@ -2581,9 +2590,17 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
     return () => clearTimeout(t);
   }, [prFilter]);
 
+  // A new filter or page keeps the rows on screen, marked busy, until it answers; another
+  // branch's rows are not this one's, so a new branch starts from the skeleton.
+  const [refreshing, setRefreshing] = useState(false);
+  const rowsFor = useRef(`${id.org}/${id.namespace}`);
   useAbortableEffect(
     (signal, live) => {
-      setRows(null);
+      if (rowsFor.current !== `${id.org}/${id.namespace}`) {
+        rowsFor.current = `${id.org}/${id.namespace}`;
+        setRows(null);
+      }
+      setRefreshing(true);
       const pr = parseInt(prSettled, 10);
       listCodeContextPacks(id, { limit: PAGE, offset, pr_number: Number.isFinite(pr) ? pr : 0, signal })
         .then((r) => {
@@ -2591,10 +2608,14 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
             setRows(r.rows);
             setTotal(r.total);
             setError(null);
+            setRefreshing(false);
           }
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) {
+            setError(humanizeError(e));
+            setRefreshing(false);
+          }
         });
     },
     [id.org, id.namespace, offset, prSettled],
@@ -2612,6 +2633,8 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       setPack({ pr, text: p.context, tokens: p.tokens_used, source: p.source });
     } catch (e) {
       toast(`Pack load failed: ${humanizeError(e)}`, "error");
+      // Fold the row back rather than leave it loading.
+      setOpen((o) => (o === pr ? null : o));
     }
   };
 
@@ -2638,11 +2661,13 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       </div>
 
       {rows === null && (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+        <LoadingSkeleton label="Loading PR packs">
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </LoadingSkeleton>
       )}
 
       {rows !== null && rows.length === 0 && (
@@ -2660,7 +2685,7 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       {/* Rows expand inline into their pack, so this stays a list of disclosure rows
           rather than a table. */}
       {rows !== null && rows.length > 0 && (
-        <div className="rounded-xl border border-border overflow-hidden">
+        <div className="rounded-xl border border-border overflow-hidden" aria-busy={refreshing || undefined}>
           {rows.map((r) => (
             <div key={r.pr_number} className="border-b border-border last:border-b-0">
               <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2">
@@ -2694,7 +2719,7 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
               {open === r.pr_number && (
                 <div className="px-4 pb-4 bg-bg">
                   {!pack || pack.pr !== r.pr_number ? (
-                    <Skeleton className="h-16 w-full" />
+                    <Loading layout="inline" label="Loading the pack" className="py-2" />
                   ) : (
                     <>
                       <div className="text-xs text-text-muted py-2 tabular">
@@ -3021,7 +3046,7 @@ function AccessTab({
     <div className="space-y-5">
       {/* 1. The rule — one decision per repository, not one per person. */}
       <section className="p-4 rounded-xl border border-border bg-surface" aria-label="How people join">
-        {ns === undefined && <Skeleton className="h-16 w-full" />}
+        {ns === undefined && <Loading layout="inline" label="Loading the join rule" />}
         {ns === null && (
           <div className="text-xs text-warn flex items-start gap-2">
             <Icon name="warning" size="sm" color="var(--color-warn)" aria-hidden="true" className="shrink-0 mt-0.5" />
@@ -3093,7 +3118,7 @@ function AccessTab({
           description={`${error}. Join this repository to see who else reads it.`}
         />
       )}
-      {grants === null && !error && <Skeleton className="h-20 w-full" />}
+      {grants === null && !error && <Loading label="Loading readers" />}
 
       {/* 2. Requests waiting for a maintainer — first, because it is the only
              thing here with a deadline attached to someone else's day. */}

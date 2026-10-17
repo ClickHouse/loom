@@ -23,7 +23,7 @@ import { sharedMine } from "../lib/sharedReads";
 import { useStore, viewHref } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { relativeTime } from "../lib/format";
-import { Kbd } from "./ui";
+import { Kbd, Loading } from "./ui";
 
 /** The memory group is server-side memory.search: a debounced call per settled query,
  *  aborted by the next keystroke. */
@@ -803,11 +803,7 @@ function SyntaxHelp() {
 }
 
 function Searching() {
-  return (
-    <div className="py-5 text-sm text-text-muted text-center" aria-live="polite">
-      Searching…
-    </div>
-  );
+  return <Loading label="Loading results" />;
 }
 
 function NoResults({ q }: { q: string }) {

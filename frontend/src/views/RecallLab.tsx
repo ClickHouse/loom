@@ -11,7 +11,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Chip, PageHeader, TabTrigger, TipTarget } from "../components/ui";
+import { Chip, Loading, PageHeader, TabTrigger, TipTarget } from "../components/ui";
 import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
@@ -208,7 +208,7 @@ function RecallHistory() {
         </div>
       )}
 
-      {loading && <div className="text-sm text-text-muted px-1">Loading…</div>}
+      {loading && <Loading layout="inline" label="Loading recorded searches" className="px-1 mb-2" />}
       {error && <div className="text-sm text-danger px-1">{error}</div>}
 
       {rows != null && !loading && !error && rows.length === 0 && (
@@ -232,7 +232,7 @@ function RecallHistory() {
               <em>&ldquo;Record what I search and what I store&rdquo;</em>.
             </div>
           )}
-          <div className="space-y-2">
+          <div className="space-y-2" aria-busy={loading || undefined}>
             {rows.map((r, i) => (
               <RecallHistoryRow key={`${r.ts}-${i}`} r={r} />
             ))}
@@ -409,7 +409,7 @@ export function RecallLab() {
               placeholder="Search your memories — see the scoring breakdown"
             />
           </div>
-          {loading && <div className="text-sm text-text-muted px-1">Scoring…</div>}
+          {loading && <Loading layout="inline" label="Loading scores" className="px-1 mb-2" />}
           {error && <div className="text-sm text-danger px-1">{error}</div>}
           {rankedError && !loading && (
             <div className="mb-2 text-xs text-text-muted px-1">
@@ -447,7 +447,7 @@ export function RecallLab() {
                 </div>
               )}
               {showResults && (
-                <div className="space-y-1.5">
+                <div className="space-y-1.5" aria-busy={loading || undefined}>
                   {rows.map((row, i) => (
                     <div key={row.key} className="p-3.5 rounded-xl border border-border bg-surface">
                       <div className="flex items-start gap-3">

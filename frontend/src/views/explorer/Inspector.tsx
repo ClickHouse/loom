@@ -4,7 +4,7 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { listFacts, searchMemory, type FactRow, type Identity, type SearchHit, type TaxonomyResponse } from "../../api";
 import { IconButton } from "../../components/IconButton";
-import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
+import { Chip, Loading, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
 import { useAbortableEffect } from "../../lib/hooks";
 import { colorFor, HOP_COLORS, HOP_EMPHASIS } from "./Canvas";
 import {
@@ -134,7 +134,7 @@ function FactList({
   onOpenMemory: (k: string) => void;
   emptyText: string;
 }) {
-  if (facts === null) return <div className="text-xs text-text-muted">Reading…</div>;
+  if (facts === null) return <Loading layout="inline" label="Loading facts" />;
   if (facts.length === 0) return <div className="text-xs text-text-muted">{emptyText}</div>;
   return (
     <ul className="space-y-1">
@@ -579,7 +579,7 @@ export function Inspector({
         />
         <IconButton label="Copy entity" onClick={() => copy(n.entity)} icon="copy" size="sm" />
         {copied && <span className="text-xs text-text-muted">copied</span>}
-        {expanding === n.entity && <span className="text-xs text-text-muted">expanding…</span>}
+        {expanding === n.entity && <Loading layout="inline" label="Loading neighbours" />}
       </div>
 
       {!isSeed && (
@@ -665,7 +665,7 @@ export function Inspector({
               : "Memories naming the seed or this entity (memory.search with an entity boost — an OR, so a row may name only one of them); click one to open it."
           }
         />
-        {hits === null && <div className="text-xs text-text-muted">Searching…</div>}
+        {hits === null && <Loading layout="inline" label="Loading memories" />}
         {hits && hits.length === 0 && (
           <div className="text-xs text-text-muted">
             {memoryTypes.size || tags.size

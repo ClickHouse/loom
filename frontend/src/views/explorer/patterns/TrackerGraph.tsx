@@ -9,6 +9,7 @@ import {
 } from "react";
 import { EmptyState } from "../../../components/EmptyState";
 import { Skeleton } from "../../../components/Skeleton";
+import { LoadingSkeleton } from "../../../components/ui";
 import { shorten } from "../model";
 import type { TrackerEdge, TrackerGraph as TrackerGraphModel, TrackerNode } from "./model";
 
@@ -384,12 +385,12 @@ export function TrackerGraph({ graph, loading, error, hint, selected, onSelect, 
       className="relative rounded-xl border border-border bg-surface overflow-hidden aspect-[820/560] max-h-[560px] w-full"
     >
       {loading && (
-        <div className="absolute inset-0 grid place-items-center" role="status" aria-label="Reading the tracker graph">
+        <LoadingSkeleton label="Loading the tracker graph" className="absolute inset-0 grid place-items-center">
           <div className="flex flex-col items-center gap-3">
             <Skeleton className="w-40 h-40 rounded-full" />
             <Skeleton className="h-3 w-32" />
           </div>
-        </div>
+        </LoadingSkeleton>
       )}
       {error && <div className="absolute inset-0 grid place-items-center p-6 text-sm text-danger">{error}</div>}
       {!loading && !error && !placed && (

@@ -15,7 +15,7 @@ import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { oneOf } from "../../lib/oneOf";
 import { IconButton } from "../../components/IconButton";
-import { Chip, PageHeader } from "../../components/ui";
+import { Chip, LoadingSkeleton, PageHeader } from "../../components/ui";
 
 /** What a visitor who cannot list the patterns reads instead of a request: the token's
  * role here is unknown, so the panel says who manages the
@@ -83,18 +83,30 @@ export function PrivacyFilters({
   const canAdd = canCall("blacklist.add", role, whoami);
   const canRemove = canCall("blacklist.remove", role, whoami);
 
+  // A reload after an add or a remove keeps the patterns on screen, marked busy.
+  const [refreshing, setRefreshing] = useState(false);
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
     if (!canList) return;
-    setRows(null);
+    setRefreshing(true);
     listBlacklist({ org: identity.org, namespace: identity.namespace }, { signal })
       .then((r) => {
         if (live()) setRows(r.rows || []);
       })
       .catch(() => {
         if (live()) setRows([]);
+      })
+      .finally(() => {
+        if (live()) setRefreshing(false);
       });
   };
-  useAbortableEffect(load, [identity.org, identity.namespace, canList]);
+  // Another namespace's patterns are not this one's: start from the skeleton.
+  useAbortableEffect(
+    (signal, live) => {
+      setRows(null);
+      load(signal, live);
+    },
+    [identity.org, identity.namespace, canList],
+  );
 
   const add = async () => {
     if (!pattern.trim()) return;
@@ -198,7 +210,11 @@ export function PrivacyFilters({
         </div>
       )}
 
-      {rows === null && <Skeleton className={compact ? "h-10 w-full" : "h-40 w-full"} />}
+      {rows === null && (
+        <LoadingSkeleton label="Loading privacy filters">
+          <Skeleton className={compact ? "h-10 w-full" : "h-40 w-full"} />
+        </LoadingSkeleton>
+      )}
       {rows !== null && rows.length === 0 && compact && (
         <p className="text-xs text-text-muted" role="status">
           {canAdd ? "No patterns yet." : "Nothing is refused here yet."}
@@ -220,6 +236,7 @@ export function PrivacyFilters({
           <PrivacyFiltersHitSummary rows={rows} />
           <div
             className={compact ? "rounded-lg border border-border bg-surface divide-y divide-border" : "space-y-1.5"}
+            aria-busy={refreshing || undefined}
           >
             {rows.map((r) => (
               <div

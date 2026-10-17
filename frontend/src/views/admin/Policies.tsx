@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -35,7 +35,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
-import { Alert, PageHeader, TipTarget } from "../../components/ui";
+import { Alert, LoadingSkeleton, PageHeader, TipTarget } from "../../components/ui";
 
 /**
  * Policies — history rules over what an agent may do next.
@@ -186,9 +186,11 @@ export function Policies() {
   const [addOpen, setAddOpen] = useState(false);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
 
+  // A reload after an add or a delete keeps the rules on screen, marked busy.
+  const [refreshing, setRefreshing] = useState(false);
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
-    setRules(null);
     setError(null);
+    setRefreshing(true);
     listPolicies({ org: identity.org, namespace: identity.namespace }, { signal })
       .then((r) => {
         if (live()) {
@@ -201,9 +203,19 @@ export function Policies() {
           setError(humanizeError(e));
           setRules([]);
         }
+      })
+      .finally(() => {
+        if (live()) setRefreshing(false);
       });
   };
-  useAbortableEffect(load, [identity.org, identity.namespace]);
+  // Another namespace's rules are not this one's: start from the skeleton.
+  useAbortableEffect(
+    (signal, live) => {
+      setRules(null);
+      load(signal, live);
+    },
+    [identity.org, identity.namespace],
+  );
 
   const remove = async (r: PolicyRule) => {
     if (
@@ -248,7 +260,11 @@ export function Policies() {
             </Button>
           }
         >
-          {rules === null && <Skeleton className="h-24 w-full" />}
+          {rules === null && (
+            <LoadingSkeleton label="Loading rules">
+              <Skeleton className="h-24 w-full" />
+            </LoadingSkeleton>
+          )}
           {rules !== null && error && <div className="text-sm text-danger">{error}</div>}
           {rules !== null && !error && rules.length === 0 && (
             <EmptyState
@@ -258,62 +274,66 @@ export function Policies() {
             />
           )}
           {rules !== null && rules.length > 0 && (
-            <Table
-              size="sm"
-              headers={[
-                { label: "Policy" },
-                { label: "Effect", width: "96px" },
-                { label: "Actions" },
-                { label: "Condition" },
-                { label: "Enabled", width: "80px" },
-                { label: "Description" },
-                { label: <span className="sr-only">Delete</span>, width: "56px" },
-              ]}
-              rows={rules.map((r) => ({
-                id: r.policy_id,
-                items: [
-                  {
-                    label: (
-                      <div className="font-mono text-xs">
-                        <div>{r.policy_id}</div>
-                        {r.updated_at && (
-                          <div className="text-xs font-sans text-text-muted">updated {relativeTime(r.updated_at)}</div>
-                        )}
-                      </div>
-                    ),
-                  },
-                  { label: <Badge text={r.effect} state={r.effect === "forbid" ? "danger" : "info"} size="sm" /> },
-                  { label: <span className="font-mono text-xs">{r.actions.join(", ")}</span>, overflowMode: "wrap" },
-                  {
-                    label: (
-                      <details className="font-mono text-xs">
-                        <summary className="cursor-pointer">{summariseCondition(r.condition)}</summary>
-                        <pre className="mt-1 whitespace-pre-wrap break-words">
-                          {JSON.stringify(r.condition, null, 2)}
-                        </pre>
-                      </details>
-                    ),
-                    overflowMode: "wrap",
-                  },
-                  { label: <Bool v={r.enabled} /> },
-                  {
-                    label: r.description ? <span className="text-text-muted">{r.description}</span> : DASH,
-                    overflowMode: "wrap",
-                  },
-                  {
-                    label: (
-                      <IconButton
-                        icon="trash"
-                        type="danger"
-                        size="sm"
-                        label={`Delete ${r.policy_id}`}
-                        onClick={() => remove(r)}
-                      />
-                    ),
-                  },
-                ],
-              }))}
-            />
+            <div aria-busy={refreshing || undefined}>
+              <Table
+                size="sm"
+                headers={[
+                  { label: "Policy" },
+                  { label: "Effect", width: "96px" },
+                  { label: "Actions" },
+                  { label: "Condition" },
+                  { label: "Enabled", width: "80px" },
+                  { label: "Description" },
+                  { label: <span className="sr-only">Delete</span>, width: "56px" },
+                ]}
+                rows={rules.map((r) => ({
+                  id: r.policy_id,
+                  items: [
+                    {
+                      label: (
+                        <div className="font-mono text-xs">
+                          <div>{r.policy_id}</div>
+                          {r.updated_at && (
+                            <div className="text-xs font-sans text-text-muted">
+                              updated {relativeTime(r.updated_at)}
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    },
+                    { label: <Badge text={r.effect} state={r.effect === "forbid" ? "danger" : "info"} size="sm" /> },
+                    { label: <span className="font-mono text-xs">{r.actions.join(", ")}</span>, overflowMode: "wrap" },
+                    {
+                      label: (
+                        <details className="font-mono text-xs">
+                          <summary className="cursor-pointer">{summariseCondition(r.condition)}</summary>
+                          <pre className="mt-1 whitespace-pre-wrap break-words">
+                            {JSON.stringify(r.condition, null, 2)}
+                          </pre>
+                        </details>
+                      ),
+                      overflowMode: "wrap",
+                    },
+                    { label: <Bool v={r.enabled} /> },
+                    {
+                      label: r.description ? <span className="text-text-muted">{r.description}</span> : DASH,
+                      overflowMode: "wrap",
+                    },
+                    {
+                      label: (
+                        <IconButton
+                          icon="trash"
+                          type="danger"
+                          size="sm"
+                          label={`Delete ${r.policy_id}`}
+                          onClick={() => remove(r)}
+                        />
+                      ),
+                    },
+                  ],
+                }))}
+              />
+            </div>
           )}
         </Card>
 
@@ -698,11 +718,20 @@ function DecisionsPanel({ version }: { version: number }) {
   const [rows, setRows] = useState<PolicyDecisionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<DecisionFilter>("");
+  // A new rules version keeps the ledger on screen, marked busy; another namespace or
+  // filter is another list, so it starts from the skeleton.
+  const [refreshing, setRefreshing] = useState(false);
+  const rowsFor = useRef("");
 
   useAbortableEffect(
     (signal, live) => {
-      setRows(null);
+      const key = `${identity.org}/${identity.namespace}/${filter}`;
+      if (rowsFor.current !== key) {
+        rowsFor.current = key;
+        setRows(null);
+      }
       setError(null);
+      setRefreshing(true);
       listPolicyDecisions(
         { org: identity.org, namespace: identity.namespace },
         { decision: filter || undefined, limit: 100, signal },
@@ -715,6 +744,9 @@ function DecisionsPanel({ version }: { version: number }) {
             setError(humanizeError(e));
             setRows([]);
           }
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
     [identity.org, identity.namespace, filter, version],
@@ -740,10 +772,12 @@ function DecisionsPanel({ version }: { version: number }) {
         off.
       </div>
       {rows === null && (
-        <div className="space-y-3">
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
+        <LoadingSkeleton label="Loading decisions">
+          <div className="space-y-3">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </LoadingSkeleton>
       )}
       {rows !== null && error && <div className="text-sm text-danger">{error}</div>}
       {rows !== null && !error && rows.length === 0 && (
@@ -752,50 +786,52 @@ function DecisionsPanel({ version }: { version: number }) {
         </div>
       )}
       {rows !== null && rows.length > 0 && (
-        <Table
-          size="sm"
-          headers={[
-            { label: "When", width: "110px" },
-            { label: "Agent" },
-            { label: "Operation" },
-            { label: "Decision", width: "96px" },
-            { label: "Enforced", width: "84px" },
-            { label: "Determining rules" },
-            { label: "Errors" },
-            { label: "Latency", width: "84px" },
-          ]}
-          rows={rows.map((r, i) => ({
-            id: `${r.request_id || r.ts}-${i}`,
-            items: [
-              {
-                label: (
-                  <TipTarget tip={r.ts} underline>
-                    <time dateTime={r.ts} className="text-text-muted">
-                      {relativeTime(r.ts)}
-                    </time>
-                  </TipTarget>
-                ),
-              },
-              { label: displayAgent(r.agent) },
-              { label: <span className="font-mono text-xs">{r.operation}</span> },
-              { label: <DecisionChip decision={r.decision} /> },
-              { label: <Bool v={r.enforced} /> },
-              {
-                label: r.determining_rules.length ? (
-                  <span className="font-mono text-xs">{r.determining_rules.join(", ")}</span>
-                ) : (
-                  DASH
-                ),
-                overflowMode: "wrap",
-              },
-              {
-                label: r.errors.length ? <span className="text-xs text-danger">{r.errors.join("; ")}</span> : DASH,
-                overflowMode: "wrap",
-              },
-              { label: <span className="tabular-nums">{r.latency_ms} ms</span> },
-            ],
-          }))}
-        />
+        <div aria-busy={refreshing || undefined}>
+          <Table
+            size="sm"
+            headers={[
+              { label: "When", width: "110px" },
+              { label: "Agent" },
+              { label: "Operation" },
+              { label: "Decision", width: "96px" },
+              { label: "Enforced", width: "84px" },
+              { label: "Determining rules" },
+              { label: "Errors" },
+              { label: "Latency", width: "84px" },
+            ]}
+            rows={rows.map((r, i) => ({
+              id: `${r.request_id || r.ts}-${i}`,
+              items: [
+                {
+                  label: (
+                    <TipTarget tip={r.ts} underline>
+                      <time dateTime={r.ts} className="text-text-muted">
+                        {relativeTime(r.ts)}
+                      </time>
+                    </TipTarget>
+                  ),
+                },
+                { label: displayAgent(r.agent) },
+                { label: <span className="font-mono text-xs">{r.operation}</span> },
+                { label: <DecisionChip decision={r.decision} /> },
+                { label: <Bool v={r.enforced} /> },
+                {
+                  label: r.determining_rules.length ? (
+                    <span className="font-mono text-xs">{r.determining_rules.join(", ")}</span>
+                  ) : (
+                    DASH
+                  ),
+                  overflowMode: "wrap",
+                },
+                {
+                  label: r.errors.length ? <span className="text-xs text-danger">{r.errors.join("; ")}</span> : DASH,
+                  overflowMode: "wrap",
+                },
+                { label: <span className="tabular-nums">{r.latency_ms} ms</span> },
+              ],
+            }))}
+          />
+        </div>
       )}
     </Card>
   );

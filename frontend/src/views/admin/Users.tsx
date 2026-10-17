@@ -17,7 +17,7 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { Alert, PageHeader } from "../../components/ui";
+import { Alert, LoadingSkeleton, PageHeader } from "../../components/ui";
 
 type Filter = "all" | "pending" | "active7d";
 
@@ -37,10 +37,13 @@ export function Users() {
   const [error, setError] = useState<string | null>(null);
   const [includeServiceAccounts, setIncludeServiceAccounts] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
+  // A refresh keeps the list on screen, marked busy, until it answers.
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
     if (!identity) return;
     setError(null);
+    setRefreshing(true);
     adminListUsers(
       {
         org: identity.org,
@@ -54,6 +57,9 @@ export function Users() {
       })
       .catch((e) => {
         if (live()) setError(String(e?.message || e));
+      })
+      .finally(() => {
+        if (live()) setRefreshing(false);
       });
   };
   useAbortableEffect(load, [identity?.org, includeServiceAccounts]);
@@ -106,7 +112,7 @@ export function Users() {
             checked={includeServiceAccounts}
             onCheckedChange={(x) => setIncludeServiceAccounts(x === true)}
           />
-          <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()}>
+          <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()} loading={refreshing}>
             Refresh
           </Button>
         </div>
@@ -114,11 +120,13 @@ export function Users() {
 
       {error && <EmptyState icon="users" title="Couldn't load" description={error} />}
       {!error && data === null && (
-        <div className="space-y-2">
-          <Skeleton className="h-14" />
-          <Skeleton className="h-14" />
-          <Skeleton className="h-14" />
-        </div>
+        <LoadingSkeleton label="Loading users">
+          <div className="space-y-2">
+            <Skeleton className="h-14" />
+            <Skeleton className="h-14" />
+            <Skeleton className="h-14" />
+          </div>
+        </LoadingSkeleton>
       )}
       {!error && data !== null && data.users.length === 0 && (
         <EmptyState
@@ -128,7 +136,7 @@ export function Users() {
         />
       )}
       {!error && data !== null && data.users.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2" aria-busy={refreshing || undefined}>
           {data.platform_admins_configured.length > 0 && (
             <div className="mb-3 text-xs text-text-muted">
               <span className="font-medium text-text">Configured platform admins (LOOM_PLATFORM_ADMINS):</span>{" "}

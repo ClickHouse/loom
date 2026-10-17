@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { EmptyState } from "../../../components/EmptyState";
 import { Skeleton } from "../../../components/Skeleton";
-import { Tip } from "../../../components/ui";
+import { LoadingSkeleton, Tip } from "../../../components/ui";
 import { heat, pct, trendGlyph, type Board as BoardModel, type BoardRow } from "./model";
 
 /**
@@ -220,15 +220,17 @@ export function Board({
 
   const frame = "relative rounded-xl border border-border bg-surface overflow-hidden min-h-[320px] flex flex-col";
 
-  if (status === "loading") {
+  // A new window keeps the board on screen, marked busy, until it answers.
+  const refreshing = status === "loading";
+  if (refreshing && !board) {
     return (
-      <div className={frame} role="status" aria-label="Reading the bug board">
+      <LoadingSkeleton label="Loading the bug board" className={frame}>
         <div className="p-4 space-y-2">
           {Array.from({ length: 8 }, (_, i) => (
             <Skeleton key={i} className="h-7 w-full" />
           ))}
         </div>
-      </div>
+      </LoadingSkeleton>
     );
   }
   if (status === "error") {
@@ -293,7 +295,7 @@ export function Board({
 
   const cols = `minmax(180px,260px) repeat(${board.severities.length}, minmax(72px, 1fr))`;
   return (
-    <div className={frame}>
+    <div className={frame} aria-busy={refreshing || undefined}>
       <div className="overflow-auto overscroll-contain flex-1 min-h-0">
         {/* biome-ignore-start lint/a11y/useSemanticElements: APG data grid with a roving tabindex over the count cells; a <table> cannot hold the sticky CSS-grid layout */}
         {/* biome-ignore-start lint/a11y/useFocusableInteractive: APG data grid — only the count cells take the roving focus; headers and empty cells are read, not visited */}

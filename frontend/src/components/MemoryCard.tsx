@@ -5,7 +5,7 @@ import type { Identity, MemoryListEntry } from "../api";
 import { getMemory } from "../api";
 import { AgentBadge } from "./AgentBadge";
 import { ListRow, TagList } from "./ui";
-import { relativeTime, timeOfDay, previewValue } from "../lib/format";
+import { relativeTime, timeOfDay, truncate, previewValue } from "../lib/format";
 import { detectEncodedValue, detectEncodedRecord } from "../lib/encoded";
 import { useAbortableEffect } from "../lib/hooks";
 
@@ -175,7 +175,8 @@ export const MemoryCard = memo(function MemoryCard({
         </span>
         {/* Line 2: the value, two lines at most. */}
         <span className="mt-1 text-sm text-text leading-normal line-clamp-2 break-words">
-          {value === null ? <span className="text-text-muted">…</span> : value}
+          {/* Cut before the clamp, so a 2 KB preview never lands in the DOM: two lines hold ~280. */}
+          {value === null ? <span className="text-text-muted">…</span> : truncate(value, 280)}
         </span>
       </button>
       <TagList

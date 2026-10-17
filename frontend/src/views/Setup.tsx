@@ -32,7 +32,7 @@ import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall, canCallCodeRepos } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Alert, PageHeader, TabTrigger, Tip, Unavailable } from "../components/ui";
+import { Alert, LoadingSkeleton, PageHeader, TabTrigger, Tip, Unavailable } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
 import { READ_ONLY_TIP, canWrite, roleOnNamespace, useNamespaceRole } from "../lib/namespaceRole";
@@ -1000,7 +1000,11 @@ function TokensSection({
 
         <div className="rounded-2xl border border-border bg-surface p-2">
           <TokensStatusSummary tokens={sa} />
-          {sa === null && <Skeleton className="h-12 w-full" />}
+          {sa === null && (
+            <LoadingSkeleton label="Loading tokens">
+              <Skeleton className="h-12 w-full" />
+            </LoadingSkeleton>
+          )}
           {sa !== null && sa.length === 0 && (
             <p className="text-sm text-text-muted px-2.5 py-3">
               No tokens yet. Generate one above; you pick the client (Claude Code, Cursor, …) after it is minted, and

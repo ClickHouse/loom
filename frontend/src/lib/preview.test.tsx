@@ -70,7 +70,8 @@ describe("MemoryCard preview", () => {
     const value = { alert: "z".repeat(4000), n: 1 };
     render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={value} />);
     const shown = await screen.findByText(/^\{"alert":"zzz/);
-    expect(must(shown.textContent, "preview text").length).toBeLessThanOrEqual(141);
+    // two lines' worth, cut before the clamp
+    expect(must(shown.textContent, "preview text").length).toBeLessThanOrEqual(281);
     // no `JSON.stringify(v, null, 2)` anywhere on the card's path
     expect(stringify.mock.calls.some((c) => c.length >= 3 && c[2] === 2)).toBe(false);
   });
@@ -93,6 +94,7 @@ describe("MemoryCard preview", () => {
   it("keeps the layout containment on a standalone card", () => {
     render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value="plain" />);
     const card = screen.getByRole("button", { name: /alerts\/2026-09-19\/1/ }).closest("[data-memory-key]");
-    expect(card?.className).toContain("[content-visibility:auto]");
+    // the row class carries `content-visibility: auto` (styles.css .list-row)
+    expect(card?.className).toContain("list-row");
   });
 });

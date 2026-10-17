@@ -22,7 +22,7 @@ import {
   type TrackerTone,
 } from "../lib/trackerSources";
 import { toast } from "../components/Toast";
-import { TipTarget } from "../components/ui";
+import { Loading, TipTarget } from "../components/ui";
 
 const ContractReportView = lazy(() =>
   import("../flows/TrackerSourceDialogs").then((m) => ({ default: m.ContractReportView })),
@@ -72,11 +72,7 @@ export function TrackersPanel({
           </p>
         </div>
       </div>
-      {loading && (
-        <p className="text-xs text-text-muted" role="status">
-          Reading the trackers…
-        </p>
-      )}
+      {loading && <Loading layout="inline" label="Loading the trackers" />}
       {!loading && sources.length === 0 && (
         <div className="rounded-lg border border-dashed border-border p-4 text-sm text-text-muted flex flex-wrap items-center gap-3">
           <span className="min-w-0 flex-1">

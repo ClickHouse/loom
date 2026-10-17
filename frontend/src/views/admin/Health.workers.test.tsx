@@ -144,6 +144,34 @@ describe("WorkersPanel", () => {
     expect(screen.getByText(/No pass reported yet/)).toBeInTheDocument();
   });
 
+  it("keeps the workers on screen, marked busy, while Refresh reads again", async () => {
+    const worker = {
+      enabled: true,
+      effective: true,
+      interval_seconds: 30,
+      last_run_at: recent,
+      last_duration_ms: 420,
+      consecutive_failures: 0,
+      last_pass_status: "ok",
+      source: "registry",
+    };
+    respond({ workers: { embedding_worker: worker } });
+    render(<WorkersPanel />);
+    await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
+    let answer: (v: unknown) => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise((r) => (answer = r))),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(screen.getByText("Memory indexing")).toBeInTheDocument();
+    expect(screen.getByTestId("workers-list")).toHaveAttribute("aria-busy", "true");
+    await act(async () => answer({ ok: true, json: async () => ({ workers: { embedding_worker: worker } }) }));
+    await waitFor(() => expect(screen.getByTestId("workers-list")).not.toHaveAttribute("aria-busy"));
+    cleanup();
+  });
+
   it("shows the empty state only when there is nothing from either source", async () => {
     respond({ workers: {}, store: { rows: 0, reporters: [] } });
     render(<WorkersPanel />);

@@ -16,7 +16,7 @@ import { relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { PageContainer } from "../../layout/PageContainer";
-import { PageHeader, TabTrigger, TipTarget } from "../../components/ui";
+import { LoadingSkeleton, PageHeader, TabTrigger, TipTarget } from "../../components/ui";
 
 // Events recorded by the control plane that don't represent a user
 // or agent action — operator observability that pollutes the user-
@@ -288,7 +288,11 @@ export function Audit() {
             </>
           )}
 
-          {rows === null && <Skeleton className="h-40 w-full" />}
+          {rows === null && (
+            <LoadingSkeleton label="Loading audit events">
+              <Skeleton className="h-40 w-full" />
+            </LoadingSkeleton>
+          )}
           {rows !== null && rows.length === 0 && (
             <EmptyState
               icon="history"
@@ -347,10 +351,12 @@ function ErasuresPanel({ org }: { org: string }) {
   }
   if (rows === null) {
     return (
-      <div className="space-y-2">
-        <Skeleton className="h-12" />
-        <Skeleton className="h-12" />
-      </div>
+      <LoadingSkeleton label="Loading erasures">
+        <div className="space-y-2">
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+        </div>
+      </LoadingSkeleton>
     );
   }
   if (rows.length === 0) {

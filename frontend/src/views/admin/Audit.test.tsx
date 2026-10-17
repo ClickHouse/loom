@@ -62,7 +62,9 @@ describe("Audit filter", () => {
       rows: [row("alice", "{}"), row("bob", "{}"), row("bob", "{}")],
     });
     render(<Audit />);
-    const status = await screen.findByRole("status");
+    // The loading skeleton is a status region too; the count's is the one left once rows land.
+    await screen.findByText("3 events");
+    const status = screen.getByRole("status");
     expect(status).toHaveTextContent("3 events");
     await userEvent.setup().type(screen.getByRole("textbox", { name: "Filter audit events" }), "alice");
     expect(screen.getByRole("status")).toBe(status);

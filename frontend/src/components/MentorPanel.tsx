@@ -16,7 +16,7 @@ import { useStore } from "../lib/state";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { humanizeError } from "../lib/format";
-import { Panel, SectionHeading } from "./ui";
+import { Loading, Panel, SectionHeading } from "./ui";
 import { useFold } from "../lib/folds";
 import { toast } from "./Toast";
 
@@ -224,11 +224,7 @@ export function MentorPanel({ identity }: { identity: Identity }) {
           </p>
         )}
 
-        {running && !result && (
-          <p role="status" className="text-sm text-text-muted">
-            Reading the agent's ledger…
-          </p>
-        )}
+        {running && !result && <Loading layout="inline" label="Loading the mentor brief" />}
 
         {error && (
           <p role="alert" className="text-sm text-danger">
@@ -237,7 +233,7 @@ export function MentorPanel({ identity }: { identity: Identity }) {
         )}
 
         {result && (
-          <div className="space-y-3" aria-busy={running}>
+          <div className="space-y-3" aria-busy={running || undefined}>
             <p className="text-sm text-text leading-relaxed" data-testid="mentor-summary">
               <span className={`font-semibold ${result.healthy ? "text-success" : "text-warn"}`}>
                 {result.healthy ? "Using the planes it has" : "Has planes it never uses"}

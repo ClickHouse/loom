@@ -59,6 +59,7 @@ import { CopyButton } from "../components/CopyButton";
 import { IconButton } from "../components/IconButton";
 import { Skeleton } from "../components/Skeleton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
+import { LoadingSkeleton } from "../components/ui/Loading";
 import { Unavailable } from "../components/ui/Unavailable";
 import { MappingEditor } from "./TrackerMapping";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
@@ -690,11 +691,13 @@ function ViewsStep({ org, database }: { org: string; database: string }) {
         </ErrorNote>
       )}
       {!cat && !error && (
-        <div className="space-y-2" role="status" aria-label="Loading the views">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+        <LoadingSkeleton label="Loading the views">
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </LoadingSkeleton>
       )}
       {cat && (
         <>
@@ -1495,10 +1498,12 @@ export function EditMappingDialog({
       }
     >
       {!inspected && !error && (
-        <div className="space-y-2" role="status" aria-label="Reading the tracker's tables">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+        <LoadingSkeleton label="Loading the tracker's tables">
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </LoadingSkeleton>
       )}
       {error && <ErrorNote>{error}</ErrorNote>}
       {inspected && (

@@ -115,7 +115,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey, o
             disabled={loadingTargets}
             placeholder={
               loadingTargets
-                ? "Loading…"
+                ? "Loading namespaces"
                 : targets.length === 0
                   ? "No other writable namespaces"
                   : "Select a namespace…"

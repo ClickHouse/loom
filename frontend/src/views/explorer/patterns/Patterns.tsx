@@ -124,9 +124,9 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
   // The board and the gaps snapshot: once per namespace and window.
   useAbortableEffect(
     async (signal, live) => {
+      // The last window's board stays up, marked busy, until this one answers.
       setBoardStatus("loading");
       setBoardError(null);
-      setFull(null);
       const anchors = facets.days ? { days: facets.days } : {};
       try {
         const [board, gaps] = await Promise.all([

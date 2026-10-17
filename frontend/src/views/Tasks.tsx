@@ -39,7 +39,7 @@ import {
   type TaskAction,
 } from "../lib/tasks";
 import { SkeletonCard } from "../components/Skeleton";
-import { Kbd, PageHeader, Tip } from "../components/ui";
+import { Kbd, LoadingSkeleton, PageHeader, Tip } from "../components/ui";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { toast, toastError } from "../components/Toast";
@@ -577,10 +577,12 @@ export function Tasks() {
       </PageHeader>
 
       {inboxes === null && (
-        <div className="space-y-3">
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
+        <LoadingSkeleton label="Loading the inboxes">
+          <div className="space-y-3">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </LoadingSkeleton>
       )}
       {inboxes && inboxError && <EmptyState icon="email" title="Couldn't load the inboxes" description={inboxError} />}
       {inboxes && !inboxError && inboxes.length === 0 && (
@@ -615,11 +617,13 @@ export function Tasks() {
             />
             <div className="min-w-0">
               {rows === null && (
-                <div className="space-y-3">
-                  <SkeletonCard />
-                  <SkeletonCard />
-                  <SkeletonCard />
-                </div>
+                <LoadingSkeleton label="Loading tasks">
+                  <div className="space-y-3">
+                    <SkeletonCard />
+                    <SkeletonCard />
+                    <SkeletonCard />
+                  </div>
+                </LoadingSkeleton>
               )}
               {rows && rowsError && <EmptyState icon="email" title="Couldn't load the tasks" description={rowsError} />}
               {rows && !rowsError && visible.length === 0 && (

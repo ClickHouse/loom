@@ -28,7 +28,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { pluginInstallLines } from "../lib/clients";
 import { PopoverTrigger } from "../components/ui/Menu";
-import { fieldError, PageHeader } from "../components/ui";
+import { fieldError, LoadingSkeleton, PageHeader } from "../components/ui";
 
 const DEFAULT_CHAR_LIMIT = 8192;
 
@@ -199,10 +199,12 @@ export function Profile() {
     return (
       <PageContainer>
         <Header onNew={() => openNew(null)} entries={[]} />
-        <div className="space-y-3 mt-6">
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-24 w-full" />
-        </div>
+        <LoadingSkeleton label="Loading the profile" className="mt-6">
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        </LoadingSkeleton>
       </PageContainer>
     );
   }

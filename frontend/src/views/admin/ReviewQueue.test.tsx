@@ -21,6 +21,7 @@ vi.mock("../../api", async (importOriginal) => {
     reviewLearning: vi.fn(),
   };
 });
+vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: async () => true }));
 import { listAllowlist, listConflicts, listLearnings, resolveConflict } from "../../api";
 
 const ORG = "dev";
@@ -150,6 +151,23 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
     expect(await screen.findByRole("button", { name: "Remove exception k/a ↔ k/b" }, WAIT)).toBeTruthy();
+  });
+  it("keeps the exceptions on screen, marked busy, while the reload after a removal reads", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAllowlist).mockResolvedValueOnce({ rows: [exception("k/a", "k/b"), exception("k/c", "k/d")] });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
+    const remove = await screen.findByRole("button", { name: "Remove exception k/a ↔ k/b" }, WAIT);
+    let answer: (v: { rows: AllowlistRow[] }) => void = () => undefined;
+    vi.mocked(listAllowlist).mockReturnValueOnce(new Promise((r) => (answer = r)));
+    await userEvent.click(remove);
+    await waitFor(() => expect(vi.mocked(listAllowlist)).toHaveBeenCalledTimes(2), WAIT);
+    expect(screen.getByText("k/c")).toBeInTheDocument();
+    expect(screen.getByTestId("allowlist")).toHaveAttribute("aria-busy", "true");
+    await act(async () => answer({ rows: [exception("k/c", "k/d")] }));
+    expect(screen.getByTestId("allowlist")).not.toHaveAttribute("aria-busy");
+    expect(screen.queryByText("k/a")).toBeNull();
   });
   it("is operable from the keyboard: tabs, status filter and the decision buttons", async () => {
     const user = userEvent.setup();

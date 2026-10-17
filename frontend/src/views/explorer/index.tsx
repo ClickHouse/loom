@@ -13,6 +13,7 @@ import {
 } from "../../api";
 import { MemoryInspector } from "../../components/MemoryInspector";
 import { toast } from "../../components/Toast";
+import { Loading } from "../../components/ui";
 import { useAbortableEffect } from "../../lib/hooks";
 import { humanizeError } from "../../lib/format";
 import { isRecord } from "../../lib/guards";
@@ -581,6 +582,8 @@ export function Explorer() {
   const entityValues = useMemo(() => new Set((taxonomy?.entities || []).map((e) => e.value)), [taxonomy]);
   const isEntity = useCallback((v: string) => entityValues.has(v.toLowerCase()), [entityValues]);
   const inPatterns = patterns && hasPatterns && binding !== null;
+  // Patterns asked for, binding not read yet: neither layout, so the walk never flashes.
+  const bindingPending = patterns && binding === null;
 
   // Nodes the server reported but did not walk through (the hub policy): the reader
   // should know a branch ends by policy, not by graph.
@@ -615,6 +618,7 @@ export function Explorer() {
         onPatterns={togglePatterns}
       />
 
+      {bindingPending && <Loading label="Loading patterns" />}
       {needsSource && <SourcePicker org={identity.org} current={identity.namespace} />}
 
       {inPatterns && binding && (
@@ -631,7 +635,7 @@ export function Explorer() {
 
       {/* Fixed footprints: 220 px facets, the canvas column, 300 px inspector;
             the single grid row is bounded by the page so each pane owns its scroll. */}
-      {!inPatterns && !needsSource && (
+      {!inPatterns && !needsSource && !bindingPending && (
         <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)_300px] lg:grid-rows-[minmax(0,1fr)] gap-4">
           <Facets
             taxonomy={taxonomy}
@@ -746,8 +750,8 @@ export function Explorer() {
               loading={loading}
               loadingLabel={
                 mode === "path" && pathQuery
-                  ? `Finding a path from ${pathQuery[0]} to ${pathQuery[1]}`
-                  : `Walking from ${seed}`
+                  ? `Loading the path from ${pathQuery[0]} to ${pathQuery[1]}`
+                  : `Loading the walk from ${seed}`
               }
               error={error}
               seedTyped={seed}

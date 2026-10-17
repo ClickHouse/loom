@@ -19,7 +19,7 @@ import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { Alert, PageHeader, Panel, Tip } from "../components/ui";
+import { Alert, LoadingSkeleton, PageHeader, Panel, Tip } from "../components/ui";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
@@ -72,6 +72,8 @@ const JOIN_ROLES: Array<{
 export function Browse() {
   const identity = useIdentity();
   const [rows, setRows] = useState<BrowseEntry[] | null>(null);
+  // A reload after a join or a create keeps the list on screen and marks it busy.
+  const [refreshing, setRefreshing] = useState(false);
   const [mine, setMine] = useState<Set<string>>(new Set());
   // Per-namespace current role so the row can offer "Request upgrade"
   // when the caller is already a member but at a role below admin.
@@ -89,13 +91,14 @@ export function Browse() {
   const setView = useStore((s) => s.setView);
 
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
-    setRows(null);
+    setRefreshing(true);
     Promise.all([
       browseNamespaces(identity.org, { limit: 200, signal }).catch(() => [] as BrowseEntry[]),
       // The shared membership read, not a second list_mine
       sharedMine(identity.org).catch(() => [] as MyNamespaceEntry[]),
     ]).then(([browseRows, mineRows]) => {
       if (!live()) return;
+      setRefreshing(false);
       // Code namespaces are surfaced in the Code section, not as joinable memory.
       setRows(browseRows.filter((r) => r.kind !== "code"));
       setRepoCount(browseRows.filter((r) => r.kind === "code").length);
@@ -111,7 +114,14 @@ export function Browse() {
     });
   };
 
-  useAbortableEffect(load, [identity.org]);
+  // Another org's list is not this one's: start from the skeleton.
+  useAbortableEffect(
+    (signal, live) => {
+      setRows(null);
+      load(signal, live);
+    },
+    [identity.org],
+  );
 
   const onJoin = async (ns: string, role: JoinRole) => {
     setJoining(ns);
@@ -255,11 +265,13 @@ export function Browse() {
       </div>
 
       {rows === null && (
-        <div className="space-y-2">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
+        <LoadingSkeleton label="Loading namespaces">
+          <div className="space-y-2">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </LoadingSkeleton>
       )}
 
       {rows !== null && filtered.length === 0 && !query && (
@@ -290,7 +302,7 @@ export function Browse() {
       )}
 
       {rows !== null && filtered.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2" data-testid="browse-list" aria-busy={refreshing || undefined}>
           {filtered.map((r) => {
             const isMember = mine.has(r.namespace);
             return (

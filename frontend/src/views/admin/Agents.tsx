@@ -10,7 +10,7 @@ import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { PageHeader } from "../../components/ui";
+import { LoadingSkeleton, PageHeader } from "../../components/ui";
 
 /**
  * Agents — which AI clients have written to Loom in the last N hours.
@@ -33,16 +33,22 @@ export function Agents() {
   const [windowHours, setWindowHours] = useState<number>(24);
   const [rows, setRows] = useState<ConnectedAgentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A refresh or a new window keeps the table on screen, marked busy, until it answers.
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
     if (!identity) return;
     setError(null);
+    setRefreshing(true);
     listConnectedAgents({ org: identity.org, window_hours: windowHours }, { signal })
       .then((r) => {
         if (live()) setRows(r.rows || []);
       })
       .catch((e) => {
         if (live()) setError(String(e?.message || e));
+      })
+      .finally(() => {
+        if (live()) setRefreshing(false);
       });
   };
   useAbortableEffect(load, [identity?.org, windowHours]);
@@ -67,18 +73,20 @@ export function Agents() {
           selected={String(windowHours)}
           onClick={(value) => setWindowHours(Number(value))}
         />
-        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()}>
+        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()} loading={refreshing}>
           Refresh
         </Button>
       </div>
 
       {error && <EmptyState icon="plug" title="Couldn't load" description={error} />}
       {!error && rows === null && (
-        <div className="space-y-2">
-          <Skeleton className="h-12" />
-          <Skeleton className="h-12" />
-          <Skeleton className="h-12" />
-        </div>
+        <LoadingSkeleton label="Loading agents">
+          <div className="space-y-2">
+            <Skeleton className="h-12" />
+            <Skeleton className="h-12" />
+            <Skeleton className="h-12" />
+          </div>
+        </LoadingSkeleton>
       )}
       {!error && rows !== null && rows.length === 0 && (
         <EmptyState
@@ -92,37 +100,39 @@ export function Agents() {
         />
       )}
       {!error && rows !== null && rows.length > 0 && (
-        <Table
-          size="sm"
-          headers={[
-            { label: "Client" },
-            { label: "Ops" },
-            { label: "Namespaces" },
-            { label: "Primary" },
-            { label: "LLM $" },
-            { label: "Last seen" },
-          ]}
-          rows={rows.map((r) => {
-            const stale = Date.now() - new Date(r.last_seen).getTime() > 24 * 3600 * 1000;
-            return {
-              id: r.agent,
-              items: [
-                { label: <span className="font-mono">{r.agent}</span> },
-                { label: <span className="tabular">{r.ops.toLocaleString()}</span> },
-                { label: <span className="tabular">{r.namespaces_touched}</span> },
-                { label: <span className="font-mono text-xs text-text-muted">{r.primary_namespace}</span> },
-                { label: <span className="tabular">{r.cost_usd > 0 ? `$${r.cost_usd.toFixed(4)}` : "—"}</span> },
-                {
-                  label: (
-                    <span className={`tabular ${stale ? "text-warn" : "text-text-muted"}`}>
-                      {relativeTime(r.last_seen)}
-                    </span>
-                  ),
-                },
-              ],
-            };
-          })}
-        />
+        <div data-testid="agents-table" aria-busy={refreshing || undefined}>
+          <Table
+            size="sm"
+            headers={[
+              { label: "Client" },
+              { label: "Ops" },
+              { label: "Namespaces" },
+              { label: "Primary" },
+              { label: "LLM $" },
+              { label: "Last seen" },
+            ]}
+            rows={rows.map((r) => {
+              const stale = Date.now() - new Date(r.last_seen).getTime() > 24 * 3600 * 1000;
+              return {
+                id: r.agent,
+                items: [
+                  { label: <span className="font-mono">{r.agent}</span> },
+                  { label: <span className="tabular">{r.ops.toLocaleString()}</span> },
+                  { label: <span className="tabular">{r.namespaces_touched}</span> },
+                  { label: <span className="font-mono text-xs text-text-muted">{r.primary_namespace}</span> },
+                  { label: <span className="tabular">{r.cost_usd > 0 ? `$${r.cost_usd.toFixed(4)}` : "—"}</span> },
+                  {
+                    label: (
+                      <span className={`tabular ${stale ? "text-warn" : "text-text-muted"}`}>
+                        {relativeTime(r.last_seen)}
+                      </span>
+                    ),
+                  },
+                ],
+              };
+            })}
+          />
+        </div>
       )}
     </PageContainer>
   );

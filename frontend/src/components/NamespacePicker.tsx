@@ -11,7 +11,7 @@ import { WILDCARD_NAMESPACE } from "../lib/namespace";
 import { isSystemKind } from "../lib/format";
 import { toast, toastError } from "./Toast";
 import { confirmAction } from "./ConfirmDialog";
-import { Tip } from "./ui";
+import { Loading, Tip } from "./ui";
 import { PopoverTrigger } from "./ui/Menu";
 // The create dialog loads when first opened.
 const CreateNamespaceDialog = lazy(() =>
@@ -218,7 +218,7 @@ function NamespacePickerMenu() {
         />
 
         <div className="flex-1 overflow-y-auto -mx-2">
-          {known === null && <div className="text-xs text-text-muted p-3 text-center">Loading…</div>}
+          {known === null && <Loading label="Loading namespaces" />}
           {known != null && filtered.length === 0 && (
             <div className="text-xs text-text-muted p-3 text-center">
               {query ? `No matches for "${query}"` : "No namespaces available."}

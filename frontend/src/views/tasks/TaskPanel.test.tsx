@@ -1,6 +1,6 @@
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { useState } from "react";
-import { cleanup, render, screen, waitFor, within } from "../../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Inbox, TaskEvent, TaskListRow, TaskRow, TaskStatus } from "../../api/tasks";
@@ -318,7 +318,11 @@ describe("TaskPanel", () => {
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("This task is not visible to you, or no longer exists.");
     expect(screen.queryByRole("heading", { name: "Objective" })).toBeNull();
-    expect(screen.queryByText("Loading…")).toBeNull();
+    // Past the loader's 300 ms delay, so a brief loader would be showing by now.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    expect(screen.queryByText("Loading the brief")).toBeNull();
     expect(screen.queryByRole("group", { name: "Actions" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();

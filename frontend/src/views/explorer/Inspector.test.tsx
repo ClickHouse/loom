@@ -79,18 +79,25 @@ function mount(props: Partial<Parameters<typeof Inspector>[0]> = {}) {
   );
 }
 
+/** The notice region: the pane's loaders are status regions too, but not polite live ones. */
+function noticeRegion() {
+  const region = screen.getAllByRole("status").find((el) => el.getAttribute("aria-live") === "polite");
+  if (!region) throw new Error("no notice region");
+  return region;
+}
+
 describe("Inspector notice region", () => {
   it("exists, empty, before any expand", () => {
     mount();
-    const region = screen.getByRole("status");
+    const region = noticeRegion();
     expect(region).toHaveAttribute("aria-live", "polite");
     expect(region).toHaveTextContent("");
   });
 
   it("reads a result that changed nothing under the selected node, and passes axe", async () => {
     const { container } = mount({ notice: expandNotice({ entity: "mergetree", added: 0, known: 3, capped: false }) });
-    expect(screen.getByRole("status")).toHaveTextContent("Expanded: 0 new within one hop · 3 already shown");
-    expect(screen.getByRole("status").textContent).not.toContain("mergetree");
+    expect(noticeRegion()).toHaveTextContent("Expanded: 0 new within one hop · 3 already shown");
+    expect(noticeRegion().textContent).not.toContain("mergetree");
     expect(screen.getByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
     expect(await axeViolations(container)).toEqual([]);
   });
@@ -98,18 +105,18 @@ describe("Inspector notice region", () => {
   it("names the node when the selection is elsewhere or empty", async () => {
     const notice = expandNotice({ entity: "keeper", added: 7, known: 0, capped: false });
     const { container, unmount } = mount({ notice });
-    expect(screen.getByRole("status")).toHaveTextContent("keeper — Expanded: +7");
+    expect(noticeRegion()).toHaveTextContent("keeper — Expanded: +7");
     expect(await axeViolations(container)).toEqual([]);
     unmount();
     const empty = mount({ notice, selection: null });
-    expect(screen.getByRole("status")).toHaveTextContent("keeper — Expanded: +7");
+    expect(noticeRegion()).toHaveTextContent("keeper — Expanded: +7");
     expect(screen.getByRole("heading", { name: "Reading the graph" })).toBeInTheDocument();
     expect(await axeViolations(empty.container)).toEqual([]);
   });
 
   it("a failed expand is read in the danger tone", () => {
     mount({ notice: { entity: "mergetree", line: "Expand failed: offline", toast: "x", tone: "error" } });
-    const region = screen.getByRole("status");
+    const region = noticeRegion();
     expect(region).toHaveTextContent("Expand failed: offline");
     expect(region.className).toContain("text-danger");
   });

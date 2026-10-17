@@ -20,7 +20,7 @@ import {
 import { useIdentity } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
-import { PageHeader, TabTrigger } from "../../components/ui";
+import { LoadingSkeleton, PageHeader, TabTrigger } from "../../components/ui";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -145,10 +145,15 @@ function ConflictsPanel() {
   // Bumped after a decision empties the queue: the refetch runs through the
   // namespace-keyed effect, so a reply that lands after a namespace switch is dropped.
   const [reload, setReload] = useState(0);
+  // The reload keeps what is on screen until it answers; another namespace starts over.
+  const rowsFor = useRef("");
 
   useAbortableEffect(
     (signal, live) => {
-      setRows(null);
+      if (rowsFor.current !== `${identity.org}/${identity.namespace}`) {
+        rowsFor.current = `${identity.org}/${identity.namespace}`;
+        setRows(null);
+      }
       listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: 50, signal })
         .then((r) => {
           if (live()) {
@@ -164,7 +169,12 @@ function ConflictsPanel() {
     [identity.org, identity.namespace, reload],
   );
 
-  if (rows === null) return <Skeleton className="h-48 w-full" />;
+  if (rows === null)
+    return (
+      <LoadingSkeleton label="Loading conflicts">
+        <Skeleton className="h-48 w-full" />
+      </LoadingSkeleton>
+    );
   if (rows.length === 0) {
     return (
       <EmptyState
@@ -267,21 +277,34 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
   const [reason, setReason] = useState<Record<string, string>>({});
   const seeded = useRef(initialPending != null);
   const [reload, setReload] = useState(0);
+  // A reload after a decision keeps the list on screen, marked busy; another namespace or
+  // status is another list, so it starts from the skeleton.
+  const [refreshing, setRefreshing] = useState(false);
+  const rowsFor = useRef("");
 
   useAbortableEffect(
     (signal, live) => {
+      const key = `${identity.org}/${identity.namespace}/${status}`;
       // The first "pending" view was already fetched by the page's probe.
       if (seeded.current && status === "pending") {
         seeded.current = false;
+        rowsFor.current = key;
         return;
       }
-      setRows(null);
+      if (rowsFor.current !== key) {
+        rowsFor.current = key;
+        setRows(null);
+      }
+      setRefreshing(true);
       listLearnings({ org: identity.org, namespace: identity.namespace }, status, 50, { signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
         .catch(() => {
           if (live()) setRows([]);
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
     [identity.org, identity.namespace, status, reload],
@@ -309,7 +332,11 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
           if (next) setStatus(next);
         }}
       />
-      {rows === null && <Skeleton className="h-40 w-full" />}
+      {rows === null && (
+        <LoadingSkeleton label="Loading learnings">
+          <Skeleton className="h-40 w-full" />
+        </LoadingSkeleton>
+      )}
       {rows !== null && rows.length === 0 && (
         <EmptyState
           icon="sparkle"
@@ -318,7 +345,7 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
         />
       )}
       {rows !== null && rows.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2" aria-busy={refreshing || undefined}>
           {rows.map((r) => (
             <Panel key={r.candidate_id}>
               <div className="flex items-center justify-between gap-3 mb-2">
@@ -382,20 +409,33 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
   const [rows, setRows] = useState<AllowlistRow[] | null>(initial ?? null);
   const seeded = useRef(initial != null);
   const [reload, setReload] = useState(0);
+  // A reload after a removal keeps the list on screen, marked busy; another namespace
+  // starts from the skeleton.
+  const [refreshing, setRefreshing] = useState(false);
+  const rowsFor = useRef("");
 
   useAbortableEffect(
     (signal, live) => {
+      const key = `${identity.org}/${identity.namespace}`;
       if (seeded.current) {
         seeded.current = false;
+        rowsFor.current = key;
         return;
       }
-      setRows(null);
+      if (rowsFor.current !== key) {
+        rowsFor.current = key;
+        setRows(null);
+      }
+      setRefreshing(true);
       listAllowlist({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
         .catch(() => {
           if (live()) setRows([]);
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
         });
     },
     [identity.org, identity.namespace, reload],
@@ -421,7 +461,12 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
     }
   };
 
-  if (rows === null) return <Skeleton className="h-40 w-full" />;
+  if (rows === null)
+    return (
+      <LoadingSkeleton label="Loading exceptions">
+        <Skeleton className="h-40 w-full" />
+      </LoadingSkeleton>
+    );
   if (rows.length === 0) {
     return (
       <EmptyState
@@ -432,7 +477,7 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
     );
   }
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" data-testid="allowlist" aria-busy={refreshing || undefined}>
       {rows.map((r) => (
         <Panel key={`${r.memory_key_a}-${r.memory_key_b}`} padding="sm" bodyClassName="flex items-start gap-3">
           <div className="flex-1 min-w-0">

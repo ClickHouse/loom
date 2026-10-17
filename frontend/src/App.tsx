@@ -3,6 +3,7 @@ import { flushView, installVitals, startView } from "./lib/vitals";
 import { ReloadBar } from "./components/ReloadBar";
 import { sharedMine, sharedHealth } from "./lib/sharedReads";
 import { SkeletonCard } from "./components/Skeleton";
+import { Loading, LoadingSkeleton } from "./components/ui";
 import {
   whoami,
   getSavedNamespace,
@@ -411,7 +412,7 @@ export default function App() {
     return (
       <main className="min-h-screen grid place-items-center text-sm text-text-muted" aria-busy="true">
         <h1 className="sr-only">Loom</h1>
-        Loading…
+        <Loading label="Loading Loom" />
       </main>
     );
   }
@@ -439,11 +440,12 @@ export default function App() {
                 three panes) something to resolve against;
                 taller views overflow it and scroll <main> as before. */}
             <div key={view} className="animate-view-in h-full">
+              {/* Delayed, so a chunk that arrives quickly never flashes a loader. */}
               <Suspense
                 fallback={
-                  <div className="p-6">
+                  <LoadingSkeleton label="Loading page" className="p-6">
                     <SkeletonCard />
-                  </div>
+                  </LoadingSkeleton>
                 }
               >
                 <ViewSwitch view={view} />
