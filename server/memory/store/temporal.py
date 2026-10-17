@@ -290,8 +290,9 @@ async def head(
     sequence holding two payloads or 0, the highest sequence that landed). An
     allocation runs ahead of its commit while the publisher inserts it: a plan
     snapshots what landed, so the commit it could not read moves the head past it.
-    An allocation whose commit was erased, expired or never landed still counts: neither its sequence nor its recording
-    time is ever handed out again, so both keep rising together. Every write reads
+    An allocation whose commit was erased, expired or never landed still counts:
+    neither its sequence nor its recording time is ever handed out again, so both
+    keep rising together. Every write reads
     it twice, so it reads the newest commit in key order and the break window above
     it, never the whole journal. With a break at the top, either payload's time is
     returned: the publisher repairs before it stamps from it."""
