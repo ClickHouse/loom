@@ -8770,6 +8770,7 @@
         "id",
         "resume",
         "skip_external",
+        "completed_since",
         "orphan_graph",
         "erase",
         "batch",
@@ -8855,6 +8856,21 @@
        "required": false,
        "help": "With --resume, on namespace_list sagas: loom tables only, skip the external backends whose step kept failing (the ledger's scope object is rewritten)",
        "metavar": null
+      },
+      {
+       "option_strings": [
+        "--completed-since"
+       ],
+       "dest": "completed_since",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": "server.cli.hygiene:_utc_instant",
+       "required": false,
+       "help": "Also re-verify completed sagas whose census ran at or after this time (UTC unless it names an offset): after a rollout, the erasures the previous build ran; with --resume, one with residue re-runs the steps that own it",
+       "metavar": "ISO_TIMESTAMP"
       },
       {
        "option_strings": [

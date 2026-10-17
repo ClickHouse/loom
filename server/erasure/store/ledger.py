@@ -3,6 +3,7 @@ and the re-verify CLI read, and the checkpoint every step appends."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, cast
 
 from server.core.repo_base import _CHClient, _default_client
@@ -100,6 +101,35 @@ async def list_failed_requests(
     ch = ch or _default_client()
     where = "status = 'failed'"
     params: dict[str, Any] = {}
+    if org:
+        where += " AND org = {org:String}"
+        params["org"] = org
+    rows = await ch.query_all(
+        f"""
+        SELECT id, org, scope_type, scope_value, requester, urgency,
+               attempts, steps_completed, requested_at, failure_reason,
+               residue_count, residue, verified_at
+        FROM loom.erasure_requests FINAL
+        WHERE {where}
+        ORDER BY requested_at
+        """,
+        params=params,
+    )
+    return cast("list[LedgerRow]", rows)
+
+
+async def list_completed_requests(
+    *,
+    since: datetime,
+    org: str | None = None,
+    ch: _CHClient | None = None,
+) -> list[LedgerRow]:
+    """Sagas the ledger holds as `completed` whose census ran at or after `since`
+    (naive UTC). After a rollout, `loom erasure-re-verify --completed-since` counts
+    them again: a build before N's tables completed without erasing them."""
+    ch = ch or _default_client()
+    where = "status = 'completed' AND verified_at >= {since:DateTime}"
+    params: dict[str, Any] = {"since": since}
     if org:
         where += " AND org = {org:String}"
         params["org"] = org

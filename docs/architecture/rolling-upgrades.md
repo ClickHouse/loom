@@ -133,6 +133,12 @@ schema. These rules keep that safe. The operator procedure is in
     ligatures `ﬁ` and `ĳ`, full-width letters, superscripts, fractions, `ª`, `º`, `ſ`).
     For the other scripts the two builds write separate nodes until N-1 stops serving,
     and a node N-1 wrote keeps its fragment name until a write states that entity again.
+14. **An erasure N-1 runs misses the tables N adds.** N-1's saga and its census do not
+    know `entity_triple_rows` and `entity_edge_rows`, so an erasure it runs during the
+    rollout leaves their rows in its scope and still records the saga `completed`. Once
+    N-1 stops serving, re-verify the erasures completed since the rollout began:
+    `loom erasure-re-verify --completed-since <rollout start> --resume` counts each again
+    with N's census and re-runs the steps that own any residue.
 
 ## What checks them
 

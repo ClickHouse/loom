@@ -127,8 +127,12 @@ census of its scope, read-only (`--id` for one saga). `--resume` re-runs failed 
 from their checkpoint, past the recovery worker's attempts budget; a step that owns a
 table the last census found rows in runs again even if the checkpoint lists it as done.
 `--skip-external` (with `--resume`, `namespace_list` sagas only) finishes the Loom tables
-when an external backend keeps failing. If a saga cannot be recovered, issue the same
-`erasure.request` again; the operation is idempotent.
+when an external backend keeps failing. `--completed-since <ISO timestamp>` also takes
+the completed sagas whose census ran at or after that time (UTC unless the timestamp
+names an offset): after a rollout, the erasures the previous build ran. A completed saga
+with residue re-runs, with `--resume`, only the steps that own it; one with none is left
+as it is. If a saga cannot be recovered, issue the same `erasure.request` again; the
+operation is idempotent.
 
 ### ClickStack erasure index
 

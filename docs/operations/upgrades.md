@@ -86,6 +86,10 @@ checkout.
 6. Update client plugins when the release mentions a plugin change: hooks run on the
    client machine and change only through the client's plugin manager
    (`claude plugin update loom@loom` for Claude Code), never through a server deploy.
+7. Once the last old replica has stopped, re-verify the erasures completed during the
+   rollout: `loom erasure-re-verify --completed-since <when step 3 began> --resume`. An
+   old replica's saga does not know the tables the new build added
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 14).
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in

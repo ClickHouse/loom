@@ -708,6 +708,7 @@ async def test_re_verify_run_lists_censuses_and_resumes_from_the_checkpoint(monk
         batch=200,
         show=20,
         requester="t",
+        completed_since=None,
     )
     assert await hygiene._re_verify_run(object(), args) == 1  # residue found, nothing resumed
     assert calls == [("list", "o"), ("census", "namespace", ["lme-1"], True)]
@@ -760,6 +761,7 @@ async def test_re_verify_orphan_graph_lists_and_erases_in_loom_only_purge_sagas(
         batch=2,
         show=20,
         requester="t",
+        completed_since=None,
     )
     assert await hygiene._re_verify_run(object(), args) == 1  # dry run with orphans → non-zero
     assert calls == []
@@ -781,6 +783,107 @@ async def test_re_verify_orphan_graph_lists_and_erases_in_loom_only_purge_sagas(
     ]
     args.org = ""
     assert await hygiene._re_verify_run(object(), args) == 2
+
+
+async def test_completed_since_also_re_verifies_completed_sagas(monkeypatch) -> None:
+    # A saga an N-1 replica completed during a rollout never erased the tables N added
+    # (entity_triple_rows, entity_edge_rows): N's census finds them and resumes it.
+    from datetime import datetime
+
+    from server.cli import hygiene
+
+    since = datetime(2026, 10, 17, 8, 0)
+    done = ["memory.tombstone", "graph_links.delete", "verify.residue"]
+    left = _ledger_row(id="c1", steps_completed=done, failure_reason="")
+    clean = _ledger_row(
+        id="c2",
+        scope_value='{"namespaces": ["lme-2"], "purge": true, "external": true}',
+        steps_completed=done,
+        failure_reason="",
+    )
+    asked: list[Any] = []
+    resumed: list[Any] = []
+
+    async def fake_failed(*, org=None, ch=None):
+        return []
+
+    async def fake_completed(*, since, org=None, ch=None):
+        asked.append((since, org))
+        return [left, clean]
+
+    async def fake_census(org, st, sv, *, ch=None):
+        return {"loom.entity_triple_rows": 2} if sv == ["lme-1"] and not resumed else {}
+
+    async def fake_counts(*, ch=None):
+        return {"orphan_entity_vectors": 0, "orphan_graph_namespaces": 0}
+
+    async def fake_run_saga(
+        *, input, row, erasure_id, requested_at, previously_completed, residue=None
+    ):
+        resumed.append((erasure_id, sorted(set(done) - previously_completed)))
+        return SimpleNamespace(
+            status="completed", steps=[], residue_count=0, residue={}, failure_reason=""
+        )
+
+    monkeypatch.setattr(erasure_ledger, "list_failed_requests", fake_failed)
+    monkeypatch.setattr(erasure_ledger, "list_completed_requests", fake_completed)
+    monkeypatch.setattr(erasure_census, "residue_census", fake_census)
+    monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
+    monkeypatch.setattr(h, "run_saga", fake_run_saga)
+    args = argparse.Namespace(
+        org="o",
+        id=None,
+        resume=False,
+        skip_external=False,
+        orphan_graph=False,
+        erase=False,
+        batch=200,
+        show=20,
+        requester="t",
+        completed_since=since,
+    )
+    assert await hygiene._re_verify_run(object(), args) == 1  # residue found, read-only
+    assert asked == [(since, "o")] and resumed == []
+
+    args.resume = True
+    assert await hygiene._re_verify_run(object(), args) == 0
+    # Only the saga with residue runs again, and only the step that owns it.
+    assert resumed == [("c1", ["graph_links.delete"])]
+
+
+async def test_list_completed_requests_takes_sagas_verified_since() -> None:
+    from datetime import datetime
+
+    seen: list[Any] = []
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            seen.append((" ".join(sql.split()), params))
+            return []
+
+    since = datetime(2026, 10, 17, 8, 0)
+    await erasure_ledger.list_completed_requests(since=since, org="o", ch=_CH())
+    sql, params = seen[0]
+    assert "status = 'completed' AND verified_at >= {since:DateTime}" in sql
+    assert "org = {org:String}" in sql and params == {"since": since, "org": "o"}
+
+
+def test_completed_since_reads_an_iso_instant_as_utc(monkeypatch) -> None:
+    from datetime import datetime
+
+    import server.cli as cli
+    from server.cli import hygiene
+
+    seen: list[argparse.Namespace] = []
+
+    def fake_cmd(args: argparse.Namespace) -> int:
+        seen.append(args)
+        return 0
+
+    monkeypatch.setattr(hygiene, "_cmd_erasure_re_verify", fake_cmd)
+    assert cli.main(["erasure-re-verify", "--completed-since", "2026-10-17T10:00+02:00"]) == 0
+    assert cli.main(["erasure-re-verify", "--completed-since", "2026-10-17 08:00"]) == 0
+    assert [a.completed_since for a in seen] == [datetime(2026, 10, 17, 8, 0)] * 2
 
 
 def test_the_cli_registers_the_command(monkeypatch) -> None:
