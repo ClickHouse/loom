@@ -425,6 +425,12 @@ live, so its `relations` are never graphed. The follow's live end, the check for
 row still stating a fact, a revision, an Undo and a replay all read it; a point write
 checks the same rule on the row it just wrote.
 
+Edges fence on a weaker rule (`HOLDS_VALUE_SQL`) that counts a proposal, so a proposal's
+co-occurrence edges are written when it is proposed. Its triples are not, and accepting
+it (`memory.proposal_decide`) writes none: they are graphed once a later write states
+them. A rejection, by `memory.proposal_decide` or `memory.reject` (of any row), only
+flips the status: it ends none of the row's edges or triples.
+
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and
 an Undo of a retirement opens again those the restored row's current value holds by the
