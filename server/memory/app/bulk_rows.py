@@ -110,7 +110,8 @@ class _BulkWriteState:
     # (retired id, the row it retired behind) per same-key retirement the judge decided
     # (`key_supersession.judge_same_key_rows`), for the triple plane's follow step.
     judged_follow_pairs: list[tuple[str, str]] = field(default_factory=list)
-    # Keys whose row FINAL keeps landed superseded by the judge: no version of them links.
+    # Keys whose row FINAL keeps landed superseded by the judge: none of their results
+    # projects (results carry no status).
     judged_retired_keys: set[str] = field(default_factory=set)
     memory_rows: list[dict[str, Any]] = field(default_factory=list)
     embedding_rows: list[dict[str, Any]] = field(default_factory=list)
@@ -230,7 +231,9 @@ def _bulk_skip_gate(
     # key. Reinforce the keeper (an `evidence` event the usage fold turns into
     # reinforcement_count), write nothing, and tell the caller which key holds the fact.
     _dup = identity_dupes.get(entry_sha)
-    if _dup is not None:
+    # The keeper being this key's own row is the unchanged check's to decide, against
+    # what the batch has written to it since.
+    if _dup is not None and _dup[1] != state.existing_ids.get(entry.memory_key):
         state.identity_duplicates[entry.memory_key] = _dup[0]
         if _dup[1] not in state.identity_dup_ids:
             state.identity_dup_ids.append(_dup[1])
@@ -286,6 +289,13 @@ def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: s
             key_axis_text(entry.memory_key),
         )
     )
+
+
+def _keep_row(state: _BulkWriteState, row: dict[str, Any]) -> None:
+    """Add a built row; its value is now the key's, so a later entry of the batch
+    restating it is unchanged and one returning to the stored value is not."""
+    state.memory_rows.append(row)
+    state.existing_sha[str(row["memory_key"])] = str(row["content_sha256"])
 
 
 def _row_id(state: _BulkWriteState, memory_key: str) -> str:
@@ -467,7 +477,7 @@ async def _bulk_build_rows(
             "updated_at": now_utc.replace(tzinfo=None),
         }
         memory_row = _full_version_row(state, memory_row, now_utc.replace(tzinfo=None))
-        state.memory_rows.append(memory_row)
+        _keep_row(state, memory_row)
         # created vs updated, decided per row rather than labelling the whole batch
         # "created". Only byte-identical restatements are diverted by the skip-gate above; an
         # entry whose key already exists with DIFFERENT content is inserted as a new version,

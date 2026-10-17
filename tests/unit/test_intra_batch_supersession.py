@@ -148,13 +148,14 @@ def test_a_key_written_twice_is_never_superseded_by_itself() -> None:
     assert stamp_intra_batch_supersessions(rows, embs, pairs, datetime(2026, 1, 1)) == []
     assert [r["status"] for r in rows + embs] == ["active"] * 4
 
+    # k1 kept at its second version: the stamp lands on that version's vector only.
     rows = [
-        row("k1", 1, "The capital of Soviet Union is Moscow."),
-        row("k1", 2, "Alice likes tea."),
+        row("k1", 1, "Alice likes tea."),
+        row("k1", 2, "The capital of Soviet Union is Moscow."),
         row("k2", 3, "The capital of Soviet Union is Russellville."),
     ]
     embs = [
         {"memory_key": r["memory_key"], "version": r["version"], "status": "active"} for r in rows
     ]
-    stamp_intra_batch_supersessions(rows, embs, [(0, 2)], datetime(2026, 1, 1))
-    assert [e["status"] for e in embs] == ["superseded", "active", "active"]
+    stamp_intra_batch_supersessions(rows, embs, [(1, 2)], datetime(2026, 1, 1))
+    assert [e["status"] for e in embs] == ["active", "superseded", "active"]

@@ -3724,6 +3724,36 @@ async def test_a_key_revised_inside_one_bulk_keeps_its_live_value_searchable(
     assert selfs[0]["n"] == 0
 
 
+async def test_a_bulk_that_returns_a_key_to_its_stored_value_ends_on_it(ch, org) -> None:
+    # Berlin is stored; one bulk writes Paris then Berlin. The last word is Berlin, as
+    # three memory.set calls in that order would leave it, not Paris.
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import after_write
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    def _bulk(*values: str) -> Any:
+        return handle_memory_bulk_set(
+            MemoryBulkSetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id="s1",
+                entries=[{"memory_key": "k", "value": v} for v in values],
+            )
+        )
+
+    await _bulk("User lives in Berlin.")
+    await _bulk("User lives in Paris.", "User lives in Berlin.")
+    await after_write.drain()
+    rows = await ch.query_all(
+        "SELECT value FROM loom.memory FINAL WHERE org = {org:String} AND memory_key = 'k'"
+        " AND tombstoned_at IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert [json.loads(r["value"]) for r in rows] == ["User lives in Berlin."]
+
+
 async def test_a_value_its_own_bulk_replaced_retires_no_other_row(ch, org, newest_wins) -> None:
     # k2's Russellville would retire k1's Moscow, but the same bulk then writes k2 again:
     # k2 no longer says anything about the capital, so Moscow stays live and searchable.

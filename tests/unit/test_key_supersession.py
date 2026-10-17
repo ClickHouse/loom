@@ -520,8 +520,8 @@ async def test_bulk_retires_judged_peers_after_the_insert_and_links_only_live_ro
         _row("n1", _d(30)),
         # Another key's row the intra-batch pass retired.
         {**_row("n2", _d(20)), "memory_key": "user_age", "status": "superseded"},
-        # The lower version of a key whose kept row the judge retired.
-        {**_row("n3", _d(20)), "memory_key": "user_hometown"},
+        # A key whose kept row the judge retired (stamp_new_row_retirements marks it).
+        {**_row("n3", _d(20)), "memory_key": "user_hometown", "status": "superseded"},
     ]
     _index(state)
     state.judged_retired_keys = {"user_hometown"}

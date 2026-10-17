@@ -295,7 +295,8 @@ def stamp_intra_batch_supersessions(
     inserted: the earlier row of each pair takes status `superseded`, `superseded_by` =
     the later row's id and `invalid_at` = the later row's `valid_at` (else `now`),
     mirrored on its own version's embedding row. A pair under one key is two versions
-    of one row, which FINAL already settles: it is skipped. Every memory row ends with
+    of one row, which FINAL already settles: it is skipped (a guard; the bulk passes only
+    the versions it keeps). Every memory row ends with
     the same key set — `ch.insert` derives the column list from row 0, and a key present
     on some rows only fails the whole batch. Returns the (older id, newer id) pairs
     stamped. Pure."""

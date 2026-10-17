@@ -530,7 +530,6 @@ async def _bulk_post_insert_links(
         r
         for r in kept_versions(state.memory_rows).values()
         if str(r.get("status") or "") != "superseded"
-        and str(r.get("memory_key") or "") not in state.judged_retired_keys
     ]
     if _live_rows and value_updates_enabled(input.detect_updates):
         try:
