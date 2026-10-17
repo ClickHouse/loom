@@ -303,7 +303,9 @@ async def _flag(org: str, row: Any, peer: Any) -> bool:
         and str(peer.memory_id) in row.conflict_with
         and str(row.memory_id) in peer.conflict_with
     ):
-        return False  # already on the review queue together
+        # Already on the review queue together; the peer's side is judged all the same.
+        await queue.stamp_judged(_queue_key(peer))
+        return False
     landed = await mark_peers_conflicted(
         org=org,
         new_memory_id=str(row.memory_id),

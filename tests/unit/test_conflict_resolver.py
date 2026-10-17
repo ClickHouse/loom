@@ -591,8 +591,11 @@ async def test_a_flag_already_raised_is_not_written_again(monkeypatch) -> None:
     monkeypatch.setattr(conflicts, "mark_peers_conflicted", mark)
     monkeypatch.setattr(queue, "stamp_judged", stamp)
     a = _mem("m1", status="conflicted", conflict_with=["m2"])
-    b = _mem("m2", status="conflicted", conflict_with=["m1"])
+    b = _mem("m2", org="o", status="conflicted", conflict_with=["m1"], session_id="s3")
     assert await resolver._flag("o", a, b) is False and called == []
+    # Confirmed, not written: the peer's side is judged all the same.
+    assert [q["session_id"] for q in stamped] == ["s3"]
+    stamped.clear()
     peer = _mem("m2", org="o", session_id="s2", content_sha256="sha-m2", version=7)
     assert await resolver._flag("o", _mem("m1"), peer) is True
     assert called[0]["expected_sha256"] == "sha-new", "only the judged write is flagged"
