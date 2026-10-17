@@ -74,40 +74,6 @@ def value_tokens(text: str) -> set[str]:
     return out
 
 
-_SPELLED_NUM = (
-    "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|"
-    "thirty|forty|fifty|hundred|half|couple|dozen|a few|several"
-)
-_MEASURE_UNIT = (
-    "seconds?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|times|"
-    "miles?|km|kilomet(?:er|re)s?|pages?|dollars?|bucks|pounds?|kg|percent"
-)
-_SPELLED_MEASURE_RE = re.compile(
-    rf"\b(?:{_SPELLED_NUM})(?:\s+and\s+a\s+half)?\s+(?:{_MEASURE_UNIT})\b", re.IGNORECASE
-)
-_MONTH_RE = re.compile(
-    r"\b(?:january|february|march|april|june|july|august|september|october|november|"
-    r"december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b\.?",
-    re.IGNORECASE,
-)
-
-
-def measured_tokens(text: str) -> set[str]:
-    """The measured content of a statement: its value tokens ("27:12", "$40",
-    "5k", "2023-05-15"), its spelled measures ("three weeks", "two and a half
-    weeks", "a couple of days") and its month names. A row that carries one
-    the row replacing it lacks is not refined by it; it is truncated ("finished
-    The Nightingale, which took them three weeks" must not be superseded by
-    "enjoyed the emotional depth of The Nightingale")."""
-    t = text or ""
-    out = set(value_tokens(t))
-    for m in _SPELLED_MEASURE_RE.finditer(t):
-        words = m.group(0).lower().split()
-        out.add(f"{words[0]}_{words[-1]}")
-    out.update(m.group(0).lower().rstrip(".")[:3] for m in _MONTH_RE.finditer(t))
-    return out
-
-
 def content_tokens(text: str) -> set[str]:
     """Lowercase alphabetic tokens minus stopwords and minus value tokens —
     the words that say WHAT is being measured."""
