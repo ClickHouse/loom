@@ -729,6 +729,17 @@ async def _record_evidence(input: MemoryBulkSetInput, memory_ids: list[str], wha
             log.warning("bulk_set: %s failed (non-fatal): %s", what, e)
 
 
+async def _bulk_settle_then_audit(
+    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
+) -> None:
+    """Settle the verdicts, then write the audit row: a conflict whose mark did not land
+    is clear in the response, and the audit counts what the response says."""
+    try:
+        await _bulk_settle_verdicts(ch, input, state, plan)
+    finally:
+        await _bulk_audit(input, state, plan)
+
+
 async def _bulk_audit(
     input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
 ) -> None:
@@ -836,15 +847,14 @@ async def _bulk_run_projections(
 
         return _run
 
-    # The settlement of verdicts (peer conflict marks, reinforcement events), the audit row
-    # and the four graph projections all read this batch's result and write different tables;
-    # none reads another's output, so they are awaited together, each
+    # The settlement of verdicts (peer conflict marks, reinforcement events) then the audit
+    # row, and the four graph projections, all read this batch's result and write different
+    # tables; none reads another's output, so they are awaited together, each
     # with its own fail-open handler. Still awaited before the response: rrf search routes
     # across the entity/graph/temporal planes and may query immediately after ingest, so
     # backgrounding would starve those planes.
     _legs = [
-        lambda: _bulk_settle_verdicts(ch, input, state, plan),
-        lambda: _bulk_audit(input, state, plan),
+        lambda: _bulk_settle_then_audit(ch, input, state, plan),
         _projection(
             "entity_vectors",
             lambda: write_entity_vectors(

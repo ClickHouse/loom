@@ -335,3 +335,45 @@ def test_a_refused_entry_names_its_pinned_blocker() -> None:
     state.existing_pinned = {"k": True}
     assert _bulk_skip_gate(NS(memory_key="k"), "s1", state, {})
     assert state.results[0].pinned_blocker_id == "K1"
+
+
+async def test_the_bulk_audit_counts_a_conflict_only_once_its_mark_landed(monkeypatch) -> None:
+    # The peer was retired before the mark: the result says clear, so must the audit.
+    import asyncio
+
+    from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
+    from server.memory.app import bulk_set, conflicts
+    from server.memory.app.bulk_rows import _BulkWriteState
+    from server.memory.app.bulk_verdicts import BulkVerdictPlan
+
+    async def nothing(*a, **k) -> None:
+        return None
+
+    for name in ("write_entity_vectors", "write_entity_edges", "write_entity_triples"):
+        monkeypatch.setattr(bulk_set, name, nothing)
+    monkeypatch.setattr(bulk_set, "_write_derived_facts", nothing)
+
+    async def mark(**k) -> str:
+        await asyncio.sleep(0.01)  # a round trip: the other legs run meanwhile
+        return "clear"
+
+    audited: list[list[str]] = []
+
+    async def audit(input, rows, plan) -> None:
+        audited.append(list(plan.conflicted))
+
+    monkeypatch.setattr(conflicts, "mark_peers_conflicted", mark)
+    monkeypatch.setattr(bulk_set, "_audit_bulk_write", audit)
+    write = MemoryBulkSetInput(
+        org="o", namespace="n", agent="a", entries=[{"memory_key": "k", "value": "v"}]
+    )
+    state = _BulkWriteState(existing_ids={"k": "id1"})
+    state.results = [
+        _BulkSetResult(memory_key="k", version=0, memory_id="id1", conflict_verdict="conflict")
+    ]
+    state.key_of = {"id1": "k"}
+    plan = BulkVerdictPlan()
+    plan.conflicted, plan.conflict_marks = ["k"], [("id1", ["p"])]
+    await bulk_set._bulk_run_projections(None, write, state, plan, None, {}, {})
+    assert state.results[0].conflict_verdict == "clear"
+    assert audited == [[]]
