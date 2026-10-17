@@ -292,8 +292,9 @@ async def test_link_refuses_while_the_old_address_asks_to_join(ch: Any) -> None:
 async def test_a_link_rebinds_the_addresses_at_once(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Grants are written under the subject an address resolves to: the old
-    # address must stop reaching the person and the new one start, unwaited.
+    # Grants are written under the subject an address resolves to, read from
+    # the directory: the old address must stop reaching the person and the new
+    # one start, unwaited. This process's alias cache is dropped too.
     from server.auth import aliases
     from server.identity.app import account_admin
     from server.settings import settings

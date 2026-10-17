@@ -4,6 +4,7 @@ row, and a new human grant is written under the login handle."""
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -61,6 +62,42 @@ async def test_canonical_subject_is_the_login_handle() -> None:
     assert (
         await al.canonical_subject("acme", "orphan@example.com", ch=_ch([])) == "orphan@example.com"
     )
+
+
+@pytest.mark.asyncio
+async def test_canonical_subject_reads_past_a_stale_cache() -> None:
+    # Another process linked or released the account: this one's cache still
+    # holds the old binding, which a grant must not be written under.
+    al._CACHE[("acme", "alice@acme.io")] = (time.monotonic(), ("alice@acme.io", "alice"))
+    al._CACHE[("acme", "new@acme.io")] = (time.monotonic(), ("new@acme.io",))
+    assert await al.canonical_subject("acme", "alice@acme.io", ch=_ch([])) == "alice@acme.io"
+    linked = _ch([{"owner_email": "alice", "contact_email": "new@acme.io"}])
+    assert await al.canonical_subject("acme", "new@acme.io", ch=linked) == "alice"
+
+
+@pytest.mark.asyncio
+async def test_a_grant_after_a_release_lands_under_the_address(monkeypatch) -> None:
+    from server.identity.api.models_grants import GrantsCreateInput
+    from server.identity.app import grants as grants_mod
+    from server.identity.store import grants as grants_repo
+
+    rows: list[dict] = []
+
+    async def _none(*_a, **_k) -> None:
+        return None
+
+    async def _insert(row: dict, **_k) -> None:
+        rows.append(row)
+
+    monkeypatch.setattr(grants_repo, "find_active_grant", _none)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    monkeypatch.setattr(grants_mod, "_enforce_code_ceiling", _none)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _ch([]))  # released: nothing tied
+    al._CACHE[("acme", "alice@acme.io")] = (time.monotonic(), ("alice@acme.io", "alice"))
+    await grants_mod.handle_grants_create(
+        GrantsCreateInput(org="acme", namespace="ns", subject="alice@acme.io", role="writer")
+    )
+    assert [r["subject"] for r in rows] == ["alice@acme.io"]
 
 
 @pytest.mark.asyncio
