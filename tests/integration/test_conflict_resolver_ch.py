@@ -1032,3 +1032,23 @@ async def test_an_answer_cut_at_the_cap_is_asked_again_then_left_owed(
         assert (status, mark, out["errored"]) == ("superseded", 2, 0)
     else:
         assert (status, mark, out["errored"]) == ("active", 1, 1)
+
+
+async def test_the_by_id_reads_use_the_memory_id_skip_index(ch, wired) -> None:
+    """Each statement that reads rows by id compares memory_id itself, so the bloom
+    filter prunes granules (a cast of the column would not)."""
+    from server.memory.store import conflict_resolver as queue
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 78)
+    ids = [r["id"] for r in (await _rows(ch, org)).values()]
+    base = {"org": org, "ns": NS, "ids": ids, "flagged": ids}
+    statements = {
+        # The anchored read's id lookup, on its own: EXPLAIN does not show a set's plan.
+        "anchored": (queue._FLAGGED_IDENTITIES_SQL, base),
+        "protected": (queue._PROTECTED_SQL, base),
+        "asserted": (queue._ASSERTED_SQL, base | {"rows": [(i, "") for i in ids]}),
+    }
+    for name, (sql, params) in statements.items():
+        plan = await ch.query_all("EXPLAIN indexes = 1 " + sql, params=params)
+        assert "memory_id_skip" in " ".join(str(v) for r in plan for v in r.values()), name

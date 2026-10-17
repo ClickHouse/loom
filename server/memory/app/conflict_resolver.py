@@ -533,7 +533,7 @@ async def _still_unprotected(
     fresh = await _head(org, str(row.memory_id))
     if not _holds(fresh, str(row.namespace), str(row.content_sha256 or "")):
         return None, []
-    high = await queue.protected_ids(org, [str(p["memory_id"]) for p in peers])
+    high = await queue.protected_ids(org, str(row.namespace), [str(p["memory_id"]) for p in peers])
     return fresh, [p for p in peers if str(p["memory_id"]) not in high]
 
 

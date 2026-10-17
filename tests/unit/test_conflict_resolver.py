@@ -346,7 +346,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     monkeypatch.setattr(queue, "stamp_judged", stamp)
     e.protected = set()
 
-    async def protected(org: str, ids: list[str], **kw: Any) -> set[str]:
+    async def protected(org: str, namespace: str, ids: list[str], **kw: Any) -> set[str]:
         return e.protected & set(ids)
 
     monkeypatch.setattr(queue, "asserted_versions", asserted)

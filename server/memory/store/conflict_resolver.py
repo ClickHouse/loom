@@ -211,7 +211,12 @@ _PEER_ROWS_SQL = """
 # distance: they join the cluster whatever the vector cutoff or the floor, since the
 # row may be owed for them alone. Only those of the row's subject: a cosine flag can
 # name another user's row, whose text must not reach this row's prompt.
-_ANCHORED_SQL = """
+_FLAGGED_IDENTITIES_SQL = """
+                  SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL
+                  WHERE org = {org:String} AND namespace = {ns:String}
+                    AND memory_id IN {flagged:Array(UUID)}"""
+_ANCHORED_SQL = (
+    """
         SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
                e.memory_key AS memory_key,
                cosineDistance(e.embedding, {emb:Array(Float32)}) AS dist
@@ -220,14 +225,14 @@ _ANCHORED_SQL = """
           AND e.user_id = {u:String} AND (e.user_id != '-' OR e.agent = {a:String})
           AND NOT (e.agent = {a:String} AND e.session_id = {s:String} AND e.memory_key = {k:String})
           AND (e.memory_key = {k:String}
-               OR (e.agent, e.user_id, e.session_id, e.memory_key) IN (
-                  SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL
-                  WHERE org = {org:String} AND namespace = {ns:String}
-                    AND toString(memory_id) IN {flagged:Array(String)}))
+               OR (e.agent, e.user_id, e.session_id, e.memory_key) IN ("""
+    + _FLAGGED_IDENTITIES_SQL
+    + """))
           AND e.scope = 'private' AND e.tombstoned_at IS NULL
           AND e.embedding_dim = {dim:UInt16} AND e.embedding.size0 = {dim:UInt16}
         SETTINGS select_sequential_consistency = 1
         """
+)
 
 
 def _ident(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
@@ -287,23 +292,41 @@ async def cluster_peers(
     return kept
 
 
-async def protected_ids(org: str, ids: list[str], *, ch: _CHClient | None = None) -> set[str]:
+# Ids bind as UUIDs: `memory_id` itself, not a cast of it, is what memory_id_skip prunes
+# (and no `toString(memory_id) AS memory_id` alias, which the WHERE would read instead).
+_PROTECTED_SQL = """
+        SELECT memory_id
+        FROM loom.memory FINAL
+        PREWHERE org = {org:String} AND namespace = {ns:String}
+        WHERE memory_id IN {ids:Array(UUID)} AND sensitivity = 'high'
+        SETTINGS select_sequential_consistency = 1
+        """
+
+
+async def protected_ids(
+    org: str, namespace: str, ids: list[str], *, ch: _CHClient | None = None
+) -> set[str]:
     """The ids among `ids` whose current row is labelled 'high', read strongly: such a
     row's text never goes to the model, whatever was read before."""
     if not ids:
         return set()
     ch = ch or _default_client()
     rows = await ch.query_all(
-        """
-        SELECT toString(memory_id) AS memory_id
-        FROM loom.memory FINAL
-        PREWHERE org = {org:String}
-        WHERE toString(memory_id) IN {ids:Array(String)} AND sensitivity = 'high'
-        SETTINGS select_sequential_consistency = 1
-        """,
-        {"org": org, "ids": [str(i) for i in ids]},
+        _PROTECTED_SQL, {"org": org, "ns": namespace, "ids": [str(i) for i in ids]}
     )
     return {str(r["memory_id"]) for r in rows}
+
+
+_ASSERTED_SQL = """
+        SELECT memory_id, min(version) AS asserted
+        FROM loom.memory_versions
+        PREWHERE org = {org:String} AND namespace = {ns:String}
+        WHERE memory_id IN {ids:Array(UUID)}
+          AND (toString(memory_id), toString(content_sha256))
+              IN {rows:Array(Tuple(String, String))}
+        GROUP BY memory_id
+        SETTINGS select_sequential_consistency = 1
+        """
 
 
 async def asserted_versions(
@@ -317,16 +340,13 @@ async def asserted_versions(
         return {}
     ch = ch or _default_client()
     found = await ch.query_all(
-        """
-        SELECT toString(memory_id) AS memory_id, min(version) AS asserted
-        FROM loom.memory_versions
-        PREWHERE org = {org:String} AND namespace = {ns:String}
-        WHERE (toString(memory_id), toString(content_sha256))
-              IN {rows:Array(Tuple(String, String))}
-        GROUP BY memory_id
-        SETTINGS select_sequential_consistency = 1
-        """,
-        {"org": org, "ns": namespace, "rows": [(str(i), str(h)) for i, h in rows]},
+        _ASSERTED_SQL,
+        {
+            "org": org,
+            "ns": namespace,
+            "ids": [str(i) for i, _ in rows],
+            "rows": [(str(i), str(h)) for i, h in rows],
+        },
     )
     return {str(r["memory_id"]): int(r["asserted"]) for r in found}
 
