@@ -88,8 +88,8 @@ def test_a_replay_undoes_rows_of_a_commit_erased_under_it(
     a = tm.first('"private"')
     at = datetime.now(UTC)
 
-    async def head(*_a: Any, **_k: Any) -> tuple[int, Any, int]:
-        return 1, at, 0
+    async def head(*_a: Any, **_k: Any) -> tuple[int, Any, int, int]:
+        return 1, at, 0, 1
 
     async def between(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
         return [_commit(1, [a], at=at)]
@@ -141,8 +141,8 @@ def test_replay_stops_below_a_fresh_gap_and_steps_over_a_settled_one(
     async def advance(org: str, ns: str, seq: int, *_a: Any, **_k: Any) -> None:
         advanced.append(seq)
 
-    async def head(*_a: Any, **_k: Any) -> tuple[int, Any, int]:
-        return 4, at, 0
+    async def head(*_a: Any, **_k: Any) -> tuple[int, Any, int, int]:
+        return 4, at, 0, 4
 
     monkeypatch.setattr(store, "head", head)
     monkeypatch.setattr(store, "commits_between", between)
@@ -208,8 +208,8 @@ def test_replay_stops_below_an_integrity_break(monkeypatch: pytest.MonkeyPatch) 
     # Sequence 2 holds two payloads: replaying either would project a guess.
     seen: list[int] = []
 
-    async def head(*_a: Any, **_k: Any) -> tuple[int, Any, int]:
-        return 3, datetime.now(UTC), 2
+    async def head(*_a: Any, **_k: Any) -> tuple[int, Any, int, int]:
+        return 3, datetime.now(UTC), 2, 3
 
     async def between(_org: str, _ns: str, lo: int, hi: int, **_k: Any) -> list[dict[str, Any]]:
         seen.append(hi)
@@ -272,8 +272,8 @@ def test_a_trailing_failed_allocation_is_stepped_over_once_settled(
 ) -> None:
     advanced: list[int] = []
 
-    async def head(*_a: Any, **_k: Any) -> tuple[int, Any, int]:
-        return 2, None, 0
+    async def head(*_a: Any, **_k: Any) -> tuple[int, Any, int, int]:
+        return 2, None, 0, 2
 
     async def none(*_a: Any, **_k: Any) -> list[Any]:
         return []

@@ -52,7 +52,7 @@ async def replay(
     """Apply commits (applied, head] to the projection; returns the new watermark.
     Stops below a missing sequence until it settles (then steps over it), and
     never passes an integrity break."""
-    _, _, broken = await store.head(org, ns)
+    _, _, broken, _ = await store.head(org, ns)
     if broken:
         head = min(head, broken - 1)
     upto = min(head, applied + _BATCH)

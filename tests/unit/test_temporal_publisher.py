@@ -39,14 +39,14 @@ class Journal:
 
     async def head(self, org, ns, **_):
         if not self.commits:
-            return self.published, None, 0
+            return self.published, None, 0, 0
         last = max(self.commits, key=lambda c: c["commit_seq"])
         payloads: dict[int, set] = {}
         for c in self.commits:
             payloads.setdefault(c["commit_seq"], set()).add(c["payload_sha256"])
         broken = min((q for q, p in payloads.items() if len(p) > 1), default=0)
         at = max(t for t in (last["recorded_at"], self.published_at) if t is not None)
-        return max(last["commit_seq"], self.published), at, broken
+        return max(last["commit_seq"], self.published), at, broken, last["commit_seq"]
 
     async def publish_mark(self, org, ns, seq, recorded_at=None, **_):
         if seq >= self.published:
@@ -216,6 +216,14 @@ def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
 
     monkeypatch.setattr(pub._locks, "lease", held_lease)
     return j
+
+
+@pytest.fixture(autouse=True)
+def _journal_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are the journal's: the feature is on."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_temporal_enabled", True)
 
 
 _VERSIONS = itertools.count(1_000)
@@ -423,6 +431,34 @@ def test_a_commit_to_the_same_key_between_plan_and_lock_replans(
     run(pub.publish_rows([mrow('"B"')]))
     assert calls["n"] >= 3  # planned twice
     assert [c["commit_seq"] for c in journal.commits] == [1, 2, 3]
+
+
+def test_a_plan_that_ran_while_another_commit_was_in_flight_plans_again(
+    journal: Journal, monkeypatch
+) -> None:
+    # A's sequence is allocated (published) but its commit has not landed when B
+    # plans; it lands before B takes the lock. B must plan again and retire A's
+    # claim, not commit beside it: the key serves one value, B's.
+    run(pub.publish_rows([mrow('"A0"')]))
+    a_commit = dict(
+        journal.commits[-1], commit_seq=2, commit_id="00000000-0000-0000-0000-0000000000a2"
+    )
+    real_head = journal.head
+    calls = {"n": 0}
+
+    async def head(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:  # B's plan: A has allocated 2, its commit is in flight
+            journal.published = 2
+        elif calls["n"] == 2:  # B under the lock: A's commit has landed
+            journal.commits.append(a_commit)
+        return await real_head(*a, **k)
+
+    monkeypatch.setattr(store, "head", head)
+    run(pub.publish_rows([mrow('"B"')]))
+    assert calls["n"] >= 3  # planned again over A's commit
+    b = journal.commits[-1]
+    assert b["commit_seq"] == 3 and b["parent_commit_id"] == a_commit["commit_id"]
 
 
 def test_a_projection_landing_between_plan_and_lock_goes_below_the_write(

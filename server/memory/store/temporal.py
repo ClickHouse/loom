@@ -283,9 +283,13 @@ async def landed_late(
     return int((row or {}).get("late") or 0) > 0
 
 
-async def head(org: str, namespace: str, *, ch: _CHClient | None = None) -> tuple[int, Any, int]:
+async def head(
+    org: str, namespace: str, *, ch: _CHClient | None = None
+) -> tuple[int, Any, int, int]:
     """(highest sequence allocated, the latest recording time stamped, the lowest
-    sequence holding two payloads or 0). An allocation whose commit was erased,
+    sequence holding two payloads or 0, the highest sequence that landed). An
+    allocation runs ahead of its commit while the publisher inserts it: a plan
+    snapshots what landed, so the commit it could not read moves the head past it. An allocation whose commit was erased,
     expired or never landed still counts: neither its sequence nor its recording
     time is ever handed out again, so both keep rising together. Every write reads
     it twice, so it reads the newest commit in key order and the break window above
@@ -308,12 +312,18 @@ async def head(org: str, namespace: str, *, ch: _CHClient | None = None) -> tupl
                 WHERE org = {{org:String}} AND namespace = {{ns:String}}
                   AND commit_seq > toInt64(ifNull(top.1, 0)) - {_BREAK_WINDOW}
                 GROUP BY commit_seq HAVING uniqExact(payload_sha256) > 1
-            )) AS broken
+            )) AS broken,
+            ifNull(top.1, 0) AS landed
         """,
         params={"org": org, "ns": namespace},
     )
     row = row or {}
-    return int(row.get("seq") or 0), row.get("at"), int(row.get("broken") or 0)
+    return (
+        int(row.get("seq") or 0),
+        row.get("at"),
+        int(row.get("broken") or 0),
+        int(row.get("landed") or 0),
+    )
 
 
 async def mark_published(

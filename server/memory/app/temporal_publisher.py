@@ -512,7 +512,7 @@ async def publish(
             async with namespace_lock(org, ns) as still_held:
                 # One round: what landed and the clock are read alongside the head
                 # (nothing commits meanwhile; the lock is held).
-                (seq, last_at, broken), clock, landed = await asyncio.gather(
+                (seq, last_at, broken, _), clock, landed = await asyncio.gather(
                     store.head(org, ns, ch=ch), store.server_now(ch=ch), _landed(batch, ch)
                 )
                 if broken:
@@ -656,7 +656,9 @@ async def _plan(
 ) -> _Batch:
     """Every amendment of the batch, against what its keys serve at a head
     snapshot. No lock: `publish` re-validates the head before it stamps."""
-    (seq, _, _), gone = await asyncio.gather(store.head(org, ns, ch=ch), erased(org, ns))
+    # The landed head, not the allocated one: a sequence whose commit is still being
+    # inserted is one this plan cannot read, so the lock sees the head moved past it.
+    (_, _, _, seq), gone = await asyncio.gather(store.head(org, ns, ch=ch), erased(org, ns))
     planned_at = datetime.now(UTC)
     keys = list(dict.fromkeys(c.ident for c in changes))
     served, heads, parents, committed_v = await asyncio.gather(
@@ -1501,7 +1503,7 @@ async def serving(org: str, ns: str, keys: Sequence[Ident]) -> set[Ident]:
     if not keys:
         return set()
     ch = _default_client()
-    seq, _, _ = await store.head(org, ns, ch=ch)
+    _, _, _, seq = await store.head(org, ns, ch=ch)  # what landed is what it can read
     served = await _served(org, ns, keys, seq, await erased(org, ns), ch)
     return {ident for ident, claims in served.items() if claims}
 
