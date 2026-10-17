@@ -700,3 +700,41 @@ async def test_a_create_cancelled_mid_insert_and_retried_logs_one_creation(
         params={"org": org},
     )
     assert stored["n"] == (2 if past_window else 1)
+
+
+@pytest.mark.asyncio
+async def test_paging_one_event_at_a_time_moves_past_a_discarded_backfill(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Past the dedup window both creations of the cancelled create are stored, and the
+    # backfill is dropped from every read. A cursor sitting just before it, paging
+    # task.updates with limit=1, still reaches the next task's creation.
+    from server.tasks.app import reads
+    from server.tasks.domain import cursors as task_cursors
+
+    org, body = await _registered("itest-page")
+    release, landing = await _cancelled_mid_insert(body, monkeypatch, past_window=True)
+    monkeypatch.undo()
+    retry = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    release.set()
+    await landing
+    second = await transitions.handle_task_create(
+        wire.TaskCreateInput(**{**body, "idempotency_key": "k2", "title": "two"})
+    )
+    monkeypatch.setattr(task_cursors, "LAG_SECONDS", 0)
+    seen: list[tuple[str, str]] = []
+    since = 0
+    for _ in range(5):
+        page = await reads.handle_task_updates(
+            wire.TaskUpdatesInput(
+                org=org, namespace="private", agent="bot", inbox="bot", since_seq=since, limit=1
+            )
+        )
+        if not page.events:
+            break
+        seen += [(str(e.task_id), str(e.event)) for e in page.events]
+        since = page.next_seq
+    assert seen == [
+        (retry.task.task_id, "created"),
+        (second.task.task_id, "created"),
+    ]

@@ -645,12 +645,20 @@ async def events_since(
     if from_subject:
         where.append("from_subject = {subj:String}")
         params["subj"] = from_subject
-    rows = await ch.query_all(
+    sql = (
         f"SELECT {EVENT_COLS} FROM loom.task_events WHERE {' AND '.join(where)} "
-        "ORDER BY seq LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1",
-        params=params,
+        "ORDER BY seq LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1"
     )
-    return await _drop_second_creations(org, cast("list[TaskEventRow]", rows), ch=ch)
+    # A dropped second creation is read but not returned. A page that lost rows to it
+    # is read on from its last seq, so a cursor that sits before one moves past it:
+    # callers advance to the last row returned.
+    kept: list[TaskEventRow] = []
+    while True:
+        rows = cast("list[TaskEventRow]", await ch.query_all(sql, params=params))
+        kept += await _drop_second_creations(org, rows, ch=ch)
+        if len(rows) < int(limit) or len(kept) >= int(limit):
+            return kept[: int(limit)]
+        params["since"] = int(rows[-1]["seq"])
 
 
 # ---------------------------------------------------------------- webhooks
