@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from server.core.leases import ClaimExpired
 from server.tasks.api import models_task as wire
 from server.tasks.app import inboxes, transitions
 from server.tasks.store import repo
@@ -85,6 +86,47 @@ async def test_a_create_that_raced_on_its_key_answers_with_the_stored_task(
         params={"org": org},
     )
     assert [str(e["task_id"]) for e in events] == [first.task.task_id]
+
+
+@pytest.mark.asyncio
+async def test_a_retry_of_a_create_cut_off_after_its_insert_gets_the_lease_row(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The key's lease timed the first create out after its task row landed and before
+    # its lease row: the retry finds the task and must leave it claimable.
+    org = f"itest-cutoff-{uuid.uuid4().hex[:8]}"
+    ident = {"org": org, "namespace": "private", "agent": "admin"}
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            **ident, inbox="bot", owner_agent="bot", accept_disclosure=["internal"]
+        )
+    )
+    body = {
+        "org": org,
+        "namespace": "public",
+        "agent": "poster",
+        "inbox": "bot",
+        "kind": "chore",
+        "title": "one task",
+        "disclosure": "internal",
+        "idempotency_key": "k1",
+    }
+
+    async def cut_off(*_: Any, **__: Any) -> None:
+        raise TimeoutError  # what the lease's asyncio.timeout raises inside the body
+
+    with monkeypatch.context() as m:
+        m.setattr(repo, "insert_event", cut_off)
+        with pytest.raises(ClaimExpired):
+            await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    retry = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+
+    assert not retry.created
+    leases = await ch.query_all(
+        "SELECT task_id, fence FROM loom.task_leases WHERE task_id = {tid:String}",
+        params={"tid": retry.task.task_id},
+    )
+    assert [(r["task_id"], int(r["fence"])) for r in leases] == [(retry.task.task_id, 0)]
 
 
 async def _erase_tasks(ch: Any, org: str, namespace: str) -> None:

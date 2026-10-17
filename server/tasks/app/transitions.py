@@ -100,6 +100,14 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
                 input.org, input.inbox, input.idempotency_key
             )
             if prior is not None:
+                # The first create may have been cut off (the key's lease timed out)
+                # after its task row and before its lease row; without one the task can
+                # never be claimed. Writing it again is a no-op when it is there.
+                if prior["status"] not in TERMINAL:
+                    backend = await repo.lease_backend()
+                    await backend.ensure_row(
+                        str(prior["task_id"]), prior["org"], prior["inbox"], int(prior["fence"])
+                    )
                 return TaskCreateOutput(
                     task=_payload(prior), created=False, seq=int(prior["version"])
                 )
