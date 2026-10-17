@@ -544,17 +544,24 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     from server.memory.workers import conflict_resolver as worker
     from server.observability import budget
 
-    e = NS(owed=[], recheck=[], resolved=[], erasing=set(), over=set(), raise_for=set(), slow=0.0)
+    e = NS(owed=[], recheck=[], resolved=[], over=set(), raise_for={}, slow=0.0, stamped=[])
     e.in_flight = e.most_in_flight = 0
 
-    async def owed(*, limit: int, **kw: Any) -> list[dict[str, Any]]:
-        return e.owed[:limit]
+    def _ns(r: dict[str, Any]) -> tuple[str, str]:
+        return (r["org"], r["namespace"])
 
-    async def recheck(*, limit: int, **kw: Any) -> list[dict[str, Any]]:
-        return e.recheck[:limit]
+    async def namespaces(**kw: Any) -> list[tuple[str, str]]:
+        return sorted({_ns(r) for r in e.owed + e.recheck})
 
-    async def erasing(org: str, **kw: Any) -> bool:
-        return org in e.erasing
+    async def owed(*, limit: int, capped: Any = (), **kw: Any) -> list[dict[str, Any]]:
+        e.capped = list(capped)
+        return [r for r in e.owed if _ns(r) not in capped][:limit]
+
+    async def recheck(*, limit: int, capped: Any = (), **kw: Any) -> list[dict[str, Any]]:
+        return [r for r in e.recheck if _ns(r) not in capped][:limit]
+
+    async def over_all(pairs, **kw):
+        return {p: p in e.over for p in pairs}
 
     async def over(org, namespace):
         return (org, namespace) in e.over
@@ -565,16 +572,21 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         await asyncio.sleep(e.slow)
         e.in_flight -= 1
         if q["memory_key"] in e.raise_for:
-            raise resolver.ModelUnavailable("404 model_not_found")
+            raise e.raise_for[q["memory_key"]]
         e.resolved.append((q["org"], q["namespace"], q["memory_key"], policy))
         counts.judged += 1
+
+    async def stamp(q, **kw):
+        e.stamped.append(q["memory_key"])
 
     async def policy(org, namespace, ch=None):
         return "newest_wins"
 
     monkeypatch.setattr(queue, "owed_rows", owed)
     monkeypatch.setattr(queue, "unjudged_conflicted_rows", recheck)
-    monkeypatch.setattr(queue, "erasure_underway", erasing)
+    monkeypatch.setattr(queue, "queued_namespaces", namespaces)
+    monkeypatch.setattr(queue, "stamp_judged", stamp)
+    monkeypatch.setattr(budget, "namespaces_over_cap", over_all)
     monkeypatch.setattr(budget, "namespace_over_cap", over)
     monkeypatch.setattr(resolver, "resolve_row", resolve)
     monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", policy)
@@ -599,12 +611,27 @@ async def test_a_pass_handles_each_tenant_on_its_own_and_each_row_once(pass_env:
     assert out["judged"] == 3
 
 
-async def test_an_erasure_or_a_spent_budget_skips_the_namespace(pass_env: NS) -> None:
+async def test_a_namespace_over_its_cap_is_left_out_of_the_read(pass_env: NS) -> None:
     pass_env.owed = [_q(org="o1", memory_key="k1"), _q(org="o2", memory_key="k2")]
-    pass_env.erasing, pass_env.over = {"o1"}, {("o2", "ns")}
+    pass_env.over = {("o2", "ns")}
     out = await pass_env.run()
-    assert pass_env.resolved == []
-    assert out["skipped_erasure"] == 1 and out["skipped_budget"] == 1
+    assert pass_env.capped == [("o2", "ns")]
+    assert [k for _, _, k, _ in pass_env.resolved] == ["k1"]
+    assert out["capped_namespaces"] == 1 and out["skipped_budget"] == 0
+
+
+async def test_a_refused_request_is_stamped_and_a_transient_failure_stays_owed(
+    pass_env: NS,
+) -> None:
+    pass_env.owed = [_q(memory_key="k1"), _q(memory_key="k2"), _q(memory_key="k3")]
+    pass_env.raise_for = {
+        "k1": resolver.Unjudgeable("400 Bad Request"),
+        "k2": RuntimeError("503 Service Unavailable"),
+    }
+    out = await pass_env.run()
+    assert pass_env.stamped == ["k1"], "a refusal holds no place; a 503 is asked again"
+    assert [k for _, _, k, _ in pass_env.resolved] == ["k3"]
+    assert out["errored"] == 2
 
 
 async def test_an_unknown_model_warns_once_and_stops_the_pass(
@@ -612,7 +639,7 @@ async def test_an_unknown_model_warns_once_and_stops_the_pass(
 ) -> None:
     monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
     pass_env.owed = [_q(memory_key="k1"), _q(memory_key="k2"), _q(memory_key="k3")]
-    pass_env.raise_for = {"k1"}
+    pass_env.raise_for = {"k1": resolver.ModelUnavailable("404 model_not_found")}
     with caplog.at_level("WARNING"):
         out = await pass_env.run()
     assert pass_env.resolved == [] and out["errored"] == 0
@@ -662,6 +689,39 @@ async def test_the_judge_maps_a_404_to_model_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: Missing())
     with pytest.raises(resolver.ModelUnavailable):
         await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
+
+
+@pytest.mark.parametrize(
+    ("status", "raised"),
+    [
+        (401, resolver.ModelUnavailable),
+        (403, resolver.ModelUnavailable),
+        (400, resolver.Unjudgeable),
+        (422, resolver.Unjudgeable),
+        (408, "transient"),
+        (429, "transient"),
+        (503, "transient"),
+    ],
+)
+async def test_the_judge_tells_a_refusal_from_a_transient_failure(
+    monkeypatch, status: int, raised: Any
+) -> None:
+    import httpx
+
+    import server.llm.client as llm_client
+
+    class Failing:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            req = httpx.Request("POST", "https://llm.example/v1")
+            raise httpx.HTTPStatusError(
+                f"{status} error", request=req, response=httpx.Response(status, request=req)
+            )
+
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: Failing())
+    want = httpx.HTTPStatusError if raised == "transient" else raised
+    with pytest.raises(want) as caught:
+        await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
+    assert type(caught.value) is want
 
 
 async def test_the_judge_sends_the_schema_and_the_model(monkeypatch) -> None:

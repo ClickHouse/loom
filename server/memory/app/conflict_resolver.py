@@ -48,7 +48,13 @@ _LIVE = ("active", "conflicted")
 
 
 class ModelUnavailable(RuntimeError):
-    """The provider answered that the resolver's model does not exist."""
+    """The provider refused the resolver's model or key (401, 403, 404): the same
+    answer for every row, so the pass stops and the rows stay owed."""
+
+
+class Unjudgeable(RuntimeError):
+    """The provider refused this row's request for a reason of its own (a 4xx other
+    than 408, 409 and 429): asking again gets the same answer."""
 
 
 @dataclass
@@ -62,8 +68,9 @@ class Counts:
     skipped_low_confidence: int = 0
     skipped_changed: int = 0
     skipped_pinned: int = 0
-    skipped_erasure: int = 0
     skipped_budget: int = 0
+    # Namespaces left out of the pass's queue read: over their daily cost cap.
+    capped_namespaces: int = 0
     errored: int = 0
 
     def as_dict(self) -> dict[str, int]:
@@ -87,8 +94,9 @@ def _row_dict(row: Any) -> dict[str, Any]:
 async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVerdict], str]:
     """One call over the cluster: ({peer memory_id: verdict}, the model that answered).
     Malformed output is {}. Never answered by the fallback model: the thresholds are
-    this model's. Raises `ModelUnavailable` when the provider does not know the model,
-    and any other provider failure as it came."""
+    this model's. Raises `ModelUnavailable` when the provider refuses the
+    model or the key, `Unjudgeable` when it refuses this request, and any other failure
+    as it came."""
     import httpx
 
     from server.llm.client import get_llm_client_without_fallback
@@ -106,9 +114,12 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
                 response_format=cr.RESPONSE_FORMAT,
             )
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            raise ModelUnavailable(str(e).splitlines()[0]) from e
-        raise
+        status, reason = e.response.status_code, str(e).splitlines()[0]
+        if status in (401, 403, 404):
+            raise ModelUnavailable(reason) from e
+        if 400 <= status < 500 and status not in (408, 409, 429):
+            raise Unjudgeable(reason) from e
+        raise  # 408, 409, 429, 5xx: transient, the row stays owed
     answered = str(getattr(res, "model", "") or settings.conflict_resolver_model)
     return cr.parse_verdicts(str(getattr(res, "text", "") or ""), peers), answered
 

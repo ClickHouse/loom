@@ -6,11 +6,14 @@ Each pass reads up to `memory_conflict_resolver_batch` marked rows, then up to
 `memory_conflict_resolver_recheck_batch` rows already `conflicted` that no resolver
 judged (flags from the cosine check, or from an older build's judge), so a false flag
 is cleared once. Both take rows in turns across namespaces, so one namespace's
-backlog does not hold the others back. A row whose namespace is over its daily LLM
-cost cap (read before each call), or whose org has an erasure queued or running, is
-skipped and stays owed. A row is stamped judged only after its actions, so a
-pass cut short judges it again and acting twice changes nothing. If the provider
-does not know the model, the pass logs one warning and stops; nothing else fails.
+backlog does not hold the others back. The queue leaves out a namespace over its daily
+LLM cost cap and an org with an erasure queued or running; their rows stay owed. The
+cap is read again before each call, for a namespace that crosses it mid-pass. A
+transient provider error leaves the row owed; a refusal of the row's own request
+stamps it judged and counts it errored, so it does not come back every pass. A row
+is stamped judged only after its actions, so a pass cut short judges it again and
+acting twice changes nothing. If the provider refuses the model or the key, the pass
+logs one warning and stops; nothing else fails.
 Leader-only, like every worker.
 """
 
@@ -40,21 +43,6 @@ def _identity(r: Mapping[str, Any]) -> tuple[str, ...]:
     )
 
 
-async def _queued() -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """The pass's rows, each identity once, grouped by (org, namespace)."""
-    rows = await queue.owed_rows(limit=int(settings.memory_conflict_resolver_batch))
-    recheck = int(settings.memory_conflict_resolver_recheck_batch)
-    if recheck > 0:
-        rows += await queue.unjudged_conflicted_rows(limit=recheck)
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    seen: set[tuple[str, ...]] = set()
-    for r in rows:
-        if _identity(r) not in seen:
-            seen.add(_identity(r))
-            groups.setdefault((str(r["org"]), str(r["namespace"])), []).append(dict(r))
-    return groups
-
-
 class _Pass:
     """What the rows judged at the same time share."""
 
@@ -64,6 +52,28 @@ class _Pass:
         self.slots = asyncio.Semaphore(int(settings.memory_conflict_resolver_concurrency))
         self.acting = asyncio.Lock()
         self.unavailable: resolver.ModelUnavailable | None = None
+
+
+async def _queued(p: _Pass) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """The pass's rows, each identity once, grouped by (org, namespace). A namespace
+    over its cost cap is left out of the read, so its rows take no place in the pass."""
+    from server.observability.budget import namespaces_over_cap
+
+    pairs = await queue.queued_namespaces()
+    over = await namespaces_over_cap(pairs) if pairs else {}
+    capped = sorted(pair for pair, is_over in over.items() if is_over)
+    p.counts.capped_namespaces = len(capped)
+    rows = await queue.owed_rows(limit=int(settings.memory_conflict_resolver_batch), capped=capped)
+    recheck = int(settings.memory_conflict_resolver_recheck_batch)
+    if recheck > 0:
+        rows += await queue.unjudged_conflicted_rows(limit=recheck, capped=capped)
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    seen: set[tuple[str, ...]] = set()
+    for r in rows:
+        if _identity(r) not in seen:
+            seen.add(_identity(r))
+            groups.setdefault((str(r["org"]), str(r["namespace"])), []).append(dict(r))
+    return groups
 
 
 async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
@@ -87,6 +97,11 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             await resolver.resolve_row(r, policy=policy, counts=p.counts, acting=p.acting)
         except resolver.ModelUnavailable as e:
             p.unavailable = p.unavailable or e
+        except resolver.Unjudgeable as e:
+            # Asking again gets the same refusal: stamp it, so it holds no place.
+            p.counts.errored += 1
+            p.errors.append(f"{namespace}/{r.get('memory_key')}: refused: {e}")
+            await queue.stamp_judged(r)
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
@@ -103,9 +118,6 @@ async def _resolve_all(p: _Pass, groups: dict[tuple[str, str], list[dict[str, An
 
     jobs = []
     for (org, namespace), rows in groups.items():
-        if await queue.erasure_underway(org):
-            p.counts.skipped_erasure += len(rows)
-            continue
         policy = await namespace_conflict_policy(org, namespace, ch=get_client())
         jobs += [_resolve_one(p, r, policy) for r in rows]
     await asyncio.gather(*jobs)
@@ -115,7 +127,7 @@ async def run_pass() -> dict[str, Any]:
     set_query_tag(f"worker.{NAME}")
     p = _Pass()
     with record_pass(NAME) as rec:
-        groups = await _queued()
+        groups = await _queued(p)
         if not groups:
             pass_context.mark_idle()
         await _resolve_all(p, groups)

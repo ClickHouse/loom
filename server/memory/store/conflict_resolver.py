@@ -18,7 +18,7 @@ An older build reads only the epoch as its own pending mark (`toUnixTimestamp(..
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -40,10 +40,28 @@ _LIVE_VECTOR = """tombstoned_at IS NULL
           AND status IN ('active', 'conflicted')
           AND embedding_dim > 0"""
 
-# Rows the resolver leaves out of its queue: a namespace soft-deleted by namespace.delete
-# (its data stays in place). An unregistered namespace has no directory row and is live.
+# Rows the resolver leaves out of its queue, so they hold no place in it: a namespace
+# soft-deleted by namespace.delete (its data stays in place; an unregistered namespace
+# has no directory row and is live), an org with an erasure underway (its saga deletes
+# what the resolver would write a new version of), and the namespaces in `capped`
+# (over their daily cost cap, read by the worker).
 _NOT_SKIPPED = """(org, namespace) NOT IN (
-              SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active)"""
+              SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active)
+          AND org NOT IN (
+              SELECT org FROM loom.erasure_requests FINAL
+              WHERE status IN ('queued', 'in_progress'))
+          AND (org, namespace) NOT IN {capped:Array(Tuple(String, String))}"""
+
+_OWED = f"""conflict_checked_at < toDateTime(2, 'UTC')
+          AND (toUnixTimestamp(conflict_checked_at) = 1
+               OR created_at < now() - INTERVAL {LEGACY_MARK_GRACE_SECONDS} SECOND)
+          AND {_LIVE_VECTOR}
+          AND {_NOT_SKIPPED}"""
+
+_UNJUDGED = f"""status = 'conflicted'
+          AND (conflict_checked_at IS NULL OR conflict_checked_at > toDateTime(2, 'UTC'))
+          AND {_LIVE_VECTOR}
+          AND {_NOT_SKIPPED}"""
 
 
 def _in_turns(where: str) -> str:
@@ -72,30 +90,41 @@ def _in_turns(where: str) -> str:
         """
 
 
-async def owed_rows(*, limit: int, ch: _CHClient | None = None) -> list[dict[str, Any]]:
-    """Rows whose write the resolver owes a judgement, in turns across namespaces."""
+def _capped(capped: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    return [(str(o), str(n)) for o, n in capped]
+
+
+async def queued_namespaces(*, ch: _CHClient | None = None) -> list[tuple[str, str]]:
+    """The (org, namespace) pairs that hold owed or unjudged `conflicted` rows the
+    queue would read: the pairs the worker checks against their cost caps."""
     ch = ch or _default_client()
-    owed = f"""conflict_checked_at < toDateTime(2, 'UTC')
-          AND (toUnixTimestamp(conflict_checked_at) = 1
-               OR created_at < now() - INTERVAL {{grace:UInt32}} SECOND)
-          AND {_LIVE_VECTOR}
-          AND {_NOT_SKIPPED}"""
-    return await ch.query_all(
-        _in_turns(owed), {"grace": LEGACY_MARK_GRACE_SECONDS, "lim": int(limit)}
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT org, namespace
+        FROM loom.memory_embeddings FINAL
+        WHERE (({_OWED}) OR ({_UNJUDGED}))
+        """,
+        {"capped": []},
     )
+    return [(str(r["org"]), str(r["namespace"])) for r in rows]
+
+
+async def owed_rows(
+    *, limit: int, capped: Sequence[tuple[str, str]] = (), ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """Rows whose write the resolver owes a judgement, in turns across namespaces;
+    none of a namespace in `capped`."""
+    ch = ch or _default_client()
+    return await ch.query_all(_in_turns(_OWED), {"lim": int(limit), "capped": _capped(capped)})
 
 
 async def unjudged_conflicted_rows(
-    *, limit: int, ch: _CHClient | None = None
+    *, limit: int, capped: Sequence[tuple[str, str]] = (), ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """`conflicted` rows no resolver has judged (flags raised by cosine alone, or by an
-    older build's judge), in turns across namespaces."""
+    older build's judge), in turns across namespaces; none of a namespace in `capped`."""
     ch = ch or _default_client()
-    unjudged = f"""status = 'conflicted'
-          AND (conflict_checked_at IS NULL OR conflict_checked_at > toDateTime(2, 'UTC'))
-          AND {_LIVE_VECTOR}
-          AND {_NOT_SKIPPED}"""
-    return await ch.query_all(_in_turns(unjudged), {"lim": int(limit)})
+    return await ch.query_all(_in_turns(_UNJUDGED), {"lim": int(limit), "capped": _capped(capped)})
 
 
 def _same_write(row: Mapping[str, Any], judged: Mapping[str, Any]) -> bool:
@@ -213,26 +242,12 @@ async def cluster_peers(
     return kept
 
 
-async def erasure_underway(org: str, *, ch: _CHClient | None = None) -> bool:
-    """Whether an erasure of this org is queued or running: its saga deletes rows the
-    resolver would otherwise write a new version of."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        SELECT count() AS n FROM loom.erasure_requests FINAL
-        WHERE org = {org:String} AND status IN ('queued', 'in_progress')
-        """,
-        {"org": org},
-    )
-    return bool(int((row or {}).get("n") or 0))
-
-
 __all__ = [
     "JUDGED_MARK",
     "OWED_MARK",
     "cluster_peers",
-    "erasure_underway",
     "owed_rows",
+    "queued_namespaces",
     "stamp_judged",
     "unjudged_conflicted_rows",
 ]

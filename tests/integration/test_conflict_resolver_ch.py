@@ -56,6 +56,7 @@ class _ScriptedLLM:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.orgs: list[str] = []
 
     async def complete(self, system: str, user: str, **kw: Any) -> Any:
         from types import SimpleNamespace
@@ -148,15 +149,15 @@ async def _paris_open(ch: Any, org: str, want: bool) -> bool:
     return n > 0
 
 
-class _OnlyOrg:
-    """The queue reads, limited to this test's org (the server holds other tests')."""
+class _OnlyOrgs:
+    """The queue reads, limited to this test's orgs (the server holds other tests')."""
 
-    def __init__(self, ch: Any, org: str) -> None:
-        self.ch, self.org = ch, org
+    def __init__(self, ch: Any, orgs: list[str]) -> None:
+        self.ch, self.orgs = ch, orgs
 
     async def query_all(self, sql: str, params: Any = None) -> Any:
-        sql = sql.replace("WHERE ", "WHERE org = {only_org:String} AND ")
-        return await self.ch.query_all(sql, params={**(params or {}), "only_org": self.org})
+        sql = sql.replace("WHERE ", "WHERE org IN {only_orgs:Array(String)} AND ")
+        return await self.ch.query_all(sql, params={**(params or {}), "only_orgs": self.orgs})
 
 
 @pytest.fixture
@@ -175,11 +176,12 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
         return "newest_wins"
 
     monkeypatch.setattr(conflicts, "namespace_conflict_policy", newest_wins)
-    owed, recheck = queue.owed_rows, queue.unjudged_conflicted_rows
-    monkeypatch.setattr(queue, "owed_rows", lambda **kw: owed(**kw, ch=_OnlyOrg(ch, org)))
-    monkeypatch.setattr(
-        queue, "unjudged_conflicted_rows", lambda **kw: recheck(**kw, ch=_OnlyOrg(ch, org))
-    )
+    # A test that needs a second org appends it to `orgs`.
+    only = _OnlyOrgs(ch, [org])
+    for name in ("queued_namespaces", "owed_rows", "unjudged_conflicted_rows"):
+        read = getattr(queue, name)
+        monkeypatch.setattr(queue, name, lambda read=read, **kw: read(**kw, ch=only))
+    llm.orgs = only.orgs
     return org, llm
 
 
@@ -524,3 +526,88 @@ async def test_a_deleted_namespace_is_not_judged_until_it_is_registered_again(
     await run_pass()
     assert llm.calls == ["office_location"]
     assert (await _marks(ch, org))["office_location"] == 2
+
+
+async def _pair(ch: Any, org: str, old: str, new: str, axis: int) -> None:
+    """An older row and, a second later, a newer owed one close to it."""
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", old, "The office is in Paris")
+        await _later()
+        await _set(org, "s2", new, "The office moved to Rome")
+        await after_write.drain()
+    await _place(ch, org, "s1", old, _vec((axis, 1.0)), owed=False)
+    await _place(ch, org, "s2", new, _vec((axis, 0.8), (axis + 1, 0.6)), owed=True)
+
+
+async def test_a_row_the_provider_refuses_does_not_stop_another_orgs_update(
+    ch, wired, monkeypatch
+) -> None:
+    """Org X's row always gets a 400; org Y's update is judged in the same pass, and
+    X's row is stamped so it does not come back."""
+    import httpx
+
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org_y, llm = wired
+    org_x = unique_org("resolver-x")
+    llm.orgs.append(org_x)
+    await _pair(ch, org_x, "x_city", "x_location", 50)
+    await _pair(ch, org_y, "office_city", "office_location", 50)
+    real = llm.complete
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        if "NEW note (key x_location)" in user:
+            req = httpx.Request("POST", "https://llm.example/v1")
+            raise httpx.HTTPStatusError(
+                "400 Bad Request", request=req, response=httpx.Response(400, request=req)
+            )
+        return await real(system, user, **kw)
+
+    monkeypatch.setattr(llm, "complete", complete)
+    out = await run_pass()
+    assert (await _rows(ch, org_y))["office_city"]["status"] == "superseded"
+    assert out["errored"] == 1 and out["retired"] == 1
+    x = await ch.query_all(
+        "SELECT toUnixTimestamp(conflict_checked_at) AS mark FROM loom.memory_embeddings FINAL"
+        " WHERE org = {org:String} AND memory_key = 'x_location'"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org_x},
+    )
+    assert [r["mark"] for r in x] == [2], "refused: stamped, it holds no place next pass"
+
+
+async def test_an_org_under_erasure_is_left_out_of_the_queue(ch, wired) -> None:
+    import uuid
+    from datetime import UTC, datetime
+
+    from server.memory.store import conflict_resolver as queue
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 52)
+    assert [r["memory_key"] for r in await queue.owed_rows(limit=10)] == ["office_location"]
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    await ch.insert(
+        "loom.erasure_requests",
+        [
+            {
+                "id": str(uuid.uuid4()),
+                "org": org,
+                "scope_type": "org",
+                "scope_value": org,
+                "requester": "test",
+                "status": "in_progress",
+                "requested_at": now,
+                "last_checkpoint_at": now,
+                "version": 1,
+            }
+        ],
+    )
+    assert await queue.owed_rows(limit=10) == []
+    assert await queue.queued_namespaces() == []

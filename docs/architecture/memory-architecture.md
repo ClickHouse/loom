@@ -232,12 +232,15 @@ actions, verdicts and confidences, never the text.
 - A pass judges `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` (8) rows at once. The re-read
   and the action of each judged row run under one lock per pass, so when two rows judged
   at once both call the same peer stale, the second re-reads it retired and leaves it.
-- A row whose namespace is over its daily LLM cost cap (`observability.budget`, read
-  before each call, so at most the calls already in flight cross it) or whose org has an
-  erasure queued or running is skipped and stays owed. Each call bills its namespace
+- The queue reads leave out a namespace over its daily LLM cost cap
+  (`observability.budget`) and an org with an erasure queued or running, so their rows
+  stay owed without taking places in a pass. The cap is read again before each call, so
+  at most the calls already in flight cross it. Each call bills its namespace
   (`worker.conflict_resolver`).
-- A provider that does not know the model gets one warning per pass and no call; a
-  failed call leaves the row owed.
+- A provider that refuses the model or the key (401, 403, 404) gets one warning per
+  pass and no further call; the rows stay owed. A transient failure (408, 409, 429, 5xx,
+  a timeout) leaves the row owed. Any other 4xx refuses this row's request, and asking
+  again gets the same answer: the row is stamped judged and counted `errored`.
 
 **Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written
 version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged.
