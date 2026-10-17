@@ -349,6 +349,15 @@ class _BulkSetResult(BaseModel):
     retired: list[str] = Field(default_factory=list)
 
 
+def refused_facts(results: list[_BulkSetResult]) -> list[_RefusedFact]:
+    """The key and verdict of each bulk_set result a refusal wrote no row for."""
+    return [
+        _RefusedFact(memory_key=r.memory_key, verdict=r.conflict_verdict)
+        for r in results
+        if r.conflict_verdict in REFUSED
+    ]
+
+
 class MemoryBulkSetOutput(BaseModel):
     # One result per entry, in order: key, version (0 when not inserted) and verdict.
     written: list[_BulkSetResult]
