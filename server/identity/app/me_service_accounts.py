@@ -52,6 +52,82 @@ def parse_ttl_days(ttl_raw: object) -> int | None:
     return ttl_days * 86400
 
 
+def _requested_roles(payload: dict[str, object]) -> dict[str, str | None]:
+    """The body's namespaces in read-priority order, each with the role asked
+    for there (None: the caller's live grant); 422 on a malformed one."""
+    raw_namespaces = payload.get("namespaces") or []
+    if not isinstance(raw_namespaces, list) or not raw_namespaces:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "namespaces must be a non-empty array",
+            },
+        )
+
+    default_role_raw = payload.get("role")
+    if default_role_raw is not None and str(default_role_raw) not in GRANT_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "role must be viewer | writer | admin",
+            },
+        )
+    default_role = str(default_role_raw) if default_role_raw is not None else None
+
+    # Parse ordered entries (order = read priority). Each is a bare string or
+    # {namespace, role?}. Duplicate namespaces collapse to first occurrence so
+    # priority stays stable; the last-seen role wins for that namespace.
+    ordered_ns: list[str] = []
+    requested_role: dict[str, str | None] = {}
+    for entry in raw_namespaces:
+        if isinstance(entry, dict):
+            ns = str(entry.get("namespace") or "").strip()
+            r_raw = entry.get("role")
+            r = str(r_raw) if r_raw is not None else default_role
+        else:
+            ns = str(entry).strip()
+            r = default_role
+        if not ns:
+            continue
+        if r is not None and r not in GRANT_ROLES:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "VALIDATION_FAILED",
+                    "message": f"role for {ns} must be viewer | writer | admin",
+                },
+            )
+        if ns not in requested_role:
+            ordered_ns.append(ns)
+        requested_role[ns] = r
+    if not ordered_ns:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "namespaces must be a non-empty array",
+            },
+        )
+    return requested_role
+
+
+async def _name_taken(org: str, name: str) -> bool:
+    """Whether a token not yet revoked or expired holds `name`: a new row
+    would replace its row, leaving it live and listed nowhere."""
+    from server.core.ch import get_client, own_write_reads
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            "SELECT 1 AS x FROM loom.service_accounts FINAL WHERE org = {org:String} "
+            "AND name = {name:String} AND revoked_at IS NULL "
+            "AND (expires_at IS NULL OR expires_at > now()) LIMIT 1",
+            params={"org": org, "name": name},
+        )
+    return row is not None
+
+
 def dev_parent(payload: dict[str, object]) -> AuthInfo:
     """The parent a token is delegated from in dev mode (no auth, no bearer): a
     flat writer for the body's subject and org, issued now."""
@@ -112,108 +188,65 @@ async def me_service_accounts_create(
             },
         )
 
-    raw_namespaces = payload.get("namespaces") or []
-    if not isinstance(raw_namespaces, list) or not raw_namespaces:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "namespaces must be a non-empty array",
-            },
-        )
+    requested_role = _requested_roles(payload)
 
-    default_role_raw = payload.get("role")
-    if default_role_raw is not None and str(default_role_raw) not in GRANT_ROLES:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "role must be viewer | writer | admin",
-            },
-        )
-    default_role = str(default_role_raw) if default_role_raw is not None else None
+    from server.auth.grant_claims import service_account_change
 
-    # Parse ordered entries (order = read priority). Each is a bare string or
-    # {namespace, role?}. Duplicate namespaces collapse to first occurrence so
-    # priority stays stable; the last-seen role wins for that namespace.
-    ordered_ns: list[str] = []
-    requested_role: dict[str, str | None] = {}
-    for entry in raw_namespaces:
-        if isinstance(entry, dict):
-            ns = str(entry.get("namespace") or "").strip()
-            r_raw = entry.get("role")
-            r = str(r_raw) if r_raw is not None else default_role
-        else:
-            ns = str(entry).strip()
-            r = default_role
-        if not ns:
-            continue
-        if r is not None and r not in GRANT_ROLES:
+    async with service_account_change(org, name):
+        if await _name_taken(org, name):
             raise HTTPException(
-                status_code=422,
+                status_code=409,
                 detail={
-                    "code": "VALIDATION_FAILED",
-                    "message": f"role for {ns} must be viewer | writer | admin",
+                    "code": "CONFLICT",
+                    "message": f"a live token is already named {name!r}; choose another name",
                 },
             )
-        if ns not in requested_role:
-            ordered_ns.append(ns)
-        requested_role[ns] = r
-    if not ordered_ns:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "namespaces must be a non-empty array",
-            },
+        delegated = await delegate(
+            parent,
+            org=org,
+            requested=requested_role,
+            scoped=True,
+            ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
+            is_service_account=True,
+            recorded=True,
         )
+        ordered_ns = delegated.namespaces
+        ns_roles = delegated.ns_roles or {}
 
-    delegated = await delegate(
-        parent,
-        org=org,
-        requested=requested_role,
-        scoped=True,
-        ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
-        is_service_account=True,
-        recorded=True,
-    )
-    ordered_ns = delegated.namespaces
-    ns_roles = delegated.ns_roles or {}
+        sa_hash = hashlib.sha1(
+            f"{org}:{name}:{subject}:{_time.time_ns()}".encode(),
+        ).hexdigest()[:6]
+        sa_subject = f"sa:{name}-{sa_hash}"
+        minted = delegated.mint(sa_subject)
 
-    sa_hash = hashlib.sha1(
-        f"{org}:{name}:{subject}:{_time.time_ns()}".encode(),
-    ).hexdigest()[:6]
-    sa_subject = f"sa:{name}-{sa_hash}"
-    minted = delegated.mint(sa_subject)
+        now = naive_utc_now_seconds()
+        expires_at = delegated.expires_at(now)
 
-    now = naive_utc_now_seconds()
-    expires_at = delegated.expires_at(now)
+        # `roles` column keeps the distinct effective roles for the list view;
+        # `ns_roles` persists the authoritative per-namespace map (JSON).
+        distinct_roles = sorted({r for r in ns_roles.values()}, key=grant_rank)
 
-    # `roles` column keeps the distinct effective roles for the list view;
-    # `ns_roles` persists the authoritative per-namespace map (JSON).
-    distinct_roles = sorted({r for r in ns_roles.values()}, key=grant_rank)
-
-    ch = get_client()
-    await ch.insert(
-        "loom.service_accounts",
-        [
-            {
-                "org": org,
-                "name": name,
-                "sa_subject": sa_subject,
-                "namespaces": ordered_ns,
-                "roles": distinct_roles,
-                "ns_roles": _json.dumps(ns_roles),
-                "ttl_days": delegated.ttl_days,
-                "created_by": subject,
-                "created_at": now,
-                "expires_at": expires_at,
-                "revoked_at": None,
-                "revoked_by": "",
-                "version": _time.time_ns(),
-            }
-        ],
-    )
+        ch = get_client()
+        await ch.insert(
+            "loom.service_accounts",
+            [
+                {
+                    "org": org,
+                    "name": name,
+                    "sa_subject": sa_subject,
+                    "namespaces": ordered_ns,
+                    "roles": distinct_roles,
+                    "ns_roles": _json.dumps(ns_roles),
+                    "ttl_days": delegated.ttl_days,
+                    "created_by": subject,
+                    "created_at": now,
+                    "expires_at": expires_at,
+                    "revoked_at": None,
+                    "revoked_by": "",
+                    "version": _time.time_ns(),
+                }
+            ],
+        )
     # A restricted namespace ticked here is read only when the token's own subject holds a
     # direct grant — write it now, capped, revoked with the token; a name in the claim alone
     # would have every read of it refused.

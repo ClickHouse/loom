@@ -590,10 +590,10 @@ function abortError(): Error {
   return Object.assign(new Error("aborted"), { name: "AbortError" });
 }
 
-/** Rejects the call once the caller's signal has fired. */
-function untilAborted<T>(work: Promise<T>, ctx: AttemptContext): Promise<T> {
+/** `work`, or the caller's abort if that comes first; `work` itself runs on. */
+function untilAborted<T>(work: T | Promise<T>, ctx: AttemptContext): Promise<T> {
   const signal = ctx.opts.signal;
-  if (!signal) return work;
+  if (!signal) return Promise.resolve(work);
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
       try {
@@ -603,10 +603,13 @@ function untilAborted<T>(work: Promise<T>, ctx: AttemptContext): Promise<T> {
       }
     };
     signal.addEventListener("abort", onAbort, { once: true });
-    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    Promise.resolve(work)
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
   });
 }
 
+/** Rejects the call once the caller's signal has fired. */
 function throwIfAborted(ctx: AttemptContext, cause?: unknown): void {
   if (!ctx.opts.signal?.aborted) return;
   const requestId = ctx.headers["X-Request-Id"] ?? "";

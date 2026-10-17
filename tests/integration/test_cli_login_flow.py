@@ -479,6 +479,23 @@ def test_service_accounts_and_account_views_need_no_dashboard(
     assert rows["forever"]["ttl_days"] == 0 and rows["forever"]["expires_at"] is None
     _loom(home, "call", "/v1/me/service_accounts.revoke", "name=forever")
     assert _whoami(base, forever["token"])["authenticated"] is False
+    # A live token's name is not taken again: the new row would replace its
+    # row, leaving the live token listed nowhere.
+    session = json.loads((home / ".loom" / "credentials").read_text())["profiles"]["default"]
+    again = httpx.post(
+        f"{base}/v1/me/service_accounts.create",
+        headers={"Authorization": f"Bearer {session['access_token']}"},
+        json={"name": "ci-bot", "namespaces": [ns]},
+    )
+    assert again.status_code == 409, again.text
+    # A revoked one's name is free again.
+    assert _loom(
+        home,
+        "call",
+        "/v1/me/service_accounts.create",
+        "--data",
+        json.dumps({"name": "forever", "namespaces": [ns]}),
+    )["token"]
     _loom(home, "call", "/v1/me/service_accounts.revoke", "name=ci-bot")
     assert _whoami(base, created["token"])["authenticated"] is False
     assert "totals" in _loom(home, "call", "/v1/me/sharing-summary")

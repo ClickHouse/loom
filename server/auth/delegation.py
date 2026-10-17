@@ -168,7 +168,10 @@ def _child_ttl(parent: AuthInfo, ttl_seconds: int | None, *, recorded: bool) -> 
         if recorded:
             return None if never else ttl
         if never:
-            raise _refuse("a token that never expires must be saved, so it can be revoked")
+            raise _refuse(
+                "a token that never expires must be saved to your token list "
+                "(persist=true), so it can be revoked"
+            )
         return min(ttl, SESSION_TTL)
     if parent.expires_at is None:
         return None if never else ttl
@@ -176,7 +179,10 @@ def _child_ttl(parent: AuthInfo, ttl_seconds: int | None, *, recorded: bool) -> 
     if left <= 0:
         raise _refuse("the parent token has expired")
     if never:
-        raise _refuse("a token that expires cannot make one that never does")
+        raise _refuse(
+            "a token that expires cannot make one that never does; sign in with SSO "
+            "or `loom login` to make one"
+        )
     return min(ttl, left)
 
 

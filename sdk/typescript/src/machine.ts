@@ -208,7 +208,8 @@ export class MachineLogin implements TokenProvider {
       key = crypto.createPrivateKey(pem);
     } catch (e) {
       // An env file's literal "\n"s, say.
-      throw new AuthError(`${source}: not a PEM private key`, { cause: e });
+      const why = pem.includes("ENCRYPTED") ? "an encrypted key is not supported" : "not a PEM private key";
+      throw new AuthError(`${source}: ${why}`, { cause: e });
     }
     const kind = key.asymmetricKeyType;
     const alg = kind === "ec" ? "ES256" : kind === "ed25519" ? "EdDSA" : "RS256";

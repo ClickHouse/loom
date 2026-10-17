@@ -310,7 +310,9 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
       {
         client: str,             # a key of MCP_SETUP_CLIENT_LABELS (claude-code, codex, cursor, …)
         namespace?: str,         # defaults to caller's namespace
-        ttl_days?: int | null,   # null = 90 days (the delegation default)
+        ttl_days?: int | null,   # null = 90 days, 0 = never (saved tokens only)
+        persist?: bool,          # saved to the token list; one not saved from a
+                                 # sign-in session lasts at most 30 days
       }
 
     Returns:
@@ -396,6 +398,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     mcp_url = f"{base_url}/mcp"
 
     shape = _mcp_client_config(client, mcp_url, minted)
+    expires_at = delegated.expires_at(naive_utc_now_seconds())
 
     return {
         "client": client,
@@ -417,4 +420,5 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         "mcp_url": mcp_url,
         "persisted": bool(sa_subject),
         "sa_subject": sa_subject,
+        "expires_at": expires_at.isoformat() if expires_at else None,
     }

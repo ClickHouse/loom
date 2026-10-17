@@ -7,8 +7,8 @@ or a revoke. Each such op holds `grant_change` for that key from its read to its
 write, as a lease (`server.core.leases`) every replica sees, with or without a
 Keeper.
 
-Claims nest in one order: account claims first (several sorted by org and
-namespace); then a subject's repository claim (`maintainers.repo_change`),
+Claims nest in one order: account or service-account claims first (several
+sorted by org and namespace); then a subject's repository claim (`maintainers.repo_change`),
 the repository's admins and the namespaces' admins, or the trusts; then a
 bot or a grant. Taken the other way round, two changes wait each other out
 and both answer 503.
@@ -61,6 +61,13 @@ def account_change(org: str, namespace: str) -> AbstractAsyncContextManager[None
     release and a password set each rewrite the whole row, so one must not
     write back what it read over the other."""
     return _claimed("account:" + json.dumps([org, namespace]), f"the account {org}/{namespace}")
+
+
+def service_account_change(org: str, name: str) -> AbstractAsyncContextManager[None]:
+    """Hold a person's service-account name in `org` from the check that it is
+    free to its row: a second create with the name would replace the first
+    row, and its token, still live, would be listed nowhere."""
+    return _claimed("service_account:" + json.dumps([org, name]), f"the token name {name!r}")
 
 
 def bot_change(name: str) -> AbstractAsyncContextManager[None]:

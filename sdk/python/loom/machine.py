@@ -144,13 +144,16 @@ class MachineLogin(httpx.Auth):
     def _assertion(self, endpoint: str, pem: bytes, source: str) -> str:
         try:
             import jwt
+            from cryptography.exceptions import UnsupportedAlgorithm
             from cryptography.hazmat.primitives.asymmetric import ec, ed25519
             from cryptography.hazmat.primitives.serialization import load_pem_private_key
         except ImportError as e:
             raise AuthInvalid("a bot key needs `pip install clickhouse-loom[machine]`") from e
+        if b"ENCRYPTED" in pem:
+            raise AuthInvalid(f"{source}: an encrypted key is not supported")
         try:
             key = load_pem_private_key(pem, password=None)
-        except ValueError as e:  # an env file's literal "\n"s, say
+        except (ValueError, TypeError, UnsupportedAlgorithm) as e:  # an env file's "\n"s, say
             raise AuthInvalid(f"{source}: not a PEM private key") from e
         alg = (
             "ES256"

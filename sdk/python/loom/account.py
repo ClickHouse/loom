@@ -58,7 +58,9 @@ class AccountClient:
         persist: bool = False,
     ) -> dict[str, Any]:
         """A fresh token and the config block to paste into an MCP client
-        (one of the Setup tab's client keys), as the Setup tab makes it."""
+        (one of the Setup tab's client keys). The Setup tab saves it to your
+        token list (`persist=True`); one not saved lasts at most 30 days and
+        cannot be made never to expire (`ttl_days=0`)."""
         body: dict[str, Any] = {"client": client, "persist": persist}
         if namespace is not None:
             body["namespace"] = namespace

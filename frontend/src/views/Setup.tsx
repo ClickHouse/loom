@@ -811,7 +811,10 @@ function TokensSection({
                       ))}
                     </select>
                   </Field>
-                  <Field label="Expires in (days)" hint="Blank = 90 days. 0 = never expires. Max 3650.">
+                  <Field
+                    label="Expires in (days)"
+                    hint="Blank = 90 days. 0 = never expires (when signed in with SSO). Max 3650."
+                  >
                     <input
                       type="text"
                       inputMode="numeric"
@@ -1017,7 +1020,10 @@ function TokensSection({
                     </div>
                   </Field>
 
-                  <Field label="Expires in (days)" hint="Blank = 90 days. 0 = never expires. Max 3650.">
+                  <Field
+                    label="Expires in (days)"
+                    hint="Blank = 90 days. 0 = never expires (when signed in with SSO). Max 3650."
+                  >
                     <input
                       type="text"
                       inputMode="numeric"

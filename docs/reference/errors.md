@@ -321,6 +321,10 @@ Raised in `server/memory/app/handlers.py`.
 
 Raised in `server/knowledge/app/conversations.py`.
 
+#### `CONFLICT`
+
+Raised in `server/identity/app/me_service_accounts.py`.
+
 #### `CONSTRAINT_VIOLATION`
 
 Raised in `server/memory/domain/record_values.py`.
