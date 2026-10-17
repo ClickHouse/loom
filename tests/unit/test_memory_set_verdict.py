@@ -409,7 +409,11 @@ def test_bulk_rows_carry_the_verdict_peers_and_next() -> None:
             verdict="merge", peers=[_peer(similarity=0.99)], existing_memory_id=_PEER_ID
         ),
     }
-    apply_bulk_verdicts(memory_rows, embedding_rows, [0, 1, 2], results, verdicts)
+    # The merged row (1) does not land.
+    landed = {id(memory_rows[0]), id(memory_rows[2])}
+    apply_bulk_verdicts(
+        memory_rows, embedding_rows, [0, 1, 2], results, verdicts, stale_rows=(), landed_rows=landed
+    )
     assert results[0].conflict_verdict == "conflict"
     assert results[0].peers[0].memory_key == "deploy_day"
     assert "memory.update(memory_key='deploy_day'" in results[0].next

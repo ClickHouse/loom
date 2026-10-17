@@ -176,18 +176,6 @@ def _without_rewritten_peers(v: Any, landing_ids: set[str]) -> Any:
     return dataclasses.replace(v, peers=peers, refined_peers=refined)
 
 
-def _landing_rows(
-    memory_rows: list[dict[str, Any]], verdicts: dict[int, Any], stale_rows: Collection[int]
-) -> set[int]:
-    """The `id()` of each row that lands when no batch replay said so: every row but a
-    merged or rejected one whose verdict is not stale."""
-    return {
-        id(r)
-        for i, r in enumerate(memory_rows)
-        if id(r) in stale_rows or getattr(verdicts.get(i), "verdict", "") not in NOT_LANDING
-    }
-
-
 def _settling_rows(memory_rows: list[dict[str, Any]], landed: Collection[int]) -> set[int]:
     """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
     versions of one row, so only the kept version's verdict may mark or retire
@@ -216,8 +204,9 @@ def apply_bulk_verdicts(
     emb_idx_of: list[int],
     results: list[Any],
     verdicts: dict[int, Any],
-    stale_rows: Collection[int] = (),
-    landed_rows: Collection[int] | None = None,
+    *,
+    stale_rows: Collection[int],
+    landed_rows: Collection[int],
 ) -> BulkVerdictPlan:
     """Pure: fold ConflictResults into the rows. `merge` and `rejected` drop
     the row (its result reports version 0); `duplicate` stamps status and
@@ -230,8 +219,6 @@ def apply_bulk_verdicts(
     drop: set[int] = set()
     dup_idx: set[int] = set()
     stale = {i for i in verdicts if id(memory_rows[i]) in stale_rows}
-    if landed_rows is None:
-        landed_rows = _landing_rows(memory_rows, verdicts, stale_rows)
     landing_ids = {str(r.get("memory_id") or "") for r in memory_rows if id(r) in landed_rows}
     verdicts = dict(verdicts)
     for i, v in list(verdicts.items()):

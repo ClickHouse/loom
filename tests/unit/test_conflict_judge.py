@@ -218,6 +218,8 @@ def test_bulk_fold_records_refines_and_keeps_the_row() -> None:
         [0],
         results,
         {0: NS(verdict="refines", refined_peers=[peer], peers=[peer])},
+        stale_rows=(),
+        landed_rows={id(memory_rows[0])},
     )
     assert plan.memory_rows == memory_rows and plan.refined == ["k0"]
     assert (
@@ -407,6 +409,8 @@ def test_bulk_fold_carries_the_relation() -> None:
                 verdict="refines", refined_peers=[peer], peers=[peer], refine_relation="supersedes"
             )
         },
+        stale_rows=(),
+        landed_rows={id(rows[0])},
     )
     assert plan.refines == [("id0", "k0", [peer], "supersedes", plan.refines[0][4])]
 

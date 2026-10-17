@@ -19,6 +19,11 @@ def _rows(n: int):
     return memory_rows, embedding_rows, emb_idx_of, results
 
 
+def _landing(rows: list[dict], *dropped: int) -> set[int]:
+    """The `id()` of the rows that land: all but the `dropped` indexes."""
+    return {id(r) for i, r in enumerate(rows) if i not in dropped}
+
+
 def _stored(**keys: tuple[str, str]):
     """A bulk's state over stored rows `keys` (key -> (memory_id, sha)), no entries yet."""
     from server.memory.app.bulk_rows import _BulkWriteState
@@ -45,7 +50,7 @@ def _entry(state, key: str, memory_id: str, sha: str) -> None:
 
 def test_no_verdicts_is_a_pass_through() -> None:
     m, e, ix, r = _rows(3)
-    plan = apply_bulk_verdicts(m, e, ix, r, {})
+    plan = apply_bulk_verdicts(m, e, ix, r, {}, stale_rows=(), landed_rows=_landing(m))
     assert plan.memory_rows == m and plan.embedding_rows == e
     assert plan.unchecked == 0 and not plan.conflict_marks
 
@@ -56,7 +61,7 @@ def test_merge_and_rejected_drop_the_row_and_zero_its_result() -> None:
         0: NS(verdict="merge", existing_memory_id="old0", peers=[]),
         2: NS(verdict="rejected", pinned_blocker_id="pin", peers=[]),
     }
-    plan = apply_bulk_verdicts(m, e, ix, r, verdicts)
+    plan = apply_bulk_verdicts(m, e, ix, r, verdicts, stale_rows=(), landed_rows=_landing(m, 0, 2))
     assert [x["memory_key"] for x in plan.memory_rows] == ["k1", "k3"]
     assert [x["memory_key"] for x in plan.embedding_rows] == ["k1", "k3"]
     assert plan.merged == ["k0"] and plan.rejected_pinned == ["k2"]
@@ -72,7 +77,7 @@ def test_duplicate_stamps_both_rows_and_conflict_records_peers() -> None:
         1: NS(verdict="duplicate", duplicate_of_id="dup-of", peers=[]),
         2: NS(verdict="conflict", peers=[NS(memory_id="p1"), NS(memory_id="p2")]),
     }
-    plan = apply_bulk_verdicts(m, e, ix, r, verdicts)
+    plan = apply_bulk_verdicts(m, e, ix, r, verdicts, stale_rows=(), landed_rows=_landing(m))
     assert len(plan.memory_rows) == 3
     assert (
         plan.memory_rows[1]["status"] == "duplicate"
@@ -90,7 +95,15 @@ def test_embedding_rows_follow_their_entry_not_their_position() -> None:
     e = [{"memory_key": "k0"}, {"memory_key": "k2"}]
     ix = [0, 2]
     r = [NS(memory_key=f"k{i}", version=1) for i in range(3)]
-    plan = apply_bulk_verdicts(m, e, ix, r, {2: NS(verdict="rejected", peers=[])})
+    plan = apply_bulk_verdicts(
+        m,
+        e,
+        ix,
+        r,
+        {2: NS(verdict="rejected", peers=[])},
+        stale_rows=(),
+        landed_rows=_landing(m, 2),
+    )
     assert [x["memory_key"] for x in plan.memory_rows] == ["k0", "k1"]
     assert [x["memory_key"] for x in plan.embedding_rows] == ["k0"]
 
@@ -98,7 +111,13 @@ def test_embedding_rows_follow_their_entry_not_their_position() -> None:
 def test_unchecked_counts_searchable_rows_past_the_cap() -> None:
     m, e, ix, r = _rows(5)
     plan = apply_bulk_verdicts(
-        m, e, ix, r, {0: NS(verdict="clear", peers=[]), 1: NS(verdict="clear", peers=[])}
+        m,
+        e,
+        ix,
+        r,
+        {0: NS(verdict="clear", peers=[]), 1: NS(verdict="clear", peers=[])},
+        stale_rows=(),
+        landed_rows=_landing(m),
     )
     assert plan.unchecked == 3
 
@@ -112,7 +131,13 @@ def test_every_row_carries_status_and_duplicate_of_after_a_duplicate_verdict() -
     ix = list(range(3))
     r = [NS(memory_key=f"k{i}", version=1) for i in range(3)]
     plan = apply_bulk_verdicts(
-        m, e, ix, r, {2: NS(verdict="duplicate", duplicate_of_id="dup", peers=[])}
+        m,
+        e,
+        ix,
+        r,
+        {2: NS(verdict="duplicate", duplicate_of_id="dup", peers=[])},
+        stale_rows=(),
+        landed_rows=_landing(m),
     )
     key_sets = {frozenset(row.keys()) for row in plan.memory_rows}
     assert len(key_sets) == 1 and {"status", "duplicate_of"} <= next(iter(key_sets))
@@ -139,14 +164,17 @@ def test_only_the_version_a_key_keeps_settles_its_verdict() -> None:
     for verdict in ("conflict", "refines"):
         v = NS(verdict=verdict, peers=[peer], refined_peers=[peer])
         m, e, ix, r = rows()
-        plan = apply_bulk_verdicts(m, e, ix, r, {0: v})
+        plan = apply_bulk_verdicts(m, e, ix, r, {0: v}, stale_rows=(), landed_rows=_landing(m))
         assert not plan.conflict_marks and not plan.refines
         assert not plan.conflicted and not plan.refined
         # Demoted to clear, it names no peers, as memory.set's demotion does.
         assert r[0].conflict_verdict == "clear" and r[0].peers == []
-        plan = apply_bulk_verdicts(*rows(), {1: v})
+        m, e, ix, r = rows()
+        plan = apply_bulk_verdicts(m, e, ix, r, {1: v}, stale_rows=(), landed_rows=_landing(m))
         assert len(plan.conflict_marks) + len(plan.refines) == 1
-        plan = apply_bulk_verdicts(*rows(), {0: v, 1: NS(verdict="merge", peers=[])})
+        m, e, ix, r = rows()
+        merged = {0: v, 1: NS(verdict="merge", peers=[])}
+        plan = apply_bulk_verdicts(m, e, ix, r, merged, stale_rows=(), landed_rows=_landing(m, 1))
         assert len(plan.conflict_marks) + len(plan.refines) == 1
 
 
@@ -191,19 +219,22 @@ def test_a_refine_or_conflict_with_a_row_another_entry_rewrites_lands() -> None:
     for verdict in ("refines", "conflict"):
         v = ConflictResult(verdict=verdict, peers=[peer("id0")], refined_peers=[peer("id0")])
         m, e, ix, r = _rows(2)
-        plan = apply_bulk_verdicts(m, e, ix, r, {1: v})
+        plan = apply_bulk_verdicts(m, e, ix, r, {1: v}, stale_rows=(), landed_rows=_landing(m))
         assert not plan.refines and not plan.conflict_marks
         assert r[1].conflict_verdict == "clear" and r[1].peers == []
         later = ConflictResult(verdict=verdict, peers=[peer("id1")], refined_peers=[peer("id1")])
         m, e, ix, r = _rows(2)
-        plan = apply_bulk_verdicts(m, e, ix, r, {0: later})
+        plan = apply_bulk_verdicts(m, e, ix, r, {0: later}, stale_rows=(), landed_rows=_landing(m))
         assert not plan.refines and not plan.conflict_marks
         assert r[0].conflict_verdict == "clear" and r[0].peers == []
         for dropped in ("rejected", "merge"):
             # The later row writing id1's key is dropped and never lands: id1 keeps the
             # value judged, so row 0 still refines or contradicts it.
             m, e, ix, r = _rows(2)
-            plan = apply_bulk_verdicts(m, e, ix, r, {0: later, 1: ConflictResult(dropped, [])})
+            verdicts = {0: later, 1: ConflictResult(dropped, [])}
+            plan = apply_bulk_verdicts(
+                m, e, ix, r, verdicts, stale_rows=(), landed_rows=_landing(m, 1)
+            )
             assert r[0].conflict_verdict == verdict
             if verdict == "refines":
                 assert [p.memory_id for p in plan.refines[0][2]] == ["id1"]
@@ -211,7 +242,8 @@ def test_a_refine_or_conflict_with_a_row_another_entry_rewrites_lands() -> None:
                 assert plan.conflict_marks == [("id0", ["id1"])]
         both = [peer("id0"), peer("p")]
         v = ConflictResult(verdict=verdict, peers=both, refined_peers=both)
-        plan = apply_bulk_verdicts(*_rows(2), {1: v})
+        m, e, ix, r = _rows(2)
+        plan = apply_bulk_verdicts(m, e, ix, r, {1: v}, stale_rows=(), landed_rows=_landing(m))
         if verdict == "refines":
             assert [p.memory_id for p in plan.refines[0][2]] == ["p"]
         else:
@@ -402,7 +434,7 @@ def test_a_refused_entry_names_its_pinned_blocker() -> None:
     m, e, ix, r = _rows(1)
     for res in r:
         res.pinned_blocker_id = ""
-    apply_bulk_verdicts(m, e, ix, r, {0: v})
+    apply_bulk_verdicts(m, e, ix, r, {0: v}, stale_rows=(), landed_rows=_landing(m, 0))
     assert r[0].conflict_verdict == "rejected" and r[0].pinned_blocker_id == "P"
     state = _stored(k=("K1", "s0"))
     state.existing_pinned = {"k": True}
