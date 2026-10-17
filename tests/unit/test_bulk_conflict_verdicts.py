@@ -282,6 +282,20 @@ def test_a_pin_from_a_landed_bulk_row_refuses_a_later_value() -> None:
     assert [r.conflict_verdict for r in state.results] == ["", "pinned"]
 
 
+def test_a_pinning_write_replaces_a_pinned_value() -> None:
+    # memory.set lets a pinning write change a pinned value; so does a bulk, whether the
+    # pin is stored or an earlier entry landed it.
+    from server.memory.app.bulk_rows import _bulk_skip_gate, settle_batch_rows
+
+    state = _stored(k=("K1", "s0"))
+    state.existing_pinned = {"k": True}
+    assert not _bulk_skip_gate(NS(memory_key="k", pinned=True), "s1", state, {})
+    assert state.skipped_pinned == []
+    state = _batch("s0", ("s1", True), ("s2", True))
+    assert settle_batch_rows(state, {}).drop == set()
+    assert state.skipped_pinned == []
+
+
 def test_returning_to_the_stored_value_after_a_rejected_row_is_unchanged() -> None:
     # Serially the rejected value never lands, so "s0" again restates the stored row.
     from server.memory.app.bulk_rows import settle_batch_rows

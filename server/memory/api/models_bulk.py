@@ -363,6 +363,7 @@ class MemoryBulkSetOutput(BaseModel):
     written: list[_BulkSetResult]
     # Keys whose live row is pinned: skipped (result version=0) rather than
     # overwritten, since overwriting would also unpin (entries default pinned=False).
+    # An entry that pins too replaces the value, as on memory.set.
     skipped_pinned: list[str] = Field(default_factory=list)
     # Keys whose live row is locked read_only: skipped (result version=0), where memory.set
     # would answer 423 LOCKED. Unlocking is the owner's act (memory.unlock).

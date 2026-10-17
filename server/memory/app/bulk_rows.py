@@ -292,7 +292,8 @@ def _bulk_skip_gate(
             _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=LOCKED)
         )
         return True
-    if state.existing_pinned.get(entry.memory_key):
+    # A pinning write may replace a pinned value, as on memory.set.
+    if state.existing_pinned.get(entry.memory_key) and not getattr(entry, "pinned", False):
         state.skipped_pinned.append(entry.memory_key)
         state.results.append(
             _BulkSetResult(
@@ -397,8 +398,9 @@ def settle_batch_rows(state: _BulkWriteState, verdicts: dict[int, Any]) -> _Repl
     `verdicts` (by memory-row index) are known.
 
     Starting from the stored values and pins, each row that lands becomes its key's value
-    and pin. A later row is then refused if that landed pin is set, or is unchanged if it
-    repeats the value its key now holds; both rows go in `drop`. A merge or pinned
+    and pin. A later row is then refused if that landed pin is set and it does not pin
+    too, or is unchanged if it repeats the value its key now holds; both rows go in
+    `drop`. A merge or pinned
     rejection keeps its row out too, unless its verdict is stale: an earlier row that
     landed rewrote the stored row it matched, so serially it would have met the new value.
     An entry that repeated an earlier row's value takes that row's outcome
@@ -432,7 +434,8 @@ def settle_batch_rows(state: _BulkWriteState, verdicts: dict[int, Any]) -> _Repl
         if same_bytes and replay.pinned.get(key):
             row["pinned"] = 1  # the same bytes keep the pin, as on memory.set
         unchanged = same_bytes and _same_labels(replay, row)
-        if unchanged or (replay.pinned.get(key) and not same_bytes):
+        refused = replay.pinned.get(key) and not same_bytes and not row["pinned"]
+        if unchanged or refused:
             replay.outcome[id(row)] = "unchanged" if unchanged else PINNED
             _drop_built_row(state, state.results[res_i], row, replay.outcome[id(row)])
             replay.drop.add(idx)
