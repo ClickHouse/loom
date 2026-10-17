@@ -616,3 +616,41 @@ def test_the_foreign_write_sweep_stays_a_settle_window_behind_now(
     monkeypatch.setattr(tp, "_rollout", lambda: True)
     asyncio.run(_ADOPT_FOREIGN(limit=10))
     assert cursors[("", "")] == recent - 10**9  # not past the settle window
+
+
+def test_the_first_sweep_starts_where_the_journal_began(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A row written after the journal's first commit that it never saw (the journal
+    # turned off for a while, or another build) is swept however long ago it was
+    # drawn; one before the first commit is a pre-journal row, seeded when next written.
+    from datetime import UTC, datetime
+
+    from server.memory.app import temporal_publisher
+
+    began = datetime(2026, 1, 1, tzinfo=UTC)
+    cursors: dict[tuple[str, str], int] = {}
+    asked: list[int] = []
+
+    async def watermark(org: str, ns: str, name: str = "", **_k: Any) -> int:
+        return cursors.get((org, ns), 0)
+
+    async def advance(org: str, ns: str, value: int, name: str = "", **_k: Any) -> None:
+        cursors[(org, ns)] = value
+
+    async def first_commit_at(only: Any = None, **_k: Any) -> datetime:
+        return began
+
+    async def foreign_rows(after: int, *, limit: int, only: Any = None, **_k: Any) -> list:
+        asked.append(after)
+        return []
+
+    async def adopt(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(store, "watermark", watermark)
+    monkeypatch.setattr(store, "advance_watermark", advance)
+    monkeypatch.setattr(store, "first_commit_at", first_commit_at)
+    monkeypatch.setattr(store, "foreign_rows", foreign_rows)
+    monkeypatch.setattr(temporal_publisher, "adopt", adopt)
+    monkeypatch.setattr(tp, "_rollout", lambda: True)
+    asyncio.run(_ADOPT_FOREIGN(limit=10, only=("o", "n")))
+    assert asked == [store.draw_version(began)]

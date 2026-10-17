@@ -1191,6 +1191,30 @@ def draw_version(at: datetime) -> int:
     return (at - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1) * 1000
 
 
+async def first_commit_at(
+    only: tuple[str, str] | None = None, *, ch: _CHClient | None = None
+) -> datetime | None:
+    """When the journal (one namespace's, with `only`) first committed; None before."""
+    ch = ch or _default_client()
+    where, params = "1", {}
+    if only is not None:
+        where, params = (
+            "org = {org:String} AND namespace = {ns:String}",
+            {
+                "org": only[0],
+                "ns": only[1],
+            },
+        )
+    row = await ch.query_one(
+        f"SELECT min(recorded_at) AS at, count() AS n FROM {COMMITS} WHERE {where}",
+        params=params,
+    )
+    if not row or not int(row.get("n") or 0):
+        return None
+    at: datetime = row["at"]
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+
 async def recorded_late(
     org: str, namespace: str, keys: Sequence[str], at: datetime, *, ch: _CHClient | None = None
 ) -> set[tuple[str, str, str, str]]:

@@ -98,7 +98,10 @@ Set `LOOM_MEMORY_BITEMPORAL_ENABLED=false` on every process and restart. No migr
 reverted: the journal tables stay. The journal's operations and fields disappear from
 the wire, and reads and `namespace.rollback` behave as in the default. Writes made while
 it is off are not journaled; when it is turned on again, the journal adopts them the way
-it adopts a previous build's writes during a rolling upgrade.
+it adopts a previous build's writes during a rolling upgrade: the bi-temporal projection
+worker's first passes sweep every row written since the journal's first commit that it
+has not seen (a deployment that runs no worker adopts each on its key's next write, and
+until then a bi-temporal read does not find it).
 
 ## Related
 

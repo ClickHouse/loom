@@ -200,7 +200,7 @@ _FOREIGN = "foreign_writes"
 _FOREIGN_TAIL_S = 900.0
 # Whether the last sweep page was full: the sweep goes on until it is not, rollout or not.
 _foreign_backlog = False
-# How far before its first pass the sweep starts (this build's migration ran at boot).
+# How far before its first pass the sweep starts when the journal has no commit yet.
 _FOREIGN_START_S = 300
 # How long after its draw another build's row may still be landing.
 _FOREIGN_SETTLE_S = 60
@@ -301,10 +301,13 @@ async def _adopt_foreign_writes(*, limit: int, only: tuple[str, str] | None = No
     org_, ns_ = only or ("", "")
     cursor = await store.watermark(org_, ns_, _FOREIGN)
     if not cursor:
-        # The first pass of the first build that journals: rows written before it are
-        # pre-journal rows, seeded when next written; only those drawn since are swept.
-        start = datetime.now(UTC) - timedelta(seconds=_FOREIGN_START_S)
-        cursor = int(start.timestamp() * 1e9)  # a version is its draw time in ns
+        # The first sweep: rows drawn before the journal's first commit are pre-journal
+        # rows, seeded when next written. Every row drawn since that it did not see (a
+        # build that does not journal, or the journal turned off for a while) is swept;
+        # with no commit yet, only those drawn shortly before this pass.
+        began = await store.first_commit_at(only)
+        start = began or datetime.now(UTC) - timedelta(seconds=_FOREIGN_START_S)
+        cursor = store.draw_version(start)
         await store.advance_watermark(org_, ns_, cursor, _FOREIGN)
     rows = await store.foreign_rows(cursor, limit=limit, only=only)
     _foreign_backlog = len(rows) >= limit
