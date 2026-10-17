@@ -41,21 +41,41 @@ _LIVE_VECTOR = """tombstoned_at IS NULL
           AND embedding_dim > 0"""
 
 
-async def owed_rows(*, limit: int, ch: _CHClient | None = None) -> list[dict[str, Any]]:
-    """Rows whose write the resolver owes a judgement, oldest first."""
-    ch = ch or _default_client()
-    return await ch.query_all(
-        f"""
+def _in_turns(where: str) -> str:
+    """The vector rows matching `where`, in turns across (org, namespace): every
+    namespace's oldest row, then every namespace's second oldest, and so on, so one
+    namespace's backlog cannot hold the others back. Only the identity is ranked; the
+    vectors are read for the picked rows alone."""
+    return f"""
         SELECT {_QUEUE_COLUMNS}
         FROM loom.memory_embeddings FINAL
-        WHERE conflict_checked_at < toDateTime(2, 'UTC')
+        WHERE (org, namespace, agent, user_id, session_id, embedding_model, memory_key) IN (
+            SELECT org, namespace, agent, user_id, session_id, embedding_model, memory_key
+            FROM (
+                SELECT org, namespace, agent, user_id, session_id, embedding_model,
+                       memory_key, created_at,
+                       row_number() OVER (PARTITION BY org, namespace ORDER BY created_at)
+                           AS turn
+                FROM loom.memory_embeddings FINAL
+                WHERE {where}
+            )
+            ORDER BY turn, created_at
+            LIMIT {{lim:UInt32}}
+        )
+          AND {where}
+        ORDER BY created_at ASC
+        """
+
+
+async def owed_rows(*, limit: int, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """Rows whose write the resolver owes a judgement, in turns across namespaces."""
+    ch = ch or _default_client()
+    owed = f"""conflict_checked_at < toDateTime(2, 'UTC')
           AND (toUnixTimestamp(conflict_checked_at) = 1
                OR created_at < now() - INTERVAL {{grace:UInt32}} SECOND)
-          AND {_LIVE_VECTOR}
-        ORDER BY created_at ASC
-        LIMIT {{lim:UInt32}}
-        """,
-        {"grace": LEGACY_MARK_GRACE_SECONDS, "lim": int(limit)},
+          AND {_LIVE_VECTOR}"""
+    return await ch.query_all(
+        _in_turns(owed), {"grace": LEGACY_MARK_GRACE_SECONDS, "lim": int(limit)}
     )
 
 
@@ -63,20 +83,12 @@ async def unjudged_conflicted_rows(
     *, limit: int, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """`conflicted` rows no resolver has judged (flags raised by cosine alone, or by an
-    older build's judge), oldest first."""
+    older build's judge), in turns across namespaces."""
     ch = ch or _default_client()
-    return await ch.query_all(
-        f"""
-        SELECT {_QUEUE_COLUMNS}
-        FROM loom.memory_embeddings FINAL
-        WHERE status = 'conflicted'
+    unjudged = f"""status = 'conflicted'
           AND (conflict_checked_at IS NULL OR conflict_checked_at > toDateTime(2, 'UTC'))
-          AND {_LIVE_VECTOR}
-        ORDER BY created_at ASC
-        LIMIT {{lim:UInt32}}
-        """,
-        {"lim": int(limit)},
-    )
+          AND {_LIVE_VECTOR}"""
+    return await ch.query_all(_in_turns(unjudged), {"lim": int(limit)})
 
 
 def _same_write(row: Mapping[str, Any], judged: Mapping[str, Any]) -> bool:

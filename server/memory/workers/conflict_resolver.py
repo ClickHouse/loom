@@ -2,10 +2,11 @@
 verdicts (`memory.app.conflict_resolver`). Up to `memory_conflict_resolver_concurrency`
 rows are judged at once.
 
-Each pass reads up to `memory_conflict_resolver_batch` marked rows, oldest first,
-then up to `memory_conflict_resolver_recheck_batch` rows already `conflicted` that
-no resolver judged (flags from the cosine check, or from an older build's judge),
-so a false flag is cleared once. A row whose namespace is over its daily LLM
+Each pass reads up to `memory_conflict_resolver_batch` marked rows, then up to
+`memory_conflict_resolver_recheck_batch` rows already `conflicted` that no resolver
+judged (flags from the cosine check, or from an older build's judge), so a false flag
+is cleared once. Both take rows in turns across namespaces, so one namespace's
+backlog does not hold the others back. A row whose namespace is over its daily LLM
 cost cap (read before each call), or whose org has an erasure queued or running, is
 skipped and stays owed. A row is stamped judged only after its actions, so a
 pass cut short judges it again and acting twice changes nothing. If the provider

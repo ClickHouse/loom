@@ -155,7 +155,7 @@ class _OnlyOrg:
         self.ch, self.org = ch, org
 
     async def query_all(self, sql: str, params: Any = None) -> Any:
-        sql = sql.replace("WHERE ", "WHERE org = {only_org:String} AND ", 1)
+        sql = sql.replace("WHERE ", "WHERE org = {only_org:String} AND ")
         return await self.ch.query_all(sql, params={**(params or {}), "only_org": self.org})
 
 
@@ -415,3 +415,62 @@ async def test_two_rows_judged_at_once_retire_their_shared_peer_once(
     assert int(versions[0]["n"]) == 1
     marks = await _marks(ch, org)
     assert marks["office_a"] == marks["office_b"] == 2
+
+
+async def test_a_namespace_with_one_owed_row_is_served_beside_a_bulk_import(
+    ch, wired, monkeypatch
+) -> None:
+    """Namespace `bulk` holds 500 owed rows, all older; the one owed row of another
+    namespace is still judged in the first pass."""
+    from datetime import timedelta
+
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.store.conflict_resolver import OWED_MARK
+    from server.memory.store.embeddings import (
+        _copy_row,
+        insert_embedding_rows,
+        live_embedding_rows_for_key,
+    )
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "office_city", "The office is in Paris")
+        await _set(org, "s2", "office_location", "The office moved to Rome")
+        await after_write.drain()
+    await _place(ch, org, "s1", "office_city", _vec((30, 1.0)), owed=False)
+    await _place(ch, org, "s2", "office_location", _vec((30, 0.8), (31, 0.6)), owed=True)
+    (row,) = await live_embedding_rows_for_key(
+        ch,
+        org=org,
+        namespace=NS,
+        agent="bot",
+        user_id=USER,
+        session_id="s2",
+        memory_key="office_location",
+    )
+    # The import: vector rows only (no memory row behind them), each owed, all older.
+    older = row["created_at"] - timedelta(hours=1)
+    bulk = [
+        _copy_row(
+            row,
+            {
+                "namespace": "bulk",
+                "memory_key": f"k{i}",
+                "created_at": older + timedelta(seconds=i),
+                "conflict_checked_at": OWED_MARK,
+            },
+        )
+        for i in range(500)
+    ]
+    await insert_embedding_rows(bulk, ch=ch)
+
+    await run_pass()
+    assert "office_location" in llm.calls
+    assert (await _marks(ch, org))["office_location"] == 2
