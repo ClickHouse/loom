@@ -354,16 +354,8 @@ async def insert_task_version(
 
 
 async def insert_created_task(row: TaskRow, *, ch: _CHClient | None = None) -> TaskRow:
-    """Insert a new task that has an idempotency key, and answer the key's task:
-    this row when it landed, else the task another create stored first.
-
-    The key's lease keeps a second create out. A create whose lease ran out before
-    its insert can still race the next one, so both insert under the key's dedup
-    token and storage drops the later row. An erased task's token can outlive it
-    and drop this row too: with no task under the key, it goes in under a fresh
-    token. The previous build's insert carries a random token whatever its caller
-    asked for (its `dedup_settings` overwrote every caller's token with one), so a
-    create of each build can both land (docs/architecture/rolling-upgrades.md, rule 10)."""
+    """Insert a task with an idempotency key; answer this row, or the one stored first.
+    Why the dedup token and its retry: docs/architecture/rolling-upgrades.md, rule 10."""
     org, inbox, key = row["org"], row["inbox"], row["idempotency_key"]
     token = f"task.create:{org}:{inbox}:{key}"
     await insert_task_version(row, dedup_token=token, ch=ch)

@@ -99,11 +99,16 @@ schema. These rules keep that safe. The operator procedure is in
    balancer for the dashboard ([upgrades](../operations/upgrades.md)).
 10. **An exclusion N adds holds only among N's replicas.** `task.create` with an
     idempotency key and the coverage watch's ready-event delivery hold a lease from this
-    build on. The build before takes none, and its client writes a random dedup token over
-    every insert's, so the key's token drops neither build's row for the other. A
-    create of each build racing on one key can store two tasks, and two deliveries two
-    ready events, as two replicas of the previous build already can. Each task is
-    whole (its event and its lease row) and claimable. This ends once N-1 stops serving.
+    build on (`insert_created_task`, `insert_ready_event`). One whose lease ran out
+    before its insert can still race the next, so both insert under one dedup token (the
+    key, or the event's task id) and storage drops the later row. An erased row's token
+    can outlive it and drop a new row too: with nothing stored, the row goes in again
+    under a fresh token. The build before takes no lease, and its client writes a random
+    dedup token over every insert's, so the key's token drops neither build's row for
+    the other. A create of each build racing on one key can store two tasks, and two
+    deliveries two ready events, as two replicas of the previous build already can.
+    Each task is whole (its event and its lease row) and claimable. This ends once N-1
+    stops serving.
 11. **A link N adds is not yet complete.** N links each value to the triples and edges
     it stated (`entity_triple_rows`, `entity_edge_rows`); N-1 links only keys, just after
     it writes the row. So a value with no row link still holds by its key link when that
