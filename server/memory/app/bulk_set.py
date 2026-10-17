@@ -207,7 +207,7 @@ async def _bulk_resolve_entities(ch: Any, input: MemoryBulkSetInput) -> dict[str
 
 
 def _bulk_log_skips(state: _BulkWriteState) -> None:
-    """Phase 7: one log line per kind of entry the batch did not write."""
+    """Phase 8a, after the verdicts: one log line per kind of entry the batch did not write."""
     if state.skipped_unchanged:
         log.info(
             "bulk_set: re-ingest skip-gate skipped %d unchanged entr%s",
@@ -976,9 +976,9 @@ async def handle_memory_bulk_set(
         input, state, embedder, entity_resolution, _bulk_clock, now_utc
     )
 
-    _bulk_log_skips(state)
-
     plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
+    # After the verdicts: settling the batch moves entries to unchanged or pinned.
+    _bulk_log_skips(state)
 
     _judged = await _bulk_judge_same_key(ch, input, state, plan)
     _bulk_clock.mark("same_key_judge")

@@ -6292,3 +6292,20 @@ async def test_end_edges_closes_a_pair_seen_thousands_of_times(ch, org, racing) 
         params={"org": org, "end": end},
     )
     assert (row["open"], row["ended"]) == ((3000, 0) if racing else (0, 3000))
+
+
+async def test_the_skip_log_counts_an_entry_a_landed_pin_refused(ch, org, caplog) -> None:
+    # The first entry lands pinned, so the second is refused: the skip log, written once
+    # the verdicts settle the batch, names it as pinned.
+    import logging
+
+    caplog.set_level(logging.INFO, logger="server.memory.app.bulk_set")
+    written = await _bulk_beside_a_pin(
+        org,
+        [
+            {"memory_key": "plan", "value": "Ship the release notes on Monday.", "pinned": True},
+            {"memory_key": "plan", "value": "Ship the release notes on Wednesday."},
+        ],
+    )
+    assert [r.conflict_verdict for r in written][1] == "pinned"
+    assert "skipped 1 entry targeting pinned key(s): ['plan']" in caplog.text
