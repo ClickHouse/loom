@@ -73,10 +73,9 @@ Structure is extracted twice. Each symbol and edge names its tier (`tier`: `scip
   `LOOM_CODE_READY_EMBED_COVERAGE` (0.95) of chunks carry a vector, `code.search`
   answers from its lexical legs and says so.
 - **Compiler tier.** SCIP indexes from `scip-clang` (C/C++), `scip-typescript`,
-  `scip-python` and `scip-go`. The TypeScript, Python and Go deltas run in the
-  `code_scip_*_delta` workers; the C/C++ delta runs on the host from a cron
-  (`deploy/cron/scip-delta.sh`, see
-  [code index operations](../../operations/code-index-operations.md#host-cron)). An
+  `scip-python` and `scip-go`, run by the `code_scip_*_delta` workers, with
+  `code_scip_full` seeding and re-indexing C/C++ entries (see
+  [code index operations](../../operations/code-index-operations.md#compiler-tier)). An
   external producer can upload with `code.scip_ingest`. It gives exact call, override
   and inheritance edges. Its C/C++, Go and TypeScript steps execute the repository's own
   build code; they run inside the

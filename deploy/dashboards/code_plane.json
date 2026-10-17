@@ -37,7 +37,7 @@
       "alert": {
         "name": "compiler tier stale",
         "condition": "max(Value) > 200 for 2h",
-        "why": "A compiler-tier producer runs about every 30 min and indexes up to 200 translation units per pass; more than 200 commits behind for 2 h means the cron, the fetch or the tier's producer is wedged (a stalled submodule fetch, for example). Override and caller answers silently degrade to the parser tier meanwhile."
+        "why": "A compiler-tier producer runs about every 30 min and indexes up to 200 translation units per pass; more than 200 commits behind for 2 h means the worker, the fetch or the tier's producer is wedged (a stalled submodule fetch, for example). Override and caller answers silently degrade to the parser tier meanwhile."
       }
     },
     {

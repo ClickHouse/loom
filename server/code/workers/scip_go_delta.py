@@ -90,6 +90,7 @@ async def run_pass() -> CodeScipGoDeltaResult:
         WATERMARK,
         CodeScipGoDeltaResult(),
         _run_repo,
+        gc_checkout=True,
         extras=lambda r: {
             "modules_indexed": r.modules_indexed,
             "modules_skipped": r.modules_skipped[:5],

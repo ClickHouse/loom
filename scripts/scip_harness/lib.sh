@@ -9,7 +9,15 @@ HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC2034 # read by the harnesses that source this file
 LOOM_ROOT="$(cd "$HARNESS_DIR/../.." && pwd)"
 PYTHON=${PYTHON:-python3}
-WORK=$(mktemp -d)
+# Beside the delta when the caller names one: its directory is mounted writable in
+# the sandbox and sized for an index, which the sandbox's own /tmp is not.
+if [[ -n "${DELTA_OUT:-}" && -d "$(dirname "$DELTA_OUT")" ]]; then
+  WORK=$(mktemp -d -p "$(dirname "$DELTA_OUT")")
+else
+  WORK=$(mktemp -d)
+fi
+# Every tool's temp files (scip-clang's per-TU shards, cmake, the converter) go there too.
+export TMPDIR=$WORK
 
 _HARNESS_ON_EXIT=()
 # on_exit <command>: run <command> at exit, the latest registered first, before

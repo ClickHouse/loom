@@ -1,9 +1,9 @@
 """`loom code <sub>`: one root span per invocation, stderr logging, stdout untouched.
 
-The span makes the scip-full/scip-delta/backfill crons observable without
+The span makes scheduled scip-full/scip-delta/backfill runs observable without
 tailing a log file. `init_otel` is suppressed under pytest by design, so these
 tests route the CLI tracer to a private in-memory provider and check the span
-shape, the exit-code/status stamping, and that stdout (which the cron logs and
+shape, the exit-code/status stamping, and that stdout (which run logs and
 operators grep) is unchanged byte for byte.
 """
 
@@ -147,7 +147,7 @@ def test_every_code_subcommand_is_named_for_its_span() -> None:
 async def test_scip_delta_subcommand_prints_result_line(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    """The cron's inline snippet printed `RESULT: <result>`; the subcommand
+    """A shell snippet printed `RESULT: <result>`; the subcommand
     that replaces it must keep that line and turn errors into exit 1."""
     from server.code.workers import scip_delta as w
     from server.core import ch

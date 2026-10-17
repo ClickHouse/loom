@@ -273,9 +273,9 @@ def test_each_entry_gets_its_own_module_cache(monkeypatch, tmp_path):
 
 def test_registry_gives_the_go_worker_its_own_deadline(monkeypatch):
     """The Go compiler-tier pass runs under
-    `code_scip_go_delta_timeout_seconds`, not the 900 s the interval implies —
-    a first pass over a few hundred modules can take longer and would be
-    cancelled with nothing applied."""
+    `code_scip_go_delta_timeout_seconds` plus headroom for the steps around the
+    harness, not the 900 s the interval implies — a first pass over a few hundred
+    modules can take longer and would be cancelled with nothing applied."""
     from server.settings import settings
     from server.workers import registry
 
@@ -284,5 +284,5 @@ def test_registry_gives_the_go_worker_its_own_deadline(monkeypatch):
     monkeypatch.setattr(settings, "code_scip_delta_enabled", False, raising=False)
     monkeypatch.setattr(settings, "code_scip_ts_delta_enabled", False, raising=False)
     spec = next(w for w in registry.enabled_workers() if w.name == "code_scip_go_delta")
-    assert spec.deadline_seconds() == 7200.0
+    assert spec.deadline_seconds() == 7200.0 + registry._TIER_HEADROOM_S
     assert spec.interval_seconds == settings.code_scip_go_delta_interval_seconds
