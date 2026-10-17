@@ -984,6 +984,10 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         return json({ tasks: taskRowsFixture(String(body.inbox ?? "")), truncated: false });
       case "/v1/task.counts":
         return json({ counts: taskCountsFixture(ns) });
+      case "/v1/task.get":
+        return json(taskGetFixture(String(body.task_id ?? ""), ns));
+      case "/v1/task.history":
+        return json(taskHistoryFixture(String(body.task_id ?? "")));
       case "/v1/code.repos":
         return json({ repos: projectRows(codeRepos, body, "namespace") });
       case "/v1/run.list":
@@ -1326,6 +1330,57 @@ function taskRowsFixture(inbox: string): Record<string, unknown>[] {
     row(2, "todo"),
     row(3, "blocked", { reason: "needs a repro from the sender", blocked_on: "sender" }),
   ];
+}
+
+/** `task.get` for one of `taskRowsFixture`'s tasks: the row with the fields only the
+ *  opened task carries, its brief among them; `found: false` for any other id. */
+function taskGetFixture(taskId: string, namespace: string): Record<string, unknown> {
+  const row = taskRowsFixture(TASK_INBOX).find((t) => t.task_id === taskId);
+  if (!row) return { found: false, task: null };
+  const task = {
+    ...row,
+    org: "dev",
+    namespace,
+    origin: "bench-bot",
+    attempt: 0,
+    fence: 0,
+    outcome: {},
+    last_actor: "process:reporter-public",
+    brief: {
+      objective: "Find why the nightly bench run reports recall 0.62 where last week read 0.71.",
+      acceptance_criteria: ["The cause is named, with the commit that brought it", "A test pins the fix"],
+      inputs: { issue: "https://github.com/example/loom/issues/4121", bench: "recall-nightly" },
+      constraints: "Do not re-run the full bench on the shared host.",
+    },
+  };
+  return { found: true, task };
+}
+
+/** `task.history` for an opened task: it was posted, then a person edited it. */
+function taskHistoryFixture(taskId: string): Record<string, unknown> {
+  const event = (seq: number, name: string, actor: string, ts: string) => ({
+    seq,
+    task_id: taskId,
+    inbox: TASK_INBOX,
+    event: name,
+    from_status: "",
+    to_status: "",
+    actor,
+    agent: actor.startsWith("process:") ? actor.slice("process:".length) : "",
+    fence: 0,
+    version: seq,
+    reason: "",
+    patch: {},
+    note: "",
+    ts,
+  });
+  return {
+    found: true,
+    events: [
+      event(1, "created", "process:reporter-public", "2026-09-20T01:00:00"),
+      event(2, "updated", "human:alice@example.com", "2026-09-20T01:30:00"),
+    ],
+  };
 }
 
 function taskCountsFixture(namespace: string): Record<string, unknown>[] {

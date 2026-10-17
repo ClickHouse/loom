@@ -369,7 +369,7 @@ export function Sidebar() {
           {!collapsed && <span className="text-xl font-semibold text-text leading-none">Loom</span>}
         </a>
         <IconButton
-          icon={collapsed ? "slide-out" : "slide-in"}
+          icon={collapsed ? "slide-in" : "slide-out"}
           size="sm"
           label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-expanded={!collapsed}

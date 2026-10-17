@@ -23,6 +23,13 @@ for (const width of [1000, 375]) {
     // The focus stays inside while the sheet is open.
     for (let i = 0; i < 12; i++) await page.keyboard.press("Tab");
     expect(await dialog.evaluate((d) => d.contains(document.activeElement))).toBe(true);
+    // On a control with a tooltip the first Escape dismisses the tooltip (WCAG 1.4.13),
+    // the second the sheet.
+    await page.getByRole("button", { name: "More actions" }).focus();
+    await expect(page.getByRole("tooltip")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("tooltip")).toBeHidden();
+    await expect(dialog).toBeVisible();
 
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();

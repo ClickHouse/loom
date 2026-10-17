@@ -3,7 +3,7 @@ import { installApi, ROUTES } from "./fixtures";
 
 // The shell scrolls only its content: the header, sidebar and phone nav stay put, so the
 // document itself never scrolls, on any route, at either width. Each route's title and
-// tab rows are checked here too, on the same render.
+// tab rows are checked here too, on the same render, and the heading type below.
 for (const width of [1400, 375]) {
   test.describe(`${width} px`, () => {
     test.use({ viewport: { width, height: 900 } });
@@ -63,3 +63,22 @@ for (const width of [1400, 375]) {
     }
   });
 }
+
+test("headings use Click UI's title type, the xl step at 27 px", async ({ page }) => {
+  await installApi(page);
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  const type = await page.evaluate(() => {
+    const out: Record<string, string> = {};
+    for (const tag of ["h1", "h2", "h3"]) {
+      const h = document.createElement(tag);
+      h.textContent = "x";
+      document.querySelector("main")?.append(h);
+      const cs = getComputedStyle(h);
+      out[tag] = `${cs.fontWeight} ${cs.fontSize}/${cs.lineHeight}`;
+    }
+    out.xl = getComputedStyle(document.documentElement).getPropertyValue("--text-xl--line-height").trim();
+    return out;
+  });
+  expect(type).toEqual({ h1: "700 20px/30px", h2: "700 18px/27px", h3: "600 16px/24px", xl: "27px" });
+});

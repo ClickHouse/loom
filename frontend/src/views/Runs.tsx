@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Alert } from "../components/ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -9,7 +9,7 @@ import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { getRun, listRuns, type RunGetResponse, type RunRow, type RunStatus } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { Chip, PageHeader, Panel, SectionHeading, Tip, TipTarget } from "../components/ui";
+import { Chip, PageHeader, Panel, SectionHeading, Tip, TipTarget, useClamped } from "../components/ui";
 import { IconButton } from "../components/IconButton";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -94,7 +94,7 @@ function TipBadge({ text, tip }: { text: string; tip: string }) {
 }
 
 /** One replay figure: its label, an (i) with what fills it, and the value. */
-function Stat({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
+function ReplayFigure({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
   return (
     <div>
       <dt className="text-xs text-text-muted flex items-center gap-0.5">
@@ -234,6 +234,27 @@ const RUN_HEADERS = [
   { label: "Started", width: "120px" },
 ];
 
+/** The goal, as the button that opens the replay. A goal the row cuts short shows in
+ *  full in a tooltip; the button's name already reads all of it, so the tip is no
+ *  description. */
+function GoalButton({ goal, dim, onClick }: { goal: string; dim: boolean; onClick: (e: MouseEvent) => void }) {
+  const [el, setEl] = useState<HTMLButtonElement | null>(null);
+  const clamped = useClamped(el, goal);
+  return (
+    <Tip content={goal} disabled={!clamped}>
+      <button
+        ref={setEl}
+        type="button"
+        onClick={onClick}
+        className={`min-w-0 max-w-full truncate text-left rounded ${dim ? "text-text-muted" : ""}`}
+        aria-describedby={undefined}
+      >
+        {goal || <span className="text-text-muted">(no goal)</span>}
+      </button>
+    </Tip>
+  );
+}
+
 function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
   const inferred = metaBool(r.metadata, "implicit");
   const dim = hasNoMemoryActivity(r);
@@ -247,18 +268,14 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
         label: (
           <div className="min-w-0">
             <div className="flex items-center gap-2 min-w-0">
-              <Tip content={r.goal} disabled={!r.goal}>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpen(r);
-                  }}
-                  className={`min-w-0 max-w-full truncate text-left rounded ${dim ? "text-text-muted" : ""}`}
-                >
-                  {r.goal || <span className="text-text-muted">(no goal)</span>}
-                </button>
-              </Tip>
+              <GoalButton
+                goal={r.goal}
+                dim={dim}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpen(r);
+                }}
+              />
               {inferred && (
                 <TipBadge
                   text="Auto"
@@ -290,10 +307,25 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
   };
 }
 
-// Grouped by session, every session's table keeps its header: a table without one leaves
-// its cells unlabelled for a screen reader.
-function RunTable({ rows, onOpen }: { rows: RunRow[]; onOpen: (r: RunRow) => void }) {
-  return <Table headers={RUN_HEADERS} rows={rows.map((r) => runRow(r, onOpen))} size="sm" />;
+// Grouped by session, only the first table draws its header; the rest keep theirs out of
+// sight, since a table without one leaves its cells unlabelled for a screen reader.
+function RunTable({
+  rows,
+  onOpen,
+  hideHeader = false,
+}: {
+  rows: RunRow[];
+  onOpen: (r: RunRow) => void;
+  hideHeader?: boolean;
+}) {
+  return (
+    <Table
+      headers={RUN_HEADERS}
+      rows={rows.map((r) => runRow(r, onOpen))}
+      size="sm"
+      className={hideHeader ? "table-header-sr-only" : undefined}
+    />
+  );
 }
 
 export function Runs() {
@@ -462,7 +494,7 @@ export function Runs() {
       {/* Grouped: sessions are headers, runs are their timeline. */}
       {rows !== null && groupBy && visible.length > 0 && (
         <div className="space-y-4">
-          {groups.map((g) => (
+          {groups.map((g, i) => (
             <section key={g.label} aria-label={`Session ${g.label}`}>
               <div className="flex items-center justify-between gap-3 px-3 py-2">
                 <div className="min-w-0 flex items-center gap-2 text-xs">
@@ -483,7 +515,7 @@ export function Runs() {
                   {g.used} relied on · {g.written} written · {relativeTime(g.latest)}
                 </div>
               </div>
-              <RunTable rows={g.runs} onOpen={openRun} />
+              <RunTable rows={g.runs} onOpen={openRun} hideHeader={i > 0} />
             </section>
           ))}
         </div>
@@ -580,7 +612,7 @@ export function Runs() {
                 const over = detail.over_budget ?? [];
                 return (
                   <dl className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm m-0">
-                    <Stat
+                    <ReplayFigure
                       label="recalled"
                       help={
                         detail.recalled < 0
@@ -591,11 +623,11 @@ export function Runs() {
                       }
                     >
                       {detail.recalled < 0 ? "n/a" : detail.recalled}
-                    </Stat>
-                    <Stat label="observations" help={EMPTY_WHY.observations}>
+                    </ReplayFigure>
+                    <ReplayFigure label="observations" help={EMPTY_WHY.observations}>
                       {detail.observations}
-                    </Stat>
-                    <Stat
+                    </ReplayFigure>
+                    <ReplayFigure
                       label="turns"
                       help={
                         !hasSession
@@ -615,8 +647,8 @@ export function Runs() {
                       ) : (
                         <span className="text-text-muted">no session</span>
                       )}
-                    </Stat>
-                    <Stat label="cost" help={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
+                    </ReplayFigure>
+                    <ReplayFigure label="cost" help={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
                       {!hasSession ? (
                         <span className="text-text-muted">no session</span>
                       ) : detail.cost_usd > 0 ? (
@@ -624,11 +656,11 @@ export function Runs() {
                       ) : (
                         "—"
                       )}
-                    </Stat>
-                    <Stat label="budget" help={EMPTY_WHY.budget}>
+                    </ReplayFigure>
+                    <ReplayFigure label="budget" help={EMPTY_WHY.budget}>
                       {budgetText(detail)}
                       {over.length > 0 && <span className="text-danger"> · over {over.join(" and ")}</span>}
-                    </Stat>
+                    </ReplayFigure>
                   </dl>
                 );
               })()}

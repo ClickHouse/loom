@@ -1,47 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
-import * as fs from "node:fs";
-import { createRequire } from "node:module";
+import { violations } from "./axe";
 import { installApi, ROUTES } from "./fixtures";
 
-// axe-core on the rendered dashboard: every route at desktop and phone width, and the shell's
-// dialog and menu open. WCAG 2.0–2.2 A and AA rules; any violation fails, with its rule,
-// impact and the first nodes it hit. Contrast is only measurable here, not in jsdom.
-const AXE = fs.readFileSync(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8");
-const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
-
-interface Violation {
-  id: string;
-  impact: string | null;
-  nodes: string[];
-}
-
-async function violations(page: Page): Promise<Violation[]> {
-  await page.addScriptTag({ content: AXE });
-  return page.evaluate(async (tags) => {
-    // The injected axe global; the specs carry no axe types.
-    const axe = (
-      window as unknown as {
-        axe: {
-          run: (
-            ctx: Document,
-            opts: object,
-          ) => Promise<{
-            violations: Array<{ id: string; impact: string | null; nodes: Array<{ target: string[] }> }>;
-          }>;
-        };
-      }
-    ).axe;
-    const wcag = await axe.run(document, { runOnly: { type: "tag", values: tags } });
-    // A popover or sheet is a dialog, and headings follow one outline; axe files both under
-    // best practice, not WCAG.
-    const names = await axe.run(document, { runOnly: { type: "rule", values: ["aria-dialog-name", "heading-order"] } });
-    return [...wcag.violations, ...names.violations].map((v) => ({
-      id: v.id,
-      impact: v.impact,
-      nodes: v.nodes.slice(0, 5).map((n) => n.target.join(" ")),
-    }));
-  }, TAGS);
-}
+// axe-core on the rendered dashboard (e2e/axe.ts): every route at desktop and phone width,
+// and the shell's dialog and menu open. Any violation fails. Contrast is only measurable
+// here, not in jsdom.
 
 async function open(page: Page, path: string) {
   await installApi(page, { memoryRows: 8, knowledgeRows: 4, runRows: 6 });
@@ -508,21 +471,48 @@ test("a fast Tab walk through header search leaves nothing open behind it", asyn
   }
 });
 
+/** The focus colour, resolved, and the outline colour of `el` in the same frame. */
+function ringColours(el: Element) {
+  const probe = document.createElement("span");
+  probe.style.color = "var(--color-focus)";
+  document.body.append(probe);
+  const focus = getComputedStyle(probe).color;
+  probe.remove();
+  return { outline: getComputedStyle(el).outlineColor, focus };
+}
+
 // Click UI's focus ring shows at once; Tailwind's transition-colors would fade it in.
 test("the focus ring is the focus colour from the first frame", async ({ page }) => {
   await open(page, "/memories");
   const trigger = page.getByRole("button", { name: /^Namespace: / });
   await page.keyboard.press("Tab");
   await trigger.focus();
-  const ring = await trigger.evaluate((el) => {
-    const probe = document.createElement("span");
-    probe.style.color = "var(--color-focus)";
-    document.body.append(probe);
-    const focus = getComputedStyle(probe).color;
-    probe.remove();
-    return { outline: getComputedStyle(el).outlineColor, focus };
-  });
+  const ring = await trigger.evaluate(ringColours);
   expect(ring.outline).toBe(ring.focus);
+});
+
+// The memory card draws the ring of the stretched button inside it; the card's own
+// transition-colors must not fade it in either.
+test("a memory card's focus ring is the focus colour from the first frame", async ({ page }) => {
+  await open(page, "/memories");
+  const card = page.locator("[data-card]").first();
+  await page.keyboard.press("Tab");
+  await card.locator("[data-memory-open]").focus();
+  const ring = await card.evaluate(ringColours);
+  expect(ring.outline).toBe(ring.focus);
+});
+
+test("an errored field shows the focus ring", async ({ page }) => {
+  await open(page, "/memories");
+  const outline = await page.evaluate(() => {
+    const input = document.createElement("input");
+    input.setAttribute("aria-invalid", "true");
+    document.querySelector("main")?.append(input);
+    input.focus();
+    const cs = getComputedStyle(input);
+    return `${cs.outlineStyle} ${cs.outlineWidth}`;
+  });
+  expect(outline).toBe("solid 2px");
 });
 
 // The profile section dialog is read-only: it opens on itself, with no tooltip up, and one

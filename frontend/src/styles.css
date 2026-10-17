@@ -582,6 +582,22 @@ textarea[aria-invalid="true"]:focus-visible {
 [data-card]:has([data-memory-open]:focus-visible) {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
+  /* At once, as every ring: the card's transition-colors would ease it in. */
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+}
+
+/* A table whose column header another table above it already shows: the header stays
+   for a screen reader, out of sight (Tailwind's sr-only). */
+.table-header-sr-only > thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border-width: 0;
 }
 
 /* ============================================================

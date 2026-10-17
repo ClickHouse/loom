@@ -28,7 +28,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { pluginInstallLines } from "../lib/clients";
 import { PopoverTrigger } from "../components/ui/Menu";
-import { PageHeader } from "../components/ui";
+import { fieldError, PageHeader } from "../components/ui";
 
 const DEFAULT_CHAR_LIMIT = 8192;
 
@@ -760,9 +760,28 @@ function SectionEditor({
   const over = measuredLen > DEFAULT_CHAR_LIMIT;
   const pct = Math.min(100, (measuredLen / DEFAULT_CHAR_LIMIT) * 100);
 
+  const [labelError, setLabelError] = useState("");
+  const changed = label !== initialLabel || value !== initialValue;
+
+  // Escape closes an untouched editor at once; typed text is dropped only on a yes.
+  async function onEscape() {
+    if (changed) {
+      const discard = await confirmAction({
+        title: "Discard changes?",
+        message: "What you typed in this section is not saved.",
+        confirmLabel: "Discard",
+        cancelLabel: "Keep editing",
+        danger: true,
+      });
+      if (!discard) return;
+    }
+    onCancel();
+  }
+
   async function onSave() {
     if (!label.trim()) {
-      toast("Label is required", "error");
+      setLabelError("Label is required");
+      labelRef.current?.focus();
       return;
     }
     if (over) {
@@ -789,25 +808,21 @@ function SectionEditor({
       onKeyDown={(e) => {
         if (e.key !== "Escape" || saving) return;
         e.stopPropagation();
-        onCancel();
+        void onEscape();
       }}
     >
-      <div className="flex items-center justify-between">
-        <div className="flex-1 min-w-0">
-          <TextField
-            ref={labelRef}
-            aria-label="Section label"
-            value={label}
-            onChange={(value) => setLabel(value)}
-            placeholder="section name (e.g. persona, about-me)"
-            disabled={!isNew}
-          />
-        </div>
-        <div className="flex items-center gap-1 ml-3">
-          <IconButton onClick={onCancel} disabled={saving} label="Cancel" icon="cross" size="sm" />
-          <IconButton onClick={onSave} disabled={saving || over} label="Save" icon="check" size="sm" />
-        </div>
-      </div>
+      <TextField
+        ref={labelRef}
+        aria-label="Section label"
+        value={label}
+        onChange={(value) => {
+          setLabel(value);
+          setLabelError("");
+        }}
+        placeholder="section name (e.g. persona, about-me)"
+        disabled={!isNew}
+        {...fieldError("section-label-error", labelError)}
+      />
       <TextAreaField
         ref={textRef}
         aria-label="Section text"
@@ -816,6 +831,7 @@ function SectionEditor({
         rows={Math.min(20, Math.max(4, value.split("\n").length + 1))}
         placeholder="This is what your AI reads, exactly as typed."
       />
+      {/* Cancel and Save follow the text they act on, so Tab reaches the text first. */}
       <div className="flex items-center gap-3 text-xs">
         {/* Not Click UI's ProgressBar: it has no danger state, and the bar turns danger over the limit. */}
         <div
@@ -830,6 +846,10 @@ function SectionEditor({
         </div>
         <div className={"font-mono tabular-nums whitespace-nowrap " + (over ? "text-danger" : "text-text-muted")}>
           {fmtInt(measuredLen)} / {fmtInt(DEFAULT_CHAR_LIMIT)}
+        </div>
+        <div className="flex items-center gap-1">
+          <IconButton onClick={onCancel} disabled={saving} label="Cancel" icon="cross" size="sm" />
+          <IconButton onClick={onSave} disabled={saving || over} label="Save" icon="check" size="sm" />
         </div>
       </div>
     </div>

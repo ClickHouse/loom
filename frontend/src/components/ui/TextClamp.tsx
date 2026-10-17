@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useLayoutEffect, useState, type CSSProperties } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TipTarget } from "./TipTarget";
 
@@ -40,23 +40,32 @@ function clampStyle(lines: number): CSSProperties {
   };
 }
 
-export function TextClamp({ text, lines = 1, max, reach, mono = false, className = "" }: TextClampProps) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [expanded, setExpanded] = useState(false);
-  const cut = max !== undefined && text.length > max;
-  const shown = cut ? `${text.slice(0, max).trimEnd()}…` : text;
-  const [overflowing, setOverflowing] = useState(false);
-
+/**
+ * Whether `el`'s text overflows its box, measured and re-measured as the box resizes or
+ * `content` changes. Pass the element through a state ref (`ref={setEl}`), so a remount
+ * (a tooltip wrapped round it) measures the new element. With `null` it keeps the last
+ * answer.
+ */
+export function useClamped(el: HTMLElement | null, content: string): boolean {
+  const [clamped, setClamped] = useState(false);
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || expanded) return;
-    const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
+    if (!el) return;
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [shown, lines, expanded]);
+  }, [el, content]);
+  return clamped;
+}
+
+export function TextClamp({ text, lines = 1, max, reach, mono = false, className = "" }: TextClampProps) {
+  const [el, setEl] = useState<HTMLSpanElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const cut = max !== undefined && text.length > max;
+  const shown = cut ? `${text.slice(0, max).trimEnd()}…` : text;
+  const overflowing = useClamped(expanded ? null : el, `${lines}:${shown}`);
 
   const clamped = !expanded && (overflowing || cut);
   const cls = `block ${mono ? "font-mono" : ""} ${className}`;
@@ -64,7 +73,7 @@ export function TextClamp({ text, lines = 1, max, reach, mono = false, className
   if (reach === "expand") {
     return (
       <>
-        <span ref={ref} className={cls} style={expanded ? undefined : clampStyle(lines)}>
+        <span ref={setEl} className={cls} style={expanded ? undefined : clampStyle(lines)}>
           {expanded ? text : shown}
         </span>
         {(clamped || expanded) && (
@@ -83,13 +92,13 @@ export function TextClamp({ text, lines = 1, max, reach, mono = false, className
   }
   if (reach === "tooltip" && clamped) {
     return (
-      <TipTarget ref={ref} tip={text} className={`${cls} rounded-sm`} style={clampStyle(lines)}>
+      <TipTarget ref={setEl} tip={text} className={`${cls} rounded-sm`} style={clampStyle(lines)}>
         {shown}
       </TipTarget>
     );
   }
   return (
-    <span ref={ref} className={cls} style={clampStyle(lines)}>
+    <span ref={setEl} className={cls} style={clampStyle(lines)}>
       {shown}
     </span>
   );

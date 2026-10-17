@@ -244,7 +244,8 @@ test.describe("under a coarse pointer", () => {
     await expect(cells).toHaveCount(5);
     const heights = await cells.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
     expect(heights.length).toBe(5);
-    for (const h of heights) expect(h).toBeGreaterThanOrEqual(44);
+    // Rounded: a cell at 44 px can measure 43.9998 after sub-pixel layout.
+    for (const h of heights) expect(Math.round(h)).toBeGreaterThanOrEqual(44);
     // the cell still selects on a tap
     await cells.first().tap();
     await expect(page).toHaveURL(/component=MergeTree&severity=medium/);

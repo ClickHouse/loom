@@ -80,6 +80,10 @@ export default defineConfig({
     // Views split by React.lazy in App.tsx.
     rollupOptions: {
       output: {
+        // A shared module only lazy views use (fieldError, Stat, TabTrigger, ...) would be a
+        // chunk of a few hundred bytes, one request each; Rollup merges a chunk under 1 kB
+        // into one that loads with it.
+        experimentalMinChunkSize: 1000,
         // Long-lived vendor chunks, so an app change does not re-download them. A function, not
         // a package list: a listed package brings its whole entry, and Click UI's entry
         // re-exports every component and its CSS. Only the modules the app imports go in, and

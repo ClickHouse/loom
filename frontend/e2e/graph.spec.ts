@@ -6,7 +6,7 @@ import { installApi } from "./fixtures";
 
 // The Graph view's gesture model and hover invariants: nothing is read before a gesture,
 // a deep link is one read, hovering every node shifts no layout and moves no canvas, Walk
-// walks, Back returns.
+// walks, Back returns. Its bar fits a phone, and Path says why it is unavailable.
 
 const SHOTS = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../e2e-screenshots");
 const NODE = ".graph-node[data-id]";
@@ -246,4 +246,36 @@ test("the entity box is the first input in the tab order and no facet heading tr
   await expect(page.getByRole("tooltip")).toContainText("Relations on this walk's typed edges");
   await shot(page, "07-tab-order-and-facets");
   expect(errors).toEqual([]);
+});
+
+test("at 375 px the graph's seed field has its own row and shows its whole placeholder", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 800 });
+  await installApi(page);
+  await page.goto("/graph");
+  const field = page.locator("#graph-seed");
+  await expect(field).toBeVisible();
+  const fit = await field.evaluate((input: HTMLInputElement) => {
+    const form = input.closest("form") as HTMLFormElement;
+    const style = getComputedStyle(input);
+    const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+    ctx.font = `${style.fontSize} ${style.fontFamily}`;
+    const text = ctx.measureText(input.placeholder).width;
+    const pad = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+    return {
+      share: input.closest(".relative")!.getBoundingClientRect().width / form.getBoundingClientRect().width,
+      placeholderFits: text + pad <= input.clientWidth,
+    };
+  });
+  expect(fit.share).toBeGreaterThan(0.95);
+  expect(fit.placeholderFits).toBe(true);
+});
+
+test("Path is reachable while unavailable and says why", async ({ page }) => {
+  await installApi(page);
+  await page.goto("/graph");
+  const path = page.getByRole("button", { name: "Path", exact: true });
+  await expect(path).toHaveAttribute("aria-disabled", "true");
+  await path.focus();
+  await expect(path).toBeFocused();
+  await expect(page.getByRole("tooltip")).toContainText("Type a second entity while a walk is open");
 });

@@ -39,7 +39,7 @@ import {
 import { humanizeError } from "../../lib/format";
 import { toast } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
-import { ExternalLink, Tip, TipTarget } from "../../components/ui";
+import { Alert, ExternalLink, Tip, TipTarget } from "../../components/ui";
 import { KindTag, PriorityBadge, StatusPill } from "./TaskBits";
 import { MenuTrigger } from "../../components/ui/Menu";
 
@@ -357,6 +357,8 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triageKey, identity]);
 
+  // The read found no task: the panel says so and offers nothing to wait on or act on.
+  const missing = task === null && error !== null;
   const current: TaskRow | TaskListRow = task ?? row;
   const inbox = inboxes.find((i) => i.inbox === current.inbox);
   const handed = posterKind(current, inbox?.owner_agent) !== "me";
@@ -428,130 +430,136 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
       </div>
 
       <div className="overflow-y-auto px-3.5 pt-1 pb-3.5 flex-1 min-h-0">
-        {error && <div className="text-xs text-danger py-2">{error}</div>}
-        {task?.status === "triage" && <Track record={record} policy={policy} task={task} />}
-        <Section title="Objective">
-          {task ? (
-            <p className="m-0 text-text-muted whitespace-pre-wrap">
-              {brief.objective || <span className="text-text-muted">The poster left the objective empty.</span>}
-            </p>
-          ) : (
-            <div className="text-xs text-text-muted">Loading…</div>
-          )}
-        </Section>
-        {brief.criteria.length > 0 && (
-          <Section title="Acceptance criteria">
-            <ul className="m-0 pl-4.5 text-text-muted list-disc">
-              {brief.criteria.map((c, i) => (
-                <li key={i}>{c}</li>
-              ))}
-            </ul>
-          </Section>
-        )}
-        {brief.inputs.length > 0 && (
-          <Section title="Inputs">
-            <dl className="tq-kv">
-              {brief.inputs.map(([k, v]) => (
-                <div key={k} className="contents">
-                  <dt>{k.replace(/_/g, " ")}</dt>
-                  <dd>
-                    <InputValue v={v} />
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </Section>
-        )}
-        {brief.constraints && (
-          <Section title="Constraints">
-            <div className="tq-constraint">{brief.constraints}</div>
-          </Section>
-        )}
-        {outcome && (
-          <Section title="Outcome">
-            <dl className="tq-kv tq-outcome">
-              {Object.entries(outcome).map(([k, v]) => (
-                <div key={k} className="contents">
-                  <dt>{k.replace(/_/g, " ")}</dt>
-                  <dd>
-                    {typeof v === "string" && URL_RE.test(v) ? (
-                      <ExternalLink href={v} className="break-all">
-                        {v}
-                      </ExternalLink>
-                    ) : (
-                      <InputValue v={v} />
-                    )}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </Section>
-        )}
-        {current.reason &&
-          (current.status === "blocked" ||
-            current.status === "deferred" ||
-            current.status === "failed" ||
-            current.status === "wont_do" ||
-            current.status === "cancelled") && (
-            <Section title={reasonTitle}>
-              <p className="m-0 text-text-muted whitespace-pre-wrap">{current.reason}</p>
+        {error && <Alert role="alert" state="danger" size="small" text={error} className="my-2" />}
+        {!missing && (
+          <>
+            {task?.status === "triage" && <Track record={record} policy={policy} task={task} />}
+            <Section title="Objective">
+              {task ? (
+                <p className="m-0 text-text-muted whitespace-pre-wrap">
+                  {brief.objective || <span className="text-text-muted">The poster left the objective empty.</span>}
+                </p>
+              ) : (
+                <div className="text-xs text-text-muted">Loading…</div>
+              )}
             </Section>
-          )}
-        <Section title="Timeline">
-          <Timeline events={events} now={now} />
-        </Section>
+            {brief.criteria.length > 0 && (
+              <Section title="Acceptance criteria">
+                <ul className="m-0 pl-4.5 text-text-muted list-disc">
+                  {brief.criteria.map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+            {brief.inputs.length > 0 && (
+              <Section title="Inputs">
+                <dl className="tq-kv">
+                  {brief.inputs.map(([k, v]) => (
+                    <div key={k} className="contents">
+                      <dt>{k.replace(/_/g, " ")}</dt>
+                      <dd>
+                        <InputValue v={v} />
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </Section>
+            )}
+            {brief.constraints && (
+              <Section title="Constraints">
+                <div className="tq-constraint">{brief.constraints}</div>
+              </Section>
+            )}
+            {outcome && (
+              <Section title="Outcome">
+                <dl className="tq-kv tq-outcome">
+                  {Object.entries(outcome).map(([k, v]) => (
+                    <div key={k} className="contents">
+                      <dt>{k.replace(/_/g, " ")}</dt>
+                      <dd>
+                        {typeof v === "string" && URL_RE.test(v) ? (
+                          <ExternalLink href={v} className="break-all">
+                            {v}
+                          </ExternalLink>
+                        ) : (
+                          <InputValue v={v} />
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </Section>
+            )}
+            {current.reason &&
+              (current.status === "blocked" ||
+                current.status === "deferred" ||
+                current.status === "failed" ||
+                current.status === "wont_do" ||
+                current.status === "cancelled") && (
+                <Section title={reasonTitle}>
+                  <p className="m-0 text-text-muted whitespace-pre-wrap">{current.reason}</p>
+                </Section>
+              )}
+            <Section title="Timeline">
+              <Timeline events={events} now={now} />
+            </Section>
+          </>
+        )}
       </div>
 
-      {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of action buttons, not form fields */}
-      <div
-        className="border-t border-border px-3.5 py-2.5 flex gap-2 items-center justify-end flex-wrap"
-        role="group"
-        aria-label="Actions"
-      >
-        {current.status === "deferred" && current.resume_at && (
-          <span className="text-xs text-text-muted">otherwise resumes {rel(current.resume_at, now)}</span>
-        )}
-        {current.status === "in_progress" && (
-          <span className="text-xs text-text-muted">
-            owned by <b className="font-medium text-text-muted">{current.owner || "—"}</b>
-            {lease !== null && <> · lease ends in {lease} min</>}
-          </span>
-        )}
-        <span className="flex-1" />
-        <Menu items={menu} />
-        {allowed.has("fail") && (
-          <Button type="secondary" htmlType="button" onClick={() => act("fail")}>
-            Fail…
-          </Button>
-        )}
-        {allowed.has("defer") && (
-          <Button type="secondary" htmlType="button" onClick={() => act("defer")}>
-            Defer…
-          </Button>
-        )}
-        {allowed.has("block") && (
-          <Button type="secondary" htmlType="button" onClick={() => act("block")}>
-            Block…
-          </Button>
-        )}
-        {allowed.has("wont_do") && (
-          <Button type="secondary" htmlType="button" onClick={() => act("wont_do")}>
-            Won't do…
-          </Button>
-        )}
-        {allowed.has("reopen") && (
-          <Button type="secondary" htmlType="button" onClick={() => act("reopen")}>
-            Reopen…
-          </Button>
-        )}
-        {primary && (
-          <Tip content={primary.tip} disabled={!primary.tip}>
-            <Button type="primary" htmlType="button" onClick={() => act(primary.action)}>
-              {primary.label}
+      {!missing && (
+        // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of action buttons, not form fields
+        <div
+          className="border-t border-border px-3.5 py-2.5 flex gap-2 items-center justify-end flex-wrap"
+          role="group"
+          aria-label="Actions"
+        >
+          {current.status === "deferred" && current.resume_at && (
+            <span className="text-xs text-text-muted">otherwise resumes {rel(current.resume_at, now)}</span>
+          )}
+          {current.status === "in_progress" && (
+            <span className="text-xs text-text-muted">
+              owned by <b className="font-medium text-text-muted">{current.owner || "—"}</b>
+              {lease !== null && <> · lease ends in {lease} min</>}
+            </span>
+          )}
+          <span className="flex-1" />
+          <Menu items={menu} />
+          {allowed.has("fail") && (
+            <Button type="secondary" htmlType="button" onClick={() => act("fail")}>
+              Fail…
             </Button>
-          </Tip>
-        )}
-      </div>
+          )}
+          {allowed.has("defer") && (
+            <Button type="secondary" htmlType="button" onClick={() => act("defer")}>
+              Defer…
+            </Button>
+          )}
+          {allowed.has("block") && (
+            <Button type="secondary" htmlType="button" onClick={() => act("block")}>
+              Block…
+            </Button>
+          )}
+          {allowed.has("wont_do") && (
+            <Button type="secondary" htmlType="button" onClick={() => act("wont_do")}>
+              Won't do…
+            </Button>
+          )}
+          {allowed.has("reopen") && (
+            <Button type="secondary" htmlType="button" onClick={() => act("reopen")}>
+              Reopen…
+            </Button>
+          )}
+          {primary && (
+            <Tip content={primary.tip} disabled={!primary.tip}>
+              <Button type="primary" htmlType="button" onClick={() => act(primary.action)}>
+                {primary.label}
+              </Button>
+            </Tip>
+          )}
+        </div>
+      )}
     </>
   );
 

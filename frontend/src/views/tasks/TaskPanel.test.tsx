@@ -297,6 +297,29 @@ describe("TaskPanel", () => {
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Copy id"]);
   });
 
+  it("a task the read does not find shows only that, with no brief to wait on and no actions", async () => {
+    vi.mocked(getTask).mockResolvedValueOnce(null);
+    render(
+      <TaskPanel
+        identity={identity}
+        row={listRow("triage")}
+        inboxes={[INBOX]}
+        canWrite
+        now={NOW}
+        reloadKey={0}
+        onClose={noop}
+        onAction={noop}
+        onOpenTask={noop}
+      />,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("This task is not visible to you, or no longer exists.");
+    expect(screen.queryByRole("heading", { name: "Objective" })).toBeNull();
+    expect(screen.queryByText("Loading…")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Actions" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+  });
+
   it("reads again when the page bumps reloadKey after an action", async () => {
     vi.mocked(getTask).mockResolvedValue(fullRow("todo"));
     const { rerender } = render(
