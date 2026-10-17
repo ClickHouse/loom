@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Mapping
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -219,12 +220,41 @@ async def save_token(
     )
 
 
-def dev_parent(payload: dict[str, object]) -> AuthInfo:
-    """The parent a token is delegated from in dev mode (no auth, no bearer): a
-    flat writer for the body's subject and org, issued now."""
+def dev_bearer(request: Request) -> AuthInfo | None:
+    """With auth off, the principal of a valid bearer the request sends; None
+    for no bearer or one that does not verify, which auth off ignores. 503 while
+    a bearer cannot be checked yet, as `verify_bearer` answers."""
+    from server.auth.bearer import auth_unavailable, bearer_token
+    from server.auth.jwt import AuthUnavailable, TokenError, verify_token
+
+    try:
+        token = bearer_token(request.headers.get("Authorization"))
+        return None if token is None else verify_token(token)
+    except AuthUnavailable as e:
+        raise auth_unavailable(e) from e
+    except TokenError:
+        return None
+
+
+def dev_caller(request: Request, params: Mapping[str, object]) -> tuple[str, str]:
+    """(subject, org) of the caller in dev mode (auth off): a valid bearer's,
+    else the request's `subject` and `org`, else "dev" in "default". Every
+    route that saves, lists or revokes a token reads it, so a token minted
+    with auth off is in the list it is revoked from."""
+    info = dev_bearer(request)
+    if info is not None:
+        return info.subject, info.org
+    return str(params.get("subject") or "dev"), str(params.get("org") or "default")
+
+
+def dev_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
+    """The parent a token is delegated from in dev mode (auth off): a flat
+    writer for `dev_caller`, issued now. A bearer only names the owner; its
+    scope and lifetime do not cap the token, as with token.mint."""
+    subject, org = dev_caller(request, payload)
     return AuthInfo(
-        subject=str(payload.get("subject") or "dev"),
-        org=str(payload.get("org") or "default"),
+        subject=subject,
+        org=org,
         namespaces=("*",),
         roles=(Role.WRITER,),
         is_service_account=False,
@@ -260,7 +290,7 @@ async def me_service_accounts_create(
     if settings.auth_actually_required():
         parent = me_callers.require_authed_info(request)
     else:
-        parent = dev_parent(payload)
+        parent = dev_parent(request, payload)
     subject, org = parent.subject, parent.org
 
     name = token_name(payload.get("name"))
@@ -315,8 +345,7 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
     if settings.auth_actually_required():
         subject, org = me_callers.require_authed_caller(request)
     else:
-        subject = request.query_params.get("subject", "dev")
-        org = request.query_params.get("org", "default")
+        subject, org = dev_caller(request, request.query_params)
 
     subs = await me_callers.subject_aliases_of(org, subject)
     rows = await get_client().query_all(
@@ -409,8 +438,7 @@ async def me_service_accounts_revoke(
     if settings.auth_actually_required():
         subject, org = me_callers.require_authed_caller(request)
     else:
-        subject = str(payload.get("subject") or "dev")
-        org = str(payload.get("org") or "default")
+        subject, org = dev_caller(request, payload)
 
     name = str(payload.get("name") or "").strip()
     if not name:

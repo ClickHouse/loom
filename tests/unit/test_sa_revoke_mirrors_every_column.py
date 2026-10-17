@@ -6,6 +6,7 @@ says what it could reach."""
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -75,7 +76,8 @@ async def test_revoke_carries_ns_roles_and_the_inherit_flag(monkeypatch) -> None
     monkeypatch.setattr(revocation, "refresh", _noop)
     monkeypatch.setattr(me.token_grants, "revoke_token_grants", _noop)
     monkeypatch.setattr(me.settings, "auth_required", False)
-    out = await me.me_service_accounts_revoke(None, {"name": "bot", "subject": "dev"})  # type: ignore[arg-type]
+    no_bearer: Any = SimpleNamespace(headers={})
+    out = await me.me_service_accounts_revoke(no_bearer, {"name": "bot", "subject": "dev"})
     assert out["revoked"] is True
     [written] = [r for t, rows in ch.inserts if t == "loom.service_accounts" for r in rows]
     assert written["ns_roles"] == row["ns_roles"]
@@ -84,6 +86,6 @@ async def test_revoke_carries_ns_roles_and_the_inherit_flag(monkeypatch) -> None
 
     # Revoked again (a retry, a second click): the first revocation stands.
     row["revoked_at"] = first = datetime(2026, 2, 1)
-    again = await me.me_service_accounts_revoke(None, {"name": "bot", "subject": "dev"})  # type: ignore[arg-type]
+    again = await me.me_service_accounts_revoke(no_bearer, {"name": "bot", "subject": "dev"})
     rows_written = [t for t, _ in ch.inserts if t == "loom.service_accounts"]
     assert again["revoked_at"] == first.isoformat() and len(rows_written) == 1

@@ -175,7 +175,7 @@ Raised in `server/auth/bearer.py`, `server/auth/login.py`, `server/identity/app/
 
 #### `AUTH_UNAVAILABLE`
 
-Raised in `server/auth/bearer.py`, `server/auth/routes.py`.
+Raised in `server/auth/bearer.py`.
 
 #### `BACKEND_TIMEOUT`
 

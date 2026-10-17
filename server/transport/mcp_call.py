@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
+from server.identity.app.caller_home import home_namespace
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import _MCP_HIDDEN_OPS
@@ -35,7 +36,7 @@ from server.transport.mcp_config import (
     _ok,
 )
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
-from server.transport.mcp_identity import _caller_defaults, home_namespace, note_default_namespace
+from server.transport.mcp_identity import _caller_defaults, note_default_namespace
 from server.transport.mcp_op import UNKNOWN_OP
 from server.transport.mcp_outcome import (
     _emit_success,
@@ -467,9 +468,7 @@ async def _bind_caller_identity(
     if defaults and "lesson_namespaces" in op.input_model.model_fields:
         # a code read's lessons include the caller's own memories, from its memory home
         arguments.setdefault("lesson_namespaces", [defaults["namespace"]])
-    note_default_namespace(
-        filled_ns, str(arguments.get("namespace") or ""), getattr(auth, "subject", "") or ""
-    )
+    note_default_namespace(filled_ns, str(arguments.get("namespace") or ""), auth)
     _scope_arguments(op.name, arguments, defaults, explicit_agent)
     if op.name == SEARCH_OP and filled_ns:
         await _address_home(arguments, auth)

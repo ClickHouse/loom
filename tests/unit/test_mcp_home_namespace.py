@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import server.identity.app.caller_home as home
 import server.transport.mcp_identity as mi
 
 KINDS = {
@@ -23,18 +24,27 @@ KINDS = {
     "code-clickhouse": "code",
     "agent-box-claude-code": "memory",
 }
+RESTRICTED = frozenset({"secret-team"})
 
 
 class _Auth:
-    def __init__(self, subject: str, namespaces: tuple[str, ...] = (), sa: bool = False) -> None:
+    def __init__(
+        self,
+        subject: str,
+        namespaces: tuple[str, ...] = (),
+        sa: bool = False,
+        creator: str = "",
+    ) -> None:
         self.subject = subject
         self.org = "clickhouse"
         self.namespaces = namespaces
+        self.ns_roles: tuple[tuple[str, str], ...] = ()
         self.is_service_account = sa
+        self.creator = creator
         self.issued_at = None
 
     def can_write(self, org: str, ns: str) -> bool:
-        return ns in self.namespaces
+        return ns in self.namespaces or "*" in self.namespaces
 
 
 class _CH:
@@ -59,6 +69,7 @@ def _wired(monkeypatch: pytest.MonkeyPatch):
     def _wire(ch: _CH) -> None:
         import server.auth.aliases as aliases
         import server.core.ch as chmod
+        import server.identity.app.namespace_classification as nc
         import server.identity.app.namespace_kinds as nk
 
         async def _aliases(org: str, subject: str, *, ch: Any = None) -> list[str]:
@@ -67,9 +78,13 @@ def _wired(monkeypatch: pytest.MonkeyPatch):
         async def _kind_map(org: str) -> dict[str, str]:
             return dict(KINDS)
 
+        async def _restricted_set(org: str) -> frozenset[str]:
+            return RESTRICTED
+
         monkeypatch.setattr(chmod, "get_client", lambda: ch)
         monkeypatch.setattr(aliases, "subject_aliases", _aliases)
         monkeypatch.setattr(nk, "kind_map", _kind_map)
+        monkeypatch.setattr(nc, "restricted_set", _restricted_set)
         from server.settings import settings
 
         monkeypatch.setattr(settings, "identity_provider", "trust-network")
@@ -77,7 +92,7 @@ def _wired(monkeypatch: pytest.MonkeyPatch):
     return _wire
 
 
-def _defaults(auth: _Auth) -> dict[str, str]:
+def _defaults(auth: Any) -> dict[str, str]:
     out = asyncio.run(mi._caller_defaults(auth, "claude-code"))
     assert out is not None
     return out
@@ -121,12 +136,161 @@ def test_the_self_signup_service_account_keeps_its_own_namespace(_wired) -> None
 def test_only_planes_reachable_falls_to_the_personal_slug_never_a_plane(_wired) -> None:
     _wired(_CH(saved="qa-clickhouse", grants=["qa-clickhouse", "code-loom"]))
     ns = _defaults(_Auth("viewer@example.com", ("code-loom",)))["namespace"]
-    assert ns == "personal-viewer" and mi.is_memory_home(KINDS, ns)
+    assert ns == "personal-viewer" and home.is_memory_home(KINDS, ns)
 
 
 def test_memory_home_helpers() -> None:
     rows = [{"namespace": n} for n in _OWNER_GRANTS]
-    assert mi.memory_home_from_grants(rows, KINDS, "alice") == "alice"
-    assert mi.memory_home_from_grants(rows[:4], KINDS, "alice") == ""
-    assert mi.is_memory_home(KINDS, "unknown-ns") is True  # directory default is memory
-    assert mi.is_memory_home(KINDS, "code-loom") is False
+    assert home.memory_home_from_grants(rows, KINDS, "alice") == "alice"
+    assert home.memory_home_from_grants(rows[:4], KINDS, "alice") == ""
+    assert home.is_memory_home(KINDS, "unknown-ns") is True  # directory default is memory
+    assert home.is_memory_home(KINDS, "code-loom") is False
+
+
+class _SetupTokenCH(_CH):
+    """A Setup-page `*` token: only its owner (`alice` unless named) holds
+    grants and a saved default. Its `service_accounts` row names `row_creator`,
+    which the default must not read: the token's signed `creator` decides."""
+
+    def __init__(
+        self,
+        saved: str | None,
+        grants: list[str],
+        owner: str = "alice",
+        row_creator: str = "sa:parent-bot",
+    ) -> None:
+        super().__init__(saved, grants)
+        self.owner, self.row_creator = owner, row_creator
+        self.sql: list[str] = []
+
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        self.sql.append(sql)
+        params = params or {}
+        if "service_accounts" in sql:
+            return {"created_by": self.row_creator}
+        if "user_state" in sql:
+            mine = self.saved and params["sub"] == self.owner
+            return {"namespace": self.saved} if mine else None
+        if "namespace_grants" in sql:
+            mine = self.owner in params["subs"] and params.get("ns") in self.grants
+            return {"role": "writer"} if mine else None
+        return None
+
+    async def query_all(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        if self.owner not in (params or {}).get("subs", []):
+            return []
+        return [{"namespace": n, "role": "writer"} for n in self.grants]
+
+
+def _setup_token(creator: str = "alice") -> _Auth:
+    return _Auth("sa:cursor-ab12cd", ("*",), sa=True, creator=creator)
+
+
+def test_a_wildcard_setup_token_defaults_to_its_creators_home(_wired) -> None:
+    ch = _SetupTokenCH(saved=None, grants=["code-loom", "alice"])
+    _wired(ch)
+    assert _defaults(_setup_token())["namespace"] == "alice"
+    assert not any("service_accounts" in q for q in ch.sql), "the signed claim, no row read"
+
+
+def test_a_wildcard_setup_token_follows_its_creators_saved_default(_wired) -> None:
+    _wired(_SetupTokenCH(saved="agent-box-claude-code", grants=["alice", "agent-box-claude-code"]))
+    assert _defaults(_setup_token())["namespace"] == "agent-box-claude-code"
+
+
+def test_a_token_minted_by_another_service_account_follows_the_signed_creator(_wired) -> None:
+    # The row says another service account made it; the gate checks alice's grants.
+    _wired(_SetupTokenCH(saved="agent-box-claude-code", grants=["agent-box-claude-code"]))
+    assert _defaults(_setup_token())["namespace"] == "agent-box-claude-code"
+
+
+def test_a_self_signup_agent_token_keeps_its_namespace_not_its_claimers_pick(_wired) -> None:
+    # Self-signup: the row's created_by is the agent account, whose claimer
+    # saved a team pick there. The token carries no creator and claims its own.
+    ch = _SetupTokenCH(
+        saved="team-x",
+        grants=["team-x"],
+        owner="agent-box-claude-code",
+        row_creator="agent-box-claude-code",
+    )
+    _wired(ch)
+    agent = _Auth("sa:agent-box-claude-code-1a2b3c", ("agent-box-claude-code",), sa=True)
+    assert _defaults(agent)["namespace"] == "agent-box-claude-code"
+
+
+def test_a_saved_restricted_namespace_is_no_default_for_a_wildcard_token(_wired) -> None:
+    _wired(_SetupTokenCH(saved="secret-team", grants=["secret-team", "alice"]))
+    assert _defaults(_setup_token())["namespace"] == "alice"
+
+
+def test_the_ranking_skips_a_restricted_namespace_the_token_does_not_name(_wired) -> None:
+    _wired(_SetupTokenCH(saved=None, grants=["secret-team", "agent-box-claude-code"]))
+    assert _defaults(_setup_token())["namespace"] == "agent-box-claude-code"
+
+
+def test_a_wildcard_setup_token_without_grants_falls_to_its_creators_personal_slug(
+    _wired,
+) -> None:
+    _wired(_SetupTokenCH(saved=None, grants=[]))
+    assert _defaults(_setup_token())["namespace"] == "personal-alice"
+
+
+def test_a_service_account_without_a_creator_keeps_todays_default(_wired) -> None:
+    from server.auth.personal_namespace import derive_personal_slug
+
+    _wired(_SetupTokenCH(saved=None, grants=["alice"]))
+    assert _defaults(_setup_token(creator=""))["namespace"] == derive_personal_slug(
+        "sa:cursor-ab12cd"
+    )
+
+
+def test_the_away_note_compares_with_the_creators_login() -> None:
+    mi.note_default_namespace(True, "alice", _setup_token())
+    assert mi.default_namespace_note() == {}
+    mi.note_default_namespace(True, "agent-box-claude-code", _setup_token())
+    assert mi.default_namespace_note() == {"namespace_defaulted": "agent-box-claude-code"}
+
+
+def test_a_creator_without_grants_is_refused_in_the_unprovisioned_default(
+    _wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No grants anywhere: the default stays `personal-<creator>`, which nobody
+    provisioned, and the unaddressed write is refused there by name."""
+    from server.auth import authz, delegation
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    _wired(_SetupTokenCH(saved=None, grants=[]))
+
+    async def _yes(*_a: Any, **_k: Any) -> bool:
+        return True
+
+    async def _no(*_a: Any, **_k: Any) -> bool:
+        return False
+
+    async def _no_grant(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(delegation, "creator_account_active", _yes)
+    monkeypatch.setattr(authz, "_is_restricted", _no)
+    monkeypatch.setattr(authz, "grant_role_for", _no_grant)
+    token = AuthInfo(
+        subject="sa:cursor-ab12cd",
+        org="clickhouse",
+        namespaces=("*",),
+        roles=(Role.WRITER,),
+        is_service_account=True,
+        creator="alice",
+    )
+    ns = _defaults(token)["namespace"]
+    assert ns == "personal-alice"
+    with pytest.raises(PermissionError) as refused:
+        asyncio.run(authz.check_authorized(token, Role.WRITER, "clickhouse", ns))
+    op = OPERATIONS_BY_NAME["memory.set"]
+    body = mcp_call._forbidden_result(op, refused.value, token, "clickhouse", ns)
+    assert body["structuredContent"]["code"] == "AUTH_INSUFFICIENT"
+    assert ns in body["structuredContent"]["error"]

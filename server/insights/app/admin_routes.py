@@ -818,8 +818,15 @@ async def admin_token_mint(
     # if this handler is ever mounted on another router.
     info = await require_org_admin(request)
     refuse_foreign_org(info, input.org, "mint a token for")
-    creator = info.subject if info is not None else "local"
     body = await request.json()
+    if info is not None:
+        creator = info.subject
+    else:
+        # Auth off: a valid bearer names the owner, in its own org; else "dev".
+        # The token list reads the same owner, so the token is listed and revocable.
+        bearer = tokens.dev_bearer(request)
+        refuse_foreign_org(bearer, input.org, "mint a token for")
+        creator = bearer.subject if bearer is not None else "dev"
     if input.name is None and "subject" in body:
         raise HTTPException(
             status_code=422,

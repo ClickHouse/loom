@@ -8,9 +8,10 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 
 from server.auth.delegation import Delegated, delegate
-from server.auth.jwt import AuthInfo
+from server.auth.jwt import AuthInfo, verify_token
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.app import me_callers, token_grants
+from server.identity.app.caller_home import caller_org, default_namespace
 from server.identity.app.me_service_accounts import (
     dev_parent,
     new_token_subject,
@@ -232,8 +233,8 @@ async def _save_mcp_token(
     org = delegated.org
     sa_subject = new_token_subject(org, client, subject)
     sa_hash = sa_subject.removeprefix(f"sa:{client}-")
-    now = naive_utc_now_seconds()
     minted = delegated.mint(sa_subject)
+    now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat
     client_label = MCP_SETUP_CLIENT_LABELS.get(client, client)
     token_name = _mcp_token_name(client_label, now, sa_hash)
     await save_token(
@@ -251,18 +252,18 @@ async def _save_mcp_token(
 
 def _setup_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
     """The token the setup token is delegated from: the caller's bearer, or in dev
-    mode (no auth, no bearer) a flat writer for the body's subject and org."""
+    mode (auth off) `dev_parent`."""
     from server.auth.bearer import verify_bearer_header
 
+    if not settings.auth_actually_required():
+        return dev_parent(request, payload)
     info = verify_bearer_header(request.headers.get("Authorization"))
-    if info is not None:
-        return info
-    if settings.auth_actually_required():
+    if info is None:
         raise HTTPException(
             status_code=401,
             detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
         )
-    return dev_parent(payload)
+    return info
 
 
 @router.post("/v1/me/setup/mcp_config")
@@ -313,10 +314,8 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     namespace_payload = payload.get("namespace")
     if namespace_payload:
         requested: dict[str, str | None] = {str(namespace_payload): None}
-        displayed_namespace = str(namespace_payload)
     else:
         requested = {"*": None}
-        displayed_namespace = next((ns for ns in parent.namespaces if ns != "*"), "default")
     # Restricted namespaces the token should read are named in the claim and, once the token
     # has a subject, granted to it directly.
     restricted_names = await _validate_restricted_request(
@@ -340,6 +339,10 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         restricted_names=restricted_names,
     )
     reads_everywhere = "*" in delegated.namespaces
+    # The page names where this token's unaddressed MCP calls land: the MCP
+    # transport's own resolver, asked about the token just minted.
+    token = verify_token(minted)
+    displayed_namespace = await default_namespace(token, caller_org(token) or org)
 
     # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.
     from server.auth.public_url import public_base_url
