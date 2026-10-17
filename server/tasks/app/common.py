@@ -340,7 +340,7 @@ async def _record(
         event=event,
         actor=actor,
         agent=agent,
-        reason=reason or (changes.get("reason") or ""),
+        reason=reason,
         note=note,
         patch=patch,
     )
