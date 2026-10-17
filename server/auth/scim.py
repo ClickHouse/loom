@@ -163,6 +163,8 @@ async def create(
                 }
             changes = {"user_name": normalized(user_name), "deleted": 0, **_entry(email_entry)}
             new, cutoff = await _set_active(row, active, **changes)
+    if new is not None and not active:
+        await _revoke_tokens(new)
     await _wait_out(cutoff)
     if new is None:
         raise Exists
@@ -199,6 +201,8 @@ async def update(
                 new, cutoff = await _set_active(
                     row, keep, asked=asked, user_name=renamed, **changes
                 )
+    if active is False:  # a retry too: it finishes what a failed try left
+        await _revoke_tokens(new)
     await _wait_out(cutoff)
     return new
 
@@ -225,8 +229,9 @@ async def delete(uid: str) -> bool:
         row = await get(uid)
         if row is None:
             return False
-        await _set_active(row, False, deleted=1)
-        return True
+        new, _ = await _set_active(row, False, deleted=1)
+    await _revoke_tokens(new)
+    return True
 
 
 async def _refuse_taken(user_name: str, uid: str) -> None:
@@ -277,6 +282,13 @@ async def _row(uid: str) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
+async def _revoke_tokens(row: dict[str, Any]) -> None:
+    # Past the leases, as it may claim many token names: the subjects are
+    # revoked outright already, so their tokens are dead with them meanwhile.
+    # This lists them so and frees their names.
+    await service_accounts.revoke_created_by(row["subjects"], revoked_by=_BY)
+
+
 async def _wait_out(cutoff: datetime | None) -> None:
     # Past the leases, so a deactivation sent meanwhile does not wait on it and
     # turn Busy; until every replica is past it, a token issued before stays revoked.
@@ -317,8 +329,6 @@ async def _set_active(
                 subjects = sorted((set(found) - known) | await _lifted(sorted(known)))
             for subject in subjects:
                 await _revoke(new["id"], subject, set(found.values()))
-            # Their tokens are dead with them: list them so, and free their names.
-            await service_accounts.revoke_created_by(subjects, revoked_by=_BY)
         if new != row or unwritten:  # a change, or a user not yet written
             await _write(new)
         # Audited as the row lands: a retry after a later failure finds the row

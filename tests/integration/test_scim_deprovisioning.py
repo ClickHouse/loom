@@ -191,7 +191,26 @@ def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
         json={"client": "claude-code", "ttl_days": 0},
     )
     assert mcp.status_code == 200, mcp.text
-    made_by_person = [service_account, never.json()["token"], mcp.json()["token"]]
+    # A token the person's own token made: created by its `sa:` subject.
+    parent = httpx.post(
+        f"{base}/v1/me/service_accounts.create",
+        headers=_bearer(session),
+        json={"name": "parent-bot", "namespaces": [ns], "role": "viewer"},
+    )
+    assert parent.status_code == 200, parent.text
+    child = httpx.post(
+        f"{base}/v1/me/service_accounts.create",
+        headers=_bearer(parent.json()["token"]),
+        json={"name": "child-bot", "namespaces": [ns], "role": "viewer"},
+    )
+    assert child.status_code == 200, child.text
+    made_by_person = [
+        service_account,
+        never.json()["token"],
+        mcp.json()["token"],
+        parent.json()["token"],
+        child.json()["token"],
+    ]
     # Another org admin's token, which the person's deactivation must leave alone.
     admin_email = f"admin-{uuid.uuid4().hex[:6]}@corp.example"
     admin_ns = _seed(ch_client, org, admin_email)
@@ -234,7 +253,8 @@ def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
     assert _authenticated(base, again)
     assert not any(_authenticated(base, t) for t in [session, *made_by_person])  # still dead
     listed = _listed(base, again)
-    assert len(listed) == 3 and all(row["revoked_by"] == "scim" for row in listed.values())
+    assert len(listed) == 5 and "child-bot" in listed  # the one parent-bot made too
+    assert all(row["revoked_by"] == "scim" for row in listed.values())
     assert _authenticated(base, admin_bot)
     assert _listed(base, admin)["admin-bot"]["revoked_at"] is None
     # A dead token's name is free again.

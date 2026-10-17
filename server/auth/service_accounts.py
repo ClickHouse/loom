@@ -12,8 +12,10 @@ they agree on what the token may read. A revoked row is written through
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -85,52 +87,96 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
         "revoked_at": revoked_at,
         "revoked_by": revoked_by,
         "version": time.time_ns(),
-        "kind": row.get("kind") or "service_account",
-        "client": row.get("client") or "",
-        "inherit_creator_grants": bool(row.get("inherit_creator_grants", True)),
-        "ns_roles": row.get("ns_roles") or "{}",
+        "kind": row["kind"],
+        "client": row["client"],
+        "inherit_creator_grants": row["inherit_creator_grants"],
+        "ns_roles": row["ns_roles"],
     }
 
 
-async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> int:
-    """List as revoked every unrevoked token any of `subjects` made, in any
-    org; how many. For subjects revoked outright, whose tokens are already
-    dead: their names come free and the Tokens list says so. A retry finds
-    only what an earlier try left."""
+# Names claimed at once while a pass revokes: each is a lease round trip.
+_CLAIMS_AT_ONCE = 8
+_UNEXPIRED = "(expires_at IS NULL OR expires_at > now())"
+
+
+async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
+    """Mark revoked every live token any of `subjects` created, directly or
+    through their tokens, in any org. For subjects revoked outright, whose
+    tokens are already dead: their names come free and the Tokens list says
+    so. A retry finds only what an earlier try left."""
+    from server.auth.delegation import MAX_CHAIN_DEPTH
+    from server.core.ch import get_client, own_write_reads
+
+    ch = get_client()
+    seen = set(subjects)
+    creators = sorted(seen)
+    # One pass per generation: the person's tokens, then the tokens those made.
+    for _ in range(MAX_CHAIN_DEPTH + 1):
+        if not creators:
+            return
+        with own_write_reads():
+            rows = await ch.query_all(
+                "SELECT org, name, sa_subject, revoked_at IS NULL AS live "
+                "FROM loom.service_accounts FINAL "
+                f"WHERE created_by IN {{subs:Array(String)}} AND {_UNEXPIRED}",
+                params={"subs": creators},
+            )
+        await _revoke_all([r for r in rows if r["live"]], creators, revoked_by)
+        # Revoked ones too: a retry still reaches what their tokens made.
+        made = {str(r["sa_subject"]) for r in rows} - seen
+        seen |= made
+        creators = sorted(made)
+
+
+async def _revoke_all(found: list[dict[str, Any]], creators: list[str], revoked_by: str) -> None:
+    """Revoke the rows `found`, in one insert, each name claimed as a create
+    claims it and read again under it: a revoked copy of a row read before
+    must not replace a newer one with the name. The claims are held until
+    the insert lands, so no create takes a name in between."""
     from server.auth.grant_claims import service_account_change
     from server.core.ch import get_client, own_write_reads
     from server.core.datetimes import naive_utc_now_seconds
 
-    if not subjects:
-        return 0
+    if not found:
+        return
     ch = get_client()
-    with own_write_reads():
-        rows = await ch.query_all(
-            "SELECT org, name FROM loom.service_accounts FINAL "
-            "WHERE created_by IN {subs:Array(String)} AND revoked_at IS NULL",
-            params={"subs": subjects},
-        )
-    revoked = 0
-    for found in rows:
-        # Held as a create holds it, and read again under it: a revoked copy
-        # of a row read before must not replace a newer one with the name.
-        async with service_account_change(found["org"], found["name"]):
-            with own_write_reads():
-                row = await ch.query_one(
-                    "SELECT * FROM loom.service_accounts FINAL "
-                    "WHERE org = {org:String} AND name = {name:String} "
-                    "AND created_by IN {subs:Array(String)} AND revoked_at IS NULL",
-                    params={"org": found["org"], "name": found["name"], "subs": subjects},
+    gate = asyncio.Semaphore(_CLAIMS_AT_ONCE)
+    inserted = asyncio.Event()
+    revoked: list[dict[str, Any]] = []
+    pending = len(found)
+
+    async def claim(org: str, name: str) -> None:
+        nonlocal pending
+        async with AsyncExitStack() as held:
+            async with gate:  # only the claiming and the read are bounded
+                await held.enter_async_context(service_account_change(org, name))
+                with own_write_reads():
+                    row = await ch.query_one(
+                        "SELECT * FROM loom.service_accounts FINAL "
+                        "WHERE org = {org:String} AND name = {name:String} "
+                        "AND created_by IN {subs:Array(String)} AND revoked_at IS NULL "
+                        f"AND {_UNEXPIRED}",
+                        params={"org": org, "name": name, "subs": creators},
+                    )
+            if row is not None:
+                revoked.append(
+                    revoked_row(
+                        dict(row), revoked_at=naive_utc_now_seconds(), revoked_by=revoked_by
+                    )
                 )
-            if row is None:
-                continue
-            now = naive_utc_now_seconds()
-            await ch.insert(
-                "loom.service_accounts",
-                [revoked_row(dict(row), revoked_at=now, revoked_by=revoked_by)],
-            )
-            revoked += 1
-    return revoked
+            pending -= 1
+            if pending == 0:  # the last one read: every claim is held
+                if revoked:
+                    await ch.insert("loom.service_accounts", revoked)
+                inserted.set()
+            await inserted.wait()
+
+    try:
+        async with asyncio.TaskGroup() as tasks:
+            for r in found:
+                tasks.create_task(claim(r["org"], r["name"]))
+    except ExceptionGroup as e:  # the failure itself, which the caller maps to a 503
+        raise e.exceptions[0] from e
 
 
 __all__ = ["SACreator", "inheriting_creator", "revoke_created_by", "revoked_row", "sa_creator"]

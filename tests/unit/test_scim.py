@@ -152,18 +152,31 @@ class _Table:
         self.lifted = lifted
         self.fail_insert = False
         self.tokens: list[dict[str, Any]] = []  # loom.service_accounts
+        self.fail_token_insert: str | None = None  # an insert with this token name fails
+        self.token_inserts = 0
+        self.claimed: set[tuple[str, str]] = set()  # token names a claim holds
 
     def token(self, org: str, name: str) -> dict[str, Any] | None:
         rows = [r for r in self.tokens if (r["org"], r["name"]) == (org, name)]
         return max(rows, key=lambda r: r["version"]) if rows else None
 
-    def live_tokens(self, subs: list[str] | None = None) -> list[dict[str, Any]]:
-        heads = [self.token(o, n) for o, n in sorted({(r["org"], r["name"]) for r in self.tokens})]
+    def made_by(self, subs: list[str] | None, sql: str) -> list[dict[str, Any]]:
+        """The tokens `subs` (any, when None) made, revoked or not; unexpired,
+        when `sql` says so."""
+        unexpired = "expires_at > now()" in sql
         return [
             r
-            for r in heads
-            if r and r["revoked_at"] is None and (subs is None or r["created_by"] in subs)
+            for r in self.heads()
+            if (subs is None or r["created_by"] in subs)
+            and not (unexpired and r["expires_at"] and r["expires_at"] <= datetime.now())
         ]
+
+    def heads(self) -> list[dict[str, Any]]:
+        names = sorted({(r["org"], r["name"]) for r in self.tokens})
+        return [r for r in (self.token(o, n) for o, n in names) if r]
+
+    def live_tokens(self) -> list[dict[str, Any]]:
+        return [r for r in self.heads() if r["revoked_at"] is None]
 
     def newest(self, uid: str) -> dict[str, Any] | None:
         rows = [r for r in self.rows if r["id"] == uid]
@@ -176,7 +189,7 @@ class _Table:
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         if "loom.service_accounts" in sql:
             p = params or {}
-            live = self.live_tokens(p.get("subs"))
+            live = [r for r in self.made_by(p.get("subs"), sql) if r["revoked_at"] is None]
             return next((r for r in live if (r["org"], r["name"]) == (p["org"], p["name"])), None)
         if "loom.revoked_tokens" in sql:
             cutoffs = [c for s, c in self.narrowed if s in self._lifted_with(params)]
@@ -202,7 +215,9 @@ class _Table:
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         if "loom.service_accounts" in sql:
-            return self.live_tokens(params["subs"])
+            return [
+                {**r, "live": r["revoked_at"] is None} for r in self.made_by(params["subs"], sql)
+            ]
         if "loom.revoked_tokens" in sql:
             return [{"jti": s} for s in self._lifted_with(params)]
         if "loom.namespace_grants" in sql:
@@ -216,6 +231,10 @@ class _Table:
         if self.fail_insert:
             raise RuntimeError("ClickHouse is away")
         if table == "loom.service_accounts":
+            if any(r["name"] == self.fail_token_insert for r in rows):
+                raise RuntimeError("ClickHouse is away")
+            assert all((r["org"], r["name"]) in self.claimed for r in rows)
+            self.token_inserts += 1
             self.tokens.extend(dict(r) for r in rows)
             return
         assert table == scim.TABLE
@@ -235,6 +254,7 @@ class _World:
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.fail_revoke = False
         self.leases: list[str] = []
+        self.holding = 0  # SCIM leases held now
         self.waits: list[float] = []  # what the real `wait_out` sleeps
 
         async def has_outright_row(subject: str) -> bool:
@@ -269,11 +289,20 @@ class _World:
         @asynccontextmanager
         async def held(name: str) -> AsyncIterator[None]:
             self.leases.append(name)
-            yield
+            self.holding += 1
+            try:
+                yield
+            finally:
+                self.holding -= 1
 
         @asynccontextmanager
         async def name_claim(org: str, name: str) -> AsyncIterator[None]:
-            yield
+            assert self.holding == 0, "token names are claimed past the SCIM leases"
+            self.table.claimed.add((org, name))
+            try:
+                yield
+            finally:
+                self.table.claimed.discard((org, name))
 
         async def no_wait(s: float) -> None:
             self.waits.append(s)
@@ -407,7 +436,9 @@ async def test_reactivating_lifts_the_refusal_and_keeps_old_tokens_revoked(world
     assert len(world.narrowed) == 1 and len(world.events) == 2
 
 
-def _saved_token(name: str, created_by: str) -> dict[str, Any]:
+def _saved_token(
+    name: str, created_by: str, *, expires_at: datetime | None = None
+) -> dict[str, Any]:
     return {
         "org": "acme",
         "name": name,
@@ -417,7 +448,7 @@ def _saved_token(name: str, created_by: str) -> dict[str, Any]:
         "ttl_days": 0,
         "created_by": created_by,
         "created_at": datetime(2026, 1, 1),
-        "expires_at": None,
+        "expires_at": expires_at,
         "revoked_at": None,
         "revoked_by": "",
         "version": 1,
@@ -458,6 +489,51 @@ async def test_a_failed_token_revocation_fails_the_deactivation(world) -> None:
     world.table.fail_insert = False
     await scim.set_active(uid, False)  # the provider retries
     assert world.table.live_tokens() == [] and await _DEACTIVATED("lee@example.com")
+
+
+async def test_tokens_made_by_the_persons_tokens_read_revoked_too(world) -> None:
+    world.person("lee@example.com", "lee")
+    parent = _saved_token("parent-bot", "lee")
+    child = _saved_token("child-bot", parent["sa_subject"])
+    grandchild = _saved_token("grandchild-bot", child["sa_subject"])
+    world.table.tokens += [parent, child, grandchild, _saved_token("ci", "admin")]
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    for name in ("parent-bot", "child-bot", "grandchild-bot"):
+        assert (world.table.token("acme", name) or {})["revoked_by"] == "scim"
+    assert world.table.live_tokens() == [_saved_token("ci", "admin")]
+
+
+async def test_many_tokens_are_revoked_in_one_request_one_insert_a_generation(world) -> None:
+    world.person("lee@example.com", "lee")
+    world.table.tokens += [_saved_token(f"bot-{i}", "lee") for i in range(200)]
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    assert world.table.live_tokens() == [] and world.table.token_inserts == 1
+
+
+async def test_an_expired_token_is_left_as_it_is(world) -> None:
+    world.person("lee@example.com", "lee")
+    expired = _saved_token("old", "lee", expires_at=datetime(2026, 1, 2))
+    world.table.tokens.append(expired)
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    assert world.table.tokens == [expired]
+
+
+async def test_a_retry_of_an_inactive_user_revokes_what_a_failed_try_left(world) -> None:
+    world.person("lee@example.com", "lee")
+    parent = _saved_token("parent-bot", "lee")
+    world.table.tokens += [parent, _saved_token("child-bot", parent["sa_subject"])]
+    uid = await _create("lee@example.com")
+    world.table.fail_token_insert = "child-bot"
+    with pytest.raises(RuntimeError):
+        await scim.set_active(uid, False)
+    assert await _DEACTIVATED("lee@example.com")  # the row landed; the child did not
+    assert [r["name"] for r in world.table.live_tokens()] == ["child-bot"]
+    world.table.fail_token_insert = None
+    await scim.set_active(uid, False)  # the provider retries
+    assert world.table.live_tokens() == []
 
 
 async def test_a_retried_reactivation_still_waits_out_the_first_ones_cutoff(

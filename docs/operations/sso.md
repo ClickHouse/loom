@@ -339,8 +339,10 @@ What Loom does with each request:
   revokes outright every subject an SSO sign-in with the email could reach
   (each SSO account naming it and each password account linked to it, in any
   org): every session, and every service account and MCP token the person
-  made. While it lasts, SSO sign-in with the email is refused ("this account
-  is deactivated"), even if it reaches no account yet. The accounts, their
+  made. Their tokens show as revoked by `scim` in the Tokens list and their
+  names are free again; a reactivation does not bring them back. While it
+  lasts, SSO sign-in with the email is refused ("this account is
+  deactivated"), even if it reaches no account yet. The accounts, their
   grants and their data stay; this is not erasure. A subject is a name, not
   an org's: when one also owns an account or holds a grant in an org the
   email does not reach (another person's `alice`), it is still revoked, and
