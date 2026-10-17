@@ -271,7 +271,8 @@ def test_reseal_check_waits_for_sign_ins_in_flight_under_the_previous_root(
 ) -> None:
     """A code, device grant or approval in Keeper carries the IdP's refresh
     token sealed: one only the previous root opens keeps the rotation open
-    until it expires, and the check names when the last one does."""
+    until it expires, and the check names when the last one does. A spent
+    one is no sign-in in flight."""
     import argparse
     import json
 
@@ -280,6 +281,8 @@ def test_reseal_check_waits_for_sign_ins_in_flight_under_the_previous_root(
     monkeypatch.setattr(settings, "jwt_secret", "old-root-secret")
     sealed = seal("oidc refresh token", "rt")
     old = json.dumps({"data": {"kind": "connect", "upstream_refresh": sealed}, "exp": 1})
+    # A code already redeemed: its sign-in is done, the record only marks it spent.
+    spent = json.dumps({"upstream_refresh": sealed, "spent": True})
     monkeypatch.setattr(settings, "jwt_secret", "new-root-secret")
     monkeypatch.setattr(settings, "jwt_secret_previous", "old-root-secret")
     new = json.dumps({"kind": "connect", "upstream_refresh": seal("oidc refresh token", "rt")})
@@ -287,6 +290,7 @@ def test_reseal_check_waits_for_sign_ins_in_flight_under_the_previous_root(
         {"value": old, "expires_at": 1_900_000_000},
         {"value": new, "expires_at": 1_900_000_900},
         {"value": "3:rid", "expires_at": 1_900_009_000},  # a session's pointer, nothing sealed
+        {"value": spent, "expires_at": 1_900_005_000},
     ]
 
     class Ch:

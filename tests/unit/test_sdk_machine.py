@@ -196,12 +196,30 @@ def test_a_busy_server_is_retryable_not_a_refusal(monkeypatch) -> None:
         machine.MachineLogin("https://loom.example", "deploy").token()
 
 
-@pytest.mark.parametrize(("status", "error"), [(503, "BackendUnavailable"), (404, "AuthInvalid")])
-def test_a_failed_discovery_is_a_loom_error(monkeypatch, status: int, error: str) -> None:
-    def get(url: str, timeout: float) -> httpx.Response:
-        return httpx.Response(status, request=httpx.Request("GET", url))
+_FAILED = [
+    ("busy", "BackendUnavailable"),
+    ("refused", "AuthInvalid"),
+    ("not json", "AuthInvalid"),
+    ("no key", "AuthInvalid"),
+    ("unreachable", "BackendUnavailable"),
+]
 
-    monkeypatch.setattr(machine.httpx, "get", get)
+
+def _answer(url: str, which: str) -> httpx.Response:
+    request = httpx.Request("GET", url)
+    if which == "unreachable":
+        raise httpx.ConnectError("refused", request=request)
+    return {
+        "busy": httpx.Response(503, request=request),
+        "refused": httpx.Response(403, request=request),
+        "not json": httpx.Response(200, text="<html>sign in</html>", request=request),
+        "no key": httpx.Response(200, json={"other": 1}, request=request),
+    }[which]
+
+
+@pytest.mark.parametrize(("which", "error"), _FAILED)
+def test_a_failed_discovery_is_a_loom_error(monkeypatch, which: str, error: str) -> None:
+    monkeypatch.setattr(machine.httpx, "get", lambda url, timeout: _answer(url, which))
     login = machine.MachineLogin(
         "https://loom.example", "deploy", key_source=("LOOM_CLIENT_KEY", "k")
     )
@@ -209,12 +227,12 @@ def test_a_failed_discovery_is_a_loom_error(monkeypatch, status: int, error: str
         login.token()
 
 
-@pytest.mark.parametrize(("status", "error"), [(503, "BackendUnavailable"), (403, "AuthInvalid")])
+@pytest.mark.parametrize(("which", "error"), _FAILED)
 def test_a_failed_ci_proof_fetch_is_a_loom_error(
-    token_endpoint, monkeypatch, status: int, error: str
+    token_endpoint, monkeypatch, which: str, error: str
 ) -> None:
     def get(url: str, *, headers: dict[str, str], timeout: float) -> httpx.Response:
-        return httpx.Response(status, request=httpx.Request("GET", url))
+        return _answer(url, which)
 
     monkeypatch.setattr(machine.httpx, "get", get)
     monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://ci.example/token")

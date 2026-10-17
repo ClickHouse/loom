@@ -23,8 +23,9 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -116,29 +117,22 @@ class MachineLogin(httpx.Auth):
                 "subject_token": _workload_token(self._audience),
                 "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
             }
-        r = httpx.post(endpoint, data=form, timeout=30.0)
-        try:
-            body = r.json()
-        except ValueError:
-            body = {}  # a proxy's page, not Loom's answer
-        if not isinstance(body, dict):
-            body = {}
-        if r.status_code == 429 or r.status_code >= 500:  # Keeper busy, the CI issuer away
-            raise BackendUnavailable(f"bot {self.profile!r}: {r.status_code}; retry shortly")
-        if r.status_code != 200 or "access_token" not in body:
-            raise AuthInvalid(
-                f"bot {self.profile!r}: {body.get('error', r.status_code)} "
-                f"{body.get('error_description', '')}".strip()
-            )
+        what = f"bot {self.profile!r}"
+        body = _answer(lambda: httpx.post(endpoint, data=form, timeout=30.0), what)
+        if "access_token" not in body:
+            raise AuthInvalid(f"{what}: no access_token in the answer")
         return str(body["access_token"]), time.time() + float(body.get("expires_in", 3600))
 
     def _audience_of_assertion(self) -> str:
         """The token endpoint the server names itself by, which a bot reaching it
         by another (internal) URL must still sign for."""
         if not self._token_endpoint:
-            r = httpx.get(f"{self.server}/.well-known/oauth-authorization-server", timeout=30.0)
-            _check(r, f"bot {self.profile!r}: server metadata")
-            self._token_endpoint = str(r.json()["token_endpoint"])
+            url = f"{self.server}/.well-known/oauth-authorization-server"
+            what = f"bot {self.profile!r}: server metadata"
+            endpoint = _answer(lambda: httpx.get(url, timeout=30.0), what).get("token_endpoint")
+            if not isinstance(endpoint, str) or not endpoint:
+                raise AuthInvalid(f"{what}: no token_endpoint")
+            self._token_endpoint = endpoint
         return self._token_endpoint
 
     def _assertion(self, endpoint: str, pem: bytes, source: str) -> str:
@@ -203,13 +197,31 @@ class MachineLogin(httpx.Auth):
             yield request
 
 
-def _check(r: httpx.Response, what: str) -> None:
-    """Raise for an answer other than 200 as the token endpoint's: busy or
-    away is retryable, anything else a refusal."""
+def _answer(send: Callable[[], httpx.Response], what: str) -> dict[str, Any]:
+    """The JSON object `send` answers, {} for any other body (a proxy's page):
+    unreachable is retryable, as `_check` says for the status."""
+    try:
+        r = send()
+    except httpx.RequestError as e:
+        raise BackendUnavailable(f"{what}: {e}") from e
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    _check(r, what, body)
+    return body
+
+
+def _check(r: httpx.Response, what: str, body: dict[str, Any]) -> None:
+    """Raise for an answer other than 200: busy or away (Keeper, the CI
+    issuer) is retryable, anything else a refusal."""
     if r.status_code == 429 or r.status_code >= 500:
         raise BackendUnavailable(f"{what}: {r.status_code}; retry shortly")
     if r.status_code != 200:
-        raise AuthInvalid(f"{what}: {r.status_code}")
+        why = f"{body.get('error', r.status_code)} {body.get('error_description', '')}"
+        raise AuthInvalid(f"{what}: {why.strip()}")
 
 
 def _key_pem(source: str, value: str) -> bytes:
@@ -254,6 +266,9 @@ def _workload_token(audience: str) -> str:
         )
     # The runner's URL carries its own query (an API version): the audience joins it.
     asked = httpx.URL(url).copy_merge_params({"audience": audience})
-    r = httpx.get(str(asked), headers={"Authorization": f"Bearer {bearer}"}, timeout=30.0)
-    _check(r, "the CI job's OIDC token")
-    return str(r.json()["value"])
+    what = "the CI job's OIDC token"
+    headers = {"Authorization": f"Bearer {bearer}"}
+    value = _answer(lambda: httpx.get(str(asked), headers=headers, timeout=30.0), what).get("value")
+    if not isinstance(value, str) or not value:
+        raise AuthInvalid(f"{what}: no value in the answer")
+    return value

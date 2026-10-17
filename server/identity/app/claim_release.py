@@ -31,6 +31,8 @@ from server.identity.store import grants as grants_repo
 log = logging.getLogger(__name__)
 router = APIRouter()
 
+_REASON = "namespace released"
+
 
 class ClaimReleaseInput(BaseModel):
     org: str
@@ -155,6 +157,17 @@ async def _release(
             ch=ch,
         )
 
+    # The agent whose own namespace this is: cut off before its row is
+    # rewritten, since the row is what names it. Its exchange makes and checks
+    # the namespace under the claim held here, so its tokens predate this cutoff.
+    agent = _agent_owner(existing)
+    cutoff = (
+        await account_admin.end_tokens(agent, by=actor_subject, reason=_REASON) if agent else None
+    )
+    # Read before the row is rewritten, and changed only by forget_namespace
+    # below, so a retry after a failure in between still finds the bots.
+    bots = await machines.naming(org, namespace, ch=ch)
+
     # Clear owner and mark inactive. The row stays, so the name stays taken
     # (self-signup's first-claim check does not filter on `active`): the
     # namespace's data is still there, and a re-claim would hand it to a
@@ -162,18 +175,6 @@ async def _release(
     # (classification, join_policy, kind, caps, ...) forward.
     # The contact email and password are cleared with the owner, so the old
     # credential dies with the claim.
-    # Their tokens end first: the row and the bots below are what names them,
-    # so a release stopped after rewriting them could not find them again. The
-    # cutoff is past the claim's deadline, so it also covers a token issued
-    # while those rewrites are still landing.
-    from server.auth.grant_claims import WRITES_LAND_S
-
-    subjects = _token_subjects(existing, await machines.naming(org, namespace, ch=ch))
-    cutoff = account_admin.cutoff_after(WRITES_LAND_S) if subjects else None
-    for subject in subjects:
-        await account_admin.end_tokens(
-            subject, by=actor_subject, reason="namespace released", cutoff=cutoff
-        )
     row = dict(existing)
     row["released_aliases"] = kept_aliases(existing)
     row["owner_email"] = ""
@@ -183,6 +184,13 @@ async def _release(
     row["description"] = f"Released by {actor_subject}" + (f" ({reason})" if reason else "")
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     await ch.insert("loom.namespaces", [row])
+
+    # A bot's exchange reads its live namespaces sequentially, so no token
+    # issued from here on carries this one: the bots' cutoff is taken now.
+    for name in bots:
+        cutoff = await account_admin.end_tokens(
+            machines.subject(name), by=actor_subject, reason=_REASON
+        )
     await sso_links.forget_account(org, namespace, actor_subject, ch=ch)
     await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
     # The claim cap reads which accounts tie a person's spellings from this table.
@@ -206,16 +214,14 @@ async def _release(
     return out, cutoff
 
 
-def _token_subjects(row: dict[str, Any], bots: list[str]) -> list[str]:
-    """The subjects a release ends the tokens of: the `bots`, and an agent's,
-    when it is the agent's own namespace (its owner is the agent)."""
-    subjects = [machines.subject(name) for name in bots]
+def _agent_owner(row: dict[str, Any]) -> str:
+    """The agent owning `row`, when it is an agent's own namespace; else ''."""
     owner = str(row.get("owner_email") or "")
     for t in row.get("tags") or []:
         trust = str(t).removeprefix(agents.TAG_PREFIX)
         if trust != str(t) and owner.startswith(agents.subject(trust, "")):
-            subjects.append(owner)  # the agent's own namespace: its owner is the agent
-    return [s for s in subjects if s]
+            return owner
+    return ""  # never a person's own sessions
 
 
 async def _may_release(info: AuthInfo, org: str, namespace: str) -> bool:

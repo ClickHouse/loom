@@ -155,12 +155,12 @@ def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -
     assert ch.inserts["loom.namespaces"][0]["description"].startswith("Released by local")
 
 
-def test_a_release_names_the_bots_and_the_agent_it_reached() -> None:
+def test_a_release_names_the_agent_owning_the_namespace() -> None:
     row = {"tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
-    assert cr._token_subjects(row, ["triage"]) == ["sa:triage", "sa:fleet:a1"]
+    assert cr._agent_owner(row) == "sa:fleet:a1"
     forged = {"tags": ["machine:fleet"], "owner_email": "lee"}  # a person's, marked by hand
     # Never the person's own sessions.
-    assert cr._token_subjects(forged, ["triage"]) == ["sa:triage"]
+    assert cr._agent_owner(forged) == ""
 
 
 def test_the_cutoff_is_waited_out_after_the_claim_is_let_go(env: Any, monkeypatch) -> None:
@@ -200,55 +200,67 @@ def test_the_cutoff_is_waited_out_after_the_claim_is_let_go(env: Any, monkeypatc
     assert events == ["claimed", "let go", "waited"]
 
 
-def test_a_release_whose_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeypatch) -> None:
-    # The row names the agent and the bots name the namespace: rewritten before
-    # the cutoffs landed, a retry could no longer find whose tokens to end.
+_AGENT_ROW = {**_ROW, "tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
+
+
+def _release(ch: _CH) -> Any:
+    return cr.release_claim(org="acme", namespace="repo-x", reason="", actor_subject="op", ch=ch)
+
+
+def test_a_release_whose_bot_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeypatch) -> None:
+    # The bots still name the namespace after the row is rewritten: a retry
+    # reading the released row must still find them, and cut them off.
     from server.auth import machines
 
-    run, _ = env
     forgotten: list[str] = []
+    ended: list[str] = []
 
     async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
-        return ["triage"]
+        return [] if forgotten else ["triage"]
 
     async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
         forgotten.append(ns)
         return ["triage"]
 
-    async def down(subject: str, **k: Any) -> Any:
-        raise RuntimeError("ClickHouse away")
+    async def down(subject: str, **k: Any) -> datetime:
+        if subject == "sa:triage":
+            raise RuntimeError("ClickHouse away")
+        ended.append(subject)
+        return datetime(2026, 1, 3)
 
     monkeypatch.setattr(machines, "naming", naming)
     monkeypatch.setattr(machines, "forget_namespace", forget)
     monkeypatch.setattr(account_admin, "end_tokens", down)
+    ch = _CH(_AGENT_ROW)
     with pytest.raises(RuntimeError):
-        run(_tok(["org_admin"]))
-    assert forgotten == []  # the bots still name it
-    ended: list[str] = []
+        asyncio.run(_release(ch))
+    assert ended == ["sa:fleet:a1"] and forgotten == []
+    (released,) = ch.inserts["loom.namespaces"]
 
-    async def end_tokens(subject: str, *, by: str, reason: str, cutoff: Any) -> datetime:
+    async def end_tokens(subject: str, **k: Any) -> datetime:
         ended.append(subject)
-        return cutoff
+        return datetime(2026, 1, 3)
 
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
-    out, _ = run(_tok(["org_admin"]))
+    ended.clear()
+    out = asyncio.run(_release(_CH(released)))  # the retry reads the rewritten row
+    assert out is not None
     assert out.released and forgotten == ["repo-x"]
-    assert ended == ["sa:triage"]  # once, before the row and bots change
+    assert ended == ["sa:triage"]  # the agent was cut off by the first pass
 
 
-def test_the_cutoff_covers_tokens_issued_until_the_slowest_release_ends(
+def test_the_bots_cutoff_is_taken_after_the_row_insert_returns(
     env: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The bots name the namespace until it is forgotten, which may land as late
-    # as the claim's deadline: a bot token minted just before must be cut off
-    # by what was written before the row changed, with nothing written after.
-    from server.auth import grant_claims, machines
+    # A bot's exchange reads its live namespaces sequentially: one that read
+    # before the insert returned dates its token earlier, and one after gets
+    # none of this namespace. The agent is cut off before its row changes.
+    from server.auth import machines
 
     run, _ = env
     start = datetime(2026, 1, 3, 12, 0, 0, tzinfo=UTC)
     clock = [start]
-    written: list[datetime] = []
-    issued: list[datetime] = []
+    events: list[tuple[str, datetime]] = []
 
     class _Clock(datetime):
         @classmethod
@@ -258,20 +270,32 @@ def test_the_cutoff_covers_tokens_issued_until_the_slowest_release_ends(
     async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
         return ["triage"]
 
-    async def slow_forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
-        clock[0] = start + timedelta(seconds=grant_claims.WRITES_LAND_S)
-        # Minted on a replica ahead by the skew, the second the write lands.
-        issued.append(clock[0] + timedelta(seconds=revocation.CLOCK_SKEW_S))
+    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+        events.append(("forget", clock[0]))
         return ["triage"]
 
     async def cut_off(subject: str, *, issued_before: datetime, **k: Any) -> None:
-        if issued:
-            raise RuntimeError("ClickHouse away")  # nothing after the rewrite may be needed
-        written.append(issued_before)
+        events.append((subject, issued_before))
+
+    plain_insert = _CH.insert
+
+    async def slow_insert(self: _CH, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
+        await plain_insert(self, table, rows, **k)
+        if table == "loom.namespaces":
+            clock[0] += timedelta(seconds=8)  # a slow insert
+            events.append(("row", clock[0]))
 
     monkeypatch.setattr(revocation, "datetime", _Clock)
     monkeypatch.setattr(machines, "naming", naming)
-    monkeypatch.setattr(machines, "forget_namespace", slow_forget)
+    monkeypatch.setattr(machines, "forget_namespace", forget)
     monkeypatch.setattr(revocation, "cut_off", cut_off)
-    assert run(_tok(["org_admin"]))[0].released
-    assert written and all(issued[0] < cutoff for cutoff in written)
+    monkeypatch.setattr(_CH, "insert", slow_insert)
+    assert run(_tok(["org_admin"]), row=_AGENT_ROW)[0].released
+    assert [e for e, _ in events] == ["sa:fleet:a1", "row", "sa:triage", "forget"]
+    returned, bots_cutoff = events[1][1], events[2][1]
+    # Minted the second the insert returned, on a replica ahead by the skew.
+    assert returned + timedelta(seconds=revocation.CLOCK_SKEW_S) < bots_cutoff
+    # And the wait is on the last cutoff, a few seconds out, not the claim's deadline.
+    (waited,) = env[1]["waited"]
+    assert waited == bots_cutoff
+    assert bots_cutoff - returned <= timedelta(seconds=1 + revocation.CLOCK_SKEW_S)
