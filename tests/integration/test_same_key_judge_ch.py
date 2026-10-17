@@ -2693,6 +2693,99 @@ async def test_a_late_projections_edge_ends_when_the_revision_ended_its_value(
     assert "jazz" in walked and "london" not in walked
 
 
+@pytest.mark.parametrize("cleanup", ["beside the write", "by the repair"])
+async def test_a_late_projections_edge_ends_when_a_bulk_retired_its_row(
+    ch, org, monkeypatch, cleanup
+) -> None:
+    # The retirement-history case of the test above: London's edges land after a
+    # later bulk write under another session retired its row. A retirement keeps the
+    # row's updated_at, so the edges end at the retirement, not at London's write: a
+    # walk between the two still reaches London, a walk after it does not.
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, bulk_set, conflicts, entity_projections
+    from server.memory.app.projection_failures import (
+        list_projection_failures,
+        retry_projection_failures,
+    )
+    from server.memory.app.write import handle_memory_set
+
+    write_edges, release, held = entity_projections.write_entity_edges, asyncio.Event(), []
+    end_edges_of = entity_projections._end_edges_of
+    failures = ["once"] if cleanup == "by the repair" else []
+
+    async def _london_held(input: Any, *args: Any, **kw: Any) -> Any:
+        if "London" in str(input.entries[0].value):
+            held.append(True)
+            await release.wait()
+        return await write_edges(input, *args, **kw)
+
+    async def _fails_once(*args: Any, **kw: Any) -> Any:
+        if failures:
+            failures.pop()
+            raise RuntimeError("transient")
+        return await end_edges_of(*args, **kw)
+
+    async def _newest_wins(org: str, namespace: str, ch: Any = None) -> str:
+        return "newest_wins"  # a later write to the key retires the older rows
+
+    monkeypatch.setattr(entity_projections, "write_entity_edges", _london_held)
+    monkeypatch.setattr(entity_projections, "_end_edges_of", _fails_once)
+    monkeypatch.setattr(conflicts, "namespace_conflict_policy", _newest_wins)
+    written = naive_utc_now()
+    london = await handle_memory_set(
+        MemorySetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="alice",
+            value="Alice lives in London",
+            entities=["alice", "london"],
+        )
+    )
+    await asyncio.sleep(2.5)  # the retirement well after London's write
+    await bulk_set.handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s2",
+            entries=[
+                {"memory_key": "alice", "value": "Alice likes jazz", "entities": ["alice", "jazz"]}
+            ],
+        )
+    )
+    (retired,) = await ch.query_all(
+        "SELECT invalid_at FROM loom.memory FINAL WHERE org = {org:String}"
+        " AND memory_id = {id:UUID} AND status = 'superseded'"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "id": str(london.memory_id)},
+    )
+    await asyncio.sleep(2.5)  # London's edges land after the retirement
+    assert held
+    release.set()
+    await after_write.drain()
+    if cleanup == "by the repair":
+        (failure,) = await list_projection_failures(
+            org=org, projection="entity_edges_close", status="active", ch=ch
+        )
+        assert failure.payload["ended_at"] == retired["invalid_at"].isoformat()
+        await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    await _mutations_done(ch, org)
+    before = written + timedelta(seconds=1.2)
+    assert "london" in await _walked(
+        org, [], labeled=False, as_of=before, seed="alice", until=lambda w: "london" in w
+    )
+    after = retired["invalid_at"] + timedelta(seconds=1.2)
+    walked = await _walked(
+        org, [], labeled=False, as_of=after, seed="alice", until=lambda w: "london" not in w
+    )
+    assert "london" not in walked
+
+
 async def test_a_late_cleanup_keeps_the_end_another_row_gave_the_pair(ch, org) -> None:
     # Alice and London have two edge rows: one another row closed ten minutes after
     # the revision, and the late projection's own open one. The late cleanup ends
@@ -2789,6 +2882,23 @@ async def test_a_value_a_retirement_ended_ends_at_the_retirement(ch, org) -> Non
     assert retired is not None and retired > written
     ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)
     assert ended == retired
+
+
+async def test_a_value_an_undated_value_update_ended_ends_at_the_retirement(ch, org) -> None:
+    # A value update whose newer row has no valid_at retires the older row without an
+    # invalid_at, keeping its updated_at: the value ended when it was retired.
+    from server.memory import store as M
+    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.value_updates import _supersession_update
+
+    row = _row(org, "s1", "price is $10", None)
+    await M.insert_memory_versions([row], ch=ch)
+    await asyncio.sleep(1.1)  # the retirement a second after the write
+    retiring = naive_utc_now().replace(microsecond=0)
+    update = _supersession_update("newer", None)
+    assert await M.write_versions_by_ids(org, [str(row["memory_id"])], update, ch=ch, strong=True)
+    ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)
+    assert ended >= retiring > row["updated_at"]
 
 
 async def test_a_value_a_back_dated_value_update_ended_ends_at_its_date(ch, org) -> None:

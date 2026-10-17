@@ -521,7 +521,7 @@ async def value_ended_at(
 ) -> datetime:
     """When the row last stopped holding the value `content_sha256`: the first version
     after the last one that held it (a revision, a retirement, a delete), read from the
-    version history. Now when the history has none."""
+    version history, dated by what that version stamped. Now when the history has none."""
     row = await ch.query_one(
         f"""
         -- holder: the last version holding the value, and its invalid_at.
@@ -535,11 +535,13 @@ async def value_ended_at(
         -- A tombstone or retirement can keep the row's updated_at. A tombstoned_at here is
         -- fresh (the holders had none); an invalid_at is fresh when the holder's differs,
         -- and may be back-dated (a value update retires as of the newer row's valid_at).
+        -- A retirement that stamps neither is dated by its version, the wall-clock
+        -- nanoseconds it was written at (`next_version`).
         SELECT argMinOrNull(
             coalesce(
                 tombstoned_at,
                 if(invalid_at IS DISTINCT FROM holder.2, invalid_at, NULL),
-                updated_at),
+                greatest(updated_at, toDateTime(fromUnixTimestamp64Nano(toInt64(version))))),
             version) AS ended
         FROM loom.memory_versions
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
