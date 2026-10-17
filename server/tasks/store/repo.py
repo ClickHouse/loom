@@ -344,8 +344,9 @@ async def fetch_task_by_idempotency_key(
 async def insert_task_version(
     row: TaskRow, *, dedup_token: str = "", ch: _CHClient | None = None
 ) -> None:
-    """One new version row. Every persisted column rides along (the RMT rule
-    in CLAUDE.md); storage drops a second insert with the same ``dedup_token``."""
+    """One new version row. Every persisted column rides along, or FINAL
+    serves a default over it; storage drops a second insert with the same
+    ``dedup_token``."""
     ch = ch or _default_client()
     settings: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
     if dedup_token:

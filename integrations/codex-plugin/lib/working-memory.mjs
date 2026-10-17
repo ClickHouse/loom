@@ -12,8 +12,8 @@
 // compaction, so the note survives the context drop it was written before.
 //
 // It is state, not knowledge: durable facts still go through memory.set,
-// and this block is never embedded or ranked (CLAUDE.md: "working memory is
-// not retrieval memory").
+// and this block is never embedded or ranked: working memory is not
+// retrieval memory.
 
 import { contentText, redactHead, resolveToken } from "./loom-client.mjs";
 

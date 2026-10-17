@@ -36,7 +36,7 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 - Plugins (MCP tools, session hooks, code shunt): [connect a coding agent](../../getting-started/connect-a-coding-agent.md),
   then [claude-code.md](claude-code.md) or [codex.md](codex.md).
 - Any other MCP client (`loom install --client …`): [mcp-clients.md](mcp-clients.md).
-- The `loom-code` skill alone, no hooks: `npx skills add ClickHouse/loom`, or
+- The `loom-code` skill alone, no hooks: `npx skills add ClickHouse/loom --skill loom-code`, or
   `claude plugin install loom-code-skill@loom`. Install either the `loom` plugin or
   `loom-code-skill`, not both; the plugin already ships the skill.
 

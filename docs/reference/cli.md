@@ -287,7 +287,7 @@ python scripts/codegen/docs_reference.py
 | `loom lexical-stats-rebuild` | Recompute BM25 document frequency for a namespace from its live rows (the term-frequency views only see inserts; supersession and tombstones leave stale vocabulary behind). | `--org`, `--namespace`, `--no-knowledge`, `--no-memory` |
 | `loom version` | Print installed Loom version. |  |
 | `loom install` | Wire Loom into a local AI client's config. | `--client`, `--server-url`, `--token`, `--name`, `--toolset`, `--dry-run`, `--force` |
-| `loom demo` | The first five minutes: ingest this repo's CLAUDE.md (or --file) into the knowledge plane the way `make ingest` does, ask it a question, and print the answer with its evidence rows. | `--file`, `--question`, `--tags`, `--base-url`, `--token`, `--org`, `--namespace`, `--root`, `--search-only` |
+| `loom demo` | The first five minutes: ingest this repo's AGENTS.md (or --file) into the knowledge plane the way `make ingest` does, ask it a question, and print the answer with its evidence rows. | `--file`, `--question`, `--tags`, `--base-url`, `--token`, `--org`, `--namespace`, `--root`, `--search-only` |
 | `loom init` | Create an identity on a Loom server. | `--agent`, `--server-url`, `--org`, `--purpose`, `--ttl-days`, `--token-path`, `--config-path`, `--no-files`, `--json` |
 | `loom ingest-transcript` | Pipe a chat-history file (markdown / JSON) into Loom's conversation table as one thread. | `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--thread-id`, `--file`, `--dry-run` |
 | `loom memory-search` | Run a memory.search from the shell. | `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--query`, `--top-k`, `--search-mode`, `--json-agent` |

@@ -1,0 +1,30 @@
+[
+  {
+    "query": "why is CI failing on PR 412",
+    "should_trigger": true
+  },
+  {
+    "query": "the mixed-version job is red, fix it",
+    "should_trigger": true
+  },
+  {
+    "query": "my PR shows no checks at all",
+    "should_trigger": true
+  },
+  {
+    "query": "is the coverage job flaky or real",
+    "should_trigger": true
+  },
+  {
+    "query": "memory.ask answers from the wrong namespace in my local server",
+    "should_trigger": false
+  },
+  {
+    "query": "run the gates before I push",
+    "should_trigger": false
+  },
+  {
+    "query": "review the diff",
+    "should_trigger": false
+  }
+]
