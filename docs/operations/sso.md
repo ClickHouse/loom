@@ -282,8 +282,9 @@ Empty (the default) leaves SCIM off and its routes unmounted; Loom refuses to
 start with a token shorter than 32 characters (`loom doctor` says so too). The token is the only
 credential `/scim/v2` takes; keep it with the client secret.
 
-Loom keys a SCIM user on an email: the request's primary `emails` value, or
-its `userName` when it sends none (Loom logs a warning when the two differ).
+Loom keys a SCIM user on an email: the request's `emails` entry marked
+primary, else its work entry, else its first, or its `userName` when it sends
+none (Loom logs a warning when the address and the `userName` differ).
 That address must be the one the provider puts in the ID token's `email`
 claim, since that is what a sign-in carries.
 
@@ -300,8 +301,9 @@ In Okta, on the app integration from [Okta setup](#okta-setup):
    **Test Connector Configuration**, then save.
 
 3. **Provisioning → To App → Edit:** enable **Create Users** and
-   **Deactivate Users**, and save. Leave **Update User Attributes** off: Loom
-   keeps no attributes but the email.
+   **Deactivate Users**, and save. **Update User Attributes** may stay off:
+   Loom keeps no attributes but the `userName` (a rename is kept) and the
+   email, which cannot change.
 4. Under **General → Sign On**, set **Application username format** to
    **Email**: Loom knows people by their email.
 
@@ -322,14 +324,18 @@ What Loom does with each request:
   first SSO sign-in makes it (JIT) or reaches the one they have, as without
   SCIM. A second create of the same email, or of a `userName` another user
   has, answers 409.
-- **Updating** a user keeps a new `userName`, unless another user has it
-  (409). A new primary email (the primary or work entry) is refused (400
-  `mutability`, by `PUT` or `PATCH`): the person would sign in to another
-  account, which a later deactivation of the old email would miss. Other
-  addresses may be added, changed or removed. Change the primary address by
-  deleting the user at the provider and creating it again. A refused request
-  that also sets `active: false` still deactivates: providers send a leaver's
-  changes together and do not retry a 400.
+- **Updating** (`PUT`, or `PATCH` of `active`, `userName` or `emails`) keeps
+  a new `userName`, unless another user has it (409), and refuses a new
+  address for the entry the email came from, or for an entry that would take
+  its place (400 `mutability`): the person would sign in to another account,
+  which a later deactivation of the old email would miss. A filtered write
+  (`emails[type eq "work"].value`) is checked only when its filter selects
+  that entry, so an unchanged address passes and other addresses may be
+  added, changed or removed. Change the email by deleting the user at the
+  provider and creating it again. A refused request that also sets
+  `active: false` still deactivates: providers send a leaver's changes
+  together and do not retry a 400. A `PUT` whose body names another user's
+  `id` is refused before anything is applied.
 - **Deactivating** (`active: false` by `PATCH` or `PUT`, or a `DELETE`)
   revokes outright every subject an SSO sign-in with the email could reach
   (each SSO account naming it and each password account linked to it, in any
@@ -347,7 +353,10 @@ What Loom does with each request:
   again: narrow it again then.
 - **Reactivating** (`active: true`) lets the person sign in again. Tokens from
   before stay revoked; they make new ones. A subject an operator revoked
-  (`loom revoke-token --subject`) stays revoked through both.
+  (`loom revoke-token --subject`) stays revoked through both, and so does a
+  subject another deactivated or deleted user still reaches (two addresses
+  reaching one account): it is lifted with the last of them, and Loom logs a
+  warning for each one it leaves.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
   reactivates them.

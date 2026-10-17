@@ -188,9 +188,14 @@ class _World:
         self.narrowed: list[tuple[str, datetime]] = []
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.fail_revoke = False
+        self.leases: list[str] = []
+        self.waits: list[float] = []
 
-        async def revoked_outright(subject: str) -> bool:
+        async def has_outright_row(subject: str) -> bool:
             return subject in self.outright
+
+        async def stale_snapshot(subject: str) -> bool:
+            raise AssertionError("SCIM reads the store, not this process's snapshot")
 
         async def revoke(subject: str, *, reason: str, revoked_by: str) -> dict[str, Any]:
             if self.fail_revoke:
@@ -212,17 +217,19 @@ class _World:
             return ""
 
         @asynccontextmanager
-        async def held(uid: str) -> AsyncIterator[None]:
+        async def held(name: str) -> AsyncIterator[None]:
+            self.leases.append(name)
             yield
 
-        async def no_wait(_s: float) -> None:
-            return None
+        async def no_wait(s: float) -> None:
+            self.waits.append(s)
 
         monkeypatch.setattr(settings, "scim_token", _TOKEN)
         monkeypatch.setattr(scim, "get_client", lambda: self.table)
         monkeypatch.setattr(scim, "_held", held)
         monkeypatch.setattr(scim, "asyncio", SimpleNamespace(sleep=no_wait))
-        monkeypatch.setattr(revocation, "revoked_outright", revoked_outright)
+        monkeypatch.setattr(revocation, "has_outright_row", has_outright_row)
+        monkeypatch.setattr(revocation, "revoked_outright", stale_snapshot)
         monkeypatch.setattr(revocation, "revoke", revoke)
         monkeypatch.setattr(revocation, "narrow", narrow)
         monkeypatch.setattr(audit, "emit", emit)
@@ -619,6 +626,8 @@ def test_a_username_that_is_the_email_cannot_change_by_patch(client: TestClient,
 
 
 _URN = "urn:ietf:params:scim:schemas:core:2.0:User:"
+# A user keyed on the work entry of their emails.
+_WORK_ROW = {"email": "lee@example.com", "email_type": "work", "email_primary": 0}
 
 
 @pytest.mark.parametrize(
@@ -646,12 +655,14 @@ def test_a_schema_qualified_active_is_active(op: dict[str, Any]) -> None:
     ],
 )
 def test_every_shape_of_an_email_change_is_seen(op: dict[str, Any]) -> None:
-    assert patched_names({"Operations": [op]}) == (None, "new@example.com")
+    _, entry = patched_names({"Operations": [op]}, _WORK_ROW)
+    assert entry is not None and entry["value"] == "new@example.com"
 
 
 def test_a_sub_attribute_of_an_email_changes_no_address() -> None:
     op = {"op": "replace", "path": 'emails[type eq "work"].primary', "value": True}
-    assert patched_names({"Operations": [op]}) == (None, None)
+    _, entry = patched_names({"Operations": [op]}, _WORK_ROW)
+    assert entry is not None and entry["value"] == "lee@example.com"
 
 
 def test_a_schema_qualified_patch_deactivates_and_refuses_a_new_email(
@@ -738,3 +749,118 @@ def test_another_address_changing_beside_a_disable_is_fine(
     assert r.status_code == 200 and r.json()["active"] is False
     assert r.json()["emails"] == [{"value": "lee@example.com", "primary": True}]
     assert world.outright == {"lee": scim.DEACTIVATED}
+
+
+@pytest.mark.parametrize(
+    ("emails", "email"),
+    [
+        (
+            [
+                {"value": "h@example.com", "type": "home"},
+                {"value": "w@example.com", "type": "work"},
+            ],
+            "w@example.com",
+        ),
+        (
+            [
+                {"value": "w@example.com", "type": "work"},
+                {"value": "p@example.com", "primary": True},
+            ],
+            "p@example.com",
+        ),
+        (
+            [{"value": "a@example.com", "type": "other"}, {"value": "b@example.com"}],
+            "a@example.com",
+        ),
+    ],
+)
+def test_the_email_is_the_primary_else_the_work_else_the_first(
+    emails: list[dict[str, Any]], email: str
+) -> None:
+    assert user_name_and_email({"userName": "x", "emails": emails})[1] == email
+
+
+def _user(client: TestClient, emails: list[dict[str, Any]]) -> str:
+    created = client.post(
+        "/scim/v2/Users", json={"userName": "lee.upn@corp.example", "emails": emails}
+    )
+    assert created.status_code == 201, created.text
+    return str(created.json()["id"])
+
+
+def _patch(client: TestClient, uid: str, *ops: dict[str, Any]) -> Any:
+    return client.patch(f"/scim/v2/Users/{uid}", json={"Operations": list(ops)})
+
+
+def test_an_unchanged_work_address_passes(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
+    same = {"op": "replace", "path": 'emails[type eq "work"].value', "value": "Lee@example.com"}
+    assert _patch(client, uid, same).status_code == 200
+
+
+def test_a_change_through_the_keyed_entrys_own_type_is_refused(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "other"}])
+    moved = {"op": "replace", "path": 'emails[type eq "other"].value', "value": "new@example.com"}
+    r = _patch(client, uid, moved)
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability"
+
+
+def test_a_quoted_primary_filter_selects_the_primary(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "primary": True}])
+    for op in (
+        {"op": "replace", "path": 'emails[primary eq "true"].value', "value": "new@example.com"},
+        {"op": "replace", "path": "emails[primary eq true].value", "value": "new@example.com"},
+    ):
+        r = _patch(client, uid, op)
+        assert r.status_code == 400 and r.json()["scimType"] == "mutability", op
+
+
+def test_a_new_work_entry_would_take_a_plain_entrys_place(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com"}])
+    work = {"op": "add", "path": 'emails[type eq "work"].value', "value": "new@example.com"}
+    assert _patch(client, uid, work).status_code == 400
+    home = {"op": "add", "path": 'emails[type eq "home"].value', "value": "lee@home.example"}
+    assert _patch(client, uid, home).status_code == 200
+
+
+def test_a_put_naming_another_user_is_refused_before_anything(client: TestClient, world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    body = {"id": "someone-else", "userName": "lee@example.com", "active": False}
+    r = client.put(f"/scim/v2/Users/{uid}", json=body)
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidValue"
+    assert world.outright == {}  # nothing applied: the request is about another user
+
+
+async def test_the_subject_phase_holds_one_lease_after_the_users(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    assert world.leases == [
+        f"scim-user:{uid}",
+        f"scim-username:{scim.user_id('lee@example.com')}",
+        "scim-subjects",
+    ]
+    world.leases.clear()
+    await scim.set_active(uid, False)
+    assert world.leases == [f"scim-user:{uid}", "scim-subjects"]
+
+
+async def test_a_shared_subject_left_revoked_is_logged_and_nothing_waits(world, caplog) -> None:
+    world.person("a@example.com", "alice")
+    world.person("b@example.com", "alice")
+    a, b = await _create("a@example.com"), await _create("b@example.com")
+    await scim.set_active(a, False)
+    await scim.set_active(b, False)
+    with caplog.at_level("WARNING", logger="server.auth.scim"):
+        await scim.set_active(a, True)
+    assert "another deactivated user still reaches" in caplog.text
+    assert world.waits == []  # nothing narrowed, so no cutoff to wait out
+
+
+async def test_an_operator_revocation_makes_no_reactivation_wait(world) -> None:
+    world.person("lee@example.com", "lee")
+    world.outright["lee"] = "offboarded"
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    await scim.set_active(uid, True)
+    assert world.waits == []
