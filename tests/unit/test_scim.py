@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.auth import grant_claims, login, oauth, revocation, scim, scim_routes
+from server.auth import grant_claims, login, oauth, revocation, scim, scim_routes, service_accounts
 from server.auth.scim_routes import (
     ScimError,
     parse_active,
@@ -172,8 +172,12 @@ class _Table:
         ]
 
     def heads(self) -> list[dict[str, Any]]:
-        names = sorted({(r["org"], r["name"]) for r in self.tokens})
-        return [r for r in (self.token(o, n) for o, n in names) if r]
+        newest: dict[tuple[str, str], dict[str, Any]] = {}
+        for r in self.tokens:
+            key = (r["org"], r["name"])
+            if key not in newest or r["version"] >= newest[key]["version"]:
+                newest[key] = r
+        return [newest[key] for key in sorted(newest)]
 
     def live_tokens(self) -> list[dict[str, Any]]:
         return [r for r in self.heads() if r["revoked_at"] is None]
@@ -253,6 +257,7 @@ class _World:
         self.table = _Table(self.accounts, self.elsewhere, self.narrowed, self.lifted)
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.fail_revoke = False
+        self.claim_limit: int | None = None  # names held at once before a claim runs out
         self.leases: list[str] = []
         self.holding = 0  # SCIM leases held now
         self.waits: list[float] = []  # what the real `wait_out` sleeps
@@ -298,6 +303,8 @@ class _World:
         @asynccontextmanager
         async def name_claim(org: str, name: str) -> AsyncIterator[None]:
             assert self.holding == 0, "token names are claimed past the SCIM leases"
+            if self.claim_limit is not None and len(self.table.claimed) >= self.claim_limit:
+                raise RuntimeError("a token name's claim ran out of time")
             self.table.claimed.add((org, name))
             try:
                 yield
@@ -504,12 +511,30 @@ async def test_tokens_made_by_the_persons_tokens_read_revoked_too(world) -> None
     assert world.table.live_tokens() == [_saved_token("ci", "admin")]
 
 
-async def test_many_tokens_are_revoked_in_one_request_one_insert_a_generation(world) -> None:
+async def test_many_tokens_are_revoked_in_one_request_one_insert_a_chunk(world) -> None:
     world.person("lee@example.com", "lee")
-    world.table.tokens += [_saved_token(f"bot-{i}", "lee") for i in range(200)]
+    world.table.tokens += [_saved_token(f"bot-{i:04}", "lee") for i in range(2000)]
+    world.claim_limit = service_accounts._CHUNK  # holding more would outlast a claim
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    assert world.table.live_tokens() == [] and world.table.token_inserts == 1
+    assert world.table.live_tokens() == [] and world.table.token_inserts == 20
+
+
+async def test_a_failed_chunk_keeps_the_ones_before_it_and_the_retry_does_the_rest(
+    world,
+) -> None:
+    world.person("lee@example.com", "lee")
+    world.table.tokens += [_saved_token(f"bot-{i:04}", "lee") for i in range(300)]
+    uid = await _create("lee@example.com")
+    world.table.fail_token_insert = "bot-0150"  # in the second chunk
+    with pytest.raises(RuntimeError):
+        await scim.set_active(uid, False)
+    assert len(world.table.live_tokens()) == 200 and world.table.token_inserts == 1
+    world.table.fail_token_insert = None
+    written = len(world.table.tokens)
+    await scim.set_active(uid, False)  # the provider retries
+    assert world.table.live_tokens() == [] and world.table.token_inserts == 3
+    assert len(world.table.tokens) - written == 200  # only what the first try left
 
 
 async def test_an_expired_token_is_left_as_it_is(world) -> None:

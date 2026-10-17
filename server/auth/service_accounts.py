@@ -96,6 +96,9 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
 
 # Names claimed at once while a pass revokes: each is a lease round trip.
 _CLAIMS_AT_ONCE = 8
+# Rows revoked under one set of claims. Each claim lasts `CHANGE_S`, so a pass
+# goes in chunks: a chunk that lands stays revoked, and a retry does the rest.
+_CHUNK = 100
 _UNEXPIRED = "(expires_at IS NULL OR expires_at > now())"
 
 
@@ -121,7 +124,9 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
                 f"WHERE created_by IN {{subs:Array(String)}} AND {_UNEXPIRED}",
                 params={"subs": creators},
             )
-        await _revoke_all([r for r in rows if r["live"]], creators, revoked_by)
+        live = [r for r in rows if r["live"]]
+        for start in range(0, len(live), _CHUNK):
+            await _revoke_all(live[start : start + _CHUNK], creators, revoked_by)
         # Revoked ones too: a retry still reaches what their tokens made.
         made = {str(r["sa_subject"]) for r in rows} - seen
         seen |= made
