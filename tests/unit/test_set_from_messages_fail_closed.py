@@ -330,5 +330,56 @@ async def test_a_record_the_write_kept_out_projects_no_typed_record(
         )
     )
     assert projected == []
-    # A refused record is not among what was written, either.
-    assert (out.written == []) == (result.conflict_verdict == "blacklisted")
+    # A record the write refused or kept as it was (version 0) is not among what
+    # was written, either.
+    assert (out.written == []) == (result.version == 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verdict", ["pinned", "locked", "blacklisted"])
+async def test_a_refused_record_gets_no_evidence_and_no_count(
+    monkeypatch: pytest.MonkeyPatch, verdict: str
+) -> None:
+    # A pinned or locked key refuses the record (version 0): the message never
+    # produced the stored row, so no evidence links to it and it is not counted.
+    import server.memory.app.extract.handler as mx
+    from server.llm.client import LLMResult
+    from server.memory.app.extract import ExtractedRecord
+
+    _stub_projections(monkeypatch)
+    linked: list[list[str]] = []
+    counted: list[int] = []
+
+    async def _fake_bulk(bulk_input):
+        class _Out:
+            written = [_BulkSetResult(memory_key="rec1", version=0, conflict_verdict=verdict)]
+
+        return _Out()
+
+    async def _link(input, keys, evidence_ids, **kw):
+        linked.append(list(keys))
+        return 0
+
+    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+        return (
+            ExtractedRecord(record={"note": "x"}),
+            LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),
+        )
+
+    monkeypatch.setattr(mx, "handle_memory_bulk_set", _fake_bulk)
+    monkeypatch.setattr(mx, "_link_written_memories_to_evidence", _link)
+    monkeypatch.setattr(
+        mx, "_account_build", lambda ns, ti, to, written, m: counted.append(written)
+    )
+    monkeypatch.setattr("server.memory.app.extract.extract_typed_record_iterative", _fake_typed)
+    out = await mx.handle_memory_set_from_messages(
+        MemorySetFromMessagesInput(
+            org="dev",
+            namespace="ns",
+            agent="a",
+            messages=[{"role": "user", "content": "x"}],
+            memory_key="rec1",
+            record_schema={"note": "string"},
+        )
+    )
+    assert linked == [[]] and counted == [0] and out.written == []

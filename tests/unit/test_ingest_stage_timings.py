@@ -289,3 +289,39 @@ async def test_a_refused_entry_is_not_written_but_its_keys_written_twin_is(
     )
     state = await pipe._step_bulk_write(state, {})
     assert [(w["memory_key"], w["version"]) for w in state.written] == [("home", 7)]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_or_locked_refusal_is_not_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A pinned or locked key refuses its entry (version 0) as a blacklist does: no
+    # evidence or chunk may attach to the stored row through it, and it is not counted.
+    import server.memory.app.pipeline as pipe
+    from server.memory.api.models_bulk import LOCKED, PINNED, MemoryBulkSetOutput, _BulkSetResult
+    from server.memory.app import bulk_set as bulk_set_mod
+    from server.memory.app import pipeline_state as pipeline_state
+
+    async def _fake_bulk(bulk_input: Any) -> MemoryBulkSetOutput:
+        return MemoryBulkSetOutput(
+            written=[
+                _BulkSetResult(memory_key="home", version=0, conflict_verdict=PINNED),
+                _BulkSetResult(memory_key="job", version=0, conflict_verdict=LOCKED),
+                _BulkSetResult(memory_key="pet", version=9),
+            ],
+            skipped_pinned=["home"],
+            skipped_locked=["job"],
+        )
+
+    monkeypatch.setattr(bulk_set_mod, "handle_memory_bulk_set", _fake_bulk)
+    state = pipeline_state.WorkflowState(
+        org="o",
+        namespace="n",
+        extracted_facts=[
+            {"key": "home", "value": "Lisbon"},
+            {"key": "job", "value": "baker"},
+            {"key": "pet", "value": "a cat"},
+        ],
+    )
+    state = await pipe._step_bulk_write(state, {})
+    assert [(w["memory_key"], w["version"]) for w in state.written] == [("pet", 9)]

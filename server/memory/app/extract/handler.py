@@ -17,7 +17,6 @@ from server.core.ch import get_client
 from server.core.datetimes import parse_iso_dt
 from server.embedding import get_embedder
 from server.memory.api.models_bulk import (
-    BLACKLISTED,
     SUPERSEDED,
     MemoryBulkSetInput,
     MemoryExtractionStatusInput,
@@ -223,8 +222,10 @@ async def _set_record_from_messages(
         ],
     )
     bulk_out = await handle_memory_bulk_set(bulk_input)
-    # A refused record was never written: no evidence, records or count attach to it.
-    written = [r for r in bulk_out.written if r.conflict_verdict != BLACKLISTED]
+    # Only a record the write inserted (version > 0) gets evidence, a typed record and
+    # a count. A blacklisted, pinned or locked key refuses it with version 0, and an
+    # unchanged one writes nothing: the message did not produce that stored row.
+    written = [r for r in bulk_out.written if r.version > 0]
     evidence_ids = await evidence_task
     try:
         belief_source_links = await _link_written_memories_to_evidence(
@@ -241,9 +242,9 @@ async def _set_record_from_messages(
             memory_keys=[r.memory_key for r in written],
             payload={"evidence_ids": evidence_ids},
         )
-    # The typed record follows the row: none for a refused, locked, pinned or
-    # unchanged entry (version 0), nor one that landed superseded behind a later row.
-    if any(r.version > 0 and r.conflict_verdict != SUPERSEDED for r in written):
+    # The typed record follows the row: none for one that landed superseded behind a
+    # later row.
+    if any(r.conflict_verdict != SUPERSEDED for r in written):
         try:
             projected = await _write_inline_record_projection(
                 input,
