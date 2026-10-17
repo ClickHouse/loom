@@ -9,6 +9,7 @@ from collections.abc import Collection
 from typing import Any
 
 from server.core.datetimes import parse_iso_dt
+from server.memory.app.conflicts import resolver_mark
 from server.memory.app.set_commit import _peer_id_in_read_scope, _set_next, _set_peers
 from server.memory.domain.conflicts import kept_versions
 
@@ -132,6 +133,9 @@ def _fold_verdict(
         if peers:
             plan.conflict_marks.append((str(row["memory_id"]), peers))
             plan.conflicted.append(key)
+    mark = resolver_mark(v)
+    if mark is not None and verdict not in NOT_LANDING and idx in emb_idx_of:
+        embedding_rows[emb_idx_of.index(idx)]["conflict_checked_at"] = mark
 
 
 def _kept_embeddings(

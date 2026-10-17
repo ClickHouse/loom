@@ -690,19 +690,14 @@ export async function listPolicyDecisions(
 /** Why Loom retired a memory, in plain words. No pronoun, so it reads for one row in the
  *  Review queue and for "Loom retired N memories automatically (…)" in Activity. */
 export const AUTO_RESOLVE_REASON_TEXT: Record<AutoResolveReason, string> = {
-  same_key_judge: "Replaced by a later statement of the same attribute",
+  conflict_resolver: "Replaced by a later statement of the same attribute",
   same_key_newest_wins: "Replaced by a newer write (namespace policy)",
   newest_wins_contradiction: "Replaced by a newer write (namespace policy)",
-  refines: "Replaced by a newer memory with more detail",
   value_update: "Replaced by an updated value",
 };
 
-/** The reason's wording, with the judge's `elaboration` label told apart; null for an
- *  unknown reason. */
-export function autoResolveReasonText(reason: string, label?: string): string | null {
-  if (reason === "same_key_judge" && label === "elaboration") {
-    return "Replaced by a later, fuller statement of the same attribute";
-  }
+/** The reason's wording; null for an unknown reason. */
+export function autoResolveReasonText(reason: string): string | null {
   return Object.hasOwn(AUTO_RESOLVE_REASON_TEXT, reason) ? AUTO_RESOLVE_REASON_TEXT[reason as AutoResolveReason] : null;
 }
 

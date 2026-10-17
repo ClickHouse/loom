@@ -120,12 +120,31 @@ async def _allowlisted_keys(org: str, namespace: str, my_key: str) -> set[str]:
     return await _conflicts_repo.allowlisted_peers(org, namespace, my_key, ch=get_client())
 
 
+def _peer_query_distance(threshold: float) -> float:
+    """The distance the peer statement reaches: the conflict threshold, or with the
+    conflict resolver on its lower floor, so a write with a peer in between is
+    marked for the resolver (those peers never flag on cosine alone)."""
+    if settings.memory_conflict_resolver_enabled:
+        threshold = min(threshold, float(settings.memory_conflict_resolver_min_similarity))
+    return query_max_distance(threshold)
+
+
+def resolver_mark(result: Any) -> datetime | None:
+    """The `conflict_checked_at` a write's vector row carries: the conflict resolver's
+    owed mark when the check asked for a judgement, else NULL."""
+    from server.memory.store.conflict_resolver import OWED_MARK
+
+    if settings.memory_conflict_resolver_enabled and bool(getattr(result, "review", False)):
+        return OWED_MARK
+    return None
+
+
 async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> tuple[float, float]:
     """(threshold, max_distance) for one namespace + memory_type — the two
     numbers `check_on_commit` resolves before its statement, exposed so a bulk
     writer resolves them once per type instead of once per fact."""
     threshold = await _resolve_threshold(org, namespace, memory_type=memory_type)
-    return threshold, query_max_distance(threshold)
+    return threshold, _peer_query_distance(threshold)
 
 
 async def candidate_rows_many(
@@ -470,7 +489,7 @@ async def check_on_commit(
         if resolved_threshold is not None
         else await _resolve_threshold(org, namespace, memory_type=memory_type)
     )
-    max_distance = query_max_distance(threshold)
+    max_distance = _peer_query_distance(threshold)
 
     # Excludes our own memory_key (re-write is LWW by version, not a conflict)
     # and filters peers by embedding_dim so cosineDistance gets equal-length
@@ -515,7 +534,8 @@ async def check_on_commit(
     # A pinned row outside the writer's read scope still blocks it.
     foreign_blocker = next((p for p in foreign if p.pinned and p.similarity >= threshold), None)
     if not peers and foreign_blocker is None:
-        return ConflictResult(verdict="clear", peers=[])
+        # Peers below the threshold only ask the conflict resolver to look.
+        return ConflictResult(verdict="clear", peers=[], review=bool(all_peers))
 
     # Step 2 — canonical-form match → merge (return existing id, skip insert), unless
     # the write is run-scoped and the peer is not this run's: then the row is inserted
@@ -576,8 +596,8 @@ async def check_on_commit(
         )
 
     # Step 3b — close-but-different (below duplicate_threshold but
-    # above conflict threshold) → conflict.
-    return ConflictResult(verdict="conflict", peers=peers)
+    # above conflict threshold) → conflict, for the conflict resolver to judge.
+    return ConflictResult(verdict="conflict", peers=peers, review=True)
 
 
 async def namespace_conflict_policy(org: str, namespace: str, *, ch: Any) -> str:
@@ -671,6 +691,8 @@ async def apply_refines(
     run_id: str = "-",
     record_into: dict[str, list[dict[str, Any]]] | None = None,
     expected_sha256: str = "",
+    skip_peer: Callable[[Any], bool] | None = None,
+    reason: str = "",
 ) -> int:
     """The `refines` verdict, after the new row is in: every non-pinned peer
     the new row replaces is superseded (status, superseded_by = the new row,
@@ -678,11 +700,14 @@ async def apply_refines(
     keep it) and a `supersedes` edge from the new key to the old records why.
     Best effort; returns the number of peers superseded. With `expected_sha256`
     (a verdict reached after the write) nothing is retired or linked once the
-    new row is another revision's, read sequentially right before the supersede.
+    new row is another revision's, read sequentially right before the supersede;
+    `skip_peer` leaves a peer whose head row it answers True for (the resolver's:
+    revised since it was judged).
 
     The peers that did retire are recorded as `memory.auto_supersede`
     (`auto_resolution`): into `record_into` (reason -> entries) when the caller
-    writes one record for many verdicts (a bulk write), else beside the response."""
+    writes one record for many verdicts (a bulk write), else beside the response,
+    under `reason` (default `newest_wins_contradiction`)."""
     from server.core.ch import sequential_reads
     from server.memory.store import get_by_id, supersede_duplicates
 
@@ -725,7 +750,9 @@ async def apply_refines(
         )
         from server.memory.domain.lock import refuses_retirement
 
-        tracker = RetirementTracker(refuses_retirement)
+        tracker = RetirementTracker(
+            lambda row: refuses_retirement(row) or (skip_peer is not None and skip_peer(row))
+        )
         try:
             # Read-your-writes: a lagging replica's row would be rebuilt over a revision.
             n = await supersede_duplicates(
@@ -741,7 +768,7 @@ async def apply_refines(
             logging.getLogger(__name__).warning("refines: supersede failed (non-fatal): %s", e)
         # What reached loom.memory, even when the embeddings mirror then failed.
         retired = [{**v, "superseded_by_key": new_memory_key} for v in tracker.retired(victims)]
-        reason = NEWEST_WINS_CONTRADICTION
+        reason = reason or NEWEST_WINS_CONTRADICTION
         if record_into is not None:
             record_into.setdefault(reason, []).extend(retired)
         else:

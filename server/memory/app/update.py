@@ -27,6 +27,7 @@ from server.memory.api.models_crud import (
     MemoryUpdateOutput,
 )
 from server.memory.app import provenance as app_provenance
+from server.memory.app.conflicts import resolver_mark
 from server.memory.app.entity_projections import project_revised_edges, project_stated_relations
 from server.memory.app.high_fence import fence_high
 from server.memory.domain import lock as _lock
@@ -256,6 +257,7 @@ def _update_embedding_row(
     key_embedding: list[float],
     *,
     has_key: bool,
+    conflict_checked_at: Any = None,
 ) -> dict[str, Any]:
     """The loom.memory_embeddings row mirroring an update's version row `memory_row`.
 
@@ -314,6 +316,8 @@ def _update_embedding_row(
             )
             in ("human", "process")
         ),
+        # The conflict resolver's owed mark when the check asks it to look.
+        conflict_checked_at=conflict_checked_at,
         content_sha256=str(memory_row["content_sha256"] or ""),
     )
 
@@ -656,6 +660,7 @@ async def _write_revision(
                 embedding,
                 key_embedding,
                 has_key=bool(key_text),
+                conflict_checked_at=resolver_mark(conflict_result),
             )
         ]
         if embedder is not None

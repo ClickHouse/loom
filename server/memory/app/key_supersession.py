@@ -150,6 +150,42 @@ def _utc(raw: Any) -> datetime | None:
     return dt.replace(microsecond=0) if dt is not None else None
 
 
+async def keys_held_elsewhere(
+    *, org: str, namespace: str, memory_rows: list[dict[str, Any]], ch: Any
+) -> set[str]:
+    """The keys among a bulk write's rows (one writer identity) that hold a live row
+    of the same subject from another session: the same user, and for the anonymous
+    user `-` the same agent. Outside `newest_wins` the conflict resolver judges such a
+    pair, since a shared key is not proof of one attribute. Inside the writer's read
+    scope only; a 'high' row is never a peer."""
+    if not memory_rows:
+        return set()
+    writer = memory_rows[0]
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "keys": sorted({str(r.get("memory_key") or "") for r in memory_rows} - {""}),
+        "own_agent": str(writer.get("agent") or ""),
+        "own_user": str(writer.get("user_id") or "-"),
+        "own_session": str(writer.get("session_id") or "-"),
+    }
+    in_scope = scope_and(request_scope(), params)
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT memory_key
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN {{keys:Array(String)}} AND user_id = {{own_user:String}}
+          AND (user_id != '-' OR agent = {{own_agent:String}})
+          AND NOT (agent = {{own_agent:String}} AND session_id = {{own_session:String}})
+          AND tombstoned_at IS NULL AND sensitivity != 'high'
+          AND status IN ('active', 'conflicted'){in_scope}
+        """,
+        params=params,
+    )
+    return {str(r["memory_key"]) for r in rows}
+
+
 async def supersede_same_key_rows(
     *,
     org: str,

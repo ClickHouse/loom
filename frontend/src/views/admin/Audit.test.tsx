@@ -58,7 +58,7 @@ describe("Audit rows", () => {
   it("says when Loom retired memories on its own, and when one was restored", async () => {
     vi.mocked(api.listAuditLog).mockResolvedValueOnce({
       rows: [
-        row("process:loom", '{"reason":"same_key_judge","count":3,"retired":[]}', "memory.auto_supersede"),
+        row("process:loom", '{"reason":"conflict_resolver","count":3,"retired":[]}', "memory.auto_supersede"),
         row("process:loom", '{"reason":"value_update","count":1,"retired":[]}', "memory.auto_supersede"),
         row("alice", '{"memory_key":"user_city","memory_id":"m1"}', "memory.unsupersede"),
       ],
@@ -77,10 +77,14 @@ describe("Audit rows", () => {
     const unsure = '{"memory_id":"m2","unconfirmed":"true"}';
     vi.mocked(api.listAuditLog).mockResolvedValueOnce({
       rows: [
-        row("process:loom", `{"reason":"refines","count":1,"retired":[${unsure}]}`, "memory.auto_supersede"),
         row(
           "process:loom",
-          `{"reason":"refines","count":3,"retired":[{"memory_id":"m1"},${unsure},{"memory_id":"m3"}]}`,
+          `{"reason":"newest_wins_contradiction","count":1,"retired":[${unsure}]}`,
+          "memory.auto_supersede",
+        ),
+        row(
+          "process:loom",
+          `{"reason":"newest_wins_contradiction","count":3,"retired":[{"memory_id":"m1"},${unsure},{"memory_id":"m3"}]}`,
           "memory.auto_supersede",
         ),
       ],
@@ -88,12 +92,12 @@ describe("Audit rows", () => {
     render(<Audit />);
     expect(
       await screen.findByText(
-        "Loom may have retired 1 memory automatically (replaced by a newer memory with more detail)",
+        "Loom may have retired 1 memory automatically (replaced by a newer write (namespace policy))",
       ),
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "Loom retired 2 memories automatically (replaced by a newer memory with more detail), and may have retired 1 more",
+        "Loom retired 2 memories automatically (replaced by a newer write (namespace policy)), and may have retired 1 more",
       ),
     ).toBeTruthy();
   });

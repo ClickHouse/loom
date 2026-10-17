@@ -285,6 +285,32 @@ def _apply_verdicts(
     return plan
 
 
+async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
+    """Phase 8b: with the conflict resolver on, a row whose key another session of
+    the same subject holds live is owed a judgement (outside `newest_wins`, which
+    retires the older row itself after the insert). Fail-open."""
+    from server.memory.app.conflicts import namespace_conflict_policy
+    from server.memory.app.key_supersession import keys_held_elsewhere
+    from server.memory.store.conflict_resolver import OWED_MARK
+    from server.settings import settings
+
+    if not settings.memory_conflict_resolver_enabled or not state.embedding_rows:
+        return
+    try:
+        policy = await namespace_conflict_policy(input.org, input.namespace, ch=ch)
+        if policy in ("newest_wins", "append_only"):
+            return
+        held = await keys_held_elsewhere(
+            org=input.org, namespace=input.namespace, memory_rows=state.memory_rows, ch=ch
+        )
+    except Exception as e:  # noqa: BLE001 — the rows land unmarked; the write stands
+        log.warning("bulk_set: same-key mark skipped (non-fatal): %s", e)
+        return
+    for row in state.embedding_rows:
+        if str(row.get("memory_key") or "") in held:
+            row["conflict_checked_at"] = OWED_MARK
+
+
 async def _bulk_intra_batch_pairs(
     ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState
 ) -> list[tuple[str, str]]:
@@ -834,6 +860,7 @@ async def handle_memory_bulk_set(
     # After the verdicts: settling the batch moves entries to unchanged or pinned.
     _bulk_log_skips(state)
 
+    await _bulk_mark_same_key(ch, input, state)
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
 
     await _bulk_insert(ch, state)

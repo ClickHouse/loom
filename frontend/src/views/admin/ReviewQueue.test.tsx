@@ -92,7 +92,7 @@ const retired = (key: string, extra: Partial<AutoResolvedRow> = {}): AutoResolve
   user_id: "u1",
   session_id: "s1",
   superseded_by: `id-${key}-new`,
-  reason: "same_key_judge",
+  reason: "conflict_resolver",
   ts: "2026-10-01T10:00:00Z",
   ...extra,
 });
@@ -295,7 +295,7 @@ describe("ReviewQueue", () => {
           label: "contradiction",
         }),
         retired("user_job", {
-          reason: "refines",
+          reason: "value_update",
           superseded_by: "abc123",
           ts: "2026-09-30T10:00:00Z",
           unconfirmed: true,
@@ -310,7 +310,7 @@ describe("ReviewQueue", () => {
     expect(await screen.findByText("user_city", {}, WAIT)).toBeTruthy();
     expect(screen.getByText("Replaced by a later statement of the same attribute")).toBeTruthy();
     expect(screen.getByText("user_city_current")).toBeTruthy();
-    expect(screen.getByText("Replaced by a newer memory with more detail")).toBeTruthy();
+    expect(screen.getByText("Replaced by an updated value")).toBeTruthy();
     // No key for the row it retired behind: its id.
     expect(screen.getByText("abc123")).toBeTruthy();
     // A retirement the re-read could not confirm says so.

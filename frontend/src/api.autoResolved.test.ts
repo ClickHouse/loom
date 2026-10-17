@@ -49,7 +49,7 @@ describe("listAutoResolved", () => {
           {
             ts: "2026-10-02T00:00:00Z",
             subject: JSON.stringify({
-              reason: "same_key_judge",
+              reason: "conflict_resolver",
               count: 3,
               retired: [entry("a", { label: "elaboration", superseded_by_key: "k" }), { memory_key: "no_id" }, "x"],
             }),
@@ -58,11 +58,14 @@ describe("listAutoResolved", () => {
           {
             ts: "2026-10-01T00:00:00Z",
             subject: JSON.stringify({
-              reason: "refines",
+              reason: "newest_wins_contradiction",
               retired: [entry("b", { agent: "" }), entry("c", { unconfirmed: "true" })],
             }),
           },
-          { ts: "2026-09-30T00:00:00Z", subject: JSON.stringify({ reason: "refines", retired: "nope" }) },
+          {
+            ts: "2026-09-30T00:00:00Z",
+            subject: JSON.stringify({ reason: "newest_wins_contradiction", retired: "nope" }),
+          },
         ],
         next_cursor: "c2",
       },
@@ -70,9 +73,9 @@ describe("listAutoResolved", () => {
     const out = await listAutoResolved({ org: "o", namespace: "n" });
     expect(out.next_cursor).toBe("c2");
     expect(out.rows.map((r) => [r.memory_id, r.reason, r.ts])).toEqual([
-      ["a", "same_key_judge", "2026-10-02T00:00:00Z"],
-      ["b", "refines", "2026-10-01T00:00:00Z"],
-      ["c", "refines", "2026-10-01T00:00:00Z"],
+      ["a", "conflict_resolver", "2026-10-02T00:00:00Z"],
+      ["b", "newest_wins_contradiction", "2026-10-01T00:00:00Z"],
+      ["c", "newest_wins_contradiction", "2026-10-01T00:00:00Z"],
     ]);
     expect(out.rows.map((r) => r.unconfirmed)).toEqual([undefined, undefined, true]);
     expect(out.rows[0]).toMatchObject({
@@ -107,8 +110,8 @@ describe("hasAutoResolved", () => {
   });
 
   it("reads one record and counts it only if it holds a retirement the tab can show", async () => {
-    const shown = JSON.stringify({ reason: "refines", retired: [entry("a")] });
-    const malformed = JSON.stringify({ reason: "refines", retired: [{ memory_key: "no_id" }] });
+    const shown = JSON.stringify({ reason: "newest_wins_contradiction", retired: [entry("a")] });
+    const malformed = JSON.stringify({ reason: "newest_wins_contradiction", retired: [{ memory_key: "no_id" }] });
     const bodies = stubAudit([
       { rows: [{ ts: "2026-10-02T00:00:00Z", subject: shown }] },
       { rows: [{ ts: "2026-10-02T00:00:00Z", subject: malformed }] },
@@ -191,13 +194,8 @@ describe("listUnsuperseded", () => {
 });
 
 describe("autoResolveReasonText", () => {
-  it("has one wording per reason, the judge's elaboration told apart", () => {
-    expect(autoResolveReasonText("same_key_judge", "contradiction")).toBe(
-      "Replaced by a later statement of the same attribute",
-    );
-    expect(autoResolveReasonText("same_key_judge", "elaboration")).toBe(
-      "Replaced by a later, fuller statement of the same attribute",
-    );
+  it("has one wording per reason", () => {
+    expect(autoResolveReasonText("conflict_resolver")).toBe("Replaced by a later statement of the same attribute");
     expect(autoResolveReasonText("newest_wins_contradiction")).toBe(autoResolveReasonText("same_key_newest_wins"));
     expect(autoResolveReasonText("toString")).toBeNull();
   });

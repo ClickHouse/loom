@@ -24,6 +24,7 @@ EVENT_TYPE = "memory.auto_supersede"
 
 # Why a row retired, one per automatic path.
 SAME_KEY_NEWEST_WINS = "same_key_newest_wins"
+CONFLICT_RESOLVER = "conflict_resolver"
 NEWEST_WINS_CONTRADICTION = "newest_wins_contradiction"
 VALUE_UPDATE = "value_update"
 

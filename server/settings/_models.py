@@ -53,6 +53,9 @@ class ModelSettings(BaseModel):
     # paraphrases and replaced states. A fact is dropped only when every model says
     # drop; folds come from the first. Fails open. "" turns it off.
     memory_extract_verify_models: str = "claude-opus-5-5"
+    # The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence
+    # thresholds were set on this model; a cheaper one is only safe for clears.
+    conflict_resolver_model: str = "gpt-6.1-sol"
     # The profile fold.
     profile_consolidation_model: str = ""
     # Reflection distillation: the outcome labeller and the contrast writer.

@@ -640,7 +640,7 @@ function AutoResolvedPanel() {
             <div className="flex-1 min-w-0">
               <div className="font-mono text-base text-text truncate">{r.memory_key}</div>
               <div className="text-sm text-text mt-0.5">
-                {autoResolveReasonText(r.reason, r.label) ?? "Retired automatically"}
+                {autoResolveReasonText(r.reason) ?? "Retired automatically"}
               </div>
               <div className="text-xs text-text-muted tabular mt-1">
                 Behind <span className="font-mono">{r.superseded_by_key || r.superseded_by || "—"}</span> ·{" "}

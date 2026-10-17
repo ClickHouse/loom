@@ -627,6 +627,14 @@ Source: `server/settings/_memory.py`
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `LOOM_CONFLICT_THRESHOLD` | `float` | `0.85` | memory.set flags a write `conflicted` when an active peer in the same (org, namespace, memory_type) sits at cosine ≥ this. Tuned for text-embedding-3-*; 1.0 disables. Per-namespace override: loom.namespaces.conflict_threshold. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` | `bool` | `False` | The conflict resolver: a leader-only worker that judges each write marked for it (a live peer of its type at cosine >= memory_conflict_resolver_min_similarity, or flagged `conflicted`) against its nearest peers in one LLM call, then retires, flags or clears. Unset, it is resolved at load: on wherever the LLM provider is real, off on `fake`; true / false force it. ~$0.005 per judged write on gpt-6.1-sol. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` | `float` | `0.6` | Peers down to this cosine (same memory_type) mark a write for the resolver and join the cluster it is judged in. The cosine `conflicted` flag stays at the conflict threshold. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS` | `int` | `8` | Most peers judged with a row in one call, nearest first. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | `float` | `0.95` | An update at or above this confidence retires the older row (newest_wins only). |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` | `float` | `0.9` | Below this confidence a verdict changes nothing. At or above it a compatible verdict clears the pair's flag, and an update this build does not retire or a contradiction flags the pair for review. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` | `int` | `20` | Marked rows judged per pass, then rows already `conflicted` re-checked per pass. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` | `int` | `10` |  |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | `float` | `60.0` | Seconds between the resolver's passes. |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. |
 | `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` | Bulk-path conflict checks run at once (at least 1). |
 | `LOOM_MEMORY_WRITE_CANDIDATE_BATCH` | `int` | `6` | Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact. |
@@ -940,6 +948,7 @@ Source: `server/settings/_models.py`
 | `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP` | `str` | `''` | memory.ask cheap tier. "" = off: every ask uses memory_ask_synth_model. When set, server/memory/domain/synth_policy.py routes easy asks cheap and hard ones strong; an empty, uncited or hedging cheap answer escalates to strong once. route_tier / route_reason / synth_model on the output record the choice. |
 | `LOOM_MEMORY_ASK_MID_MODEL` | `str` | `''` | memory.ask mid tier. "" = none. With a model set, strong-routed asks whose reason is in memory_ask_synth_mid_routes go mid; an empty, uncited or hedging mid answer escalates to strong once. |
 | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` | `str` | `'claude-opus-5-5'` | The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not and folds same-claim paraphrases and replaced states. A fact is dropped only when every model says drop; folds come from the first. Fails open. "" turns it off. |
+| `LOOM_CONFLICT_RESOLVER_MODEL` | `str` | `'gpt-6.1-sol'` | The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence thresholds were set on this model; a cheaper one is only safe for clears. |
 | `LOOM_PROFILE_CONSOLIDATION_MODEL` | `str` | `''` | The profile fold. |
 | `LOOM_REFLECTION_DISTILL_MODEL` | `str` | `''` | Reflection distillation: the outcome labeller and the contrast writer. |
 | `LOOM_CODE_LINK_REVISE_MODEL` | `str` | `''` | The code-link `revise` judge: does a memory's claim still hold for its code's new text. |

@@ -41,9 +41,8 @@ export async function listAuditLog(
 
 /** Why Loom retired a memory on its own (`server/memory/app/auto_resolution.py`). */
 export type AutoResolveReason =
-  | "same_key_judge"
+  | "conflict_resolver"
   | "same_key_newest_wins"
-  | "refines"
   | "newest_wins_contradiction"
   | "value_update";
 

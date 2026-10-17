@@ -228,6 +228,14 @@ _WORKERS: tuple[_Worker, ...] = (
         "INTERVAL_SECONDS",
         interval_in_module=True,
     ),
+    # One LLM call per write the conflict check marked; up to ten minutes a pass.
+    _Worker(
+        "conflict_resolver",
+        "server.memory.workers.conflict_resolver",
+        "memory_conflict_resolver_enabled",
+        "memory_conflict_resolver_interval_seconds",
+        max_pass_seconds=600.0,
+    ),
     _Worker(
         "orphan_vector_reconcile",
         "server.memory.workers.orphan_vector_reconcile",

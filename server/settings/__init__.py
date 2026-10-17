@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from server.core.env_file import env_file_path
@@ -69,6 +70,15 @@ class Settings(
         validate_by_alias=True,
         hide_input_in_errors=True,
     )
+
+    @model_validator(mode="after")
+    def _resolve_conflict_resolver(self) -> Settings:
+        """Unset, the conflict resolver runs wherever the resolved LLM provider is
+        real; an explicit value is never overridden."""
+        if "memory_conflict_resolver_enabled" not in self.model_fields_set:
+            self.memory_conflict_resolver_enabled = self.llm_provider != "fake"
+            self._inferred_fields |= {"memory_conflict_resolver_enabled"}
+        return self
 
     def _mask(self, key: str, value: object) -> object:
         # Only the length, so an operator can confirm it is set: even a short

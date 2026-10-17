@@ -80,6 +80,30 @@ class MemorySettings(BaseModel):
     # for text-embedding-3-*; 1.0 disables. Per-namespace override:
     # loom.namespaces.conflict_threshold.
     conflict_threshold: float = 0.85
+    # The conflict resolver: a leader-only worker that judges each write marked for it
+    # (a live peer of its type at cosine >= memory_conflict_resolver_min_similarity, or
+    # flagged `conflicted`) against its nearest peers in one LLM call, then retires,
+    # flags or clears. Unset, it is resolved at load: on wherever the LLM provider is
+    # real, off on `fake`; true / false force it. ~$0.005 per judged write on
+    # gpt-6.1-sol.
+    memory_conflict_resolver_enabled: bool = False
+    # Peers down to this cosine (same memory_type) mark a write for the resolver and
+    # join the cluster it is judged in. The cosine `conflicted` flag stays at the
+    # conflict threshold.
+    memory_conflict_resolver_min_similarity: float = Field(default=0.60, gt=0.0, le=1.0)
+    # Most peers judged with a row in one call, nearest first.
+    memory_conflict_resolver_max_peers: int = Field(default=8, ge=1, le=8)
+    # An update at or above this confidence retires the older row (newest_wins only).
+    memory_conflict_resolver_retire_confidence: float = Field(default=0.95, ge=0.0, le=1.0)
+    # Below this confidence a verdict changes nothing. At or above it a compatible
+    # verdict clears the pair's flag, and an update this build does not retire or a
+    # contradiction flags the pair for review.
+    memory_conflict_resolver_clear_confidence: float = Field(default=0.90, ge=0.0, le=1.0)
+    # Marked rows judged per pass, then rows already `conflicted` re-checked per pass.
+    memory_conflict_resolver_batch: int = Field(default=20, ge=1)
+    memory_conflict_resolver_recheck_batch: int = Field(default=10, ge=0)
+    # Seconds between the resolver's passes.
+    memory_conflict_resolver_interval_seconds: float = 60.0
     # Entries per bulk call that get the conflict check; later entries are written unchecked
     # and counted. 0 = none are checked.
     bulk_conflict_check_max_entries: int = 200

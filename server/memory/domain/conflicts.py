@@ -59,6 +59,9 @@ class ConflictResult:
     # verdict=='refines': the peers the new row replaces; the caller inserts the row
     # active, supersedes these and links them with a `supersedes` edge.
     refined_peers: list[ConflictPeer] = field(default_factory=list)
+    # The conflict resolver owes this write a judgement: a `conflict`, or a `clear`
+    # with a peer between the resolver floor and the conflict threshold.
+    review: bool = False
 
 
 # The namespace conflict policy under which the gate never reaches a verdict against a

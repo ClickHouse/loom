@@ -15,6 +15,7 @@ from clickhouse_connect.datatypes.registry import get_from_name
 from clickhouse_connect.driver.insert import InsertContext
 
 from server.identity.app.namespace_autoregister import AUTO_ROW_VERSION
+from server.memory.store.conflict_resolver import JUDGED_MARK, OWED_MARK
 
 
 @pytest.fixture
@@ -43,6 +44,8 @@ def _encoded(type_name: str, value: datetime) -> int:
 @pytest.mark.parametrize(
     ("type_name", "value", "seconds"),
     [
+        ("Nullable(DateTime)", OWED_MARK, 1),  # memory_embeddings.conflict_checked_at
+        ("Nullable(DateTime)", JUDGED_MARK, 2),
         ("DateTime", AUTO_ROW_VERSION, 1),  # namespaces.updated_at
     ],
 )
