@@ -487,6 +487,28 @@ async def test_a_row_or_peer_labelled_high_before_the_prompt_is_never_sent(row_e
     assert row_env.llm_calls == 0 and row_env.acted == []
 
 
+async def test_a_cancellation_while_acting_lets_the_act_and_its_audit_finish(
+    row_env: NS, monkeypatch
+) -> None:
+    async def slow_act(action: str, org: str, namespace: str, row: Any, peer: Any) -> bool:
+        await asyncio.sleep(0.05)
+        row_env.acted.append((action, row.memory_id, peer.memory_id))
+        return True
+
+    monkeypatch.setattr(resolver, "_act", slow_act)
+    task = asyncio.ensure_future(
+        resolver.resolve_row(_q(), policy="newest_wins", counts=resolver.Counts())
+    )
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.1)
+    assert row_env.acted == [(cr.RETIRE, "m1", "m2")]
+    assert row_env.audits and row_env.audits[0][0]["action"] == cr.RETIRE
+    assert row_env.stamped == [], "cut short before its stamp: judged again next pass"
+
+
 async def test_the_recheck_clears_a_false_flag_and_judges_the_flagged_peer(row_env: NS) -> None:
     row_env.mem.status, row_env.mem.conflict_with = "conflicted", ["m2"]
     row_env.answer = _answer(_entry("p1", "unrelated", 0.98))
@@ -561,32 +583,62 @@ async def test_unlinking_a_pair_leaves_other_flags_and_reactivates_a_row_left_wi
     assert await resolver._clear("o", stored["m1"], stored["m2"]) is False and written == []
 
 
-async def test_a_retirement_behind_the_newer_row_of_the_pair(monkeypatch) -> None:
-    from server.memory.app import auto_resolution, conflicts
+@pytest.fixture
+def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
+    from server.memory.app import auto_resolution, conflicts, projection_failures
 
-    seen: dict[str, Any] = {}
+    e = NS(seen={}, records=[], followed=[], log=[], follow_ok=True, retires=True)
 
     async def refines(**kw: Any) -> int:
-        seen.update(kw)
+        e.log.append("supersede")
+        e.seen.update(kw)
+        if not e.retires:
+            return 0
         loser = kw["refined_peers"][0]
         kw["record_into"].setdefault(kw["reason"], []).append(
             {"memory_id": loser.memory_id, "superseded_by": kw["new_memory_id"]}
         )
         return 1
 
-    records: list[Any] = []
-
     async def record(**kw: Any) -> None:
-        records.append(kw)
-
-    followed: list[Any] = []
+        e.records.append(kw)
 
     async def follow(org, namespace, agent, pairs):
-        followed.extend(pairs)
+        e.followed.extend(pairs)
+        return e.follow_ok
+
+    async def intent(**kw: Any) -> str:
+        e.log.append(("intent", kw["projection"], kw["payload"]["pairs"]))
+        return "f1"
+
+    async def resolved(*, org: str, failure_ids: list[str], **kw: Any) -> int:
+        e.log.append(("resolved", failure_ids))
+        return 1
 
     monkeypatch.setattr(conflicts, "apply_refines", refines)
     monkeypatch.setattr(auto_resolution, "record_auto_supersessions", record)
     monkeypatch.setattr(resolver, "_follow", follow)
+    monkeypatch.setattr(projection_failures, "record_projection_failure", intent)
+    monkeypatch.setattr(projection_failures, "mark_projection_failures_resolved", resolved)
+    return e
+
+
+@pytest.mark.parametrize(("retires", "follow_ok"), [(True, True), (True, False), (False, True)])
+async def test_the_follow_is_owed_before_the_supersede_and_settled_after_it(
+    retire_env: NS, retires: bool, follow_ok: bool
+) -> None:
+    retire_env.retires, retire_env.follow_ok = retires, follow_ok
+    late = _mem("m1", content_sha256="sha-late")
+    current = _mem("m2", session_id="s2", content_sha256="sha-cur")
+    assert await resolver._retire("o", "ns", current, late) is retires
+    assert retire_env.log[0] == ("intent", "triples_follow_rows", [["m1", "m2"]])
+    assert retire_env.log[1] == "supersede"
+    # A follow that failed stays owed to the repair; nothing retired, nothing owed.
+    assert (("resolved", ["f1"]) in retire_env.log) is (follow_ok or not retires)
+
+
+async def test_a_retirement_behind_the_newer_row_of_the_pair(retire_env: NS) -> None:
+    seen, records, followed = retire_env.seen, retire_env.records, retire_env.followed
     # The peer, an older statement, retires behind the judged row.
     late = _mem("m1", valid_at=datetime(2024, 1, 1), content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")

@@ -220,7 +220,11 @@ re-checked row is often the older side of its flag, so when a flagged peer was s
 later, the latest such peer is presented as NEW and the row as its peer. A retirement goes through `apply_refines`: the older row is superseded behind the
 newer, a `supersedes` edge records why, one `memory.auto_supersede` record names it
 (reason `conflict_resolver`, so `memory.restore` undoes it), and the triple plane follows
-(`follow_row_supersessions`, left for the repair on failure). A flag is
+(`follow_row_supersessions`). The follow is owed before the supersede commits: one
+committed `triples_follow_rows` projection-failure row holds the pair and is resolved once
+the follow lands, so a failure or a crash in between leaves it for the projection repair,
+which follows a pair only while its loser is retired behind its winner. The acting of a
+judged row (its pairs, records, follows and audit row) is shielded from cancellation. A flag is
 `mark_peers_conflicted`; a clear removes the pair from each side's `conflict_with`, and a
 row left with no flag is `active` again, on its vector row too. One hash-only
 `memory.conflict_resolver` audit row per judged row that changed memory lists the pairs,

@@ -118,8 +118,8 @@ async def record_projection_failure(
     error: BaseException | str,
     payload: dict[str, Any] | None = None,
     ch: Any | None = None,
-) -> None:
-    """Append one projection failure row.
+) -> str:
+    """Append one projection failure row; returns its failure_id.
 
     Callers should wrap this helper in their own fail-open guard.
     """
@@ -128,11 +128,12 @@ async def record_projection_failure(
     now = naive_utc_now()
     error_type = type(error).__name__ if isinstance(error, BaseException) else "Error"
     error_message = str(error)
+    failure_id = str(uuid.uuid4())
     await ch.insert(
         "loom.memory_projection_failures",
         [
             {
-                "failure_id": str(uuid.uuid4()),
+                "failure_id": failure_id,
                 "org": org,
                 "namespace": namespace,
                 "agent": agent,
@@ -152,6 +153,7 @@ async def record_projection_failure(
         # fire-and-forget buffer dies with the replica that holds it.
         settings={"async_insert": 1, "wait_for_async_insert": 1},
     )
+    return failure_id
 
 
 def _decode_payload(raw: object) -> dict[str, Any]:

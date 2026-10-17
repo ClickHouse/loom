@@ -822,3 +822,43 @@ async def test_closer_rows_of_another_type_do_not_hide_a_peer(ch, wired) -> None
     await run_pass()
     assert "office_location" in llm.calls
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+
+
+async def _follow_intents(ch: Any, org: str, want_active: int) -> list[dict[str, Any]]:
+    # Resolving is a mutation: poll up to ten seconds for `want_active` active rows.
+    rows: list[dict[str, Any]] = []
+    for _ in range(50):
+        rows = await ch.query_all(
+            "SELECT status, payload FROM loom.memory_projection_failures"
+            " WHERE org = {org:String} AND projection = 'triples_follow_rows'"
+            " SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1",
+            params={"org": org},
+        )
+        if sum(r["status"] == "active" for r in rows) == want_active:
+            break
+        await asyncio.sleep(0.2)
+    return rows
+
+
+@pytest.mark.parametrize("follow_fails", [False, True])
+async def test_a_retirement_owes_its_follow_until_the_follow_lands(
+    ch, wired, monkeypatch, follow_fails: bool
+) -> None:
+    from server.memory.app import entity_projections
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 66)
+    if follow_fails:
+
+        async def boom(*a: Any, **kw: Any) -> Any:
+            raise RuntimeError("graph unavailable")
+
+        monkeypatch.setattr(entity_projections, "follow_row_supersessions", boom)
+    out = await run_pass()
+    assert out["retired"] == 1
+    ids = {k: r["id"] for k, r in (await _rows(ch, org)).items()}
+    rows = await _follow_intents(ch, org, want_active=1 if follow_fails else 0)
+    assert len(rows) == 1, "one intent, never a second row for the same pair"
+    assert rows[0]["status"] == ("active" if follow_fails else "resolved")
+    assert json.loads(rows[0]["payload"])["pairs"] == [[ids["office_city"], ids["office_location"]]]

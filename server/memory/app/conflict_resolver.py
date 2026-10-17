@@ -198,12 +198,30 @@ async def _assertion_order(org: str, namespace: str, rows: list[Any]) -> dict[st
 
 async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
     """Supersede `peer` behind the judged row `row`, recorded and followed. The
-    caller has checked that `peer` was stated first."""
+    caller has checked that `peer` was stated first.
+
+    The follow is queued for the projection repair before the supersede commits
+    (FOLLOW_ROWS; the repair follows a pair only while its loser is retired behind
+    its winner, so an intent whose retirement never landed changes nothing), and
+    resolved once the follow lands: a crash between the two leaves the fact for the
+    repair, not open forever. No intent, no retirement."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
     from server.memory.app.conflicts import apply_refines
+    from server.memory.app.projection_failures import FOLLOW_ROWS, record_projection_failure
 
     loser, winner = peer, row
     loser_sha = str(loser.content_sha256 or "")
+    pair = (str(loser.memory_id), str(winner.memory_id))
+    intent = await record_projection_failure(
+        org=org,
+        namespace=namespace,
+        agent=str(winner.agent),
+        projection=FOLLOW_ROWS,
+        source_operation=f"worker.{CONFLICT_RESOLVER}",
+        source_resource_id=f"{CONFLICT_RESOLVER}:{pair[1]}",
+        error="conflict_resolver: retirement to follow",
+        payload={"pairs": [list(pair)]},
+    )
     into: dict[str, list[dict[str, Any]]] = {}
     await apply_refines(
         org=org,
@@ -219,37 +237,40 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
     )
     retired = [{**r, "label": cr.UPDATE} for r in into.get(CONFLICT_RESOLVER, [])]
     if not retired:
+        await _done(org, intent)
         return False
     await record_auto_supersessions(
         org=org, namespace=namespace, retired=retired, reason=CONFLICT_RESOLVER
     )
     pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in retired]
-    await _follow(org, namespace, str(winner.agent), pairs)
+    if await _follow(org, namespace, str(winner.agent), pairs):
+        await _done(org, intent)
     return True
 
 
-async def _follow(org: str, namespace: str, agent: str, pairs: list[tuple[str, str]]) -> None:
-    """The triple plane follows the retirement; a failure is left for the repair."""
+async def _done(org: str, intent: str) -> None:
+    """The follow intent is no longer owed; left active, the repair replays it."""
+    from server.memory.app.projection_failures import mark_projection_failures_resolved
+
+    try:
+        await mark_projection_failures_resolved(org=org, failure_ids=[intent])
+    except Exception as e:  # noqa: BLE001 — a replay of a followed pair changes nothing
+        log.warning("conflict_resolver: follow intent left for the repair: %s", e)
+
+
+async def _follow(org: str, namespace: str, agent: str, pairs: list[tuple[str, str]]) -> bool:
+    """The triple plane follows the retirement; True when every pair was followed.
+    A failure is left to the repair, which holds the pairs as the follow intent."""
     from server.core.ch import get_client
     from server.memory.app.entity_projections import follow_row_supersessions
-    from server.memory.app.projection_errors import record_input_projection_failure
-    from server.memory.app.projection_failures import FOLLOW_ROWS
 
     scope = SimpleNamespace(org=org, namespace=namespace, agent=agent)
     try:
         left = (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed
     except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them later
-        log.warning("conflict_resolver: triples follow failed (recorded for repair): %s", e)
-        left = pairs
-    if left:
-        await record_input_projection_failure(
-            scope,
-            projection=FOLLOW_ROWS,
-            error=f"supersession pairs left for the repair to follow: {len(left)}",
-            payload={"pairs": [list(p) for p in left]},
-            source_operation="worker.conflict_resolver",
-            source_resource_id=f"conflict_resolver:{pairs[0][1]}",
-        )
+        log.warning("conflict_resolver: triples follow failed (left for the repair): %s", e)
+        return False
+    return not left
 
 
 async def _flag(org: str, row: Any, peer: Any) -> bool:
@@ -512,6 +533,26 @@ async def _judge_and_act(
     if not verdicts:
         counts.errored += 1  # an answer with nothing usable in it: nothing changes
         return
+    # Shielded: a cancellation (the pass deadline, a shutdown) lets the pairs already
+    # being acted on finish with their records, follows and audit row.
+    await asyncio.shield(
+        _act_on_verdicts(org, namespace, row, peers, verdicts, policy, counts, model, acting)
+    )
+
+
+async def _act_on_verdicts(
+    org: str,
+    namespace: str,
+    row: Any,
+    peers: list[dict[str, Any]],
+    verdicts: dict[str, cr.PeerVerdict],
+    policy: str,
+    counts: Counts,
+    model: str,
+    acting: asyncio.Lock,
+) -> None:
+    """Settle each pair the answer acts on, then one audit row for the row, all under
+    `acting` (held here, inside the shield, so it is held for as long as this runs)."""
     acted: list[dict[str, Any]] = []
     judged = (str(row.memory_id), str(row.content_sha256 or ""))
     async with acting:
