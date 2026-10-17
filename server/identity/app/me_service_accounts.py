@@ -175,6 +175,7 @@ async def me_service_accounts_create(
         scoped=True,
         ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
         is_service_account=True,
+        recorded=True,
     )
     ordered_ns = delegated.namespaces
     ns_roles = delegated.ns_roles or {}

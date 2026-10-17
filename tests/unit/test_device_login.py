@@ -1076,7 +1076,7 @@ def test_ending_a_session_refuses_its_access_tokens() -> None:
         verify_token(token)
 
 
-def test_a_child_of_a_session_token_lives_as_long_as_asked_not_its_hour() -> None:
+def test_a_child_of_a_session_lives_as_long_as_asked_when_it_is_listed() -> None:
     from server.auth import delegation
     from server.auth.jwt import verify_token
 
@@ -1092,14 +1092,23 @@ def test_a_child_of_a_session_token_lives_as_long_as_asked_not_its_hour() -> Non
             )
         )
 
-    ninety_days = 90 * 86400
-    # Not the parent's hour: what the person asked for, never included.
-    assert delegation._child_ttl(parent(session_id="s1"), ninety_days) == ninety_days
-    assert delegation._child_ttl(parent(session_id="s1"), None) == ninety_days  # the default
-    assert delegation._child_ttl(parent(session_id="s1"), delegation.NEVER) is None
-    # Any other parent still bounds it, a token that never expires too.
-    assert delegation._child_ttl(parent(), ninety_days) <= 3600
-    assert delegation._child_ttl(parent(), delegation.NEVER) <= 3600
+    from fastapi import HTTPException
+
+    ninety_days, never = 90 * 86400, delegation.NEVER
+    session = parent(session_id="s1")
+    # Not the parent's hour: what the person asked for, one that never expires
+    # included, for a token they can see and revoke in their list.
+    assert delegation._child_ttl(session, ninety_days, recorded=True) == ninety_days
+    assert delegation._child_ttl(session, None, recorded=True) == ninety_days  # the default
+    assert delegation._child_ttl(session, never, recorded=True) is None
+    # Listed nowhere, it lasts no longer than the session could.
+    assert delegation._child_ttl(session, ninety_days, recorded=False) == delegation.SESSION_TTL
+    with pytest.raises(HTTPException, match="must be saved"):
+        delegation._child_ttl(session, never, recorded=False)
+    # Any other parent bounds it, and cannot make one that never expires.
+    assert delegation._child_ttl(parent(), ninety_days, recorded=True) <= 3600
+    with pytest.raises(HTTPException, match="cannot make one that never does"):
+        delegation._child_ttl(parent(), never, recorded=True)
 
 
 def test_two_people_on_one_code_end_the_grant_for_both(_world, monkeypatch) -> None:

@@ -118,6 +118,7 @@ async def _child(parent: AuthInfo, requested: dict[str, str | None], **kw: Any) 
         scoped=kw.pop("scoped", False),
         ttl_seconds=kw.pop("ttl_seconds", None),
         is_service_account=kw.pop("is_service_account", True),
+        recorded=kw.pop("recorded", True),
     )
     return verify_token(d.mint(kw.pop("subject", "sa:bot")))
 
@@ -247,6 +248,7 @@ async def test_revoking_the_parent_kills_the_child_and_the_grandchild(
         scoped=False,
         ttl_seconds=None,
         is_service_account=True,
+        recorded=True,
     )
     raw_grandchild = d.mint("sa:g")
     verify_token(raw_grandchild)
@@ -264,6 +266,7 @@ async def test_revoking_the_creator_kills_the_child(world, monkeypatch: pytest.M
         scoped=False,
         ttl_seconds=None,
         is_service_account=True,
+        recorded=True,
     )
     raw = d.mint("sa:bot")
     monkeypatch.setattr(revocation, "_revoked_before", {"alice": int(time.time()) + 10})
@@ -493,6 +496,7 @@ async def test_revoking_a_service_account_by_subject_kills_its_children(
         scoped=True,
         ttl_seconds=None,
         is_service_account=True,
+        recorded=True,
     )
     raw_grandchild = d.mint("sa:grandchild")
     raw_child = (
@@ -503,6 +507,7 @@ async def test_revoking_a_service_account_by_subject_kills_its_children(
             scoped=True,
             ttl_seconds=None,
             is_service_account=True,
+            recorded=True,
         )
     ).mint("sa:child2")
     verify_token(raw_grandchild)
@@ -533,6 +538,7 @@ async def _mint_from(parent: AuthInfo, subject: str) -> str:
         scoped=False,
         ttl_seconds=None,
         is_service_account=True,
+        recorded=True,
     )
     return d.mint(subject)
 
@@ -621,6 +627,7 @@ async def test_ttl_days_rounds_up(world) -> None:
         scoped=False,
         ttl_seconds=3600,
         is_service_account=True,
+        recorded=True,
     )
     assert d.ttl_days == 1
 

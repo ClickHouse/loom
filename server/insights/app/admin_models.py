@@ -107,7 +107,7 @@ class TokenMintInput(BaseModel):
     roles: list[str] = Field(default_factory=lambda: ["writer"])
     ns_roles: dict[str, str] | None = None
     consumer: str = Field("", max_length=64)
-    ttl_seconds: int | None = Field(None, ge=1)
+    ttl_seconds: int | None = Field(None, ge=1, le=3650 * 86400)
     is_service_account: bool = True
 
     @model_validator(mode="after")

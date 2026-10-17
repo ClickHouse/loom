@@ -839,6 +839,7 @@ async def admin_token_mint(
             scoped=bool(input.ns_roles),
             ttl_seconds=input.ttl_seconds,
             is_service_account=input.is_service_account,
+            recorded=False,  # audited by jti, listed nowhere
         )
         minted = delegated.mint(input.subject, jti=jti, consumer=input.consumer or None)
         namespaces, roles, ns_roles = delegated.namespaces, delegated.roles, delegated.ns_roles

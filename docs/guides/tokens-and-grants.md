@@ -272,10 +272,11 @@ what was asked for, cut to what the caller's token allows and to the caller's li
   inherited `ns_write` binds the child's writes whatever its `ns_roles` say;
 - a service-account caller mints only service-account tokens (on the Setup page: send
   `persist=true`);
-- an expiry: `ttl_days`/`ttl_seconds`, 90 days when unset, and never past the caller's own
-  token's `exp` (a longer TTL is clipped), except from a sign-in session's hour-long token
-  (`loom login`, dashboard SSO), whose children are clipped to the session's 30-day horizon
-  instead;
+- an expiry: `ttl_days`/`ttl_seconds`, 90 days when unset, `ttl_days: 0` for never, and
+  never past the caller's own token's `exp` (a longer TTL is clipped, and a token that
+  expires cannot make one that never does), except from a sign-in session's hour-long token
+  (`loom login`, dashboard SSO): a child saved to the person's service-account list lasts
+  what was asked, one listed nowhere at most 30 days and never for ever;
 - `parents` (every ancestor's token id), `parent_subjects` (every ancestor's `sub`),
   `parent_iats` (every ancestor's `iat`) and `creator` (the person at the root).
 

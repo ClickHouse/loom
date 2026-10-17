@@ -30,7 +30,7 @@ import asyncio
 import logging
 import math
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from server.core import readiness
@@ -43,17 +43,17 @@ log = logging.getLogger(__name__)
 # `expires_at` to DateTime, whose range ends in 2106; a later value wraps to a
 # past date and ClickHouse drops the row, so the revocation silently never
 # lands. Every expiry is therefore clamped below that range.
-NEVER_EXPIRES_DAYS = 3650
 _LATEST_EXPIRY = datetime(2105, 12, 31)
 
 
-def revocation_expiry(expires_at: datetime | None, now: datetime) -> datetime:
+def revocation_expiry(expires_at: datetime | None) -> datetime:
     """The `expires_at` to store for a revocation: the token's own expiry (naive
-    UTC), `NEVER_EXPIRES_DAYS` from `now` when it has none, and never past the
-    table TTL's DateTime range."""
+    UTC), never past the table TTL's DateTime range, which is also where one
+    without an expiry lands."""
     if expires_at is None:
-        expires_at = now + timedelta(days=NEVER_EXPIRES_DAYS)
-    elif expires_at.tzinfo is not None:
+        # A token that never expires stays revoked as long as the table can hold it.
+        return _LATEST_EXPIRY
+    if expires_at.tzinfo is not None:
         expires_at = expires_at.astimezone(UTC).replace(tzinfo=None)
     return min(expires_at, _LATEST_EXPIRY)
 
@@ -234,7 +234,7 @@ async def revoke(
     `iat` is before it — the shape for "the old
     token leaked, the re-mint from an hour ago stays". `expires_at` is when
     the revocation may lapse — the token's own `exp`; None (a token without
-    `exp`) keeps the row for `NEVER_EXPIRES_DAYS`. Returns the row as
+    `exp`) keeps the row as long as the table can. Returns the row as
     written. Raises on a CH failure (the caller decides how to report it; a
     revocation that did not land must not look landed).
     """
@@ -246,7 +246,7 @@ async def revoke(
     if "\x00" in token_id:  # no subject has one; CUTOFF_PREFIX keys are cut_off's
         raise ValueError("revoke: a jti or sub may not contain a NUL character")
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    expires_at = revocation_expiry(expires_at, now)
+    expires_at = revocation_expiry(expires_at)
     if issued_before is not None and issued_before.tzinfo is not None:
         issued_before = issued_before.astimezone(UTC).replace(tzinfo=None)
     row: dict[str, Any] = {
@@ -276,7 +276,7 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
             {
                 "jti": CUTOFF_PREFIX + subject,
                 "revoked_at": now,
-                "expires_at": revocation_expiry(None, now),
+                "expires_at": revocation_expiry(None),
                 "reason": reason,
                 "revoked_by": revoked_by,
                 "issued_before": cutoff,

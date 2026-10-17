@@ -21,8 +21,9 @@ and so on.
 ## Bots and CI jobs
 
 A bot needs no `loom login`: register it once (`loom bot create`, or a platform admin's
-`loom call /v1/admin/bots.create`), then run it with `LOOM_CLIENT_ID` and either
-`LOOM_CLIENT_KEY_FILE` (its private key) or, in a CI job, `LOOM_WORKLOAD_AUDIENCE`.
+`loom call /v1/admin/bots.create`), then run it with `LOOM_CLIENT_ID` and either its
+private key (`LOOM_CLIENT_KEY_FILE`, `LOOM_CLIENT_KEY`, or an AWS Secrets Manager secret in
+`LOOM_CLIENT_KEY_SECRET`) or, in a CI job, `LOOM_WORKLOAD_AUDIENCE`.
 The SDK gets and renews its hour-long token itself. See
 [single sign-on](../operations/sso.md#bots-and-ci).
 

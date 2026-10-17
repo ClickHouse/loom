@@ -462,11 +462,23 @@ def test_service_accounts_and_account_views_need_no_dashboard(
         json.dumps({"name": "ci-bot", "namespaces": [ns], "role": "viewer"}),
     )
     assert _whoami(base, created["token"])["is_service_account"] is True
-    # Minted from an hour-long session token, it lives to the session's horizon
-    # (30 days, though it asked for the 90-day default), not the token's hour.
-    assert 29 * 86400 < _whoami(base, created["token"])["exp"] - time.time() <= 30 * 86400
+    # Minted from an hour-long session token, it lives as long as it asked
+    # (the 90-day default), not the token's hour.
+    assert 89 * 86400 < _whoami(base, created["token"])["exp"] - time.time() <= 90 * 86400
+    forever = _loom(
+        home,
+        "call",
+        "/v1/me/service_accounts.create",
+        "--data",
+        json.dumps({"name": "forever", "namespaces": [ns], "ttl_days": 0}),
+    )
+    assert _whoami(base, forever["token"]).get("exp") is None
     listed = _loom(home, "call", "/v1/me/service_accounts")
-    assert [r["name"] for r in listed["rows"]] == ["ci-bot"]
+    rows = {r["name"]: r for r in listed["rows"]}
+    assert set(rows) == {"ci-bot", "forever"}
+    assert rows["forever"]["ttl_days"] == 0 and rows["forever"]["expires_at"] is None
+    _loom(home, "call", "/v1/me/service_accounts.revoke", "name=forever")
+    assert _whoami(base, forever["token"])["authenticated"] is False
     _loom(home, "call", "/v1/me/service_accounts.revoke", "name=ci-bot")
     assert _whoami(base, created["token"])["authenticated"] is False
     assert "totals" in _loom(home, "call", "/v1/me/sharing-summary")
@@ -520,7 +532,7 @@ def test_a_replayed_session_ends_and_spares_the_rest(
     credentials.access_token(refused=first["access_token"])  # the client goes on...
     credentials.access_token(refused=_stored()["access_token"])
     # ...and a copy of the first token turns up: this session ends. The CI
-    # token minted from it is its owner's to revoke (it lives at most 30 days).
+    # token minted from it is its owner's to revoke.
     assert _refresh(base, first["refresh_token"]).json()["error"] == "invalid_grant"
     assert _whoami(base, _stored()["access_token"])["authenticated"] is False
     assert _whoami(base, made["token"])["authenticated"] is True

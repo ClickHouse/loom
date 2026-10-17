@@ -259,6 +259,7 @@ export class Transport {
       sent: 0,
       bearer: "",
       reauthed: false,
+      resending: false,
     };
     const deadline = this.now() + this.ratelimitMaxWaitMs;
     for (;;) {
@@ -346,7 +347,9 @@ export class Transport {
       throw new AuthError(`refusing to send ${provider.label ?? "the provider"}'s token to ${new URL(ctx.url).host}`, {
         op: ctx.op,
       });
-    ctx.bearer = await provider.token(ctx.refused);
+    throwIfAborted(ctx);
+    // The caller may give up on its wait; a renewal other calls share goes on.
+    ctx.bearer = await untilAborted(provider.token(ctx.refused), ctx);
     ctx.refused = undefined;
     ctx.headers.Authorization = `Bearer ${ctx.bearer}`;
   }
@@ -386,7 +389,9 @@ export class Transport {
       return true;
     };
     for (let attempt = 1; ; attempt++) {
-      ctx.sent++;
+      // A resend with a fresh token is the same attempt, as the Python SDK counts it.
+      if (!ctx.resending) ctx.sent++;
+      ctx.resending = false;
       headers["X-Loom-Retry-Count"] = String(ctx.sent - 1);
       if (this.#provider) await this.authorize(ctx);
       this.log.debug(
@@ -431,6 +436,7 @@ export class Transport {
         // The token may have been revoked or rotated: once more with a fresh
         // one. The server refused before dispatch, and this is no policy retry.
         ctx.reauthed = true;
+        ctx.resending = true;
         ctx.refused = ctx.bearer;
         this.log.info(`${op} 401; retrying once with a fresh token (rid=${requestId})`);
         attempt--;
@@ -532,6 +538,8 @@ interface AttemptContext {
   bearer: string;
   /** A 401 has been answered with a fresh token; not again. */
   reauthed: boolean;
+  /** The next send repeats this attempt with a fresh token. */
+  resending: boolean;
   /** The token the server just refused, which the next attempt replaces. */
   refused?: string;
 }
@@ -583,6 +591,22 @@ function abortError(): Error {
 }
 
 /** Rejects the call once the caller's signal has fired. */
+function untilAborted<T>(work: Promise<T>, ctx: AttemptContext): Promise<T> {
+  const signal = ctx.opts.signal;
+  if (!signal) return work;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      try {
+        throwIfAborted(ctx);
+      } catch (e) {
+        reject(e);
+      }
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 function throwIfAborted(ctx: AttemptContext, cause?: unknown): void {
   if (!ctx.opts.signal?.aborted) return;
   const requestId = ctx.headers["X-Request-Id"] ?? "";

@@ -372,6 +372,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         scoped=False,
         ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
         is_service_account=persist,
+        recorded=persist,
     )
 
     # persist=True tracks the token in service_accounts (kind='mcp') so

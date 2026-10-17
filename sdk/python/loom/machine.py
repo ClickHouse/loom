@@ -100,12 +100,13 @@ class MachineLogin(httpx.Auth):
     def _fetch(self) -> tuple[str, float]:
         endpoint = f"{self.server}/oauth/token"
         if self._key_source:
+            source, value = self._key_source
             form = {
                 "grant_type": "client_credentials",
                 "client_id": self.profile,
                 "client_assertion_type": ASSERTION_TYPE,
                 "client_assertion": self._assertion(
-                    self._audience_of_assertion(), _key_pem(*self._key_source)
+                    self._audience_of_assertion(), _key_pem(source, value), source
                 ),
             }
         else:
@@ -140,14 +141,17 @@ class MachineLogin(httpx.Auth):
             self._token_endpoint = str(r.json()["token_endpoint"])
         return self._token_endpoint
 
-    def _assertion(self, endpoint: str, pem: bytes) -> str:
+    def _assertion(self, endpoint: str, pem: bytes, source: str) -> str:
         try:
             import jwt
             from cryptography.hazmat.primitives.asymmetric import ec, ed25519
             from cryptography.hazmat.primitives.serialization import load_pem_private_key
         except ImportError as e:
             raise AuthInvalid("a bot key needs `pip install clickhouse-loom[machine]`") from e
-        key = load_pem_private_key(pem, password=None)
+        try:
+            key = load_pem_private_key(pem, password=None)
+        except ValueError as e:  # an env file's literal "\n"s, say
+            raise AuthInvalid(f"{source}: not a PEM private key") from e
         alg = (
             "ES256"
             if isinstance(key, ec.EllipticCurvePrivateKey)
@@ -203,7 +207,7 @@ def _key_pem(source: str, value: str) -> bytes:
     if source == "LOOM_CLIENT_KEY":
         return value.encode()
     try:
-        import boto3  # type: ignore[import-untyped]
+        import boto3
     except ImportError as e:
         raise AuthInvalid("LOOM_CLIENT_KEY_SECRET needs `pip install clickhouse-loom[aws]`") from e
     # An ARN names its region; a bare id takes the AWS SDK's default one.
@@ -212,6 +216,8 @@ def _key_pem(source: str, value: str) -> bytes:
         secret = boto3.client("secretsmanager", region_name=region).get_secret_value(SecretId=value)
     except Exception as e:  # botocore's errors; the token in hand stays good
         raise BackendUnavailable(f"reading {value} from Secrets Manager: {e}") from e
+    if "SecretString" not in secret:
+        raise AuthInvalid(f"{value}: the key must be stored as text, not as binary")
     return str(secret["SecretString"]).encode()
 
 
@@ -229,7 +235,8 @@ def _workload_token(audience: str) -> str:
     bearer = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
     if not (url and bearer and audience):
         raise AuthInvalid(
-            "LOOM_CLIENT_ID is set but there is no key (LOOM_CLIENT_KEY_FILE) or CI token "
+            "LOOM_CLIENT_ID is set but there is no key (LOOM_CLIENT_KEY_FILE, LOOM_CLIENT_KEY "
+            "or LOOM_CLIENT_KEY_SECRET) or CI token "
             "(LOOM_WORKLOAD_TOKEN, LOOM_WORKLOAD_TOKEN_FILE, or a CI job with "
             "LOOM_WORKLOAD_AUDIENCE)"
         )

@@ -8208,7 +8208,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "When the revocation may lapse — the token's own exp. Omit for a token without exp: the row is kept for 100 years.",
+       "help": "When the revocation may lapse — the token's own exp. Omit for a token without exp: the row is kept for good (to 2105).",
        "metavar": "ISO8601"
       },
       {

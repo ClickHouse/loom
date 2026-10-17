@@ -148,7 +148,11 @@ export class MachineLogin implements TokenProvider {
           grant_type: "client_credentials",
           client_id: this.clientId,
           client_assertion_type: ASSERTION_TYPE,
-          client_assertion: await this.#assertion(await this.#assertionAudience(), await this.#keyPem(this.#key)),
+          client_assertion: await this.#assertion(
+            await this.#assertionAudience(),
+            await this.#keyPem(this.#key),
+            this.#key.source,
+          ),
         }
       : {
           grant_type: TOKEN_EXCHANGE,
@@ -197,9 +201,15 @@ export class MachineLogin implements TokenProvider {
     return this.#tokenEndpoint;
   }
 
-  async #assertion(audience: string, pem: string): Promise<string> {
+  async #assertion(audience: string, pem: string, source: KeySource): Promise<string> {
     const crypto = (await this.#import("node:crypto")) as typeof import("node:crypto");
-    const key = crypto.createPrivateKey(pem);
+    let key: import("node:crypto").KeyObject;
+    try {
+      key = crypto.createPrivateKey(pem);
+    } catch (e) {
+      // An env file's literal "\n"s, say.
+      throw new AuthError(`${source}: not a PEM private key`, { cause: e });
+    }
     const kind = key.asymmetricKeyType;
     const alg = kind === "ec" ? "ES256" : kind === "ed25519" ? "EdDSA" : "RS256";
     const now = Math.floor(this.#now() / 1000);
@@ -233,10 +243,9 @@ export class MachineLogin implements TokenProvider {
     // An ARN names its region; a bare id takes the AWS SDK's default one.
     const region = value.startsWith("arn:") ? value.split(":")[3] : undefined;
     const client = new sm.SecretsManagerClient(region ? { region } : {});
+    let out: { SecretString?: string };
     try {
-      const out = await client.send(new sm.GetSecretValueCommand({ SecretId: value }));
-      if (typeof out.SecretString !== "string") throw new Error("the secret has no SecretString");
-      return out.SecretString;
+      out = await client.send(new sm.GetSecretValueCommand({ SecretId: value }));
     } catch (e) {
       throw new BackendUnavailable(`reading ${value} from Secrets Manager: ${e instanceof Error ? e.message : e}`, {
         cause: e,
@@ -244,6 +253,9 @@ export class MachineLogin implements TokenProvider {
     } finally {
       client.destroy?.();
     }
+    if (typeof out.SecretString !== "string")
+      throw new AuthError(`${value}: the key must be stored as text, not as binary`);
+    return out.SecretString;
   }
 
   /** The workload's OIDC token: given, in a file (re-read, so a rotated one is picked up), or asked of GitHub Actions. */
@@ -279,14 +291,21 @@ export class MachineLogin implements TokenProvider {
 
   /** One request of the login itself; a connection failure reads as the server being away. */
   async #get(url: string, init: RequestInit): Promise<Response> {
+    let res: Response;
     try {
-      return await this.#fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+      // Never followed: a redirect would carry the proof in the body elsewhere.
+      res = await this.#fetch(url, { ...init, redirect: "manual", signal: AbortSignal.timeout(30_000) });
     } catch (e) {
       throw new BackendUnavailable(`bot ${this.clientId}: cannot reach ${new URL(url).origin}`, {
         cause: e,
         code: NETWORK_ERROR_CODE,
       });
     }
+    if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400))
+      throw new AuthError(`bot ${this.clientId}: ${new URL(url).origin} answered a redirect; not followed`, {
+        status: res.status,
+      });
+    return res;
   }
 }
 

@@ -303,3 +303,28 @@ def test_two_key_sources_at_once_are_refused(signed, monkeypatch, tmp_path) -> N
     monkeypatch.setenv("LOOM_CLIENT_KEY", "example-key")
     with pytest.raises(AuthInvalid, match="not several"):
         machine.machine_login("https://loom.example")
+
+
+def test_a_key_that_is_not_a_pem_names_its_source(signed, monkeypatch) -> None:
+    # As `docker --env-file` leaves it: the newlines written as "\n".
+    from server.auth import machines
+
+    private, _ = machines.generate_key()
+    monkeypatch.setenv("LOOM_CLIENT_KEY", private.decode().replace("\n", "\\n"))
+    with pytest.raises(AuthInvalid, match="LOOM_CLIENT_KEY: not a PEM private key"):
+        machine.machine_login("https://loom.example").token()  # type: ignore[union-attr]
+
+
+def test_a_secret_stored_as_binary_is_a_configuration_error(signed, monkeypatch) -> None:
+    import types
+
+    class _Client:
+        def get_secret_value(self, SecretId: str) -> dict[str, bytes]:
+            return {"SecretBinary": b"\x01"}
+
+    monkeypatch.setitem(
+        sys.modules, "boto3", types.SimpleNamespace(client=lambda *a, **k: _Client())
+    )
+    monkeypatch.setenv("LOOM_CLIENT_KEY_SECRET", "loom/triage")
+    with pytest.raises(AuthInvalid, match="stored as text"):
+        machine.machine_login("https://loom.example").token()  # type: ignore[union-attr]

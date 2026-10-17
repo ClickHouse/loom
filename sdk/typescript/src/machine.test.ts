@@ -5,7 +5,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readEnv } from "./client.js";
 import { AuthError, BackendUnavailable } from "./errors.js";
-import { MachineLogin, machineLogin, TOKEN_EXCHANGE } from "./machine.js";
+import {
+  type KeySource,
+  MachineLogin,
+  type MachineLoginOptions,
+  machineLogin,
+  TOKEN_EXCHANGE,
+  type TokenProvider,
+} from "./machine.js";
 import { Transport } from "./transport.js";
 
 const BASE = "http://loom.test";
@@ -209,6 +216,43 @@ describe("MachineLogin with a key", () => {
 });
 
 describe("key sources", () => {
+  it("names the source of a key that is not a PEM", async () => {
+    // As `docker --env-file` leaves it: the newlines written as `\n`.
+    const broken = pem("ec").privatePem.replaceAll("\n", "\\n");
+    const srv = server();
+    const source: KeySource = "LOOM_CLIENT_KEY";
+    const opts: MachineLoginOptions = {
+      baseUrl: BASE,
+      clientId: "b",
+      key: { source, value: broken },
+      fetch: srv.fetch,
+    };
+    const bot = new MachineLogin(opts);
+    await expect(bot.token()).rejects.toThrow(new AuthError("LOOM_CLIENT_KEY: not a PEM private key"));
+  });
+
+  it("refuses a secret stored as binary as a configuration error, not a retry", async () => {
+    const fakeModule = {
+      GetSecretValueCommand: class {
+        constructor(readonly input: { SecretId: string }) {}
+      },
+      SecretsManagerClient: class {
+        async send() {
+          return { SecretBinary: new Uint8Array([1]) };
+        }
+      },
+    };
+    const srv = server();
+    const bot = new MachineLogin({
+      baseUrl: BASE,
+      clientId: "b",
+      key: { source: "LOOM_CLIENT_KEY_SECRET", value: "loom/bot" },
+      fetch: srv.fetch,
+      importModule: async (name) => (name === "@aws-sdk/client-secrets-manager" ? fakeModule : import(name)),
+    });
+    await expect(bot.token()).rejects.toBeInstanceOf(AuthError);
+  });
+
   it("re-reads LOOM_CLIENT_KEY_FILE for each token, so a rotated key is picked up", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loom-key-"));
     const file = join(dir, "bot.pem");
@@ -360,6 +404,21 @@ describe("MachineLogin with a workload token", () => {
   });
 });
 
+describe("redirects", () => {
+  it.each([307, 308])("refuses a %i from /oauth/token instead of sending the proof on", async (status) => {
+    const sent: string[] = [];
+    const fetch = async (url: string, init: RequestInit): Promise<Response> => {
+      sent.push(url);
+      expect(init.redirect).toBe("manual");
+      return new Response(null, { status, headers: { Location: "http://elsewhere.test/collect" } });
+    };
+    vi.stubEnv("LOOM_WORKLOAD_TOKEN", "workload-proof");
+    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", fetch });
+    await expect(bot.token()).rejects.toBeInstanceOf(AuthError);
+    expect(sent).toEqual([`${BASE}/oauth/token`]); // never the redirect's target
+  });
+});
+
 describe("Transport with a token provider", () => {
   function bot(srv: ReturnType<typeof server>, baseUrl = BASE) {
     vi.stubEnv("LOOM_WORKLOAD_TOKEN", "wl");
@@ -374,6 +433,44 @@ describe("Transport with a token provider", () => {
     expect(await t.post("memory.set", { org: "o" })).toEqual({ ok: true });
     expect(v1(srv).map(auth)).toEqual([`Bearer ${accessToken(1)}`, `Bearer ${accessToken(2)}`]);
     expect(srv.tokenCalls()).toHaveLength(2);
+  });
+
+  it("counts the fresh-token resend as the same attempt, not a retry", async () => {
+    const srv = server({ v1: [{ status: 401, body: { detail: { code: "UNAUTHENTICATED" } } }] });
+    const t = new Transport({ baseUrl: BASE, tokenProvider: bot(srv), fetch: srv.fetch, retry: { maxAttempts: 1 } });
+    await t.post("memory.set", { org: "o" });
+    const count = (c: { init: RequestInit }) => (c.init.headers as Record<string, string>)["X-Loom-Retry-Count"];
+    expect(v1(srv).map(count)).toEqual(["0", "0"]);
+  });
+
+  it("asks the provider for nothing once the caller has cancelled", async () => {
+    let asked = 0;
+    const provider: TokenProvider = { token: async () => (asked++, "t"), origin: BASE };
+    const srv = server();
+    const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: srv.fetch });
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(t.post("memory.get", { org: "o" }, { signal: ctrl.signal })).rejects.toThrow("aborted");
+    expect(asked).toBe(0);
+    expect(v1(srv)).toHaveLength(0);
+  });
+
+  it("lets a caller give up on a stalled token while others keep waiting for it", async () => {
+    let release: (t: string) => void = () => {};
+    const pending = new Promise<string>((r) => {
+      release = r;
+    });
+    const provider: TokenProvider = { token: () => pending, origin: BASE };
+    const srv = server();
+    const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: srv.fetch });
+    const ctrl = new AbortController();
+    const cancelled = t.post("memory.get", { org: "o" }, { signal: ctrl.signal });
+    const patient = t.post("memory.get", { org: "o" });
+    ctrl.abort();
+    await expect(cancelled).rejects.toThrow("aborted");
+    release("shared");
+    expect(await patient).toEqual({ ok: true });
+    expect(v1(srv).map(auth)).toEqual(["Bearer shared"]);
   });
 
   it("surfaces a second 401 instead of looping", async () => {
