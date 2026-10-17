@@ -1414,7 +1414,7 @@ async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> 
         raise OAuthError(
             "invalid_client", 401, description="this client assertion was used already"
         )
-    return await _machine_tokens(m, since, int(time.time()) + machines.TOKEN_TTL, {"by": "key"})
+    return await _machine_tokens(m, since, since + machines.TOKEN_TTL, {"by": "key"})
 
 
 async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
@@ -1439,9 +1439,9 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
         raise _refused(e) from None
     except (GrantBusyError, BackendUnavailableError):  # its first exchange, made elsewhere now
         raise _unavailable() from None
-    # The token never outlives the proof; `since` stays the issue time
-    # revocation is judged by.
-    ends = min(int(proof["exp"]), int(time.time()) + machines.TOKEN_TTL)
+    # The token never outlives the proof, nor an hour from `since`: its issue
+    # time, which revocation is judged by.
+    ends = min(int(proof["exp"]), since + machines.TOKEN_TTL)
     issued = await _machine_tokens(
         m, since, ends, {"by": "workload", "workload_sub": str(proof["sub"])}, agent, own
     )

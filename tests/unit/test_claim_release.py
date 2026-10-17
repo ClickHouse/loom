@@ -299,3 +299,42 @@ def test_the_bots_cutoff_is_taken_after_the_row_insert_returns(
     (waited,) = env[1]["waited"]
     assert waited == bots_cutoff
     assert bots_cutoff - returned <= timedelta(seconds=1 + revocation.CLOCK_SKEW_S)
+
+
+def test_a_release_failing_after_its_row_is_rewritten_says_to_retry(
+    env: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Cut off at the claim's deadline before the bots' cutoff: their tokens
+    # keep the namespace until a retry ends them.
+    from server.auth import machines
+    from server.core.errors import BackendUnavailableError
+
+    async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
+        return ["triage"]
+
+    async def deadline(subject: str, **k: Any) -> datetime:
+        raise BackendUnavailableError("the change did not finish in time", operation="grant_change")
+
+    monkeypatch.setattr(machines, "naming", naming)
+    monkeypatch.setattr(account_admin, "end_tokens", deadline)
+    ch = _CH(_ROW)
+    with caplog.at_level("WARNING"), pytest.raises(BackendUnavailableError) as failed:
+        asyncio.run(_release(ch))
+    assert "loom.namespaces" in ch.inserts
+    assert "retry it" in failed.value.message and "bots' tokens" in failed.value.message
+    assert "retry it to end its bots' tokens" in caplog.text
+
+
+def test_a_release_failing_before_its_row_is_rewritten_warns_of_nothing(
+    env: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from server.auth import machines
+
+    async def down(org: str, ns: str, *, ch: Any) -> list[str]:
+        raise RuntimeError("ClickHouse away")
+
+    monkeypatch.setattr(machines, "naming", down)
+    ch = _CH(_ROW)
+    with caplog.at_level("WARNING"), pytest.raises(RuntimeError):
+        asyncio.run(_release(ch))
+    assert "loom.namespaces" not in ch.inserts and "claim_release" not in caplog.text

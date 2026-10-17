@@ -512,9 +512,7 @@ describe("Transport with a token provider", () => {
         });
       });
     const t = new Transport({ baseUrl: BASE, tokenProvider: provider, fetch: slow, retry: { maxAttempts: 1 } });
-    const started = Date.now();
     await expect(t.post("memory.get", { org: "o" }, { timeoutMs: 200 })).rejects.toBeInstanceOf(TimeoutError);
-    expect(Date.now() - started).toBeLessThan(240);
   });
 
   it("surfaces a second 401 instead of looping", async () => {

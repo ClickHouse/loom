@@ -24,6 +24,7 @@ from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
 from server.core.ch import CHClient, get_client
+from server.core.errors import BackendUnavailableError
 from server.identity.app import account_admin
 from server.identity.domain.account_ties import kept_aliases
 from server.identity.store import grants as grants_repo
@@ -95,13 +96,35 @@ async def release_claim(
     registry row stays, so the name stays claimed. Returns None when the
     namespace has no registry row. The caller authorizes; `ch` defaults to the
     server's client.
+
+    A release that fails must be retried: one cut off after its row was
+    rewritten has not ended its bots' tokens, which keep the namespace for up
+    to an hour.
     """
     if ch is None:
         ch = get_client()
     from server.auth.grant_claims import account_change
 
-    async with account_change(org, namespace):  # a password set rewrites the same row
-        released = await _release(org, namespace, reason, actor_subject, ch)
+    rewritten: list[bool] = []  # set once the loom.namespaces row is sent
+    try:
+        async with account_change(org, namespace):  # a password set rewrites the same row
+            released = await _release(org, namespace, reason, actor_subject, ch, rewritten)
+    except Exception as e:
+        if rewritten:
+            log.warning(
+                "claim_release: %s/%s failed after its row was rewritten; "
+                "retry it to end its bots' tokens: %s",
+                org,
+                namespace,
+                e,
+            )
+        if isinstance(e, BackendUnavailableError):
+            raise BackendUnavailableError(
+                f"the release of {org}/{namespace} did not finish ({e.message}); retry it, "
+                "or its bots' tokens keep the namespace for up to an hour",
+                operation=e.extra.get("operation", ""),
+            ) from e
+        raise
     if released is None:
         return None
     out, cutoff = released
@@ -113,7 +136,7 @@ async def release_claim(
 
 
 async def _release(
-    org: str, namespace: str, reason: str, actor_subject: str, ch: CHClient
+    org: str, namespace: str, reason: str, actor_subject: str, ch: CHClient, rewritten: list[bool]
 ) -> tuple[ClaimReleaseOutput, datetime | None] | None:
     # SELECT * so the release row mirrors EVERY column forward: loom.namespaces is
     # ReplacingMergeTree(updated_at), and an omitted column would reset to its schema
@@ -183,6 +206,7 @@ async def _release(
     row["active"] = False
     row["description"] = f"Released by {actor_subject}" + (f" ({reason})" if reason else "")
     row["updated_at"] = max(now, existing.get("updated_at") or now)
+    rewritten.append(True)
     await ch.insert("loom.namespaces", [row])
 
     # A bot's exchange reads its live namespaces sequentially, so no token

@@ -414,7 +414,7 @@ export class Transport {
       // What the token wait left of this attempt's timeout.
       const responseMs = Math.max(0, timeoutMs - (Date.now() - asked));
       this.log.debug(
-        `${op} → ${method} ${url} attempt ${attempt} timeout ${timeoutMs} ms bytes ${payload?.length ?? 0}`,
+        `${op} → ${method} ${url} attempt ${attempt} waits ${responseMs} of ${timeoutMs} ms bytes ${payload?.length ?? 0}`,
         redactHeaders(headers),
       );
       throwIfAborted(ctx);
@@ -424,9 +424,13 @@ export class Transport {
         const e = ex.error;
         if (isAbort(e)) {
           throwIfAborted(ctx, e);
-          const err = new TimeoutError(`${op}: no response within ${timeoutMs} ms`, { op, cause: e, requestId });
+          const err = new TimeoutError(`${op}: no response within the call's ${timeoutMs} ms timeout`, {
+            op,
+            cause: e,
+            requestId,
+          });
           const may = policy.retryTimeouts === "always" || (policy.retryTimeouts === "idempotent" && ctx.deduplicated);
-          if (may && (await retryAfter(attempt, `timed out after ${timeoutMs} ms`))) continue;
+          if (may && (await retryAfter(attempt, `ran past the call's ${timeoutMs} ms timeout`))) continue;
           throw err;
         }
         if (ex.failed === "body") {
