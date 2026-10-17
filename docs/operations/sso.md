@@ -122,6 +122,16 @@ with more than one admin, registered first, in one org); its tokens are for
   LOOM_CLIENT_ID=triage-bot LOOM_CLIENT_KEY_FILE=./triage-bot.pem python agent.py
   ```
 
+  The key comes from one of: `LOOM_CLIENT_KEY_FILE` (a PEM file), `LOOM_CLIENT_KEY`
+  (the PEM itself, as a secret manager injects it into the environment), or
+  `LOOM_CLIENT_KEY_SECRET` (an AWS Secrets Manager secret id or ARN holding the
+  PEM; `pip install clickhouse-loom[aws]`). The SDK reads it again for each
+  token, so a key rotated in place is picked up. The TypeScript SDK
+  (`@clickhouse/loom`) takes the same variables; any other client signs the
+  assertion itself (RFC 7523: `iss` and `sub` the bot's name, `aud` the
+  `token_endpoint` from `/.well-known/oauth-authorization-server`, a two-minute
+  `exp` and a fresh `jti`).
+
 - **A CI job.** No secret at all: the job hands over the OIDC token its CI
   platform issues for that run, and Loom accepts it only from that issuer, for
   that audience, with every `--claim` matching (a value ending in `*` matches a
@@ -208,8 +218,9 @@ loom mint-token --subject sa:legacy --org acme --service-account \
 ```
 
 SSO does not affect bots or minted tokens. A token a person creates from their
-session (`/v1/me/service_accounts`) lasts at most 30 days and dies with that
-person's offboarding, so long-running bots use one of the above.
+session (`/v1/me/service_accounts`) lasts as long as they chose and belongs to
+them: revoking the person ends it. Long-running bots use one of the above, so
+they do not stop with someone's offboarding.
 
 ## Sessions and logout
 
@@ -224,9 +235,11 @@ person's offboarding, so long-running bots use one of the above.
 /v1/me/service_accounts`) and revoke what you don't recognise.
 - Okta refusing the user at a refresh ends that session.
 - Service accounts and MCP tokens a person creates from a sign-in session
-  outlive it, including `loom logout`, for at most 30 days. Only a refresh
-  asks Okta about the user, so for someone with no live session nothing
-  checks before then. When offboarding, revoke the person:
+  outlive it, including `loom logout`, for as long as they chose (blank is 90
+  days, 0 never expires). Disabling someone at the provider ends their
+  sessions at the next refresh (within the hour) but not these tokens: only a
+  refresh asks the provider about a person. When offboarding, revoke the
+  person, which ends every token they made too:
   `loom revoke-token --subject <their subject>`.
 - Every sign-in, device approval and denial, MCP consent, JIT account and
   ended session writes an `auth.*` row to the audit log:

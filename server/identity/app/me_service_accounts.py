@@ -7,7 +7,7 @@ namespaces, with no operator round-trip.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -34,19 +34,19 @@ def json_int(value: object) -> int:
 
 def parse_ttl_days(ttl_raw: object) -> int | None:
     """`ttl_days` of a minted token in seconds: None = the delegation default
-    (90 days); else 1..3650 days; anything else is a 422."""
+    (90 days); 0 = never expires; else 1..3650 days; anything else is a 422."""
     if ttl_raw is None:
         return None
     try:
         ttl_days = json_int(ttl_raw)
-        if ttl_days < 1 or ttl_days > 3650:
+        if ttl_days < 0 or ttl_days > 3650:
             raise ValueError
     except (TypeError, ValueError) as e:
         raise HTTPException(
             status_code=422,
             detail={
                 "code": "VALIDATION_FAILED",
-                "message": "ttl_days must be 1..3650 or null",
+                "message": "ttl_days must be 1..3650, 0 for never, or null for 90",
             },
         ) from e
     return ttl_days * 86400
@@ -81,7 +81,7 @@ async def me_service_accounts_create(
                           #   defaults to the top-level `role`, else the
                           #   caller's live grant on that namespace.
       role: str|null      # default role for bare entries (viewer|writer|admin)
-      ttl_days: int|null  # default and null: 90 days
+      ttl_days: int|null  # default and null: 90 days; 0: never expires
 
     Each namespace's role is delegated from the caller's token
     (`server.auth.delegation.delegate`): at most the caller's token allows and
@@ -186,7 +186,7 @@ async def me_service_accounts_create(
     minted = delegated.mint(sa_subject)
 
     now = naive_utc_now_seconds()
-    expires_at = now + timedelta(seconds=delegated.ttl_seconds)
+    expires_at = delegated.expires_at(now)
 
     # `roles` column keeps the distinct effective roles for the list view;
     # `ns_roles` persists the authoritative per-namespace map (JSON).

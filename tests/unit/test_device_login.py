@@ -1076,7 +1076,7 @@ def test_ending_a_session_refuses_its_access_tokens() -> None:
         verify_token(token)
 
 
-def test_a_child_of_a_session_token_lives_to_the_sessions_horizon_not_its_hour() -> None:
+def test_a_child_of_a_session_token_lives_as_long_as_asked_not_its_hour() -> None:
     from server.auth import delegation
     from server.auth.jwt import verify_token
 
@@ -1093,10 +1093,13 @@ def test_a_child_of_a_session_token_lives_to_the_sessions_horizon_not_its_hour()
         )
 
     ninety_days = 90 * 86400
-    # Not the parent's hour, but never past how long the session itself may go on.
-    assert delegation._child_ttl(parent(session_id="s1"), ninety_days) == delegation.SESSION_TTL
-    assert delegation._child_ttl(parent(session_id="s1"), 7 * 86400) == 7 * 86400
-    assert delegation._child_ttl(parent(), ninety_days) <= 3600  # any other parent still bounds it
+    # Not the parent's hour: what the person asked for, never included.
+    assert delegation._child_ttl(parent(session_id="s1"), ninety_days) == ninety_days
+    assert delegation._child_ttl(parent(session_id="s1"), None) == ninety_days  # the default
+    assert delegation._child_ttl(parent(session_id="s1"), delegation.NEVER) is None
+    # Any other parent still bounds it, a token that never expires too.
+    assert delegation._child_ttl(parent(), ninety_days) <= 3600
+    assert delegation._child_ttl(parent(), delegation.NEVER) <= 3600
 
 
 def test_two_people_on_one_code_end_the_grant_for_both(_world, monkeypatch) -> None:

@@ -589,8 +589,8 @@ function TokensSection({
       ttlValue = null;
     } else {
       const n = Number(ttlRaw);
-      if (!Number.isInteger(n) || n < 1 || n > 3650) {
-        toast("TTL must be 1-3650 days or blank for 90", "error");
+      if (!Number.isInteger(n) || n < 0 || n > 3650) {
+        toast("TTL must be 1-3650 days, 0 for never, or blank for 90", "error");
         return;
       }
       ttlValue = n;
@@ -645,8 +645,8 @@ function TokensSection({
       ttlValue = null;
     } else {
       const n = Number(ttlRaw);
-      if (!Number.isInteger(n) || n < 1 || n > 3650) {
-        toast("Expiry must be 1-3650 days or blank for 90", "error");
+      if (!Number.isInteger(n) || n < 0 || n > 3650) {
+        toast("Expiry must be 1-3650 days, 0 for never, or blank for 90", "error");
         return;
       }
       ttlValue = n;
@@ -811,7 +811,7 @@ function TokensSection({
                       ))}
                     </select>
                   </Field>
-                  <Field label="Expires in (days)" hint="Blank = 90 days. Max 3650.">
+                  <Field label="Expires in (days)" hint="Blank = 90 days. 0 = never expires. Max 3650.">
                     <input
                       type="text"
                       inputMode="numeric"
@@ -1017,7 +1017,7 @@ function TokensSection({
                     </div>
                   </Field>
 
-                  <Field label="Expires in (days)" hint="Blank = 90 days. Max 3650.">
+                  <Field label="Expires in (days)" hint="Blank = 90 days. 0 = never expires. Max 3650.">
                     <input
                       type="text"
                       inputMode="numeric"

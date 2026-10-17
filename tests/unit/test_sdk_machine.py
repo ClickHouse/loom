@@ -207,3 +207,99 @@ def test_a_malformed_answer_keeps_the_token_in_hand(monkeypatch) -> None:
     login.token()
     login._renew_at = 0
     assert login.token() == "t1"
+
+
+@pytest.fixture
+def signed(monkeypatch) -> list[dict[str, str]]:
+    sent: list[dict[str, str]] = []
+
+    def get(url: str, timeout: float) -> httpx.Response:
+        meta = {"token_endpoint": "https://loom.example/oauth/token"}
+        return httpx.Response(200, json=meta, request=httpx.Request("GET", url))
+
+    def post(url: str, *, data: dict[str, str], timeout: float) -> httpx.Response:
+        sent.append(data)
+        return httpx.Response(200, json={"access_token": f"t{len(sent)}", "expires_in": 3600})
+
+    monkeypatch.setattr(machine.httpx, "get", get)
+    monkeypatch.setattr(machine.httpx, "post", post)
+    for var in machine._KEY_SOURCES:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("LOOM_CLIENT_ID", "triage")
+    return sent
+
+
+def _verified(form: dict[str, str], public: bytes) -> dict[str, Any]:
+    import jwt as pyjwt
+
+    aud = "https://loom.example/oauth/token"
+    return dict(pyjwt.decode(form["client_assertion"], public, algorithms=["ES256"], audience=aud))
+
+
+def test_a_key_given_in_the_environment_signs(signed, monkeypatch) -> None:
+    # As a secret manager injects it (an ECS or Kubernetes secret as an env var).
+    from server.auth import machines
+
+    private, public = machines.generate_key()
+    monkeypatch.setenv("LOOM_CLIENT_KEY", private.decode())
+    machine.machine_login("https://loom.example").token()  # type: ignore[union-attr]
+    assert _verified(signed[0], public)["sub"] == "triage"
+
+
+def test_a_key_in_aws_secrets_manager_is_read_for_each_token(signed, monkeypatch) -> None:
+    import types
+
+    from server.auth import machines
+
+    keys = [machines.generate_key(), machines.generate_key()]
+    asked: list[tuple[str | None, str]] = []
+
+    class _Client:
+        def __init__(self, region: str | None) -> None:
+            self.region = region
+
+        def get_secret_value(self, SecretId: str) -> dict[str, str]:
+            asked.append((self.region, SecretId))
+            return {"SecretString": keys[len(asked) - 1][0].decode()}  # rotated in between
+
+    fake = types.SimpleNamespace(client=lambda name, region_name=None: _Client(region_name))
+    monkeypatch.setitem(sys.modules, "boto3", fake)
+    arn = "arn:aws:secretsmanager:eu-west-1:123456789012:secret:loom/triage"
+    monkeypatch.setenv("LOOM_CLIENT_KEY_SECRET", arn)
+    login = machine.machine_login("https://loom.example")
+    assert login is not None
+    login.token()
+    login.token(refused="t1")  # the next token signs with the rotated key
+    assert asked == [("eu-west-1", arn)] * 2
+    assert _verified(signed[0], keys[0][1]) and _verified(signed[1], keys[1][1])
+
+
+def test_secrets_manager_away_keeps_the_token_in_hand(signed, monkeypatch) -> None:
+    import types
+
+    from server.auth import machines
+
+    calls = {"n": 0}
+
+    class _Client:
+        def get_secret_value(self, SecretId: str) -> dict[str, str]:
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise RuntimeError("throttled")
+            return {"SecretString": machines.generate_key()[0].decode()}
+
+    monkeypatch.setitem(
+        sys.modules, "boto3", types.SimpleNamespace(client=lambda *a, **k: _Client())
+    )
+    monkeypatch.setenv("LOOM_CLIENT_KEY_SECRET", "loom/triage")
+    login = machine.machine_login("https://loom.example")
+    assert login is not None and login.token() == "t1"
+    login._renew_at = 0  # due for renewal, and the secret cannot be read now
+    assert login.token() == "t1"
+
+
+def test_two_key_sources_at_once_are_refused(signed, monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LOOM_CLIENT_KEY_FILE", str(tmp_path / "bot.pem"))
+    monkeypatch.setenv("LOOM_CLIENT_KEY", "example-key")
+    with pytest.raises(AuthInvalid, match="not several"):
+        machine.machine_login("https://loom.example")

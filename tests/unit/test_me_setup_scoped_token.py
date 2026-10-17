@@ -100,7 +100,7 @@ async def test_a_namespace_the_caller_holds_no_grant_on_is_refused(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ttl_days", [0, 3651, 10**9])
+@pytest.mark.parametrize("ttl_days", [-1, 3651, 10**9])
 async def test_a_ttl_outside_ten_years_is_a_422(
     monkeypatch: pytest.MonkeyPatch, grants: dict, ttl_days: int
 ) -> None:

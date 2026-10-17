@@ -734,7 +734,7 @@ def test_setup_parent_in_dev_mode_is_a_flat_writer(monkeypatch: pytest.MonkeyPat
     )
 
 
-@pytest.mark.parametrize("raw", [True, 1.9, "7", float("inf"), float("nan"), [7], 0, 3651])
+@pytest.mark.parametrize("raw", [True, 1.9, "7", float("inf"), float("nan"), [7], -1, 3651])
 def test_ttl_days_must_be_an_integer_in_range(raw: Any) -> None:
     from server.identity.app.me_service_accounts import parse_ttl_days
 
@@ -748,3 +748,4 @@ def test_ttl_days_accepts_an_integral_number() -> None:
 
     assert parse_ttl_days(7) == parse_ttl_days(7.0) == 7 * 86400
     assert parse_ttl_days(None) is None
+    assert parse_ttl_days(0) == 0  # never expires

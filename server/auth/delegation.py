@@ -12,6 +12,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
@@ -43,7 +44,7 @@ class Delegated:
     write_namespaces: list[str] | None
     read_scope: str
     read_user_id: str
-    ttl_seconds: int
+    ttl_seconds: int | None  # None: never expires
     parents: list[str]
     parent_subjects: list[str]
     parent_iats: list[int]
@@ -52,8 +53,12 @@ class Delegated:
 
     @property
     def ttl_days(self) -> int:
-        """The TTL in whole days, rounded up: a live token never shows 0."""
-        return math.ceil(self.ttl_seconds / 86400)
+        """The TTL in whole days, rounded up; 0 for a token that never expires."""
+        return math.ceil(self.ttl_seconds / 86400) if self.ttl_seconds else NEVER
+
+    def expires_at(self, now: datetime) -> datetime | None:
+        """When a token minted at `now` expires; None if never."""
+        return None if self.ttl_seconds is None else now + timedelta(seconds=self.ttl_seconds)
 
     def mint(self, subject: str, *, jti: str | None = None, consumer: str | None = None) -> str:
         return jwt_mod.mint_token(
@@ -82,8 +87,10 @@ def _refuse(message: str) -> HTTPException:
 
 # A refresh token's lifetime (server/auth/oauth.py). It rolls: each refresh
 # issues one good for this long, so a session used at least this often has no
-# fixed end. It is the cap on a token minted from a session.
+# fixed end.
 SESSION_TTL = 30 * 86400
+# `ttl_seconds` asking for a token that never expires.
+NEVER = 0
 
 
 async def delegate(
@@ -144,22 +151,20 @@ def _child_org(parent: AuthInfo, org: str) -> str:
     return org
 
 
-def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int:
-    """The child's TTL: the one asked for, else the default, clipped so the
-    child never outlives its parent. A sign-in session's access token lives an
-    hour and the next refresh replaces it, so its children are capped at
-    SESSION_TTL instead. They outlive the session itself (a logout, a lost
-    refresh answer): they are what the person made for agents and CI, and are
-    revoked one by one or with the person."""
-    ttl = ttl_seconds if ttl_seconds is not None else DEFAULT_TTL_DAYS * 86400
-    if parent.session_id:
-        return min(ttl, SESSION_TTL)
-    if parent.expires_at is not None:
-        left = parent.expires_at - int(time.time())
-        if left <= 0:
-            raise _refuse("the parent token has expired")
-        ttl = min(ttl, left)
-    return ttl
+def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int | None:
+    """The child's TTL in seconds (None: never expires): the one asked for,
+    else the default, clipped so the child never outlives its parent. A
+    sign-in session's access token lives an hour and the next refresh replaces
+    it, so its children take what was asked: they are what the person made for
+    agents and CI, outlive the session (a logout, a lost refresh answer), and
+    are revoked one by one or with the person."""
+    ttl = DEFAULT_TTL_DAYS * 86400 if ttl_seconds is None else ttl_seconds or None
+    if parent.session_id or parent.expires_at is None:
+        return ttl
+    left = parent.expires_at - int(time.time())
+    if left <= 0:
+        raise _refuse("the parent token has expired")
+    return left if ttl is None else min(ttl, left)
 
 
 async def _allowed_roles(

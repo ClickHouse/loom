@@ -3,7 +3,7 @@ token for one MCP client and returns that client's config entry."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -261,7 +261,7 @@ async def _persist_mcp_token(
                 "ttl_days": delegated.ttl_days,
                 "created_by": subject,
                 "created_at": now,
-                "expires_at": now + timedelta(seconds=delegated.ttl_seconds),
+                "expires_at": delegated.expires_at(now),
                 "revoked_at": None,
                 "revoked_by": "",
                 "version": _time.time_ns(),

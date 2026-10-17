@@ -2,8 +2,12 @@
 login` and no long-lived secret. With LOOM_CLIENT_ID set, the SDK proves
 either
 
-- a key (LOOM_CLIENT_KEY_FILE): it signs a short client assertion
-  (private_key_jwt; needs `pip install clickhouse-loom[machine]`), or
+- a key: it signs a short client assertion (private_key_jwt; needs
+  `pip install clickhouse-loom[machine]`). The key is a PEM file
+  (LOOM_CLIENT_KEY_FILE), the PEM itself (LOOM_CLIENT_KEY, as a secret
+  manager injects it), or an AWS Secrets Manager secret holding it
+  (LOOM_CLIENT_KEY_SECRET, an id or ARN; needs `clickhouse-loom[aws]`), read
+  again for each token so a rotated key is picked up; or
 - its CI job's own OIDC token: LOOM_WORKLOAD_TOKEN or LOOM_WORKLOAD_TOKEN_FILE,
   or asked of the CI platform when it offers one on request
   (ACTIONS_ID_TOKEN_REQUEST_URL), for LOOM_WORKLOAD_AUDIENCE,
@@ -30,6 +34,7 @@ from loom.errors import AuthInvalid, BackendUnavailable, LoomError
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
 _RENEW_BEFORE_S = 300
+_KEY_SOURCES = ("LOOM_CLIENT_KEY_FILE", "LOOM_CLIENT_KEY", "LOOM_CLIENT_KEY_SECRET")
 
 
 def machine_login(server: str) -> MachineLogin | None:
@@ -37,10 +42,13 @@ def machine_login(server: str) -> MachineLogin | None:
     client_id = os.environ.get("LOOM_CLIENT_ID", "").strip()
     if not client_id:
         return None
+    given = [name for name in _KEY_SOURCES if os.environ.get(name, "").strip()]
+    if len(given) > 1:
+        raise AuthInvalid(f"bot {client_id!r}: set one of {', '.join(given)}, not several")
     return MachineLogin(
         server,
         client_id,
-        key_file=os.environ.get("LOOM_CLIENT_KEY_FILE", ""),
+        key_source=(given[0], os.environ[given[0]].strip()) if given else None,
         audience=os.environ.get("LOOM_WORKLOAD_AUDIENCE", ""),
     )
 
@@ -50,11 +58,19 @@ class MachineLogin(httpx.Auth):
     before it expires and once more when the server answers 401."""
 
     def __init__(
-        self, server: str, client_id: str, *, key_file: str = "", audience: str = ""
+        self,
+        server: str,
+        client_id: str,
+        *,
+        key_file: str = "",
+        key_source: tuple[str, str] | None = None,
+        audience: str = "",
     ) -> None:
         self.server = server.rstrip("/")
         self.profile = client_id  # how the transport names the credential
-        self._key_file, self._audience = key_file, audience
+        # (env var, value): where the key comes from; key_file is the file one.
+        self._key_source = key_source or (("LOOM_CLIENT_KEY_FILE", key_file) if key_file else None)
+        self._audience = audience
         self._token, self._expires_at, self._renew_at, self._token_endpoint = "", 0.0, 0.0, ""
         self._lock = threading.Lock()
 
@@ -83,12 +99,14 @@ class MachineLogin(httpx.Auth):
 
     def _fetch(self) -> tuple[str, float]:
         endpoint = f"{self.server}/oauth/token"
-        if self._key_file:
+        if self._key_source:
             form = {
                 "grant_type": "client_credentials",
                 "client_id": self.profile,
                 "client_assertion_type": ASSERTION_TYPE,
-                "client_assertion": self._assertion(self._audience_of_assertion()),
+                "client_assertion": self._assertion(
+                    self._audience_of_assertion(), _key_pem(*self._key_source)
+                ),
             }
         else:
             form = {
@@ -122,14 +140,14 @@ class MachineLogin(httpx.Auth):
             self._token_endpoint = str(r.json()["token_endpoint"])
         return self._token_endpoint
 
-    def _assertion(self, endpoint: str) -> str:
+    def _assertion(self, endpoint: str, pem: bytes) -> str:
         try:
             import jwt
             from cryptography.hazmat.primitives.asymmetric import ec, ed25519
             from cryptography.hazmat.primitives.serialization import load_pem_private_key
         except ImportError as e:
             raise AuthInvalid("a bot key needs `pip install clickhouse-loom[machine]`") from e
-        key = load_pem_private_key(Path(self._key_file).read_bytes(), password=None)
+        key = load_pem_private_key(pem, password=None)
         alg = (
             "ES256"
             if isinstance(key, ec.EllipticCurvePrivateKey)
@@ -176,6 +194,25 @@ class MachineLogin(httpx.Auth):
             token = await asyncio.to_thread(self._request_token, request, token)
             request.headers["Authorization"] = f"Bearer {token}"
             yield request
+
+
+def _key_pem(source: str, value: str) -> bytes:
+    """The bot's private key, from where LOOM_CLIENT_KEY_* says."""
+    if source == "LOOM_CLIENT_KEY_FILE":
+        return Path(value).read_bytes()
+    if source == "LOOM_CLIENT_KEY":
+        return value.encode()
+    try:
+        import boto3  # type: ignore[import-untyped]
+    except ImportError as e:
+        raise AuthInvalid("LOOM_CLIENT_KEY_SECRET needs `pip install clickhouse-loom[aws]`") from e
+    # An ARN names its region; a bare id takes the AWS SDK's default one.
+    region = value.split(":")[3] if value.startswith("arn:") else None
+    try:
+        secret = boto3.client("secretsmanager", region_name=region).get_secret_value(SecretId=value)
+    except Exception as e:  # botocore's errors; the token in hand stays good
+        raise BackendUnavailable(f"reading {value} from Secrets Manager: {e}") from e
+    return str(secret["SecretString"]).encode()
 
 
 def _workload_token(audience: str) -> str:
