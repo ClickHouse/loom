@@ -1679,6 +1679,78 @@ async def test_a_replayed_insert_names_its_triples_as_the_write_resolved_them(
     assert await _open_cities(ch, org, {"london"}) == {"london"}
 
 
+async def test_a_replay_that_inserted_never_inserts_again_after_a_failed_repair(
+    ch, org, monkeypatch
+) -> None:
+    # The write's triples insert fails. Its replay inserts them, then its repair fails,
+    # and the process stops before it writes anything else. The failure must already say
+    # the triples landed: the next replay repairs them and never inserts them again,
+    # whatever the dedup window has forgotten since.
+    from server.core import ch as ch_mod
+    from server.memory.app import projection_failures, projections
+    from server.memory.app.projection_errors import (
+        TRIPLES_INSERTED_AT,
+        TriplesInsertFailed,
+        bulk_projection_payload,
+        record_input_projection_failure,
+    )
+    from server.memory.app.projection_failures import (
+        list_projection_failures,
+        retry_projection_failure,
+    )
+
+    _row, write, results = await _row_and_write(
+        ch, org, "s1", "I live in London", [("user", "live_in", "london")], memory_key="k1"
+    )
+    client = ch_mod.get_client()
+    insert = client.insert
+    inserted: list[str] = []
+
+    async def triples_fail(table: str, rows: Any, **kw: Any) -> Any:
+        if table == "loom.entity_triples":
+            raise ConnectionError("transient")
+        return await insert(table, rows, **kw)
+
+    async def counting(table: str, rows: Any, **kw: Any) -> Any:
+        inserted.append(table)
+        return await insert(table, rows, **kw)
+
+    async def fails(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(client, "insert", triples_fail)
+    with pytest.raises(TriplesInsertFailed) as raised:
+        await projections.write_entity_triples(write, results, ch=ch, entity_map={})
+    monkeypatch.setattr(client, "insert", insert)
+    await record_input_projection_failure(
+        write,
+        projection="entity_triples",
+        error=raised.value,
+        payload=bulk_projection_payload(write, results, error=raised.value),
+        source_operation="memory.bulk_set",
+    )
+    failure = await _recorded_reconcile(ch, org, "entity_triples")
+
+    # The replay inserts, its repair fails, and nothing it would write next lands.
+    with monkeypatch.context() as stopped:
+        stopped.setattr(projections, "_repair_contradictory_triples", fails)
+        stopped.setattr(projection_failures, "record_projection_failure", fails)
+        stopped.setattr(projection_failures, "mark_projection_failures_resolved", fails)
+        assert not (await retry_projection_failure(failure, ch=ch)).resolved
+
+    (failure,) = await list_projection_failures(org=org, projection="entity_triples", ch=ch)
+    assert failure.payload[TRIPLES_INSERTED_AT]
+    # The build before inserts the `entries` of an `entity_triples` failure.
+    assert "entries" not in failure.payload
+    monkeypatch.setattr(client, "insert", counting)
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    monkeypatch.setattr(client, "insert", insert)
+    assert "loom.entity_triples" not in inserted
+    await _mutations_done(ch, org)
+    assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 0}
+    assert await list_projection_failures(org=org, ch=ch) == []
+
+
 @pytest.mark.parametrize(("copies", "want"), [(1, {"rome"}), (2, {"london", "rome"})])
 async def test_a_successor_is_judged_by_an_unredacted_copy_of_its_value(
     ch, org, copies, want

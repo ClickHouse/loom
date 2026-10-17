@@ -36,6 +36,12 @@ TRIPLES_RESTORE_ID = "triples_restore_id"
 # build before replays every `entity_triples` failure by inserting the triples again,
 # which would count them twice; it leaves a name it does not know active.
 TRIPLES_REPAIR = "entity_triples_repair"
+# A replay that inserted an `entity_triples` failure's triples and then failed to repair
+# them records that in the failure itself, its entries and results moved under these
+# keys. The build before inserts an `entity_triples` failure's `entries` again, and
+# refuses one without them, leaving it active.
+LANDED_ENTRIES = "triples_landed_entries"
+LANDED_RESULTS = "triples_landed_results"
 
 
 class TriplesInsertFailed(Exception):

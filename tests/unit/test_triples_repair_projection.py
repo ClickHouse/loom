@@ -120,26 +120,46 @@ async def test_a_legacy_triples_failure_that_landed_still_replays_only_the_repai
     assert ch.triple_inserts() == []
 
 
-async def test_a_replay_that_inserted_hands_its_failed_repair_to_the_new_name(
-    monkeypatch,
-) -> None:
-    # The replay of an insert failure inserts the triples, then its repair fails. The
-    # failure must not stay `entity_triples`: the build before would insert again.
+async def test_a_replay_that_inserted_records_it_in_the_failure_itself(monkeypatch) -> None:
+    # The replay of an insert failure inserts the triples, then its repair fails. One
+    # mutation of the failure says they landed: no second row, nothing left to resolve.
+    # The entries move out of `entries`, which the build before would insert again.
     from server.memory.app import projections
+    from server.memory.app.projection_errors import LANDED_ENTRIES, LANDED_RESULTS
 
     async def failing_repair(input, triples, *, ch, at):
         raise RuntimeError("repair read timed out")
 
+    class _PayloadCH(_CH):
+        def __init__(self) -> None:
+            super().__init__()
+            self.payloads: list[dict[str, Any]] = []
+
+        async def execute(self, sql, params=None):
+            await super().execute(sql, params)
+            if "UPDATE payload" in sql:
+                self.payloads.append(json.loads(params["payload"]))
+
     monkeypatch.setattr(projections, "_repair_contradictory_triples", failing_repair)
+    ch = _PayloadCH()
+    failure = _failure("entity_triples")
+    result = await retry_projection_failure(failure, ch=ch)
+    assert not result.resolved and "TriplesRepairFailed" in result.error
+    assert not [t for t, _ in ch.inserts if t == "loom.memory_projection_failures"]
+    (payload,) = ch.payloads
+    assert payload["triples_inserted_at"]
+    assert "entries" not in payload and "results" not in payload
+    assert [e["memory_key"] for e in payload[LANDED_ENTRIES]] == ["k1"]
+    assert [r["memory_id"] for r in payload[LANDED_RESULTS]] == [_ROW_ID]
+
+    # The next replay repairs only.
+    monkeypatch.setattr(projections, "_repair_contradictory_triples", _no_repair)
+    landed = _failure("entity_triples")
+    landed.payload.clear()
+    landed.payload.update(payload)
     ch = _CH()
-    result = await retry_projection_failure(_failure("entity_triples"), ch=ch)
-    recorded = [rows[0] for t, rows in ch.inserts if t == "loom.memory_projection_failures"]
-    assert [r["projection"] for r in recorded] == [TRIPLES_REPAIR]
-    payload = json.loads(recorded[0]["payload"])
-    assert payload["triples_inserted_at"] and payload["entries"]
-    # The old failure is resolved and never touched again.
-    assert result.resolved, result
-    assert not any("UPDATE payload" in sql for sql in ch.executed)
+    assert (await retry_projection_failure(landed, ch=ch)).resolved
+    assert ch.triple_inserts() == []
 
 
 async def test_a_point_write_records_a_failed_repair_under_the_new_name(monkeypatch) -> None:

@@ -74,6 +74,7 @@ from server.tasks.app.trust import (
     _token_subject,
     _triage_note,
 )
+from server.tasks.domain.cursors import BACKFILLED
 from server.tasks.domain.states import TaskStatus
 from server.tasks.store import repo as repo
 from server.tasks.store.rows import InboxRow, TaskRow
@@ -129,8 +130,9 @@ async def _prior_task(prior: TaskRow, *, backfill: bool = True) -> TaskCreateOut
 
 async def _backfill_created_event(prior: TaskRow) -> None:
     """Log the created event a cut-off create left out. The retry holds the key's lease,
-    so no other retry of this build writes it at the same time; a first create that was
-    only stalled past its lease, not dead, can still write its own as well."""
+    so no other retry of this build writes it at the same time. A first create that was
+    only stalled past its lease, or cancelled while its insert still ran, can still land
+    its own: the two share one dedup token, and readers keep only the first."""
     events = await repo.task_history(prior["org"], str(prior["task_id"]), consistent=True)
     if any(e["event"] == "created" for e in events):
         return
@@ -152,7 +154,11 @@ async def _backfill_created_event(prior: TaskRow) -> None:
         actor=_actor(f"process:{agent}"),
         agent=agent,
         # The mode follows from where it landed; whether a policy decided is not kept.
-        patch={"kind": prior["kind"], "mode": "auto" if landed == "todo" else "triage"},
+        patch={
+            "kind": prior["kind"],
+            "mode": "auto" if landed == "todo" else "triage",
+            BACKFILLED: True,
+        },
     )
 
 
