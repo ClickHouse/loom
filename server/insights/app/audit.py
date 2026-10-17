@@ -32,11 +32,6 @@ async def audit_rows_for_request(request_id: str, *, limit: int = 100) -> list[a
 _V2 = "v2|"
 
 
-def _encode_cursor_v2(ts: datetime, request_id: str, row_hash: str) -> str:
-    raw = f"{_V2}{ts.isoformat()}|{row_hash}|{request_id}"
-    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
-
-
 def _decode_page_cursor(cursor: str) -> tuple[datetime, str, str | None]:
     """A page cursor's keyset: (ts, request_id, row_hash), the hash None for a
     first-format cursor."""

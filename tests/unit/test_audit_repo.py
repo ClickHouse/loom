@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime
 from typing import Any
 
@@ -163,6 +164,13 @@ async def test_a_page_that_ends_with_a_whole_write_has_no_next_cursor(monkeypatc
     assert [r.subject for r in out.rows] == ["1", "2"] and out.next_cursor is None
 
 
+def _v2_cursor(ts: datetime, request_id: str, row_hash: str) -> str:
+    """The second cursor format, which this build reads and does not write yet:
+    base64 of `v2|<ts>|<row_hash>|<request_id>`."""
+    raw = f"v2|{ts.isoformat()}|{row_hash}|{request_id}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
 @pytest.mark.asyncio
 async def test_a_versioned_cursor_keysets_on_the_row_hash(monkeypatch) -> None:
     from server.auth import context as ctx
@@ -172,7 +180,7 @@ async def test_a_versioned_cursor_keysets_on_the_row_hash(monkeypatch) -> None:
     monkeypatch.setattr(ctx, "current_auth", lambda: None)
     ch = StubCH()
     monkeypatch.setattr(h, "get_client", lambda: ch)
-    cursor = h._encode_cursor_v2(_row()["ts"], "req-1", "f" * 64)
+    cursor = _v2_cursor(_row()["ts"], "req-1", "f" * 64)
     await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", cursor=cursor))
     sql, params = ch.query_all_calls[0]
     assert "(ts, request_id, row_hash) <" in sql and "{c_hash:FixedString(64)}" in sql
@@ -200,13 +208,13 @@ async def test_a_cursor_issued_before_the_row_hash_still_pages(monkeypatch) -> N
 @pytest.mark.parametrize("request_id", ["req-1", "trace|1", "ends|", "|", ""])
 def test_both_cursor_formats_keep_any_request_id(request_id: str) -> None:
     from server.core.cursors import encode_cursor
-    from server.insights.app.audit import _decode_page_cursor, _encode_cursor_v2
+    from server.insights.app.audit import _decode_page_cursor
 
     ts = datetime(2026, 5, 16, 12, 0, tzinfo=UTC)
     # The previous build's `ts|request_id`: everything after the first bar is the id.
     assert _decode_page_cursor(encode_cursor(ts, request_id)) == (ts, request_id, None)
     for row_hash in ("a" * 64, ""):
-        v2 = _encode_cursor_v2(ts, request_id, row_hash)
+        v2 = _v2_cursor(ts, request_id, row_hash)
         assert _decode_page_cursor(v2) == (ts, request_id, row_hash)
 
 
@@ -217,8 +225,8 @@ def test_a_v2_cursor_with_a_malformed_hash_is_a_validation_error(row_hash: str) 
     # The hash binds as FixedString(64) bytes: a longer one would fail the query with a
     # 500. A legacy row's empty hash stays valid.
     from server.core.errors import ValidationError
-    from server.insights.app.audit import _decode_page_cursor, _encode_cursor_v2
+    from server.insights.app.audit import _decode_page_cursor
 
-    v2 = _encode_cursor_v2(datetime(2026, 5, 16, 12, 0, tzinfo=UTC), "req-1", row_hash)
+    v2 = _v2_cursor(datetime(2026, 5, 16, 12, 0, tzinfo=UTC), "req-1", row_hash)
     with pytest.raises(ValidationError):
         _decode_page_cursor(v2)
