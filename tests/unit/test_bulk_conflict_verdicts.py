@@ -305,6 +305,27 @@ def test_a_restated_merge_before_its_target_is_rewritten_stays_a_merge() -> None
     assert [x["memory_key"] for x in plan.memory_rows] == ["a", "t"]
 
 
+def test_a_restated_landing_keeps_the_merge_peers_on_the_merging_entry() -> None:
+    # a=Berlin merges into T, t is rewritten, a=Berlin again lands. The first a answers
+    # a merge naming T, as memory.set does; the landing names no peer (T's old text).
+    from server.memory.app.bulk_rows import _bulk_skip_gate
+    from server.memory.app.bulk_set import _apply_verdicts
+
+    peer_t = ConflictPeer(
+        memory_id="T", memory_key="t", similarity=0.95, pinned=False, canonical=""
+    )
+    merge = ConflictResult(verdict="merge", peers=[peer_t], existing_memory_id="T")
+    state = _stored(t=("T", "berlin"))
+    _entry(state, "a", "A1", "berlin")
+    _entry(state, "t", "T", "bike")
+    assert _bulk_skip_gate(NS(memory_key="a"), "berlin", state, {})
+    _apply_verdicts(state, [], {0: merge})
+    first, last = state.results[0], state.results[2]
+    assert first.conflict_verdict == "merge" and [p.memory_id for p in first.peers] == ["T"]
+    assert last.conflict_verdict == "clear" and last.peers == [] and last.next == ""
+    assert last.memory_id == "A1" and last.version == 1
+
+
 def test_a_restatement_of_a_landed_entry_counts_once_as_unchanged() -> None:
     from server.memory.app.bulk_rows import _bulk_skip_gate
     from server.memory.app.bulk_set import _apply_verdicts

@@ -27,6 +27,7 @@ from server.memory.app.projections import (
     resolved_entity_list,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.app.set_commit import _set_next
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
@@ -449,10 +450,12 @@ def land_restated_merges(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
     `copy_restated_verdicts`, so a repeat between the two copies the merge."""
     for res_i, src_i, row, target in state.restated_landings:
         src, res = state.results[src_i], state.results[res_i]
+        # The row landed as the restatement's write: it met the new value, so no peer.
         res.version, res.memory_id = src.version, src.memory_id
-        res.conflict_verdict, res.peers, res.next = src.conflict_verdict, src.peers, src.next
+        res.conflict_verdict, res.peers, res.next = "clear", [], _set_next("clear", [])
+        # The earlier entry keeps the peers it was stamped with (the merge target).
         src.version, src.memory_id = 0, ""
-        src.conflict_verdict, src.peers, src.next = "merge", [], ""
+        src.conflict_verdict, src.next = "merge", _set_next("merge", src.peers)
         plan.merged.append(src.memory_key)
         plan.reinforce_ids.append(target)
         # A copy of this merge reinforces the same target.
