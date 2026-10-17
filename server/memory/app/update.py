@@ -27,7 +27,7 @@ from server.memory.api.models_crud import (
     MemoryUpdateOutput,
 )
 from server.memory.app import provenance as app_provenance
-from server.memory.app.conflicts import resolver_mark
+from server.memory.app.conflicts import same_key_mark
 from server.memory.app.entity_projections import project_revised_edges, project_stated_relations
 from server.memory.app.high_fence import fence_high
 from server.memory.domain import lock as _lock
@@ -649,6 +649,13 @@ async def _write_revision(
         **({"confidence": float(new_confidence)} if new_confidence is not None else {}),
         **status_cols,
     )
+    mark = await same_key_mark(
+        conflict_result,
+        org=input.org,
+        namespace=existing.namespace,
+        memory_row=memory_row,
+        policy=(await cfg_task).policy,
+    )
     # If searchable, refresh the embedding row too — in the same round trip
     # as the version row (as memory.set's dual write).
     emb_rows = (
@@ -660,7 +667,7 @@ async def _write_revision(
                 embedding,
                 key_embedding,
                 has_key=bool(key_text),
-                conflict_checked_at=resolver_mark(conflict_result),
+                conflict_checked_at=mark,
             )
         ]
         if embedder is not None

@@ -624,3 +624,57 @@ async def test_an_org_under_erasure_is_left_out_of_the_queue(
     owed = [r["memory_key"] for r in await queue.owed_rows(limit=10)]
     assert owed == ([] if left_out else ["office_location"])
     assert (await queue.queued_namespaces() == []) is left_out
+
+
+async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, monkeypatch) -> None:
+    """memory.set and memory.update_by_id from s2 of a key s1 holds live are owed a
+    judgement under auto_reinforce, though no peer sits near them."""
+    from server.embedding import get_embedder
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app import after_write, conflicts, set_commit, update
+
+    org, _ = wired
+
+    async def auto(org: str, namespace: str, ch: Any = None) -> str:
+        return "auto_reinforce"
+
+    monkeypatch.setattr(conflicts, "namespace_conflict_policy", auto)
+    real = get_embedder()
+
+    class Apart:
+        """Every text in its own direction: no cosine peer at all."""
+
+        dim, model_name = real.dim, real.model_name
+        n = 60
+
+        async def embed(self, text: str) -> list[float]:
+            Apart.n += 1
+            return _vec((Apart.n, 1.0))
+
+    monkeypatch.setattr(set_commit, "get_embedder", lambda: Apart())
+    monkeypatch.setattr(update, "get_embedder", lambda: Apart(), raising=False)
+    await _set(org, "s1", "office", "office: Paris")
+    await _set(org, "s2", "car", "The user drives a blue car")
+    await after_write.drain()
+    marks = await _marks(ch, org)
+    assert marks["office"] is None and marks["car"] is None
+    second = await _set(org, "s2", "office", "The office moved to Rome last week")
+    await after_write.drain()
+    rows = await ch.query_all(
+        "SELECT session_id, toUnixTimestamp(conflict_checked_at) AS mark"
+        " FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND memory_key = 'office'"
+        " AND tombstoned_at IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert {r["session_id"]: r["mark"] for r in rows} == {"s1": None, "s2": 1}
+    # A revision of s2's row is owed again: s1 still holds the key.
+    await update.handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org=org, memory_id=second, value="The office is in Rome")
+    )
+    rows = await ch.query_all(
+        "SELECT session_id, toUnixTimestamp(conflict_checked_at) AS mark"
+        " FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND memory_key = 'office'"
+        " AND tombstoned_at IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert {r["session_id"]: r["mark"] for r in rows} == {"s1": None, "s2": 1}

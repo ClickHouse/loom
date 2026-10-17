@@ -139,6 +139,33 @@ def resolver_mark(result: Any) -> datetime | None:
     return None
 
 
+async def same_key_mark(
+    result: Any, *, org: str, namespace: str, memory_row: dict[str, Any], policy: str | None
+) -> datetime | None:
+    """`resolver_mark` for a point write, or the owed mark when another session of the
+    same subject holds the row's key live: a shared key is not proof of one attribute,
+    so the resolver judges the pair (as bulk writes do). Not under `newest_wins`, which
+    retires the older row itself, nor `append_only`. One query; fail-open."""
+    from server.memory.app.key_supersession import keys_held_elsewhere
+    from server.memory.store.conflict_resolver import OWED_MARK
+
+    mark = resolver_mark(result)
+    if mark is not None or not settings.memory_conflict_resolver_enabled:
+        return mark
+    try:
+        ch = get_client()
+        policy = policy or await namespace_conflict_policy(org, namespace, ch=ch)
+        if policy in ("newest_wins", "append_only"):
+            return None
+        held = await keys_held_elsewhere(
+            org=org, namespace=namespace, memory_rows=[memory_row], ch=ch
+        )
+    except Exception as e:  # noqa: BLE001 — the row lands unmarked; the write stands
+        log.warning("same-key mark skipped (non-fatal): %s", e)
+        return None
+    return OWED_MARK if str(memory_row.get("memory_key") or "") in held else None
+
+
 async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> tuple[float, float]:
     """(threshold, max_distance) for one namespace + memory_type — the two
     numbers `check_on_commit` resolves before its statement, exposed so a bulk

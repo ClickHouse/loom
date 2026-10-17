@@ -601,7 +601,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     insert, so the new id exists. Returns the verdict that landed: `clear` when no
     peer was left live to flag.
     """
-    from server.memory.app.conflicts import mark_peers_conflicted, resolver_mark
+    from server.memory.app.conflicts import mark_peers_conflicted, same_key_mark
     from server.observability.otel import traced
 
     input, memory_id, memory_row, expires_at = w.input, w.memory_id, w.memory_row, w.expires_at
@@ -611,6 +611,15 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     embedder, excerpt, embedding = w.embedder, w.excerpt, w.embedding
     key_embedding, key_text = w.key_embedding, w.key_text
     embedding_dim_for_insert = embedder.dim
+    # Owed a judgement when the check asks the conflict resolver to look, or another
+    # session holds this key.
+    mark = await same_key_mark(
+        conflict_result,
+        org=input.org,
+        namespace=input.namespace,
+        memory_row=memory_row,
+        policy=_cfg.policy,
+    )
 
     import server.memory.store as memory_repo
 
@@ -650,8 +659,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         # defaulted to `active` while loom.memory holds a `duplicate` verdict, the search
         # pool would keep serving the duplicate.
         status=str(memory_row.get("status") or "active"),
-        # Owed a judgement when the check asks the conflict resolver to look.
-        conflict_checked_at=resolver_mark(conflict_result),
+        conflict_checked_at=mark,
         content_sha256=str(memory_row.get("content_sha256") or ""),
         # The memory row's version, not one drawn now: a newer write's retire or fence
         # outranks this vector even when its embedding arrives late.

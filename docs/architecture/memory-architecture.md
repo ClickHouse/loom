@@ -158,7 +158,7 @@ emits (`memory/store/conflict_resolver.py`):
 | Value                 | Meaning                                                                                                                            |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | NULL                  | Nothing owed: no peer at the resolver floor when written.                                                                          |
-| `1970-01-01 00:00:01` | Owed: a peer at the floor, a `conflict` verdict, or (bulk, outside `newest_wins`) a key another session of the same subject holds. |
+| `1970-01-01 00:00:01` | Owed: a peer at the floor, a `conflict` verdict, or (outside `newest_wins`) a key another session of the same subject holds. |
 | `1970-01-01 00:00:02` | Judged.                                                                                                                            |
 | `1970-01-01 00:00:00` | A judgement an older build deferred and lost: owed after 60 s.                                                                     |
 | any real time         | Stamped by an older build: owed again only while the row is `conflicted`.                                                          |
