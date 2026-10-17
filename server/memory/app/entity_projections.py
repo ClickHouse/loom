@@ -423,8 +423,14 @@ async def project_memory_set_entities(
     result = _BulkSetResult(memory_key=memory_key, version=0, memory_id=memory_id)
     ch = ch or get_client()
     # A revision that ran first closed what it dropped already: this value is not current.
+    key = (str(input.agent), str(input.user_id), str(input.session_id), memory_key)
     if not await rows_holding(
-        input.org, input.namespace, [(memory_id, content_sha256)], ch=ch, holder_sql=HOLDS_VALUE_SQL
+        input.org,
+        input.namespace,
+        [(memory_id, content_sha256)],
+        ch=ch,
+        holder_sql=HOLDS_VALUE_SQL,
+        key=key,
     ):
         return 0
     with traced("entities.write_edges", entities=len(ents)):
@@ -645,8 +651,9 @@ async def project_stated_relations(
 async def _holds_its_value(row: Mapping[str, Any], *, ch: Any) -> bool:
     """Whether the stored row still holds `row`'s value (`HOLDS_VALUE_SQL`)."""
     version = [(str(row["memory_id"]), str(row["content_sha256"]))]
+    key = (str(row["agent"]), str(row["user_id"]), str(row["session_id"]), str(row["memory_key"]))
     held = await rows_holding(
-        row["org"], row["namespace"], version, ch=ch, holder_sql=HOLDS_VALUE_SQL
+        row["org"], row["namespace"], version, ch=ch, holder_sql=HOLDS_VALUE_SQL, key=key
     )
     return bool(held)
 
@@ -1379,12 +1386,13 @@ async def rows_holding(
     *,
     ch: Any,
     holder_sql: str = GRAPH_HOLDER_SQL,
+    key: tuple[str, str, str, str] | None = None,
 ) -> set[str]:
     """Of `versions`, (memory_id, content_sha256) pairs, the ids of the rows whose
     current value is still that version and that pass `holder_sql`: by default
     GRAPH_HOLDER_SQL (may hold graph facts), or a weaker test such as
-    HOLDS_VALUE_SQL (not deleted, retired or 'high')."""
-    held = await versions_held(org, namespace, versions, ch=ch, holder_sql=holder_sql)
+    HOLDS_VALUE_SQL (not deleted, retired or 'high'). `key` as `versions_held`."""
+    held = await versions_held(org, namespace, versions, ch=ch, holder_sql=holder_sql, key=key)
     return {memory_id for memory_id, _ in held}
 
 
@@ -1395,21 +1403,31 @@ async def versions_held(
     *,
     ch: Any,
     holder_sql: str = GRAPH_HOLDER_SQL,
+    key: tuple[str, str, str, str] | None = None,
 ) -> set[tuple[str, str]]:
     """`rows_holding`, answered by version: the pairs still current. A row revised
-    twice in one write is asked about both values and holds only one."""
+    twice in one write is asked about both values and holds only one. `key` (agent,
+    user_id, session_id, memory_key), when every version is of that one row, narrows
+    the read to it through the table's sort key, as `memory.get_by_id` does."""
     if not versions:
         return set()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "versions": sorted(set(versions))}
+    prewhere = ""
+    if key is not None:
+        prewhere = """PREWHERE agent = {agent:String} AND user_id = {uid:String}
+          AND session_id = {sid:String} AND memory_key = {key:String}"""
+        params.update(zip(("agent", "uid", "sid", "key"), key, strict=True))
     found = await ch.query_all(
         f"""
         SELECT DISTINCT toString(memory_id) AS id, toString(content_sha256) AS sha
         FROM loom.memory FINAL
+        {prewhere}
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND (memory_id, content_sha256) IN {{versions:Array(Tuple(UUID, String))}}
           AND {holder_sql}
         SETTINGS select_sequential_consistency = 1
         """,
-        params={"org": org, "ns": namespace, "versions": sorted(set(versions))},
+        params=params,
     )
     return {(str(r["id"]), str(r["sha"])) for r in found}
 

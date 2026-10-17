@@ -181,8 +181,10 @@ async def test_a_first_write_states_relations_only_while_its_row_holds_the_value
 
     answers, seen, closed = list(held), [], []
 
-    async def holding(org, namespace, versions, *, ch, holder_sql):
+    async def holding(org, namespace, versions, *, ch, holder_sql, key):
         assert versions == [("m1", "sha")]
+        # Narrowed to the row's own key, not the whole namespace.
+        assert key == ("a", "u", "s", "k")
         return {"m1"} if answers.pop(0) else set()
 
     async def write(row, value, relations, *, op, ch):
@@ -195,7 +197,7 @@ async def test_a_first_write_states_relations_only_while_its_row_holds_the_value
     monkeypatch.setattr(ep, "_write_stated_relations", write)
     monkeypatch.setattr(ep, "reconcile_row_facts", reconcile)
     row = {"org": "o", "namespace": "n", "agent": "a", "memory_id": "m1", "status": "active"}
-    row["content_sha256"] = "sha"
+    row.update(user_id="u", session_id="s", memory_key="k", content_sha256="sha")
     await ep.project_stated_relations(
         row, "I live in Rome", [("user", "live_in", "rome")], revised=False, op="o", ch=None
     )
