@@ -153,6 +153,9 @@ async def _release(
     # (classification, join_policy, kind, caps, ...) forward.
     # The contact email and password are cleared with the owner, so the old
     # credential dies with the claim.
+    # Their tokens end first: the row and the bots below are what names them,
+    # so a release stopped after rewriting them could not find them again.
+    await _end_tokens(org, namespace, existing, actor_subject, ch)
     row = dict(existing)
     row["released_aliases"] = kept_aliases(existing)
     row["owner_email"] = ""
@@ -163,7 +166,7 @@ async def _release(
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     await ch.insert("loom.namespaces", [row])
     await sso_links.forget_account(org, namespace, actor_subject, ch=ch)
-    await _forget_machines(org, namespace, existing, actor_subject, ch)
+    await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
     # The claim cap reads which accounts tie a person's spellings from this table.
     grant_cache.invalidate(org)
 
@@ -183,15 +186,12 @@ async def _release(
     )
 
 
-async def _forget_machines(
-    org: str, namespace: str, row: dict[str, Any], by: str, ch: CHClient
-) -> None:
-    """Bots naming the namespace lose it, and the tokens they hold now end; so do
-    an agent's, when it is the agent's own namespace (its owner is the agent)."""
+async def _end_tokens(org: str, namespace: str, row: dict[str, Any], by: str, ch: CHClient) -> None:
+    """The tokens of the bots naming the namespace end now; so do an agent's,
+    when it is the agent's own namespace (its owner is the agent)."""
     from server.identity.app import account_admin
 
-    forgotten = await machines.forget_namespace(org, namespace, by, ch=ch)
-    ended = [machines.subject(name) for name in forgotten]
+    ended = [machines.subject(name) for name in await machines.naming(org, namespace, ch=ch)]
     owner = str(row.get("owner_email") or "")
     for t in row.get("tags") or []:
         trust = str(t).removeprefix(agents.TAG_PREFIX)

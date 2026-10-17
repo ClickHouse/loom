@@ -182,17 +182,24 @@ def test_a_disable_waits_out_its_cutoff(world, monkeypatch) -> None:
     assert waited == [world["cutoff"]]
 
 
-def test_adopting_ends_a_persons_tokens_but_not_their_next_sign_in(world, monkeypatch) -> None:
+def test_adopting_ends_tokens_from_any_replica_but_not_the_next_sign_in(world, monkeypatch) -> None:
     async def link(email: str, accounts: list[tuple[str, str]], by: str) -> list[tuple[str, str]]:
         return accounts
 
     monkeypatch.setattr(account_admin.sso_links, "link_live", link)
     monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
+    waited: list[Any] = []
+
+    async def wait(cutoff: Any) -> None:
+        waited.append(cutoff)
+
+    monkeypatch.setattr(account_admin, "_wait_until", wait)
     plan = [{"email": "lee@acme.io", "org": "acme", "namespace": "lee", "owner": "lee", "skip": ""}]
     asyncio.run(account_admin.adopt(plan, by="ops", keep_tokens=False))
-    # The next whole second, not the bots' margin: they sign in again at once.
-    # And still past every token issued so far.
-    assert time.time() < world["cutoff"].timestamp() <= time.time() + 1
+    # Past every token issued so far, a replica's clock ahead included, as a
+    # bot's cutoff is; and waited out, so a sign-in once adopt returns is past it.
+    assert world["cutoff"].timestamp() >= time.time() + account_admin._CLOCK_SKEW_S
+    assert waited == [world["cutoff"]]
 
 
 def test_a_disable_that_stopped_part_way_is_finished_by_another(world) -> None:
@@ -474,3 +481,13 @@ def test_the_cli_refuses_an_adoption_whose_skip_matches_nothing(monkeypatch, cap
     )
     assert sso._cmd_adopt(args) == 2
     assert "typo@acme.io" in capsys.readouterr().err
+
+
+def test_making_a_disabled_bot_again_ends_its_old_tokens(world, monkeypatch) -> None:
+    # A disable that saved the row and stopped before its cutoff: the old
+    # key's tokens must not outlive the bot made again under its name.
+    asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
+    world["bots"]["triage"]["active"] = False  # disabled, its cutoff never written
+    world["revoked"].clear()
+    asyncio.run(account_admin.create_bot(_bot(["triage=viewer"]), by="ops", replace=False))
+    assert world["revoked"] == [("sa:triage", "bot replaced")]

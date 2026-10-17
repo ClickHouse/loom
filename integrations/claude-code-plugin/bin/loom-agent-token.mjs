@@ -21,6 +21,8 @@ export async function exchange({ env = process.env, fetchImpl = fetch, now = Dat
       subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
     }),
     signal: AbortSignal.timeout(2500),
+    // Never followed: a redirect would carry the workload's proof elsewhere.
+    redirect: "manual",
   });
   const body = r.ok ? await r.json() : {};
   if (!body.access_token) return false;

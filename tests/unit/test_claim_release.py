@@ -153,18 +153,53 @@ def test_a_release_ends_the_tokens_of_the_bots_and_agent_it_reached(monkeypatch)
 
     ended: list[str] = []
 
-    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+    async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
         return ["triage"]
 
     async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
         ended.append(subject)
 
-    monkeypatch.setattr(machines, "forget_namespace", forget)
+    monkeypatch.setattr(machines, "naming", naming)
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
     row = {"tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
-    asyncio.run(cr._forget_machines("acme", "fleet-a1", row, "root", ch=None))
+    asyncio.run(cr._end_tokens("acme", "fleet-a1", row, "root", ch=None))  # type: ignore[arg-type]
     assert ended == ["sa:triage", "sa:fleet:a1"]
     ended.clear()
     forged = {"tags": ["machine:fleet"], "owner_email": "lee"}  # a person's, marked by hand
-    asyncio.run(cr._forget_machines("acme", "lee", forged, "root", ch=None))
+    asyncio.run(cr._end_tokens("acme", "lee", forged, "root", ch=None))  # type: ignore[arg-type]
     assert ended == ["sa:triage"]  # never the person's own sessions
+
+
+def test_a_release_whose_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeypatch) -> None:
+    # The row names the agent and the bots name the namespace: rewritten before
+    # the cutoffs landed, a retry could no longer find whose tokens to end.
+    from server.auth import machines
+    from server.identity.app import account_admin
+
+    run, _ = env
+    forgotten: list[str] = []
+
+    async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
+        return ["triage"]
+
+    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+        forgotten.append(ns)
+        return ["triage"]
+
+    async def down(subject: str, *, by: str, reason: str) -> Any:
+        raise RuntimeError("ClickHouse away")
+
+    monkeypatch.setattr(machines, "naming", naming)
+    monkeypatch.setattr(machines, "forget_namespace", forget)
+    monkeypatch.setattr(account_admin, "end_tokens", down)
+    with pytest.raises(RuntimeError):
+        run(_tok(["org_admin"]))
+    assert forgotten == []  # the bots still name it
+    ended: list[str] = []
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        ended.append(subject)
+
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    out, _ = run(_tok(["org_admin"]))
+    assert out.released and ended == ["sa:triage"] and forgotten == ["repo-x"]
