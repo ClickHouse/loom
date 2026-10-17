@@ -31,6 +31,7 @@ from server.memory.app.bulk_rows import (
     _BulkWriteState,
     copy_restated_verdicts,
     drop_built_rows,
+    land_restated_merges,
     settle_batch_rows,
 )
 from server.memory.app.bulk_verdicts import (
@@ -278,6 +279,7 @@ def _apply_verdicts(
         landed_rows=landed,
     )
     copy_restated_verdicts(state, plan, copies)
+    land_restated_merges(state, plan)
     state.memory_rows = plan.memory_rows
     state.embedding_rows = plan.embedding_rows
     return plan

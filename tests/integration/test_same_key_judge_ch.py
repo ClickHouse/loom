@@ -4082,6 +4082,39 @@ async def _live_values(ch: Any, org: str) -> dict[tuple[str, str], tuple[str, in
     }
 
 
+async def test_a_restated_merge_lands_once_its_target_was_rewritten_in_between(
+    ch, org, monkeypatch
+) -> None:
+    # alias merges into target's Berlin; target is then rewritten; alias is said again.
+    # Serially the second alias meets the bicycle, not Berlin, and lands: the store must
+    # keep the Berlin fact.
+    from types import SimpleNamespace
+
+    from server.memory.app import bulk_set
+
+    first = await _bulk_in(org, "s1", {"memory_key": "target", "value": "Alice lives in Berlin."})
+    merge = SimpleNamespace(
+        verdict="merge", existing_memory_id=first.written[0].memory_id, peers=[]
+    )
+
+    async def alias_merges(*args: Any, **kw: Any) -> dict[int, Any]:
+        return {0: merge}  # rows: alias, target; the second alias builds none
+
+    monkeypatch.setattr(bulk_set, "_bulk_conflict_verdicts", alias_merges)
+    out = await _bulk_in(
+        org,
+        "s1",
+        {"memory_key": "alias", "value": "Alice lives in Berlin"},
+        {"memory_key": "target", "value": "Alice owns a red bicycle."},
+        {"memory_key": "alias", "value": "Alice lives in Berlin"},
+    )
+    verdicts = [(r.conflict_verdict, r.version > 0) for r in out.written]
+    assert verdicts == [("merge", False), ("", True), ("clear", True)]
+    live = await _live_values(ch, org)
+    assert live[("s1", "alias")] == ("Alice lives in Berlin", 0)
+    assert live[("s1", "target")] == ("Alice owns a red bicycle.", 0)
+
+
 async def test_a_bulk_keeps_a_value_it_moves_off_a_key_it_overwrites(ch, org) -> None:
     # k2 holds Berlin; one bulk moves k2 to the bicycle and states Berlin under k.
     # k2's Berlin is gone by the time k is written, so k must not dedup or merge into it.
