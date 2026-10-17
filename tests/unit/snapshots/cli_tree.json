@@ -8869,7 +8869,7 @@
        "nargs": null,
        "type": "server.cli.hygiene:_utc_instant",
        "required": false,
-       "help": "Re-verify the completed sagas whose census ran at or after this time, not the failed ones (UTC unless it names an offset): after a rollout, the erasures the previous build ran. Only their orphan row links are counted (entity_triple_rows and entity_edge_rows rows whose memory has no live row); --resume deletes them",
+       "help": "Re-verify the completed sagas whose census ran at or after this time, not the failed ones (UTC unless it names an offset): after a rollout, the erasures the previous build ran. Only their orphan row links are counted (entity_triple_rows and entity_edge_rows rows whose memory has no live row and no row written since the census); --resume deletes them",
        "metavar": "ISO_TIMESTAMP"
       },
       {

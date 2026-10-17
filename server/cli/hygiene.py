@@ -539,8 +539,7 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
     """A completed saga gets no second run: everything in its scope now may have
     been written after it finished. Only the row links an older build's erasure
     did not know, and whose memory has no live row and no row written since the
-    census, are counted (and with
-    `resume`, deleted). 1 while any are left, else 0."""
+    census, are counted (and with `resume`, deleted). 1 while any are left, else 0."""
     from server.erasure.store import steps_graph
 
     org = str(row["org"])
@@ -814,7 +813,8 @@ def _add_namespace_hygiene_parsers(sub: Any) -> None:
         "the failed ones (UTC unless it names an offset): after a rollout, the erasures "
         "the previous build ran. "
         "Only their orphan row links are counted (entity_triple_rows and entity_edge_rows "
-        "rows whose memory has no live row); --resume deletes them",
+        "rows whose memory has no live row and no row written since the census); --resume "
+        "deletes them",
     )
     p_erv.add_argument(
         "--orphan-graph",
