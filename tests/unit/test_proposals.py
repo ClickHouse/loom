@@ -225,7 +225,6 @@ def test_a_proposal_supersedes_nothing_on_any_refines_path(monkeypatch: pytest.M
 
     monkeypatch.setattr(memory_repo, "get_by_id", _get)
     monkeypatch.setattr(memory_repo, "supersede_duplicates", _never)
-    monkeypatch.setattr(conflicts, "_truncating_refines", _never)
     peer = conflict_rules.ConflictPeer(
         memory_id="p",
         memory_key="old",

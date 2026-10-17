@@ -528,7 +528,7 @@ async def _bulk_settle_verdicts(
 
         # One record per reason for the whole write, not one per verdict.
         refined_out: dict[str, list[dict[str, Any]]] = {}
-        for new_id, new_key, refined, new_value in plan.refines:
+        for new_id, new_key, refined in plan.refines:
             try:
                 await apply_refines(
                     org=input.org,
@@ -537,7 +537,6 @@ async def _bulk_settle_verdicts(
                     new_memory_key=new_key,
                     refined_peers=refined,
                     ch=ch,
-                    new_value=new_value,
                     record_into=refined_out,
                 )
             except Exception as e:  # noqa: BLE001 — the write stands
@@ -882,16 +881,12 @@ async def handle_memory_bulk_set(
 
 def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:
     """(retired peer, new row) pairs of the plan's `refines` verdicts, for
-    the triple plane to follow — minus the peers `apply_refines` kept because
-    the new row would truncate them."""
-    from server.memory.app.conflicts import truncating_refinement
-
+    the triple plane to follow."""
     return [
         (str(getattr(p, "memory_id", "") or ""), str(new_id))
-        for new_id, _new_key, refined, new_value in plan.refines
+        for new_id, _new_key, refined in plan.refines
         for p in refined
         if getattr(p, "memory_id", "")
-        and not truncating_refinement(new_value, str(getattr(p, "value", "") or ""))
     ]
 
 

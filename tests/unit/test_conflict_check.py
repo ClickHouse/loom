@@ -234,3 +234,69 @@ async def test_a_failed_prefetch_falls_back_to_per_read(monkeypatch) -> None:
     cfg = await cf.prefetch_write_config("o", "n", "semantic", "k1")
     assert cfg == conflict_rules.WriteConfig()
     assert all(v is None for v in cfg.check_kwargs().values())
+
+
+# --- an update retires its predecessor even when the changed value is a number ----
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("The office lease ends in 2025", "The office lease ends in 2027"),
+        ("The team standup is at 10:00 on Mondays", "The team standup is at 11:30 on Mondays"),
+    ],
+)
+async def test_a_changed_number_or_year_is_an_update_under_newest_wins(
+    env: NS, monkeypatch: pytest.MonkeyPatch, old: str, new: str
+) -> None:
+    env.rows[:] = [_row(_P1, "office_lease_end", old, 0.03)]
+
+    async def newest(*a: Any, **k: Any) -> str:
+        return "newest_wins"
+
+    monkeypatch.setattr(cf, "namespace_conflict_policy", newest)
+    res = await _check(new, memory_key="lease_end")
+    assert res.verdict == "refines" and [p.memory_id for p in res.refined_peers] == [_P1]
+
+
+@pytest.mark.asyncio
+async def test_a_rescheduled_date_retires_the_old_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.memory.app.ops as ops
+    import server.memory.store as repo
+
+    victims: list[Any] = []
+
+    async def supersede(org: str, v: list[dict[str, Any]], **_kw: Any) -> int:
+        victims.extend(v)
+        return len(v)
+
+    async def no_row(*a: Any, **k: Any) -> None:
+        return None
+
+    async def link(inp: Any) -> Any:
+        return NS(linked=True)
+
+    monkeypatch.setattr(repo, "supersede_duplicates", supersede)
+    monkeypatch.setattr(repo, "get_by_id", no_row)
+    monkeypatch.setattr(ops, "handle_memory_link", link)
+    old = ConflictPeer(
+        "p1",
+        "standup_time",
+        0.9,
+        False,
+        "c",
+        agent="ag",
+        user_id="u",
+        session_id="s",
+        value="Standup is on 2026-03-04 at 10:00",
+    )
+    await cf.apply_refines(
+        org="o",
+        namespace="ns",
+        new_memory_id="n1",
+        new_memory_key="standup_day",
+        refined_peers=[old],
+        ch=object(),
+    )
+    assert [v["memory_id"] for v in victims] == ["p1"], "the old date does not stay live"

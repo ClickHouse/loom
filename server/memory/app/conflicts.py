@@ -416,7 +416,7 @@ async def _substitution_verdict(
         policy = ""
     if policy != "newest_wins":
         return None
-    return substitution_result(subst, peers, new_value=new_value, new_valid_at=new_valid_at)
+    return substitution_result(subst, peers, new_valid_at=new_valid_at)
 
 
 async def check_on_commit(
@@ -659,44 +659,6 @@ async def auto_reinforce_peer(ident: Any, peer_id: str, *, ch: Any, cfg: Any = N
         logging.getLogger(__name__).warning("auto_reinforce bump failed (non-fatal): %s", e)
 
 
-def truncating_refinement(new_value: str, peer_value: str) -> bool:
-    """Whether `new_value` drops a measured token `peer_value` carries. Pure."""
-    from server.memory.app.value_updates import measured_tokens
-
-    if not peer_value:
-        return False
-    return bool(measured_tokens(peer_value) - measured_tokens(new_value or ""))
-
-
-async def _truncating_refines(
-    org: str,
-    namespace: str,
-    new_memory_id: str,
-    new_value: str,
-    refined_peers: list[ConflictPeer],
-    *,
-    ch: Any = None,
-) -> set[str]:
-    """The peers a refines verdict must NOT retire (see `apply_refines`).
-    Reads the new row's text when the caller had none; fail-open to none."""
-    if not refined_peers:
-        return set()
-    text = new_value or ""
-    if not text:
-        try:
-            rows = await (ch or get_client()).query_all(
-                "SELECT toString(value) AS v FROM loom.memory FINAL WHERE org = {org:String} "
-                "AND namespace = {ns:String} AND toString(memory_id) = {mid:String} LIMIT 1",
-                params={"org": org, "ns": namespace, "mid": str(new_memory_id)},
-            )
-            text = str(rows[0]["v"]) if rows else ""
-        except Exception:  # noqa: BLE001 — no text, no guard
-            return set()
-    if not text:
-        return set()
-    return {p.memory_id for p in refined_peers if truncating_refinement(text, p.value or "")}
-
-
 async def apply_refines(
     *,
     org: str,
@@ -706,22 +668,15 @@ async def apply_refines(
     refined_peers: list[ConflictPeer],
     ch: Any = None,
     run_id: str = "-",
-    new_value: str = "",
     record_into: dict[str, list[dict[str, Any]]] | None = None,
     expected_sha256: str = "",
 ) -> int:
-    """The `refines` verdict, after the new row is in: every
-    non-pinned refined peer is superseded (status, superseded_by = the new
-    row, invalid_at now — never deleted; recall drops it, the audit trail and
-    `as_of` keep it) and a `refines` edge from the new key to the old records
-    why. Best effort; returns the number of peers superseded.
-
-    A peer whose text carries a measured token the new row lacks (a duration, a count, a
-    price, a date, a month) keeps its row — the new statement elaborates a facet but
-    truncates the record, and the question that needs the measure ("how long did it
-    take") would read "not recorded". The edge is still written. `new_value` is the new
-    row's text; when the caller has none it is read from the store. With
-    `expected_sha256` (a deferred verdict) nothing is retired or linked once the
+    """The `refines` verdict, after the new row is in: every non-pinned peer
+    the new row replaces is superseded (status, superseded_by = the new row,
+    invalid_at now — never deleted; recall drops it, the audit trail and `as_of`
+    keep it) and a `supersedes` edge from the new key to the old records why.
+    Best effort; returns the number of peers superseded. With `expected_sha256`
+    (a verdict reached after the write) nothing is retired or linked once the
     new row is another revision's, read sequentially right before the supersede.
 
     The peers that did retire are recorded as `memory.auto_supersede`
@@ -730,15 +685,13 @@ async def apply_refines(
     from server.core.ch import sequential_reads
     from server.memory.store import get_by_id, supersede_duplicates
 
-    # A proposal (a fact on trial) retires nothing — whichever
-    # path reached this verdict (inline, deferred settle, the sweep, bulk).
+    # A proposal (a fact on trial) retires nothing, whichever path reached this verdict.
     try:
         new_row = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)
     except Exception:  # noqa: BLE001 — unreadable: the verdict applies
         new_row = None
     if new_row is not None and str(getattr(new_row, "status", "") or "") == "proposed":
         return 0
-    keep = await _truncating_refines(org, namespace, new_memory_id, new_value, refined_peers, ch=ch)
     victims = [
         {
             "memory_id": p.memory_id,
@@ -750,13 +703,13 @@ async def apply_refines(
             "superseded_by": new_memory_id,
         }
         for p in refined_peers
-        if not p.pinned and p.memory_id and p.memory_id != new_memory_id and p.memory_id not in keep
+        if not p.pinned and p.memory_id and p.memory_id != new_memory_id
     ]
     if expected_sha256:
         # The verdict takes effect at this read: a revision committed after it is
         # the serial order "A refined its peers, then B replaced A", which leaves
         # the same rows. Fencing B itself would put a lock on every memory.set.
-        # One difference: B's own inline judge saw a peer active that this then
+        # One difference: B's own inline check saw a peer active that this then
         # retires, so B's conflict_with can name a superseded row (review queue only).
         with sequential_reads():
             current = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)

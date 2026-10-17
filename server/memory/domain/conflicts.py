@@ -1,7 +1,7 @@
 """The values a conflict check answers with (ConflictResult and its peers, the
 per-namespace write config) and the pure rules it applies: canonical text,
-same-content and templated-substitution tests, intra-batch supersession and
-quantity preservation. The reads are server/memory/app/conflicts.py."""
+same-content and templated-substitution tests and intra-batch supersession. The
+reads are server/memory/app/conflicts.py."""
 
 from __future__ import annotations
 
@@ -358,43 +358,10 @@ def merge_scope(new_run_id: str, peer_run_id: str) -> str:
     return "same_run" if str(peer_run_id or "-") == new_run_id else "cross_run"
 
 
-_QUANTITY_RE = re.compile(
-    r"(?:\$|€|£)\s?\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\s?(?:%|percent|k\b|dollars?|usd|eur|"
-    r"miles?|km|kg|lbs?|hours?|hrs?|minutes?|mins?|days?|weeks?|months?|years?)\b|\b\d{2,}(?:\.\d+)?\b",
-    re.IGNORECASE,
-)
-
-
-def quantities(text: str) -> set[str]:
-    """The amounts a statement carries — currency, numbers with units, and
-    bare numbers of two or more digits — normalised (no symbol, no thousands
-    separators, lower-cased unit). Pure."""
-    out: set[str] = set()
-    for m in _QUANTITY_RE.finditer(text or ""):
-        tok = m.group(0).lower().replace(",", "").replace(" ", "")
-        tok = re.sub(r"^[$€£]", "", tok)
-        num = re.match(r"\d+(?:\.\d+)?", tok)
-        if num:
-            out.add(num.group(0).rstrip("0").rstrip(".") if "." in num.group(0) else num.group(0))
-    return out
-
-
-def preserves_quantities(new_value: str, old_value: str) -> bool:
-    """A refinement may retire a peer only if it keeps every
-    amount the peer stated. Otherwise a fact loses its answer, as when
-    "ordered from Thrive Market last month and spent around $150" is retired
-    by "ordered from Thrive Market last month and got great deals": the judge
-    calls the second an elaboration and the amount leaves the fact plane.
-    Pure."""
-    missing = quantities(old_value) - quantities(new_value)
-    return not missing
-
-
 def substitution_result(
     subst: list[ConflictPeer],
     peers: list[ConflictPeer],
     *,
-    new_value: str,
     new_valid_at: datetime | None = None,
 ) -> ConflictResult:
     """The verdict for peers that are templated substitutions of the new value
@@ -407,14 +374,12 @@ def substitution_result(
     The clock is the calendar before it is the arrival: when the new row and a
     peer both carry a `valid_at` and the peer's is later, the row being written
     is the OLDER statement, and retiring the peer would put the store back in
-    time. Then the pair stays a `conflict` to review."""
+    time. Then the pair stays a `conflict` to review. A changed amount (a year,
+    a count, a time) is what an update of this shape changes, so it never keeps
+    the old row."""
     if later_valid_peers(subst, new_valid_at):
         return ConflictResult(verdict="conflict", peers=subst)
-    # A peer whose amounts the new row does not carry stays.
-    kept = [p for p in subst if preserves_quantities(new_value, p.value)]
-    if not kept:
-        return ConflictResult(verdict="conflict", peers=peers)
-    return ConflictResult(verdict="refines", peers=peers, refined_peers=kept)
+    return ConflictResult(verdict="refines", peers=peers, refined_peers=subst)
 
 
 @dataclass(frozen=True)

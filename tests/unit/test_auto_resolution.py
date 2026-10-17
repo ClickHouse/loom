@@ -487,7 +487,7 @@ async def test_a_bulk_writes_one_record_for_all_its_refines_verdicts(monkeypatch
 
     monkeypatch.setattr(conflicts, "apply_refines", refines)
     plan = BulkVerdictPlan()
-    plan.refines = [(f"n{i}", f"k{i}", [], "v") for i in range(3)]
+    plan.refines = [(f"n{i}", f"k{i}", []) for i in range(3)]
     await bulk_set._bulk_settle_verdicts(None, _Input(), _BulkWriteState(), plan)
     (ev,) = emitted
     assert _ids(ev) == ["old-n0", "old-n1", "old-n2"]
@@ -631,7 +631,6 @@ async def _refines(monkeypatch, **kw: Any) -> None:
         new_memory_key="user_city",
         refined_peers=[_peer("o1"), _peer("locked"), _peer("retired")],
         ch=object(),
-        new_value="lives in a city by the sea",
         **kw,
     )
 
