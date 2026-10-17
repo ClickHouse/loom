@@ -2,7 +2,11 @@
 --
 -- id is the SCIM resource id, derived from email (lower-cased), so every
 -- replica and every retry names a person the same. email is the address an
--- SSO sign-in carries: the provider's primary email, else its userName.
+-- SSO sign-in carries: the emails entry marked primary, else the work one,
+-- else the first, else the userName. email_type ('' when none) and
+-- email_primary describe that entry, so a PATCH filtered on an entry
+-- (`emails[type eq "work"]`) is checked against the email only when it
+-- selects it or one that would take its place.
 -- active = 0 is a deactivation: every subject in subjects (each one an SSO
 -- sign-in with the email could reach when it was deactivated) is revoked, and
 -- SSO sign-in with the email is refused until it is 1 again. deleted = 1 is a
@@ -12,6 +16,8 @@ CREATE TABLE IF NOT EXISTS loom.scim_users
     `id` String,
     `user_name` String,
     `email` String,
+    `email_type` String,
+    `email_primary` UInt8,
     `active` UInt8,
     `deleted` UInt8,
     `subjects` Array(String),

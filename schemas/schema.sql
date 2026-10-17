@@ -3112,14 +3112,14 @@ CREATE TABLE IF NOT EXISTS loom.scim_users
     `id` String,
     `user_name` String,
     `email` String,
+    `email_type` String,
+    `email_primary` UInt8,
     `active` UInt8,
     `deleted` UInt8,
     `subjects` Array(String),
     `created_at` DateTime64(3, 'UTC'),
     `updated_at` DateTime64(3, 'UTC'),
-    `version` UInt64,
-    `email_type` String DEFAULT '',
-    `email_primary` UInt8 DEFAULT 0
+    `version` UInt64
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id

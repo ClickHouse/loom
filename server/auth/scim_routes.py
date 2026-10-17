@@ -3,8 +3,9 @@ deactivate and reactivate people (`server/auth/scim.py`).
 
 Mounted only when `LOOM_SCIM_TOKEN` is set, and that bearer token is the only
 credential these routes take. A user resource carries `userName`, its email
-(the primary `emails` value, else `userName`) and `active`; other attributes a
-provider sends are accepted and not kept.
+(the `emails` entry marked primary, else the work one, else the first, else
+`userName`) and `active`; other attributes a provider sends are accepted and
+not kept.
 """
 
 from __future__ import annotations
@@ -128,6 +129,8 @@ def patched_active(body: dict[str, Any]) -> bool | None:
         raise ScimError(400, "a PatchOp needs Operations", "invalidSyntax")
     active = None
     for op in ops:
+        if not isinstance(op, dict):
+            continue  # refused by `patched_names`, once an `active` beside it is known
         for attr, value in _attributes(op):
             if attr != "active":
                 continue
@@ -146,8 +149,9 @@ def patched_names(
     checks the shape."""
     user_name, entry = None, None
     for op in body["Operations"]:
+        pairs = _attributes(op)  # refuses an operation that is not an object
         kind = str(op.get("op") or "").lower()
-        for attr, value in _attributes(op):
+        for attr, value in pairs:
             if attr == "username":
                 if kind == "remove":
                     raise ScimError(400, "the userName cannot be removed", "mutability")
@@ -171,12 +175,20 @@ def _keyed_written(kind: str, attr: str, value: Any, row: dict[str, Any]) -> dic
         if best is None:
             raise _no_change("the email cannot be removed")
         return best
-    if "[" not in attr:
+    if "[" not in attr and "]" not in attr:
         return None  # `emails.display` and the like
-    filt, sub = attr[attr.index("[") + 1 : attr.rindex("]")], attr.rsplit("]", 1)[-1]
+    opening, closing = attr.find("["), attr.find("]")
+    if attr.count("[") != 1 or attr.count("]") != 1 or closing < opening:
+        raise ScimError(400, "an emails path is malformed", "invalidPath")
+    filt, sub = attr[opening + 1 : closing], attr[closing + 1 :]
     if sub not in ("", ".value", ".type", ".primary"):
         return None
-    written = dict(value) if sub == "" and isinstance(value, dict) else {sub[1:]: value}
+    if sub == "":
+        if kind != "remove" and not isinstance(value, dict):
+            raise ScimError(400, "an emails entry must be an object", "invalidValue")
+        written = dict(value) if isinstance(value, dict) else {}
+    else:
+        written = {sub[1:]: value}
     selected = _selected(filt, stored)
     if selected is not False:  # the keyed entry, or a filter we cannot read
         if kind == "remove":
@@ -199,27 +211,33 @@ def _keyed_written(kind: str, attr: str, value: Any, row: dict[str, Any]) -> dic
 _COMPARISON = re.compile(r'\s*(type|value|primary)\s+eq\s+(?:"([^"]*)"|(true|false))\s*')
 
 
-def _selected(filt: str, stored: dict[str, Any]) -> bool | None:
-    """Whether an `emails[…]` filter selects the keyed entry; None when it is
-    not one comparison."""
+def _comparison(filt: str) -> tuple[str, str | bool] | None:
+    """An `emails[…]` filter as (attribute, value), `primary` as a bool; None
+    when it is not one comparison."""
     m = _COMPARISON.fullmatch(filt)
     if not m:
         return None
     attr, text, flag = m.groups()
     want = text if text is not None else flag
+    return attr, scim.is_primary(want) if attr == "primary" else want
+
+
+def _selected(filt: str, stored: dict[str, Any]) -> bool | None:
+    """Whether an `emails[…]` filter selects the keyed entry; None when it is
+    not one comparison."""
+    comparison = _comparison(filt)
+    if comparison is None:
+        return None
+    attr, want = comparison
     if attr == "primary":
-        return (want.lower() == "true") == bool(stored["primary"])
-    return scim.normalized(want) == scim.normalized(str(stored[attr]))
+        return want == scim.is_primary(stored["primary"])
+    return scim.normalized(str(want)) == scim.normalized(str(stored[attr]))
 
 
 def _criteria(filt: str) -> dict[str, Any]:
     """What a filter says of the entry it selects (`{"type": "other"}`)."""
-    m = _COMPARISON.fullmatch(filt)
-    if not m:
-        return {}
-    attr, text, flag = m.groups()
-    want = text if text is not None else flag
-    return {attr: want.lower() == "true" if attr == "primary" else want}
+    comparison = _comparison(filt)
+    return {} if comparison is None else {comparison[0]: comparison[1]}
 
 
 def _no_change(detail: str) -> ScimError:
@@ -248,7 +266,7 @@ async def _body(request: Request) -> dict[str, Any]:
 
 def _rank(entry: dict[str, Any]) -> int:
     """Which emails entry Loom keys on: the primary, else the work one, else the first."""
-    if str(entry.get("primary")).lower() == "true":
+    if scim.is_primary(entry.get("primary")):
         return 2
     return 1 if str(entry.get("type") or "").lower() == "work" else 0
 
@@ -416,7 +434,7 @@ async def _deactivating_anyway(uid: str, active: bool | None) -> AsyncIterator[N
     a 400, so dropping its `active: false` would leave them active."""
     try:
         yield
-    except ScimError:
+    except Exception:  # re-raised: a refused or failed request must still deactivate
         if active is False:
             await scim.set_active(uid, False)
         raise

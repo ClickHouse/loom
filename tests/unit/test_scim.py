@@ -91,6 +91,7 @@ def test_a_patch_sets_active_and_drops_the_rest(body: dict[str, Any], active: bo
 def test_a_patch_that_cannot_set_active_is_refused(body: dict[str, Any]) -> None:
     with pytest.raises(ScimError) as e:
         patched_active(body)
+        patched_names(body, _WORK_ROW)  # an operation that is not an object is refused here
     assert e.value.status == 400
 
 
@@ -197,14 +198,16 @@ class _World:
         async def stale_snapshot(subject: str) -> bool:
             raise AssertionError("SCIM reads the store, not this process's snapshot")
 
-        async def revoke(subject: str, *, reason: str, revoked_by: str) -> dict[str, Any]:
+        async def revoke(
+            subject: str, *, reason: str, revoked_by: str, reread: bool = True
+        ) -> dict[str, Any]:
             if self.fail_revoke:
                 raise RuntimeError("ClickHouse is away")
             self.outright[subject] = reason
             return {}
 
         async def narrow(
-            key: str, *, reason: str, issued_before: datetime, revoked_by: str
+            key: str, *, reason: str, issued_before: datetime, revoked_by: str, reread: bool = True
         ) -> bool:
             if self.outright.get(key) != reason:
                 return False
@@ -224,6 +227,9 @@ class _World:
         async def no_wait(s: float) -> None:
             self.waits.append(s)
 
+        async def no_refresh() -> None:
+            return None
+
         monkeypatch.setattr(settings, "scim_token", _TOKEN)
         monkeypatch.setattr(scim, "get_client", lambda: self.table)
         monkeypatch.setattr(scim, "_held", held)
@@ -232,6 +238,7 @@ class _World:
         monkeypatch.setattr(revocation, "revoked_outright", stale_snapshot)
         monkeypatch.setattr(revocation, "revoke", revoke)
         monkeypatch.setattr(revocation, "narrow", narrow)
+        monkeypatch.setattr(revocation, "refresh", no_refresh)
         monkeypatch.setattr(audit, "emit", emit)
 
     def person(self, email: str, *subjects: str) -> None:
@@ -832,17 +839,61 @@ def test_a_put_naming_another_user_is_refused_before_anything(client: TestClient
     assert world.outright == {}  # nothing applied: the request is about another user
 
 
-async def test_the_subject_phase_holds_one_lease_after_the_users(world) -> None:
-    world.person("lee@example.com", "lee")
+def _subject_lease(subject: str) -> str:
+    return f"scim-subject:{scim._keyed(subject)[:32]}"
+
+
+async def test_leases_go_user_then_username_then_each_subject_sorted(world) -> None:
+    world.person("lee@example.com", "lee", "alice")
     uid = await _create("lee@example.com")
-    assert world.leases == [
-        f"scim-user:{uid}",
-        f"scim-username:{scim.user_id('lee@example.com')}",
-        "scim-subjects",
-    ]
+    # An active user staying active touches no subject, so takes no subject lease.
+    assert world.leases == [f"scim-user:{uid}", f"scim-username:{scim.user_id('lee@example.com')}"]
     world.leases.clear()
     await scim.set_active(uid, False)
-    assert world.leases == [f"scim-user:{uid}", "scim-subjects"]
+    by_subject = [_subject_lease(s) for s in ("alice", "lee")]  # sorted by subject
+    assert world.leases == [f"scim-user:{uid}", *by_subject]
+    world.leases.clear()
+    await scim.set_active(uid, True)
+    assert world.leases == [f"scim-user:{uid}", *by_subject]
+
+
+async def test_a_rename_of_an_active_user_waits_on_no_subject(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    world.leases.clear()
+    await scim.update(uid, user_name="lee.new@corp.example")
+    assert world.leases == [
+        f"scim-user:{uid}",
+        f"scim-username:{scim.user_id('lee.new@corp.example')}",
+    ]
+
+
+async def test_a_lease_the_store_cannot_give_is_busy(monkeypatch) -> None:
+    from contextlib import asynccontextmanager as cm
+
+    from server.core import leases
+
+    @cm
+    async def away(*_a: Any, **_k: Any) -> AsyncIterator[bool]:
+        raise leases.LeaseUnavailable("the lease store did not answer")
+        yield True
+
+    monkeypatch.setattr(leases, "holding", away)
+    with pytest.raises(scim.Busy):
+        async with scim._held("scim-user:x"):
+            pass
+
+
+def test_a_busy_user_answers_a_scim_503(client: TestClient, world, monkeypatch) -> None:
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+
+    async def busy(*_a: Any, **_k: Any) -> None:
+        raise scim.Busy
+
+    monkeypatch.setattr(scim, "update", busy)
+    r = _patch(client, uid, {"op": "replace", "path": "active", "value": False})
+    assert r.status_code == 503 and r.headers["retry-after"]
+    assert r.json()["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:Error"]
 
 
 async def test_a_shared_subject_left_revoked_is_logged_and_nothing_waits(world, caplog) -> None:
@@ -864,3 +915,57 @@ async def test_an_operator_revocation_makes_no_reactivation_wait(world) -> None:
     await scim.set_active(uid, False)
     await scim.set_active(uid, True)
     assert world.waits == []
+
+
+_PRIMARY_ROW = {"email": "lee@example.com", "email_type": "work", "email_primary": 1}
+
+
+def test_a_stored_primary_entry_ranks_as_primary() -> None:
+    # A secondary address of a user keyed on their primary entry may change.
+    other = {"op": "replace", "path": 'emails[type eq "other"].value', "value": "x@example.com"}
+    assert patched_names({"Operations": [other]}, _PRIMARY_ROW) == (None, None)
+    demoted = {"op": "replace", "path": "emails[primary eq true].primary", "value": False}
+    with pytest.raises(ScimError) as e:
+        patched_names({"Operations": [demoted]}, _PRIMARY_ROW)
+    assert e.value.scim_type == "mutability"
+
+
+@pytest.mark.parametrize("flag", [True, "True", "true", 1])
+def test_every_spelling_of_primary_is_kept_as_primary(world, flag: Any) -> None:
+    async def run() -> dict[str, Any]:
+        entry = {"value": "lee@example.com", "primary": flag}
+        return await scim.create(
+            "lee@example.com", "lee@example.com", active=True, email_entry=entry
+        )
+
+    import asyncio
+
+    assert asyncio.run(run())["email_primary"] == 1
+
+
+def test_a_malformed_path_is_refused_and_still_deactivates(client: TestClient, world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    broken = {"op": "replace", "path": 'emails[type eq "work"', "value": "b@example.com"}
+    r = _patch(client, uid, {"op": "replace", "path": "active", "value": False}, broken)
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidPath"
+    assert world.outright == {"lee": scim.DEACTIVATED}
+
+
+def test_a_failed_request_still_deactivates(client: TestClient, world, monkeypatch) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+
+    def broken(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(scim_routes, "patched_names", broken)
+    with pytest.raises(RuntimeError):
+        _patch(client, uid, {"op": "replace", "path": "active", "value": False})
+    assert world.outright == {"lee": scim.DEACTIVATED}
+
+
+def test_a_whole_entry_write_must_be_an_object(client: TestClient, world) -> None:
+    uid = _user(client, [{"value": "lee@example.com", "type": "work"}])
+    r = _patch(client, uid, {"op": "replace", "path": 'emails[type eq "work"]', "value": "b@x.com"})
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidValue"

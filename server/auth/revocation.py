@@ -232,6 +232,7 @@ async def revoke(
     reason: str = "",
     revoked_by: str = "",
     issued_before: datetime | None = None,
+    reread: bool = True,
 ) -> dict[str, Any]:
     """Revoke every token whose `jti` OR `sub` equals `token_id` and refresh
     this process's snapshot so `is_revoked` answers True at once.
@@ -268,7 +269,8 @@ async def revoke(
         "version": await _next_version(token_id),
     }
     await get_client().insert("loom.revoked_tokens", [row])
-    await refresh()
+    if reread:  # a caller writing several re-reads once, after them
+        await refresh()
     _apply_locally(token_id, _cutoff_seconds(issued_before), row["version"])
     return row
 
@@ -325,7 +327,9 @@ async def has_outright_row(jti: str) -> bool:
     return row is not None
 
 
-async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: str) -> bool:
+async def narrow(
+    key: str, *, reason: str, issued_before: datetime, revoked_by: str, reread: bool = True
+) -> bool:
     """Turn the outright revocation of `key` that was written with `reason`
     into one of the tokens issued before `issued_before`, so new tokens work
     and old ones stay revoked. A revocation written for another reason (an
@@ -344,7 +348,9 @@ async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: 
     if row is None or row["issued_before"] is not None or row["reason"] != reason:
         return False
     lifted = f"{reason}, lifted"
-    await revoke(key, issued_before=issued_before, reason=lifted, revoked_by=revoked_by)
+    await revoke(
+        key, issued_before=issued_before, reason=lifted, revoked_by=revoked_by, reread=reread
+    )
     # Only for an operator's `revoke-token` landing between the read above and
     # this write: under FINAL ours replaced it, so write it again, on top.
     with own_write_reads():
@@ -363,6 +369,7 @@ async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: 
             reason=other["reason"],
             revoked_by=other["revoked_by"],
             issued_before=other["issued_before"],
+            reread=reread,
         )
     return True
 

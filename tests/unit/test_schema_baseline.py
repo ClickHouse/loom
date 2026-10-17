@@ -102,7 +102,6 @@ def test_the_journal_files() -> None:
         "042_machine_identities.sql",
         "043_machine_agent_claims.sql",
         "044_scim_users.sql",
-        "045_scim_email_entry.sql",
     ]
 
 

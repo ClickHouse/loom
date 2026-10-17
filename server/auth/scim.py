@@ -1,6 +1,8 @@
 """Who an identity provider has deactivated over SCIM 2.0 (`loom.scim_users`).
 
-A SCIM user is an email the provider manages. Loom makes no account for one:
+A SCIM user is an email the provider manages: its `emails` entry marked
+primary, else its work entry, else its first, else its userName
+(`scim_routes.user_name_and_email`). Loom makes no account for one:
 JIT makes that at the person's first sign-in, as without SCIM. What SCIM
 changes is `active`:
 
@@ -15,9 +17,10 @@ changes is `active`:
 The accounts and their data stay: this is not erasure. A subject an operator
 revoked outright stays revoked through both, and so does one another
 deactivated user still reaches. Leases, always taken in this order: the
-user's, then a userName's it takes (create, rename), then `scim-subjects`
-around the revocations and the row they belong with, so two users sharing a
-subject never interleave. Each step is idempotent, so a provider's retry of a
+user's, then a userName's it takes (create, rename), then, around a
+deactivation's or reactivation's revocations and the row they belong with, one
+per subject the user reaches, in sorted order: only users sharing a subject
+wait on each other. Each step is idempotent, so a provider's retry of a
 half-done one finishes it. With `LOOM_SCIM_TOKEN` empty nothing here is read.
 """
 
@@ -30,7 +33,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -189,8 +192,15 @@ def _entry(email_entry: dict[str, Any] | None) -> dict[str, Any]:
         return {}
     return {
         "email_type": str(email_entry.get("type") or "").lower(),
-        "email_primary": int(email_entry.get("primary") in (True, "true")),
+        "email_primary": int(is_primary(email_entry.get("primary"))),
     }
+
+
+def is_primary(value: Any) -> bool:
+    """A SCIM `primary` flag as providers send it (true, "True") or Loom stores it (1)."""
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return value is True or value == 1
 
 
 async def delete(uid: str) -> bool:
@@ -222,14 +232,25 @@ def _name_lease(user_name: str) -> str:
     return f"scim-username:{user_id(user_name)}"
 
 
-_SUBJECTS_LEASE = "scim-subjects"
+@asynccontextmanager
+async def _held(name: str) -> AsyncIterator[None]:
+    try:
+        async with leases.holding(name, ttl_s=_LEASE_TTL_S, wait_s=_LEASE_WAIT_S) as held:
+            if not held:
+                raise Busy
+            yield
+    except leases.LeaseUnavailable as e:  # the store did not answer, or the work ran long
+        raise Busy from e
 
 
 @asynccontextmanager
-async def _held(name: str) -> AsyncIterator[None]:
-    async with leases.holding(name, ttl_s=_LEASE_TTL_S, wait_s=_LEASE_WAIT_S) as held:
-        if not held:
-            raise Busy
+async def _subject_leases(subjects: list[str]) -> AsyncIterator[None]:
+    """One lease per subject, in sorted order, so users sharing one never
+    interleave their revocations and two never wait on each other in a cycle."""
+    async with AsyncExitStack() as held:
+        for subject in sorted(set(subjects)):
+            # Keyed like the audit's: the lease store is no place for an address.
+            await held.enter_async_context(_held(f"scim-subject:{_keyed(subject)[:32]}"))
         yield
 
 
@@ -244,22 +265,29 @@ async def _row(uid: str) -> dict[str, Any] | None:
 async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict[str, Any]:
     was_active = bool(row["active"])
     new = {**row, **changes, "active": int(active)}
+    unwritten = "version" not in row
+    if active and was_active:  # no revocation to make or lift: no subject lease
+        if new != row or unwritten:
+            await _write(new)
+        return new
+    found = {} if active else await _subjects(row["email"])
+    known = set(row["subjects"])
     cutoff = None
-    async with _held(_SUBJECTS_LEASE):
-        if active and not was_active:
+    async with _subject_leases([*known, *found]):
+        if active:
             cutoff = await _lift(row["id"], row["subjects"])
-        elif not active:
-            found = await _subjects(row["email"])
-            known = set(row["subjects"])
+        else:
             new["subjects"] = sorted(known | set(found))
             # Going inactive (or retrying a try that stopped short of writing the
             # row) revokes them all; once inactive, only accounts found since, so
             # one an operator narrowed stays narrowed.
-            first = was_active or "version" not in row
+            first = was_active or unwritten
             for subject in new["subjects"] if first else sorted(set(found) - known):
                 await _revoke(new["id"], subject, set(found.values()))
-        if new != row or "version" not in row:  # a change, or a user not yet written
+        if new != row or unwritten:  # a change, or a user not yet written
             await _write(new)
+    # The snapshot re-read each revocation would make, once and past the leases.
+    await revocation.refresh()
     if cutoff is not None:  # wait out the cutoff's second, a token issued in it falls before it
         await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
     if active != was_active:
@@ -308,7 +336,7 @@ async def _revoke(uid: str, subject: str, orgs: set[str]) -> None:
             actor=_BY,
             subject={"id": uid, "subject": _keyed(subject), "orgs": elsewhere},
         )
-    await revocation.revoke(subject, reason=DEACTIVATED, revoked_by=_BY)
+    await revocation.revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)
 
 
 async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
@@ -347,7 +375,7 @@ async def _lift(uid: str, subjects: list[str]) -> datetime | None:
             )
             continue
         lifted |= await revocation.narrow(
-            subject, reason=DEACTIVATED, issued_before=cutoff, revoked_by=_BY
+            subject, reason=DEACTIVATED, issued_before=cutoff, revoked_by=_BY, reread=False
         )
     return cutoff if lifted else None
 

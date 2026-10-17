@@ -364,7 +364,9 @@ What Loom does with each request:
 Loom keeps each SCIM user's row in `loom.scim_users` (the userName, the email,
 the subjects it revoked and whether it is active) for as long as the
 deployment does, deleted users included: that row is what keeps a deactivated
-person out. Requests are idempotent, so the provider's retries are safe. The
+person out. Requests are idempotent, so the provider's retries are safe, and
+they run side by side: only those for people who reach a shared account wait
+on each other (a busy one answers 503 and the provider retries it). The
 only filter served is `userName eq "<userName>"`; `GET /Users`,
 `GET /Users/{id}` and `GET /ServiceProviderConfig` answer as RFC 7644 says.
 
