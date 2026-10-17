@@ -81,7 +81,13 @@ schema. These rules keep that safe. The operator procedure is in
    to keys N-1 does not read, so N-1 refuses it (no entries) and leaves it active. N
    writes a failure's `abandoned` status because N-1 reads that status as a plain string and
    lists only `active` ones; the `status="abandoned"` list filter works only on N
-   replicas.
+   replicas. The conflict resolver's owed follow is `triples_follow_owed`, not
+   `triples_follow_rows`, for the same reason: N-1's follow does not check that the
+   loser is still retired. While N-1 leads, its repair re-reads every failure whose
+   name it does not know on every pass (oldest first, each answered
+   `unsupported_projection` and left active), so they take places in its batch
+   (`LOOM_PROJECTION_REPAIR_MAX_FAILURES_PER_PASS`); past that many, N-1 replays
+   nothing else until an N replica leads.
 4. **Wire formats** (cursors, session and run ids, worker resume cursors, JSON stored in
    rows): N reads the old and the new format, and only N+1 writes the new one.
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
