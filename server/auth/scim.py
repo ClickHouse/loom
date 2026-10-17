@@ -17,12 +17,14 @@ changes is `active`:
 
 The accounts and their data stay: this is not erasure. A subject an operator
 revoked outright stays revoked through both, and so does one another
-deactivated user still reaches. Leases, always taken in this order: the
-user's, then a userName's it takes (create, rename), then, around a
-deactivation's or reactivation's revocations and the row they belong with, one
-per subject the user reaches, in sorted order: only users sharing a subject
-wait on each other. Each step is idempotent, so a provider's retry of a
-half-done one finishes it. With `LOOM_SCIM_TOKEN` empty nothing here is read.
+deactivated user still reaches. An operator's revocation that would lapse (an
+expiry, or a cutoff still ahead) is made lasting, so an operator lifts it.
+Leases, always taken in this order: the user's, then a userName's it takes
+(create, rename), then, around a deactivation's or reactivation's revocations
+and the row they belong with, one per subject the user reaches, in sorted
+order: only users sharing a subject wait on each other. Each step is
+idempotent, so a provider's retry of a half-done one finishes it. With
+`LOOM_SCIM_TOKEN` empty nothing here is read.
 """
 
 from __future__ import annotations
@@ -323,11 +325,10 @@ async def _set_active(
             cutoff = await _lift(row["id"], row["subjects"])
         else:
             new["subjects"] = sorted(known | set(found))
-            # Going inactive (or retrying a try that stopped short of writing the
-            # row) revokes them all; once inactive, only accounts found since,
-            # those a reactivation that failed to write the row narrowed and those
-            # whose revocation lapses or lapsed, so one an operator narrowed stays
-            # narrowed.
+            # Going inactive, or retrying a try that stopped short of writing the
+            # row, revokes them all. Once inactive, a repeat revokes only accounts
+            # found since, those a failed reactivation narrowed and those whose
+            # revocation lapses or lapsed: one an operator narrowed stays narrowed.
             if was_active or unwritten:
                 subjects = new["subjects"]
             else:
@@ -377,13 +378,25 @@ async def _subjects(email: str) -> dict[str, str]:
 
 async def _revoke(uid: str, subject: str, orgs: set[str]) -> None:
     """Revoke `subject` outright unless it already is for good (by an operator,
-    or by the try this one retries); one an operator time-boxed is replaced, as
-    it would let the old tokens back in when it lapses. A subject is a name, not
-    an org's: the same one may be someone else's elsewhere, and the revocation
-    reaches them too."""
+    or by the try this one retries). An operator's revocation still holding the
+    person out but due to lapse (an expiry, or a cutoff ahead) is made lasting
+    under the operator's reason, so a reactivation leaves it alone. A subject is
+    a name, not an org's: the same one may be someone else's elsewhere, and the
+    revocation reaches them too."""
     # The store, not this process's snapshot: one behind would skip a revocation needed again.
-    if await revocation.has_outright_row(subject, lasting=True):
+    live = await _live_revocation(subject)
+    if live is not None and live["lasting"]:
         return
+    reason, revoked_by = DEACTIVATED, _BY
+    ours = (DEACTIVATED, revocation.lifted_reason(DEACTIVATED))
+    if live is not None and live["holds_out"] and live["reason"] not in ours:
+        reason, revoked_by = live["reason"], live["revoked_by"]
+        log.warning(
+            "scim: deactivating %s makes an operator's revocation of a subject it reaches "
+            "last until an operator narrows it (`loom revoke-token --subject <it> "
+            "--issued-before <now>`)",
+            uid,
+        )
     elsewhere = await _orgs_beyond(subject, orgs)
     if elsewhere:
         # Failing closed, it is still revoked; an operator sees it and can narrow it.
@@ -400,7 +413,23 @@ async def _revoke(uid: str, subject: str, orgs: set[str]) -> None:
             actor=_BY,
             subject={"id": uid, "subject": _keyed(subject), "orgs": elsewhere},
         )
-    await revocation.revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)
+    await revocation.revoke(subject, reason=reason, revoked_by=revoked_by, reread=False)
+
+
+async def _live_revocation(subject: str) -> dict[str, Any] | None:
+    """The row revoking `subject` now: its reason and author, whether it is
+    outright and never lapses, and whether it still holds tokens issued now."""
+    with own_write_reads():
+        return await get_client().query_one(
+            """
+            SELECT reason, revoked_by,
+                issued_before IS NULL AND expires_at >= {latest:DateTime64(3, 'UTC')} AS lasting,
+                issued_before IS NULL OR issued_before > now() AS holds_out
+            FROM loom.revoked_tokens FINAL
+            WHERE jti = {j:String} AND expires_at > now()
+            """,
+            params={"j": subject, "latest": revocation.LATEST_EXPIRY},
+        )
 
 
 async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
@@ -485,7 +514,7 @@ async def _held_for_good(subjects: list[str]) -> set[str]:
             WHERE jti IN {s:Array(String)} AND expires_at > now()
               AND (issued_before IS NOT NULL OR expires_at >= {latest:DateTime64(3, 'UTC')})
             """,
-            params={"s": subjects, "latest": revocation.revocation_expiry(None)},
+            params={"s": subjects, "latest": revocation.LATEST_EXPIRY},
         )
     return {r["jti"] for r in rows}
 

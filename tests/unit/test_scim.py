@@ -161,6 +161,7 @@ class _Table:
         self.shuffle: random.Random | None = None  # the store's rows come in no set order
         self.outright: dict[str, str] = {}  # the world's, for `_held_for_good`
         self.lapsing: set[str] = set()
+        self.revoked_by: dict[str, str] = {}
 
     def token(self, org: str, name: str) -> dict[str, Any] | None:
         rows = [r for r in self.tokens if (r["org"], r["name"]) == (org, name)]
@@ -202,6 +203,8 @@ class _Table:
             p = params or {}
             live = [r for r in self.made_by(sql, p) if r["revoked_at"] is None]
             return next((r for r in live if (r["org"], r["name"]) == (p["org"], p["name"])), None)
+        if "AS holds_out" in sql:
+            return self._live_revocation(params["j"])
         if "loom.revoked_tokens" in sql:
             cutoffs = [c for s, c in self.narrowed if s in self._lifted_with(params)]
             return {"cutoff": max(cutoffs, default=None)}
@@ -220,6 +223,17 @@ class _Table:
         if "active = 0" in sql:
             return {"x": 1} if row and not row["active"] else None
         return row
+
+    def _live_revocation(self, s: str) -> dict[str, Any] | None:
+        row = {"revoked_by": self.revoked_by.get(s, ""), "lasting": False}
+        if s in self.outright:
+            lasting = s not in self.lapsing
+            return {**row, "reason": self.outright[s], "lasting": lasting, "holds_out": True}
+        if s not in self.lifted:
+            return None
+        cutoffs = [c.replace(tzinfo=None) for k, c in self.narrowed if k == s]
+        cutoff = max(cutoffs, default=_now())
+        return {**row, "reason": self.lifted[s], "holds_out": cutoff > _now()}
 
     def _lifted_with(self, params: dict[str, Any]) -> list[str]:
         return [s for s in params["s"] if self.lifted.get(s) == params["r"]]
@@ -276,9 +290,6 @@ class _World:
         self.holding = 0  # SCIM leases held now
         self.waits: list[float] = []  # what the real `wait_out` sleeps
 
-        async def has_outright_row(subject: str, *, lasting: bool = False) -> bool:
-            return subject in self.outright and not (lasting and subject in self.lapsing)
-
         async def stale_snapshot(subject: str) -> bool:
             raise AssertionError("SCIM reads the store, not this process's snapshot")
 
@@ -288,6 +299,7 @@ class _World:
             if self.fail_revoke:
                 raise RuntimeError("ClickHouse is away")
             self.outright[subject] = reason
+            self.table.revoked_by[subject] = revoked_by
             self.lapsing.discard(subject)  # replaced under FINAL
             self.lifted.pop(subject, None)
             return {}
@@ -355,7 +367,6 @@ class _World:
         monkeypatch.setattr(scim, "_held", held)
         monkeypatch.setattr(grant_claims, "service_account_change", name_claim)
         monkeypatch.setattr(revocation, "asyncio", SimpleNamespace(sleep=no_wait))
-        monkeypatch.setattr(revocation, "has_outright_row", has_outright_row)
         monkeypatch.setattr(revocation, "revoked_outright", stale_snapshot)
         monkeypatch.setattr(revocation, "revoke", revoke)
         monkeypatch.setattr(revocation, "narrow", narrow)
@@ -807,15 +818,49 @@ async def test_an_operator_revocation_survives_deactivate_and_reactivate(world) 
     assert world.outright == {"lee": "offboarded"} and world.narrowed == []
 
 
-async def test_a_time_boxed_operator_revocation_still_gets_the_deactivations_own(world) -> None:
-    # `loom revoke-token --subject lee --expires-at <tomorrow>`: lee's old
-    # tokens must not work again once it lapses, while the user is inactive.
+async def test_a_time_boxed_operator_revocation_lasts_through_deactivate_and_reactivate(
+    world,
+) -> None:
+    # `loom revoke-token --subject lee --expires-at <in two weeks>`: lee's old
+    # tokens must not work again once it lapses, nor once the user is reactivated.
     world.person("lee@example.com", "lee")
     world.outright["lee"] = "suspended"
     world.lapsing.add("lee")
+    world.table.revoked_by["lee"] = "cli:ops"
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    assert world.outright == {"lee": scim.DEACTIVATED} and world.lapsing == set()
+    assert world.outright == {"lee": "suspended"} and world.lapsing == set()
+    await scim.set_active(uid, True)
+    assert world.outright == {"lee": "suspended"} and world.narrowed == []
+    assert world.table.revoked_by["lee"] == "cli:ops"
+
+
+async def test_an_operators_cutoff_still_ahead_lasts_through_deactivate_and_reactivate(
+    world,
+) -> None:
+    # `loom revoke-token --subject lee --issued-before <in two weeks>`.
+    world.person("lee@example.com", "lee")
+    world.narrowed.append(("lee", _now() + timedelta(days=14)))
+    world.lifted["lee"] = "suspended"
+    world.table.revoked_by["lee"] = "cli:ops"
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    assert world.outright == {"lee": "suspended"} and "lee" not in world.lifted
+    await scim.set_active(uid, True)
+    assert world.outright == {"lee": "suspended"} and world.table.revoked_by["lee"] == "cli:ops"
+
+
+async def test_an_operators_past_cutoff_is_replaced_and_lifted_as_before(world) -> None:
+    world.person("lee@example.com", "lee")
+    world.narrowed.append(("lee", _now() - timedelta(hours=1)))
+    world.lifted["lee"] = "suspended"
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    assert world.outright == {"lee": scim.DEACTIVATED}
+    await scim.set_active(uid, True)
+    assert world.outright == {} and world.lifted == {
+        "lee": revocation.lifted_reason(scim.DEACTIVATED)
+    }
 
 
 async def test_a_repeated_deactivation_revokes_a_subject_whose_revocation_lapsed(world) -> None:
@@ -826,7 +871,7 @@ async def test_a_repeated_deactivation_revokes_a_subject_whose_revocation_lapsed
     world.lapsing.add("lee-ops")  # an operator time-boxed this one meanwhile
     world.outright["lee-ops"] = "suspended"
     await scim.set_active(uid, False)  # the provider sends it again
-    assert world.outright == {"lee": scim.DEACTIVATED, "lee-ops": scim.DEACTIVATED}
+    assert world.outright == {"lee": scim.DEACTIVATED, "lee-ops": "suspended"}
     assert world.lapsing == set()
 
 

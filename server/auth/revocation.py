@@ -42,8 +42,9 @@ log = logging.getLogger(__name__)
 # (`expires_at > now()`) and the table TTL (10 days past it). The TTL casts
 # `expires_at` to DateTime, whose range ends in 2106; a later value wraps to a
 # past date and ClickHouse drops the row, so the revocation silently never
-# lands. Every expiry is therefore clamped below that range.
-_LATEST_EXPIRY = datetime(2105, 12, 31)
+# lands. Every expiry is therefore clamped below that range, and a row
+# stored with this one never lapses.
+LATEST_EXPIRY = datetime(2105, 12, 31)
 
 # How far another replica's clock may run ahead of this one's: a token it
 # issues as of a later second than the cutoff would outlive the revocation.
@@ -68,10 +69,10 @@ def revocation_expiry(expires_at: datetime | None) -> datetime:
     without an expiry lands."""
     if expires_at is None:
         # A token that never expires stays revoked as long as the table can hold it.
-        return _LATEST_EXPIRY
+        return LATEST_EXPIRY
     if expires_at.tzinfo is not None:
         expires_at = expires_at.astimezone(UTC).replace(tzinfo=None)
-    return min(expires_at, _LATEST_EXPIRY)
+    return min(expires_at, LATEST_EXPIRY)
 
 
 # Last-known-good revocation set. Replaced wholesale by `refresh`;
@@ -327,21 +328,18 @@ async def _next_version(jti: str) -> int:
     return await next_version(get_client(), "loom.revoked_tokens", "jti", jti)
 
 
-async def has_outright_row(jti: str, *, lasting: bool = False) -> bool:
+async def has_outright_row(jti: str) -> bool:
     """Whether loom.revoked_tokens itself revokes `jti` outright: what a cutoff
-    written under that key replaces (an owed session revocation it does not).
-    `lasting`: only a row that never lapses counts, not a time-boxed one."""
+    written under that key replaces (an owed session revocation it does not)."""
     from server.core.ch import get_client, own_write_reads
 
-    since = _LATEST_EXPIRY if lasting else datetime(1970, 1, 1)
     with own_write_reads():
         row = await get_client().query_one(
             """
             SELECT 1 AS x FROM loom.revoked_tokens FINAL
             WHERE jti = {j:String} AND expires_at > now() AND issued_before IS NULL
-              AND expires_at >= {since:DateTime64(3, 'UTC')}
             """,
-            params={"j": jti, "since": since},
+            params={"j": jti},
         )
     return row is not None
 
