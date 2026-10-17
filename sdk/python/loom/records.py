@@ -110,6 +110,7 @@ class MemoryRecordClient:
         *,
         filters: Mapping[str, str] | None = None,
         predicates: Sequence[Mapping[str, Any]] | None = None,
+        as_of: datetime | str | None = None,
         valid_as_of: datetime | str | None = None,
         known_as_of: datetime | str | None = None,
         limit: int = 100,
@@ -130,6 +131,8 @@ class MemoryRecordClient:
             body["filters"] = {str(k): str(v) for k, v in filters.items()}
         if predicates:
             body["predicates"] = [dict(p) for p in predicates]
+        if as_of is not None:  # the journal off; valid_as_of / known_as_of need it on
+            body["as_of"] = _iso(as_of)
         if valid_as_of is not None:
             body["valid_as_of"] = _iso(valid_as_of)
         if known_as_of is not None:

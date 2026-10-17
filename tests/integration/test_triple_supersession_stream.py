@@ -27,6 +27,7 @@ from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry  # n
 from server.memory.api.models_facts import FactsListInput  # noqa: E402
 from server.memory.app.bulk_set import handle_memory_bulk_set  # noqa: E402
 from server.memory.app.facts import handle_facts_list  # noqa: E402
+from tests.integration.conftest import journal_on
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +47,8 @@ async def _objects(org: str, ns: str, valid_as_of: datetime | None) -> set[str]:
             namespace=ns,
             subject="user",
             relation="works_at",
-            valid_as_of=valid_as_of,
+            # The handler is called directly: the time goes in the active mode's field.
+            **({"valid_as_of": valid_as_of} if journal_on() else {"as_of": valid_as_of}),
             limit=10,
         )
     )

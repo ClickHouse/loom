@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 from tests.integration._resources import unique_org  # noqa: E402
 
 ORG = unique_org("bitemporal")
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.journal]
 
 
 def jan(day: int) -> str:

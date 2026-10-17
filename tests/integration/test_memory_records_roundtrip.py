@@ -155,6 +155,7 @@ async def test_record_history_keeps_both_versions_after_a_merge(ch_client) -> No
     assert len(hist.rows) >= 2, hist.rows
 
 
+@pytest.mark.journal
 async def test_a_query_at_k_matches_typed_values_and_states_as_today() -> None:
     # The probes that matched today and not at K: a boolean filter on "true", a
     # number accepted as "10", and an explicit rejected state.

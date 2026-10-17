@@ -102,6 +102,7 @@ class FactsClient:
         max_hops: int = 2,
         top_k_per_hop: int = 20,
         min_co_occur: int = 1,
+        as_of: datetime | None = None,
         valid_as_of: datetime | None = None,
         known_as_of: datetime | None = None,
         labeled: bool = False,
@@ -141,6 +142,8 @@ class FactsClient:
             "min_co_occur": min_co_occur,
             "labeled": labeled,
         }
+        if as_of is not None:  # the journal off; valid_as_of / known_as_of need it on
+            payload["as_of"] = as_of.isoformat()
         if valid_as_of is not None:
             payload["valid_as_of"] = valid_as_of.isoformat()
         if known_as_of is not None:
@@ -163,6 +166,7 @@ class FactsClient:
         max_hops: int = 3,
         top_k_per_hop: int = 20,
         min_co_occur: int = 1,
+        as_of: datetime | None = None,
         valid_as_of: datetime | None = None,
         known_as_of: datetime | None = None,
         labeled: bool = False,
@@ -188,6 +192,8 @@ class FactsClient:
             "min_co_occur": min_co_occur,
             "labeled": labeled,
         }
+        if as_of is not None:  # the journal off; valid_as_of / known_as_of need it on
+            payload["as_of"] = as_of.isoformat()
         if valid_as_of is not None:
             payload["valid_as_of"] = valid_as_of.isoformat()
         if known_as_of is not None:

@@ -34,6 +34,7 @@ import pytest
 
 from tests.integration._eventually import wait_until
 from tests.integration._resources import unique_org
+from tests.integration.conftest import journal_on
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -841,6 +842,7 @@ def test_positive_control_tenant_a_finds_its_own_canary(control_plane_url, seed,
     assert r.status_code == 200 and r.json().get("found") is True
 
 
+@pytest.mark.journal
 @pytest.mark.parametrize("temporal", ["valid_as_of", "known_as_of"])
 def test_positive_control_tenant_a_reads_its_canary_through_the_journal(
     control_plane_url, seed, tokens, temporal
@@ -861,7 +863,14 @@ def test_positive_control_tenant_a_reads_its_canary_through_the_journal(
 
 
 @pytest.mark.parametrize("who", ["b_writer", "b_viewer", "other_org"])
-@pytest.mark.parametrize("temporal", ["", "valid_as_of", "known_as_of"])
+@pytest.mark.parametrize(
+    "temporal",
+    [
+        "",
+        pytest.param("valid_as_of", marks=pytest.mark.journal),
+        pytest.param("known_as_of", marks=pytest.mark.journal),
+    ],
+)
 def test_every_read_op_against_namespace_a_leaks_nothing(
     control_plane_url, seed, tokens, who, temporal
 ) -> None:
@@ -942,7 +951,8 @@ def test_org_level_lookups_do_not_bypass_the_namespace(control_plane_url, seed, 
     row whose namespace the token cannot read."""
     now = datetime.now(UTC).isoformat()
     for who in ("b_writer", "b_viewer", "other_org"):
-        axes = ({}, {"valid_as_of": now}, {"known_as_of": now})
+        # With the journal on, the historical reads are walked too.
+        axes = ({}, {"valid_as_of": now}, {"known_as_of": now}) if journal_on() else ({},)
         for mid, extra in ((m, x) for m in seed.memory_ids for x in axes):
             r = _post(
                 control_plane_url,

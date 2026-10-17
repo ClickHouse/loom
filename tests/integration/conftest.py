@@ -6,6 +6,12 @@ cycles); `destructive` stops merges, runs OPTIMIZE or deletes whole scopes;
 `provider` needs a real embedder or LLM and skips on the fakes; `recovery`
 drives a failure and the path back from it.
 
+Modes: the server runs with the bi-temporal journal off (the default) or on
+(LOOM_MEMORY_TEMPORAL_ENABLED=true, set for the server and this suite alike). A
+test marked `journal` runs only with it on; one marked `no_journal` (what the
+journal replaces: single-axis `as_of`, the version-row rollback) only with it
+off; an unmarked test runs in both.
+
 Prerequisites: an unset LOOM_BASE_URL skips the suite; a set but unhealthy
 one fails it, because a configured server that does not answer is a broken
 environment, not a missing one. ClickHouse is reached only at an explicit
@@ -52,6 +58,15 @@ _TIERS = {
     "recovery": "drives a failure and the recovery path back from it",
 }
 _REQUEST_LOG_DEPTH = 25
+_MODES = {
+    "journal": "needs the bi-temporal journal on (LOOM_MEMORY_TEMPORAL_ENABLED=true)",
+    "no_journal": "covers what the journal replaces; runs with it off (the default)",
+}
+
+
+def journal_on() -> bool:
+    """The suite's mode: the server under test runs with the same setting."""
+    return os.environ.get("LOOM_MEMORY_TEMPORAL_ENABLED", "").strip().lower() in {"1", "true"}
 
 
 # Fixtures whose use puts a test in a tier, so the tier cannot drift from the
@@ -64,12 +79,17 @@ _TIER_BY_FIXTURE = {
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    for name, doc in _TIERS.items():
+    for name, doc in {**_TIERS, **_MODES}.items():
         config.addinivalue_line("markers", f"{name}: {doc}")
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    on = journal_on()
     for item in items:
+        if "journal" in item.keywords and not on:
+            item.add_marker(pytest.mark.skip(reason="needs LOOM_MEMORY_TEMPORAL_ENABLED=true"))
+        if "no_journal" in item.keywords and on:
+            item.add_marker(pytest.mark.skip(reason="what the journal replaces; it is on"))
         for fixture, tier in _TIER_BY_FIXTURE.items():
             if fixture in getattr(item, "fixturenames", ()):
                 item.add_marker(tier)

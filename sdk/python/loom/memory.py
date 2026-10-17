@@ -585,6 +585,7 @@ class MemoryClient:
         session_id: str | None = None,
         run_id: str | None = None,
         agent_id: str | None = None,
+        as_of: datetime | None = None,
         valid_as_of: datetime | None = None,
         known_as_of: datetime | None = None,
         if_version: int | None = None,
@@ -599,10 +600,14 @@ class MemoryClient:
         served). Default False: the exact row, with `canonical_key` naming
         the canonical when the row is a duplicate.
 
-        `valid_as_of` / `known_as_of` read the key bi-temporally: the
-        assertions that applied at valid time V as Loom had recorded them at
-        knowledge time K (either alone fills the other: K = now, or V = K).
-        The response then carries `temporal` (the cutoff) and `assertions`.
+        `as_of` replays valid time (not transaction time): the row that was
+        true at that real-world moment, filtered by
+        `coalesce(valid_at, created_at) <= as_of`. With the server's bi-temporal
+        journal on (LOOM_MEMORY_TEMPORAL_ENABLED), `valid_as_of` / `known_as_of`
+        take its place: the assertions that applied at valid time V as Loom had
+        recorded them at knowledge time K (either alone fills the other: K = now,
+        or V = K), and the response carries `temporal` (the cutoff) and
+        `assertions`. Each mode ignores the other's arguments.
 
         `fields` whitelists the output fields — e.g.
         `["value", "tags", "status"]` — so the response carries only
@@ -612,7 +617,7 @@ class MemoryClient:
             user_id, session_id, run_id=run_id, agent_id=agent_id
         )
         payload["memory_key"] = memory_key
-        _temporal(payload, valid_as_of, known_as_of)
+        _temporal(payload, valid_as_of, known_as_of, as_of)
         if fields:
             payload["fields"] = list(fields)
         if if_version is not None:
@@ -765,6 +770,8 @@ class MemoryClient:
         user_id: str | None = None,
         session_id: str | None = None,
         run_id: str | None = None,
+        as_of: datetime | None = None,
+        as_of_basis: str | None = None,
         valid_as_of: datetime | None = None,
         known_as_of: datetime | None = None,
         tags: builtins.list[str] | None = None,
@@ -812,7 +819,9 @@ class MemoryClient:
             payload["namespace_scope"] = namespace_scope
         if read_scope != "namespace":
             payload["read_scope"] = read_scope
-        _temporal(payload, valid_as_of, known_as_of)
+        _temporal(payload, valid_as_of, known_as_of, as_of)
+        if as_of_basis is not None:
+            payload["as_of_basis"] = as_of_basis
         if tags:
             payload["tags"] = list(tags)
             if tags_soft:
@@ -1244,6 +1253,7 @@ class MemoryClient:
         session_id: str | None = None,
         sort_by: str = "recency",
         quotas: dict[str, int] | None = None,
+        as_of: datetime | None = None,
         valid_as_of: datetime | None = None,
         known_as_of: datetime | None = None,
         include_duplicates: bool = False,
@@ -1285,7 +1295,7 @@ class MemoryClient:
             payload["memory_type"] = memory_type
         if quotas:
             payload["quotas"] = quotas
-        _temporal(payload, valid_as_of, known_as_of)
+        _temporal(payload, valid_as_of, known_as_of, as_of)
         if include_duplicates:
             payload["include_duplicates"] = True
         if tags:
@@ -1449,6 +1459,7 @@ class MemoryClient:
         self,
         memory_id: str,
         *,
+        as_of: datetime | None = None,
         valid_as_of: datetime | None = None,
         known_as_of: datetime | None = None,
     ) -> dict[str, Any] | None:
@@ -1461,7 +1472,7 @@ class MemoryClient:
         `valid_as_of` / `known_as_of`: a bi-temporal read — see `get`.
         """
         payload: dict[str, Any] = {"org": self._agent.org, "memory_id": memory_id}
-        _temporal(payload, valid_as_of, known_as_of)
+        _temporal(payload, valid_as_of, known_as_of, as_of)
         result = await self._agent.transport.post(
             "/v1/memory.get_by_id",
             payload,
@@ -2042,6 +2053,7 @@ class MemoryClient:
         demote_tags: builtins.list[str] | None = None,
         reinforcement_weight: float | None = None,
         reinforcement_half_life_days: float | None = None,
+        as_of: datetime | None = None,
         valid_as_of: datetime | None = None,
         known_as_of: datetime | None = None,
         include_tags: bool = False,
@@ -2128,6 +2140,7 @@ class MemoryClient:
             demote_tags=demote_tags,
             reinforcement_weight=reinforcement_weight,
             reinforcement_half_life_days=reinforcement_half_life_days,
+            as_of=as_of,
             valid_as_of=valid_as_of,
             known_as_of=known_as_of,
             bodies=bodies,
@@ -2281,8 +2294,16 @@ class MemoryClient:
 
 
 def _temporal(
-    payload: dict[str, Any], valid_as_of: datetime | None, known_as_of: datetime | None
+    payload: dict[str, Any],
+    valid_as_of: datetime | None,
+    known_as_of: datetime | None,
+    as_of: datetime | None = None,
 ) -> None:
+    """The read's time arguments. `as_of` is the single-axis replay of a server with
+    the bi-temporal journal off; `valid_as_of` / `known_as_of` need it on. A server
+    ignores the other side's (and names it in `ignored_args`)."""
+    if as_of is not None:
+        payload["as_of"] = as_of.isoformat()
     if valid_as_of is not None:
         payload["valid_as_of"] = valid_as_of.isoformat()
     if known_as_of is not None:
