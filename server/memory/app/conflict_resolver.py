@@ -304,7 +304,7 @@ async def _flag(org: str, row: Any, peer: Any) -> bool:
         and str(row.memory_id) in peer.conflict_with
     ):
         # Already on the review queue together; the peer's side is judged all the same.
-        await queue.stamp_judged(_queue_key(peer))
+        await queue.stamp_judged(_queue_key(org, peer))
         return False
     landed = await mark_peers_conflicted(
         org=org,
@@ -317,14 +317,18 @@ async def _flag(org: str, row: Any, peer: Any) -> bool:
         return False
     # The pair is judged: the peer's flag is not an unjudged one to re-check, the other
     # way round, next pass.
-    await queue.stamp_judged(_queue_key(peer))
+    await queue.stamp_judged(_queue_key(org, peer))
     return True
 
 
-def _queue_key(row: Any) -> dict[str, Any]:
-    """A memory row as the queue row `stamp_judged` takes."""
-    cols = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "version")
-    return {c: getattr(row, c) for c in cols} | {"content_sha256": str(row.content_sha256 or "")}
+def _queue_key(org: str, row: Any) -> dict[str, Any]:
+    """A memory row of `org` as the queue row `stamp_judged` takes."""
+    cols = ("namespace", "agent", "user_id", "session_id", "memory_key", "version")
+    return (
+        {"org": org}
+        | {c: getattr(row, c) for c in cols}
+        | {"content_sha256": str(row.content_sha256 or "")}
+    )
 
 
 async def _unlink(org: str, row: Any, other_id: str) -> bool:
@@ -510,6 +514,7 @@ async def resolve_row(
         limit=int(settings.memory_conflict_resolver_max_peers),
         prefer=frozenset(str(x) for x in row.conflict_with),
     )
+    queued_id = str(row.memory_id)
     if peers:
         row, peers = await _newest_as_new(org, row, peers)
         row, peers = await _still_unprotected(org, row, peers)
@@ -525,6 +530,9 @@ async def resolve_row(
         )
         if not settled:
             return  # the org came under erasure: nothing written, the row stays owed
+        if str(row.memory_id) != queued_id:
+            # Judged with a newer flagged peer as NEW: that write is judged too.
+            await queue.stamp_judged(_queue_key(org, row))
     await queue.stamp_judged(q)
 
 
@@ -556,8 +564,9 @@ async def _newest_as_new(
         return row, peers
     top = max(later, key=lambda p: order[str(p["memory_id"])])
     new = await _head(org, str(top["memory_id"]))
-    if not _holds(new, str(row.namespace), str(top["content_sha256"])):
-        return row, peers  # changed since the cluster read: judged as queued
+    if not _holds(new, str(row.namespace), str(top["content_sha256"])) or new.pinned:
+        # Changed since the cluster read, or pinned (never acted on): judged as queued.
+        return row, peers
     as_peer = {
         "memory_id": str(row.memory_id),
         "agent": str(row.agent),

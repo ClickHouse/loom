@@ -769,6 +769,17 @@ async def test_a_recheck_of_the_older_side_of_a_flag_judges_the_newer_as_new(
     assert rest[0]["content_sha256"] == "sha-new" and rest[0]["similarity"] == 0.9
     # The newer side, or a row with no later flagged peer, is judged as queued.
     assert await resolver._newest_as_new("o", newer, peers[1:]) == (newer, peers[1:])
+    # A pinned newer row is never acted on: the row stays NEW.
+    newer.pinned = True
+    assert await resolver._newest_as_new("o", older, peers) == (older, peers)
+
+
+async def test_a_judgement_with_the_newer_side_as_new_stamps_both_rows(row_env: NS) -> None:
+    row_env.mem.conflict_with = ["m2"]
+    row_env.asserted = {"m1": 1_000, "m2": 2_000}  # the flagged peer is the newer
+    row_env.heads["m2"].memory_key = "office_town"
+    await _resolve()
+    assert sorted(row_env.stamped) == ["office_city", "office_town"]
 
 
 # --- the pass ---------------------------------------------------------------------------------
