@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from server.auth import revocation
+from tests.unit.revocation_fakes import revocation_read
 
 
 class _Table:
@@ -29,9 +30,7 @@ class _Table:
         return [r for k, r in self.rows.items() if keys is None or k in keys]
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
-        assert "max(version)" in sql
-        row = self.rows.get(params["j"])
-        return {"v": row.get("version", 0) if row else 0}
+        return revocation_read(list(self.rows.values()), sql, params)
 
 
 @pytest.fixture
@@ -271,14 +270,11 @@ def test_a_narrowing_elsewhere_wins_over_the_outright_revoke_made_here(monkeypat
     assert not revocation.is_revoked("lee", issued_at=new)
 
 
-def test_a_host_clock_behind_still_writes_past_the_newest_row(monkeypatch, table) -> None:
-    """Under FINAL the highest version wins: a narrowing from a host running
-    10 s fast must not outvote a deactivation written after it elsewhere."""
-    real = time.time_ns
-    monkeypatch.setattr(revocation.time, "time_ns", lambda: real() + 10 * 10**9)
-    asyncio.run(revocation.revoke("lee", issued_before=datetime.now(UTC), reason="lifted"))
-    fast = table.rows["lee"]["version"]
-    monkeypatch.setattr(revocation.time, "time_ns", real)  # the next host's clock is right
+def test_a_revoke_writes_past_a_row_from_a_clock_ahead(table) -> None:
+    """Under FINAL the highest version wins: a narrowing written 10 s ahead of
+    the clock (a host running fast) must not outvote a later deactivation."""
+    fast = time.time_ns() + 10 * 10**9
+    table.rows["lee"] = {"jti": "lee", "issued_before": datetime.now(UTC), "version": fast}
     asyncio.run(revocation.revoke("lee", reason="deactivated"))
     assert table.rows["lee"]["version"] > fast
     asyncio.run(revocation.refresh())

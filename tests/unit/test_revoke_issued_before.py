@@ -25,6 +25,7 @@ import pytest
 from server import cli
 from server.auth import revocation
 from server.auth.jwt import TokenError, mint_token, new_jti, verify_token
+from tests.unit.revocation_fakes import revocation_read
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
@@ -112,9 +113,7 @@ class _FakeCH:
         self.disconnected += 1
 
     async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
-        # The newest version a revoke writes past; nothing else is read by key here.
-        rows = [r for r in self.rows if r["jti"] == (params or {}).get("j")]
-        return {"v": max((r.get("version", 0) for r in rows), default=0)} if "max(" in sql else None
+        return revocation_read(self.rows, sql, params)
 
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
         self.inserts.append((table, rows))
@@ -264,9 +263,7 @@ class _WriteOnlyCH:
         self.inserted: list[dict[str, Any]] = []
 
     async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
-        # The newest version a revoke writes past; nothing else is read by key here.
-        rows = [r for r in self.inserted if r["jti"] == (params or {}).get("j")]
-        return {"v": max((r.get("version", 0) for r in rows), default=0)} if "max(" in sql else None
+        return revocation_read(self.inserted, sql, params)
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserted.extend(rows)
@@ -319,7 +316,9 @@ def test_a_local_revoke_does_not_pretend_the_list_is_loaded(
 def test_cli_warns_when_a_cutoff_replaces_an_outright_revocation(
     fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    asyncio.run(revocation.revoke("alice", reason="offboarded"))
+    # Written by another process: this one's snapshot does not hold it.
+    never = datetime(2105, 12, 31)
+    fake_ch.rows.append({"jti": "alice", "issued_before": None, "expires_at": never, "version": 1})
     rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", "2026-09-17T16:30:00Z"])
     assert rc == 0 and "revoked outright" in capsys.readouterr().err
     cli.main(["revoke-token", "--subject", "bob", "--issued-before", "2026-09-17T16:30:00Z"])

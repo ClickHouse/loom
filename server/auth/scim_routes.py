@@ -13,6 +13,8 @@ import hmac
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -137,33 +139,46 @@ def patched_active(body: dict[str, Any]) -> bool | None:
 
 def patched_names(body: dict[str, Any]) -> tuple[str | None, str | None]:
     """The userName and the primary email a PatchOp leaves, each None when it
-    does not touch it. Call after `patched_active`, which checks the shape."""
+    does not touch it. Only the primary address counts: another entry may be
+    added, changed or removed. Call after `patched_active`, which checks the shape."""
     user_name = email = None
     for op in body["Operations"]:
+        kind = str(op.get("op") or "").lower()
         for attr, value in _attributes(op):
-            if attr != "username" and not attr.startswith("emails"):
-                continue
-            if not _replaces(op):
-                raise ScimError(400, "the userName and email cannot be removed", "mutability")
             if attr == "username":
+                if kind == "remove":
+                    raise ScimError(400, "the userName cannot be removed", "mutability")
                 user_name = value if isinstance(value, str) else None
-            else:
-                email = _email_in(attr, value) or email
+            elif attr.startswith("emails"):
+                email = _primary_written(kind, attr, value) or email
     return user_name, email
 
 
-def _email_in(attr: str, value: Any) -> str | None:
-    """The address an `emails…` operation writes: a whole list, one entry
-    (`emails[type eq "work"]`) or its `.value`; None for another sub-attribute
-    (`.type`, `.primary`), which changes no address."""
-    sub = attr.rsplit("]", 1)[-1] if "[" in attr else attr.removeprefix("emails")
-    if sub not in ("", ".value"):
+# An `emails[…]` filter that picks the address Loom keys on.
+_PRIMARY_FILTER = re.compile(r'type\s+eq\s+"work"|primary\s+eq\s+true')
+
+
+def _primary_written(kind: str, attr: str, value: Any) -> str | None:
+    """The primary address an `emails…` operation writes, or None when it
+    leaves that alone: another entry (`emails[type eq "other"]`), another
+    sub-attribute (`.type`), or an `add` to the list (it appends, RFC 7644
+    §3.5.2.1) of no primary entry. Removing the primary is refused."""
+    if "[" in attr:
+        if not _PRIMARY_FILTER.search(attr) or attr.rsplit("]", 1)[-1] not in ("", ".value"):
+            return None
+        if kind == "remove":
+            raise ScimError(400, "the primary email cannot be removed", "mutability")
+        if isinstance(value, dict):
+            value = value.get("value")
+        return value if isinstance(value, str) and value.strip() else None
+    if attr != "emails":
         return None
-    if isinstance(value, dict):
-        value = value.get("value")
-    if isinstance(value, list):
-        return _primary_email(value) or None
-    return value if isinstance(value, str) and value.strip() else None
+    if kind == "remove":
+        raise ScimError(400, "the primary email cannot be removed", "mutability")
+    items = value if isinstance(value, list) else [value]
+    if kind == "add":
+        items = [e for e in items if isinstance(e, dict) and e.get("primary") is True]
+    return _primary_email(items) or None
 
 
 def _int_param(request: Request, name: str, default: int) -> int:
@@ -312,13 +327,14 @@ async def create_user(request: Request) -> JSONResponse:
 @router.put("/Users/{uid}")
 async def replace_user(uid: str, request: Request) -> JSONResponse:
     body = await _body(request)
+    active = parse_active(body["active"]) if "active" in body else None
     row = await scim.get(uid)
     if row is None:
         raise _not_found()
-    name, email = user_name_and_email(body)
-    _refuse_another_email(row, email)
-    active = parse_active(body["active"]) if "active" in body else None
-    row = await _update(uid, active, name) or row
+    async with _deactivating_anyway(uid, active):
+        name, email = user_name_and_email(body)
+        _refuse_another_email(row, email)
+        row = await _update(uid, active, name) or row
     return _answer(_resource(request, row))
 
 
@@ -326,17 +342,31 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
 async def patch_user(uid: str, request: Request) -> JSONResponse:
     body = await _body(request)
     active = patched_active(body)
-    name, email = patched_names(body)
     row = await scim.get(uid)
     if row is None:
         raise _not_found()
-    if email is not None:
-        _refuse_another_email(row, email)
-    elif name is not None and row["user_name"] == row["email"]:
-        _refuse_another_email(row, name)  # the userName may be where the email came from
-    if active is not None or name is not None:
-        row = await _update(uid, active, name) or row
+    async with _deactivating_anyway(uid, active):
+        name, email = patched_names(body)
+        if email is not None:
+            _refuse_another_email(row, email)
+        elif name is not None and row["user_name"] == row["email"]:
+            _refuse_another_email(row, name)  # the userName may be where the email came from
+        if active is not None or name is not None:
+            row = await _update(uid, active, name) or row
     return _answer(_resource(request, row))
+
+
+@asynccontextmanager
+async def _deactivating_anyway(uid: str, active: bool | None) -> AsyncIterator[None]:
+    """Fail closed: a request refused for another attribute still deactivates.
+    A provider batches a leaver's changes into one request and does not retry
+    a 400, so dropping its `active: false` would leave them active."""
+    try:
+        yield
+    except ScimError:
+        if active is False:
+            await scim.set_active(uid, False)
+        raise
 
 
 async def _update(uid: str, active: bool | None, name: str | None) -> dict[str, Any] | None:

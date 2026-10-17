@@ -303,17 +303,26 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
 
 
 async def _next_version(jti: str) -> int:
-    """A version past the newest row of `jti`, whichever host's clock wrote it:
-    under FINAL the highest version wins, not the latest write, so one host
-    running fast must not outvote a later revocation from another."""
+    from server.core.ch import get_client
+    from server.core.versions import next_version
+
+    return await next_version(get_client(), "loom.revoked_tokens", "jti", jti)
+
+
+async def has_outright_row(jti: str) -> bool:
+    """Whether loom.revoked_tokens itself revokes `jti` outright: what a cutoff
+    written under that key replaces (an owed session revocation it does not)."""
     from server.core.ch import get_client, own_write_reads
 
     with own_write_reads():
         row = await get_client().query_one(
-            "SELECT max(version) AS v FROM loom.revoked_tokens WHERE jti = {j:String}",
+            """
+            SELECT 1 AS x FROM loom.revoked_tokens FINAL
+            WHERE jti = {j:String} AND expires_at > now() AND issued_before IS NULL
+            """,
             params={"j": jti},
         )
-    return max(time.time_ns(), int((row or {}).get("v") or 0) + 1)
+    return row is not None
 
 
 async def narrow(key: str, *, reason: str, issued_before: datetime, revoked_by: str) -> bool:

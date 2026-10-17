@@ -152,9 +152,14 @@ class _Table:
             return {"n": len(self.live())}
         if "user_name =" in sql:
             return next((r for r in self.live() if r["user_name"] == params["n"]), None)
-        row = self.newest(params["id"]) if params else None
         if "max(version)" in sql:
-            return {"v": row["version"] if row else 0}
+            newest = self.newest(params["k"])
+            return {"v": max(time.time_ns(), newest["version"] + 1 if newest else 0)}
+        if "has(subjects" in sql:
+            heads = [self.newest(uid) for uid in {r["id"] for r in self.rows} - {params["id"]}]
+            held = [r for r in heads if r and not r["active"] and params["s"] in r["subjects"]]
+            return {"x": 1} if held else None
+        row = self.newest(params["id"]) if params else None
         if "active = 0" in sql:
             return {"x": 1} if row and not row["active"] else None
         return row
@@ -678,3 +683,58 @@ def test_a_username_another_user_holds_is_refused(client: TestClient, world) -> 
     }
     r = client.patch(f"/scim/v2/Users/{kim.json()['id']}", json=rename)
     assert r.status_code == 409 and r.json()["scimType"] == "uniqueness"
+
+
+async def test_reactivating_one_user_keeps_a_subject_another_inactive_user_reaches(world) -> None:
+    world.person("a@example.com", "alice")
+    world.person("b@example.com", "alice")  # two addresses, one subject
+    a, b = await _create("a@example.com"), await _create("b@example.com")
+    await scim.set_active(a, False)
+    await scim.set_active(b, False)  # alice is already revoked, and B lists her
+    await scim.set_active(a, True)
+    assert world.outright == {"alice": scim.DEACTIVATED} and world.narrowed == []
+    await scim.set_active(b, True)  # the last one holding her lets her go
+    assert world.outright == {} and [s for s, _ in world.narrowed] == ["alice"]
+
+
+def test_a_patch_refused_for_an_email_still_deactivates(client: TestClient, world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    ops = [
+        {"op": "replace", "path": "active", "value": False},
+        {"op": "replace", "path": "userName", "value": "new@example.com"},
+    ]
+    r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability"
+    assert world.outright == {"lee": scim.DEACTIVATED}  # fail closed
+    assert client.get(f"/scim/v2/Users/{uid}").json()["active"] is False
+
+
+def test_a_put_refused_for_an_email_still_deactivates(client: TestClient, world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    body = {"userName": "lee@example.com", "emails": [{"value": "b@example.com"}], "active": False}
+    r = client.put(f"/scim/v2/Users/{uid}", json=body)
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability"
+    assert world.outright == {"lee": scim.DEACTIVATED}
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        # A leaver's other address changed in the same sync cycle as the disable.
+        {"op": "add", "path": 'emails[type eq "other"].value', "value": "lee@home.example"},
+        {"op": "remove", "path": 'emails[type eq "other"]'},
+        {"op": "add", "path": "emails", "value": [{"value": "x@home.example", "type": "home"}]},
+    ],
+)
+def test_another_address_changing_beside_a_disable_is_fine(
+    client: TestClient, world, other: dict[str, Any]
+) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    ops = [{"op": "replace", "path": "active", "value": False}, other]
+    r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
+    assert r.status_code == 200 and r.json()["active"] is False
+    assert r.json()["emails"] == [{"value": "lee@example.com", "primary": True}]
+    assert world.outright == {"lee": scim.DEACTIVATED}

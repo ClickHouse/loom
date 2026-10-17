@@ -34,6 +34,7 @@ from typing import Any
 from server.auth import login, revocation
 from server.core import leases
 from server.core.ch import get_client, own_write_reads
+from server.core.versions import next_version
 from server.observability import audit
 from server.settings import settings
 
@@ -128,7 +129,7 @@ async def create(user_name: str, email: str, *, active: bool) -> dict[str, Any]:
     """Record the SCIM user for `email`. Raises Exists when one is live. A
     deleted one comes back, still deactivated unless `active`."""
     uid = user_id(email)
-    async with _held(uid):
+    async with _held(uid), _held(_name_key(user_name)):
         row = await _row(uid)
         if row is not None and not row["deleted"]:
             raise Exists
@@ -159,11 +160,12 @@ async def update(
         row = await get(uid)
         if row is None:
             return None
-        changes: dict[str, Any] = {}
-        if user_name and normalized(user_name) != row["user_name"]:
+        keep = bool(row["active"]) if active is None else active
+        if not user_name or normalized(user_name) == row["user_name"]:
+            return await _set_active(row, keep)
+        async with _held(_name_key(user_name)):
             await _refuse_taken(user_name, uid)
-            changes["user_name"] = normalized(user_name)
-        return await _set_active(row, bool(row["active"]) if active is None else active, **changes)
+            return await _set_active(row, keep, user_name=normalized(user_name))
 
 
 async def delete(uid: str) -> bool:
@@ -178,15 +180,23 @@ async def delete(uid: str) -> bool:
 
 
 async def _refuse_taken(user_name: str, uid: str) -> None:
-    """Raise Exists when another live user holds `user_name`: a filter must find one."""
-    other = await find(user_name)
+    """Raise Exists when another live user holds `user_name`: a filter must
+    find one. Run under the userName's lease, so two creates cannot both pass."""
+    with own_write_reads():
+        other = await find(user_name)
     if other is not None and other["id"] != uid:
         raise Exists
 
 
+def _name_key(user_name: str) -> str:
+    # Hashed like the id: the lease store is no place for an address.
+    return "name:" + user_id(user_name)
+
+
 @asynccontextmanager
-async def _held(uid: str) -> AsyncIterator[None]:
-    async with leases.holding(f"scim-user:{uid}", ttl_s=_LEASE_TTL_S, wait_s=_LEASE_WAIT_S) as held:
+async def _held(key: str) -> AsyncIterator[None]:
+    """A user's lease (`key` its id), or a userName's (`_name_key`)."""
+    async with leases.holding(f"scim-user:{key}", ttl_s=_LEASE_TTL_S, wait_s=_LEASE_WAIT_S) as held:
         if not held:
             raise Busy
         yield
@@ -204,7 +214,7 @@ async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict
     was_active = bool(row["active"])
     new = {**row, **changes, "active": int(active)}
     if active and not was_active:
-        await _lift(row["subjects"])
+        await _lift(row["id"], row["subjects"])
     elif not active:
         found = await _subjects(row["email"])
         known = set(row["subjects"])
@@ -285,25 +295,38 @@ async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
     return [r["org"] for r in rows]
 
 
-async def _lift(subjects: list[str]) -> None:
+async def _lift(uid: str, subjects: list[str]) -> None:
     """Narrow the deactivation's revocations to the tokens issued so far, and
-    wait out this second: a token issued in it would fall before the cutoff."""
+    wait out this second: a token issued in it would fall before the cutoff.
+    A subject another deactivated user also reaches stays revoked: lifting it
+    would let that one back in."""
     cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+    lifted = False
     for subject in subjects:
+        if await _held_by_another_inactive(uid, subject):
+            continue
         await revocation.narrow(subject, reason=DEACTIVATED, issued_before=cutoff, revoked_by=_BY)
-    if subjects:
+        lifted = True
+    if lifted:
         await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
+
+
+async def _held_by_another_inactive(uid: str, subject: str) -> bool:
+    with own_write_reads():
+        row = await get_client().query_one(
+            f"""
+            SELECT 1 AS x FROM {TABLE} FINAL
+            WHERE active = 0 AND id != {{id:String}} AND has(subjects, {{s:String}})
+            LIMIT 1
+            """,
+            params={"id": uid, "s": subject},
+        )
+    return row is not None
 
 
 async def _write(row: dict[str, Any]) -> None:
     ch = get_client()
-    # Past the user's newest row, whichever replica's clock wrote it.
-    with own_write_reads():
-        newest = await ch.query_one(
-            f"SELECT max(version) AS v FROM {TABLE} WHERE id = {{id:String}}",
-            params={"id": row["id"]},
-        )
-    version = max(time.time_ns(), int((newest or {}).get("v") or 0) + 1)
+    version = await next_version(ch, TABLE, "id", row["id"])
     row.update(updated_at=datetime.now(UTC), version=version)
     await ch.insert(TABLE, [{c: row[c] for c in COLUMNS}])
 

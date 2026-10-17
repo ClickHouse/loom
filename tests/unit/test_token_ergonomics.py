@@ -31,6 +31,7 @@ import server.cli as cli
 from server.auth import revocation
 from server.cli import access
 from server.settings import settings
+from tests.unit.revocation_fakes import revocation_read
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
@@ -171,9 +172,7 @@ class _FakeCH:
         self.disconnected += 1
 
     async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any] | None:
-        # The newest version a revoke writes past; nothing else is read by key here.
-        rows = [r for r in self.rows if r["jti"] == (params or {}).get("j")]
-        return {"v": max((r.get("version", 0) for r in rows), default=0)} if "max(" in sql else None
+        return revocation_read(self.rows, sql, params)
 
     async def insert(self, table: str, rows: list[dict[str, Any]], *a: Any, **kw: Any) -> None:
         self.inserts.append((table, rows))

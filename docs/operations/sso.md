@@ -323,10 +323,13 @@ What Loom does with each request:
   SCIM. A second create of the same email, or of a `userName` another user
   has, answers 409.
 - **Updating** a user keeps a new `userName`, unless another user has it
-  (409). A new email is refused (400
+  (409). A new primary email (the primary or work entry) is refused (400
   `mutability`, by `PUT` or `PATCH`): the person would sign in to another
-  account, which a later deactivation of the old email would miss. Change an
-  address by deleting the user at the provider and creating it again.
+  account, which a later deactivation of the old email would miss. Other
+  addresses may be added, changed or removed. Change the primary address by
+  deleting the user at the provider and creating it again. A refused request
+  that also sets `active: false` still deactivates: providers send a leaver's
+  changes together and do not retry a 400.
 - **Deactivating** (`active: false` by `PATCH` or `PUT`, or a `DELETE`)
   revokes outright every subject an SSO sign-in with the email could reach
   (each SSO account naming it and each password account linked to it, in any

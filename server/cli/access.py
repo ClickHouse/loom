@@ -308,7 +308,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             return _print_revocations(await revocation.list_active(), as_json=args.json)
         token_id = args.jti or args.subject
         by = f"cli:{getpass.getuser()}"
-        if issued_before is not None and await revocation.revoked_outright(token_id):
+        if issued_before is not None and await revocation.has_outright_row(token_id):
             print(
                 f"  ! {token_id!r} is revoked outright; this replaces that, and its tokens "
                 "issued after the cutoff work again",
