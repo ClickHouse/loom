@@ -1,7 +1,9 @@
 """task.create calls with one idempotency key, on live ClickHouse: they run
 one at a time under a lease on the key, so a racing retry answers with the
 task the first one stored, and a create after the task was erased lands a new
-one. The coverage-watch ready event's delivery works the same way.
+one. Each insert also carries the key's dedup token, which the previous build
+relies on instead of the lease. The coverage-watch ready event's delivery works
+the same way.
 
 Skips cleanly when LOOM_CH_HOST is unset.
 """
@@ -150,8 +152,9 @@ async def _erase_tasks(ch: Any, org: str, namespace: str) -> None:
 
 @pytest.mark.asyncio
 async def test_a_create_after_its_task_was_erased_lands_a_new_task(ch: Any) -> None:
-    # ClickHouse keeps an insert's dedup token after DELETE, so the second
-    # create's insert is dropped although no task holds the key any more.
+    # The second create holds the key's lease and finds no task under it. ClickHouse
+    # keeps an insert's dedup token after DELETE, so its insert under the key's token
+    # is dropped; it reads back no task and lands it again under a fresh token.
     org = f"itest-erased-{uuid.uuid4().hex[:8]}"
     ident = {"org": org, "namespace": "private", "agent": "admin"}
     await inboxes.handle_inbox_register(
@@ -189,8 +192,9 @@ async def test_a_create_after_its_task_was_erased_lands_a_new_task(ch: Any) -> N
 
 @pytest.mark.asyncio
 async def test_racing_creates_after_an_erasure_land_one_task(ch: Any) -> None:
-    # Every racer's first insert is dropped (the token outlived the erased
-    # task); their second inserts must still dedup one another.
+    # The racers take the key's lease one at a time. The first finds no task; its
+    # insert under the key's token is dropped (the token outlived the erased task),
+    # so it lands again under a fresh token. The others find that task.
     org = f"itest-erased-{uuid.uuid4().hex[:8]}"
     ident = {"org": org, "namespace": "private", "agent": "admin"}
     await inboxes.handle_inbox_register(
@@ -226,9 +230,10 @@ async def test_racing_creates_after_an_erasure_land_one_task(ch: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_a_new_watch_after_the_namespace_was_erased_posts_its_ready_event(ch: Any) -> None:
-    # The ready event's id is fixed per (org, namespace, commit, inbox), and
-    # ClickHouse keeps a dedup token after DELETE: the second watch's event
-    # must not be dropped as a repeat of the erased one's.
+    # The ready event's id is fixed per (org, namespace, commit, inbox) and is its
+    # insert's dedup token, which ClickHouse keeps after DELETE: the second watch's
+    # event is dropped as a repeat of the erased one's, read back missing, and
+    # inserted again under a fresh token.
     from server.code.app import watches as svc
     from server.code.store import coverage_watches as wrepo
     from server.erasure.store.mutations import count_then_mutate
@@ -278,7 +283,8 @@ async def _late(i: int, call: Any, *args: Any) -> Any:
 
 @pytest.mark.asyncio
 async def test_racing_creates_store_one(ch: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The original task was erased, then two retries race, each insert slow.
+    # The original task was erased, then two retries race, each insert slow: the
+    # lease makes the second wait and find the task the first one stored.
     org = f"itest-erased-{uuid.uuid4().hex[:8]}"
     ident = {"org": org, "namespace": "private", "agent": "admin"}
     await inboxes.handle_inbox_register(
