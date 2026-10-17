@@ -583,7 +583,18 @@ async def test_a_row_the_provider_refuses_does_not_stop_another_orgs_update(
     assert [r["mark"] for r in x] == [2], "refused: stamped, it holds no place next pass"
 
 
-async def test_an_org_under_erasure_is_left_out_of_the_queue(ch, wired) -> None:
+@pytest.mark.parametrize(
+    ("status", "reason", "left_out"),
+    [
+        ("in_progress", "", True),
+        ("failed", "step erase_memory failed closed", True),  # the recovery worker retries it
+        ("failed", "max_attempts (5) exceeded", False),  # abandoned: never runs again
+        ("completed", "", False),
+    ],
+)
+async def test_an_org_under_erasure_is_left_out_of_the_queue(
+    ch, wired, status: str, reason: str, left_out: bool
+) -> None:
     import uuid
     from datetime import UTC, datetime
 
@@ -602,12 +613,14 @@ async def test_an_org_under_erasure_is_left_out_of_the_queue(ch, wired) -> None:
                 "scope_type": "org",
                 "scope_value": org,
                 "requester": "test",
-                "status": "in_progress",
+                "status": status,
+                "failure_reason": reason,
                 "requested_at": now,
                 "last_checkpoint_at": now,
                 "version": 1,
             }
         ],
     )
-    assert await queue.owed_rows(limit=10) == []
-    assert await queue.queued_namespaces() == []
+    owed = [r["memory_key"] for r in await queue.owed_rows(limit=10)]
+    assert owed == ([] if left_out else ["office_location"])
+    assert (await queue.queued_namespaces() == []) is left_out

@@ -40,17 +40,22 @@ _LIVE_VECTOR = """tombstoned_at IS NULL
           AND status IN ('active', 'conflicted')
           AND embedding_dim > 0"""
 
+# The failure_reason of an abandoned erasure saga, which never runs again
+# (erasure.store.ledger.ABANDONED_REASON_PREFIX; this store may not import it).
+ERASURE_ABANDONED_PREFIX = "max_attempts ("
+
 # Rows the resolver leaves out of its queue, so they hold no place in it: a namespace
 # soft-deleted by namespace.delete (its data stays in place; an unregistered namespace
-# has no directory row and is live), an org with an erasure underway (its saga deletes
-# what the resolver would write a new version of), and the namespaces in `capped`
-# (over their daily cost cap, read by the worker).
-_NOT_SKIPPED = """(org, namespace) NOT IN (
+# has no directory row and is live), an org with an erasure queued, running or failed
+# and due a retry (its saga deletes what the resolver would write a new version of),
+# and the namespaces in `capped` (over their daily cost cap, read by the worker).
+_NOT_SKIPPED = f"""(org, namespace) NOT IN (
               SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active)
           AND org NOT IN (
               SELECT org FROM loom.erasure_requests FINAL
-              WHERE status IN ('queued', 'in_progress'))
-          AND (org, namespace) NOT IN {capped:Array(Tuple(String, String))}"""
+              WHERE status IN ('queued', 'in_progress', 'failed')
+                AND NOT startsWith(failure_reason, '{ERASURE_ABANDONED_PREFIX}'))
+          AND (org, namespace) NOT IN {{capped:Array(Tuple(String, String))}}"""
 
 _OWED = f"""conflict_checked_at < toDateTime(2, 'UTC')
           AND (toUnixTimestamp(conflict_checked_at) = 1

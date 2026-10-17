@@ -7,10 +7,10 @@ Each pass reads up to `memory_conflict_resolver_batch` marked rows, then up to
 judged (flags from the cosine check, or from an older build's judge), so a false flag
 is cleared once. Both take rows in turns across namespaces, so one namespace's
 backlog does not hold the others back. The queue leaves out a namespace over its daily
-LLM cost cap and an org with an erasure queued or running; their rows stay owed. The
-cap is read again before each call, for a namespace that crosses it mid-pass. A
-transient provider error leaves the row owed; a refusal of the row's own request
-stamps it judged and counts it errored, so it does not come back every pass. A row
+LLM cost cap and an org with an erasure queued, running or due a retry; their rows
+stay owed. The cap is read again before each call, for a namespace that crosses it
+mid-pass. A transient provider error leaves the row owed; a refusal of the row's own
+request stamps it judged and counts it errored, so it does not come back every pass. A row
 is stamped judged only after its actions, so a pass cut short judges it again and
 acting twice changes nothing. If the provider refuses the model or the key, the pass
 logs one warning and stops; nothing else fails.

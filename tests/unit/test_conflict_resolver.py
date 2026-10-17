@@ -871,3 +871,9 @@ def test_the_defaults_are_the_benched_operating_point() -> None:
     assert defaults["memory_conflict_resolver_recheck_batch"] == 8
     assert defaults["memory_conflict_resolver_concurrency"] == 8
     assert defaults["memory_conflict_resolver_interval_seconds"] == 10.0
+
+
+def test_the_queue_knows_an_abandoned_erasure_as_the_ledger_writes_it() -> None:
+    from server.erasure.store.ledger import ABANDONED_REASON_PREFIX
+
+    assert queue.ERASURE_ABANDONED_PREFIX == ABANDONED_REASON_PREFIX

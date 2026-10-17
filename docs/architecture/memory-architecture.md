@@ -233,8 +233,9 @@ actions, verdicts and confidences, never the text.
   and the action of each judged row run under one lock per pass, so when two rows judged
   at once both call the same peer stale, the second re-reads it retired and leaves it.
 - The queue reads leave out a namespace over its daily LLM cost cap
-  (`observability.budget`) and an org with an erasure queued or running, so their rows
-  stay owed without taking places in a pass. The cap is read again before each call, so
+  (`observability.budget`) and an org with an erasure queued, running or failed and due a
+  retry (an abandoned saga does not count), so their rows stay owed without taking places
+  in a pass. The cap is read again before each call, so
   at most the calls already in flight cross it. Each call bills its namespace
   (`worker.conflict_resolver`).
 - A provider that refuses the model or the key (401, 403, 404) gets one warning per
