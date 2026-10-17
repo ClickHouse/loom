@@ -350,6 +350,10 @@ async def publish_rows(
 _NOT_RESTORED = frozenset({"org", "namespace", "agent", "user_id", "session_id", "memory_key"})
 
 
+# ClickHouse's clock as the last publish of this task stamped it (None: none yet).
+_stamp_clock: ContextVar[datetime | None] = ContextVar("temporal_stamp_clock", default=None)
+
+
 async def refence_rows(rows: Sequence[Mapping[str, Any]], *, ch: _CHClient | None = None) -> None:
     """Once a batch's current rows are in: an erasure of their scope requested since
     the write began takes them back out, vectors too, and refuses the write.
@@ -363,7 +367,9 @@ async def refence_rows(rows: Sequence[Mapping[str, Any]], *, ch: _CHClient | Non
     groups: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for r in rows:
         groups.setdefault((str(r["org"]), str(r["namespace"])), []).append(r)
-    since = await _began(ch)
+    # The stamp's clock, when this task published the rows: an earlier time only
+    # widens the window of erasures that take them back out.
+    since = await _began(ch, _stamp_clock.get())
     for (org, ns), batch in groups.items():
         users = sorted({str(r["user_id"]) for r in batch})
         _, late = await fence.scope_erasures(org, ns, users, since - timedelta(seconds=1), ch=ch)
@@ -569,7 +575,16 @@ async def publish(
                         org, ns, last["commit_seq"], last["recorded_at"], ch=ch
                     )
                     await _insert_commits(org, ns, batch.commits, ch)
-                    await _refence(org, ns, changes, batch, ch, clock)
+                    # The read-backs and the erasure fence again, in one round.
+                    outcomes = await asyncio.gather(
+                        _read_back(org, ns, batch.commits, ch),
+                        _refence(org, ns, changes, batch, ch, clock),
+                        return_exceptions=True,
+                    )
+                    for outcome in outcomes:
+                        if isinstance(outcome, BaseException):
+                            raise outcome
+                    _stamp_clock.set(clock)
             if batch.commits:
                 projected = _project(
                     org,
@@ -577,6 +592,7 @@ async def publish(
                     batch.projection,
                     batch.commits[-1]["commit_seq"],
                     first_seq=batch.commits[0]["commit_seq"],
+                    previous=batch.mark,
                     ch=ch,
                 )
                 # Inside the insert funnel it runs alongside the row insert: a reader
@@ -643,6 +659,8 @@ class _Batch:
     refresh: list[Ident] = field(default_factory=list)
     # Per key, the loom.memory version of the head the plan read (0: none).
     read_heads: dict[Ident, int] = field(default_factory=dict)
+    # The projection's watermark the plan read.
+    mark: int = 0
 
 
 async def _plan(
@@ -658,15 +676,12 @@ async def _plan(
     snapshot. No lock: `publish` re-validates the head before it stamps."""
     # The landed head, not the allocated one: a sequence whose commit is still being
     # inserted is one this plan cannot read, so the lock sees the head moved past it.
-    (_, _, _, seq), gone = await asyncio.gather(store.head(org, ns, ch=ch), erased(org, ns))
+    # The projection's watermark is read with it, ahead of the rows it vouches for.
+    (_, _, _, seq), gone, mark = await asyncio.gather(
+        store.head(org, ns, ch=ch), erased(org, ns), store.watermark(org, ns, ch=ch)
+    )
     planned_at = datetime.now(UTC)
     keys = list(dict.fromkeys(c.ident for c in changes))
-    served, heads, parents, committed_v = await asyncio.gather(
-        _served(org, ns, keys, seq, gone, ch),
-        store.memory_heads(org, ns, keys, ch=ch),
-        store.last_commits(org, ns, keys, ch=ch),
-        store.newest_row_versions(org, ns, keys, ch=ch),
-    )
     b = _Batch(
         org=org,
         ns=ns,
@@ -674,15 +689,30 @@ async def _plan(
         operation=operation,
         seq=seq,
         keys=keys,
-        parents=parents,
+        parents={},
         idem=idempotency.request_key_var.get(),
         request_sha=idempotency.request_body_var.get(),
         erased=gone,
     )
+
+    async def current_rows() -> tuple[list[dict[str, Any]], dict[Ident, str]]:
+        # The claim each current row shows, when a restatement wrote it (its commit
+        # names it): read as soon as the rows are.
+        heads = await store.memory_heads(org, ns, keys, ch=ch)
+        return heads, await store.restated_claims(org, ns, heads, ch=ch)
+
+    # Everything else the plan reads, in one round.
+    served, (heads, restated), b.parents, committed_v, priors = await asyncio.gather(
+        _served(org, ns, keys, seq, gone, ch, mark=mark),
+        current_rows(),
+        store.last_commits(org, ns, keys, ch=ch),
+        store.newest_row_versions(org, ns, keys, ch=ch),
+        _retried_commits(b, ch),
+    )
+    b.mark = mark
     head_rows = {ident_of(h): h for h in heads}
     b.read_heads = {ident: int(h.get("version") or 0) for ident, h in head_rows.items()}
-    # The claim each current row shows, when a restatement wrote it (its commit names it).
-    for ident, aid in (await store.restated_claims(org, ns, heads, ch=ch)).items():
+    for ident, aid in restated.items():
         if ident in head_rows:
             head_rows[ident] = {**head_rows[ident], _SHOWS: aid}
     # Per key, the newest loom.memory version the journal or the current row knows:
@@ -693,7 +723,6 @@ async def _plan(
         else int(committed_v.get(ident, 0))
         for ident in keys
     }
-    priors = await _retried_commits(b, ch)
     own = {ident: {str(c["commit_id"]) for c in cs} for ident, cs in priors.items()}
     # Rows another build wrote, as the plan read them (the batch's own rows replace
     # `head_rows` entries as it goes): each is adopted once, before its key's change.
@@ -708,7 +737,7 @@ async def _plan(
             _answer_retry(b, change, prior, own.get(ident, set()), served, planned_at)
             continue
         current = served.setdefault(ident, {})
-        if not current and ident not in parents:
+        if not current and ident not in b.parents:
             _seed(b, ident, head_rows.get(ident), current)
         elif ident in foreign_heads:
             _adopt(
@@ -1680,15 +1709,25 @@ async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaita
 
 
 async def _served(
-    org: str, ns: str, keys: Sequence[Ident], head_seq: int, gone: store.Erased, ch: _CHClient
+    org: str,
+    ns: str,
+    keys: Sequence[Ident],
+    head_seq: int,
+    gone: store.Erased,
+    ch: _CHClient,
+    *,
+    mark: int | None = None,
 ) -> dict[Ident, dict[str, Served]]:
     """What each key serves at the head. From the projection when it is current;
     otherwise by reducing those keys' journal from the start."""
     out: dict[Ident, dict[str, Served]] = {}
     if not keys or head_seq == 0:
         return out
-    # The watermark first: rows read after it hold at least what it names.
-    if await store.watermark(org, ns, ch=ch) >= head_seq:
+    # The watermark first (`mark`, when the caller read it already): rows read after
+    # it hold at least what it names.
+    if mark is None:
+        mark = await store.watermark(org, ns, ch=ch)
+    if mark >= head_seq:
         for r in await store.served_for_keys(org, ns, keys, erased=gone, ch=ch):
             ident = ident_of(r)
             s = served_from_row(r)
@@ -1769,6 +1808,12 @@ async def _insert_commits(org: str, ns: str, commits: list[dict[str, Any]], ch: 
         await asyncio.sleep(0.05 * (attempt + 1))
     else:
         raise TemporalUnavailableError(f"temporal journal insert failed: {err}")
+
+
+async def _read_back(org: str, ns: str, commits: list[dict[str, Any]], ch: _CHClient) -> None:
+    """The batch's sequences read back once inserted: one another publisher also wrote
+    (a lease lost mid-insert), or an insert that landed late, withdraws the batch."""
+    ids = [c["commit_id"] for c in commits]
     seqs = [c["commit_seq"] for c in commits]
     others, late = await asyncio.gather(
         store.other_commits_at(org, ns, seqs, ids, ch=ch), store.landed_late(org, ns, ids, ch=ch)
@@ -1815,13 +1860,21 @@ async def _withdraw(org: str, ns: str, ids: list[str], ch: _CHClient) -> None:
 
 
 async def _project(
-    org: str, ns: str, rows: list[dict[str, Any]], seq: int, *, first_seq: int, ch: _CHClient
+    org: str,
+    ns: str,
+    rows: list[dict[str, Any]],
+    seq: int,
+    *,
+    first_seq: int,
+    previous: int,
+    ch: _CHClient,
 ) -> None:
     """Apply the commits to the assertion projection. A failure leaves the
     watermark behind; readers reduce the tail and the projection worker repairs it.
-    It never revokes the committed belief."""
+    It never revokes the committed belief. `previous` is the watermark the plan read:
+    it only rises, so one that reached the batch's first sequence still does, and one
+    behind leaves the advance to the worker."""
     try:
-        previous = await store.watermark(org, ns, ch=ch)
         await store.insert_assertions(rows, ch=ch)
         if previous >= first_seq - 1:
             await store.advance_watermark(org, ns, seq, ch=ch)

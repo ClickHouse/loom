@@ -213,20 +213,24 @@ async def _insert_then_fence(
     alongside: Sequence[Callable[[Rows], Awaitable[Any]]],
     handed: Sequence[Awaitable[Any]] = (),
 ) -> None:
-    outcomes = await asyncio.gather(
-        ch.insert(
-            "loom.memory",
-            [dict(r) for r in rows],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
-        ),
-        *(f(rows) for f in alongside),
-        *handed,
-        return_exceptions=True,
-    )
-    # Whatever failed, the rows may be in: the hooks' fence holds for them first.
-    for after in _AFTER_INSERT:
-        await after(rows, ch=ch)
-    for outcome in outcomes:
+    # Handed work runs from the insert's start until the after-insert hooks are done.
+    side = [asyncio.ensure_future(w) for w in handed]
+    try:
+        outcomes = await asyncio.gather(
+            ch.insert(
+                "loom.memory",
+                [dict(r) for r in rows],
+                settings={"async_insert": 0, "wait_for_async_insert": 1},
+            ),
+            *(f(rows) for f in alongside),
+            return_exceptions=True,
+        )
+        # Whatever failed, the rows may be in: the hooks' fence holds for them first.
+        for after in _AFTER_INSERT:
+            await after(rows, ch=ch)
+    finally:
+        outcomes_side = await asyncio.gather(*side, return_exceptions=True)
+    for outcome in [*outcomes, *outcomes_side]:
         if isinstance(outcome, BaseException):
             raise outcome
 
