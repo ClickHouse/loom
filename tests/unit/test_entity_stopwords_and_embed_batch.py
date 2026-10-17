@@ -360,3 +360,22 @@ def test_canonical_order_survives_offset_enumeration() -> None:
     for offset in range(1, len(ents)):
         for i in range(len(ents) - offset):
             assert ents[i] <= ents[i + offset]
+
+
+@pytest.mark.parametrize(
+    ("text", "junk"),
+    [
+        # A polite Korean verb: "I live in Seoul".
+        ("서울 에 살아요", ["살아요"]),
+        ("저는 학생 입니다", ["입니다"]),
+        # Hiragana writes greetings, copulas and verb endings, not names.
+        ("こんにちは です ます", ["こんにちは", "です", "ます"]),
+        ("東京 に 行きました", ["行きました"]),
+    ],
+)
+def test_a_spaced_korean_or_japanese_verb_is_not_an_entity(text: str, junk: list[str]) -> None:
+    ents = _candidate_entities_from_value(text)
+    assert not {canonical_entity_text(j) for j in junk} & set(ents), ents
+    for name in ("서울", "東京"):
+        if name in text:
+            assert canonical_entity_text(name) in ents

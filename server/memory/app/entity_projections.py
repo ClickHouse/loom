@@ -278,15 +278,21 @@ _SET_ENTITY_STOPWORDS = frozenset(
 _SET_ENTITY_PROPER_RE = re.compile(r"\b[A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*)*")
 # Longer than a name in wide characters: a run of unspaced text ("東京に住んでいます").
 _SET_ENTITY_MAX_WIDE_LEN = 6
+# The polite endings of a Korean verb: "살아요" (live), "입니다" (am).
+_KOREAN_VERB_ENDINGS = ("요", "니다")
 
 
 def _not_a_name(word: str) -> bool:
     """Shorter than a thing's name: "is", "at", "of", "3pm". Wide characters (CJK,
-    Hangul) write a name in two: "東京", "서울"."""
+    Hangul) write a name in two: "東京", "서울". A word with hiragana is grammar
+    ("です", "こんにちは"), as is a Korean polite verb ("살아요")."""
     if not word[0].isalpha():
         return True
     if all(unicodedata.east_asian_width(c) in ("W", "F") for c in word):
-        return len(word) < 2 or len(word) > _SET_ENTITY_MAX_WIDE_LEN
+        if len(word) < 2 or len(word) > _SET_ENTITY_MAX_WIDE_LEN:
+            return True
+        has_hiragana = any("\u3040" <= c <= "\u309f" for c in word)
+        return has_hiragana or word.endswith(_KOREAN_VERB_ENDINGS)
     return len(word) < _SET_ENTITY_MIN_LEN
 
 
