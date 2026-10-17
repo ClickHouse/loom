@@ -167,6 +167,7 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
     import server.llm.client as llm_client
     from server.memory.app import conflicts
     from server.memory.store import conflict_resolver as queue
+    from server.memory.workers import conflict_resolver as worker
     from server.settings import settings
 
     org = unique_org("resolver")
@@ -178,6 +179,8 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
         return "newest_wins"
 
     monkeypatch.setattr(conflicts, "namespace_conflict_policy", newest_wins)
+    # Every pass reads the recheck: a test's flags are judged in the pass it runs.
+    monkeypatch.setattr(worker, "RECHECK_IDLE_S", 0.0)
     # A test that needs a second org appends it to `orgs`.
     only = _OnlyOrgs(ch, [org])
     for name in ("queued_namespaces", "owed_rows", "unjudged_conflicted_rows"):

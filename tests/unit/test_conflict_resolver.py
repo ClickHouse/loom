@@ -740,6 +740,8 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
 
     e = NS(owed=[], recheck=[], resolved=[], over=set(), raise_for={}, slow=0.0, stamped=[])
     e.in_flight = e.most_in_flight = 0
+    e.recheck_reads = 0
+    monkeypatch.setattr(worker, "_recheck_after", 0.0)
 
     def _ns(r: dict[str, Any]) -> tuple[str, str]:
         return (r["org"], r["namespace"])
@@ -752,6 +754,7 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         return [r for r in e.owed if _ns(r) not in capped][:limit]
 
     async def recheck(*, limit: int, capped: Any = (), **kw: Any) -> list[dict[str, Any]]:
+        e.recheck_reads += 1
         return [r for r in e.recheck if _ns(r) not in capped][:limit]
 
     async def over_all(pairs, **kw):
@@ -1149,3 +1152,16 @@ def test_the_queue_knows_an_abandoned_erasure_as_the_ledger_writes_it() -> None:
     from server.erasure.store.ledger import ABANDONED_REASON_PREFIX
 
     assert queue.ERASURE_ABANDONED_PREFIX == ABANDONED_REASON_PREFIX
+
+
+async def test_the_recheck_waits_once_it_comes_back_short(
+    pass_env: NS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A full batch: read again next pass. Short: not again for RECHECK_IDLE_S.
+    monkeypatch.setattr(settings, "memory_conflict_resolver_recheck_batch", 2)
+    pass_env.recheck = [_q(memory_key=f"k{i}") for i in range(3)]
+    await pass_env.run()
+    pass_env.recheck = pass_env.recheck[2:]
+    await pass_env.run()
+    await pass_env.run()
+    assert pass_env.recheck_reads == 2

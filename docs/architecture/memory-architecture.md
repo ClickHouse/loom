@@ -166,7 +166,11 @@ emits (`memory/store/conflict_resolver.py`):
 A mark belongs to the write that set it: a revision emits a new vector row with its own.
 Each pass reads `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` (40) owed rows and then
 `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` (8) rows already `conflicted` that no
-resolver judged, so a flag the cosine check raised is judged once too. Both reads take
+resolver judged, so a flag the cosine check raised is judged once too. That second
+read scans every `conflicted` row (no index prunes its predicate), so once it comes back
+short of a full batch it is skipped for five minutes. Both reads find their namespaces
+first without `FINAL`, where the mark's minmax index prunes, and run `FINAL` over those
+namespaces alone. Both reads take
 rows in turns across (org, namespace), oldest first within each, so one namespace's bulk
 import does not hold back a row written elsewhere. Neither reads a namespace that
 `namespace.delete` soft-deleted; its rows are judged if it is registered again.

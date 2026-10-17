@@ -5,8 +5,9 @@ rows are judged at once.
 Each pass reads up to `memory_conflict_resolver_batch` marked rows, then up to
 `memory_conflict_resolver_recheck_batch` rows already `conflicted` that no resolver
 judged (flags from the cosine check, or from an older build's judge), so a false flag
-is cleared once. Both take rows in turns across namespaces, so one namespace's
-backlog does not hold the others back. The queue leaves out a namespace over its daily
+is cleared once. That read scans every conflicted row, so once it comes back short it
+waits `RECHECK_IDLE_S` before the next. Both take rows in turns across namespaces, so
+one namespace's backlog does not hold the others back. The queue leaves out a namespace over its daily
 LLM cost cap and an org with an erasure queued, running or due a retry; their rows
 stay owed. The cap is read again before each call, for a namespace that crosses it
 mid-pass. A transient provider error leaves the row owed; a refusal of the row's own
@@ -36,6 +37,11 @@ log = logging.getLogger(__name__)
 
 NAME = "conflict_resolver"
 
+# The recheck's read scans every `conflicted` row (its predicate prunes nothing). A
+# backlog drains a batch per pass; once a read comes back short, the next waits this long.
+RECHECK_IDLE_S = 300.0
+_recheck_after = 0.0  # time.monotonic() before which the recheck is not read
+
 
 def _identity(r: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(
@@ -59,14 +65,19 @@ async def _queued(p: _Pass) -> dict[tuple[str, str], list[dict[str, Any]]]:
     over its cost cap is left out of the read, so its rows take no place in the pass."""
     from server.observability.budget import namespaces_over_cap
 
-    pairs = await queue.queued_namespaces()
+    global _recheck_after
+    recheck = int(settings.memory_conflict_resolver_recheck_batch)
+    due = recheck > 0 and time.monotonic() >= _recheck_after
+    pairs = await queue.queued_namespaces(recheck=due)
     over = await namespaces_over_cap(pairs) if pairs else {}
     capped = sorted(pair for pair, is_over in over.items() if is_over)
     p.counts.capped_namespaces = len(capped)
     rows = await queue.owed_rows(limit=int(settings.memory_conflict_resolver_batch), capped=capped)
-    recheck = int(settings.memory_conflict_resolver_recheck_batch)
-    if recheck > 0:
-        rows += await queue.unjudged_conflicted_rows(limit=recheck, capped=capped)
+    if due:
+        found = await queue.unjudged_conflicted_rows(limit=recheck, capped=capped)
+        if len(found) < recheck:
+            _recheck_after = time.monotonic() + RECHECK_IDLE_S
+        rows += found
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     seen: set[tuple[str, ...]] = set()
     for r in rows:

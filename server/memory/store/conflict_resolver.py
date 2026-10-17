@@ -69,11 +69,19 @@ _UNJUDGED = f"""status = 'conflicted'
           AND {_NOT_SKIPPED}"""
 
 
+def _queued_pairs(where: str) -> str:
+    """The (org, namespace) pairs with any version matching `where`: a superset of the
+    pairs the latest versions hold. Read without FINAL, where the skip indexes prune
+    (under FINAL every granule of a key range is read back)."""
+    return f"SELECT DISTINCT org, namespace FROM loom.memory_embeddings WHERE {where}"
+
+
 def _in_turns(where: str) -> str:
     """The vector rows matching `where`, in turns across (org, namespace): every
     namespace's oldest row, then every namespace's second oldest, and so on, so one
     namespace's backlog cannot hold the others back. Only the identity is ranked; the
-    vectors are read for the picked rows alone."""
+    vectors are read for the picked rows alone. The FINAL read covers only the
+    namespaces `_queued_pairs` names, not the whole table."""
     return f"""
         SELECT {_QUEUE_COLUMNS}
         FROM loom.memory_embeddings FINAL
@@ -85,7 +93,8 @@ def _in_turns(where: str) -> str:
                        row_number() OVER (PARTITION BY org, namespace ORDER BY created_at)
                            AS turn
                 FROM loom.memory_embeddings FINAL
-                WHERE {where}
+                WHERE (org, namespace) IN ({_queued_pairs(where)})
+                  AND {where}
             )
             ORDER BY turn, created_at
             LIMIT {{lim:UInt32}}
@@ -99,18 +108,17 @@ def _capped(capped: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
     return [(str(o), str(n)) for o, n in capped]
 
 
-async def queued_namespaces(*, ch: _CHClient | None = None) -> list[tuple[str, str]]:
-    """The (org, namespace) pairs that hold owed or unjudged `conflicted` rows the
-    queue would read: the pairs the worker checks against their cost caps."""
+async def queued_namespaces(
+    *, recheck: bool = True, ch: _CHClient | None = None
+) -> list[tuple[str, str]]:
+    """The (org, namespace) pairs that may hold owed rows, and with `recheck` unjudged
+    `conflicted` rows, the queue would read: the pairs the worker checks against their
+    cost caps. A superset (any version counts): an extra pair is only checked."""
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        f"""
-        SELECT DISTINCT org, namespace
-        FROM loom.memory_embeddings FINAL
-        WHERE (({_OWED}) OR ({_UNJUDGED}))
-        """,
-        {"capped": []},
-    )
+    sql = _queued_pairs(_OWED)
+    if recheck:
+        sql += f" UNION DISTINCT {_queued_pairs(_UNJUDGED)}"
+    rows = await ch.query_all(sql, {"capped": []})
     return [(str(r["org"]), str(r["namespace"])) for r in rows]
 
 
