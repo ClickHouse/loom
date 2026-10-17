@@ -105,17 +105,7 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
                 exc_info=True,
             )
     # The facts the retirement closed and the restored value still holds come back.
-    from server.memory.app.entity_projections import reconcile_row_facts
-
-    await reconcile_row_facts(
-        input,
-        [str(existing.memory_id)],
-        reopen=True,
-        op="memory.restore",
-        ch=ch,
-        hashes={str(existing.memory_id): str(existing.content_sha256)},
-        restored_at=restored_at,
-    )
+    await _reopen_facts(input, existing, restored_at, ch=ch)
     await audit.emit(
         "memory.unsupersede",
         org=input.org,
@@ -132,6 +122,24 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         memory_id=str(existing.memory_id),
         version=new_version,
         from_status="superseded",
+    )
+
+
+async def _reopen_facts(
+    input: MemoryRestoreInput, existing: MemoryRow, restored_at: datetime, *, ch: Any
+) -> None:
+    """Open again the facts the restored row states, dated at the restore: while it was
+    retired or deleted, another row's revision or delete may have closed them."""
+    from server.memory.app.entity_projections import reconcile_row_facts
+
+    await reconcile_row_facts(
+        input,
+        [str(existing.memory_id)],
+        reopen=True,
+        op="memory.restore",
+        ch=ch,
+        hashes={str(existing.memory_id): str(existing.content_sha256)},
+        restored_at=restored_at,
     )
 
 
@@ -392,6 +400,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
             memory_id=str(row.get("memory_id") or ""),
             version=int(row.get("version") or 0),
         )
+    restored_at = naive_utc_now()
     restore_row = memory_repo.build_memory_version_row(
         existing,
         version=new_version,
@@ -415,6 +424,8 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
             "memory_embeddings restore failed (non-fatal): %s",
             e,
         )
+    # A fact the row states may have closed while it was deleted.
+    await _reopen_facts(input, existing, restored_at, ch=ch)
 
     # If this row was tombstoned inside an erasure's scope + time window,
     # record the restore as a reversal so the audit log stops claiming
