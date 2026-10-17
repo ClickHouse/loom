@@ -1,9 +1,8 @@
 """The identity reads behind an MCP caller's default namespace.
 
-The transport decides which namespace an unaddressed call lands in
-(`server/transport/mcp_identity.py`); what it decides on — the user's saved
-dashboard pick and their live grants, ranked — is the identity plane's data, read
-here through its store.
+`caller_home` decides which namespace an unaddressed call lands in; what it
+decides on — the user's saved dashboard pick and their live grants, ranked — is
+read here through the identity store.
 """
 
 from __future__ import annotations

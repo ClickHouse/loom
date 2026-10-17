@@ -8,10 +8,10 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 
 from server.auth.delegation import Delegated, delegate
-from server.auth.jwt import AuthInfo
-from server.auth.personal_namespace import derive_personal_slug
+from server.auth.jwt import AuthInfo, verify_token
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.app import me_callers, token_grants
+from server.identity.app.caller_home import caller_org, default_namespace
 from server.identity.app.me_service_accounts import (
     dev_parent,
     new_token_subject,
@@ -314,17 +314,8 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     namespace_payload = payload.get("namespace")
     if namespace_payload:
         requested: dict[str, str | None] = {str(namespace_payload): None}
-        displayed_namespace = str(namespace_payload)
     else:
         requested = {"*": None}
-        # Where an unaddressed MCP call from a `*` token lands: single-user mode
-        # writes to the default namespace, any other mode falls back to the
-        # caller's personal namespace.
-        if settings.effective_identity_provider() == "single-user":
-            fallback = settings.default_namespace
-        else:
-            fallback = derive_personal_slug(subject)
-        displayed_namespace = next((ns for ns in parent.namespaces if ns != "*"), fallback)
     # Restricted namespaces the token should read are named in the claim and, once the token
     # has a subject, granted to it directly.
     restricted_names = await _validate_restricted_request(
@@ -348,6 +339,10 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         restricted_names=restricted_names,
     )
     reads_everywhere = "*" in delegated.namespaces
+    # The page names where this token's unaddressed MCP calls land: the MCP
+    # transport's own resolver, asked about the token just minted.
+    token = verify_token(minted)
+    displayed_namespace = await default_namespace(token, caller_org(token) or org)
 
     # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.
     from server.auth.public_url import public_base_url

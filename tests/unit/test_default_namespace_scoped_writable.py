@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+import server.identity.app.caller_home as home
 import server.transport.mcp_identity as mi
 from server.operations.base import Role
 
@@ -80,6 +81,7 @@ def wire(monkeypatch: pytest.MonkeyPatch):
     def _wire(ch: _CH) -> None:
         import server.auth.aliases as aliases
         import server.core.ch as chmod
+        import server.identity.app.namespace_classification as nc
         import server.identity.app.namespace_kinds as nk
 
         async def _aliases(org: str, subject: str, *, ch: Any = None) -> list[str]:
@@ -90,7 +92,12 @@ def wire(monkeypatch: pytest.MonkeyPatch):
 
         monkeypatch.setattr(chmod, "get_client", lambda: ch)
         monkeypatch.setattr(aliases, "subject_aliases", _aliases)
+
+        async def _none_restricted(org: str) -> frozenset[str]:
+            return frozenset()
+
         monkeypatch.setattr(nk, "kind_map", _kind_map)
+        monkeypatch.setattr(nc, "restricted_set", _none_restricted)
         from server.settings import settings
 
         monkeypatch.setattr(settings, "identity_provider", "trust-network")
@@ -163,19 +170,19 @@ def test_viewer_only_caller_still_gets_its_readable_plane(wire) -> None:
 def test_saved_pick_ok_rules() -> None:
     legacy = _Auth("z")
     scoped = _Auth("z", ("a",), ns_roles=(("a", "writer"),))
-    assert mi.saved_pick_ok("jdoe", "admin", KINDS, legacy, "clickhouse", [])
-    assert not mi.saved_pick_ok("team-alerts", "viewer", KINDS, legacy, "clickhouse", [])
-    assert not mi.saved_pick_ok("qa-clickhouse", "admin", KINDS, legacy, "clickhouse", [])
-    assert not mi.saved_pick_ok("b", "writer", KINDS, scoped, "clickhouse", ["a"])
-    assert mi.saved_pick_ok("a", "writer", KINDS, scoped, "clickhouse", ["a"])
+    assert home.saved_pick_ok("jdoe", "admin", KINDS, legacy, "clickhouse", [])
+    assert not home.saved_pick_ok("team-alerts", "viewer", KINDS, legacy, "clickhouse", [])
+    assert not home.saved_pick_ok("qa-clickhouse", "admin", KINDS, legacy, "clickhouse", [])
+    assert not home.saved_pick_ok("b", "writer", KINDS, scoped, "clickhouse", ["a"])
+    assert home.saved_pick_ok("a", "writer", KINDS, scoped, "clickhouse", ["a"])
 
 
 def test_a_non_home_default_is_named_and_home_is_silent() -> None:
-    mi.note_default_namespace(True, "team-alerts", "jdoe")
+    mi.note_default_namespace(True, "team-alerts", _Auth("jdoe"))
     assert mi.default_namespace_note() == {"namespace_defaulted": "team-alerts"}
-    mi.note_default_namespace(True, "jdoe", "jdoe@example.com")
+    mi.note_default_namespace(True, "jdoe", _Auth("jdoe@example.com"))
     assert mi.default_namespace_note() == {}
-    mi.note_default_namespace(False, "team-x", "jdoe")  # explicit namespace
+    mi.note_default_namespace(False, "team-x", _Auth("jdoe"))  # explicit namespace
     assert mi.default_namespace_note() == {}
 
 
@@ -191,5 +198,5 @@ def test_a_scoped_writer_outside_its_write_claim_is_not_writable() -> None:
         ns_roles=(("a", "writer"), ("b", "writer")),
         write_namespaces=("a",),
     )
-    assert mi.token_can_write(token, "o", "a")
-    assert not mi.token_can_write(token, "o", "b")
+    assert home.token_can_write(token, "o", "a")
+    assert not home.token_can_write(token, "o", "b")

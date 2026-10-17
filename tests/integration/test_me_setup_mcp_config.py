@@ -154,6 +154,53 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str, ch_client
     assert body["namespace_scope"] == "all"
 
 
+def _save_default(ch_client: Any, org: str, subject: str, namespace: str) -> None:
+    """The person's dashboard switcher pick ("" clears it)."""
+    row = [org, subject, namespace, time.time_ns()]
+    ch_client.insert(
+        "loom.user_state", [row], column_names=["org", "subject", "default_namespace", "version"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_setup_token_names_the_saved_default_it_writes_to(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    """A person who writes two namespaces and picked the second in the switcher:
+    the page names the namespace an unaddressed MCP write from the token lands in."""
+    from server.auth.jwt import mint_token
+    from server.auth.personal_namespace import derive_personal_slug
+
+    person = f"setup-{uuid.uuid4().hex[:8]}"
+    personal, team = derive_personal_slug(person), f"team-{uuid.uuid4().hex[:8]}"
+    for ns in (personal, team):
+        _grant_writer(ch_client, "clickhouse", ns, person, revoke=False)
+    _save_default(ch_client, "clickhouse", person, team)
+    token = mint_token(
+        subject=person,
+        org="clickhouse",
+        namespaces=[personal],
+        roles=["WRITER"],
+        is_service_account=False,
+    )
+    body: dict[str, Any] = {}
+    try:
+        r = await _post(control_plane_url, token, {"client": "cursor"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # Single-user mode writes its one namespace; every other mode follows the pick.
+        assert body["namespace"] != personal, body["namespace"]
+        if body["namespace"] != team:
+            _grant_writer(ch_client, "clickhouse", body["namespace"], person, revoke=False)
+        await _assert_unaddressed_write_lands_in(
+            control_plane_url, body["token"], body["namespace"]
+        )
+    finally:
+        for ns in {personal, team, body.get("namespace", team)}:
+            _grant_writer(ch_client, "clickhouse", ns, person, revoke=True)
+        _save_default(ch_client, "clickhouse", person, "")
+
+
 @pytest.mark.asyncio
 async def test_setup_mcp_config_vscode_uses_servers_key(control_plane_url: str) -> None:
     """VS Code uses `servers` instead of `mcpServers`."""

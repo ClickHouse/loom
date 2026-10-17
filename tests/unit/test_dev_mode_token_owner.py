@@ -45,7 +45,6 @@ class _Store:
 @pytest.fixture(params=["auth-off", "single-user"])
 def client(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from server.auth import authz, revocation
-    from server.auth import jwt as jwt_mod
     from server.identity.app import me_callers, me_service_accounts, me_setup, token_grants
     from server.insights.app import admin_routes
 
@@ -59,7 +58,6 @@ def client(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> T
 
     store = _Store()
     monkeypatch.setattr("server.core.ch.get_client", lambda: store)
-    monkeypatch.setattr(jwt_mod, "mint_token", lambda **kw: "jwt-minted")
 
     async def _aliases(org: str, subject: str) -> list[str]:
         return [subject]
@@ -179,6 +177,32 @@ def test_a_wildcard_setup_token_from_a_wildcard_bearer_names_the_personal_namesp
     r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["namespace"] == "personal-alice"
+
+
+def test_a_wildcard_setup_token_names_where_its_unaddressed_calls_land(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Alice's saved switcher pick is a team she writes: MCP lands there, so the page says so.
+    from server.auth import aliases
+    from server.identity.app import caller_defaults
+
+    async def _saved(org: str, subject: str, **_: Any) -> str:
+        return "team-x" if subject == "alice" else ""
+
+    async def _writer_role(*_a: Any, **_k: Any) -> str:
+        return "writer"
+
+    async def _own(org: str, subject: str, **_: Any) -> list[str]:
+        return [subject]
+
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(settings, "identity_provider", "trust-network")
+    monkeypatch.setattr(caller_defaults, "saved_default", _saved)
+    monkeypatch.setattr(caller_defaults, "live_role_on", _writer_role)
+    monkeypatch.setattr(aliases, "subject_aliases", _own)
+    r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=_alice())
+    assert r.status_code == 200, r.text
+    assert r.json()["namespace"] == "team-x"
 
 
 def test_a_bearers_token_mint_token_is_its_own_and_revoked_by_it(client: TestClient) -> None:
