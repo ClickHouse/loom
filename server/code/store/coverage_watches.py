@@ -83,13 +83,7 @@ async def ready_event_exists(
     org: str, inbox: str, task_id: str, *, ch: _CHClient | None = None
 ) -> bool:
     ch = ch or _default_client()
-    row = await ch.query_one(
-        "SELECT count() AS n FROM loom.task_events "
-        "WHERE org = {org:String} AND inbox = {inbox:String} AND task_id = {tid:UUID} "
-        "AND event = {event:String} SETTINGS select_sequential_consistency = 1",
-        params={"org": org, "inbox": inbox, "tid": task_id, "event": READY_EVENT},
-    )
-    return bool(row and int(row.get("n") or 0) > 0)
+    return bool(await _ready_event_seqs(org, inbox, task_id, ch=ch))
 
 
 async def insert_ready_event(row: dict[str, Any], *, ch: _CHClient | None = None) -> bool:
