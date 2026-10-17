@@ -1,3 +1,12 @@
+export type {
+  AccountClient,
+  CreateServiceAccountOptions,
+  GrantRole,
+  ServiceAccountCreated,
+  ServiceAccountNamespace,
+  ServiceAccountRevoked,
+  ServiceAccountRow,
+} from "./account.js";
 export type { Body, Scope } from "./agent.js";
 export { Agent, Datapack, SENTINEL } from "./agent.js";
 export type { ProbeResult } from "./capabilities.js";

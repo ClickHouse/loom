@@ -12,6 +12,7 @@
  * call; the dotted name is the one that appears in the server's ledger.
  */
 
+import { AccountClient } from "./account.js";
 import { type Capabilities, capabilities as fetchCapabilities } from "./capabilities.js";
 import { OP_BY_NAME, OPS, type OpMap, type OpName, type OpSpec } from "./generated/ops.js";
 import { machineLogin } from "./machine.js";
@@ -45,10 +46,13 @@ export type LoomClientOptions = TransportOptions;
 // biome-ignore lint/suspicious/noUnsafeDeclarationMerging: the constructor defines every group property the interface declares.
 export class LoomClient {
   readonly transport: Transport;
+  /** Your own tokens: `loom.account.createServiceAccount(...)`, outside the op registry. */
+  readonly account: AccountClient;
   private caps: { promise: Promise<Capabilities>; at: number } | undefined;
 
   constructor(opts: LoomClientOptions | Transport) {
     this.transport = opts instanceof Transport ? opts : new Transport(readEnv(opts));
+    this.account = new AccountClient(this.transport);
     for (const group of new Set(OPS.map((o) => o.group))) {
       Object.defineProperty(this, group, {
         value: this.group(group as Groups),

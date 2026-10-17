@@ -20,6 +20,9 @@
  * parsed as seconds or an HTTP-date; `postWithMeta` returns the response
  * metadata (`CallResult`) alongside the body.
  *
+ * `get` reads a path outside the op registry (`me/service_accounts`) the same
+ * way: same credential, retries and errors, no body and no Idempotency-Key.
+ *
  * Instead of a static `apiKey`, a `tokenProvider` (a bot's `MachineLogin`)
  * hands over the token for each request; a 401 is sent once more with a fresh
  * one, and the token never goes to an origin other than the provider's.
@@ -233,27 +236,38 @@ export class Transport {
   }
 
   /** `post`, returning the body with the response metadata. */
-  async postWithMeta<T = unknown>(op: string, body: unknown, opts: CallOptions = {}): Promise<CallResult<T>> {
+  postWithMeta<T = unknown>(op: string, body: unknown, opts: CallOptions = {}): Promise<CallResult<T>> {
+    return this.send<T>("POST", op, body, opts);
+  }
+
+  /** GET `{baseUrl}/v1/{path}`: a read, so retried like a read-only op. */
+  async get<T = unknown>(path: string, opts: CallOptions = {}): Promise<T> {
+    return (await this.send<T>("GET", path, undefined, opts)).data;
+  }
+
+  private async send<T>(method: "GET" | "POST", op: string, body: unknown, opts: CallOptions): Promise<CallResult<T>> {
     const headers: Record<string, string> = { ...this.headers };
     if (this.#apiKey) headers.Authorization = `Bearer ${this.#apiKey}`;
     const requestId = opts.requestId ?? randomId();
     headers["X-Request-Id"] = requestId;
-    const spec = OP_BY_NAME[op as OpName];
+    const isGet = method === "GET";
+    if (isGet) delete headers["Content-Type"];
+    const spec = isGet ? undefined : OP_BY_NAME[op as OpName];
     // The server keeps no replay of a read-only op: its retry just runs again.
     const idem = opts.idempotencyKey ?? (spec?.idempotent && !spec.readOnly ? randomId() : undefined);
     if (idem) headers["Idempotency-Key"] = idem;
-    const sent = this.withConsumer(body);
-    const payload = JSON.stringify(sent);
+    const payload = isGet ? undefined : JSON.stringify(this.withConsumer(body));
     const url = `${this.baseUrl}/v1/${op}`;
     const policy = resolveRetryPolicy(this.retry, opts.retry, `call ${op}`);
     const ctx: AttemptContext = {
       op,
+      method,
       url,
       payload,
       headers,
       opts,
       policy,
-      idempotent: spec?.idempotent === true,
+      idempotent: isGet || spec?.idempotent === true,
       deduplicated: spec?.idempotent === true && !spec.readOnly,
       startedAt: this.now(),
       sent: 0,
@@ -309,7 +323,7 @@ export class Transport {
     throwIfAborted(ctx);
   }
 
-  /** One POST and its body, under the per-call timeout and the caller's signal. */
+  /** One request and its body, under the per-call timeout and the caller's signal. */
   private async exchange(ctx: AttemptContext, timeoutMs: number): Promise<Exchange> {
     const signal = ctx.opts.signal;
     const ctrl = new AbortController();
@@ -320,7 +334,7 @@ export class Transport {
       let res: Response;
       try {
         res = await this.fetchImpl(ctx.url, {
-          method: "POST",
+          method: ctx.method,
           headers: ctx.headers,
           body: ctx.payload,
           signal: ctrl.signal,
@@ -369,7 +383,7 @@ export class Transport {
   }
 
   private async postWithRetries<T>(ctx: AttemptContext): Promise<CallResult<T>> {
-    const { op, url, payload, headers, opts, policy } = ctx;
+    const { op, method, url, payload, headers, opts, policy } = ctx;
     const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
     const requestId = headers["X-Request-Id"] ?? "";
     let sleptMs = 0;
@@ -395,7 +409,7 @@ export class Transport {
       headers["X-Loom-Retry-Count"] = String(ctx.sent - 1);
       if (this.#provider) await this.authorize(ctx);
       this.log.debug(
-        `${op} → POST ${url} attempt ${attempt} timeout ${timeoutMs} ms bytes ${payload.length}`,
+        `${op} → ${method} ${url} attempt ${attempt} timeout ${timeoutMs} ms bytes ${payload?.length ?? 0}`,
         redactHeaders(headers),
       );
       throwIfAborted(ctx);
@@ -523,8 +537,10 @@ function neverRan(status: number, code: string): boolean {
 
 interface AttemptContext {
   op: string;
+  method: "GET" | "POST";
   url: string;
-  payload: string;
+  /** The JSON body; none on a GET. */
+  payload: string | undefined;
   headers: Record<string, string>;
   opts: CallOptions;
   policy: RetryPolicy;
