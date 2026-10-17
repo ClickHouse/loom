@@ -6,11 +6,11 @@ import { Table } from "@clickhouse/click-ui/Table";
 import { useStore } from "../../lib/state";
 import { listConnectedAgents, type ConnectedAgentRow } from "../../api";
 import { relativeTime } from "../../lib/format";
-import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
+import { IconButton } from "../../components/IconButton";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { LoadingSkeleton, PageHeader } from "../../components/ui";
+import { PageHeader } from "../../components/ui";
 
 /**
  * Agents — which AI clients have written to Loom in the last N hours.
@@ -21,6 +21,15 @@ import { LoadingSkeleton, PageHeader } from "../../components/ui";
  * connection works. Troubleshooting copy lives in the rendered
  * description / empty states below.
  */
+const HEADERS = [
+  { label: "Client" },
+  { label: "Ops" },
+  { label: "Namespaces" },
+  { label: "Primary" },
+  { label: "LLM $" },
+  { label: "Last seen" },
+];
+
 const WINDOWS = [
   { value: "1", label: "1 hour" },
   { value: "24", label: "24 hours" },
@@ -60,10 +69,16 @@ export function Agents() {
       <PageHeader title="Agents">
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
-      <div className="text-sm text-text-muted mb-6 max-w-2xl">
-        Every AI client that writes to Loom identifies itself in the request. This page rolls those requests up so you
-        can see which clients are connected, when each was last active, and how much they're writing. If a client you
-        expect isn't here within seconds of an action, check the config and restart the client.
+      <div className="text-sm text-text-muted mb-4 max-w-[72ch]">
+        The AI clients that write to Loom, when each was last active and how much it writes.{" "}
+        <span className="inline-flex align-middle">
+          <IconButton
+            icon="info-in-circle"
+            size="xs"
+            label="About agents"
+            tooltip="Every client names itself in its requests, and this page rolls them up. If a client you expect is not here within seconds of an action, check its config and restart it."
+          />
+        </span>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
@@ -80,13 +95,7 @@ export function Agents() {
 
       {error && <EmptyState icon="plug" title="Couldn't load" description={error} />}
       {!error && rows === null && (
-        <LoadingSkeleton label="Loading agents">
-          <div className="space-y-2">
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
-          </div>
-        </LoadingSkeleton>
+        <Table aria-label="Connected clients" aria-busy loading size="sm" headers={HEADERS} rows={[]} />
       )}
       {!error && rows !== null && rows.length === 0 && (
         <EmptyState
@@ -102,15 +111,9 @@ export function Agents() {
       {!error && rows !== null && rows.length > 0 && (
         <div data-testid="agents-table" aria-busy={refreshing || undefined}>
           <Table
+            aria-label="Connected clients"
             size="sm"
-            headers={[
-              { label: "Client" },
-              { label: "Ops" },
-              { label: "Namespaces" },
-              { label: "Primary" },
-              { label: "LLM $" },
-              { label: "Last seen" },
-            ]}
+            headers={HEADERS}
             rows={rows.map((r) => {
               const stale = Date.now() - new Date(r.last_seen).getTime() > 24 * 3600 * 1000;
               return {

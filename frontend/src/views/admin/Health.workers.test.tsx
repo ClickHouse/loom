@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../lib/state";
 import { Health, OpMixPanel, WorkersPanel, colourOf, parseOpMix } from "./Health";
@@ -170,6 +170,43 @@ describe("WorkersPanel", () => {
     await act(async () => answer({ ok: true, json: async () => ({ workers: { embedding_worker: worker } }) }));
     await waitFor(() => expect(screen.getByTestId("workers-list")).not.toHaveAttribute("aria-busy"));
     cleanup();
+  });
+
+  it("lays the workers out as a table, one row each, its status a badge", async () => {
+    const worker = {
+      enabled: true,
+      effective: true,
+      interval_seconds: 30,
+      last_run_at: recent,
+      last_duration_ms: 420,
+      consecutive_failures: 0,
+      last_pass_status: "ok",
+    };
+    respond({ workers: { embedding_worker: worker, dedup_worker: { ...worker, consecutive_failures: 1 } } });
+    render(<WorkersPanel />);
+    await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
+    const table = screen.getByRole("table", { name: "Workers" });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent),
+    ).toEqual(["Worker", "Status", "Last pass", "Every"]);
+    const [, indexing, dedup] = within(table).getAllByRole("row");
+    expect(within(indexing).getAllByRole("cell")[1]).toHaveTextContent("Healthy");
+    expect(within(indexing).getAllByRole("cell")[3]).toHaveTextContent("30s");
+    expect(within(dedup).getAllByRole("cell")[1]).toHaveTextContent("1 consecutive failure");
+    expect(within(dedup).getAllByRole("cell")[1]).not.toHaveTextContent("Healthy");
+  });
+
+  it("draws the first read as Click UI's loading table, marked busy", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
+    render(<WorkersPanel />);
+    const table = await screen.findByRole("table", { name: "Workers" });
+    expect(table).toHaveAttribute("aria-busy", "true");
+    expect(within(table).getByText("Loading data")).toBeInTheDocument();
   });
 
   it("shows the empty state only when there is nothing from either source", async () => {

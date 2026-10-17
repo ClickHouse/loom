@@ -353,6 +353,7 @@ export function Spending() {
           )}
           {visibleRows.length > 0 && (
             <Table
+              aria-label={`Usage by day and ${breakdown}`}
               size="sm"
               headers={[
                 { label: "Day", width: "110px" },

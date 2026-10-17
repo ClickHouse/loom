@@ -4,28 +4,20 @@ import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { getRun, listRuns, type RunGetResponse, type RunRow, type RunStatus } from "../api";
 import { useStore, useIdentity } from "../lib/state";
-import { SkeletonCard } from "../components/Skeleton";
-import {
-  Chip,
-  Loading,
-  LoadingSkeleton,
-  PageHeader,
-  Panel,
-  SectionHeading,
-  Tip,
-  TipTarget,
-  useClamped,
-} from "../components/ui";
+import { Chip, Loading, PageHeader, Panel, SectionHeading, Tip, TipTarget, useClamped } from "../components/ui";
 import { IconButton } from "../components/IconButton";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { displayAgent, humanizeError, relativeTime, truncate } from "../lib/format";
+import { displayAgent, humanizeError, relativeTime, shortDate, truncate } from "../lib/format";
 import { PageContainer } from "../layout/PageContainer";
 import { Modal } from "../components/ui/Modal";
+import { ListPager, usePageSize } from "../components/ui/ListPager";
+import { ListToolbar } from "../components/ui/ListToolbar";
 
 // The nine fields a run row reads of the twenty a run carries; run.get carries the rest
 // for the opened run.
@@ -66,6 +58,10 @@ export const RUNS_FIELDS = [
  */
 
 type Filter = "" | RunStatus;
+
+// run.list reads at most 200 runs and has no offset: the page holds the newest 200 and
+// pages them here. Going further back needs a cursor on the server.
+const RUNS_LIMIT = 200;
 
 const RUN_FILTERS: readonly Filter[] = ["", "active", "completed", "failed", "cancelled"];
 
@@ -308,7 +304,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
         className: CARD,
         label: (
           <time dateTime={r.started_at}>
-            {relativeTime(r.started_at)}
+            {shortDate(r.started_at)}
             <span className="sr-only"> ({r.started_at})</span>
           </time>
         ),
@@ -318,24 +314,37 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
 }
 
 // Grouped by session, only the first table draws its header; the rest keep theirs out of
-// sight, since a table without one leaves its cells unlabelled for a screen reader.
+// sight, since a table without one leaves its cells unlabelled for a screen reader. The
+// first read is Click UI's own loading table.
 function RunTable({
+  label,
   rows,
   onOpen,
   hideHeader = false,
+  loading = false,
 }: {
+  label: string;
   rows: RunRow[];
   onOpen: (r: RunRow) => void;
   hideHeader?: boolean;
+  loading?: boolean;
 }) {
   return (
     <Table
+      aria-label={label}
+      aria-busy={loading || undefined}
+      loading={loading}
       headers={RUN_HEADERS}
       rows={rows.map((r) => runRow(r, onOpen))}
       size="sm"
       className={hideHeader ? "table-header-sr-only" : undefined}
     />
   );
+}
+
+/** A run the search names: its goal, agent or id holds the typed text. */
+function matches(r: RunRow, q: string): boolean {
+  return `${r.goal} ${r.agent} ${r.run_id}`.toLowerCase().includes(q);
 }
 
 export function Runs() {
@@ -349,6 +358,9 @@ export function Runs() {
   const [agents, setAgents] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState(false);
   const [hideConn, setHideConn] = useState(true);
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize("runs");
   const openRecallForRun = useStore((s) => s.openRecallForRun);
   const [open, setOpen] = useState<RunRow | null>(null);
   // The goal button (or row) that opened the replay — refocused on close,
@@ -369,12 +381,13 @@ export function Runs() {
     let live = true;
     setRows(null);
     setError(null);
+    setPage(0);
     // The no-memory-activity fold is a run.list filter, not a slice of the fetched page.
     // Folding after the server's LIMIT can leave a chatty consumer's page empty — its
     // newest 100 runs all hollow while hundreds of filled runs sit further back.
     listRuns(
       { org: identity.org, namespace: identity.namespace },
-      { status: filter, agent, limit: 100, fields: RUNS_FIELDS, memoryActivity: hideConn ? "with" : "" },
+      { status: filter, agent, limit: RUNS_LIMIT, fields: RUNS_FIELDS, memoryActivity: hideConn ? "with" : "" },
     )
       .then((rs) => {
         if (!live) return;
@@ -413,9 +426,14 @@ export function Runs() {
   }, [open, identity.org, identity.namespace]);
 
   // The server already applied the fold (memory_activity: "with"); hollow rows
-  // only arrive when the reader asked for them, and then they render dimmed.
-  const visible = useMemo(() => rows || [], [rows]);
-  const groups = useMemo(() => (groupBy ? bySession(visible) : []), [groupBy, visible]);
+  // only arrive when the reader asked for them, and then they render dimmed. The search
+  // reads the runs on hand.
+  const q = query.trim().toLowerCase();
+  const visible = useMemo(() => (rows || []).filter((r) => !q || matches(r, q)), [rows, q]);
+  const pageRows = visible.slice(page * pageSize, (page + 1) * pageSize);
+  const groups = groupBy ? bySession(pageRows) : [];
+  const rangeStart = pageRows.length === 0 ? 0 : page * pageSize + 1;
+  const countLine = `${rangeStart}–${page * pageSize + pageRows.length} of ${visible.length}`;
 
   const counts = { total: visible.length, completed: 0, failed: 0, used: 0, written: 0 };
   for (const r of visible) {
@@ -430,58 +448,71 @@ export function Runs() {
       <PageHeader title="Runs">
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
-      <p className="text-sm text-text-muted mb-5 max-w-[70ch]">
-        One row per agent execution: the goal, how it ended, the memories the agent relied on, and what it wrote. Open a
-        run to replay what it recalled, observed and cost. A session is one connection's worth of runs — group by it to
-        see a whole working sitting.
-      </p>
+      <div className="text-sm text-text-muted mb-4 max-w-[72ch]">
+        One row per agent execution: the goal, how it ended, the memories it relied on and what it wrote.{" "}
+        <span className="inline-flex align-middle">
+          <IconButton
+            icon="info-in-circle"
+            size="xs"
+            label="About runs"
+            tooltip="Open a run to replay what it recalled, observed and cost. A session is one connection's worth of runs: group by it to see a whole working sitting."
+          />
+        </span>
+      </div>
 
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {/* Five statuses are wider than a phone: the group scrolls sideways, not the page. */}
-        <div className="max-w-full overflow-x-auto">
+      <ListToolbar label="Search and filters" count={rows !== null && visible.length > 0 ? countLine : undefined}>
+        <div className="min-w-[10rem] flex-1">
+          <SearchField
+            value={query}
+            onChange={(value) => {
+              setQuery(value);
+              setPage(0);
+            }}
+            placeholder="Search runs"
+            aria-label="Search runs"
+          />
+        </div>
+        {/* Five statuses and the agent are wider than a phone: they scroll sideways inside
+            the bar, not the page. */}
+        <div className="flex min-w-0 items-center gap-2 overflow-x-auto">
           <ButtonGroup
             aria-label="Filter runs by status"
             selected={filter}
             onClick={(value) => setFilter(value as Filter)}
             options={RUN_FILTERS.map((f) => ({ value: f, label: f ? STATUS_META[f].label : "All" }))}
           />
+          {(agents.length > 1 || agent) && (
+            <Select
+              value={agent || ALL_AGENTS}
+              onSelect={(v) => setAgent(v === ALL_AGENTS ? "" : v)}
+              triggerProps={{ "aria-label": "Agent" }}
+              className="w-44 shrink-0"
+            >
+              <Select.Item value={ALL_AGENTS}>Every agent</Select.Item>
+              {agents.map((a) => (
+                <Select.Item key={a} value={a}>
+                  {displayAgent(a)}
+                </Select.Item>
+              ))}
+            </Select>
+          )}
         </div>
-        <span className="w-px h-4 bg-border mx-1 max-md:hidden" />
+      </ListToolbar>
+
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
         <Chip label="Group by session" selected={groupBy} onClick={() => setGroupBy((v) => !v)} />
         {/* One label; pressed means the folded runs are shown. */}
         <Chip label="Show runs with no memory activity" selected={!hideConn} onClick={() => setHideConn((v) => !v)} />
-        {(agents.length > 1 || agent) && (
-          <Select
-            value={agent || ALL_AGENTS}
-            onSelect={(v) => setAgent(v === ALL_AGENTS ? "" : v)}
-            triggerProps={{ "aria-label": "Agent" }}
-            className="w-48"
-          >
-            <Select.Item value={ALL_AGENTS}>Every agent</Select.Item>
-            {agents.map((a) => (
-              <Select.Item key={a} value={a}>
-                {displayAgent(a)}
-              </Select.Item>
-            ))}
-          </Select>
-        )}
         {rows && visible.length > 0 && (
-          <span className="ml-auto text-xs text-text-muted">
-            {counts.total} run{counts.total === 1 ? "" : "s"} · {counts.completed} completed · {counts.failed} failed ·{" "}
-            {counts.used} memories relied on · {counts.written} written
+          <span className="ml-auto text-xs text-text-muted tabular">
+            {rows.length === RUNS_LIMIT ? "Newest 200 runs" : `${counts.total} run${counts.total === 1 ? "" : "s"}`} ·{" "}
+            {counts.completed} completed · {counts.failed} failed · {counts.used} memories relied on · {counts.written}{" "}
+            written
           </span>
         )}
       </div>
 
-      {rows === null && (
-        <LoadingSkeleton label="Loading runs">
-          <div className="space-y-3">
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-          </div>
-        </LoadingSkeleton>
-      )}
+      {rows === null && <RunTable label="Runs" rows={[]} onOpen={openRun} loading />}
       {rows !== null && error && <div className="text-sm text-danger mb-4">{error}</div>}
       {rows !== null && !error && rows.length === 0 && !hideConn && (
         <EmptyState
@@ -500,37 +531,59 @@ export function Runs() {
         />
       )}
 
-      {/* Flat: run-first table. */}
-      {rows !== null && !groupBy && visible.length > 0 && <RunTable rows={visible} onOpen={openRun} />}
+      {rows !== null && rows.length > 0 && visible.length === 0 && (
+        <p className="py-6 text-sm text-text-muted">No run matches “{query.trim()}”.</p>
+      )}
 
-      {/* Grouped: sessions are headers, runs are their timeline. */}
-      {rows !== null && groupBy && visible.length > 0 && (
-        <div className="space-y-4">
-          {groups.map((g, i) => (
-            <section key={g.label} aria-label={`Session ${g.label}`}>
-              <div className="flex items-center justify-between gap-3 px-3 py-2">
-                <div className="min-w-0 flex items-center gap-2 text-xs">
-                  <Icon name="cards" size="xs" aria-hidden="true" className="shrink-0" />
-                  {g.session_id.length > 32 ? (
-                    <TipTarget tip={g.session_id}>
-                      <span className="font-mono">{truncate(g.session_id, 32)}</span>
-                    </TipTarget>
-                  ) : (
-                    <span className="font-mono truncate">{g.session_id || "(no session)"}</span>
-                  )}
-                  <span className="text-text-muted">·</span>
-                  <span className="text-text-muted">
-                    {g.runs.length} run{g.runs.length === 1 ? "" : "s"}
-                  </span>
+      {/* A new page scrolls here and takes focus. */}
+      <div id="runs-list" tabIndex={-1} className="outline-none">
+        {/* Flat: run-first table. */}
+        {rows !== null && !groupBy && visible.length > 0 && <RunTable label="Runs" rows={pageRows} onOpen={openRun} />}
+
+        {/* Grouped: sessions are headers, runs are their timeline. */}
+        {rows !== null && groupBy && visible.length > 0 && (
+          <div className="space-y-4">
+            {groups.map((g, i) => (
+              <section key={g.label} aria-label={`Session ${g.label}`}>
+                <div className="flex items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0 flex items-center gap-2 text-xs">
+                    <Icon name="cards" size="xs" aria-hidden="true" className="shrink-0" />
+                    {g.session_id.length > 32 ? (
+                      <TipTarget tip={g.session_id}>
+                        <span className="font-mono">{truncate(g.session_id, 32)}</span>
+                      </TipTarget>
+                    ) : (
+                      <span className="font-mono truncate">{g.session_id || "(no session)"}</span>
+                    )}
+                    <span className="text-text-muted">·</span>
+                    <span className="text-text-muted">
+                      {g.runs.length} run{g.runs.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div className="text-xs text-text-muted whitespace-nowrap">
+                    {g.used} relied on · {g.written} written · {relativeTime(g.latest)}
+                  </div>
                 </div>
-                <div className="text-xs text-text-muted whitespace-nowrap">
-                  {g.used} relied on · {g.written} written · {relativeTime(g.latest)}
-                </div>
-              </div>
-              <RunTable rows={g.runs} onOpen={openRun} hideHeader={i > 0} />
-            </section>
-          ))}
-        </div>
+                <RunTable label={`Runs in session ${g.label}`} rows={g.runs} onOpen={openRun} hideHeader={i > 0} />
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+      {rows !== null && visible.length > 0 && (
+        <ListPager
+          label="Runs pages"
+          page={page}
+          pageSize={pageSize}
+          shown={pageRows.length}
+          total={visible.length}
+          onPage={setPage}
+          onPageSize={(n) => {
+            setPageSize(n);
+            setPage(0);
+          }}
+          topId="runs-list"
+        />
       )}
 
       {/* Replay dialog: the stored row plus what run.get derives live. */}

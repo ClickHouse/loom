@@ -275,6 +275,14 @@ function fmtDuration(ms: number): string {
   return `${Math.round(ms / 60000)} min`;
 }
 
+// A worker's interval is in its own column ("Every"), so the pass line keeps to the pass.
+const WORKER_HEADERS = [
+  { label: "Worker" },
+  { label: "Status", width: "300px" },
+  { label: "Last pass" },
+  { label: "Every", width: "80px" },
+];
+
 export function WorkersPanel() {
   const [rows, setRows] = useState<WorkerRow[] | null>(null);
   const [store, setStore] = useState<WorkersStore | null>(null);
@@ -374,11 +382,7 @@ export function WorkersPanel() {
           Refresh
         </Button>
       </div>
-      {rows === null && (
-        <LoadingSkeleton label="Loading workers">
-          <Skeleton className="h-40 w-full" />
-        </LoadingSkeleton>
-      )}
+      {rows === null && <Table aria-label="Workers" aria-busy loading size="sm" headers={WORKER_HEADERS} rows={[]} />}
       {rows !== null && (rows.length === 0 || visible.length === 0) && (
         <EmptyState
           icon="settings"
@@ -407,96 +411,118 @@ export function WorkersPanel() {
       )}
       {rows !== null && visible.length > 0 && (
         <div className="space-y-1.5" data-testid="workers-list" aria-busy={refreshing || undefined}>
-          {visible.map((w) => {
-            const status = statusOf(w);
-            const info = WORKER_INFO[w.name] || {
-              label: w.name.replace(/_/g, " "),
-              blurb: "Background worker.",
-            };
-            const pill = w.last_pass_status ? PASS_PILL[w.last_pass_status] : null;
-            const from = colourOf(w.reporting_from);
-            const written = w.rows_written ?? 0;
-            return (
-              <div key={w.name} className="flex items-start gap-3 p-3 rounded-xl border border-border bg-surface">
-                <div
-                  className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                    status === "healthy"
-                      ? "bg-success"
-                      : status === "degraded"
-                        ? "bg-danger"
-                        : status === "stalled"
-                          ? "bg-warn"
-                          : "bg-text-muted"
-                  }`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-text">{info.label}</span>
-                    <span className="text-xs text-text-muted font-mono">{w.name}</span>
-                    {(w.consecutive_failures ?? 0) > 0 && (
-                      <Badge
-                        size="sm"
-                        state="danger"
-                        text={`${w.consecutive_failures} consecutive failure${(w.consecutive_failures ?? 0) === 1 ? "" : "s"}${(w.consecutive_failures ?? 0) >= 3 ? " — DEGRADED" : ""}`}
-                      />
-                    )}
-                    {pill && status !== "disabled" && <Badge size="sm" state={pill.state} text={pill.label} />}
-                    {status === "stalled" && <Badge size="sm" state="warning" text="Stalled — overdue for a tick" />}
-                    {status === "disabled" && (
-                      <Badge
-                        size="sm"
-                        state="disabled"
-                        text={
-                          w.disabled_reason === "disabled_by_setting"
-                            ? "Off in config"
-                            : w.disabled_reason || "Disabled"
-                        }
-                      />
-                    )}
-                  </div>
-                  <div className="text-xs text-text-muted mt-1">{info.blurb}</div>
-                  {status !== "disabled" && (
-                    <div className="text-xs text-text-muted mt-1 tabular">
-                      {w.last_run_at ? (
-                        <>
-                          Last ran {relativeTime(w.last_run_at)}
-                          {w.last_duration_ms != null && <> · took {fmtDuration(w.last_duration_ms)}</>}
-                          {written > 0 && <> · {written.toLocaleString()} rows written</>}
-                          {w.total_runs != null && <> · {w.total_runs.toLocaleString()} runs total</>}
-                          {w.interval_seconds ? <> · every {fmtInterval(w.interval_seconds)}</> : null}
-                          {from && (
-                            <>
-                              {" "}
-                              · reporting from{" "}
-                              <span className="font-mono">
-                                {from}
-                                {from !== w.reporting_from && <span className="sr-only"> ({w.reporting_from})</span>}
-                              </span>
-                            </>
-                          )}
-                          {w.namespace && (
-                            <>
-                              {" "}
-                              · last namespace reached: <span className="font-mono">{w.namespace}</span>
-                            </>
-                          )}
-                          {w.trigger === "manual" && <> · manual run</>}
-                        </>
+          <Table
+            aria-label="Workers"
+            size="sm"
+            headers={WORKER_HEADERS}
+            rows={visible.map((w) => {
+              const status = statusOf(w);
+              const info = WORKER_INFO[w.name] || {
+                label: w.name.replace(/_/g, " "),
+                blurb: "Background worker.",
+              };
+              const pill = w.last_pass_status ? PASS_PILL[w.last_pass_status] : null;
+              const from = colourOf(w.reporting_from);
+              const written = w.rows_written ?? 0;
+              return {
+                id: w.name,
+                isDisabled: status === "disabled",
+                items: [
+                  {
+                    overflowMode: "wrap",
+                    label: (
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-text">{info.label}</span>
+                          <span className="text-xs text-text-muted font-mono">{w.name}</span>
+                        </div>
+                        <div className="text-xs text-text-muted mt-0.5">{info.blurb}</div>
+                      </div>
+                    ),
+                  },
+                  {
+                    overflowMode: "wrap",
+                    label: (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {status === "healthy" && !pill && <Badge size="sm" state="success" text="Healthy" />}
+                        {(w.consecutive_failures ?? 0) > 0 && (
+                          <Badge
+                            size="sm"
+                            state="danger"
+                            text={`${w.consecutive_failures} consecutive failure${(w.consecutive_failures ?? 0) === 1 ? "" : "s"}${(w.consecutive_failures ?? 0) >= 3 ? " — DEGRADED" : ""}`}
+                          />
+                        )}
+                        {pill && status !== "disabled" && <Badge size="sm" state={pill.state} text={pill.label} />}
+                        {status === "stalled" && (
+                          <Badge size="sm" state="warning" text="Stalled — overdue for a tick" />
+                        )}
+                        {status === "disabled" && (
+                          <Badge
+                            size="sm"
+                            state="disabled"
+                            text={
+                              w.disabled_reason === "disabled_by_setting"
+                                ? "Off in config"
+                                : w.disabled_reason || "Disabled"
+                            }
+                          />
+                        )}
+                      </div>
+                    ),
+                  },
+                  {
+                    overflowMode: "wrap",
+                    label:
+                      status === "disabled" ? (
+                        <span className="text-xs text-text-muted">—</span>
                       ) : (
-                        <>
-                          No pass reported yet
-                          {w.interval_seconds ? <> (every {fmtInterval(w.interval_seconds)})</> : null}
-                        </>
-                      )}
-                      {w.last_error && status !== "healthy" && (
-                        <span className="block text-danger mt-0.5">Error: {w.last_error.slice(0, 200)}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+                        <div className="text-xs text-text-muted tabular">
+                          {w.last_run_at ? (
+                            <>
+                              Last ran {relativeTime(w.last_run_at)}
+                              {w.last_duration_ms != null && <> · took {fmtDuration(w.last_duration_ms)}</>}
+                              {written > 0 && <> · {written.toLocaleString()} rows written</>}
+                              {w.total_runs != null && <> · {w.total_runs.toLocaleString()} runs total</>}
+                              {from && (
+                                <>
+                                  {" "}
+                                  · reporting from{" "}
+                                  <span className="font-mono">
+                                    {from}
+                                    {from !== w.reporting_from && (
+                                      <span className="sr-only"> ({w.reporting_from})</span>
+                                    )}
+                                  </span>
+                                </>
+                              )}
+                              {w.namespace && (
+                                <>
+                                  {" "}
+                                  · last namespace reached: <span className="font-mono">{w.namespace}</span>
+                                </>
+                              )}
+                              {w.trigger === "manual" && <> · manual run</>}
+                            </>
+                          ) : (
+                            <>No pass reported yet</>
+                          )}
+                          {w.last_error && status !== "healthy" && (
+                            <span className="block text-danger mt-0.5">Error: {w.last_error.slice(0, 200)}</span>
+                          )}
+                        </div>
+                      ),
+                  },
+                  {
+                    label: (
+                      <span className="text-xs text-text-muted tabular">
+                        {w.interval_seconds ? fmtInterval(w.interval_seconds) : "—"}
+                      </span>
+                    ),
+                  },
+                ],
+              };
+            })}
+          />
           {hiddenByConfig > 0 && !showAll && (
             <Button type="empty" htmlType="button" fillWidth iconLeft="eye" onClick={() => setShowAll(true)}>
               {`Show ${hiddenByConfig} worker${hiddenByConfig === 1 ? "" : "s"} disabled in config`}

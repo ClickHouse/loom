@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "../../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AllowlistRow, ConflictRow, LearningEntry } from "../../api";
@@ -14,6 +14,7 @@ vi.mock("../../api", async (importOriginal) => {
   return {
     ...actual,
     listConflicts: vi.fn(),
+    countConflicts: vi.fn(async () => 0),
     resolveConflict: vi.fn(async () => ({ resolved: true, affected_memory_ids: [] })),
     listAllowlist: vi.fn(),
     removeAllowlist: vi.fn(async () => ({ removed: true })),
@@ -22,7 +23,7 @@ vi.mock("../../api", async (importOriginal) => {
   };
 });
 vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: async () => true }));
-import { listAllowlist, listConflicts, listLearnings, resolveConflict } from "../../api";
+import { countConflicts, listAllowlist, listConflicts, listLearnings, resolveConflict } from "../../api";
 
 const ORG = "dev";
 const WAIT = { timeout: 5000 };
@@ -150,7 +151,11 @@ describe("ReviewQueue", () => {
     seed("ns-a");
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
-    expect(await screen.findByRole("button", { name: "Remove exception k/a ↔ k/b" }, WAIT)).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Remove exception k/a and k/b" }, WAIT)).toBeTruthy();
+    // The pair reads "k/a and k/b", not a spoken arrow glyph.
+    const table = screen.getByRole("table", { name: "Allowed exceptions" });
+    expect(within(table).getAllByRole("row")[1]).toHaveTextContent("k/a and k/b");
+    expect(table).not.toHaveTextContent("↔");
   });
   it("keeps the exceptions on screen, marked busy, while the reload after a removal reads", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
@@ -158,7 +163,7 @@ describe("ReviewQueue", () => {
     seed("ns-a");
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
-    const remove = await screen.findByRole("button", { name: "Remove exception k/a ↔ k/b" }, WAIT);
+    const remove = await screen.findByRole("button", { name: "Remove exception k/a and k/b" }, WAIT);
     let answer: (v: { rows: AllowlistRow[] }) => void = () => undefined;
     vi.mocked(listAllowlist).mockReturnValueOnce(new Promise((r) => (answer = r)));
     await userEvent.click(remove);
@@ -213,5 +218,46 @@ describe("ReviewQueue", () => {
     await user.keyboard(" ");
     await screen.findByText("k/promoted", {}, WAIT);
     expect(promoted.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("lists the queue in a table, says how many of the total it holds, and loads more", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(3);
+    vi.mocked(listConflicts).mockImplementation(async (_id, opts) =>
+      opts?.before_version
+        ? { rows: [conflict("k/three")], next_before_version: null }
+        : { rows: [conflict("k/one"), conflict("k/two")], next_before_version: 7 },
+    );
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(await screen.findByText("2 of 3", {}, WAIT)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(4), WAIT);
+    expect(vi.mocked(listConflicts).mock.calls.at(-1)?.[1]?.before_version).toBe(7);
+    expect(screen.getByText("3 of 3")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+
+    // A row of the queue opens that conflict for a decision.
+    await userEvent.click(within(table).getByRole("button", { name: "k/three" }));
+    expect(screen.getByText("value of k/three")).toBeInTheDocument();
+  });
+
+  it("takes a decided conflict out of the queue", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(2);
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [conflict("k/one"), conflict("k/two")],
+      next_before_version: null,
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    await waitFor(() => expect(within(table).queryByRole("button", { name: "k/one" })).toBeNull(), WAIT);
+    expect(within(table).getByRole("button", { name: "k/two" })).toBeInTheDocument();
+    expect(screen.getByText("1 of 1")).toBeInTheDocument();
   });
 });

@@ -7,9 +7,9 @@ import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { useStore, useIdentity } from "../../lib/state";
+import { ListPager, usePageSize } from "../../components/ui/ListPager";
 import { hasOrgAdminClaim } from "../../lib/role";
 import { adminListUsers, claimRelease, type AdminUserRow, type AdminUsersResult } from "../../api";
-import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { relativeTime, humanizeError } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
@@ -17,7 +17,7 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { Alert, LoadingSkeleton, PageHeader } from "../../components/ui";
+import { Alert, PageHeader } from "../../components/ui";
 
 type Filter = "all" | "pending" | "active7d";
 
@@ -48,7 +48,8 @@ export function Users() {
       {
         org: identity.org,
         include_service_accounts: includeServiceAccounts,
-        limit: 200,
+        // admin.users has no offset: one read of up to 1,000 accounts, paged here.
+        limit: 1000,
       },
       { signal },
     )
@@ -120,13 +121,7 @@ export function Users() {
 
       {error && <EmptyState icon="users" title="Couldn't load" description={error} />}
       {!error && data === null && (
-        <LoadingSkeleton label="Loading users">
-          <div className="space-y-2">
-            <Skeleton className="h-14" />
-            <Skeleton className="h-14" />
-            <Skeleton className="h-14" />
-          </div>
-        </LoadingSkeleton>
+        <Table aria-label="Users" aria-busy loading size="sm" headers={USER_HEADERS} rows={[]} />
       )}
       {!error && data !== null && data.users.length === 0 && (
         <EmptyState
@@ -149,7 +144,8 @@ export function Users() {
             </div>
           )}
 
-          <UserListTable data={data} filter={filter} />
+          {/* Keyed by the filter, so another filter starts from its first page. */}
+          <UserList key={filter} data={data} filter={filter} />
 
           <div className="mt-3 text-xs text-text-muted">
             {data.total} account{data.total === 1 ? "" : "s"} shown. To promote someone to platform admin, add their
@@ -251,8 +247,14 @@ function FilterLabel({ label, count, icon }: { label: string; count: number; ico
   );
 }
 
-function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filter }) {
+const USER_HEADERS = [{ label: "Subject" }, { label: "Namespaces" }, { label: "Auth" }, { label: "Last active" }];
+
+/** The accounts the filter keeps, 50 to a page (admin.users has no offset, so the pages
+ *  are cut here). */
+function UserList({ data, filter }: { data: AdminUsersResult; filter: Filter }) {
   const sevenDaysMs = 7 * 24 * 3600 * 1000;
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize("users");
   const rows = useMemo(() => {
     if (filter === "pending") {
       return data.users.filter((u) => u.grants.some((g) => g.pending_role));
@@ -262,9 +264,35 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
     }
     return data.users;
   }, [data, filter, sevenDaysMs]);
+  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
 
   return (
+    <>
+      <UserListTable rows={pageRows} filter={filter} />
+      <ListPager
+        label="Users pages"
+        page={page}
+        pageSize={pageSize}
+        shown={pageRows.length}
+        total={rows.length}
+        onPage={setPage}
+        onPageSize={(n) => {
+          setPageSize(n);
+          setPage(0);
+        }}
+        topId="users-list"
+      />
+    </>
+  );
+}
+
+// A new page scrolls to the table and gives it focus.
+function UserListTable({ rows, filter }: { rows: AdminUserRow[]; filter: Filter }) {
+  return (
     <Table
+      id="users-list"
+      tabIndex={-1}
+      aria-label="Users"
       size="sm"
       noDataMessage={
         filter === "pending"
@@ -273,7 +301,7 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
             ? "No users active in the last 7 days."
             : "No users to show."
       }
-      headers={[{ label: "Subject" }, { label: "Namespaces" }, { label: "Auth" }, { label: "Last active" }]}
+      headers={USER_HEADERS}
       rows={rows.map((u: AdminUserRow) => ({
         id: u.subject,
         items: [

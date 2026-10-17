@@ -31,6 +31,7 @@ import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Skeleton, SkeletonCard } from "../components/Skeleton";
 import { toast } from "../components/Toast";
+import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { stageFlips } from "../lib/codeStage";
 import { confirmAction } from "../components/ConfirmDialog";
 import {
@@ -398,6 +399,9 @@ function RepositoriesHome({
   const [registering, setRegistering] = useState<{ group: RepoGroup | null } | null>(null);
   const org = useStore((s) => s.identity)?.org ?? repos?.[0]?.org ?? "";
   const [query, setQuery] = useState("");
+  // Most orgs hold a handful of repositories: no pages until there are more than 50.
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize("repositories");
   // The record facet — the tracker namespaces whose `repos` name a repository — is read
   // once here and joined onto the cards by repository.
   const tracker = useTrackerSources(org);
@@ -415,6 +419,7 @@ function RepositoriesHome({
         (c.record?.namespaces ?? []).some((n) => n.ns.namespace.toLowerCase().includes(q)),
     );
   }, [cards, query]);
+  const pageCards = visible.slice(page * pageSize, (page + 1) * pageSize);
   const totals = useMemo(() => {
     const all = repos ?? [];
     return {
@@ -546,13 +551,17 @@ function RepositoriesHome({
           )
         }
       />
-      <p className="text-sm text-text-muted mb-5 max-w-2xl">
-        One card per repository: its <strong className="font-medium text-text">code</strong> — indexed branches you can
-        search and ask about — and its <strong className="font-medium text-text">tracker</strong> — issues and PRs, read
-        live. Everything here is read-only. An <strong className="font-medium text-text">open</strong> one joins in one
-        click; a <strong className="font-medium text-text">restricted</strong> one is requested and a maintainer
-        approves.
-      </p>
+      <div className="text-sm text-text-muted mb-5 max-w-[72ch]">
+        One card per repository: its indexed code branches and its tracker of issues and PRs, all read-only.{" "}
+        <span className="inline-flex align-middle">
+          <IconButton
+            icon="info-in-circle"
+            size="xs"
+            label="About repositories"
+            tooltip="You can search and ask about a branch's code; the tracker is read live. An open repository joins in one click; a restricted one is requested and a maintainer approves."
+          />
+        </span>
+      </div>
 
       {loaded && repos.length > 0 && (
         <div className="mb-5 flex items-center gap-3 flex-wrap text-xs text-text-muted tabular-nums">
@@ -575,7 +584,10 @@ function RepositoriesHome({
           <div className="w-64 max-w-full">
             <SearchField
               value={query}
-              onChange={(v) => setQuery(v)}
+              onChange={(v) => {
+                setQuery(v);
+                setPage(0);
+              }}
               placeholder="Filter repositories or branches"
               aria-label="Filter repositories"
             />
@@ -647,9 +659,10 @@ function RepositoriesHome({
       )}
 
       {loaded && visible.length > 0 && (
-        // Folded rows, so the list is a compact stack; a card grows only when opened.
-        <div className="space-y-2">
-          {visible.map((c) => (
+        // Folded rows, so the list is a compact stack; a card grows only when opened. A new
+        // page scrolls here and takes focus.
+        <div id="repositories-list" tabIndex={-1} className="space-y-2 outline-none">
+          {pageCards.map((c) => (
             <RepositoryCard
               key={c.repo}
               card={c}
@@ -660,6 +673,21 @@ function RepositoriesHome({
             />
           ))}
         </div>
+      )}
+      {loaded && visible.length > 0 && (
+        <ListPager
+          label="Repository pages"
+          page={page}
+          pageSize={pageSize}
+          shown={pageCards.length}
+          total={visible.length}
+          onPage={setPage}
+          onPageSize={(n) => {
+            setPageSize(n);
+            setPage(0);
+          }}
+          topId="repositories-list"
+        />
       )}
       {loaded && cards.length > 0 && visible.length === 0 && (
         <div className="text-sm text-text-muted py-6">No repository or branch matches “{query}”.</div>
@@ -2573,8 +2601,8 @@ function ExploreTab({ id }: { id: CodeId }) {
 // PR packs
 // ---------------------------------------------------------------------------
 
-function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
-  const PAGE = 50;
+export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
+  const [pageSize, setPageSize] = usePageSize("packs");
   const [rows, setRows] = useState<CodeContextPackRow[] | null>(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -2602,7 +2630,7 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       }
       setRefreshing(true);
       const pr = parseInt(prSettled, 10);
-      listCodeContextPacks(id, { limit: PAGE, offset, pr_number: Number.isFinite(pr) ? pr : 0, signal })
+      listCodeContextPacks(id, { limit: pageSize, offset, pr_number: Number.isFinite(pr) ? pr : 0, signal })
         .then((r) => {
           if (live()) {
             setRows(r.rows);
@@ -2618,7 +2646,7 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           }
         });
     },
-    [id.org, id.namespace, offset, prSettled],
+    [id.org, id.namespace, offset, pageSize, prSettled],
   );
 
   const toggle = async (pr: number) => {
@@ -2685,7 +2713,12 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       {/* Rows expand inline into their pack, so this stays a list of disclosure rows
           rather than a table. */}
       {rows !== null && rows.length > 0 && (
-        <div className="rounded-xl border border-border overflow-hidden" aria-busy={refreshing || undefined}>
+        <div
+          id="packs-list"
+          tabIndex={-1}
+          className="rounded-xl border border-border overflow-hidden outline-none"
+          aria-busy={refreshing || undefined}
+        >
           {rows.map((r) => (
             <div key={r.pr_number} className="border-b border-border last:border-b-0">
               <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2">
@@ -2737,30 +2770,20 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
         </div>
       )}
 
-      {total > PAGE && (
-        <div className="flex items-center justify-between text-xs text-text-muted tabular">
-          <span>
-            {offset + 1}–{Math.min(offset + PAGE, total)} of {fmtInt(total)}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              type="secondary"
-              htmlType="button"
-              disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - PAGE))}
-            >
-              Newer
-            </Button>
-            <Button
-              type="secondary"
-              htmlType="button"
-              disabled={offset + PAGE >= total}
-              onClick={() => setOffset(offset + PAGE)}
-            >
-              Older
-            </Button>
-          </div>
-        </div>
+      {rows !== null && rows.length > 0 && (
+        <ListPager
+          label="PR pack pages"
+          page={Math.floor(offset / pageSize)}
+          pageSize={pageSize}
+          shown={rows.length}
+          total={total}
+          onPage={(n) => setOffset(n * pageSize)}
+          onPageSize={(n) => {
+            setPageSize(n);
+            setOffset(0);
+          }}
+          topId="packs-list"
+        />
       )}
     </div>
   );

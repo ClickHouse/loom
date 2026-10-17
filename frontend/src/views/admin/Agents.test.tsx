@@ -1,6 +1,6 @@
 /** Refresh reads the clients again with the table still on screen: the table is marked
  *  busy and the button shows it is working, and nothing is swapped for a loader. */
-import { act, cleanup, fireEvent, render, screen } from "../../test/rtl";
+import { act, cleanup, fireEvent, render, screen, within } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../lib/state";
 import { Agents } from "./Agents";
@@ -30,10 +30,13 @@ afterEach(() => {
 });
 
 describe("Agents: loading", () => {
-  it("shows a labelled skeleton on the first load", async () => {
+  it("draws the first load as Click UI's loading table, marked busy", async () => {
     listConnectedAgents.mockReturnValue(new Promise(() => {}));
     render(<Agents />);
-    expect(await screen.findByRole("status", { name: "Loading agents" })).toHaveAttribute("aria-busy", "true");
+    const table = await screen.findByRole("table", { name: "Connected clients" });
+    expect(table).toHaveAttribute("aria-busy", "true");
+    expect(within(table).getByText("Loading data")).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Client" })).toBeInTheDocument();
   });
 
   it("keeps the table on screen, marked busy, while Refresh reads again", async () => {
@@ -46,7 +49,7 @@ describe("Agents: loading", () => {
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     expect(screen.getByText("claude-code")).toBeInTheDocument();
     expect(screen.getByTestId("agents-table")).toHaveAttribute("aria-busy", "true");
-    expect(screen.queryByRole("status", { name: "Loading agents" })).toBeNull();
+    expect(screen.queryByText("Loading data")).toBeNull();
 
     await act(async () => answer({ rows: [ROW] }));
     expect(screen.getByTestId("agents-table")).not.toHaveAttribute("aria-busy");

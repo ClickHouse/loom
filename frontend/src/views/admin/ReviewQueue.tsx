@@ -2,9 +2,12 @@ import { useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Table } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import {
+  countConflicts,
   listConflicts,
   resolveConflict,
   listAllowlist,
@@ -136,9 +139,16 @@ export function ReviewQueue() {
 
 // ─── Conflicts panel ───────────────────────────────────────────────────
 
+const CONFLICT_PAGE = 50;
+
 function ConflictsPanel() {
   const identity = useIdentity();
   const [rows, setRows] = useState<ConflictRow[] | null>(null);
+  // The next older page (conflicts.list is keyed by version), and how many the namespace
+  // holds in all.
+  const [next, setNext] = useState<number | null>(null);
+  const [total, setTotal] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [index, setIndex] = useState(0);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -154,10 +164,11 @@ function ConflictsPanel() {
         rowsFor.current = `${identity.org}/${identity.namespace}`;
         setRows(null);
       }
-      listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: 50, signal })
+      listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: CONFLICT_PAGE, signal })
         .then((r) => {
           if (live()) {
             setRows(r.rows);
+            setNext(r.next_before_version);
             setIndex(0);
             setReason("");
           }
@@ -165,16 +176,39 @@ function ConflictsPanel() {
         .catch(() => {
           if (live()) setRows([]);
         });
+      countConflicts({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((n) => {
+          if (live()) setTotal(n);
+        })
+        .catch(() => {
+          if (live()) setTotal(null);
+        });
     },
     [identity.org, identity.namespace, reload],
   );
 
-  if (rows === null)
-    return (
-      <LoadingSkeleton label="Loading conflicts">
-        <Skeleton className="h-48 w-full" />
-      </LoadingSkeleton>
-    );
+  // The next older page joins the queue; the decision in progress stays where it is.
+  const loadMore = async () => {
+    if (next === null || !rows) return;
+    const key = rowsFor.current;
+    setLoadingMore(true);
+    try {
+      const r = await listConflicts(
+        { org: identity.org, namespace: identity.namespace },
+        { limit: CONFLICT_PAGE, before_version: next },
+      );
+      if (rowsFor.current !== key) return;
+      const have = new Set(rows.map((c) => c.memory_id));
+      setRows([...rows, ...r.rows.filter((c) => !have.has(c.memory_id))]);
+      setNext(r.next_before_version);
+    } catch (e) {
+      toast(`Couldn't load more conflicts: ${humanizeError(e)}`, "error");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  if (rows === null) return <QueueTable rows={[]} current={null} onPick={() => {}} loading />;
   if (rows.length === 0) {
     return (
       <EmptyState
@@ -189,6 +223,8 @@ function ConflictsPanel() {
   if (!current) return <EmptyState icon="secure" title="All clear" description="You worked through the queue." />;
 
   const peerId = current.conflict_with?.[0];
+  // The server's count is cached for a minute; it is never less than the rows on hand.
+  const held = total === null ? null : Math.max(total, rows.length);
 
   const decide = async (decision: ResolveDecision) => {
     setBusy(true);
@@ -201,8 +237,13 @@ function ConflictsPanel() {
       );
       toast("Resolved", "ok");
       setReason("");
-      if (index + 1 < rows.length) setIndex(index + 1);
-      else setReload((n) => n + 1);
+      // The decided conflict leaves the queue; the next one takes its place.
+      const rest = rows.filter((c) => c.memory_id !== current.memory_id);
+      if (held !== null) setTotal(held - 1);
+      if (rest.length > 0) {
+        setRows(rest);
+        setIndex(Math.min(index, rest.length - 1));
+      } else setReload((n) => n + 1);
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {
@@ -212,8 +253,14 @@ function ConflictsPanel() {
 
   return (
     <div>
-      <div className="text-sm text-text-muted tabular mb-3">
-        Conflict {index + 1} of {rows.length} · resolve in order
+      <div className="mb-3 flex items-center gap-3 text-sm text-text-muted tabular">
+        <span>
+          Conflict {index + 1} of {rows.length} · resolve in order
+        </span>
+        <span className="ml-auto text-xs">
+          {held === null ? `${rows.length} loaded` : `${rows.length} of ${held}`}
+          <span className="sr-only"> conflicts loaded</span>
+        </span>
       </div>
       <Panel>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
@@ -261,7 +308,75 @@ function ConflictsPanel() {
           </Button>
         </div>
       </Panel>
+
+      <h2 className="mt-6 mb-2 text-sm font-semibold">Queue</h2>
+      <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} />
+      {next !== null && (
+        <Button
+          type="secondary"
+          htmlType="button"
+          fillWidth
+          className="mt-3"
+          loading={loadingMore}
+          disabled={loadingMore}
+          onClick={() => void loadMore()}
+        >
+          Load more
+        </Button>
+      )}
     </div>
+  );
+}
+
+/** The conflicts on hand, one row each; the one being decided is the active row, and a
+ *  key opens that conflict. The first read is Click UI's own loading table. */
+function QueueTable({
+  rows,
+  current,
+  onPick,
+  loading = false,
+  busy = false,
+}: {
+  rows: ConflictRow[];
+  current: string | null;
+  onPick: (index: number) => void;
+  loading?: boolean;
+  busy?: boolean;
+}) {
+  return (
+    <Table
+      aria-label="Conflicts"
+      aria-busy={loading || busy || undefined}
+      loading={loading}
+      size="sm"
+      headers={[
+        { label: "Key" },
+        { label: "Version", width: "90px" },
+        { label: "Pinned", width: "90px" },
+        { label: "Written", width: "120px" },
+      ]}
+      rows={rows.map((c, i) => ({
+        id: c.memory_id,
+        isActive: c.memory_id === current,
+        items: [
+          {
+            label: (
+              <button
+                type="button"
+                className="min-w-0 max-w-full truncate rounded text-left font-mono text-xs"
+                aria-current={c.memory_id === current || undefined}
+                onClick={() => onPick(i)}
+              >
+                {c.memory_key}
+              </button>
+            ),
+          },
+          { label: <span className="tabular">v{c.version}</span> },
+          { label: c.pinned ? "Pinned" : <span className="text-text-muted">—</span> },
+          { label: <span className="tabular text-text-muted">{relativeTime(c.created_at)}</span> },
+        ],
+      }))}
+    />
   );
 }
 
@@ -461,13 +576,7 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
     }
   };
 
-  if (rows === null)
-    return (
-      <LoadingSkeleton label="Loading exceptions">
-        <Skeleton className="h-40 w-full" />
-      </LoadingSkeleton>
-    );
-  if (rows.length === 0) {
+  if (rows !== null && rows.length === 0) {
     return (
       <EmptyState
         icon="line-in-circle"
@@ -476,30 +585,57 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
       />
     );
   }
+  // The first read is Click UI's own loading table; a reload keeps the rows, marked busy.
   return (
-    <div className="space-y-1.5" data-testid="allowlist" aria-busy={refreshing || undefined}>
-      {rows.map((r) => (
-        <Panel key={`${r.memory_key_a}-${r.memory_key_b}`} padding="sm" bodyClassName="flex items-start gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 text-sm font-mono">
-              <span className="text-text truncate">{r.memory_key_a}</span>
-              <span className="text-text-muted">↔</span>
-              <span className="text-text truncate">{r.memory_key_b}</span>
-            </div>
-            <div className="text-xs text-text-muted tabular mt-1">
-              {r.allowed_by} · {relativeTime(r.allowed_at)}
-              {r.reason && <> · "{r.reason}"</>}
-            </div>
-          </div>
-          <IconButton
-            icon="cross"
-            type="danger"
-            size="sm"
-            label={`Remove exception ${r.memory_key_a} ↔ ${r.memory_key_b}`}
-            onClick={() => remove(r.memory_key_a, r.memory_key_b)}
-          />
-        </Panel>
-      ))}
+    <div data-testid="allowlist" aria-busy={refreshing || undefined}>
+      <Table
+        aria-label="Allowed exceptions"
+        aria-busy={rows === null || undefined}
+        loading={rows === null}
+        size="sm"
+        headers={[
+          { label: "Pair" },
+          { label: "Allowed by", width: "180px" },
+          { label: "When", width: "110px" },
+          { label: "Reason" },
+          { label: <span className="sr-only">Remove</span>, width: "56px" },
+        ]}
+        rows={(rows ?? []).map((r) => ({
+          id: `${r.memory_key_a}-${r.memory_key_b}`,
+          items: [
+            {
+              label: (
+                <span className="flex min-w-0 items-center gap-2 font-mono text-xs">
+                  <span className="truncate">{r.memory_key_a}</span>
+                  <Icon name="resize-arrows-horizontal" size="xs" aria-hidden="true" className="shrink-0" />
+                  <span className="sr-only"> and </span>
+                  <span className="truncate">{r.memory_key_b}</span>
+                </span>
+              ),
+            },
+            { label: <span className="text-xs">{r.allowed_by}</span> },
+            { label: <span className="tabular text-xs text-text-muted">{relativeTime(r.allowed_at)}</span> },
+            {
+              label: r.reason ? (
+                <span className="text-xs">{r.reason}</span>
+              ) : (
+                <span className="text-text-muted">—</span>
+              ),
+            },
+            {
+              label: (
+                <IconButton
+                  icon="cross"
+                  type="danger"
+                  size="sm"
+                  label={`Remove exception ${r.memory_key_a} and ${r.memory_key_b}`}
+                  onClick={() => remove(r.memory_key_a, r.memory_key_b)}
+                />
+              ),
+            },
+          ],
+        }))}
+      />
     </div>
   );
 }
