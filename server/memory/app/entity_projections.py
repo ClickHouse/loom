@@ -1450,8 +1450,8 @@ async def stated_by_live_rows(
 ) -> frozenset[tfr.Triple]:
     """Of `triples`, those a row that may hold graph facts (`GRAPH_HOLDER_SQL`) holds:
     stated for its current value, or carried from a value it was revised from
-    (`tfr.carried`). `rows` (ids) limits the rows asked; without it, rows that predate
-    row links count too (`held_by_unlinked_rows`)."""
+    (`tfr.carried`). `rows` (ids) limits the rows asked; without it, rows with no
+    row links of their own count too (`held_by_unlinked_rows`)."""
     return frozenset(await live_holders(org, namespace, triples, ch=ch, rows=rows))
 
 
@@ -1538,12 +1538,15 @@ async def held_by_unlinked_rows(
     ch: Any,
     rows: list[str] | None = None,
 ) -> frozenset[tfr.Triple]:
-    """Of `triples`, those a row written before rows were linked to triples holds: a
-    live row whose value was first written before the row-links migration, of a key the
-    triple is linked to (`entity_triple_memories`), that still names it
-    (`tfr.still_states`). A value written since with no link stated no fact, and holds
-    none. With `rows` (ids) and no `triples`: what those rows hold of every triple
-    their keys are linked to."""
+    """Of `triples`, those a row with no link of its own holds: a live row whose current
+    value has no triple its extractor stated (`entity_triple_rows`), of a key the triple
+    is linked to (`entity_triple_memories`), that still names it (`tfr.still_states`).
+    The key link counts for a value first written before rows were linked, or for one a
+    build that links only keys wrote since (the previous build, during a rollout): its
+    key link is then no older than the value, and no row of the key links the
+    triple. A value this build wrote that stated nothing has neither, and holds none.
+    With `rows` (ids) and no `triples`: what those rows hold of every triple their keys
+    are linked to."""
     return frozenset(await _unlinked_holders(org, namespace, triples, ch=ch, rows=rows))
 
 
@@ -1568,10 +1571,11 @@ async def _unlinked_holders(
     found = await ch.query_all(
         f"""
         WITH keyed AS (
-            SELECT memory_key, subject, relation, object
+            SELECT memory_key, subject, relation, object, max(seen_at) AS seen_at
             FROM loom.entity_triple_memories
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND {wanted}
+            GROUP BY memory_key, subject, relation, object
         ),
         live AS (
             SELECT memory_id, memory_key, value, content_sha256, updated_at
@@ -1580,35 +1584,57 @@ async def _unlinked_holders(
               AND memory_key IN (SELECT memory_key FROM keyed)
               AND {GRAPH_HOLDER_SQL}
               {only_rows}
-              -- Its current value was first written before rows were linked: a pin, a
-              -- lock or an Undo writes the same value again and keeps it a legacy row.
-              AND (memory_id, content_sha256) NOT IN (
-                  SELECT memory_id, content_sha256 FROM loom.memory_versions
-                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                    AND memory_id IN (
-                        SELECT memory_id FROM loom.memory
-                        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                          AND memory_key IN (SELECT memory_key FROM keyed)
-                    )
-                  GROUP BY memory_id, content_sha256
-                  HAVING min(updated_at) >= (
-                      SELECT min(applied_at) FROM loom._migrations
-                      WHERE filename = {{row_links:String}}
-                  )
-              )
+        ),
+        -- When each value was first written: a pin, a lock or an Undo writes it again. A
+        -- value older than the mirror has no version there, and joins as 0.
+        first_written AS (
+            SELECT memory_id, content_sha256, min(updated_at) AS at
+            FROM loom.memory_versions
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_id IN (SELECT memory_id FROM live)
+            GROUP BY memory_id, content_sha256
+        ),
+        -- The rows of each key that link the triple (any of their values): a key link
+        -- they write is theirs.
+        linked AS (
+            SELECT DISTINCT m.memory_key AS memory_key, r.subject AS subject,
+                   r.relation AS relation, r.object AS object
+            FROM loom.entity_triple_rows AS r
+            INNER JOIN (
+                SELECT DISTINCT memory_id, memory_key FROM loom.memory
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND memory_key IN (SELECT memory_key FROM keyed)
+            ) AS m ON r.memory_id = m.memory_id
+            WHERE r.org = {{org:String}} AND r.namespace = {{ns:String}}
+              AND (r.subject, r.relation, r.object) IN (SELECT subject, relation, object FROM keyed)
         )
         SELECT toString(l.memory_id) AS id, toString(l.content_sha256) AS sha,
                l.updated_at AS updated_at, l.value AS value,
                k.subject AS subject, k.relation AS relation, k.object AS object
         FROM keyed AS k
         INNER JOIN live AS l ON k.memory_key = l.memory_key
-        -- What its extractor stated for its current value; a successor written for it
-        -- (inferred) or a link of another value leaves it a legacy row.
+        LEFT JOIN first_written AS f
+            ON f.memory_id = l.memory_id AND f.content_sha256 = l.content_sha256
+        -- No link its extractor stated for its current value (a successor written for
+        -- it, inferred, or a link of another value does not count)...
         WHERE (l.memory_id, l.content_sha256) NOT IN (
             SELECT memory_id, content_sha256 FROM loom.entity_triple_rows
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND NOT inferred
               AND memory_id IN (SELECT memory_id FROM live)
         )
+          -- ...and first written before rows were linked, or by a build that links only
+          -- keys: a key link no older than the value, that no linked row of the key wrote.
+          AND (
+              f.at < (
+                  SELECT min(applied_at) FROM loom._migrations
+                  WHERE filename = {{row_links:String}}
+              )
+              OR (
+                  k.seen_at >= f.at
+                  AND (k.memory_key, k.subject, k.relation, k.object) NOT IN (
+                      SELECT memory_key, subject, relation, object FROM linked)
+              )
+          )
         SETTINGS select_sequential_consistency = 1
         """,
         params={

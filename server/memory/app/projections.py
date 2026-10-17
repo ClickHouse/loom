@@ -1116,9 +1116,11 @@ def _edge_observation_parts(observations: list[tuple[Any, ...]]) -> list[list[tu
 _EDGE_ROW_LINKS_MIGRATION = "043_entity_edge_rows.sql"
 
 # The pairs of {pairs} a live row still names: its current value has a link to the
-# pair, or it is a row whose value was first written before rows were linked to
-# edges, with no link for that value, of a key linked to the pair (a legacy row's
-# text is not read: it keeps the edge, as its key link did).
+# pair, or it has no edge link of its own and its key's link to the pair counts, as for
+# triples (`held_by_unlinked_rows`): the value was first written before rows were linked
+# to edges, or since by a build that links only keys (the key link is no older than the
+# value, and no row of the key links the pair). Such a row's text is not read: it
+# keeps the edge, as its key link did.
 _HELD_PAIRS_CTES = f"""
     rowed AS (
         SELECT memory_id, content_sha256, entity_a, entity_b FROM loom.entity_edge_rows
@@ -1126,33 +1128,40 @@ _HELD_PAIRS_CTES = f"""
           AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
     ),
     keyed AS (
-        SELECT memory_key, entity_a, entity_b FROM loom.entity_edge_memories
+        SELECT memory_key, entity_a, entity_b, max(seen_at) AS seen_at
+        FROM loom.entity_edge_memories
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
+        GROUP BY memory_key, entity_a, entity_b
     ),
-    keyed_ids AS (
-        SELECT memory_id FROM loom.memory
+    keyed_rows AS (
+        SELECT DISTINCT memory_id, memory_key FROM loom.memory
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND memory_key IN (SELECT memory_key FROM keyed)
     ),
-    legacy AS (
-        SELECT memory_key FROM loom.memory FINAL
+    unlinked AS (
+        SELECT memory_id, memory_key, content_sha256 FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND memory_key IN (SELECT memory_key FROM keyed)
           AND {GRAPH_HOLDER_SQL}
           AND (memory_id, content_sha256) NOT IN (
               SELECT memory_id, content_sha256 FROM loom.entity_edge_rows
               WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                AND memory_id IN (SELECT memory_id FROM keyed_ids))
-          -- A pin, a lock or an Undo writes the same value again and keeps it a legacy row.
-          AND (memory_id, content_sha256) NOT IN (
-              SELECT memory_id, content_sha256 FROM loom.memory_versions
-              WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                AND memory_id IN (SELECT memory_id FROM keyed_ids)
-              GROUP BY memory_id, content_sha256
-              HAVING min(updated_at) >= (
-                  SELECT min(applied_at) FROM loom._migrations
-                  WHERE filename = {{edge_links:String}}))
+                AND memory_id IN (SELECT memory_id FROM keyed_rows))
+    ),
+    -- When each value was first written: a pin, a lock or an Undo writes it again. A
+    -- value older than the mirror has no version there, and joins as 0.
+    first_written AS (
+        SELECT memory_id, content_sha256, min(updated_at) AS at FROM loom.memory_versions
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_id IN (SELECT memory_id FROM unlinked)
+        GROUP BY memory_id, content_sha256
+    ),
+    -- The rows of each key that link the pair (any of their values).
+    linked AS (
+        SELECT DISTINCT m.memory_key AS memory_key, r.entity_a AS entity_a, r.entity_b AS entity_b
+        FROM rowed AS r
+        INNER JOIN keyed_rows AS m ON r.memory_id = m.memory_id
     ),
     held AS (
         SELECT entity_a, entity_b FROM rowed
@@ -1162,7 +1171,17 @@ _HELD_PAIRS_CTES = f"""
               AND memory_id IN (SELECT memory_id FROM rowed)
               AND {GRAPH_HOLDER_SQL})
         UNION ALL
-        SELECT entity_a, entity_b FROM keyed WHERE memory_key IN (SELECT memory_key FROM legacy)
+        SELECT k.entity_a AS entity_a, k.entity_b AS entity_b
+        FROM keyed AS k
+        INNER JOIN unlinked AS u ON k.memory_key = u.memory_key
+        LEFT JOIN first_written AS f
+            ON f.memory_id = u.memory_id AND f.content_sha256 = u.content_sha256
+        WHERE f.at < (
+                SELECT min(applied_at) FROM loom._migrations
+                WHERE filename = {{edge_links:String}})
+           OR (k.seen_at >= f.at
+               AND (k.memory_key, k.entity_a, k.entity_b) NOT IN (
+                   SELECT memory_key, entity_a, entity_b FROM linked))
     )"""
 
 

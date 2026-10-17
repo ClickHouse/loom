@@ -1180,15 +1180,19 @@ async def test_a_proposal_naming_a_single_valued_fact_changes_no_established_one
     assert await _status(ch, org, london) == "active"
 
 
-async def _legacy_stated(ch: Any, org: str, value: str, triple: tuple, key: str) -> dict[str, Any]:
-    """A row written before rows were linked to triples: its triple is linked to its
-    key only. Returns the row."""
+async def _legacy_stated(
+    ch: Any, org: str, value: str, triple: tuple, key: str, written: datetime | None = None
+) -> dict[str, Any]:
+    """A row written before rows were linked to triples, or (`written` now) by the
+    previous build during a rollout: its triple is linked to its key only, as that
+    build's projection links it just after the row. Returns the row."""
     from server.memory import store as M
     from server.memory.app.projections import entity_triple_row
 
     now = naive_utc_now()
+    written = written or datetime(2020, 1, 1)  # before row links
     row = _row(org, "s0", value, now, memory_key=key)
-    row["created_at"] = row["updated_at"] = datetime(2020, 1, 1)  # before row links
+    row["created_at"] = row["updated_at"] = written
     await M.insert_memory_versions([row], ch=ch)
     s, r, o = triple
     await ch.insert(
@@ -1209,7 +1213,9 @@ async def _legacy_stated(ch: Any, org: str, value: str, triple: tuple, key: str)
         ],
     )
     link = {"org": org, "namespace": NS, "subject": s, "relation": r, "object": o}
-    await ch.insert("loom.entity_triple_memories", [{**link, "memory_key": key}])
+    await ch.insert(
+        "loom.entity_triple_memories", [{**link, "memory_key": key, "seen_at": written}]
+    )
     return row
 
 
@@ -1229,6 +1235,19 @@ async def test_a_fact_a_row_predating_row_links_states_survives_a_revision(
     linked = await _stated(ch, org, "s1", "I like jazz", jazz, memory_key="r1")
     await _revise("memory.update_by_id", org, linked, "I like rock", (rock,))
     await _mutations_done(ch, org)
+    assert await _open_facts(ch, org, want) == want
+
+
+async def test_a_fact_a_previous_build_row_states_survives_a_revision(ch, org) -> None:
+    # Mid-rollout the previous build writes "I like jazz" with a key link and no row
+    # link. Another row stating jazz is revised to rock: the previous build's row still
+    # holds jazz.
+    jazz, rock = ("user", "like", "jazz"), ("user", "like", "rock")
+    await _legacy_stated(ch, org, "I like jazz", jazz, "older", written=naive_utc_now())
+    linked = await _stated(ch, org, "s1", "I like jazz", jazz, memory_key="r1")
+    await _revise("memory.update_by_id", org, linked, "I like rock", (rock,))
+    await _mutations_done(ch, org)
+    want = {("like", "jazz"), ("like", "rock")}
     assert await _open_facts(ch, org, want) == want
 
 
@@ -5861,6 +5880,24 @@ async def test_a_dropped_facts_edge_stays_open_while_another_row_names_both(ch, 
     await _mutations_done(ch, org)
     await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
     assert await _walked(org, [], labeled=True, seed="alice") == []
+    assert await _walks_to(org, "london")
+
+
+async def test_a_dropped_facts_edge_stays_open_while_a_previous_build_row_names_both(
+    ch, org
+) -> None:
+    # Mid-rollout the previous build writes the trip row's edge with a key link and no
+    # row link (it links no rows). London's row is revised away: the trip row's edge stays.
+    likes = ("alice", "like", "london")
+    london = await _stated(ch, org, "s1", "Alice likes London", likes)
+    trip = await _stated(
+        ch, org, "s2", "Alice's trip to London", extracted=False, memory_key="trip"
+    )
+    await _mentions(ch, org, london, "alice", "london")
+    await _mentions(ch, org, {**trip, "memory_id": ""}, "alice", "london")
+    await _revise("memory.update_by_id", org, london, "Alice likes Rome")
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
     assert await _walks_to(org, "london")
 
 

@@ -104,6 +104,12 @@ schema. These rules keep that safe. The operator procedure is in
     create of each build racing on one key can store two tasks, and two deliveries two
     ready events, as two replicas of the previous build already can. Each task is
     whole (its event and its lease row) and claimable. This ends once N-1 stops serving.
+11. **A link N adds is not yet complete.** N links each value to the triples and edges
+    it stated (`entity_triple_rows`, `entity_edge_rows`); N-1 links only keys, just after
+    it writes the row. So a value with no row link still holds by its key link when that
+    link is no older than the value and no row of the key links the fact, and a close N
+    runs keeps what an N-1 row states. A key that rows of both builds link to one fact
+    reads as N's: there an N-1 row can lose that fact until it is stated again.
 
 ## What checks them
 

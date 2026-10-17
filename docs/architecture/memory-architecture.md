@@ -313,16 +313,19 @@ A facet edge (the agent's file, concept or topic) is no row's: it is never linke
 no retirement closes it.
 
 A triple another live row's links still state stays open, unless a newer successor's
-repair closes it (above); a row whose value was first written before rows were linked to
-triples (by the row-links migration's applied time, read from `loom.memory_versions`, so
-a pin, a lock or an Undo of the same value keeps it one) has no links its extractor
-stated for its current value, and keeps open a triple its key is linked to
-(`entity_triple_memories`) while its value still names it; an Undo of such a row opens
-again the triples it holds by that rule. A successor written for such a row, or a link
-of another of its values, does not make it a linked row. A value written since that
-stated no fact has no link and holds none; during a rolling deploy, a replica still on
-the previous build writes key links only, so its rows hold nothing until the fact is
-stated again.
+repair closes it (above). A row whose current value has no link its extractor stated
+keeps open a triple its key is linked to (`entity_triple_memories`) while its value
+still names it, when that key link counts: the value was first written before rows were
+linked to triples (by the row-links migration's applied time, read from
+`loom.memory_versions`, so a pin, a lock or an Undo of the same value keeps it one), or
+since by a build that links only keys, the previous one still serving during a rolling
+deploy. That build links the key just after it writes the row, so its key link is no
+older than the value, and no row of the key links the triple. A value this build wrote
+that stated nothing holds none, unless its key was linked in that same second (links
+are stored to the second) or since by a row of the previous build: then the fact stays
+open, it never closes early. An Undo of such a row opens again the
+triples it holds by that rule. A successor written for such a row, or a link
+of another of its values, does not make it a linked row.
 
 A cycle or a longer chain leaves the loser's triples open and logs a warning, and a
 write records the pair for `projection_repair`; a pair even the repair cannot read
@@ -438,8 +441,8 @@ names both: `entity_edge_rows` links each pair to the row and the `content_sha25
 the value that named it, so the revised or retired rows count too, and a revision whose
 new value still names both keeps its edge. No row text is read: a row whose entities
 came from extraction or resolution ("NYC" is `new york city`) keeps it as well. A row
-whose value was first written before those links existed, and has none for it, keeps the
-edge while its key is linked to the pair (`entity_edge_memories`), as before. A row
+whose current value has no edge link keeps the edge while its key is linked to the pair
+(`entity_edge_memories`) and that link counts, by the same rule as triples. A row
 naming the pair while the close runs lands its links before its edges, and the close
 checks again after its UPDATE and opens the pair again when one is found. The edge keeps
 no `invalid_at`, so a walk at an earlier time still finds it.
