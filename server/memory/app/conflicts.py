@@ -50,6 +50,7 @@ from server.memory.store.conflict_candidates import (
     _peer_candidates_sql,
     candidate_sql_many,
     pinned_sql_many,
+    vector_params,
 )
 from server.settings import settings
 
@@ -163,7 +164,7 @@ async def candidate_rows_many(
             "org": org,
             "ns": namespace,
             "dim": dim,
-            "embs": [items[i][2] for i in idxs],
+            **vector_params([items[i][2] for i in idxs]),
             "types": [items[i][0] for i in idxs],
             "keys": [items[i][1] for i in idxs],
             "max_dists": [float(items[i][3]) for i in idxs],

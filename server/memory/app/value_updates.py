@@ -43,6 +43,7 @@ from server.memory.app.auto_resolution import (
     record_auto_supersessions,
     retired_entry,
 )
+from server.memory.store.conflict_candidates import vector_param, vector_params
 
 log = logging.getLogger(__name__)
 
@@ -242,8 +243,7 @@ def _peers_sql_many(n: int, in_scope: str = "") -> str:
     over the vector column replicates it per row per fact), `LIMIT 8 BY qidx`
     for the per-row `LIMIT 8`."""
     terms = ", ".join(
-        f"({i}, 1 - cosineDistance(e.embedding, {{embs:Array(Array(Float32))}}[{i}]))"
-        for i in range(1, n + 1)
+        f"({i}, 1 - cosineDistance(e.embedding, {vector_param(i)}))" for i in range(1, n + 1)
     )
     return f"""
         SELECT hit.1 - 1 AS qidx,
@@ -289,7 +289,7 @@ async def _peers_many(
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
-        "embs": [it[2] for it in items],
+        **vector_params([it[2] for it in items]),
         "types": [it[0] for it in items],
         "keys": [it[1] for it in items],
         "dim": dim,
