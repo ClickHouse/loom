@@ -6,6 +6,7 @@ from __future__ import annotations
 from types import SimpleNamespace as NS
 
 from server.memory.app.bulk_verdicts import apply_bulk_verdicts
+from server.memory.domain.conflicts import ConflictPeer, ConflictResult
 
 
 def _rows(n: int):
@@ -138,3 +139,27 @@ def test_a_merge_with_a_row_an_earlier_entry_rewrote_lands() -> None:
     assert r[1].conflict_verdict == "clear" and r[1].version == 101
     late = apply_bulk_verdicts(*_rows(2), {0: NS(verdict="merge", existing_memory_id="id1")})
     assert late.merged == ["k0"]
+
+
+def test_a_refine_or_conflict_with_a_row_an_earlier_entry_rewrote_lands() -> None:
+    # Row 0 rewrites id0 ("User owns a red bicycle."); row 1 refined or contradicted
+    # id0's old bytes ("User lives in Berlin."). Retiring or flagging id0 would hit the
+    # bicycle. A peer the batch did not rewrite still counts.
+    def peer(mid: str) -> ConflictPeer:
+        return ConflictPeer(
+            memory_id=mid, memory_key=mid, similarity=0.9, pinned=False, canonical=""
+        )
+
+    for verdict in ("refines", "conflict"):
+        v = ConflictResult(verdict=verdict, peers=[peer("id0")], refined_peers=[peer("id0")])
+        m, e, ix, r = _rows(2)
+        plan = apply_bulk_verdicts(m, e, ix, r, {1: v})
+        assert not plan.refines and not plan.conflict_marks
+        assert r[1].conflict_verdict == "clear" and r[1].peers == []
+        both = [peer("id0"), peer("p")]
+        v = ConflictResult(verdict=verdict, peers=both, refined_peers=both)
+        plan = apply_bulk_verdicts(*_rows(2), {1: v})
+        if verdict == "refines":
+            assert [p.memory_id for p in plan.refines[0][2]] == ["p"]
+        else:
+            assert plan.conflict_marks == [("id1", ["p"])]

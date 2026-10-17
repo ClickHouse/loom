@@ -4,6 +4,7 @@ first stated event date a merged row keeps. No I/O."""
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from server.core.datetimes import parse_iso_dt
@@ -152,6 +153,20 @@ def _target_rewritten_before(v: Any, idx: int, first_row: dict[str, int]) -> boo
     return bool(target) and first_row.get(target, idx) < idx
 
 
+def _without_rewritten_peers(v: Any, idx: int, first_row: dict[str, int]) -> Any:
+    """A refines or conflict verdict without the peers an earlier row of the batch
+    rewrote: their stored bytes are gone too. Returns `v` itself when none was."""
+    if getattr(v, "verdict", "") not in ("refines", "conflict"):
+        return v
+    old_peers = list(getattr(v, "peers", None) or [])
+    old_refined = list(getattr(v, "refined_peers", None) or [])
+    peers = [p for p in old_peers if first_row.get(str(p.memory_id), idx) >= idx]
+    refined = [p for p in old_refined if first_row.get(str(p.memory_id), idx) >= idx]
+    if len(peers) == len(old_peers) and len(refined) == len(old_refined):
+        return v
+    return dataclasses.replace(v, peers=peers, refined_peers=refined)
+
+
 def _settling_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) -> set[int]:
     """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
     versions of one row, so only the kept version's verdict may mark or retire
@@ -181,6 +196,16 @@ def apply_bulk_verdicts(
     for i, r in enumerate(memory_rows):
         first_row.setdefault(str(r.get("memory_id") or ""), i)
     stale = {i for i, v in verdicts.items() if _target_rewritten_before(v, i, first_row)}
+    verdicts = dict(verdicts)
+    for i, v in list(verdicts.items()):
+        trimmed = _without_rewritten_peers(v, i, first_row)
+        if trimmed is v:
+            continue
+        verdicts[i] = trimmed
+        # Every peer it judged was rewritten: nothing left to mark or retire.
+        left = trimmed.refined_peers if trimmed.verdict == "refines" else trimmed.peers
+        if not left:
+            stale.add(i)
     settling = _settling_rows(memory_rows, {i: v for i, v in verdicts.items() if i not in stale})
     for idx, v in verdicts.items():
         verdict = getattr(v, "verdict", "clear")
