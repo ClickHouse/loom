@@ -287,12 +287,10 @@ async def _row(uid: str) -> dict[str, Any] | None:
 
 async def _revoke_tokens(row: dict[str, Any]) -> None:
     # Past the leases, as it may claim many token names: the subjects are
-    # revoked outright already, so their tokens are dead with them meanwhile.
-    # This lists them so and frees their names. Only those made by now: a
-    # later one can only be one a reactivation let in since this began.
-    now = await get_client().query_one("SELECT now() AS now")
-    before = now["now"] if now else datetime.now(UTC)
-    await service_accounts.revoke_created_by(row["subjects"], revoked_by=_BY, before=before)
+    # revoked already, so their tokens are dead with them meanwhile. This
+    # lists the dead ones so and frees their names; one the revocations let
+    # live (made after a reactivation's or an operator's cutoff) stays live.
+    await service_accounts.revoke_created_by(row["subjects"], revoked_by=_BY)
 
 
 async def _wait_out(cutoff: datetime | None) -> None:

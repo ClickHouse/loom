@@ -349,9 +349,10 @@ What Loom does with each request:
   Loom logs a warning and audits `auth.scim_collateral` naming those orgs.
   Find it in `loom revoke-token --list` (reason `scim: deactivated`) and
   narrow it with `--subject <it> --issued-before <now>` if it is someone
-  else's. The provider repeating the deactivation leaves it narrowed, but
-  once the person is reactivated, their next deactivation revokes it outright
-  again: narrow it again then.
+  else's. The provider repeating the deactivation, or deleting the user,
+  leaves it narrowed and the tokens made from it since live, but once the
+  person is reactivated, their next deactivation revokes it outright again:
+  narrow it again then.
 - **Reactivating** (`active: true`) lets the person sign in again. Tokens from
   before stay revoked; they make new ones. A subject an operator revoked
   (`loom revoke-token --subject`) stays revoked through both, and so does a

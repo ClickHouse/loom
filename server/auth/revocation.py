@@ -445,6 +445,24 @@ async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
     return False
 
 
+async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
+    """Each of `subjects` that is revoked, read from ClickHouse as `refresh`
+    reads it: None when outright, else the cutoff (unix seconds) a token must
+    be issued at or after to live. A subject not revoked is left out."""
+    found: dict[str, int | None] = {}
+    if not subjects:
+        return found
+    keys = sorted({*subjects, *(CUTOFF_PREFIX + s for s in subjects)})
+    for r in await _read_revocations(keys):
+        key, cutoff = str(r["jti"]), _cutoff_seconds(r.get("issued_before"))
+        subject = key.removeprefix(CUTOFF_PREFIX)
+        if cutoff is None and key == subject:
+            found[subject] = None
+        elif subject not in found or found[subject] is not None:
+            found[subject] = max(found.get(subject) or 0, cutoff or 0)
+    return found
+
+
 async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
     """The unexpired revocation rows for `keys`, read as of every write that
     landed, on whichever replica the read reaches."""

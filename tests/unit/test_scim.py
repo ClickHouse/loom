@@ -165,17 +165,15 @@ class _Table:
         return max(rows, key=lambda r: r["version"]) if rows else None
 
     def made_by(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        """The tokens `subs` (any, when absent) made, revoked or not; unexpired
-        and made by `before`, when `sql` says so."""
+        """The tokens `subs` (any, when absent) made, revoked or not;
+        unexpired, when `sql` says so."""
         subs = params.get("subs")
         unexpired = "expires_at > now()" in sql
-        before = params["before"] if "created_at <=" in sql else None
         return [
             r
             for r in self.heads()
             if (subs is None or r["created_by"] in subs)
             and not (unexpired and r["expires_at"] and r["expires_at"] <= datetime.now())
-            and (before is None or r["created_at"] <= before)
         ]
 
     def heads(self) -> list[dict[str, Any]]:
@@ -198,8 +196,6 @@ class _Table:
         return sorted((r for r in heads if r and not r["deleted"]), key=lambda r: r["user_name"])
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
-        if sql.startswith("SELECT now()"):
-            return {"now": datetime.now(UTC).replace(tzinfo=None, microsecond=0)}
         if "loom.service_accounts" in sql:
             p = params or {}
             live = [r for r in self.made_by(sql, p) if r["revoked_at"] is None]
@@ -298,6 +294,16 @@ class _World:
             self.lifted[key] = revocation.lifted_reason(reason)
             return True
 
+        async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
+            found: dict[str, int | None] = {}
+            for s in subjects:
+                cutoff = next((c for k, c in reversed(self.narrowed) if k == s), None)
+                if s in self.outright:
+                    found[s] = None
+                elif s in self.lifted and cutoff is not None:
+                    found[s] = int(cutoff.replace(tzinfo=cutoff.tzinfo or UTC).timestamp())
+            return found
+
         async def emit(event: str, **kw: Any) -> str:
             self.audits.append((event, kw))
             return ""
@@ -345,6 +351,7 @@ class _World:
         monkeypatch.setattr(revocation, "revoked_outright", stale_snapshot)
         monkeypatch.setattr(revocation, "revoke", revoke)
         monkeypatch.setattr(revocation, "narrow", narrow)
+        monkeypatch.setattr(revocation, "cutoffs", cutoffs)
         monkeypatch.setattr(revocation, "refresh", no_refresh)
         monkeypatch.setattr(audit, "emit", emit)
 
@@ -404,14 +411,54 @@ async def test_a_subject_someone_else_has_elsewhere_is_revoked_and_flagged(world
     assert "alice" not in str(collateral["subject"]["subject"])
 
 
-async def test_a_repeated_deactivation_leaves_an_operators_narrowing_alone(world) -> None:
+def _now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+
+
+def _narrowed_by_an_operator(world: _World, subject: str) -> datetime:
+    """`loom revoke-token --subject <it> --issued-before <now>` on a collateral subject."""
+    cutoff = _now()
+    del world.outright[subject]
+    world.narrowed.append((subject, cutoff))
+    world.lifted[subject] = "operator"
+    return cutoff
+
+
+def _made_since(world: _World, name: str, created_by: str, created_at: datetime) -> str:
+    token = {**_saved_token(name, created_by), "created_at": created_at}
+    world.table.tokens.append(token)
+    return str(token["sa_subject"])
+
+
+async def _deactivated_then_narrowed(world: _World) -> str:
+    """Lee deactivated, then narrowed by an operator, with tokens made on each
+    side of the cutoff and a token each of those made."""
     world.person("lee@example.com", "lee")
+    world.table.tokens.append(_saved_token("laptop", "lee"))
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    del world.outright["lee"]  # an operator narrowed a collateral subject
+    cutoff = _narrowed_by_an_operator(world, "lee")
+    older = _made_since(world, "older", "lee", cutoff - timedelta(seconds=1))  # dead
+    after = _made_since(world, "after", "lee", cutoff)  # issued at the cutoff: live
+    _made_since(world, "older-child", older, cutoff)  # its maker is dead
+    _made_since(world, "after-child", after, cutoff)
+    return uid
+
+
+async def test_a_repeated_deactivation_leaves_an_operators_narrowing_alone(world) -> None:
+    uid = await _deactivated_then_narrowed(world)
     world.person("lee@example.com", "lee", "lee-new")
     await scim.set_active(uid, False)  # the provider sends it again
     assert world.outright == {"lee-new": scim.DEACTIVATED}  # only the account found since
+    # The token list says what the token check does: the tokens made since live.
+    assert [r["name"] for r in world.table.live_tokens()] == ["after", "after-child"]
+
+
+async def test_a_delete_after_an_operators_narrowing_leaves_the_tokens_made_since(world) -> None:
+    uid = await _deactivated_then_narrowed(world)
+    await scim.delete(uid)  # a provider deleting the user a while after disabling it
+    assert world.outright == {}
+    assert [r["name"] for r in world.table.live_tokens()] == ["after", "after-child"]
 
 
 async def test_the_audit_row_names_no_subject_in_clear(world) -> None:
@@ -590,8 +637,10 @@ async def test_a_late_deactivation_pass_leaves_a_token_made_after_reactivating(
     deactivating = asyncio.create_task(scim.set_active(uid, False))
     await reached.wait()  # the pass has listed `laptop` and waits for its name
     await scim.set_active(uid, True)
-    # The old `laptop` reads dead, so its name is free: the person makes a new one.
-    made = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
+    # The old `laptop` reads dead, so its name is free: the person makes a new
+    # one, issued at the cutoff, so live, however the clocks stand.
+    [(_, cutoff)] = world.narrowed
+    made = cutoff.astimezone(UTC).replace(tzinfo=None)
     new = {**_saved_token("laptop", "lee"), "sa_subject": "sa:laptop-def456"}
     world.table.tokens.append({**new, "created_at": made, "version": 2})
     resume.set()

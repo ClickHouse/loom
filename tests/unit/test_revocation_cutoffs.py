@@ -68,6 +68,23 @@ def test_a_cutoff_alone_ends_only_earlier_tokens(table) -> None:
     assert not asyncio.run(revocation.subjects_revoked(["sa:bot"], issued_at=after))
 
 
+def test_the_cutoffs_read_from_the_store_agree_with_the_token_check(table) -> None:
+    # What SCIM decides a listed token's fate by: the same rule as `is_revoked`.
+    now = datetime.now(UTC).replace(microsecond=0)
+    asyncio.run(revocation.revoke("eve", reason="offboarded"))
+    asyncio.run(revocation.revoke("lee", issued_before=now))
+    asyncio.run(
+        revocation.cut_off(
+            "lee", issued_before=now + timedelta(seconds=6), reason="r", revoked_by="ops"
+        )
+    )
+    found = asyncio.run(revocation.cutoffs(["eve", "lee", "kim"]))
+    assert found == {"eve": None, "lee": int(now.timestamp()) + 6}
+    asyncio.run(revocation.refresh())
+    assert revocation.is_revoked("lee", issued_at=int(now.timestamp()) + 5)
+    assert not revocation.is_revoked("lee", issued_at=int(now.timestamp()) + 6)
+
+
 def test_a_subject_that_looks_like_a_cutoff_is_its_own(table) -> None:
     # `loom mint-token --subject cutoff:batch-import` is a subject like any other.
     asyncio.run(revocation.revoke("cutoff:batch-import", reason="leaked"))
