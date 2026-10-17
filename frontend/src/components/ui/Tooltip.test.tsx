@@ -56,6 +56,69 @@ describe("Tip, turned off while open", () => {
   });
 });
 
+describe("Tip, hovered or focused while off", () => {
+  // Radix reports the open but never the close while the tip is off (the close equals the
+  // controlled false), so a stored open would show the tip by itself once turned back on.
+  it("does not open by itself once turned on", async () => {
+    const { rerender } = render(
+      <Tip content="Memories" disabled>
+        <button type="button">Memories</button>
+      </Tip>,
+    );
+    const button = screen.getByRole("button", { name: "Memories" });
+    act(() => button.focus());
+    fireEvent.focus(button);
+    act(() => button.blur());
+    fireEvent.blur(button);
+    fireEvent.pointerMove(button);
+    fireEvent.pointerLeave(button);
+    rerender(
+      <Tip content="Memories">
+        <button type="button">Memories</button>
+      </Tip>,
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+});
+
+describe("Tip, opened and closed in one go", () => {
+  // A click right after the tip opened (Radix opens at once just after another tip closed)
+  // closes it before React has rendered the open; the close must still land.
+  it("stays closed after a focus and a click in the same tick", () => {
+    render(
+      <Tip content="Collapse sidebar">
+        <button type="button">Collapse</button>
+      </Tip>,
+    );
+    const button = screen.getByRole("button", { name: "Collapse" });
+    act(() => {
+      fireEvent.focus(button);
+      fireEvent.click(button);
+    });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+});
+
+describe("Tip, while off", () => {
+  // A tip that is off must not count as an open tooltip, or the next tip skips its delay.
+  it("leaves the next tip its delay", () => {
+    render(
+      <>
+        <Tip content="Memories" disabled>
+          <button type="button">Memories</button>
+        </Tip>
+        <Tip content="Collapse sidebar">
+          <button type="button">Collapse</button>
+        </Tip>
+      </>,
+    );
+    fireEvent.focus(screen.getByRole("button", { name: "Memories" }));
+    fireEvent.pointerMove(screen.getByRole("button", { name: "Collapse" }));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+});
+
 describe("TipTarget", () => {
   it("stays one element as its tooltip turns on and off, a stop only while it has one", async () => {
     const { TipTarget } = await import("./TipTarget");

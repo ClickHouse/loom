@@ -1,4 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, type SyntheticEvent } from "react";
+import { flushSync } from "react-dom";
+import { Slot } from "@radix-ui/react-slot";
 import { Tooltip } from "@clickhouse/click-ui/Tooltip";
 
 /**
@@ -23,16 +25,28 @@ export interface TipProps {
 export function Tip({ content, children, side = "top", disabled = false }: TipProps) {
   // Controlled for its whole life: Click UI's `disabled` alone would switch Radix between
   // controlled and uncontrolled, and Radix would keep an open state from before the switch.
+  // While off, the hover and focus that open it never reach Radix: an open Radix cannot show
+  // would still make the next tip skip its delay. Each change renders at once, because
+  // Radix compares a close with the `open` it last rendered and drops it if that is false.
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
   return (
-    <Tooltip open={open && !disabled} onOpenChange={setOpen}>
-      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+    <Tooltip open={open && !disabled} onOpenChange={(next) => flushSync(() => setOpen(next))}>
+      <Tooltip.Trigger asChild>
+        <Slot onPointerMove={disabled ? skipRadix : undefined} onFocus={disabled ? skipRadix : undefined}>
+          {children}
+        </Slot>
+      </Tooltip.Trigger>
       <Tooltip.Content side={side} collisionPadding={8} maxWidth="320px" showArrow>
         {content}
       </Tooltip.Content>
     </Tooltip>
   );
+}
+
+// Radix's trigger handlers skip an event the child already marked as handled.
+function skipRadix(event: SyntheticEvent) {
+  event.preventDefault();
 }
