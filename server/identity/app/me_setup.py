@@ -225,11 +225,11 @@ async def _save_mcp_token(
     client: str,
     delegated: Delegated,
     restricted_names: list[str],
-) -> tuple[str, str]:
+) -> tuple[str, str, datetime | None]:
     """Track a Setup-page token in `service_accounts` (kind='mcp') so it is revocable from
     the Tokens list, minted under its own `sa:` subject so revocation-by-sub kills this
     token and not the person's JWT. Restricted namespaces get the token's own direct grant.
-    Returns (minted token, sa_subject)."""
+    Returns (minted token, sa_subject, the saved row's expires_at)."""
     org = delegated.org
     sa_subject = new_token_subject(org, client, subject)
     sa_hash = sa_subject.removeprefix(f"sa:{client}-")
@@ -247,7 +247,7 @@ async def _save_mcp_token(
         }
         await token_grants.grant_restricted_to_token(org, sa_subject, subject, caller_roles)
 
-    return minted, sa_subject
+    return minted, sa_subject, delegated.expires_at(now)
 
 
 def _setup_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
@@ -291,6 +291,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         token: str,              # the minted JWT
         sa_subject: str,         # its subject in the token list
         expires_at: str | null,  # ISO-8601; null: never expires
+        namespace: str,          # where unaddressed calls land; "": none, calls must name one
         …                        # and the namespace, scope and URL it reads
       }
     """
@@ -332,7 +333,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
         is_service_account=True,
     )
-    minted, sa_subject = await _save_mcp_token(
+    minted, sa_subject, expires_at = await _save_mcp_token(
         subject=subject,
         client=client,
         delegated=delegated,
@@ -351,7 +352,6 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     mcp_url = f"{base_url}/mcp"
 
     shape = _mcp_client_config(client, mcp_url, minted)
-    expires_at = delegated.expires_at(naive_utc_now_seconds())
 
     return {
         "client": client,

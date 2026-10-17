@@ -43,8 +43,11 @@ class _Auth:
         self.creator = creator
         self.issued_at = None
 
-    def can_write(self, org: str, ns: str) -> bool:
+    def can_access(self, org: str, ns: str) -> bool:
         return ns in self.namespaces or "*" in self.namespaces
+
+    def can_write(self, org: str, ns: str) -> bool:
+        return self.can_access(org, ns)
 
 
 class _CH:
@@ -243,13 +246,36 @@ def _token(namespaces: tuple[str, ...], **kw: Any) -> Any:
     )
 
 
-def test_a_token_claiming_one_plane_never_defaults_to_a_namespace_it_cannot_read(
-    _wired,
-) -> None:
-    # Setup token for `qa-clickhouse` only: the creator's memory grant is
-    # outside the claim, so the read-only fallback must not name it.
+def test_a_token_claiming_only_a_qa_plane_has_no_default_namespace(_wired) -> None:
+    # Setup token for `qa-clickhouse` only: the creator's memory grant and
+    # personal namespace are outside the claim, so neither is its default.
     _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
-    assert _defaults(_token(("qa-clickhouse",)))["namespace"] == "personal-alice"
+    assert _defaults(_token(("qa-clickhouse",)))["namespace"] == ""
+
+
+def test_an_unaddressed_write_from_a_qa_only_token_asks_for_a_namespace(
+    _wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live shape: no namespace is filled in, so the call fails validation
+    naming `namespace`, not AUTH_INSUFFICIENT on a personal namespace."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
+    monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
+    op = OPERATIONS_BY_NAME["memory.set"]
+    args: dict[str, Any] = {"memory_key": "k", "value": "v"}
+    token = _token(("qa-clickhouse",))
+
+    async def _call() -> Any:
+        request_id, _ = await mcp_call._bind_caller_identity(op, args, token, "claude-code")
+        return mcp_call._validated_input(1, op, args, request_id)
+
+    out = asyncio.run(_call())["result"]["structuredContent"]
+    assert "namespace" not in args
+    assert out["code"] == "VALIDATION_FAILED"
+    assert ["namespace"] in [list(e["loc"]) for e in out["errors"]]
+    assert "must name its `namespace`" in asyncio.run(mi._caller_default_context(token))
 
 
 def test_a_restricted_namespace_is_off_limits_to_a_token_of_another_org(_wired) -> None:

@@ -5,6 +5,7 @@ saved to the caller's token list."""
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from datetime import timedelta
 from types import SimpleNamespace
@@ -173,22 +174,49 @@ async def test_the_label_needs_no_revocation_list_once_the_token_is_saved(
     assert out["namespace"] == "a" and len(saved) == 1
 
 
+# The delegations the Setup page mints (scoped=False: the default `*`, and a
+# named namespace plus a restricted one) and a scoped caller's.
+_SHAPES = [
+    ({"*": None}, False),
+    ({"a": None, "secret": None}, False),
+    ({"a": None}, True),
+]
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("requested", "scoped"), _SHAPES)
 async def test_the_label_identity_is_the_one_the_token_verifies_as(
-    monkeypatch: pytest.MonkeyPatch, grants: dict
+    monkeypatch: pytest.MonkeyPatch, grants: dict, requested: dict, scoped: bool
 ) -> None:
-    caller = _caller(namespaces=("a",), roles=(), ns_roles=(("a", "writer"),))
+    grants[("o", "secret", "alice")] = Role.WRITER
+    caller = (
+        _caller(namespaces=("a",), roles=(), ns_roles=(("a", "writer"),)) if scoped else _caller()
+    )
     delegated = await delegation.delegate(
         caller,
         org="o",
-        requested={"a": None},
-        scoped=True,
+        requested=requested,
+        scoped=scoped,
         ttl_seconds=3600,
         is_service_account=True,
     )
     verified = verify_token(delegated.mint("sa:cursor-ab12cd"))
     built = delegated.as_auth("sa:cursor-ab12cd")
-    claims = ("subject", "org", "namespaces", "write_namespaces", "ns_roles", "roles")
-    more = ("is_service_account", "creator", "parents", "parent_subjects", "parent_iats")
-    for field in claims + more + ("read_scope", "read_user_id"):
-        assert getattr(built, field) == getattr(verified, field), field
+    # Set at verification only: the token's id and its iat/exp.
+    minted_only = {"token_id", "issued_at", "expires_at"}
+    for field in dataclasses.fields(AuthInfo):
+        if field.name not in minted_only:
+            assert getattr(built, field.name) == getattr(verified, field.name), field.name
+
+
+@pytest.mark.asyncio
+async def test_the_page_shows_the_expiry_the_saved_row_holds(
+    monkeypatch: pytest.MonkeyPatch, grants: dict
+) -> None:
+    # A clock that moves between reads: the response must not read it again.
+    ticks = iter(range(100))
+    start = me.naive_utc_now_seconds()
+    monkeypatch.setattr(me, "naive_utc_now_seconds", lambda: start + timedelta(seconds=next(ticks)))
+    out = await _setup(monkeypatch, _caller(), {"ttl_days": 30})
+    [row] = saved
+    assert out["expires_at"] == row["expires_at"].isoformat()

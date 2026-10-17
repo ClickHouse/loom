@@ -454,8 +454,10 @@ async def _bind_caller_identity(
     # index at all.
     defaults = await _caller_defaults(auth, client_name)
     explicit_agent = bool(arguments.get("agent"))
+    # An empty default namespace (a delegated token whose claim holds no home)
+    # is not filled in: the call then fails validation naming `namespace`.
     filled_ns = (
-        bool(defaults)
+        bool(defaults and defaults["namespace"])
         and "namespace" in op.input_model.model_fields
         and not arguments.get("namespace")
         and not op.name.startswith("code.")
@@ -463,9 +465,9 @@ async def _bind_caller_identity(
     if defaults and not op.name.startswith("code."):
         field_names = set(op.input_model.model_fields.keys())
         for k, v in defaults.items():
-            if k in field_names and not arguments.get(k):
+            if v and k in field_names and not arguments.get(k):
                 arguments[k] = v
-    if defaults and "lesson_namespaces" in op.input_model.model_fields:
+    if defaults and defaults["namespace"] and "lesson_namespaces" in op.input_model.model_fields:
         # a code read's lessons include the caller's own memories, from its memory home
         arguments.setdefault("lesson_namespaces", [defaults["namespace"]])
     note_default_namespace(filled_ns, str(arguments.get("namespace") or ""), auth)

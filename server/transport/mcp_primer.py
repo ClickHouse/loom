@@ -256,7 +256,7 @@ async def _loom_primer_text(
     # at conversation start" nudges don't fire reliably, so bundling the
     # render here is the one-step path to loaded persona context.
     profile_section = ""
-    if include_profile and defaults:
+    if include_profile and defaults and defaults["namespace"]:
         try:
             from server.memory.api.models_profile import ProfileRenderInput
             from server.memory.app.profile import handle_profile_render

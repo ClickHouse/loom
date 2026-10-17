@@ -426,7 +426,13 @@ function TokensSection({
   // their branch namespaces.
   const [mcpRestrictedRepos, setMcpRestrictedRepos] = useState<Set<string>>(() => new Set());
   const [mcpTtlDays, setMcpTtlDays] = useState<string>("90");
-  const [mcpResult, setMcpResult] = useState<{ token: string; mcpUrl: string; restricted?: string[] } | null>(null);
+  // `namespace`: where the server fills in unaddressed calls; "" when the token has no default.
+  const [mcpResult, setMcpResult] = useState<{
+    token: string;
+    mcpUrl: string;
+    namespace?: string;
+    restricted?: string[];
+  } | null>(null);
   const [dialogClient, setDialogClient] = useState<ClientId>(() => {
     // Blocked storage throws on read; the default client stands in.
     try {
@@ -628,6 +634,7 @@ function TokensSection({
       setMcpResult({
         token: r.token,
         mcpUrl: r.mcp_url,
+        namespace: r.namespace,
         restricted: r.restricted_namespaces,
       });
       onMinted({ token: r.token, mcpUrl: r.mcp_url });
@@ -1077,8 +1084,14 @@ function TokensSection({
             text="This is the only time the token is shown. The same token works in every client — switch clients below to copy each one's config block, then paste into each client's MCP config file and restart."
           />
           <div className="text-xs text-text-muted" data-testid="minted-token-scope">
-            Writes to <span className="font-mono text-text">{mcpScope.home}</span>; reads every namespace and repository
-            you belong to, including ones you join later
+            {mcpResult?.namespace === "" ? (
+              <>Has no default namespace: calls from this client must name one</>
+            ) : (
+              <>
+                Writes to <span className="font-mono text-text">{mcpResult?.namespace || mcpScope.home}</span>
+              </>
+            )}
+            ; reads every namespace and repository you belong to, including ones you join later
             {(() => {
               const added = mcpScope.excludedRestricted
                 .filter((r) => mcpRestrictedRepos.has(r.repo))

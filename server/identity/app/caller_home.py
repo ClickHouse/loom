@@ -154,7 +154,7 @@ def ranked_grant_default(
             (r for r in rows if str(r.get("namespace") or "") in order),
             key=lambda r: order[str(r.get("namespace") or "")],
         )
-    elif getattr(auth_info, "creator", "") and "*" not in auth_info.namespaces:
+    elif getattr(auth_info, "creator", ""):
         rows = [r for r in rows if auth_info.can_access(org, str(r.get("namespace") or ""))]
     writable = [
         r
@@ -176,7 +176,7 @@ async def _kinds_or_empty(org: str) -> dict[str, str]:
         return {}
 
 
-async def _unnamed_restricted(auth: Any, org: str) -> frozenset[str]:
+async def _restricted_off_limits(auth: Any, org: str) -> frozenset[str]:
     """Restricted namespaces the gate refuses this token on
     (`authz._check_restricted`): all of them for a token of another org (or
     org `*`), else those it does not name. None of them is a default."""
@@ -252,7 +252,8 @@ async def default_namespace(auth: Any, org: str) -> str:
     so the default is that name, unless the token claims one. Any other mode
     follows the home subject: its saved switcher pick, then the token's own
     writable claim, then its grants, ranked; else the token's first claim or
-    the home's personal namespace."""
+    the home's personal namespace. "" when a delegated token reaches none of
+    them: its calls must name a namespace."""
     from server.settings import settings
 
     claimed: list[str] = []
@@ -268,7 +269,16 @@ async def default_namespace(auth: Any, org: str) -> str:
     try:
         return await _multi_user_default(auth, org, claimed, home)
     except Exception:  # noqa: BLE001 — default namespace falls back to claim or personal slug
-        return claimed[0] if claimed else derive_personal_slug(home)
+        return _reachable(auth, org, claimed[0] if claimed else derive_personal_slug(home))
+
+
+def _reachable(auth: Any, org: str, namespace: str) -> str:
+    """`namespace`, or "" when a delegated token cannot reach it: such a token
+    reads only its claim, so a default outside it would only be refused.
+    With no default, a call must name its namespace."""
+    if getattr(auth, "creator", "") and not auth.can_access(org, namespace):
+        return ""
+    return namespace
 
 
 async def _multi_user_default(auth: Any, org: str, claimed: list[str], home: str) -> str:
@@ -281,7 +291,7 @@ async def _multi_user_default(auth: Any, org: str, claimed: list[str], home: str
     if home != subject:
         subs += await subject_aliases(org, home, ch=ch)
     kinds = await _kinds_or_empty(org)  # only a memory plane is a home
-    off_limits = await _unnamed_restricted(auth, org)
+    off_limits = await _restricted_off_limits(auth, org)
     claimed = [n for n in claimed if n not in off_limits]  # refused even when named
     saved = await caller_defaults.saved_default(org, home, ch=ch)
     namespace = await _saved_pick(auth, org, saved, subs, kinds, claimed, off_limits, ch)
@@ -297,8 +307,8 @@ async def _multi_user_default(auth: Any, org: str, claimed: list[str], home: str
         namespace = ranked_grant_default(rows, kinds, home, auth, org, claimed)
     namespace = namespace or (claimed[0] if claimed else derive_personal_slug(home))
     if not is_memory_home(kinds, namespace):  # never a shared plane by default
-        return derive_personal_slug(home)
-    return namespace
+        namespace = derive_personal_slug(home)
+    return _reachable(auth, org, namespace)
 
 
 async def _saved_pick(

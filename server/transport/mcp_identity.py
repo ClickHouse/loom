@@ -143,6 +143,11 @@ async def _caller_default_context(auth: Any) -> str:
     defaults = await _caller_defaults(auth)
     if not defaults:
         return ""
+    if not defaults["namespace"]:
+        return (
+            f"\n\n**Default Loom workspace:** none for this token; every call must "
+            f"name its `namespace`. agent=`{defaults['agent']}` is filled in when omitted."
+        )
     return (
         f"\n\n**Default Loom workspace:** "
         f"namespace=`{defaults['namespace']}`, agent=`{defaults['agent']}`. "

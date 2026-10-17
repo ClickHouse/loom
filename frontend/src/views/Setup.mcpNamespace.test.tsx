@@ -107,6 +107,25 @@ describe("Setup's MCP home namespace", () => {
     expect(await mintedNamespace()).toBe("ns-c");
   });
 
+  it("names where the minted token's unaddressed calls land, as the server says", async () => {
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(/^Writes to ns-a;/);
+  });
+
+  it("says a token with no default namespace must name one", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({ ...minted, namespace: "" });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/calls from this client must name one/);
+    expect(scope).not.toHaveTextContent(/Writes to/);
+  });
+
   it("announces each field's hint as its description", async () => {
     render(<Setup />);
     await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
