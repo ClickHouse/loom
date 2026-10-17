@@ -173,6 +173,19 @@ def _without_rewritten_peers(v: Any, idx: int, first_row: dict[str, int]) -> Any
     return dataclasses.replace(v, peers=peers, refined_peers=refined)
 
 
+def _first_landing_rows(
+    memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]
+) -> dict[str, int]:
+    """Each memory_id's first row in the batch, counting only rows that land: a merged
+    or rejected row rewrites no peer. A stale merge that lands anyway still counts as
+    dropped here, which can miss a retirement but never makes a wrong one."""
+    first: dict[str, int] = {}
+    for i, r in enumerate(memory_rows):
+        if getattr(verdicts.get(i), "verdict", "") not in ("merge", "rejected"):
+            first.setdefault(str(r.get("memory_id") or ""), i)
+    return first
+
+
 def _settling_rows(memory_rows: list[dict[str, Any]], verdicts: dict[int, Any]) -> set[int]:
     """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
     versions of one row, so only the kept version's verdict may mark or retire
@@ -203,9 +216,10 @@ def apply_bulk_verdicts(
     for i, r in enumerate(memory_rows):
         first_row.setdefault(str(r.get("memory_id") or ""), i)
     stale = {i for i, v in verdicts.items() if _target_rewritten_before(v, i, first_row)}
+    landing_first_row = _first_landing_rows(memory_rows, verdicts)
     verdicts = dict(verdicts)
     for i, v in list(verdicts.items()):
-        trimmed = _without_rewritten_peers(v, i, first_row)
+        trimmed = _without_rewritten_peers(v, i, landing_first_row)
         if trimmed is v:
             continue
         verdicts[i] = trimmed

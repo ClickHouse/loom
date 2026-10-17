@@ -162,6 +162,16 @@ def test_a_refine_or_conflict_with_a_row_another_entry_rewrites_lands() -> None:
         plan = apply_bulk_verdicts(m, e, ix, r, {0: later})
         assert not plan.refines and not plan.conflict_marks
         assert r[0].conflict_verdict == "clear" and r[0].peers == []
+        for dropped in ("rejected", "merge"):
+            # The later row writing id1's key is dropped and never lands: id1 keeps the
+            # value judged, so row 0 still refines or contradicts it.
+            m, e, ix, r = _rows(2)
+            plan = apply_bulk_verdicts(m, e, ix, r, {0: later, 1: ConflictResult(dropped, [])})
+            assert r[0].conflict_verdict == verdict
+            if verdict == "refines":
+                assert [p.memory_id for p in plan.refines[0][2]] == ["id1"]
+            else:
+                assert plan.conflict_marks == [("id0", ["id1"])]
         both = [peer("id0"), peer("p")]
         v = ConflictResult(verdict=verdict, peers=both, refined_peers=both)
         plan = apply_bulk_verdicts(*_rows(2), {1: v})
