@@ -184,7 +184,11 @@ _ANY_COPULA = _COPULA | frozenset(
 
 def _names_an_attribute(words: list[str]) -> bool:
     # A possessive is one word ("italy's"): curly apostrophes are straight by now.
-    return any(w in _ATTRIBUTE_PHRASE_WORDS or w.endswith("'s") for w in words)
+    # It counts only with a noun after it ("italy's capital"). As the last word it
+    # is a name ("macy's", "mcdonald's").
+    if any(w in _ATTRIBUTE_PHRASE_WORDS for w in words):
+        return True
+    return any(w.endswith("'s") for w in words[:-1])
 
 
 def object_substitution(old: str, new: str) -> tuple[str, str] | None:

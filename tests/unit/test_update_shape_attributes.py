@@ -60,6 +60,15 @@ def test_a_possessive_names_the_attribute(old: str, new: str, objects: tuple[str
     assert _is_update(old, new)
 
 
+@pytest.mark.parametrize("name", ["Macy's", "McDonald's", "Wendy's", "Kellogg's", "Macy’s"])
+def test_a_brand_name_ending_in_s_is_not_a_possessive(name: str) -> None:
+    # The name is the last word before the copula: no noun follows it, so it
+    # names a thing, and two opinions of it are two facts.
+    old, new = f"User thinks {name} is expensive.", f"User thinks {name} is crowded."
+    assert not _is_update(old, new)
+    assert intra_batch_supersessions([old, new]) == []
+
+
 def test_a_possessive_update_in_one_batch_retires_the_earlier_row() -> None:
     values = ["Italy’s capital is Rome.", "Italy’s capital is Milan."]
     assert intra_batch_supersessions(values) == [(0, 1)]

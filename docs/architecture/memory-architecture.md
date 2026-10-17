@@ -413,7 +413,9 @@ was written or stated for (`carried`):
   with Globex). After a bare name and a copula or "have" verb of a major language, the
   two spans are two attributes unless both are numbers ("Wang Xiaoming est âgé de 28
   ans" / "… est ingénieur logiciel" and "У меня есть собака" / "… кошка" never pair; "I
-  live in Москва" / "… in Berlin" does).
+  live in Москва" / "… in Berlin" does). A possessive with a noun after it names an
+  attribute ("Italy's capital is Rome" / "… Milan" pairs); as the last word before the
+  copula it is a name ("User thinks Macy's is expensive" / "… crowded" never pairs).
 - **Erased values:** an old value since erased or redacted holds nothing (another
   unredacted version with the same hash still counts). The links stay until the row is
   erased; each carries its row's `user_id`, so a user's erasure finds them after the row
