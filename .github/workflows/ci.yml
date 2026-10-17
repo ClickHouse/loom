@@ -367,12 +367,19 @@ jobs:
           if-no-files-found: ignore
 
   integration:
-    name: pytest integration (ClickHouse service)
+    # The default (journal off) keeps the required check's name; the journal-on run
+    # migrates its dormant migration and runs the suite in that mode.
+    name: pytest integration (ClickHouse service)${{ matrix.journal == 'true' && ' — bi-temporal journal on' || '' }}
     needs: clickhouse
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        journal: ["false", "true"]
     # ~1,200 tests take ~28 min on a hosted runner; the bound leaves headroom, not slack.
     timeout-minutes: 35
     env:
+      LOOM_MEMORY_TEMPORAL_ENABLED: ${{ matrix.journal }}
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost
       LOOM_CH_PORT: "8123"
@@ -507,9 +514,16 @@ jobs:
             server-auth.log
 
   mixed-version:
-    name: builds N-1 and N on one ClickHouse
+    name: builds N-1 and N on one ClickHouse${{ matrix.journal == 'true' && ' — bi-temporal journal on' || '' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        journal: ["false", "true"]
     timeout-minutes: 30
+    env:
+      # Both builds run in this mode; on, N applies the journal's dormant migration.
+      LOOM_MEMORY_TEMPORAL_ENABLED: ${{ matrix.journal }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

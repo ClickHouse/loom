@@ -224,6 +224,9 @@ class Server:
             LOOM_OTEL_ENABLED="false",
             LOOM_INSTANCE_LABEL=f"ci:mixed-version-{self.name}",
         )
+        # The gate's mode: both builds run with the bi-temporal journal on or off.
+        if os.environ.get("LOOM_MEMORY_TEMPORAL_ENABLED"):
+            env["LOOM_MEMORY_TEMPORAL_ENABLED"] = os.environ["LOOM_MEMORY_TEMPORAL_ENABLED"]
         if self.workers != "off":
             env["LOOM_DEPLOYMENT"] = "1"  # one shared lease, not one per instance label
         return env
