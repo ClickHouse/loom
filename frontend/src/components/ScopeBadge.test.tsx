@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "../test/rtl";
 import { describe, expect, it } from "vitest";
 import { ScopeBadge } from "./ScopeBadge";
 

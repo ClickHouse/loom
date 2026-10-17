@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { GraduationCap } from "lucide-react";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Select } from "@clickhouse/click-ui/Select";
+import { Table } from "@clickhouse/click-ui/Table";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   mentorBrief,
   type Identity,
@@ -93,21 +97,14 @@ function evidenceText(evidence: Record<string, unknown>): string {
     .join(", ");
 }
 
-const BTN =
-  "inline-flex items-center justify-center gap-1.5 min-h-9 px-3 text-sm font-medium rounded-md transition-colors pointer-coarse:min-h-11";
+const SEVERITY_STATE: Record<MentorSeverity, BadgeState> = {
+  critical: "danger",
+  warning: "warning",
+  info: "neutral",
+};
 
 function SeverityBadge({ severity }: { severity: MentorSeverity }) {
-  const tone =
-    severity === "critical"
-      ? "bg-[var(--color-danger-soft)] text-[var(--color-danger)]"
-      : severity === "warning"
-        ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
-        : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]";
-  return (
-    <span className={`inline-block rounded px-1.5 py-0.5 text-2xs uppercase tracking-wider font-semibold ${tone}`}>
-      {severity}
-    </span>
-  );
+  return <Badge text={severity} state={SEVERITY_STATE[severity] ?? "neutral"} size="sm" />;
 }
 
 export function MentorPanel({ identity }: { identity: Identity }) {
@@ -164,69 +161,52 @@ export function MentorPanel({ identity }: { identity: Identity }) {
         id="mentor-heading"
         level={2}
         label="Mentor"
-        caption="what the store tells an agent working here"
         hint="Reads one agent's calls in this namespace and names the planes it never used — the code index, the tracker source, documents, records, offload, the entity graph — with the counts behind each hint, and whether past hints were followed. Read-only; the agent acts, the mentor advises."
-        actions={
-          <span className="inline-flex flex-wrap items-center gap-2 text-sm">
-            <label className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
-              <span className="sr-only">Agent</span>
-              {result && result.agents.length > 0 ? (
-                <select
-                  aria-label="Agent"
-                  value={agent || result.agent}
-                  onChange={(e) => setAgent(e.target.value)}
-                  disabled={running}
-                  className="min-h-9 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm text-[var(--color-text)] pointer-coarse:min-h-11"
-                >
-                  {[result.agent, ...result.agents.filter((a) => a !== result.agent)].map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  aria-label="Agent"
-                  placeholder="agent (default: most active writer)"
-                  value={agent}
-                  onChange={(e) => setAgent(e.target.value)}
-                  disabled={running}
-                  className="min-h-9 w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm text-[var(--color-text)] pointer-coarse:min-h-11"
-                />
-              )}
-            </label>
-            <label className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
-              <span className="sr-only">Mentor window</span>
-              <select
-                aria-label="Mentor window"
-                value={windowSeconds}
-                onChange={(e) => setWindowSeconds(Number(e.target.value))}
-                disabled={running}
-                className="min-h-9 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm text-[var(--color-text)] pointer-coarse:min-h-11"
-              >
-                {WINDOWS.map((w) => (
-                  <option key={w.seconds} value={w.seconds}>
-                    {w.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              onClick={run}
-              disabled={running}
-              aria-busy={running}
-              className={`${BTN} bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] disabled:opacity-60 disabled:cursor-wait`}
-            >
-              <GraduationCap size={13} aria-hidden="true" />{" "}
-              {running ? "Asking the mentor…" : result ? "Ask again" : "Ask the mentor"}
-            </button>
-          </span>
-        }
       />
+      {/* The caption is its own line, so the title row stays label + (i) at any width. */}
+      <p className="caption mb-3">What the store tells an agent working here</p>
+      {/* The controls sit in a toolbar row under the title: Click UI's Select fills its
+          container, so in the heading's action slot it took a line of its own. */}
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <div className="w-full sm:w-56">
+          {result && result.agents.length > 0 ? (
+            <Select
+              label="Agent"
+              value={agent || result.agent}
+              onSelect={(v) => setAgent(v)}
+              disabled={running}
+              options={[result.agent, ...result.agents.filter((a) => a !== result.agent)].map((a) => ({
+                value: a,
+                label: a,
+              }))}
+            />
+          ) : (
+            <TextField
+              label="Agent"
+              placeholder="most active writer"
+              value={agent}
+              onChange={(v) => setAgent(v)}
+              disabled={running}
+            />
+          )}
+        </div>
+        <div className="w-40">
+          <Select
+            label="Window"
+            triggerProps={{ "aria-label": "Mentor window" }}
+            value={String(windowSeconds)}
+            onSelect={(v) => setWindowSeconds(Number(v))}
+            disabled={running}
+            options={WINDOWS.map((w) => ({ value: String(w.seconds), label: w.label }))}
+          />
+        </div>
+        <Button type="secondary" htmlType="button" iconLeft="light-bulb" onClick={run} loading={running}>
+          {result ? "Ask again" : "Ask the mentor"}
+        </Button>
+      </div>
 
       {!result && !running && !error && (
-        <p className="text-sm text-[var(--color-text-muted)] leading-relaxed max-w-2xl">
+        <p className="text-sm text-text-muted leading-relaxed max-w-2xl">
           Which loom planes does an agent working here never touch? Ask the mentor to see the planes it uses, the ones
           this namespace offers that it never called, and whether the hints it was given were followed. Leave the agent
           empty for the namespace's most active writer; the dashboard's own traffic is never the subject.
@@ -234,26 +214,24 @@ export function MentorPanel({ identity }: { identity: Identity }) {
       )}
 
       {running && !result && (
-        <p role="status" className="text-sm text-[var(--color-text-muted)]">
+        <p role="status" className="text-sm text-text-muted">
           Reading the agent's ledger…
         </p>
       )}
 
       {error && (
-        <p role="alert" className="text-sm text-[var(--color-danger)]">
+        <p role="alert" className="text-sm text-danger">
           Mentor brief failed: {error}
         </p>
       )}
 
       {result && (
         <div className="space-y-3" aria-busy={running}>
-          <p className="text-sm text-[var(--color-text)] leading-relaxed" data-testid="mentor-summary">
-            <span
-              className={`font-semibold ${result.healthy ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"}`}
-            >
+          <p className="text-sm text-text leading-relaxed" data-testid="mentor-summary">
+            <span className={`font-semibold ${result.healthy ? "text-success" : "text-warn"}`}>
               {result.healthy ? "Using the planes it has" : "Has planes it never uses"}
             </span>
-            <span className="text-[var(--color-text-muted)]">
+            <span className="text-text-muted">
               {" "}
               · agent <span className="font-mono">{result.agent}</span>
               {result.agent_defaulted && <> (the most active writer here; pick another above)</>} ·{" "}
@@ -264,7 +242,7 @@ export function MentorPanel({ identity }: { identity: Identity }) {
           </p>
 
           {hints.length === 0 ? (
-            <p className="text-sm text-[var(--color-text-muted)]" role="status">
+            <p className="text-sm text-text-muted" role="status">
               Nothing to say in this window.
             </p>
           ) : (
@@ -275,20 +253,16 @@ export function MentorPanel({ identity }: { identity: Identity }) {
                   data-testid="mentor-hint"
                   data-code={h.code}
                   data-severity={h.severity}
-                  className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 p-2.5 text-sm"
+                  className="rounded-md border border-border bg-surface-2/60 p-2.5 text-sm"
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <SeverityBadge severity={h.severity} />
-                    <span className="font-medium text-[var(--color-text)]">{humanizeHintCode(h.code)}</span>
-                    {h.ops.length > 0 && (
-                      <span className="font-mono text-2xs text-[var(--color-text-muted)]">{h.ops.join(" · ")}</span>
-                    )}
+                    <span className="font-medium text-text">{humanizeHintCode(h.code)}</span>
+                    {h.ops.length > 0 && <span className="font-mono text-xs text-text-muted">{h.ops.join(" · ")}</span>}
                   </div>
-                  <p className="mt-1 text-[var(--color-text)] leading-relaxed">{h.text}</p>
+                  <p className="mt-1 text-text leading-relaxed">{h.text}</p>
                   {Object.keys(h.evidence).length > 0 && (
-                    <p className="mt-1 font-mono text-2xs text-[var(--color-text-muted)]">
-                      evidence: {evidenceText(h.evidence)}
-                    </p>
+                    <p className="mt-1 font-mono text-xs text-text-muted">evidence: {evidenceText(h.evidence)}</p>
                   )}
                 </li>
               ))}
@@ -296,41 +270,29 @@ export function MentorPanel({ identity }: { identity: Identity }) {
           )}
 
           {result.adoption.length > 0 && (
-            <div className="overflow-x-auto -mx-1 px-1">
-              <table className="text-sm border-collapse" aria-label="Hint adoption" data-testid="mentor-adoption">
-                <thead>
-                  <tr className="text-left text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">
-                    <th scope="col" className="py-1.5 pr-4">
-                      Hint
-                    </th>
-                    <th scope="col" className="py-1.5 pr-4 text-right">
-                      Shown
-                    </th>
-                    <th scope="col" className="py-1.5 text-right">
-                      Followed
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.adoption.map((a) => (
-                    <tr key={a.code} className="border-t border-[var(--color-border)]">
-                      <td className="py-1.5 pr-4">{humanizeHintCode(a.code)}</td>
-                      <td className="py-1.5 pr-4 text-right tabular">{a.shown_sessions.toLocaleString()}</td>
-                      <td className="py-1.5 text-right tabular">{a.followed_sessions.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Table
+              aria-label="Hint adoption"
+              data-testid="mentor-adoption"
+              size="sm"
+              headers={[{ label: "Hint" }, { label: "Shown", width: "96px" }, { label: "Followed", width: "96px" }]}
+              rows={result.adoption.map((a) => ({
+                id: a.code,
+                items: [
+                  { label: humanizeHintCode(a.code) },
+                  { label: <span className="tabular">{a.shown_sessions.toLocaleString()}</span> },
+                  { label: <span className="tabular">{a.followed_sessions.toLocaleString()}</span> },
+                ],
+              }))}
+            />
           )}
 
           {result.skipped.length > 0 && (
-            <p className="text-xs text-[var(--color-text-muted)]" data-testid="mentor-skipped">
+            <p className="text-xs text-text-muted" data-testid="mentor-skipped">
               Could not read: {result.skipped.join("; ")}
             </p>
           )}
 
-          <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+          <p className="text-xs text-text-muted leading-relaxed">
             The same hints reach the agent unasked — up to three in <code>context.pack</code> at session start and one
             per call when a rule fires. The <code>loom-mentor</code> skill has the table; <code>loom-optimize</code>{" "}
             reworks the rows a data-shape hint names, with your approval. The dashboard shows; it does not rewrite.

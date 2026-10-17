@@ -1,6 +1,9 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import * as Popover from "@radix-ui/react-popover";
-import { ChevronDown, Search, Lock, Globe, Crown, UserRound, X, Plus } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Popover } from "@clickhouse/click-ui/Popover";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { listMine, setSavedNamespace, cancelNamespaceRequest, isAuthDisabled, type MyNamespaceEntry } from "../api";
 import { invalidateShared, sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
@@ -8,6 +11,8 @@ import { WILDCARD_NAMESPACE } from "../lib/namespace";
 import { isSystemKind } from "../lib/format";
 import { toast, toastError } from "./Toast";
 import { confirmAction } from "./ConfirmDialog";
+import { Tip } from "./ui";
+import { PopoverTrigger } from "./ui/Menu";
 // The create dialog loads when first opened.
 const CreateNamespaceDialog = lazy(() =>
   import("../flows/CreateNamespaceDialog").then((m) => ({ default: m.CreateNamespaceDialog })),
@@ -32,8 +37,8 @@ export function NamespacePicker() {
   // every hook in it runs unconditionally.
   if (isAuthDisabled()) {
     return (
-      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 text-base text-[var(--color-text)]">
-        <span className="text-[var(--color-text-subtle)]">ns</span>
+      <div className="inline-flex items-center gap-1.5 h-8 px-3 text-sm text-text">
+        <span className="text-text-muted">ns</span>
         <span className="font-medium">{identity?.namespace ?? "local"}</span>
       </div>
     );
@@ -58,6 +63,7 @@ function NamespacePickerMenu() {
   const [rows, setRows] = useState<MyNamespaceEntry[] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   // Lazy-load on first open. Refetch when identity.org changes (rare
   // but happens when a multi-tenant user switches orgs upstream).
@@ -179,134 +185,125 @@ function NamespacePickerMenu() {
   };
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger>
         <button
-          className="inline-flex items-center gap-1.5 max-w-full min-w-0 px-2 sm:px-3 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors text-base text-[var(--color-text)]"
+          ref={triggerRef}
+          type="button"
+          className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
           aria-label={`Namespace: ${current}`}
         >
-          <span className="text-[var(--color-text-subtle)]" aria-hidden="true">
+          <span className="text-text-muted" aria-hidden="true">
             ns
           </span>
           <span className="font-medium truncate">{current}</span>
-          <ChevronDown size={12} className="text-[var(--color-text-subtle)] shrink-0" aria-hidden="true" />
+          <Icon name="chevron-down" size="xs" aria-hidden="true" />
         </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          align="start"
-          sideOffset={4}
-          className="z-50 w-[360px] max-h-[480px] flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl animate-fade-in"
-        >
-          <div className="relative p-2 border-b border-[var(--color-border)]">
-            <Search
-              size={13}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none"
-              aria-hidden="true"
-            />
-            <input
-              aria-label="Search namespaces"
-              ref={inputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search namespaces…"
-              className="w-full pl-8 pr-7 py-1.5 text-sm rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none"
-            />
-            {query && (
-              <button
-                onClick={() => setQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                aria-label="Clear"
-              >
-                <X size={12} />
-              </button>
-            )}
-          </div>
+      </PopoverTrigger>
+      <Popover.Content
+        align="start"
+        aria-label="Namespaces"
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          triggerRef.current?.focus();
+        }}
+        className="w-[360px] max-w-[calc(100vw-16px)] max-h-[480px] flex flex-col gap-2"
+      >
+        <SearchField
+          aria-label="Search namespaces"
+          ref={inputRef}
+          value={query}
+          onChange={(v) => setQuery(v)}
+          placeholder="Search namespaces…"
+        />
 
-          <div className="flex-1 overflow-y-auto p-1.5">
-            {known === null && <div className="text-xs text-[var(--color-text-muted)] p-3 text-center">Loading…</div>}
-            {known != null && filtered.length === 0 && (
-              <div className="text-xs text-[var(--color-text-muted)] p-3 text-center">
-                {query ? `No matches for "${query}"` : "No namespaces available."}
-              </div>
-            )}
-            <Section
-              title="Your namespaces"
-              rows={sort(owned)}
-              current={current}
-              onPick={onPick}
-              onCancelPending={onCancelPending}
-            />
-            <Section
-              title="Joined"
-              rows={sort(joined)}
-              current={current}
-              onPick={onPick}
-              onCancelPending={onCancelPending}
-            />
-            <Section
-              title="From your token"
-              rows={sort(transient)}
-              current={current}
-              onPick={onPick}
-              onCancelPending={onCancelPending}
-            />
-            {known != null && joined.length === 0 && transient.length === 0 && !query && (
-              <button
-                onClick={() => {
-                  setOpen(false);
-                  useStore.getState().setView("browse");
-                }}
-                className="w-full mt-1 px-3 py-2 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md text-left inline-flex items-center gap-2"
-              >
-                <Globe size={11} />
-                Find public namespaces to join in Spaces →
-              </button>
-            )}
-          </div>
-
-          {systemHiddenCount > 0 && (
-            <button
-              onClick={() => setShowSystem(true)}
-              className="border-t border-[var(--color-border)] p-2 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-center"
+        <div className="flex-1 overflow-y-auto -mx-2">
+          {known === null && <div className="text-xs text-text-muted p-3 text-center">Loading…</div>}
+          {known != null && filtered.length === 0 && (
+            <div className="text-xs text-text-muted p-3 text-center">
+              {query ? `No matches for "${query}"` : "No namespaces available."}
+            </div>
+          )}
+          <Section
+            title="Your namespaces"
+            rows={sort(owned)}
+            current={current}
+            onPick={onPick}
+            onCancelPending={onCancelPending}
+          />
+          <Section
+            title="Joined"
+            rows={sort(joined)}
+            current={current}
+            onPick={onPick}
+            onCancelPending={onCancelPending}
+          />
+          <Section
+            title="From your token"
+            rows={sort(transient)}
+            current={current}
+            onPick={onPick}
+            onCancelPending={onCancelPending}
+          />
+          {known != null && joined.length === 0 && transient.length === 0 && !query && (
+            <Button
+              type="empty"
+              htmlType="button"
+              iconLeft="globe"
+              align="left"
+              fillWidth
+              onClick={() => {
+                setOpen(false);
+                useStore.getState().setView("browse");
+              }}
             >
+              Find public namespaces to join in Spaces
+            </Button>
+          )}
+        </div>
+
+        <div className="flex flex-col items-stretch border-t border-border pt-2 -mx-2">
+          {systemHiddenCount > 0 && (
+            <Button type="empty" htmlType="button" align="left" onClick={() => setShowSystem(true)}>
               Show {systemHiddenCount} system / bench namespace{systemHiddenCount === 1 ? "" : "s"}
-            </button>
+            </Button>
           )}
           {showSystem && (
-            <button
-              onClick={() => setShowSystem(false)}
-              className="border-t border-[var(--color-border)] p-2 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-center"
-            >
+            <Button type="empty" htmlType="button" align="left" onClick={() => setShowSystem(false)}>
               Hide system namespaces
-            </button>
+            </Button>
           )}
-
           {/* Browsing and joining spaces is part of picking one,
               so the Spaces page is reached from here, not from the rail. One
               call to action: the empty list above already carries it. */}
           {known != null && (joined.length > 0 || transient.length > 0 || !!query) && (
-            <button
+            <Button
+              type="empty"
+              htmlType="button"
+              iconLeft="globe"
+              align="left"
               onClick={() => {
                 setOpen(false);
                 setView("browse");
               }}
-              className="border-t border-[var(--color-border)] px-3 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-2"
             >
-              <Globe size={13} /> Browse and join spaces
-            </button>
+              Browse and join spaces
+            </Button>
           )}
-          <button
+          <Button
+            type="empty"
+            htmlType="button"
+            iconLeft="plus"
+            align="left"
             onClick={() => {
               setOpen(false);
               setCreateOpen(true);
             }}
-            className="border-t border-[var(--color-border)] px-3 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-2"
           >
-            <Plus size={13} /> Create namespace
-          </button>
-        </Popover.Content>
-      </Popover.Portal>
+            Create namespace
+          </Button>
+        </div>
+      </Popover.Content>
       {createOpen && (
         <Suspense fallback={null}>
           <CreateNamespaceDialog
@@ -330,7 +327,7 @@ function NamespacePickerMenu() {
           />
         </Suspense>
       )}
-    </Popover.Root>
+    </Popover>
   );
 }
 
@@ -350,8 +347,8 @@ function Section({
   if (rows.length === 0) return null;
   return (
     <div className="mb-2 last:mb-0">
-      <div className="px-2 pt-1 pb-0.5 text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-subtle)]">
-        {title} <span className="opacity-60 tabular">({rows.length})</span>
+      <div className="section-label px-2 pt-1 pb-0.5">
+        {title} <span className="tabular">({rows.length})</span>
       </div>
       {rows.map((r) => {
         const active = r.namespace === current;
@@ -359,49 +356,42 @@ function Section({
         return (
           <div
             key={r.namespace}
-            className={`group flex items-stretch gap-1 rounded-md transition-colors ${
-              active ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]"
-            }`}
+            className={`flex items-center gap-1 rounded-sm transition-colors ${active ? "bg-surface-3" : "hover:bg-surface-2"}`}
           >
             <button
+              type="button"
               onClick={() => onPick(r.namespace)}
-              className={`flex-1 text-left flex items-center gap-2 px-2 py-1.5 rounded-md ${
-                active ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"
-              }`}
+              aria-current={active ? "true" : undefined}
+              className="flex-1 min-w-0 text-left flex items-center gap-2 px-2 py-1.5 rounded-sm text-text"
             >
               <RoleIcon role={r.role} />
               <span className="flex-1 min-w-0">
-                <span className="font-medium text-sm truncate block">
-                  {r.namespace}
-                  {(r.kind === "code" || r.kind === "qa") && (
-                    <span className="ml-1.5 align-middle text-2xs font-normal rounded px-1 py-px border border-border text-text-muted">
-                      {r.kind}
-                    </span>
-                  )}
+                <span className="text-sm truncate flex items-center gap-1.5">
+                  <span className="truncate">{r.namespace}</span>
+                  {(r.kind === "code" || r.kind === "qa") && <Badge text={r.kind} size="sm" />}
                 </span>
-                {r.description && (
-                  <span className="text-2xs text-[var(--color-text-muted)] truncate block">{r.description}</span>
-                )}
+                {r.description && <span className="text-xs text-text-muted truncate block">{r.description}</span>}
               </span>
-              {pendingRole && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    onCancelPending(r.namespace, pendingRole);
-                  }}
-                  className="text-2xs px-1.5 py-0.5 rounded bg-warn/15 text-warn shrink-0 hover:bg-warn/15"
-                  title={
-                    r.pending_admins && r.pending_admins.length > 0
-                      ? `${r.pending_role} request awaiting approval from: ${r.pending_admins.join(", ")} — click to withdraw`
-                      : `${r.pending_role} request awaiting admin approval — click to withdraw`
-                  }
-                >
-                  pending {r.pending_role}
-                </button>
-              )}
               <VisibilityBadge v={r.visibility} />
             </button>
+            {pendingRole && (
+              <Tip
+                content={
+                  r.pending_admins && r.pending_admins.length > 0
+                    ? `${r.pending_role} request awaiting approval from: ${r.pending_admins.join(", ")} — click to withdraw`
+                    : `${r.pending_role} request awaiting admin approval — click to withdraw`
+                }
+              >
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  onClick={() => onCancelPending(r.namespace, pendingRole)}
+                  className="shrink-0 mr-1"
+                >
+                  {`pending ${r.pending_role}`}
+                </Button>
+              </Tip>
+            )}
           </div>
         );
       })}
@@ -411,14 +401,14 @@ function Section({
 
 function RoleIcon({ role }: { role: MyNamespaceEntry["role"] }) {
   if (role === "admin") {
-    return <Crown size={12} className="text-[var(--color-warn)] shrink-0" aria-label="You're admin" />;
+    return <Icon name="star" size="xs" color="var(--color-warn)" aria-label="You're admin" />;
   }
-  return <UserRound size={12} className="text-[var(--color-text-subtle)] shrink-0" aria-label={role} />;
+  return <Icon name="user" size="xs" color="var(--color-text-muted)" aria-label={role} />;
 }
 
 function VisibilityBadge({ v }: { v: MyNamespaceEntry["visibility"] }) {
   if (v === "public") {
-    return <Globe size={11} className="text-[var(--color-text-subtle)] shrink-0" aria-label="Public" />;
+    return <Icon name="globe" size="xs" color="var(--color-text-muted)" aria-label="Public" />;
   }
-  return <Lock size={11} className="text-[var(--color-text-subtle)] shrink-0" aria-label="Private" />;
+  return <Icon name="lock" size="xs" color="var(--color-text-muted)" aria-label="Private" />;
 }

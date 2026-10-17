@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfirmViewport, confirmAction } from "./ConfirmDialog";
 
@@ -81,5 +81,26 @@ describe("confirmAction", () => {
     });
     await expect(p).resolves.toBe(true);
     expect(action).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("confirm focus", () => {
+  it("returns focus to the control that asked, also after a newer confirm replaced it", async () => {
+    render(
+      <StrictMode>
+        <button type="button">Delete key</button>
+        <ConfirmViewport />
+      </StrictMode>,
+    );
+    const opener = screen.getByRole("button", { name: "Delete key" });
+    opener.focus();
+    const first = await open(() => confirmAction({ title: "Delete key?", danger: true }));
+    // Cancel takes focus, so a stray Enter cannot confirm.
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    const second = await open(() => confirmAction({ title: "Delete two keys?", danger: true }));
+    expect(await first.result).toBe(false);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(await second.result).toBe(false);
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 });

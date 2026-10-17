@@ -1,10 +1,11 @@
-import { Code, Bug, Layers } from "lucide-react";
+import { Link } from "@clickhouse/click-ui/Link";
 import { useStore } from "../lib/state";
 import type { View } from "../lib/state";
 import { kindOf } from "../lib/namespace";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "./ScopeBadge";
 import { EmptyState } from "./EmptyState";
+import { PageHeader } from "./ui";
 
 /**
  * The page a memory view renders when the picked namespace is not a memory
@@ -51,7 +52,7 @@ export function MemoryScopeMissing({ view }: { view: View }) {
   if (!namespace) {
     body = (
       <EmptyState
-        icon={Layers}
+        icon="cards"
         title="No memory namespace to read"
         description={`${title} reads a memory namespace, and your token reaches none yet. Join one from Spaces (namespace picker → Browse and join), or ask for a grant; anything you can already reach is in the namespace menu.`}
         action={{ label: "Browse and join spaces", onClick: () => setView("browse") }}
@@ -60,7 +61,7 @@ export function MemoryScopeMissing({ view }: { view: View }) {
   } else if (kind === "qa") {
     body = (
       <EmptyState
-        icon={Bug}
+        icon="flag"
         title={`${namespace} is a tracker source`}
         description={`It holds issues, pull requests and incidents read live from the tracker, not memories — ${title} has nothing to read there. Its bug board is the Graph view's Patterns mode.`}
         action={{ label: "Open in Patterns", onClick: openPatterns }}
@@ -69,30 +70,25 @@ export function MemoryScopeMissing({ view }: { view: View }) {
   } else {
     body = (
       <EmptyState
-        icon={Code}
+        icon="code"
         title={`${namespace} is a repository index`}
         description={`It holds indexed code, not memories — ${title} has nothing to read there. Search and browse the repository from Repositories.`}
-        action={{ label: "Open Repositories", onClick: () => setView("code") }}
+        action={{ label: "Open repositories", onClick: () => setView("code") }}
       />
     );
   }
 
   return (
     <PageContainer>
-      <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
-      <div className="mt-1 mb-6">
+      <PageHeader title={title}>
         <ScopeBadge kind="namespace" value={namespace} />
-      </div>
+      </PageHeader>
       {body}
-      <p className="text-center text-sm text-[var(--color-text-muted)]">
+      <p className="text-center text-sm text-text-muted">
         Reading memories? Pick a memory namespace from the{" "}
-        <button
-          type="button"
-          onClick={() => openNamespacePicker(true)}
-          className="text-[var(--color-accent)] hover:underline"
-        >
+        <Link component="button" type="button" onClick={() => openNamespacePicker(true)}>
           namespace menu
-        </button>{" "}
+        </Link>{" "}
         in the header.
       </p>
     </PageContainer>

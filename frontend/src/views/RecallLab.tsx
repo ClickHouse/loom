@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
-import { FlaskConical, Search, History } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { Select } from "@clickhouse/click-ui/Select";
+import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { listMemories, searchMemory, listSearchTraceLog, type SearchHit, type SearchTraceLogRow } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
+import { Chip, PageHeader, TabTrigger, TipTarget } from "../components/ui";
 import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
@@ -35,33 +41,29 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
   const top = pairs.reduce((m, p) => Math.max(m, p.score ?? 0), 0);
   const longQuery = r.query.length > QUERY_FOLD_CHARS;
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
+    <div className="rounded-xl border border-border bg-surface px-3 py-2.5">
       <div className="flex items-baseline justify-between gap-3">
-        <div className="min-w-0 text-sm text-[var(--color-text)]">
+        <div className="min-w-0 text-sm text-text">
           {r.query !== "" ? (
             <>
               <div className={`break-words whitespace-pre-wrap ${longQuery && !fullQuery ? "line-clamp-3" : ""}`}>
                 {r.query}
               </div>
               {longQuery && (
-                <button
-                  type="button"
-                  onClick={() => setFullQuery((v) => !v)}
-                  className="mt-0.5 text-2xs text-[var(--color-accent)] hover:underline"
-                >
+                <Button type="empty" htmlType="button" onClick={() => setFullQuery((v) => !v)} className="mt-0.5">
                   {fullQuery ? "Show less" : `Show full query (${r.query.length.toLocaleString()} chars)`}
-                </button>
+                </Button>
               )}
             </>
           ) : (
-            <span className="italic text-[var(--color-text-subtle)]">wording not recorded</span>
+            <span className="italic text-text-muted">wording not recorded</span>
           )}
         </div>
-        <div className="text-2xs text-[var(--color-text-subtle)] whitespace-nowrap">{relativeTime(r.ts)}</div>
+        <div className="text-xs text-text-muted whitespace-nowrap">{relativeTime(r.ts)}</div>
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-[var(--color-text-muted)]">
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
         <span>
-          <strong className="text-[var(--color-text)]">{r.result_count}</strong> of {r.top_k} returned
+          <strong className="text-text">{r.result_count}</strong> of {r.top_k} returned
         </span>
         <span>{r.latency_ms} ms</span>
         {/* retrieval_risk is Literal["low","medium","high","abstain"],
@@ -70,49 +72,42 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
             risk abstain"). One chip: the abstain outcome if it
             happened, otherwise the band when it is worth flagging. */}
         {r.abstain ? (
-          <span
-            className="text-[var(--color-warn,var(--color-text))]"
-            title="Nothing passed the relevance floor, so loom returned no answer rather than a weak guess."
-          >
-            abstained
-          </span>
+          <TipTarget tip="Nothing passed the relevance floor, so loom returned no answer rather than a weak guess.">
+            <Badge text="abstained" state="warning" size="sm" />
+          </TipTarget>
         ) : (
           (r.retrieval_risk === "medium" || r.retrieval_risk === "high") && (
-            <span title="Results were returned, but confidence was below the comfortable band.">
-              {r.retrieval_risk} risk
-            </span>
+            <TipTarget tip="Results were returned, but confidence was below the comfortable band.">
+              <Badge text={`${r.retrieval_risk} risk`} state="warning" size="sm" />
+            </TipTarget>
           )
         )}
         {r.operation !== "" && (
-          <span
-            className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] font-mono"
-            title="The operation that ran this search. memory.ask and the MCP search tool carry the wording a person gave; a direct memory.search carries whatever the calling program composed."
-          >
-            via {r.operation}
-          </span>
+          <TipTarget tip="The operation that ran this search. memory.ask and the MCP search tool carry the wording a person gave; a direct memory.search carries whatever the calling program composed.">
+            <Badge text={`via ${r.operation}`} state="neutral" size="sm" />
+          </TipTarget>
         )}
         <span>{displayAgent(r.agent)}</span>
         {r.run_id !== "" && r.run_id !== "-" && <span>run {r.run_id}</span>}
       </div>
       {pairs.length > 0 && (
-        <ul className="mt-2 space-y-0.5" aria-label="Returned memories with scores">
+        <div className="mt-2 flex justify-end text-xs text-text-muted">
+          <TipTarget tip="blended rank score at the time of the search" underline>
+            score
+          </TipTarget>
+        </div>
+      )}
+      {pairs.length > 0 && (
+        <ul className="mt-0.5 space-y-0.5" aria-label="Returned memories with scores">
           {shown.map(({ key, score }) => (
-            <li key={key} className="grid grid-cols-[minmax(0,1fr)_3.5rem] items-center gap-x-2 text-2xs">
-              <span className="min-w-0 truncate font-mono text-[var(--color-text-muted)]" title={key}>
-                {key}
-              </span>
-              <span
-                className="text-right font-mono tabular-nums text-[var(--color-text)]"
-                title="blended rank score at the time of the search"
-              >
+            <li key={key} className="grid grid-cols-[minmax(0,1fr)_3.5rem] items-center gap-x-2 text-xs">
+              <span className="min-w-0 break-all font-mono text-text-muted">{key}</span>
+              <span className="text-right font-mono tabular-nums text-text">
                 {score == null ? "–" : score.toFixed(3)}
               </span>
-              <div
-                className="col-span-2 h-0.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"
-                aria-hidden="true"
-              >
+              <div className="col-span-2 h-0.5 rounded-full bg-surface-2 overflow-hidden" aria-hidden="true">
                 <div
-                  className="h-full bg-[var(--color-accent)]"
+                  className="h-full bg-accent"
                   style={{
                     width: `${score == null || top <= 0 ? 0 : Math.max(0, Math.min(100, (score / top) * 100)).toFixed(1)}%`,
                   }}
@@ -122,13 +117,9 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
           ))}
           {pairs.length > KEYS_FOLDED && (
             <li>
-              <button
-                type="button"
-                onClick={() => setAllKeys((v) => !v)}
-                className="mt-1 text-2xs text-[var(--color-accent)] hover:underline"
-              >
+              <Button type="empty" htmlType="button" onClick={() => setAllKeys((v) => !v)} className="mt-1">
                 {allKeys ? "Show fewer" : `Show all ${pairs.length}`}
-              </button>
+              </Button>
             </li>
           )}
         </ul>
@@ -188,44 +179,41 @@ function RecallHistory() {
   return (
     <>
       <div className="flex items-center justify-between gap-3 mb-3">
-        <p className="text-sm text-[var(--color-text-muted)] max-w-2xl">
+        <p className="text-sm text-text-muted max-w-2xl">
           Searches that already happened — what came back, whether recall abstained, and how long it took.
         </p>
-        <select
-          aria-label="Time window"
-          value={hours}
-          onChange={(e) => setHours(Number(e.target.value))}
-          className="px-2 py-1.5 text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+        <Select
+          value={String(hours)}
+          onSelect={(v) => setHours(Number(v))}
+          triggerProps={{ "aria-label": "Time window" }}
+          className="w-40 shrink-0"
         >
-          <option value={24}>Last 24 hours</option>
-          <option value={168}>Last 7 days</option>
-          <option value={720}>Last 30 days</option>
-        </select>
+          <Select.Item value="24">Last 24 hours</Select.Item>
+          <Select.Item value="168">Last 7 days</Select.Item>
+          <Select.Item value="720">Last 30 days</Select.Item>
+        </Select>
       </div>
 
       {runFilter && (
         <div className="mb-3 flex items-center gap-2 text-xs">
-          <span className="text-[var(--color-text-muted)]">Searches under run</span>
-          <button
-            type="button"
-            onClick={() => setRunFilter(null)}
-            title="Show every recorded search again"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-mono"
-          >
-            {runFilter.length > 28 ? `${runFilter.slice(0, 28)}…` : runFilter}
-            <span aria-hidden="true">×</span>
-            <span className="sr-only">clear run filter</span>
-          </button>
-          <span className="text-[var(--color-text-subtle)]">last 30 days</span>
+          <span className="text-text-muted">Searches under run</span>
+          <Chip
+            label={runFilter.length > 28 ? `${runFilter.slice(0, 28)}…` : runFilter}
+            mono
+            selected
+            tip="Remove to show every recorded search again"
+            onRemove={() => setRunFilter(null)}
+          />
+          <span className="text-text-muted">last 30 days</span>
         </div>
       )}
 
-      {loading && <div className="text-sm text-[var(--color-text-muted)] px-1">Loading…</div>}
-      {error && <div className="text-sm text-[var(--color-danger)] px-1">{error}</div>}
+      {loading && <div className="text-sm text-text-muted px-1">Loading…</div>}
+      {error && <div className="text-sm text-danger px-1">{error}</div>}
 
       {rows != null && !loading && !error && rows.length === 0 && (
         <EmptyState
-          icon={History}
+          icon="history"
           title={runFilter ? "No recorded searches under this run" : "No recorded searches"}
           description={
             runFilter
@@ -238,7 +226,7 @@ function RecallHistory() {
       {rows != null && rows.length > 0 && (
         <>
           {!anyQueryText && (
-            <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+            <div className="mb-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-text-muted">
               Search wording isn&apos;t being recorded, so these rows show what was retrieved but not what was asked.
               Turn it on for this namespace in its settings &mdash;{" "}
               <em>&ldquo;Record what I search and what I store&rdquo;</em>.
@@ -259,14 +247,14 @@ function RecallHistory() {
 function RankedTerms({ hit }: { hit: SearchHit }) {
   return (
     <>
-      <span title="similarity the search reports for the hit">sim {hit.similarity.toFixed(3)}</span>
-      <span title="final score the ranked hits are ordered by">score {hit.rank_score.toFixed(3)}</span>
+      <TipTarget tip="similarity the search reports for the hit">sim {hit.similarity.toFixed(3)}</TipTarget>
+      <TipTarget tip="final score the ranked hits are ordered by">score {hit.rank_score.toFixed(3)}</TipTarget>
       {whyTerms(hit.score_components).map((t) => (
-        <span key={t.label} className={t.value < 0 ? "text-[var(--color-warn)]" : "text-[var(--color-accent)]"}>
+        <span key={t.label} className={t.value < 0 ? "text-warn" : "text-accent"}>
           {t.label} {signed(t.value)}
         </span>
       ))}
-      {hit.source && <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)]">{hit.source}</span>}
+      {hit.source && <Badge text={hit.source} state="neutral" size="sm" />}
     </>
   );
 }
@@ -382,16 +370,15 @@ export function RecallLab() {
   return (
     <PageContainer>
       <div className="mb-4">
-        <h1 className="text-3xl font-semibold tracking-tight">Memories</h1>
-        <div className="mt-1 mb-3">
+        <PageHeader title="Memories" tab="Recall">
           <ScopeBadge kind="namespace" value={identity.namespace} />
-        </div>
+        </PageHeader>
         <MemoryTabs active="recall" />
-        <h2 className="flex items-center gap-2 text-xl font-semibold text-[var(--color-text)]">
-          <FlaskConical size={18} className="text-[var(--color-accent)]" /> Recall
+        <h2 className="flex items-center gap-2 text-text">
+          <Icon name="flask" size="md" color="var(--color-accent)" aria-hidden="true" /> Recall
         </h2>
         {tab === "score" && (
-          <p className="mt-1 text-sm text-[var(--color-text-muted)] max-w-2xl">
+          <p className="mt-1 text-sm text-text-muted max-w-2xl">
             Why did a memory land where it did on the Memories list? These are the rows it shows for a query with no
             filters set, in its order: memories whose text holds the query come first, newest first; then the ranked
             search, each hit with its similarity, final score and the terms that moved it (key match, entity, recency,
@@ -400,125 +387,106 @@ export function RecallLab() {
         )}
       </div>
 
-      <div className="flex items-center gap-1 mb-4 border-b border-[var(--color-border)]">
-        {(
-          [
-            ["score", "Score a query", FlaskConical],
-            ["history", "Recall history", History],
-          ] as const
-        ).map(([id, label, Icon]) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm -mb-px border-b-2 transition-colors ${
-              tab === id
-                ? "border-[var(--color-accent)] text-[var(--color-text)]"
-                : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            <Icon size={14} /> {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "history" && <RecallHistory />}
-
-      <div className={tab === "score" ? "relative mb-4" : "hidden"}>
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)]" />
-        <input
-          aria-label="Recall query"
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search your memories — see the scoring breakdown"
-          className="w-full pl-9 pr-3 py-2.5 text-base rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] transition-colors"
-        />
-      </div>
-
-      {tab === "score" && loading && <div className="text-sm text-[var(--color-text-muted)] px-1">Scoring…</div>}
-      {tab === "score" && error && <div className="text-sm text-[var(--color-danger)] px-1">{error}</div>}
-      {tab === "score" && rankedError && !loading && (
-        <div className="mb-2 text-xs text-[var(--color-text-muted)] px-1">
-          Ranked search failed ({rankedError}); showing the keyword matches only.
-        </div>
-      )}
-
-      {tab === "score" && rows != null && !loading && !error && rows.length === 0 && (
-        <EmptyState
-          icon={FlaskConical}
-          title="No candidates"
-          description="Nothing in this namespace scored against that query."
-        />
-      )}
-
-      {tab === "score" && rows != null && rows.length > 0 && (
-        <>
-          {abstain && (
-            <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-              No confident match — the search abstained on this query. These are the nearest memories, not real matches.
-              {!showWeak && (
-                <>
-                  {" "}
-                  <button
-                    onClick={() => setShowWeak(true)}
-                    className="underline underline-offset-2 hover:text-[var(--color-text)] transition-colors"
-                  >
-                    Show {rows.length} anyway
-                  </button>
-                </>
-              )}
+      <Tabs value={tab} onValueChange={(v) => setTab(v === "history" ? "history" : "score")}>
+        <Tabs.TriggersList className="mb-4" aria-label="Recall">
+          <TabTrigger value="score" icon="flask">
+            Score a query
+          </TabTrigger>
+          <TabTrigger value="history" icon="history">
+            Recall history
+          </TabTrigger>
+        </Tabs.TriggersList>
+        <Tabs.Content value="history">
+          <RecallHistory />
+        </Tabs.Content>
+        <Tabs.Content value="score">
+          <div className="mb-4">
+            <SearchField
+              aria-label="Recall query"
+              autoFocus
+              value={query}
+              onChange={(value) => setQuery(value)}
+              placeholder="Search your memories — see the scoring breakdown"
+            />
+          </div>
+          {loading && <div className="text-sm text-text-muted px-1">Scoring…</div>}
+          {error && <div className="text-sm text-danger px-1">{error}</div>}
+          {rankedError && !loading && (
+            <div className="mb-2 text-xs text-text-muted px-1">
+              Ranked search failed ({rankedError}); showing the keyword matches only.
             </div>
           )}
-          {model && showResults && (
-            <div className="text-2xs text-[var(--color-text-subtle)] mb-2 px-1">
-              {rows.length} row{rows.length === 1 ? "" : "s"} · embedder <span className="font-mono">{model}</span>
-            </div>
+
+          {rows != null && !loading && !error && rows.length === 0 && (
+            <EmptyState
+              icon="flask"
+              title="No candidates"
+              description="Nothing in this namespace scored against that query."
+            />
           )}
-          {showResults && (
-            <div className="space-y-1.5">
-              {rows.map((row, i) => (
-                <div
-                  key={row.key}
-                  className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]"
-                >
-                  <div className="flex items-start gap-3">
-                    <span className="shrink-0 mt-0.5 w-6 text-right text-xs font-mono text-[var(--color-text-subtle)]">
-                      #{i + 1}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-2xs font-mono text-[var(--color-text-subtle)] break-all">{row.key}</p>
-                      <p className="text-sm text-[var(--color-text)] break-words">{row.text}</p>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs font-mono text-[var(--color-text-muted)]">
-                        {row.keyword && (
-                          <span
-                            className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                            title="its text holds the query; the Memories list shows these first, newest first"
-                          >
-                            keyword match
-                          </span>
-                        )}
-                        {row.hit && <RankedTerms hit={row.hit} />}
-                        <span className="text-[var(--color-text-subtle)]">{row.memoryType}</span>
-                      </div>
-                      {row.hit && (
-                        // score bar, relative to the top ranked hit
-                        <div className="mt-1.5 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                          <div
-                            className="h-full bg-[var(--color-accent)]"
-                            style={{
-                              width: `${topScore > 0 ? Math.max(0, Math.min(100, (row.hit.rank_score / topScore) * 100)).toFixed(1) : 0}%`,
-                            }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
+
+          {rows != null && rows.length > 0 && (
+            <>
+              {abstain && (
+                <div className="mb-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-text-muted">
+                  No confident match — the search abstained on this query. These are the nearest memories, not real
+                  matches.
+                  {!showWeak && (
+                    <>
+                      {" "}
+                      <Button type="empty" htmlType="button" onClick={() => setShowWeak(true)}>
+                        Show {rows.length} anyway
+                      </Button>
+                    </>
+                  )}
                 </div>
-              ))}
-            </div>
+              )}
+              {model && showResults && (
+                <div className="text-xs text-text-muted mb-2 px-1">
+                  {rows.length} row{rows.length === 1 ? "" : "s"} · embedder <span className="font-mono">{model}</span>
+                </div>
+              )}
+              {showResults && (
+                <div className="space-y-1.5">
+                  {rows.map((row, i) => (
+                    <div key={row.key} className="p-3.5 rounded-xl border border-border bg-surface">
+                      <div className="flex items-start gap-3">
+                        <span className="shrink-0 mt-0.5 w-6 text-right text-xs font-mono text-text-muted">
+                          #{i + 1}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-mono text-text-muted break-all">{row.key}</p>
+                          <p className="text-sm text-text break-words">{row.text}</p>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-mono text-text-muted">
+                            {row.keyword && (
+                              <TipTarget tip="its text holds the query; the Memories list shows these first, newest first">
+                                <Badge text="keyword match" state="neutral" size="sm" />
+                              </TipTarget>
+                            )}
+                            {row.hit && <RankedTerms hit={row.hit} />}
+                            <span className="text-text-muted">{row.memoryType}</span>
+                          </div>
+                          {row.hit && (
+                            // score bar, relative to the top ranked hit
+                            <div className="mt-1.5 h-1 rounded-full bg-surface-2 overflow-hidden">
+                              <div
+                                className="h-full bg-accent"
+                                style={{
+                                  width: `${topScore > 0 ? Math.max(0, Math.min(100, (row.hit.rank_score / topScore) * 100)).toFixed(1) : 0}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
-        </>
-      )}
+        </Tabs.Content>
+      </Tabs>
     </PageContainer>
   );
 }

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { RecallLab } from "./RecallLab";
@@ -43,7 +43,7 @@ describe("Recall history run filter", () => {
     expect(opts?.run_id).toBe("r-full");
     expect(opts?.since_hours).toBe(720);
     expect(await screen.findByText("No recorded searches under this run")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /clear run filter/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove r-full" }));
     await waitFor(() => expect(listSearchTraceLog).toHaveBeenCalledTimes(2));
     const opts2 = must(listSearchTraceLog.mock.calls[1][1], "second trace-log opts");
     expect(opts2.run_id).toBeUndefined();

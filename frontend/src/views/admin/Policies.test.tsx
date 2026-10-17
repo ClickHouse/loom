@@ -1,6 +1,7 @@
 /** The mode badge shows the server's mode verbatim; a mode the UI does not know
  *  takes the off styling and blurb instead of an undefined lookup. */
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "../../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
 import { useStore } from "../../lib/state";
@@ -13,6 +14,7 @@ vi.mock("../../api", async (importOriginal) => {
     // The wire field is a string; a newer server can send a mode this build has no entry for.
     listPolicies: vi.fn(async () => ({ rules: [], mode: "audit-only" })),
     listPolicyDecisions: vi.fn(async () => ({ rows: [] })),
+    setPolicy: vi.fn(async (_id, body) => ({ rule: { ...body }, leaf_count: 1 })),
   };
 });
 
@@ -62,5 +64,25 @@ describe("Policies condition summary", () => {
     });
     render(<Policies />);
     expect(await screen.findByText("all(formerly memory.get within 1h AND x)")).toBeTruthy();
+  });
+});
+
+describe("Policies add rule", () => {
+  it("submits the dialog's fields with the chosen effect", async () => {
+    const user = userEvent.setup();
+    render(<Policies />);
+    await user.click(await screen.findByRole("button", { name: /Add rule/ }));
+    await user.type(screen.getByLabelText("Policy ID"), "no-blind-delete");
+    await user.click(screen.getByRole("button", { name: /Effect/ }));
+    // Click UI's Select items carry no option role; the open list's item is the one with a data-value.
+    await waitFor(() => expect(document.querySelector('[data-value="require"]')).not.toBeNull());
+    await user.click(document.querySelector<HTMLElement>('[data-value="require"]') as HTMLElement);
+    await user.click(screen.getByRole("button", { name: /Save rule/ }));
+    await waitFor(() =>
+      expect(api.setPolicy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ policy_id: "no-blind-delete", effect: "require", actions: ["memory.delete"] }),
+      ),
+    );
   });
 });

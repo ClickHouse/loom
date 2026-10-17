@@ -2,7 +2,7 @@
 // edit details, edit content, delete) are rendered only for the row under the pointer,
 // focused, or selected — otherwise 50 rows would carry ~30 nodes each for controls nobody
 // could use at once.
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { Documents } from "./Documents";

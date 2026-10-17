@@ -132,7 +132,7 @@ test("a memory view on a picked code namespace names the kind and offers Reposit
   await expect(page.getByRole("heading", { name: `${CODE_NS} is a repository index` })).toBeVisible();
   // The ScopeBadge names the namespace with its kind.
   await expect(page.locator("#main").getByText(CODE_NS, { exact: true }).locator("..")).toContainText("code");
-  await page.getByRole("button", { name: "Open Repositories" }).click();
+  await page.getByRole("button", { name: "Open repositories" }).click();
   await expect(page).toHaveURL(/\/repositories$/);
   await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
   expect(calls.memory).toEqual([]);
@@ -159,7 +159,7 @@ test("a token that reaches nothing lands on Setup with the join-or-grant notice 
   );
   await expect(notice).not.toContainText("memory namespace");
   await shot(page, "18-landing-nothing-reachable-setup");
-  await notice.getByRole("button", { name: "Open Repositories" }).click();
+  await notice.getByRole("button", { name: "Open repositories" }).click();
   await expect(page).toHaveURL(/\/repositories$/);
   await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
   expect(calls.memory).toEqual([]);

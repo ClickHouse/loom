@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
@@ -99,12 +99,14 @@ describe("TaskInboxBell", () => {
     const user = userEvent.setup();
     render(<TaskInboxBell />);
     await screen.findByText("3");
-    await user.click(screen.getByRole("button", { name: "Tasks waiting for a person" }));
+    await user.click(screen.getByRole("button", { name: "Tasks waiting for a person, 3" }));
     expect(screen.getByText("private-bot")).toBeInTheDocument();
     expect(screen.getByText("2 in triage", { exact: false })).toBeInTheDocument();
     expect(
       screen.getByText("1 blocked on a person · 5 blocked on a sender or external event", { exact: false }),
     ).toBeInTheDocument();
+    // The arrow is drawn, not spoken.
+    expect(screen.getByRole("button", { name: /^private-bot.* Open$/ })).toBeInTheDocument();
     await user.click(screen.getByText("pool"));
     expect(useStore.getState().view).toBe("tasks");
     expect(new URLSearchParams(window.location.search).get("inbox")).toBe("pool");

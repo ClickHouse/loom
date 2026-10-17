@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AllowlistRow, ConflictRow, LearningEntry } from "../../api";
@@ -125,6 +125,22 @@ describe("ReviewQueue", () => {
     seed("ns-b");
     await screen.findByText("No conflicts", {}, WAIT);
     expect(screen.queryByRole("tab")).toBeNull();
+    // A lone Conflicts panel is the page, not a tab panel with no tabs.
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+  });
+
+  it("shows conflicts before the probes answer, and reads them once when a late probe reveals the Learnings tab", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("a/key")], next_before_version: null });
+    let reveal: (v: { rows: ReturnType<typeof learning>[] }) => void = () => {};
+    vi.mocked(listLearnings).mockReturnValue(new Promise((r) => (reveal = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/key", {}, WAIT);
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    await act(async () => reveal({ rows: [learning("a/learned")] }));
+    await screen.findByRole("tab", { name: /Learnings/ }, WAIT);
+    expect(screen.getByRole("tabpanel", { name: /Conflicts/ })).toHaveTextContent("value of a/key");
+    expect(vi.mocked(listConflicts)).toHaveBeenCalledTimes(1);
   });
 
   it("names the icon-only remove button on an exception", async () => {
@@ -134,5 +150,50 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
     expect(await screen.findByRole("button", { name: "Remove exception k/a ↔ k/b" }, WAIT)).toBeTruthy();
+  });
+  it("is operable from the keyboard: tabs, status filter and the decision buttons", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [conflict("k/one"), conflict("k/two")],
+      next_before_version: null,
+    });
+    vi.mocked(listLearnings).mockImplementation(async (_id, status) => ({
+      rows: status === "pending" ? [learning("k/pending")] : [learning("k/promoted")],
+    }));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+
+    // The conflict's reason field and buttons are reached with Tab and pressed with Enter.
+    const reason = screen.getByRole("textbox", { name: "Reason for the decision" });
+    reason.focus();
+    await user.keyboard("dup");
+    // The footer reads secondary first, primary last: Skip, Allow both, Drop A, Keep A.
+    for (const name of [/Skip/, /Allow both/, /Drop A/, /Keep A/]) {
+      await user.tab();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name }));
+    }
+    await user.keyboard("{Enter}");
+    await waitFor(
+      () => expect(resolveConflict).toHaveBeenCalledWith(expect.anything(), "id-k/one", "revise", { reason: "dup" }),
+      WAIT,
+    );
+    await screen.findByText("value of k/two", {}, WAIT);
+
+    // Arrow keys move between the sub-tabs.
+    const conflictsTab = screen.getByRole("tab", { name: /Conflicts/ });
+    conflictsTab.focus();
+    await user.keyboard("{ArrowRight}");
+    const learningsTab = screen.getByRole("tab", { name: /Learnings/ });
+    expect(document.activeElement).toBe(learningsTab);
+    await waitFor(() => expect(learningsTab.getAttribute("aria-selected")).toBe("true"), WAIT);
+    await screen.findByText("k/pending", {}, WAIT);
+
+    // The status filter is a group of toggle buttons pressed with Space.
+    const promoted = screen.getByRole("button", { name: "Promoted" });
+    promoted.focus();
+    await user.keyboard(" ");
+    await screen.findByText("k/promoted", {}, WAIT);
+    expect(promoted.getAttribute("aria-pressed")).toBe("true");
   });
 });

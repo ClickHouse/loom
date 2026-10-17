@@ -1,13 +1,14 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Tip } from "./Tooltip";
+import { useLayoutEffect, useState, type CSSProperties } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { TipTarget } from "./TipTarget";
 
 /**
  * TextClamp — n lines of text with the full text always reachable. A silent ellipsis on
  * load-bearing text is a defect; this component makes the caller say how the rest is
  * reached:
  *
- * - `reach="tooltip"`: when the text is clamped, the span is focusable and
- *   the full text opens as a tooltip on hover and on focus.
+ * - `reach="tooltip"`: when the text is clamped, it is a `TipTarget`: focusable,
+ *   and the full text opens as a tooltip on hover and on focus.
  * - `reach="expand"`: when clamped, a "Show more" button follows; it
  *   toggles the clamp and says so (`aria-expanded`).
  * - `reach="parent"`: the caller's ancestor reaches the text (a row
@@ -39,23 +40,32 @@ function clampStyle(lines: number): CSSProperties {
   };
 }
 
-export function TextClamp({ text, lines = 1, max, reach, mono = false, className = "" }: TextClampProps) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [expanded, setExpanded] = useState(false);
-  const cut = max !== undefined && text.length > max;
-  const shown = cut ? `${text.slice(0, max).trimEnd()}…` : text;
-  const [overflowing, setOverflowing] = useState(false);
-
+/**
+ * Whether `el`'s text overflows its box, measured and re-measured as the box resizes or
+ * `content` changes. Pass the element through a state ref (`ref={setEl}`), so a remount
+ * (a tooltip wrapped round it) measures the new element. With `null` it keeps the last
+ * answer.
+ */
+export function useClamped(el: HTMLElement | null, content: string): boolean {
+  const [clamped, setClamped] = useState(false);
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || expanded) return;
-    const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
+    if (!el) return;
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [shown, lines, expanded]);
+  }, [el, content]);
+  return clamped;
+}
+
+export function TextClamp({ text, lines = 1, max, reach, mono = false, className = "" }: TextClampProps) {
+  const [el, setEl] = useState<HTMLSpanElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const cut = max !== undefined && text.length > max;
+  const shown = cut ? `${text.slice(0, max).trimEnd()}…` : text;
+  const overflowing = useClamped(expanded ? null : el, `${lines}:${shown}`);
 
   const clamped = !expanded && (overflowing || cut);
   const cls = `block ${mono ? "font-mono" : ""} ${className}`;
@@ -63,32 +73,35 @@ export function TextClamp({ text, lines = 1, max, reach, mono = false, className
   if (reach === "expand") {
     return (
       <>
-        <span ref={ref} className={cls} style={expanded ? undefined : clampStyle(lines)}>
+        <span ref={setEl} className={cls} style={expanded ? undefined : clampStyle(lines)}>
           {expanded ? text : shown}
         </span>
         {(clamped || expanded) && (
-          <button
-            type="button"
+          <Button
+            type="empty"
+            htmlType="button"
             aria-expanded={expanded}
             onClick={() => setExpanded((v) => !v)}
-            className="mt-0.5 text-2xs text-text-muted underline decoration-dotted hover:text-text pointer-coarse:min-h-11 pointer-coarse:px-2"
+            className="mt-0.5"
           >
             {expanded ? "Show less" : "Show more"}
-          </button>
+          </Button>
         )}
       </>
     );
   }
-  const span = (
-    <span
-      ref={ref}
-      className={`${cls} ${clamped && reach === "tooltip" ? "outline-none focus-visible:ring-2 focus-visible:ring-focus rounded" : ""}`}
-      style={clampStyle(lines)}
-      tabIndex={clamped && reach === "tooltip" ? 0 : undefined}
-    >
+  if (reach === "tooltip") {
+    // One element whether or not the text is cut off, so a resize that changes it keeps
+    // the focus; the tip and the tab stop come with the cut.
+    return (
+      <TipTarget ref={setEl} tip={text} disabled={!clamped} className={`${cls} rounded-sm`} style={clampStyle(lines)}>
+        {shown}
+      </TipTarget>
+    );
+  }
+  return (
+    <span ref={setEl} className={cls} style={clampStyle(lines)}>
       {shown}
     </span>
   );
-  if (reach === "tooltip" && clamped) return <Tip content={text}>{span}</Tip>;
-  return span;
 }

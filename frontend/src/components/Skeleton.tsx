@@ -1,6 +1,6 @@
 /** Skeleton placeholders that shimmer while data loads. */
 export function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`skeleton motion-reduce:[animation:none]! ${className}`} />;
+  return <div className={`skeleton ${className}`} />;
 }
 
 export function SkeletonText({ lines = 3 }: { lines?: number }) {
@@ -15,7 +15,7 @@ export function SkeletonText({ lines = 3 }: { lines?: number }) {
 
 export function SkeletonCard() {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+    <div className="rounded-sm border border-border bg-surface p-4 space-y-3">
       <div className="flex items-center justify-between">
         <Skeleton className="h-3 w-32" />
         <Skeleton className="h-3 w-12" />

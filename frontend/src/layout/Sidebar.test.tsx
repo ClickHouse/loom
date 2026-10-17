@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 
 /** The badge reads leave after paint + idle (two animation frames, then a timer in
@@ -207,5 +207,20 @@ describe("Sidebar collapsed rail", () => {
       await new Promise((r) => setTimeout(r, 400));
     });
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    // The scope hint is the link's description instead.
+    expect(screen.getByRole("link", { name: "Memories" })).toHaveAccessibleDescription(/picked above/);
+  });
+
+  // Click UI's slide-out is |← (toward the rail's edge) and slide-in is →|.
+  it("points the toggle the way it moves the rail", () => {
+    seed(viewer, [row("team-a", "viewer")]);
+    const { unmount } = render(<Sidebar />);
+    const glyph = (name: string) =>
+      screen.getByRole("button", { name }).querySelector("svg")?.getAttribute("aria-label");
+    expect(glyph("Collapse sidebar")).toBe("slide-out");
+    unmount();
+    useStore.setState({ sidebarCollapsed: true });
+    render(<Sidebar />);
+    expect(glyph("Expand sidebar")).toBe("slide-in");
   });
 });

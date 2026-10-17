@@ -1,0 +1,131 @@
+import { fireEvent, render, screen, waitFor } from "../test/rtl";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useStore } from "../lib/state";
+import { HeaderSearch } from "./HeaderSearch";
+
+// The header search is a WAI-ARIA combobox: focus stays in the input while ↑↓ move the
+// highlighted option, which the input names through aria-activedescendant.
+
+const inspect = vi.fn();
+const inspectProfile = vi.fn();
+// What the empty box lists: the newest memories and the profile sections.
+const catalog = vi.hoisted(() => ({
+  recent: [] as Array<{ memory_key: string; agent: string }>,
+  profile: [] as Array<{ label: string; value: string }>,
+}));
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    listMemories: vi.fn(async () => ({ entries: catalog.recent, truncated: false, total: catalog.recent.length })),
+    listKnowledge: vi.fn(async () => ({ rows: [] })),
+    listProfile: vi.fn(async () => ({ entries: catalog.profile })),
+    browseNamespaces: vi.fn(async () => []),
+    searchMemory: vi.fn(async () => ({
+      results: [
+        { memory_key: "coffee/order", agent: "a", memory_type: "semantic", content_excerpt: "flat white" },
+        { memory_key: "coffee/shop", agent: "a", memory_type: "semantic", content_excerpt: "corner cafe" },
+      ],
+    })),
+  };
+});
+vi.mock("../lib/sharedReads", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/sharedReads")>();
+  return { ...actual, sharedMine: vi.fn(async () => []) };
+});
+
+beforeEach(() => {
+  inspect.mockReset();
+  inspectProfile.mockReset();
+  catalog.recent = [];
+  catalog.profile = [];
+  useStore.setState({
+    identity: { org: "dev", namespace: "team", agent: "dashboard" },
+    view: "memories",
+    inspect,
+    inspectProfile,
+  });
+});
+
+describe("HeaderSearch", () => {
+  it("highlights options with the arrow keys and opens the highlighted one on Enter", async () => {
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    const input = screen.getByRole("combobox", { name: "Search Loom" });
+    await user.type(input, "coffee");
+    const listbox = await screen.findByRole("listbox", { name: "Search results" });
+    expect(input).toHaveAttribute("aria-expanded", "true");
+    expect(input).toHaveAttribute("aria-controls", listbox.id);
+    expect(screen.getByRole("group", { name: "Best matches" })).toBeInTheDocument();
+
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(2);
+    await waitFor(() => expect(input).toHaveAttribute("aria-activedescendant", options[0].id));
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+
+    await user.keyboard("{ArrowDown}");
+    expect(input).toHaveAttribute("aria-activedescendant", options[1].id);
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+    expect(input).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(inspect).toHaveBeenCalledWith("coffee/shop", { agent: "a" });
+  });
+
+  it("opens the panel on focus and keeps it open", async () => {
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.tab();
+    expect(screen.getByRole("combobox", { name: "Search Loom" })).toHaveFocus();
+    expect(await screen.findByText("Syntax")).toBeInTheDocument();
+    // In a browser the focus that opened the panel reaches Radix's outside-focus listener
+    // once the panel has mounted; the field is the panel's anchor, so the panel stays.
+    fireEvent.focusIn(screen.getByRole("combobox", { name: "Search Loom" }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText("Syntax")).toBeInTheDocument();
+  });
+
+  it("closes the panel when focus leaves the field for another control", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <HeaderSearch />
+        <button type="button">New</button>
+      </>,
+    );
+    await user.tab();
+    expect(await screen.findByText("Syntax")).toBeInTheDocument();
+    // A combobox's popup closes when focus leaves the combobox (WAI-ARIA), however fast.
+    await user.tab();
+    expect(screen.getByRole("button", { name: "New" })).toHaveFocus();
+    await waitFor(() => expect(screen.queryByText("Syntax")).toBeNull());
+  });
+
+  it("moves through the empty box's recent memories and profile with the arrow keys", async () => {
+    catalog.recent = [
+      { memory_key: "notes/one", agent: "a" },
+      { memory_key: "notes/two", agent: "b" },
+    ];
+    catalog.profile = [{ label: "timezone", value: "UTC" }];
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.tab();
+    const input = screen.getByRole("combobox", { name: "Search Loom" });
+    await screen.findByRole("group", { name: "Recent memories" });
+    await screen.findByRole("group", { name: "Your profile" });
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(3);
+    // Nothing is highlighted until ↓, so Enter in an empty box opens nothing.
+    expect(input).not.toHaveAttribute("aria-activedescendant");
+
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expect(input).toHaveAttribute("aria-activedescendant", options[1].id);
+    await user.keyboard("{Enter}");
+    expect(inspect).toHaveBeenCalledWith("notes/two", { agent: "b" });
+
+    await user.click(input);
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{Enter}");
+    expect(inspectProfile).toHaveBeenCalledWith("timezone");
+  });
+});
