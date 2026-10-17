@@ -1110,6 +1110,10 @@ async def mark_peers_conflicted(
         return "moved"
     if new_is_proposal:
         return "conflict"
+    # The peers are read again here, not built from `peers` above. Those rows carry
+    # every column, but they were read before the new row was marked: a peer revised
+    # or retired in the meantime would be written back over at a higher version,
+    # undoing that change. Reading just before the write keeps that window small.
     await memory_repo.write_versions_by_ids(
         org,
         live,
