@@ -31,8 +31,9 @@ class BulkVerdictPlan:
         self.refines: list[tuple[str, str, list[Any], str, str]] = []
         self.refined: list[str] = []
         self.reinforce_ids: list[str] = []
-        # Merged key -> the stored row it merged into.
-        self.merged_into: dict[str, str] = {}
+        # id() of a merged row -> the stored row it merged into. By row, not key: a key
+        # written twice can merge twice.
+        self.merged_into: dict[int, str] = {}
         self.unchecked: int = 0
 
     def add_refine(self, row: dict[str, Any], key: str, refined: list[Any], relation: str) -> None:
@@ -111,7 +112,7 @@ def _fold_verdict(
         plan.merged.append(key)
         if getattr(v, "existing_memory_id", ""):
             plan.reinforce_ids.append(str(v.existing_memory_id))
-            plan.merged_into[key] = str(v.existing_memory_id)
+            plan.merged_into[id(row)] = str(v.existing_memory_id)
     elif verdict == "rejected":
         drop.add(idx)
         plan.rejected_pinned.append(key)

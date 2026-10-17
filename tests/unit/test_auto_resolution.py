@@ -573,11 +573,69 @@ async def test_a_bulk_mark_with_no_live_peer_left_answers_clear(monkeypatch) -> 
     assert state.results[0].conflict_verdict == "clear" and plan.conflicted == []
 
 
+async def _restatement_reinforces(monkeypatch, state: Any, verdict: Any) -> list[str]:
+    """Entry 0 writes `state`'s key with value sha "s2" (its verdict `verdict`); entry 1
+    says s2 again. Returns the ids the write reinforced."""
+    from types import SimpleNamespace as NS
+
+    from server.memory.app import bulk_set
+    from server.memory.app.bulk_rows import _bulk_skip_gate, _keep_row, _row_id
+    from server.memory.app.bulk_verdicts import apply_bulk_verdicts
+    from server.memory.store import usage
+
+    reinforced: list[str] = []
+
+    async def record(**kw):
+        reinforced.append(kw["memory_id"])
+
+    monkeypatch.setattr(usage, "record_usage_event", record)
+    row = {"memory_key": "k", "content_sha256": "s2", "pinned": False}
+    row["memory_id"] = _row_id(state, "k")
+    _keep_row(state, row)
+    assert _bulk_skip_gate(NS(memory_key="k"), "s2", state, {})
+    results = [NS(memory_key="k", version=1, memory_id=row["memory_id"])]
+    plan = apply_bulk_verdicts(state.memory_rows, [], [], results, {0: verdict})
+    state.memory_rows = plan.memory_rows
+    await bulk_set._bulk_settle_verdicts(None, _Input(), state, plan)
+    return reinforced
+
+
 async def test_a_restatement_of_a_merged_new_key_reinforces_the_merge_target(
     monkeypatch,
 ) -> None:
-    # Entry 0 creates key k (minted id n1) and merges into the stored row "old", so no n1
-    # row lands; entry 1 says k's value again. Its evidence goes to "old", never to n1.
+    # Entry 0 creates key k and merges into the stored row "old", so no row for k lands;
+    # entry 1 says k's value again. Its evidence goes to "old", never to k's minted id.
+    from types import SimpleNamespace as NS
+
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    merge = NS(verdict="merge", existing_memory_id="old", peers=[])
+    assert await _restatement_reinforces(monkeypatch, _BulkWriteState(), merge) == ["old", "old"]
+
+
+async def test_a_restatement_of_a_revision_reinforces_the_row_the_revision_reached(
+    monkeypatch,
+) -> None:
+    # Stored k is "Berlin" (row e1); entry 0 revises it to "Paris", entry 1 says "Paris"
+    # again. e1 never held "Paris" if entry 0 merged elsewhere or was rejected.
+    from types import SimpleNamespace as NS
+
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    def stored() -> _BulkWriteState:
+        state = _BulkWriteState()
+        state.existing_ids, state.existing_sha = {"k": "e1"}, {"k": "s1"}
+        return state
+
+    merge = NS(verdict="merge", existing_memory_id="old", peers=[])
+    rejected = NS(verdict="rejected", peers=[])
+    clear = NS(verdict="clear", peers=[])
+    assert await _restatement_reinforces(monkeypatch, stored(), merge) == ["old", "old"]
+    assert await _restatement_reinforces(monkeypatch, stored(), rejected) == []
+    assert await _restatement_reinforces(monkeypatch, stored(), clear) == ["e1"]
+
+
+async def test_a_restatement_of_a_stored_value_reinforces_the_stored_row(monkeypatch) -> None:
     from server.memory.app import bulk_set
     from server.memory.app.bulk_rows import _BulkWriteState
     from server.memory.app.bulk_verdicts import BulkVerdictPlan
@@ -590,14 +648,10 @@ async def test_a_restatement_of_a_merged_new_key_reinforces_the_merge_target(
 
     monkeypatch.setattr(usage, "record_usage_event", record)
     state = _BulkWriteState()
-    state.new_ids = {"k": "n1"}
     state.existing_ids = {"live": "e1"}
-    state.restated_ids = ["n1", "e1"]
-    plan = BulkVerdictPlan()
-    plan.merged, plan.reinforce_ids = ["k"], ["old"]
-    plan.merged_into = {"k": "old"}
-    await bulk_set._bulk_settle_verdicts(None, _Input(), state, plan)
-    assert sorted(reinforced) == ["e1", "old", "old"]
+    state.restated_ids = ["e1"]
+    await bulk_set._bulk_settle_verdicts(None, _Input(), state, BulkVerdictPlan())
+    assert reinforced == ["e1"]
 
 
 def _peer(mid: str, key: str = "user_city") -> Any:

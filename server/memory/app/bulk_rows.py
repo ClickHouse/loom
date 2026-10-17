@@ -107,8 +107,11 @@ class _BulkWriteState:
     # Ids of the rows this batch has written a new version of: their stored bytes may be gone.
     rewritten_ids: set[str] = field(default_factory=set)
     # A byte-identical restatement of the SAME key is the frequency signal: it reinforces the
-    # live row instead of vanishing.
+    # live row instead of vanishing. `restated_ids` are stored rows whose stored value was
+    # restated; `restated_rows` are rows of this batch whose value was, settled after the
+    # verdicts (which may drop the row).
     restated_ids: list[str] = field(default_factory=list)
+    restated_rows: list[dict[str, Any]] = field(default_factory=list)
     # (retired id, the row it retired behind) per same-key retirement the judge decided
     # (`key_supersession.judge_same_key_rows`), for the triple plane's follow step.
     judged_follow_pairs: list[tuple[str, str]] = field(default_factory=list)
@@ -210,6 +213,18 @@ class _LockView:
         self.lock_until = cols.get("lock_until")
 
 
+def _note_restatement(state: _BulkWriteState, memory_key: str) -> None:
+    """Remember what a byte-identical restatement reinforces: the stored row, or the
+    batch row whose value it repeats when an earlier entry wrote the key."""
+    rid = state.existing_ids.get(memory_key) or state.new_ids.get(memory_key)
+    if rid in state.rewritten_ids:
+        row = next(r for r in reversed(state.memory_rows) if r["memory_id"] == rid)
+        if not any(r is row for r in state.restated_rows):
+            state.restated_rows.append(row)
+    elif rid and rid not in state.restated_ids:
+        state.restated_ids.append(rid)
+
+
 def _bulk_skip_gate(
     entry: Any,
     entry_sha: str,
@@ -228,10 +243,7 @@ def _bulk_skip_gate(
     # need them before this loop, and they need the embeddings it prepares.
     if state.existing_sha.get(entry.memory_key) == entry_sha:
         state.skipped_unchanged += 1
-        # The stored row, or the one an earlier entry of this batch is creating.
-        _rid = state.existing_ids.get(entry.memory_key) or state.new_ids.get(entry.memory_key)
-        if _rid and _rid not in state.restated_ids:
-            state.restated_ids.append(_rid)
+        _note_restatement(state, entry.memory_key)
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
         return True
     # The same bytes already live under this identity, in another session or under another

@@ -628,18 +628,17 @@ async def _record_intra_batch_retirements(
 
 
 def _landed_restated_ids(state: _BulkWriteState, plan: BulkVerdictPlan) -> list[str]:
-    """The rows the batch's restatements reinforce. A new key whose first entry merged
-    wrote no row: its restatement reinforces the row it merged into. One dropped another
-    way (a pinned rejection) has no row to reinforce."""
-    landed = set(state.existing_ids.values())
-    landed.update(str(r.get("memory_id") or "") for r in state.memory_rows)
-    key_of_new = {mid: key for key, mid in state.new_ids.items()}
-    out: list[str] = []
-    for rid in state.restated_ids:
-        if rid not in landed:
-            rid = plan.merged_into.get(key_of_new.get(rid, ""), "")
-        if rid:
-            out.append(rid)
+    """The rows the batch's restatements reinforce. A restated stored value reinforces
+    the stored row. A restated value an earlier entry wrote reinforces that entry's row if
+    it landed, the row it merged into if it merged, and nothing if a pinned rejection
+    dropped it."""
+    out = list(state.restated_ids)
+    landed = {id(r) for r in state.memory_rows}
+    for row in state.restated_rows:
+        if id(row) in landed:
+            out.append(str(row["memory_id"]))
+        elif id(row) in plan.merged_into:
+            out.append(plan.merged_into[id(row)])
     return out
 
 
