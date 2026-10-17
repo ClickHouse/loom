@@ -19,6 +19,13 @@ sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
 
+async def _auth_on(control_plane_url: str) -> bool:
+    """Whether the server checks bearers: a read route answers 401 without one."""
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=10.0) as c:
+        r = await c.get("/v1/me/service_accounts")
+    return r.status_code == 401
+
+
 async def _post(control_plane_url: str, token: str | None, body: dict) -> httpx.Response:
     headers: dict[str, str] = {}
     if token:
@@ -30,6 +37,7 @@ async def _post(control_plane_url: str, token: str | None, body: dict) -> httpx.
 @pytest.mark.asyncio
 async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
     from server.auth.jwt import mint_token
+    from server.settings import settings
 
     token = mint_token(
         subject="alice",
@@ -45,12 +53,12 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
     assert body["client"] == "claude-desktop"
     assert body["subject"] == "alice"
     assert body["org"] == "clickhouse"
-    # With auth off the bearer only names the owner (the token is not delegated
-    # from it), so no namespace of its labels the write target.
-    auth_on = (
-        await _post(control_plane_url, None, {"client": "claude-desktop"})
-    ).status_code == 401
-    assert body["namespace"] == ("personal-alice" if auth_on else "default")
+    # With auth off the token isn't delegated from the bearer, so the response
+    # names no namespace of the bearer's.
+    if await _auth_on(control_plane_url):
+        assert body["namespace"] == "personal-alice"
+    else:
+        assert body["namespace"] == settings.default_namespace
     assert body["mcp_url"].endswith("/mcp")
     assert body["config_key"] == "mcpServers"
     # `namespace` in the response is the write target; reads
@@ -210,20 +218,15 @@ async def test_setup_mcp_config_rejects_unknown_client(control_plane_url: str) -
 @pytest.mark.asyncio
 async def test_setup_mcp_config_requires_auth(control_plane_url: str) -> None:
     """When auth_required=True and no token is presented, return 401."""
-    # Probe the SERVER's actual auth state via an unauth call. A
-    # process-env check on LOOM_AUTH_REQUIRED=true would mislead: the server may be in
-    # `identity_provider=single-user` mode (auth_actually_required=False)
-    # even when LOOM_AUTH_REQUIRED=true is set in .env. Skip when the
-    # server isn't enforcing auth — there's nothing to verify.
-    probe = await _post(control_plane_url, None, {"client": "claude-desktop"})
-    if probe.status_code != 401:
+    # Ask the server, not the process env: single-user mode skips the bearer check
+    # even with LOOM_AUTH_REQUIRED=true. With auth off this POST would mint a token.
+    if not await _auth_on(control_plane_url):
         pytest.skip(
-            f"server isn't enforcing auth on /v1/me/setup/mcp_config "
-            f"(probe returned {probe.status_code}); set "
-            f"LOOM_AUTH_REQUIRED=true AND LOOM_IDENTITY_PROVIDER=trust-network "
-            f"to exercise this path"
+            "server isn't enforcing auth; set LOOM_AUTH_REQUIRED=true AND "
+            "LOOM_IDENTITY_PROVIDER=trust-network to exercise this path"
         )
-    assert probe.status_code == 401
+    r = await _post(control_plane_url, None, {"client": "claude-desktop"})
+    assert r.status_code == 401
 
 
 @pytest.mark.asyncio

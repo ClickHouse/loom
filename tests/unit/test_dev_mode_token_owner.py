@@ -144,6 +144,16 @@ def test_a_setup_page_token_is_listed_and_revoked(
     _revoke_and_check(client, headers, _setup_mint(client, headers))
 
 
+def test_a_wildcard_setup_token_names_the_default_namespace(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A `*` token with auth off writes to the default namespace, not alice's `home`.
+    monkeypatch.setattr(settings, "default_namespace", "shared-dev")
+    r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=_alice())
+    assert r.status_code == 200, r.text
+    assert r.json()["namespace"] == settings.default_namespace
+
+
 def test_a_bearers_token_mint_token_is_its_own_and_revoked_by_it(client: TestClient) -> None:
     _token_mint(client, _alice(), "acme")
     assert _listed(client, _alice())["ci-bot"]["created_by"] == "alice"

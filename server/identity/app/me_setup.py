@@ -316,7 +316,10 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         displayed_namespace = str(namespace_payload)
     else:
         requested = {"*": None}
-        displayed_namespace = next((ns for ns in parent.namespaces if ns != "*"), "default")
+        # A `*` token with auth off writes to the deployment's default namespace.
+        displayed_namespace = next(
+            (ns for ns in parent.namespaces if ns != "*"), settings.default_namespace
+        )
     # Restricted namespaces the token should read are named in the claim and, once the token
     # has a subject, granted to it directly.
     restricted_names = await _validate_restricted_request(
