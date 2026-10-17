@@ -138,7 +138,7 @@ after regenerating the CLI snapshot, run `docs_reference.py` too.
 ## Before you push
 
 ```bash
-make lint            # every --check above, plus ruff and the gates
+make lint            # every --check above, plus ruff, the gates and Biome's dashboard accessibility rules
 ```
 
 A failure names the script to run; run it, review the diff, and commit the regenerated

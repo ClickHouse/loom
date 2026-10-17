@@ -164,7 +164,7 @@ python scripts/codegen/sdk_ts_gen.py                       # sdk/typescript/src/
 python scripts/codegen/op_reach_census.py --write-manifest # server/operations/reach_manifest.py
 python scripts/codegen/docs_reference.py                   # generated regions of docs/reference/*.md
 make format
-make lint          # ruff, gates, every generator with --check, the reach census --check
+make lint          # ruff, gates, every generator with --check, the reach census --check, Biome's dashboard accessibility rules
 make typecheck
 make test-unit     # reach census, MCP listing budget
 ```
