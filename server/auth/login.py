@@ -301,8 +301,10 @@ async def resolve_identity_for_email(
     matching it would hand a stranger's namespace to whoever owns the address
     at the IdP. None when nothing matches.
     """
-    ch = get_client()
     ident = email.strip().lower()
+    if not ident:  # an agent's or a bot's row names no email and has no password
+        return None
+    ch = get_client()
     rows = await ch.query_all(
         """
         SELECT namespace, owner_email, org, password_hash, contact_email

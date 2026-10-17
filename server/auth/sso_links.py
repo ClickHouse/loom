@@ -33,9 +33,12 @@ _UNLINKED = f"""
 
 async def unlinked_accounts(email: str) -> list[dict[str, Any]]:
     """The password accounts naming `email` that SSO does not reach yet."""
+    email = email.strip().lower()
+    if not email:  # accounts with no email are nobody's to link
+        return []
     return await get_client().query_all(
         _UNLINKED.format(where="contact_email = {email:String}"),
-        params={"email": email.strip().lower()},
+        params={"email": email},
     )
 
 

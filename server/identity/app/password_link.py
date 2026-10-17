@@ -44,9 +44,10 @@ _SSO_ACCOUNTS = """
 
 
 async def sso_accounts(email: str, org: str = "") -> list[dict[str, Any]]:
-    return await get_client().query_all(
-        _SSO_ACCOUNTS, params={"email": email.strip().lower(), "org": org}
-    )
+    email = email.strip().lower()
+    if not email:  # every agent's row matches no email
+        return []
+    return await get_client().query_all(_SSO_ACCOUNTS, params={"email": email, "org": org})
 
 
 async def make_link(email: str, accounts: list[dict[str, Any]], *, by: str) -> str:

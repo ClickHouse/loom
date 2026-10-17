@@ -409,3 +409,25 @@ def test_a_restart_begins_each_sign_in_where_it_began() -> None:
     mcp = urlsplit(oauth._restart_url(_PENDING | {"mcp_state": "st"}))
     assert mcp.path == "/oauth/authorize"
     assert parse_qs(mcp.query)["client_id"] == ["c"] and parse_qs(mcp.query)["state"] == ["st"]
+
+
+@pytest.mark.parametrize("email", ["", "   "])
+def test_no_email_resolves_to_nobody_whatever_rows_have_none(
+    monkeypatch: pytest.MonkeyPatch, email: str
+) -> None:
+    # Agents' and bots' rows name no email and hold no password: an empty
+    # email must never be looked up, or it would land on one of them.
+    import asyncio
+
+    from server.identity.app import password_link
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            raise AssertionError("an empty email was looked up")
+
+    monkeypatch.setattr(login, "get_client", lambda: _CH())
+    monkeypatch.setattr(password_link, "get_client", lambda: _CH())
+    monkeypatch.setattr(sso_links, "get_client", lambda: _CH())
+    assert asyncio.run(login.resolve_identity_for_email(email)) is None
+    assert asyncio.run(password_link.sso_accounts(email)) == []
+    assert asyncio.run(sso_links.unlinked_accounts(email)) == []
