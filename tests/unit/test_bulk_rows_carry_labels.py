@@ -152,3 +152,28 @@ async def test_a_repeat_of_the_stored_bytes_keeps_a_live_expiry(monkeypatch) -> 
         state = await _build(monkeypatch, _stored(value, expires_at=stored_expiry), entry)
         (row,) = state.memory_rows
         assert row["expires_at"] == want
+
+
+async def test_a_repeat_on_a_read_only_row_never_changes_its_expiry(monkeypatch) -> None:
+    # The lock refuses an expiry change (memory.set: 423, refused_action 'expire'). A new
+    # label that leaves the expiry alone is written with the stored expiry; one whose
+    # retention window or ttl_seconds would move it is refused as locked.
+    from server.settings import settings
+
+    value = "Alice lives in Berlin"
+    month = (NOW + timedelta(days=30)).replace(tzinfo=None, microsecond=0)
+    medium = {"memory_key": "k", "value": value, "sensitivity": "medium"}
+    for window_days, entry, written in (
+        (90, medium, True),
+        (7, medium, False),
+        (0, {"memory_key": "k", "value": value, "ttl_seconds": 60, "pinned": True}, False),
+    ):
+        monkeypatch.setattr(settings, "memory_sensitive_retention_days", window_days)
+        stored = _stored(value, expires_at=month, lock_mode="read_only")
+        state = await _build(monkeypatch, stored, entry)
+        if written:
+            (row,) = state.memory_rows
+            assert row["expires_at"] == month and row["sensitivity"] == "medium"
+        else:
+            assert state.memory_rows == [] and state.skipped_locked == ["k"]
+            assert state.results[0].conflict_verdict == "locked"

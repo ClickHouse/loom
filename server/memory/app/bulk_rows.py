@@ -205,13 +205,19 @@ def _full_version_row(
     return memory_repo.build_first_version_row(memory_row, now=now)
 
 
-def _bulk_value_locked(state: _BulkWriteState, memory_key: str) -> bool:
-    """The live row's lock in force refuses a value change (read_only)."""
+def _bulk_locked(state: _BulkWriteState, memory_key: str, action: str) -> bool:
+    """The live row's lock in force refuses `action` ('value' or 'expire': read_only)."""
     live = state.existing_carried.get(memory_key)
     if not live:
         return False
     mode = _lock.effective_mode(_LockView(live))
-    return "value" in _lock.REFUSES.get(mode, frozenset())
+    return action in _lock.REFUSES.get(mode, frozenset())
+
+
+def _refuse_locked(state: _BulkWriteState, memory_key: str) -> None:
+    """The entry writes nothing: its key's lock refuses it, as memory.set's 423 does."""
+    state.skipped_locked.append(memory_key)
+    state.results.append(_BulkSetResult(memory_key=memory_key, version=0, conflict_verdict=LOCKED))
 
 
 class _LockView:
@@ -286,14 +292,12 @@ def _bulk_skip_gate(
     # key; a batch skips just that entry, surfaced in `skipped_locked`.
     # Only the stored pin skips here. A pin an earlier entry asked for counts once the
     # verdicts say that entry landed (`settle_batch_rows`).
-    # The same bytes are not a value change: as on memory.set, no lock or pin refuses them.
+    # The same bytes are not a value change: as on memory.set, no pin refuses them, and a
+    # lock refuses them only if they change the expiry (`_changes_locked_expiry`).
     if restated:
         return False
-    if _bulk_value_locked(state, entry.memory_key):
-        state.skipped_locked.append(entry.memory_key)
-        state.results.append(
-            _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=LOCKED)
-        )
+    if _bulk_locked(state, entry.memory_key, "value"):
+        _refuse_locked(state, entry.memory_key)
         return True
     # A pinning write may replace a pinned value, as on memory.set.
     if state.existing_pinned.get(entry.memory_key) and not getattr(entry, "pinned", False):
@@ -350,10 +354,35 @@ def _entry_expiry(
         return now_utc + timedelta(seconds=entry.ttl_seconds)
     if state.existing_sha.get(entry.memory_key) != entry_sha:
         return None
-    stored = to_naive_utc(getattr(state.existing_rows.get(entry.memory_key), "expires_at", None))
+    return _live_stored_expiry(state, entry.memory_key, now_utc)
+
+
+def _live_stored_expiry(
+    state: _BulkWriteState, memory_key: str, now_utc: datetime
+) -> datetime | None:
+    """The stored row's expiry under `memory_key`, if it has not passed yet."""
+    stored = to_naive_utc(getattr(state.existing_rows.get(memory_key), "expires_at", None))
     if stored is not None and stored > to_naive_utc(now_utc):
         return stored
     return None
+
+
+def _changes_locked_expiry(
+    state: _BulkWriteState,
+    entry: Any,
+    entry_sha: str,
+    expires_at: datetime | None,
+    now_utc: datetime,
+) -> bool:
+    """Whether an entry repeating a read_only row's bytes would change its expiry, by its
+    `ttl_seconds` or by the sensitive retention: the lock refuses it (memory.set: 423,
+    refused_action 'expire'). A new value on such a row the skip gate refuses already."""
+    key = entry.memory_key
+    if state.existing_sha.get(key) != entry_sha or not _bulk_locked(state, key, "expire"):
+        return False
+    if entry.ttl_seconds is not None:
+        return True
+    return to_naive_utc(expires_at) != _live_stored_expiry(state, key, now_utc)
 
 
 def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: str) -> None:
@@ -675,6 +704,9 @@ async def _bulk_build_rows(
             now=now_utc,
             settings=_sr_settings,
         )
+        if _changes_locked_expiry(state, entry, entry_sha, expires_at, now_utc):
+            _refuse_locked(state, entry.memory_key)
+            continue
         # Per-entry char_limit enforcement — same shape as handle_memory_set.
         if entry.char_limit is not None and len(serialized_value) > entry.char_limit:
             raise HTTPException(
