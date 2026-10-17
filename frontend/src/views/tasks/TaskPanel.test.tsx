@@ -1,4 +1,6 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import * as RadixDialog from "@radix-ui/react-dialog";
+import { useState } from "react";
+import { cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Inbox, TaskEvent, TaskListRow, TaskRow, TaskStatus } from "../../api/tasks";
@@ -155,10 +157,9 @@ describe("TaskPanel", () => {
         "Acceptance criteria section",
       ).querySelectorAll("li"),
     ).toHaveLength(2);
-    expect(within(panel).getByRole("link", { name: "ClickHouse/ClickHouse#120507" })).toHaveAttribute(
-      "href",
-      "https://github.com/ClickHouse/ClickHouse/issues/120507",
-    );
+    expect(
+      within(panel).getByRole("link", { name: "ClickHouse/ClickHouse#120507 (opens in a new tab)" }),
+    ).toHaveAttribute("href", "https://github.com/ClickHouse/ClickHouse/issues/120507");
     expect(within(panel).getByText("src/Parsers/ASTJSONReadHelpers.cpp:87")).toHaveClass("font-mono");
     expect(within(panel).getByText("03011_json_read_expr_child_ub.sql")).toHaveClass("font-mono");
     expect(within(panel).getByRole("link", { name: /s3.example\/asan-1.txt/ })).toHaveAttribute(
@@ -169,7 +170,7 @@ describe("TaskPanel", () => {
     expect(within(panel).getByText(/The reproducer must not appear/)).toHaveClass("tq-constraint");
     expect(within(panel).getByText("from reporter-public")).toBeInTheDocument();
     expect(within(panel).getByText("→ private-bot")).toBeInTheDocument();
-    expect(within(panel).getByText("· 01234567…")).toBeInTheDocument();
+    expect(within(panel).getByText("01234567…")).toBeInTheDocument();
     expect(getTask).toHaveBeenCalledTimes(1);
     expect(taskHistory).toHaveBeenCalledTimes(1);
     expect(listPolicies).not.toHaveBeenCalled(); // only a triage task reads the rule
@@ -211,7 +212,11 @@ describe("TaskPanel", () => {
     });
     mount("triage");
     const panel = await screen.findByRole("complementary", { name: "Task detail" });
-    await within(panel).findByLabelText("4 tasks from this poster: 2 done, 1 won't do, 0 failed, 1 open");
+    const record = await within(panel).findByLabelText(
+      "4 tasks from this poster: 2 done, 1 won't do, 0 failed, 1 open",
+    );
+    // Each count is the dashboard's one stat tile (ui/Stat, Click UI's BigStat).
+    expect(record.querySelectorAll("[class*='big-stat__title']")).toHaveLength(4);
     await within(panel).findByText(/Rule:/);
     expect(within(panel).getByText("review")).toBeInTheDocument();
     expect(within(panel).getByText("inputs.pr")).toBeInTheDocument();
@@ -233,19 +238,19 @@ describe("TaskPanel", () => {
   it("footer per status: triage accepts, todo starts/defers/blocks/won't do, in progress finishes, fails, blocks, defers or cancels", async () => {
     const onAction = mount("triage");
     let f = await footerOf();
-    expect(buttons(f)).toEqual(["Accept", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Won't do…", "Accept"]);
     await userEvent.setup().click(within(f).getByRole("button", { name: "Accept" }));
     expect(onAction).toHaveBeenCalledWith("accept", expect.objectContaining({ task_id: "0123456789abcdef" }));
     cleanup();
 
     mount("todo");
     f = await footerOf();
-    expect(buttons(f)).toEqual(["Start", "Defer…", "Block…", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Defer…", "Block…", "Won't do…", "Start"]);
     cleanup();
 
     mount("in_progress", { owner: "reporter", lease_until: iso(-22) });
     f = await footerOf();
-    expect(buttons(f)).toEqual(["Mark done…", "Fail…", "Defer…", "Block…", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Fail…", "Defer…", "Block…", "Won't do…", "Mark done…"]);
     expect(f).toHaveTextContent("owned by reporter · lease ends in 22 min");
     const user = userEvent.setup();
     await user.click(within(f).getByRole("button", { name: "More actions" }));
@@ -255,14 +260,14 @@ describe("TaskPanel", () => {
   it("footer per status: blocked unblocks, deferred resumes now (task.resume) and says when the sweeper would, closed short of done reopens, done only copies", async () => {
     let onAction = mount("blocked", { blocked_on: "sender", reason: "need the exact server flags" });
     let f = await footerOf();
-    expect(buttons(f)).toEqual(["Unblock", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Won't do…", "Unblock"]);
     expect(screen.getByRole("heading", { name: "Blocked on sender" })).toBeInTheDocument();
     expect(screen.getByText("need the exact server flags")).toBeInTheDocument();
     cleanup();
 
     onAction = mount("deferred", { reason: "binary for merge SHA not built yet", resume_at: iso(-120) });
     f = await footerOf();
-    expect(buttons(f)).toEqual(["Resume now", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Won't do…", "Resume now"]);
     expect(f).toHaveTextContent("otherwise resumes in 2 h");
     expect(screen.getByRole("heading", { name: "Deferred · resumes in 2 h" })).toBeInTheDocument();
     await userEvent.setup().click(within(f).getByRole("button", { name: "Resume now" }));
@@ -271,7 +276,7 @@ describe("TaskPanel", () => {
 
     mount("failed", { reason: "bisect: no good build" });
     f = await footerOf();
-    expect(buttons(f)).toEqual(["Reopen…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Reopen…"]);
     expect(screen.getByRole("heading", { name: "Reason" })).toBeInTheDocument();
     cleanup();
 
@@ -282,7 +287,9 @@ describe("TaskPanel", () => {
     expect(buttons(f)).toEqual(["More actions"]);
     await screen.findByRole("heading", { name: "Outcome" });
     expect(
-      screen.getByRole("link", { name: "https://github.com/ClickHouse/example-private/issues/4121" }),
+      screen.getByRole("link", {
+        name: "https://github.com/ClickHouse/example-private/issues/4121 (opens in a new tab)",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -292,6 +299,29 @@ describe("TaskPanel", () => {
     expect(buttons(f)).toEqual(["More actions"]);
     await userEvent.setup().click(within(f).getByRole("button", { name: "More actions" }));
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Copy id"]);
+  });
+
+  it("a task the read does not find shows only that, with no brief to wait on and no actions", async () => {
+    vi.mocked(getTask).mockResolvedValueOnce(null);
+    render(
+      <TaskPanel
+        identity={identity}
+        row={listRow("triage")}
+        inboxes={[INBOX]}
+        canWrite
+        now={NOW}
+        reloadKey={0}
+        onClose={noop}
+        onAction={noop}
+        onOpenTask={noop}
+      />,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("This task is not visible to you, or no longer exists.");
+    expect(screen.queryByRole("heading", { name: "Objective" })).toBeNull();
+    expect(screen.queryByText("Loading…")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Actions" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
   it("reads again when the page bumps reloadKey after an action", async () => {
@@ -325,5 +355,52 @@ describe("TaskPanel", () => {
     );
     await waitFor(() => expect(getTask).toHaveBeenCalledTimes(2));
     expect(taskHistory).toHaveBeenCalledTimes(2);
+  });
+  // Under 1280 px the page renders the panel as a modal sheet: a dialog named by the task's
+  // title that takes the focus, closes on Escape and hands the focus back to the task's row.
+  it("as a sheet is a dialog that takes the focus, closes on Escape and returns it to the row", async () => {
+    // Radix's Portal hands its child a ref to track it; the panel must take it.
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(getTask).mockResolvedValueOnce(fullRow("todo"));
+    const row = listRow("todo");
+    function Page() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" data-task-id={row.task_id} onClick={() => setOpen(true)}>
+            row
+          </button>
+          <RadixDialog.Root open={open} onOpenChange={setOpen}>
+            <RadixDialog.Portal>
+              {open && (
+                <TaskPanel
+                  identity={identity}
+                  row={row}
+                  inboxes={[INBOX]}
+                  canWrite
+                  now={NOW}
+                  reloadKey={0}
+                  onClose={() => setOpen(false)}
+                  onAction={noop}
+                  onOpenTask={noop}
+                  sheet
+                />
+              )}
+            </RadixDialog.Portal>
+          </RadixDialog.Root>
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Page />);
+    await user.click(screen.getByRole("button", { name: "row" }));
+    const dialog = await screen.findByRole("dialog", { name: row.title });
+    expect(dialog).toHaveFocus();
+    expect(screen.queryByRole("complementary", { name: "Task detail" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("button", { name: "row" })).toHaveFocus();
+    expect(errors.mock.calls.flat().join(" ")).not.toMatch(/cannot be given refs/);
+    errors.mockRestore();
   });
 });

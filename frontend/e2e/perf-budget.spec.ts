@@ -18,14 +18,26 @@ const LONG_TASK_BUDGET_MS = 2500;
 // 4x on a production build; the budget is generous for CI's slower runners and trips when
 // a closed dialog, a forced layout or a per-row formatter creeps back into every boot.
 const SHELL_LONG_TASK_BUDGET_MS = 1200;
+const CLS_BUDGET = 0.1;
 
-test("boot on /memories: LCP within budget at 4x CPU, fonts preloaded, boot reads leave together", async ({ page }) => {
+test("boot on /memories: LCP and layout shift within budget at 4x CPU, fonts preloaded, boot reads leave together", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     window.__lcp = 0;
+    window.__ls = { entries: 0, value: 0 };
     try {
       new PerformanceObserver((l) => {
         for (const e of l.getEntries()) window.__lcp = e.startTime;
       }).observe({ type: "largest-contentful-paint", buffered: true });
+      // lib.dom has no LayoutShift entry type; a layout-shift entry carries `value`.
+      new PerformanceObserver((l) => {
+        for (const e of l.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
+          if (e.hadRecentInput) continue;
+          window.__ls.entries += 1;
+          window.__ls.value += e.value;
+        }
+      }).observe({ type: "layout-shift", buffered: true });
     } catch {
       /* not supported */
     }
@@ -51,8 +63,8 @@ test("boot on /memories: LCP within budget at 4x CPU, fonts preloaded, boot read
     "Inter latin is preloaded",
   ).toBe(true);
   expect(
-    preloads.some((l) => /jetbrains-mono-latin-wght-normal/.test(l)),
-    "JetBrains Mono latin is preloaded",
+    preloads.some((l) => /inconsolata-latin-wght-normal/.test(l)),
+    "Inconsolata latin is preloaded",
   ).toBe(true);
 
   // The membership read is not chained behind whoami — with the token's claims decoded
@@ -68,6 +80,9 @@ test("boot on /memories: LCP within budget at 4x CPU, fonts preloaded, boot read
   expect(lcp, `LCP ${Math.round(lcp)} ms over the ${LCP_BUDGET_MS} ms budget at 4x CPU`).toBeLessThanOrEqual(
     LCP_BUDGET_MS,
   );
+  // The fonts swap in after first paint; their fallbacks must not move the page (CLS "good" is 0.1).
+  const shift = await page.evaluate(() => window.__ls.value);
+  expect(shift, `layout shift ${shift.toFixed(3)} over the ${CLS_BUDGET} budget`).toBeLessThanOrEqual(CLS_BUDGET);
   await cdp.detach();
 });
 

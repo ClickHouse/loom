@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { X, Users, Plus, Crown, UserRound, Eye, Trash2, AlertCircle } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Select } from "@clickhouse/click-ui/Select";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   listGrants,
   createGrant,
@@ -14,6 +16,9 @@ import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
+import { IconButton } from "../components/IconButton";
+import { Modal, ModalFooter } from "../components/ui/Modal";
+import { fieldError, Tip } from "../components/ui";
 import { relativeTime, humanizeError } from "../lib/format";
 import { oneOf } from "../lib/oneOf";
 
@@ -119,7 +124,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
   const onChangeRole = async (subject: string, role: GrantRole) => {
     setBusy(subject);
     try {
-      // The role <select> is the one deliberate "lower this member" control;
+      // The role Select is the one deliberate "lower this member" control;
       // it says so to the server. onAdd never does.
       await createGrant({ org, namespace }, subject, role, { replace: true });
       toast(`${subject} → ${role}`, "ok");
@@ -193,8 +198,10 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
     requested_role: r.pending_role || r.role,
   }));
 
+  const addLabel = isCode ? "Add reader" : "Add member";
+
   return (
-    <Dialog.Root
+    <Modal
       open={open}
       onOpenChange={(v) => {
         if (!v) {
@@ -203,286 +210,233 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
         }
         onOpenChange(v);
       }}
+      title={`${isCode ? "Readers of" : "Members of"} ${label ?? namespace}`}
+      description={label ? namespace : undefined}
+      className="w-full max-w-[600px]"
     >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(600px,92vw)] max-h-[85vh] flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-          <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-[var(--color-border)] shrink-0">
-            <div className="min-w-0">
-              <Dialog.Title className="text-lg font-semibold tracking-tight flex items-start gap-2 min-w-0">
-                <Users size={16} className="shrink-0 mt-1" />
-                <span className="break-words">
-                  {isCode ? "Readers of" : "Members of"}{" "}
-                  {label ? <span>{label}</span> : <span className="font-mono break-all">{namespace}</span>}
-                </span>
-              </Dialog.Title>
-              {label && (
-                <div className="mt-0.5 pl-6 text-2xs font-mono text-[var(--color-text-subtle)] break-all">
-                  {namespace}
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {canManage && !adding && (
-                <button
-                  onClick={() => setAdding(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)]"
-                >
-                  <Plus size={13} /> {isCode ? "Add reader" : "Add member"}
-                </button>
-              )}
-              <Dialog.Close
-                className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                aria-label="Close"
-              >
-                <X size={16} />
-              </Dialog.Close>
-            </div>
+      <div>
+        {rows === null && <div className="py-8 text-center text-sm text-text-muted">Loading…</div>}
+        {rows !== null && rows.length === 0 && (
+          <div className="py-8 text-center text-sm text-text-muted">
+            No members yet.{canManage && ` Click ${addLabel} below to invite the first one.`}
           </div>
-
-          <div className="px-6 py-4 flex-1 overflow-y-auto">
-            {rows === null && <div className="text-sm text-[var(--color-text-muted)] text-center py-8">Loading…</div>}
-            {rows !== null && rows.length === 0 && (
-              <div className="text-sm text-[var(--color-text-muted)] text-center py-8">
-                No members yet.{canManage && " Click Add member below to invite the first one."}
-              </div>
-            )}
-            {pendingRows.length > 0 && (
-              <div className="mb-4">
-                <div className="text-2xs uppercase tracking-wider text-warn mb-2 font-semibold">
-                  Pending requests ({pendingRows.length})
-                </div>
-                <div className="space-y-1">
-                  {pendingRows.map((r) => {
-                    const sinceDate = r.pending_since || r.granted_at;
-                    const hasBase = !!r.pending_role && r.role !== r.requested_role;
-                    return (
-                      <div
-                        key={`p-${r.subject}`}
-                        className="flex items-center gap-3 p-2.5 rounded-lg bg-warn/10 border border-warn/40"
-                      >
-                        <RoleIcon role={r.requested_role} />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-mono break-all">{r.subject}</div>
-                          <div className="text-2xs text-[var(--color-text-muted)]">
-                            {hasBase ? (
-                              <>
-                                currently <span className="font-medium">{r.role}</span> · requesting{" "}
-                                <span className="font-medium">{r.requested_role}</span>
-                              </>
-                            ) : (
-                              <>
-                                requested <span className="font-medium">{r.requested_role}</span>
-                              </>
-                            )}{" "}
-                            · {relativeTime(sinceDate)}
-                            {(pendingElsewhere?.[r.subject] ?? []).length > 0 && (
-                              <div className="mt-0.5 break-words">
-                                also waiting on {(pendingElsewhere?.[r.subject] ?? []).map((t) => t.label).join(", ")} —
-                                one decision covers all
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        {canManage ? (
-                          <>
-                            <button
-                              onClick={() => onApprove(r.subject, "approve")}
-                              disabled={busy === r.subject}
-                              title={
-                                targetsFor(r.subject).length > 1
-                                  ? `Also approves: ${(pendingElsewhere?.[r.subject] ?? []).map((t) => t.label).join(", ")}`
-                                  : undefined
-                              }
-                              className="px-2.5 py-1 text-xs font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
-                            >
-                              Approve as{" "}
-                              {isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}
-                              {targetsFor(r.subject).length > 1 && <> on {targetsFor(r.subject).length} branches</>}
-                            </button>
-                            <button
-                              onClick={() => onApprove(r.subject, "reject")}
-                              disabled={busy === r.subject}
-                              className="px-2.5 py-1 text-xs text-[var(--color-text-muted)] hover:text-danger rounded-md disabled:opacity-50"
-                            >
-                              Reject
-                            </button>
-                          </>
-                        ) : r.subject === me ? (
-                          <button
-                            onClick={async () => {
-                              if (
-                                !(await confirmAction({
-                                  title: `Withdraw your ${r.requested_role} request on ${namespace}?`,
-                                  message: "Keeps any current access; the request just leaves the admin queue.",
-                                  confirmLabel: "Withdraw",
-                                }))
-                              )
-                                return;
-                              setBusy(r.subject);
-                              try {
-                                await cancelNamespaceRequest(org, namespace);
-                                toast(`Withdrew ${r.requested_role} request`, "ok");
-                                load();
-                              } catch (e) {
-                                toast(`Cancel failed: ${humanizeError(e)}`, "error");
-                              } finally {
-                                setBusy(null);
-                              }
-                            }}
-                            disabled={busy === r.subject}
-                            className="px-2.5 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                          >
-                            Withdraw
-                          </button>
-                        ) : (
-                          <span className="text-2xs text-[var(--color-text-muted)] px-2">awaiting admin</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            {activeRows.length > 0 && (
-              <div className="space-y-1">
-                {pendingRows.length > 0 && (
-                  <div className="text-2xs uppercase tracking-wider text-[var(--color-text-subtle)] mb-1 font-semibold">
-                    Members ({activeRows.length})
-                  </div>
-                )}
-                {activeRows.map((r) => (
+        )}
+        {pendingRows.length > 0 && (
+          <div className="mb-4">
+            <div className="mb-2 text-xs font-medium text-warn">Pending requests ({pendingRows.length})</div>
+            <div className="space-y-1">
+              {pendingRows.map((r) => {
+                const sinceDate = r.pending_since || r.granted_at;
+                const hasBase = !!r.pending_role && r.role !== r.requested_role;
+                const elsewhere = pendingElsewhere?.[r.subject] ?? [];
+                const targets = targetsFor(r.subject).length;
+                return (
                   <div
-                    key={r.subject}
-                    className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-[var(--color-surface-2)]"
+                    key={`p-${r.subject}`}
+                    className="flex items-center gap-3 rounded-lg border border-warn/40 bg-warn/10 p-2.5"
                   >
-                    <RoleIcon role={r.role} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-mono truncate">
-                        {r.subject}
-                        {r.subject === me && (
-                          <span className="ml-2 text-2xs text-[var(--color-text-subtle)] font-sans">(you)</span>
+                    <RoleIcon role={r.requested_role} />
+                    <div className="min-w-0 flex-1">
+                      <div className="break-all font-mono text-sm">{r.subject}</div>
+                      <div className="text-xs text-text-muted">
+                        {hasBase ? (
+                          <>
+                            currently <span className="font-medium">{r.role}</span> · requesting{" "}
+                            <span className="font-medium">{r.requested_role}</span>
+                          </>
+                        ) : (
+                          <>
+                            requested <span className="font-medium">{r.requested_role}</span>
+                          </>
+                        )}{" "}
+                        · {relativeTime(sinceDate)}
+                        {elsewhere.length > 0 && (
+                          <div className="mt-0.5 break-words">
+                            also waiting on {elsewhere.map((t) => t.label).join(", ")} — one decision covers all
+                          </div>
                         )}
-                      </div>
-                      <div className="text-2xs text-[var(--color-text-muted)]">
-                        Granted {relativeTime(r.granted_at)} by {r.granted_by}
                       </div>
                     </div>
-                    {canManage && r.subject !== me ? (
+                    {canManage ? (
                       <>
-                        <select
-                          aria-label={`Role for ${r.subject}`}
-                          value={r.role}
-                          disabled={busy === r.subject}
-                          onChange={(e) => {
-                            const role = oneOf(roleValues, e.target.value);
-                            if (role !== null) onChangeRole(r.subject, role);
-                          }}
-                          className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]"
+                        <Tip
+                          content={`Also approves: ${elsewhere.map((t) => t.label).join(", ")}`}
+                          disabled={targets <= 1}
                         >
-                          {roles.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={() => onRemove(r.subject)}
+                          <Button
+                            type="secondary"
+                            htmlType="button"
+                            onClick={() => onApprove(r.subject, "approve")}
+                            disabled={busy === r.subject}
+                          >
+                            {`Approve as ${isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}${targets > 1 ? ` on ${targets} branches` : ""}`}
+                          </Button>
+                        </Tip>
+                        <Button
+                          type="empty"
+                          htmlType="button"
+                          onClick={() => onApprove(r.subject, "reject")}
                           disabled={busy === r.subject}
-                          className="p-1.5 text-danger hover:bg-danger/15 rounded-md transition-colors disabled:opacity-50"
-                          aria-label={`Remove ${r.subject}`}
-                          title="Remove from namespace"
                         >
-                          <Trash2 size={13} />
-                        </button>
+                          Reject
+                        </Button>
                       </>
+                    ) : r.subject === me ? (
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        onClick={async () => {
+                          if (
+                            !(await confirmAction({
+                              title: `Withdraw your ${r.requested_role} request on ${namespace}?`,
+                              message: "Keeps any current access; the request just leaves the admin queue.",
+                              confirmLabel: "Withdraw",
+                            }))
+                          )
+                            return;
+                          setBusy(r.subject);
+                          try {
+                            await cancelNamespaceRequest(org, namespace);
+                            toast(`Withdrew ${r.requested_role} request`, "ok");
+                            load();
+                          } catch (e) {
+                            toast(`Cancel failed: ${humanizeError(e)}`, "error");
+                          } finally {
+                            setBusy(null);
+                          }
+                        }}
+                        disabled={busy === r.subject}
+                      >
+                        Withdraw
+                      </Button>
                     ) : (
-                      <span className="text-xs text-[var(--color-text-muted)] capitalize px-2">{r.role}</span>
+                      <span className="px-2 text-xs text-text-muted">awaiting admin</span>
                     )}
                   </div>
-                ))}
-              </div>
-            )}
+                );
+              })}
+            </div>
           </div>
-
-          {canManage && (
-            <div className="px-6 py-3.5 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl shrink-0">
-              {!adding ? (
-                <button
-                  onClick={() => setAdding(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)]"
-                >
-                  <Plus size={13} /> {isCode ? "Add reader" : "Add member"}
-                </button>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      aria-label="Email or subject of the member to add"
-                      value={newSubject}
-                      onChange={(e) => setNewSubject(e.target.value)}
-                      placeholder="user@example.com (or subject identifier)"
-                      autoFocus
-                      onKeyDown={(e) => e.key === "Enter" && onAdd()}
-                      className="flex-1 px-3 py-2 text-base rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]"
-                    />
-                    <select
-                      aria-label="Role for the new member"
-                      value={newRole}
-                      onChange={(e) => {
-                        const role = oneOf(roleValues, e.target.value);
-                        if (role !== null) setNewRole(role);
-                      }}
-                      className="px-2 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]"
-                    >
-                      {roles.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
+        )}
+        {activeRows.length > 0 && (
+          <div className="space-y-1">
+            {pendingRows.length > 0 && (
+              <div className="mb-1 text-xs font-medium text-text-muted">Members ({activeRows.length})</div>
+            )}
+            {activeRows.map((r) => (
+              <div key={r.subject} className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-surface-2">
+                <RoleIcon role={r.role} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-mono text-sm">
+                    {r.subject}
+                    {r.subject === me && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
                   </div>
-                  <div className="text-2xs text-[var(--color-text-muted)]">
-                    {roles.find((r) => r.value === newRole)?.desc}
-                  </div>
-                  {err && (
-                    <div className="flex gap-2 px-3 py-2 text-xs text-danger bg-danger/15 rounded-md">
-                      <AlertCircle size={13} className="shrink-0 mt-0.5" />
-                      <span>{err}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => {
-                        setAdding(false);
-                        setNewSubject("");
-                        setErr(null);
-                      }}
-                      className="px-3 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={onAdd}
-                      disabled={!newSubject.trim() || busy === "__add__"}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
-                    >
-                      <Plus size={12} /> {busy === "__add__" ? "Adding…" : "Add"}
-                    </button>
+                  <div className="text-xs text-text-muted">
+                    Granted {relativeTime(r.granted_at)} by {r.granted_by}
                   </div>
                 </div>
-              )}
+                {canManage && r.subject !== me ? (
+                  <>
+                    <div className="w-36 shrink-0">
+                      <Select
+                        triggerProps={{ "aria-label": `Role for ${r.subject}` }}
+                        value={r.role}
+                        disabled={busy === r.subject}
+                        onSelect={(value) => {
+                          const role = oneOf(roleValues, value);
+                          if (role !== null && role !== r.role) onChangeRole(r.subject, role);
+                        }}
+                        options={roles.map((opt) => ({ value: opt.value, label: opt.label }))}
+                      />
+                    </div>
+                    <IconButton
+                      icon="trash"
+                      type="danger"
+                      size="sm"
+                      label={`Remove ${r.subject}`}
+                      tooltip="Remove from namespace"
+                      onClick={() => onRemove(r.subject)}
+                      disabled={busy === r.subject}
+                    />
+                  </>
+                ) : (
+                  <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {canManage && adding && (
+        <div className="mt-4 space-y-2 border-t border-border pt-4">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <TextField
+                aria-label="Email or subject of the member to add"
+                value={newSubject}
+                onChange={(value) => setNewSubject(value)}
+                placeholder="user@example.com (or subject identifier)"
+                autoFocus
+                onKeyDown={(e) => e.key === "Enter" && onAdd()}
+                {...fieldError("add-member-error", err)}
+              />
             </div>
+            <div className="w-36 shrink-0">
+              <Select
+                triggerProps={{ "aria-label": "Role for the new member" }}
+                value={newRole}
+                onSelect={(value) => {
+                  const role = oneOf(roleValues, value);
+                  if (role !== null) setNewRole(role);
+                }}
+                options={roles.map((opt) => ({ value: opt.value, label: opt.label }))}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-text-muted">{roles.find((r) => r.value === newRole)?.desc}</p>
+        </div>
+      )}
+
+      {canManage && (
+        <ModalFooter>
+          {adding ? (
+            <>
+              <Button
+                type="secondary"
+                htmlType="button"
+                onClick={() => {
+                  setAdding(false);
+                  setNewSubject("");
+                  setErr(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="primary"
+                htmlType="button"
+                iconLeft="plus"
+                onClick={onAdd}
+                disabled={!newSubject.trim()}
+                loading={busy === "__add__"}
+              >
+                Add
+              </Button>
+            </>
+          ) : (
+            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAdding(true)}>
+              {addLabel}
+            </Button>
           )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </ModalFooter>
+      )}
+    </Modal>
   );
 }
 
 function RoleIcon({ role }: { role: GrantRole }) {
-  if (role === "admin") return <Crown size={13} className="text-warn shrink-0" aria-label="Admin" />;
-  if (role === "writer")
-    return <UserRound size={13} className="text-[var(--color-text-muted)] shrink-0" aria-label="Writer" />;
-  return <Eye size={13} className="text-[var(--color-text-subtle)] shrink-0" aria-label="Viewer" />;
+  if (role === "admin") return <Icon name="star" size="xs" color="var(--color-warn)" aria-label="Admin" />;
+  if (role === "writer") return <Icon name="user" size="xs" color="var(--color-text-muted)" aria-label="Writer" />;
+  return <Icon name="eye" size="xs" color="var(--color-text-muted)" aria-label="Viewer" />;
 }

@@ -2,10 +2,9 @@
 // tooltips), stays out of the modal's aria-hidden, and still pauses on hover even though the
 // modal turns pointer events off on <body>.
 import * as Dialog from "@radix-ui/react-dialog";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfirmViewport, confirmAction } from "./ConfirmDialog";
-import { TOOLTIP_CLS } from "./ui/Tooltip";
 import { ToastViewport, toast } from "./Toast";
 
 afterEach(() => {
@@ -59,7 +58,8 @@ describe("toast layer over dialogs", () => {
 
     const toastZ = zOf(viewport().className);
     for (const el of overlays) expect(toastZ).toBeGreaterThan(zOf(el.getAttribute("class") ?? ""));
-    expect(toastZ).toBeLessThan(zOf(TOOLTIP_CLS));
+    // Popovers and tooltips sit at 70 (styles.css, [data-radix-popper-content-wrapper]).
+    expect(toastZ).toBeLessThan(70);
   });
 
   it("is not hidden from assistive tech by the modal", () => {

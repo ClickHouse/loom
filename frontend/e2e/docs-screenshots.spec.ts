@@ -12,7 +12,7 @@ import { expect, test, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isRecord } from "./fixtures";
+import { isRecord, pickOption } from "./fixtures";
 
 const ENABLED = process.env.LOOM_DOCS_SCREENSHOTS === "1";
 const OUT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/images");
@@ -733,7 +733,7 @@ test.describe("docs screenshots", () => {
     await page.getByRole("button", { name: "Generate token" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByText("Token generated")).toBeVisible();
-    await dialog.getByRole("combobox").selectOption("claude-code");
+    await pickOption(dialog, "MCP client", "claude-code");
     await expect(dialog.getByTestId("claude-code-recommended")).toBeVisible();
     await capture(page, "dashboard-connect");
   });

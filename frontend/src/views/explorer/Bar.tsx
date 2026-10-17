@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { CircleDot, Footprints, LayoutGrid, Route, Waypoints } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import type { Identity, TaxonomyEntry } from "../../api";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { matchEntities, parsePathQuery, shorten } from "./model";
+import { PageHeader, Unavailable } from "../../components/ui";
 
 /**
  * Bar — the top strip: scope, the omnibox, Walk, Path, and the trail.
@@ -115,28 +119,22 @@ export function Bar({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
-          <Waypoints size={18} /> Graph
-        </h1>
+      <PageHeader title="Graph" tab={patterns ? "Patterns" : undefined}>
         <ScopeBadge kind="namespace" value={identity.namespace} />
+        {/* biome-ignore lint/a11y/useSemanticElements: the box submits, so it stays a <form>; role="search" makes it the search landmark */}
         <form
-          className="flex items-center gap-2 flex-1 min-w-[280px]"
+          className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]"
           role="search"
           onSubmit={(e) => {
             e.preventDefault();
             submit(open && suggestions.length ? suggestions[hi] : undefined);
           }}
         >
-          <div className="relative flex-1 max-w-[520px]">
+          {/* Below sm the field takes the whole row, so its placeholder is not cut. */}
+          <div className="relative basis-full sm:basis-auto sm:flex-1 sm:max-w-[520px]">
             {/* An entity box, not a search box: a node glyph and an
                 entity placeholder, so it does not read as the header's ⌘K search. */}
-            <CircleDot
-              size={14}
-              aria-hidden="true"
-              className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted"
-            />
-            <input
+            <TextField
               id="graph-seed"
               role="combobox"
               aria-expanded={open && suggestions.length > 0}
@@ -144,8 +142,8 @@ export function Bar({
               aria-autocomplete="list"
               aria-activedescendant={open && suggestions.length ? `graph-omnibox-${hi}` : undefined}
               value={draft}
-              onChange={(e) => {
-                onDraft(e.target.value);
+              onChange={(value) => {
+                onDraft(value);
                 setOpen(true);
               }}
               onFocus={() => setOpen(true)}
@@ -158,111 +156,122 @@ export function Bar({
               aria-label="Seed entity, or two entities joined by an arrow for a path"
               autoComplete="off"
               spellCheck={false}
-              className="w-full pl-7 pr-2 py-1.5 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] font-mono"
+              startContent={<Icon name="dot" size="sm" aria-hidden="true" />}
             />
             {open && (suggestions.length > 0 || (typing.length >= 3 && entities !== null)) && (
-              <ul
-                id="graph-omnibox-list"
-                role="listbox"
-                className="absolute z-30 left-0 right-0 mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl overflow-hidden text-xs"
-              >
-                {suggestions.map((s, i) => (
-                  <li
-                    key={s.value}
-                    id={`graph-omnibox-${i}`}
-                    role="option"
-                    aria-selected={i === hi}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      submit(s);
-                    }}
-                    onMouseEnter={() => setHi(i)}
-                    className={`flex items-center gap-2 px-2.5 py-1.5 cursor-pointer ${i === hi ? "bg-[var(--color-surface-2)]" : ""}`}
-                  >
-                    <span className="font-mono truncate flex-1">{s.value}</span>
-                    <span className="text-2xs text-[var(--color-text-subtle)]">{s.how}</span>
-                    <span className="tabular-nums text-[var(--color-text-muted)] w-14 text-right">{s.count}</span>
-                  </li>
-                ))}
+              <div className="absolute z-30 left-0 right-0 mt-1 rounded-lg border border-border bg-surface shadow-xl overflow-hidden text-xs">
+                {/* The listbox holds options only; the messages below it are not choices. */}
+                <ul
+                  id="graph-omnibox-list"
+                  // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: APG combobox with a listbox popup — focus stays on the input, aria-activedescendant names the option
+                  role="listbox"
+                  aria-label="Matching entities"
+                  hidden={suggestions.length === 0}
+                >
+                  {suggestions.map((s, i) => (
+                    // biome-ignore lint/a11y/useFocusableInteractive: APG combobox option — never focused itself, the input points at it with aria-activedescendant
+                    <li
+                      key={s.value}
+                      id={`graph-omnibox-${i}`}
+                      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: APG combobox option inside the listbox above
+                      role="option"
+                      aria-selected={i === hi}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        submit(s);
+                      }}
+                      onMouseEnter={() => setHi(i)}
+                      className={`flex items-center gap-2 px-2.5 py-1.5 cursor-pointer ${i === hi ? "bg-surface-2" : ""}`}
+                    >
+                      <span className="font-mono truncate flex-1">{s.value}</span>
+                      <span className="text-xs text-text-muted">{s.how}</span>
+                      <span className="tabular-nums text-text-muted w-14 text-right">{s.count}</span>
+                    </li>
+                  ))}
+                </ul>
                 {suggestions.length === 0 && (
-                  <li className="px-2.5 py-1.5 text-[var(--color-text-subtle)]">
+                  <p role="status" className="px-2.5 py-1.5 text-text-muted">
                     No entity matches “{typing}”; Walk tries it as typed (the server canonicalises).
-                  </li>
+                  </p>
                 )}
                 {suggestions.length > 0 && pathQuery && (
-                  <li className="px-2.5 py-1 text-2xs text-[var(--color-text-subtle)] border-t border-[var(--color-border)]">
+                  <p className="px-2.5 py-1 text-xs text-text-muted border-t border-border">
                     ↵ finds the path from <span className="font-mono">{pathQuery.a}</span> to the highlighted entity
-                  </li>
+                  </p>
                 )}
-              </ul>
+              </div>
             )}
           </div>
-          <button
-            type="submit"
+          <Button
+            type="primary"
+            htmlType="submit"
+            iconLeft={pathQuery ? "arrow-directions" : "arrow-right"}
             disabled={!draft.trim() || busy}
-            className="inline-flex items-center gap-1.5 text-sm rounded-lg bg-[var(--color-accent)] text-[var(--color-on-accent)] px-3 py-1.5 font-medium hover:bg-[var(--color-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {pathQuery ? (
-              <>
-                <Route size={13} /> Path
-              </>
-            ) : (
-              <>
-                <Footprints size={13} /> Walk
-              </>
-            )}
-          </button>
+            {pathQuery ? "Path" : "Walk"}
+          </Button>
           {!pathQuery && (
-            <button
-              type="button"
-              disabled={!pathTarget || busy}
-              onClick={() => {
-                if (pathTarget && currentSeed) {
-                  onDraft(`${currentSeed} → ${pathTarget}`);
-                  onPath(currentSeed, pathTarget);
-                }
-              }}
-              className="inline-flex items-center gap-1.5 text-sm rounded-lg border border-[var(--color-border-strong)] px-3 py-1.5 hover:bg-[var(--color-surface-2)] disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-label={pathTarget && currentSeed ? `Path from ${currentSeed} to ${pathTarget}` : "Path"}
-              aria-describedby={pathTarget && currentSeed ? undefined : "explorer-path-hint"}
+            <Unavailable
+              reason={
+                busy
+                  ? "A walk is loading."
+                  : pathTarget && currentSeed
+                    ? null
+                    : "Type a second entity while a walk is open, or a → b, to ask for a path."
+              }
             >
-              <Route size={13} /> Path
-            </button>
+              <Button
+                type="secondary"
+                htmlType="button"
+                iconLeft="arrow-directions"
+                onClick={() => {
+                  if (pathTarget && currentSeed) {
+                    onDraft(`${currentSeed} → ${pathTarget}`);
+                    onPath(currentSeed, pathTarget);
+                  }
+                }}
+                aria-label={pathTarget && currentSeed ? `Path from ${currentSeed} to ${pathTarget}` : "Path"}
+              >
+                Path
+              </Button>
+            </Unavailable>
           )}
         </form>
         {patternsAvailable && (
-          <button
-            type="button"
-            aria-pressed={patterns}
+          <ButtonGroup
+            aria-label="Mode"
+            selected={patterns ? "patterns" : ""}
             onClick={() => onPatterns(!patterns)}
-            className={`inline-flex items-center gap-1.5 text-sm rounded-lg border px-3 py-1.5 ${patterns ? "border-text bg-surface-2 text-text" : "border-border-strong text-text-muted hover:bg-surface-2 hover:text-text"}`}
-            aria-describedby="explorer-patterns-hint"
-          >
-            <LayoutGrid size={13} aria-hidden="true" /> Patterns
-          </button>
+            options={[
+              {
+                value: "patterns",
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Icon name="services" size="xs" aria-hidden="true" />
+                    Patterns
+                  </span>
+                ),
+                "aria-describedby": "explorer-patterns-hint",
+              },
+            ]}
+          />
         )}
         <span id="explorer-patterns-hint" className="sr-only">
           Open issues by component and severity from the tracker, and the issue and PR graph behind a cell. Press again
           to return to the entity graph.
         </span>
-        <span id="explorer-path-hint" className="sr-only">
-          Type a second entity while a walk is open, or a → b, to ask for a path.
-        </span>
-      </div>
+      </PageHeader>
       {trail.length > 0 && (
-        <div
-          className="text-xs text-[var(--color-text-muted)] flex items-center gap-1 flex-wrap"
-          aria-label="Seeds walked this session"
-        >
+        <div className="text-xs text-text-muted flex items-center gap-1 flex-wrap">
           <span>walked:</span>
           {trail.map((t, i) => (
             <span key={`${t}-${i}`} className="inline-flex items-center gap-1">
-              {i > 0 && <span className="text-[var(--color-text-subtle)]">›</span>}
+              {i > 0 && <span className="text-text-muted">›</span>}
               <button
                 type="button"
                 onClick={() => onWalk(t)}
                 disabled={t === currentSeed}
-                className={`font-mono ${t === currentSeed ? "text-[var(--color-text)]" : "underline hover:text-[var(--color-text)]"}`}
+                className={`font-mono ${t === currentSeed ? "text-text" : "underline hover:text-text"}`}
               >
                 {shorten(t, 24)}
               </button>

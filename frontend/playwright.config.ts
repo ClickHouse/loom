@@ -27,6 +27,12 @@ export default defineConfig({
     // hover flicker loop this guards against needs a scrollbar that can appear.
     launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] },
   },
+  // The Explorer runs again at Playwright's default 1280 × 720, where its outline and
+  // canvas are narrowest beside the facets and the inspector.
+  projects: [
+    { name: "desktop" },
+    { name: "explorer-1280", testMatch: /explorer-.*\.spec\.ts/, use: { viewport: { width: 1280, height: 720 } } },
+  ],
   // `--host 127.0.0.1` in e2e:serve, and the same address here: a runner
   // that resolves `localhost` to `::1` would otherwise serve on IPv6 while
   // the probe below waits on IPv4 until the timeout.

@@ -2,7 +2,7 @@
  * Where the server runs without the repository-job sandbox it refuses adding a repository
  * or branch from the page (`SANDBOX_UNAVAILABLE`), so the page offers neither.
  */
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useStore } from "../lib/state";

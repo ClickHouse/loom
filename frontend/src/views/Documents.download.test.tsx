@@ -1,7 +1,7 @@
 // A Library row's download button fetches the document under the viewer's scope with the
 // original filename (or the Markdown name for a text-only document), and a failed call —
 // download or delete — raises an error toast that carries the request id.
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { ApiError } from "../lib/errors";

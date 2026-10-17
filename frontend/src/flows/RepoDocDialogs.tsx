@@ -12,21 +12,17 @@
  * so a maintainer checking a document never counts as an agent opening it.
  */
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { Download, FileText, Upload } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Tabs } from "@clickhouse/click-ui/Tabs";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, downloadKnowledge, getKnowledge, textDownloadName, type KnowledgeEntry } from "../api";
 import { humanizeError, relativeTime } from "../lib/format";
 import { toastError } from "../components/Toast";
+import { TabTrigger } from "../components/ui/TabTrigger";
 import { readDocumentFile, slugify, type ReadDocument } from "../lib/docFiles";
-import {
-  CancelButton,
-  DialogFrame,
-  ErrorNote,
-  Field,
-  INPUT_CLS,
-  PRIMARY_BTN,
-  SECONDARY_BTN,
-  TEXTAREA_CLS,
-} from "./TaskDialogFrame";
+import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
 const UI_CONSUMER = "loom-ui";
 
@@ -85,6 +81,7 @@ export function RepoDocAddDialog({
       setBusy(null);
     }
   };
+
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setOver(false);
@@ -127,108 +124,104 @@ export function RepoDocAddDialog({
       open={open}
       onOpenChange={onOpenChange}
       width={600}
-      icon={<FileText size={16} aria-hidden="true" />}
       title={`Add a document to ${repo}`}
       description="A design note, runbook or spec agents should read before changing this code. Readers of the repository can read it; it stays as private as the repository."
       footer={
         <>
           <CancelButton />
-          <button type="button" className={PRIMARY_BTN} disabled={!ready} onClick={() => void save()}>
-            {busy === "saving" ? "Adding…" : "Add document"}
-          </button>
+          <Button
+            type="primary"
+            htmlType="button"
+            disabled={!ready}
+            loading={busy === "saving"}
+            onClick={() => void save()}
+          >
+            Add document
+          </Button>
         </>
       }
     >
-      <div
-        role="tablist"
-        aria-label="How to add it"
-        className="inline-flex rounded-md border border-border p-0.5 text-xs"
-      >
-        {(["file", "paste"] as const).map((m) => (
-          <button
-            key={m}
-            type="button"
-            role="tab"
-            aria-selected={mode === m}
-            onClick={() => setMode(m)}
-            className={`px-3 min-h-8 rounded ${mode === m ? "bg-surface-3 text-text font-medium" : "text-text-muted"}`}
+      <Tabs value={mode} onValueChange={(v) => setMode(v === "paste" ? "paste" : "file")}>
+        <Tabs.TriggersList aria-label="How to add it">
+          <TabTrigger value="file">Upload a file</TabTrigger>
+          <TabTrigger value="paste">Paste text</TabTrigger>
+        </Tabs.TriggersList>
+        <Tabs.Content value="file" className="pt-4">
+          {/* Not Click UI's FileUpload: its file input has no name, and it cannot show what was read. */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop target for dragged files; the "Choose a file" button inside is the keyboard path */}
+          {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setOver(true);
+            }}
+            onDragLeave={() => setOver(false)}
+            onDrop={onDrop}
+            className={`rounded border border-dashed p-5 text-center text-sm ${over ? "border-accent bg-accent-soft" : "border-border-strong"}`}
           >
-            {m === "file" ? "Upload a file" : "Paste text"}
-          </button>
-        ))}
-      </div>
-      {mode === "file" ? (
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setOver(true);
-          }}
-          onDragLeave={() => setOver(false)}
-          onDrop={onDrop}
-          className={`rounded-lg border-2 border-dashed p-5 text-center text-sm ${over ? "border-accent bg-accent-soft" : "border-border"}`}
-        >
-          {file ? (
-            <p className="flex items-center justify-center gap-2">
-              <FileText size={14} aria-hidden="true" /> <span className="font-medium">{file.blob.name}</span>
-              <span className="text-text-muted">
-                · {Math.max(1, Math.round(file.blob.size / 1024))} KB · {file.text.length.toLocaleString()} characters
-                read
-              </span>
-            </p>
-          ) : (
-            <p className="text-text-muted">
-              {busy === "reading" ? "Reading the file…" : "Drop a PDF, Word, Markdown or text file here"}
-            </p>
-          )}
-          <button
-            type="button"
-            className={`${SECONDARY_BTN} mt-3`}
-            disabled={busy !== null}
-            onClick={() => inputRef.current?.click()}
-          >
-            <Upload size={13} aria-hidden="true" /> {file ? "Choose another file" : "Choose a file"}
-          </button>
-          <input
-            ref={inputRef}
-            type="file"
-            className="sr-only"
-            aria-label="Choose a file"
-            accept=".pdf,.docx,.md,.markdown,.txt,.rst,.adoc,.json,.yaml,.yml,.csv,.html,.xml,text/*"
-            onChange={(e) => void take(e.target.files?.[0])}
-            tabIndex={-1}
-          />
-        </div>
-      ) : (
-        <Field id="rdoc-text" label="Text" hint="Markdown is fine">
-          <textarea
+            {file ? (
+              <div className="flex items-center justify-center gap-2">
+                <Icon name="document" size="sm" aria-hidden="true" />
+                <span className="font-medium">{file.blob.name}</span>
+                <span className="text-text-muted">
+                  · {Math.max(1, Math.round(file.blob.size / 1024))} KB · {file.text.length.toLocaleString()} characters
+                  read
+                </span>
+              </div>
+            ) : (
+              <p className="text-text-muted">
+                {busy === "reading" ? "Reading the file…" : "Drop a PDF, Word, Markdown or text file here"}
+              </p>
+            )}
+            <div className="mt-3 flex justify-center">
+              <Button
+                type="secondary"
+                htmlType="button"
+                iconLeft="upload"
+                disabled={busy !== null}
+                onClick={() => inputRef.current?.click()}
+              >
+                {file ? "Choose another file" : "Choose a file"}
+              </Button>
+            </div>
+            <input
+              ref={inputRef}
+              type="file"
+              className="sr-only"
+              aria-label="Choose a file"
+              accept=".pdf,.docx,.md,.markdown,.txt,.rst,.adoc,.json,.yaml,.yml,.csv,.html,.xml,text/*"
+              onChange={(e) => void take(e.target.files?.[0])}
+              tabIndex={-1}
+            />
+          </div>
+        </Tabs.Content>
+        <Tabs.Content value="paste" className="pt-4">
+          <TextAreaField
             id="rdoc-text"
-            className={`${TEXTAREA_CLS} font-mono text-sm`}
+            label="Text (Markdown is fine)"
+            className="font-mono"
             rows={8}
             value={pasted}
-            onChange={(e) => setPasted(e.target.value)}
+            onChange={setPasted}
           />
-        </Field>
-      )}
-      <Field id="rdoc-title" label="Title">
-        <input
-          id="rdoc-title"
-          className={INPUT_CLS}
-          value={title}
-          placeholder="MergeTree merge scheduling — design note"
-          onChange={(e) => setTitle(e.target.value)}
-        />
-      </Field>
-      <Field id="rdoc-desc" label="What agents should use it for" hint="optional, one line">
-        <input
-          id="rdoc-desc"
-          className={INPUT_CLS}
-          value={description}
-          placeholder="Read before touching merge selection or TTL"
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </Field>
+        </Tabs.Content>
+      </Tabs>
+      <TextField
+        id="rdoc-title"
+        label="Title"
+        value={title}
+        placeholder="MergeTree merge scheduling — design note"
+        onChange={setTitle}
+      />
+      <TextField
+        id="rdoc-desc"
+        label="What agents should use it for (optional, one line)"
+        value={description}
+        placeholder="Read before touching merge selection or TTL"
+        onChange={setDescription}
+      />
       {uri && (
-        <p className="text-2xs text-text-subtle break-all">
+        <p className="text-xs text-text-muted break-all">
           Saved as <span className="font-mono">{uri}</span>
         </p>
       )}
@@ -294,21 +287,25 @@ export function RepoDocViewer({
       open={open}
       onOpenChange={onOpenChange}
       width={760}
-      icon={<FileText size={16} aria-hidden="true" />}
       title={doc.title || doc.source_uri}
-      description={
-        <>
-          <span className="font-mono">{doc.source_uri}</span>
-          {doc.ingested_at ? ` · added ${relativeTime(doc.ingested_at)}` : ""}
-          {reads ? ` · opened by agents ${reads.reads} time${reads.reads === 1 ? "" : "s"} in ${reads.days} days` : ""}
-        </>
-      }
+      description={[
+        doc.source_uri,
+        doc.ingested_at ? `added ${relativeTime(doc.ingested_at)}` : "",
+        reads ? `opened by agents ${reads.reads} time${reads.reads === 1 ? "" : "s"} in ${reads.days} days` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")}
       footer={
         <>
-          <button type="button" className={SECONDARY_BTN} disabled={downloading} onClick={() => void download()}>
-            <Download size={13} aria-hidden="true" />{" "}
-            {downloading ? "Downloading…" : doc.has_blob ? "Download original" : "Download"}
-          </button>
+          <Button
+            type="secondary"
+            htmlType="button"
+            iconLeft="download"
+            loading={downloading}
+            onClick={() => void download()}
+          >
+            {doc.has_blob ? "Download original" : "Download"}
+          </Button>
           <CancelButton label="Close" />
         </>
       }
@@ -322,7 +319,7 @@ export function RepoDocViewer({
       {state.kind === "ready" && (
         <>
           {state.description && <p className="text-sm text-text-muted">{state.description}</p>}
-          <p className="text-2xs text-text-subtle">The text agents read, as Loom stores it.</p>
+          <p className="text-xs text-text-muted">The text agents read, as Loom stores it.</p>
           <pre className="max-h-[55vh] overflow-auto rounded-md border border-border bg-surface-2 p-3 text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">
             {state.content || "(no text)"}
           </pre>

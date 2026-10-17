@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, ServiceAccountEntry, WhoAmI } from "../api";
@@ -204,7 +204,7 @@ describe("Setup's remembered MCP client", () => {
     render(<Setup />);
     await userEvent.click(await screen.findByRole("button", { name: /Generate token/ }, WAIT));
     const picker = await screen.findByLabelText(/^MCP client/, undefined, WAIT);
-    expect(picker).toHaveValue("claude-desktop");
+    expect(picker).toHaveTextContent("Claude Desktop");
   });
 
   it("a stored id that names no client falls back to the default", async () => {
@@ -213,7 +213,7 @@ describe("Setup's remembered MCP client", () => {
     seed(admin, [], MEMORY_NS);
     render(<Setup />);
     await userEvent.click(await screen.findByRole("button", { name: /Generate token/ }, WAIT));
-    expect(await screen.findByLabelText(/^MCP client/, undefined, WAIT)).toHaveValue("claude-desktop");
+    expect(await screen.findByLabelText(/^MCP client/, undefined, WAIT)).toHaveTextContent("Claude Desktop");
     localStorage.clear();
   });
 });
@@ -268,11 +268,11 @@ describe("Setup's new-namespace button", () => {
       </>,
     );
     await userEvent.click(await screen.findByRole("button", { name: "For a bot that sees only these" }, WAIT));
-    expect(screen.queryByLabelText("Your role here: admin")).not.toBeInTheDocument();
+    expect(screen.queryByText("Your role here: admin")).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Namespace to add to the token"), "robot-ns");
     await userEvent.click(screen.getByRole("button", { name: /New namespace/ }));
     await waitFor(() => expect(registerNamespace).toHaveBeenCalledTimes(1), WAIT);
-    expect(await screen.findByLabelText("Your role here: admin", undefined, WAIT)).toBeInTheDocument();
+    expect(await screen.findByText("Your role here: admin", undefined, WAIT)).toBeInTheDocument();
     expect(useStore.getState().myNamespaces).toEqual([home, created]);
   });
 });

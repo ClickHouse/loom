@@ -1,45 +1,24 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  Clock,
-  AlertTriangle,
-  FileText,
-  Settings,
-  Activity,
-  History,
-  DollarSign,
-  Shield,
-  ChevronDown,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Plug,
-  Users as UsersIcon,
-  ArrowLeftRight,
-  Layers,
-  MessagesSquare,
-  Ban,
-  Code,
-  ListChecks,
-  Gavel,
-  Inbox,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { IconButton } from "../components/IconButton";
 import { Tip } from "../components/ui/Tooltip";
 import { useStore, viewHref, type View } from "../lib/state";
 import { countConflicts, countNewAgents } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
 import { sharedBudgetStatus } from "../lib/sharedReads";
+import { hasOrgAdminClaim, isNamespaceAdmin } from "../lib/role";
+import { roleOnNamespace } from "../lib/namespaceRole";
+import { canCall } from "../lib/canCall";
+import { isMemoryNamespace } from "../lib/namespace";
 
 // How long a remembered badge answer is shown before the idle refresh replaces it — one
 // poll interval.
 const BADGE_SESSION_TTL_MS = 60_000;
 // The agents badge reads every fifth minute tick
 const AGENTS_EVERY_N_TICKS = 5;
-import { hasOrgAdminClaim, isNamespaceAdmin } from "../lib/role";
-import { roleOnNamespace } from "../lib/namespaceRole";
-import { canCall } from "../lib/canCall";
-import { isMemoryNamespace } from "../lib/namespace";
-// Loom mark inlined so currentColor inherits from the sidebar's text
-// color and the icon stays visible on both light and dark themes.
+
+// Loom mark inlined so currentColor inherits from the sidebar's text color.
 function LoomMark({ size = 32 }: { size?: number }) {
   return (
     <svg
@@ -48,7 +27,7 @@ function LoomMark({ size = 32 }: { size?: number }) {
       viewBox="0 0 40 40"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      className="shrink-0 text-[var(--color-accent)]"
+      className="shrink-0 text-accent"
       aria-hidden="true"
     >
       {/* spokes */}
@@ -71,7 +50,7 @@ function LoomMark({ size = 32 }: { size?: number }) {
 export interface NavItem {
   id: View;
   label: string;
-  icon: LucideIcon;
+  icon: IconName;
   /** What the page is scoped by — the namespace picked in the header, or the whole org
    *  (Repositories, Tasks). Read out in the item's tooltip so a namespace switch never
    *  surprises. */
@@ -100,16 +79,16 @@ interface NavGroup {
 export const RAIL_GROUPS: NavGroup[] = [
   // Profile sits first — it's the user's identity surface (the
   // always-loaded context every AI sees).
-  { label: null, items: [{ id: "profile", label: "Profile", icon: Layers, scope: "namespace" }] },
+  { label: null, items: [{ id: "profile", label: "Profile", icon: "cards", scope: "namespace" }] },
   {
     label: "Memory",
     items: [
-      { id: "memories", label: "Memories", icon: Clock, scope: "namespace" },
-      { id: "knowledge", label: "Library", icon: FileText, scope: "namespace" },
+      { id: "memories", label: "Memories", icon: "clock", scope: "namespace" },
+      { id: "knowledge", label: "Library", icon: "document", scope: "namespace" },
       // Route id stays "sessions" (stable deep links); the label matches the
       // view it renders — Conversations (threads), not the run-session that
       // groups runs in the Runs view.
-      { id: "sessions", label: "Conversations", icon: MessagesSquare, scope: "namespace" },
+      { id: "sessions", label: "Conversations", icon: "chat", scope: "namespace" },
     ],
   },
   {
@@ -117,21 +96,21 @@ export const RAIL_GROUPS: NavGroup[] = [
     items: [
       // Runs: the ledger of agent executions — goal, what was recalled and
       // relied on, what was written, what it cost, how it ended.
-      { id: "runs", label: "Runs", icon: ListChecks, scope: "namespace" },
+      { id: "runs", label: "Runs", icon: "list-numbered", scope: "namespace" },
       // Tasks: the inbox plane — work one agent handed another, triaged, claimed under a
       // lease, and edited by a person on a board.
-      { id: "tasks", label: "Tasks", icon: Inbox, scope: "org" },
+      { id: "tasks", label: "Tasks", icon: "email", scope: "org" },
     ],
   },
   {
     label: "Sources",
     // Code: the indexed-repo plane. Not memory — read-only reference data
     // with its own health pipeline, hence a section rather than a namespace.
-    items: [{ id: "code", label: "Repositories", icon: Code, scope: "org" }],
+    items: [{ id: "code", label: "Repositories", icon: "code", scope: "org" }],
   },
 ];
 export const MAIN: NavItem[] = RAIL_GROUPS.flatMap((g) => g.items);
-export const SETTINGS_ITEM: NavItem = { id: "setup", label: "Settings", icon: Settings, scope: "namespace" };
+export const SETTINGS_ITEM: NavItem = { id: "setup", label: "Settings", icon: "gear", scope: "namespace" };
 
 // Admin drawer items. Review queue is HIDDEN by default — it's a
 // usually-empty surface (conflicts/learnings only appear on
@@ -150,23 +129,23 @@ export const ADMIN_GROUPS: NavGroup[] = [
   {
     label: "Review",
     items: [
-      { id: "admin:guardrails", label: "Guardrails", icon: Ban, scope: "namespace" },
+      { id: "admin:guardrails", label: "Guardrails", icon: "line-in-circle", scope: "namespace" },
       // Policies: history rules over what an agent may do next — forbid /
       // require an action based on the caller's own recent trace.
-      { id: "admin:policies", label: "Policies", icon: Gavel, scope: "namespace" },
+      { id: "admin:policies", label: "Policies", icon: "secure", scope: "namespace" },
     ],
   },
   {
     label: "Observe",
     items: [
-      { id: "admin:health", label: "Health", icon: Activity, scope: "namespace" },
-      { id: "admin:activity", label: "Activity", icon: History, scope: "namespace" },
+      { id: "admin:health", label: "Health", icon: "activity", scope: "namespace" },
+      { id: "admin:activity", label: "Activity", icon: "history", scope: "namespace" },
       // Flow (route id "sharing" — stable deep links): a READ-ONLY observability
       // view — where memories flow (writes/recalls, cross-namespace reach,
       // per-tool producer/consumer activity, memberships).
-      { id: "sharing", label: "Flow", icon: ArrowLeftRight, scope: "namespace" },
-      { id: "admin:usage", label: "Usage", icon: DollarSign, scope: "namespace" },
-      { id: "admin:agents", label: "Agents", icon: Plug, scope: "namespace" },
+      { id: "sharing", label: "Flow", icon: "share-network", scope: "namespace" },
+      { id: "admin:usage", label: "Usage", icon: "dollar", scope: "namespace" },
+      { id: "admin:agents", label: "Agents", icon: "plug", scope: "namespace" },
     ],
   },
 ];
@@ -182,7 +161,7 @@ export function isDrawerView(v: View): boolean {
 // Operator-only items — shown only when the caller's JWT carries
 // PLATFORM_ADMIN / ORG_ADMIN. The Users view is the most-load-bearing
 // of these (you can't manage who has access without seeing the list).
-export const ADMIN_OPERATOR_ONLY: NavItem[] = [{ id: "admin:users", label: "Users", icon: UsersIcon, scope: "org" }];
+export const ADMIN_OPERATOR_ONLY: NavItem[] = [{ id: "admin:users", label: "Users", icon: "users", scope: "org" }];
 /** The drawer's Access group: operator entries, shown to platform / org admins. */
 const ACCESS_GROUP: NavGroup = { label: "Access", items: ADMIN_OPERATOR_ONLY };
 
@@ -257,10 +236,7 @@ export function Sidebar() {
   const visibleAdmin: NavItem[] = !canAdmin
     ? []
     : conflictCount != null && conflictCount > 0
-      ? [
-          { id: "admin:review_queue", label: "Review queue", icon: AlertTriangle, badge: conflictCount },
-          ...adminWithBadges,
-        ]
+      ? [{ id: "admin:review_queue", label: "Review queue", icon: "warning", badge: conflictCount }, ...adminWithBadges]
       : adminWithBadges;
 
   // Fetch conflict count + budget + agents activity on identity change
@@ -374,10 +350,11 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`hidden md:flex shrink-0 border-r border-[var(--color-border)] bg-[var(--color-surface)] flex-col ${collapsed ? "w-[60px]" : "w-[244px]"}`}
+      className={`hidden md:flex shrink-0 border-r border-border bg-surface flex-col ${collapsed ? "w-[60px]" : "w-[244px]"}`}
     >
-      {/* Brand + collapse — brand is an anchor: cmd-click opens Memories in a new tab */}
-      <div className={`pt-5 pb-4 flex items-center justify-between ${collapsed ? "px-3" : "px-5"}`}>
+      {/* Brand + collapse — brand is an anchor: cmd-click opens Memories in a new tab. The
+          toggle is one button in both states, so it keeps the focus when pressed. */}
+      <div className={`pt-5 flex items-center justify-between ${collapsed ? "px-3 pb-2 flex-col gap-4" : "px-5 pb-4"}`}>
         <a
           href={viewHref("memories")}
           onClick={(e) => {
@@ -385,44 +362,28 @@ export function Sidebar() {
             e.preventDefault();
             setView("memories");
           }}
-          className="flex items-center gap-2.5 rounded-lg hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] no-underline"
+          className="flex items-center gap-2.5 rounded-sm hover:opacity-80 transition-opacity no-underline hover:no-underline"
           aria-label="Loom — go to Memories"
         >
           <LoomMark size={32} />
-          {!collapsed && (
-            <span className="text-xl font-semibold tracking-tight text-[var(--color-text)] leading-none">Loom</span>
-          )}
+          {!collapsed && <span className="text-xl font-semibold text-text leading-none">Loom</span>}
         </a>
-        {!collapsed && (
-          <button
-            onClick={toggleSidebar}
-            className="p-1 text-[var(--color-text-subtle)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded transition-colors"
-            aria-label="Collapse sidebar"
-          >
-            <PanelLeftClose size={14} />
-          </button>
-        )}
-      </div>
-      {collapsed && (
-        <button
+        <IconButton
+          icon={collapsed ? "slide-in" : "slide-out"}
+          size="sm"
+          label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
           onClick={toggleSidebar}
-          className="mx-3 mb-2 p-1.5 text-[var(--color-text-subtle)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded transition-colors"
-          aria-label="Expand sidebar"
-        >
-          <PanelLeftOpen size={14} />
-        </button>
-      )}
+        />
+      </div>
 
-      {/* Main nav — anchors so cmd-click opens in a new tab */}
-      <nav className="flex-1 px-3 mt-1 overflow-y-auto" aria-label="Sections">
+      {/* Main nav — anchors so cmd-click opens in a new tab. Padded, not margined, so the
+          scroll box leaves room for the first and last items' focus ring. */}
+      <nav className="flex-1 px-3 py-1 overflow-y-auto" aria-label="Sections">
         {RAIL_GROUPS.map((g, gi) => (
           <div
             key={g.label ?? "top"}
-            className={
-              gi === 0
-                ? "space-y-1"
-                : `space-y-1 ${collapsed ? "pt-2 mt-2 border-t border-[var(--color-border)]" : "pt-4"}`
-            }
+            className={`${NAV_LIST} ${gi === 0 ? "" : collapsed ? "pt-2 mt-2 border-t border-border" : "pt-4"}`}
           >
             {g.label && !collapsed && <GroupLabel>{g.label}</GroupLabel>}
             {g.items.map((item) => (
@@ -440,20 +401,29 @@ export function Sidebar() {
         {!collapsed && visibleAdmin.length > 0 && (
           <div className="pt-4">
             <button
+              type="button"
               onClick={() => setAdminOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-3 py-2 text-md rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors"
+              className={`${NAV_ITEM} w-full justify-between`}
               aria-expanded={adminOpen}
             >
-              <span className="flex items-center gap-2.5">
-                <Shield size={15} /> Admin
+              <span className={`flex items-center ${NAV_GAP}`}>
+                <span className={NAV_ICON}>
+                  <Icon name="secure" size="sm" aria-hidden="true" />
+                </span>
+                Admin
               </span>
-              <ChevronDown size={14} className={`transition-transform ${adminOpen ? "rotate-180" : ""}`} />
+              <Icon
+                name="chevron-down"
+                size="sm"
+                aria-hidden="true"
+                className={`transition-transform ${adminOpen ? "rotate-180" : ""}`}
+              />
             </button>
 
             {adminOpen && (
-              <div className="ml-1 pl-3 border-l border-[var(--color-border)] mt-0.5 animate-fade-in motion-reduce:animate-none!">
+              <div className="ml-1 pl-3 border-l border-border mt-0.5 animate-fade-in">
                 {groupAdminItems(visibleAdmin).map((g, gi) => (
-                  <div key={g.label ?? gi} className={`space-y-0.5 ${gi > 0 ? "pt-2" : ""}`}>
+                  <div key={g.label ?? gi} className={`${NAV_LIST} ${gi > 0 ? "pt-2" : ""}`}>
                     <GroupLabel>{g.label}</GroupLabel>
                     {g.items.map((item) => (
                       <NavBtn
@@ -475,7 +445,7 @@ export function Sidebar() {
             they don't disappear when the user collapses the sidebar.
             No dropdown — every icon is one click, tooltip on hover. */}
         {collapsed && visibleAdmin.length > 0 && (
-          <div className="pt-3 mt-2 border-t border-[var(--color-border)] space-y-1">
+          <div className={`pt-3 mt-2 border-t border-border ${NAV_LIST}`}>
             {visibleAdmin.map((item) => (
               <NavBtn
                 key={item.id}
@@ -490,7 +460,7 @@ export function Sidebar() {
       </nav>
 
       {/* Settings at the foot: tokens, clients, what is remembered, privacy filters */}
-      <div className={`border-t border-[var(--color-border)] ${collapsed ? "p-2" : "p-3"}`}>
+      <div className={`border-t border-border ${collapsed ? "p-2" : "p-3"}`}>
         <NavBtn
           item={SETTINGS_ITEM}
           active={view === "setup"}
@@ -502,13 +472,29 @@ export function Sidebar() {
   );
 }
 
+// Click UI's SidebarNavigationItem renders a div with onClick (no href, no cmd-click), so
+// the rail keeps its anchors and draws them with that component's own variables: 400
+// 14 px, 4.5 / 12 / 16 px padding, a 16 px muted icon 12 px from the label, 4 px corners,
+// the hover and selected fills. Click UI gives the item no focus ring; Loom's is added.
+const NAV_LIST = "flex flex-col gap-(--click-sidebar-navigation-item-global-gap)";
+const NAV_GAP = "gap-(--click-sidebar-navigation-item-default-space-gap)";
+const NAV_ITEM = [
+  "relative flex items-center min-w-0 rounded-(--click-sidebar-navigation-item-radii-all)",
+  "py-(--click-sidebar-navigation-item-default-space-y) pl-4 pr-(--click-sidebar-navigation-item-default-space-right)",
+  NAV_GAP,
+  "[font:var(--click-sidebar-navigation-item-typography-default)]",
+  "text-(--click-sidebar-main-navigation-item-color-text-default) hover:text-(--click-sidebar-main-navigation-item-color-text-hover)",
+  "bg-(--click-sidebar-main-navigation-item-color-background-default) hover:bg-(--click-sidebar-main-navigation-item-color-background-hover)",
+  "aria-[current=page]:bg-(--click-sidebar-main-navigation-item-color-background-active)",
+  "no-underline hover:no-underline",
+].join(" ");
+const NAV_ICON = "inline-flex shrink-0 text-(--click-sidebar-main-navigation-item-color-icon-default)";
+const NAV_TITLE =
+  "pl-4 pb-1 select-none [font:var(--click-sidebar-navigation-title-typography-default)] text-(--click-sidebar-main-navigation-title-color-default)";
+
 function GroupLabel({ children }: { children: string | null }) {
   if (!children) return null;
-  return (
-    <div className="px-3 pb-1 text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-subtle)] select-none">
-      {children}
-    </div>
-  );
+  return <div className={NAV_TITLE}>{children}</div>;
 }
 
 /** The scope read-out for an item's tooltip / title. */
@@ -529,8 +515,8 @@ function NavBtn({
   onActivate: () => void;
   collapsed: boolean;
 }) {
-  const Icon = item.icon;
   const hint = scopeHint(item);
+  const hintId = useId();
   // Anchor (not button) so cmd/ctrl-click opens the view in a new tab,
   // middle-click works, and "Copy link" gives a usable URL.
   const anchor = (
@@ -541,56 +527,69 @@ function NavBtn({
         e.preventDefault();
         onActivate();
       }}
-      className={`w-full flex items-center ${collapsed ? "justify-center" : "justify-between"} gap-2 ${collapsed ? "px-2 py-2" : "px-3 py-2"} text-md rounded-lg transition-colors relative no-underline ${
-        active
-          ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-medium"
-          : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
-      }`}
-      aria-label={collapsed ? item.label : undefined}
+      className={`${NAV_ITEM} ${collapsed ? "justify-center px-2!" : "justify-between"}`}
+      aria-label={collapsed ? collapsedName(item) : undefined}
       aria-current={active ? "page" : undefined}
-      title={!collapsed && hint ? `${item.label} — ${hint}` : undefined}
+      aria-describedby={hint ? hintId : undefined}
     >
-      <span className="flex items-center gap-2.5 min-w-0">
-        <Icon size={15} className="shrink-0" />
+      {/* The scope hint is the link's description, not part of its name. */}
+      {hint && (
+        <span id={hintId} hidden>
+          {hint}
+        </span>
+      )}
+      <span className={`flex items-center min-w-0 ${NAV_GAP}`}>
+        <span className={NAV_ICON}>
+          <Icon name={item.icon} size="sm" aria-hidden="true" />
+        </span>
         {!collapsed && <span className="truncate">{item.label}</span>}
       </span>
-      {item.badge != null &&
-        item.badge > 0 &&
-        (() => {
-          const tone = item.badgeTone || "default";
-          const isDot = item.badge >= 999;
-          const colorCls =
-            tone === "warn"
-              ? "bg-[var(--color-warn)] text-[var(--color-on-accent)]"
-              : tone === "accent"
-                ? "bg-[var(--color-accent)] text-[var(--color-on-accent)]"
-                : "bg-[var(--color-accent)] text-[var(--color-on-accent)]";
-          if (isDot) {
-            return (
-              <span
-                aria-label="Attention required"
-                title="Attention required"
-                className={`shrink-0 w-2 h-2 rounded-full ${colorCls.split(" ")[0]} ${
-                  collapsed ? "absolute top-0.5 right-0.5" : ""
-                }`}
-              />
-            );
-          }
-          return (
-            <span
-              className={`text-2xs font-semibold tabular px-1.5 py-0.5 rounded ${colorCls} ${
-                collapsed ? "absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] grid place-items-center px-0.5" : ""
-              }`}
-            >
-              {item.badge}
-            </span>
-          );
-        })()}
+      {item.badge != null && item.badge > 0 && (
+        <NavBadge count={item.badge} tone={item.badgeTone ?? "default"} collapsed={collapsed} />
+      )}
     </a>
   );
   return (
     <Tip content={item.label} side="right" disabled={!collapsed}>
       {anchor}
     </Tip>
+  );
+}
+
+/** A collapsed item's name: its label, and its badge's count, which the name would
+ *  otherwise hide. */
+function collapsedName(item: NavItem): string {
+  if (!item.badge) return item.label;
+  return item.badge >= 999 ? `${item.label}, attention required` : `${item.label}, ${item.badge}`;
+}
+
+/** A nav entry's count (Click UI's small solid badge), or a dot at 999+ for "attention". */
+function NavBadge({
+  count,
+  tone,
+  collapsed,
+}: {
+  count: number;
+  tone: "default" | "warn" | "accent";
+  collapsed: boolean;
+}) {
+  const pin = collapsed ? "absolute -top-0.5 -right-0.5" : "";
+  if (count >= 999) {
+    return (
+      <span
+        role="img"
+        aria-label="Attention required"
+        className={`shrink-0 w-2 h-2 rounded-full ${tone === "warn" ? "bg-warn" : "bg-accent"} ${pin}`}
+      />
+    );
+  }
+  return (
+    <Badge
+      text={String(count)}
+      type="solid"
+      size="sm"
+      state={tone === "warn" ? "warning" : "neutral"}
+      className={`shrink-0 tabular ${pin}`}
+    />
   );
 }
