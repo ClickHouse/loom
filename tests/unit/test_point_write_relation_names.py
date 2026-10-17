@@ -34,3 +34,24 @@ def test_a_part_that_is_blank_once_canonical_is_refused(relation):
             build(**_IDENTITY, memory_key="k", value="v", relations=[relation])
     with pytest.raises(ValidationError):
         MemoryUpdateByIdInput(org="o", memory_id="m", value="v", relations=[relation])
+
+
+def _refusal(relation) -> str:
+    with pytest.raises(ValidationError) as caught:
+        MemorySetInput(**_IDENTITY, memory_key="k", value="v", relations=[relation])
+    return caught.value.errors()[0]["msg"]
+
+
+@pytest.mark.parametrize(("verb", "stored"), [("has", "''"), ("is a", "'a'"), ("좋아한다", "''")])
+def test_a_refused_relation_names_what_it_was_stored_as(verb, stored):
+    message = _refusal(("Alice", verb, "cat"))
+    assert f"{verb!r} is stored as {stored}" in message
+    assert "copulas" in message and "non-Latin letters" in message
+    assert "content verb such as 'owns'" in message
+
+
+def test_a_refused_subject_names_what_it_was_stored_as():
+    message = _refusal(("the ?", "owns", "cat"))
+    assert "'the ?' is stored as ''" in message
+    assert "articles, possessives and punctuation" in message
+    assert "a subject needs at least 2 characters" in message

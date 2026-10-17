@@ -221,11 +221,15 @@ class MemoryGetOutput(ProjectedRow):
 # row, each part capped at 256. The lengths the triple writer needs are checked on the
 # canonical form it stores, so "I" (stored as "user") is a subject and "  " is refused
 # rather than dropped. A bulk entry's `relations` stay unchecked: an extractor's surplus
-# is cut, not refused.
-def _canonical_at_least(min_chars: int, canonical: Any) -> AfterValidator:
+# is cut, not refused. The refusal says what the value was stored as and why, since
+# "has" and "is a" look long enough until the copula is dropped.
+def _canonical_at_least(
+    min_chars: int, canonical: Any, dropped: str, advice: str
+) -> AfterValidator:
     def check(raw: str) -> str:
-        if len(canonical(raw)) < min_chars:
-            raise ValueError(f"needs at least {min_chars} characters once canonicalised")
+        stored = canonical(raw)
+        if len(stored) < min_chars:
+            raise ValueError(f"{raw!r} is stored as {stored!r} ({dropped} are dropped); {advice}")
         return raw
 
     return AfterValidator(check)
@@ -235,9 +239,34 @@ def _relation_verb(raw: str) -> str:
     return canonical_relation(canonicalize_verb(raw)).verb
 
 
-_FactSubject = Annotated[str, Field(max_length=256), _canonical_at_least(2, canonical_entity_text)]
-_FactRelation = Annotated[str, Field(max_length=256), _canonical_at_least(2, _relation_verb)]
-_FactObject = Annotated[str, Field(max_length=256), _canonical_at_least(1, canonical_entity_text)]
+_ENTITY_DROPS = "articles, possessives and punctuation"
+_FactSubject = Annotated[
+    str,
+    Field(max_length=256),
+    _canonical_at_least(
+        2,
+        canonical_entity_text,
+        _ENTITY_DROPS,
+        "a subject needs at least 2 characters, such as a name",
+    ),
+]
+_FactRelation = Annotated[
+    str,
+    Field(max_length=256),
+    _canonical_at_least(
+        2,
+        _relation_verb,
+        "copulas, auxiliaries and non-Latin letters",
+        "name it with a content verb such as 'owns'",
+    ),
+]
+_FactObject = Annotated[
+    str,
+    Field(max_length=256),
+    _canonical_at_least(
+        1, canonical_entity_text, _ENTITY_DROPS, "an object needs at least 1 character"
+    ),
+]
 Fact = tuple[_FactSubject, _FactRelation, _FactObject]
 
 
