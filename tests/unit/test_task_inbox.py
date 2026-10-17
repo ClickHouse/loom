@@ -515,12 +515,51 @@ async def test_a_retried_create_writes_the_created_event_a_cut_off_create_left_o
     await _post(fake, idempotency_key="k1")
     events = [e for e in fake.events if e["task_id"] == tid]
     assert [e["event"] for e in events] == ["created"]
-    keep = ("seq", "from_status", "to_status", "actor", "agent", "from_subject", "fence")
+    keep = ("from_status", "to_status", "actor", "agent", "from_subject", "fence")
     assert {k: events[0][k] for k in keep} == {k: first[k] for k in keep}
     # A claimed task is not a create's to finish.
     fake.events.clear()
     fake.tasks[tid].update(status="in_progress", fence=1)
     await _post(fake, idempotency_key="k1")
+    assert fake.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_backfilled_created_event_with_nothing_after_it_reaches_cursor_readers(
+    fake: FakeRepo,
+) -> None:
+    # A reader whose cursor already passed the task's version must still be handed the
+    # created event the retry writes, so it gets a fresh seq.
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1")
+    fake.events.clear()
+    cursor = await fake.server_version()
+    await _post(fake, idempotency_key="k1")
+    delivered = await fake.events_since(ORG, since_seq=cursor, lag_s=0)
+    assert [(e["event"], e["task_id"]) for e in delivered] == [("created", a.task.task_id)]
+
+
+@pytest.mark.asyncio
+async def test_a_create_that_lost_the_insert_race_leaves_the_event_to_the_winner(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The winner stored its task and is still running: it writes its own created event.
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1")
+    fake.events.clear()
+
+    async def missed(org, inbox, key):
+        return None  # the loser's lease ran out, so its lookup ran before the winner stored
+
+    winner = dict(fake.tasks[a.task.task_id])
+
+    async def lost(row):
+        return dict(winner)
+
+    monkeypatch.setattr(fake, "fetch_task_by_idempotency_key", missed)
+    monkeypatch.setattr(fake, "insert_created_task", lost)
+    b = await _post(fake, idempotency_key="k1", title="raced")
+    assert not b.created and b.task.task_id == a.task.task_id
     assert fake.events == []
 
 

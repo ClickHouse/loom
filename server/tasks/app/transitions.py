@@ -106,16 +106,19 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
         return await _create(input, inbox, subject)
 
 
-async def _prior_task(prior: TaskRow) -> TaskCreateOutput:
+async def _prior_task(prior: TaskRow, *, backfill: bool = True) -> TaskCreateOutput:
     """The answer to a create whose key already holds the task `prior`.
 
     The first create may have been cut off (the key's lease timed out) after its task
     row and before its created event or its lease row; without a lease row the task can
     never be claimed. The retry writes what is missing: writing the lease row again is a
     no-op when it is there. Only a task never claimed can be in that state: a claimed
-    one finishing drops its lease before it records the end, and must not get it back."""
+    one finishing drops its lease before it records the end, and must not get it back.
+    `backfill=False` leaves the created event out: for a create whose own insert lost
+    to `prior`, whose create is still running and writes its own."""
     if prior["status"] in ("todo", "triage") and int(prior["fence"]) == 0:
-        await _backfill_created_event(prior)
+        if backfill:
+            await _backfill_created_event(prior)
         backend = await repo.lease_backend()
         await backend.ensure_row(
             str(prior["task_id"]), prior["org"], prior["inbox"], int(prior["fence"])
@@ -125,16 +128,20 @@ async def _prior_task(prior: TaskRow) -> TaskCreateOutput:
 
 async def _backfill_created_event(prior: TaskRow) -> None:
     """Log the created event a cut-off create left out. The retry holds the key's lease,
-    so no other create of this build reads and writes it at the same time."""
+    so no other retry of this build writes it at the same time; a first create that was
+    only stalled past its lease, not dead, can still write its own as well."""
     events = await repo.task_history(prior["org"], str(prior["task_id"]), consistent=True)
     if any(e["event"] == "created" for e in events):
         return
     if events:
         # The task was accepted or edited since: it landed in the status the first of
-        # those events left, and its created event goes just before that one.
+        # those events left, and its created event goes just before that one. A cursor
+        # reader already past that seq never sees it: it is history only.
         landed, seq = str(events[0]["from_status"]), int(events[0]["seq"]) - 1
     else:
-        landed, seq = str(prior["status"]), int(prior["version"])
+        # Nothing after it: a fresh seq, so cursor readers (webhooks, task.updates,
+        # task.watch) past the task's version still deliver it.
+        landed, seq = str(prior["status"]), await repo.server_version(int(prior["version"]))
     agent = str(prior["from_agent"])
     await _log_transition(
         cast(TaskRow, {**prior, "status": ""}),
@@ -221,7 +228,8 @@ async def _create(input: TaskCreateInput, inbox: InboxRow, subject: str) -> Task
     if input.idempotency_key:
         stored = await repo.insert_created_task(row)
         if str(stored["task_id"]) != task_id:
-            return await _prior_task(stored)  # a create whose lease ran out lost the race
+            # A create whose lease ran out lost the race; the winner logs its own event.
+            return await _prior_task(stored, backfill=False)
     else:
         await repo.insert_task_version(row)
     await _log_transition(
