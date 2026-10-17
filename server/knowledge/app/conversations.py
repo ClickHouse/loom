@@ -518,7 +518,7 @@ async def handle_conversation_search(
     # BY must stay the bare distance for the vector index), so each namespace is asked for
     # more rows than the page holds.
     spans_agents = input.agent in ("*", "-")
-    per_namespace = min(input.top_k * 2, 200) if spans_agents else input.top_k
+    per_namespace = input.top_k * 2 if spans_agents else input.top_k
 
     async def _search_one(ns: str) -> tuple[str, list[ConversationHit]]:
         return ns, await vector_search(

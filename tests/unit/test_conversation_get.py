@@ -844,3 +844,12 @@ async def test_vector_search_across_agents_fills_its_page_with_distinct_turns(
         )
     )
     assert asked == [2]
+
+    # The largest page keeps the same headroom.
+    asked.clear()
+    await app.handle_conversation_search(
+        ConversationSearchInput(
+            org="clickhouse", namespace="finance", agent="*", query="deploy", top_k=200
+        )
+    )
+    assert asked == [400]

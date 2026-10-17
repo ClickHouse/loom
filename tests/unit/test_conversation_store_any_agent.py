@@ -201,3 +201,16 @@ async def test_a_substring_hit_names_a_shared_turns_first_copy() -> None:
     inner, _, outer = sql.partition("LIMIT 1 BY")
     assert "ORDER BY ts ASC" in inner
     assert "ORDER BY ts DESC" in outer
+
+
+@pytest.mark.asyncio
+async def test_a_shared_turns_first_copy_is_the_same_row_on_every_read() -> None:
+    # Two agents can log a turn in one millisecond: the agent breaks that tie, so the copy a
+    # read keeps does not depend on which part ClickHouse delivers first.
+    ch = StubCH()
+    await conversation_repo.list_thread("o", "ns", None, "t-1", ch=ch)
+    inner = ch.calls[-1][0].partition("LIMIT 1 BY")[0]
+    assert "ORDER BY ts ASC, msg_id ASC, cityHash64(content) ASC, agent ASC" in inner
+    await conversation_repo.search_substring("o", ["ns"], "*", "deploy", limit=5, ch=ch)
+    inner = ch.calls[-1][0].partition("LIMIT 1 BY")[0]
+    assert "ORDER BY ts ASC, agent ASC" in inner

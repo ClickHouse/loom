@@ -539,6 +539,20 @@ test("the profile section dialog opens on itself and closes on one Escape", asyn
   await expect(dialog).toBeHidden();
 });
 
+// A date field keeps Click UI's active border while focus is anywhere in it, its calendar
+// button included (the browser draws that button's own ring; author styles cannot).
+test("a date field keeps its focus border on its calendar button", async ({ page }) => {
+  await open(page, "/graph");
+  const field = page.locator("#graph-as-of");
+  await field.focus();
+  const active = await field.evaluate((el) => getComputedStyle(el).borderColor);
+  // Through the month, day and year segments to the calendar button.
+  for (let i = 0; i < 3; i++) await page.keyboard.press("Tab");
+  expect(await field.evaluate((el) => el.matches(":focus"))).toBe(false);
+  expect(await field.evaluate((el) => el.matches(":focus-within"))).toBe(true);
+  expect(await field.evaluate((el) => getComputedStyle(el).borderColor)).toBe(active);
+});
+
 // WCAG 2.1.4: the one-key shortcuts can be turned off, and ? then types nothing.
 test("the single-key shortcuts turn off from the help dialog", async ({ page }) => {
   await open(page, "/memories");

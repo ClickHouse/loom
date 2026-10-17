@@ -249,7 +249,9 @@ class ConversationSearchInput(BaseModel):
     thread_id: str | None = None  # optional: scope to one thread
     run_id: str | None = None  # optional: filter by run_id
     role: ConversationRole | None = None  # optional: filter by speaker
-    # At most this many hits (1-200).
+    # At most this many hits (1-200). Across agents ("*" or "-") a turn several agents
+    # logged is one hit; the vector path reads twice this per namespace before it merges
+    # them, so a page can still be short when a turn has more than two copies.
     top_k: int = Field(default=20, ge=1, le=200)
     # "all_mine" also reads the caller's own namespaces, up to
     # `memory_search_fanout_max_namespaces`, as knowledge.search does.

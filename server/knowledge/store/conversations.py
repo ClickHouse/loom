@@ -441,7 +441,7 @@ async def search_substring(
         # its first copy, the one a thread read shows.
         source = f"""(
             SELECT {columns} FROM {source}
-            ORDER BY ts ASC
+            ORDER BY ts ASC, agent ASC
             LIMIT 1 BY namespace, thread_id, {TURN}
         )"""
     rows = await ch.query_all(
@@ -530,7 +530,7 @@ async def list_thread(
         # the cursor is what says a later one is not a new turn.
         source = f"""(
             SELECT {columns} FROM {source}
-            ORDER BY ts ASC, msg_id ASC, cityHash64(content) ASC
+            ORDER BY ts ASC, msg_id ASC, cityHash64(content) ASC, agent ASC
             LIMIT 1 BY {TURN}
         )"""
     rows = await ch.query_all(
