@@ -673,7 +673,13 @@ async def _bulk_build_rows(
         entry_tags = list(entry.tags or [])
         entry_anchor_dt = parse_iso_dt(entry.temporal_anchor)
         entry_entities = resolved_entity_list(entry.entities or [], entity_resolution)
-        state.entry_metas.append((entry, serialized_value, entry_tags, entry_entities, expires_at))
+        # The protected-attribute and sensitivity labels ride the row's tags, and the
+        # embedding row's: the ranking reads them there.
+        row_tags = _with_sensitivity_tag(
+            _with_attribute_tags(entry_tags, serialized_value, input.namespace),
+            entry_sensitivity,
+        )
+        state.entry_metas.append((entry, serialized_value, row_tags, entry_entities, expires_at))
         memory_row = {
             "org": input.org,
             "namespace": input.namespace,
@@ -709,11 +715,7 @@ async def _bulk_build_rows(
             "valid_to": entry.valid_to,
             "char_limit": entry.char_limit,
             "pinned": 1 if entry.pinned else 0,
-            # Protected-attribute label rides the row's tags.
-            "tags": _with_sensitivity_tag(
-                _with_attribute_tags(entry_tags, serialized_value, input.namespace),
-                entry_sensitivity,
-            ),
+            "tags": row_tags,
             "entities": entry_entities,
             # Code-native facets. Carried on every row: ch.insert
             # derives columns from rows[0].keys(), and under RMT FINAL an omitted
