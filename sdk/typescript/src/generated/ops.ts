@@ -5555,8 +5555,14 @@ export interface MemorySetFromMessagesInput {
   defer?: boolean;
 }
 
+export interface RefusedFact {
+  memory_key: string;
+  verdict: string;
+}
+
 export interface MemorySetFromMessagesOutput {
   written?: BulkSetResult[];
+  refused?: RefusedFact[];
   tokens_in?: number;
   tokens_out?: number;
   llm_provider?: string;

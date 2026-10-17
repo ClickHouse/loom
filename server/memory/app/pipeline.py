@@ -972,6 +972,11 @@ async def _step_bulk_write(
     # for a refused entry (blacklisted, pinned or locked key): it produced no row, and
     # neither evidence nor chunks may attach to the stored one through it.
     state.written = [r.model_dump() for r in bulk_out.written if r.conflict_verdict not in REFUSED]
+    state.refused = [
+        {"memory_key": r.memory_key, "verdict": r.conflict_verdict}
+        for r in bulk_out.written
+        if r.conflict_verdict in REFUSED
+    ]
     for _phase, _ms in (getattr(bulk_out, "stage_ms", None) or {}).items():
         state.stage_ms[f"bulk.{_phase}"] = float(_ms)
     return state

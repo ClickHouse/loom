@@ -328,3 +328,7 @@ async def test_a_pinned_or_locked_refusal_is_not_written_but_a_restatement_is(
     )
     state = await pipe._step_bulk_write(state, {})
     assert [(w["memory_key"], w["version"]) for w in state.written] == [("pet", 9), ("city", 0)]
+    assert state.refused == [
+        {"memory_key": "home", "verdict": PINNED},
+        {"memory_key": "job", "verdict": LOCKED},
+    ]

@@ -12680,6 +12680,7 @@ class MemorySetFromMessagesOutput(TypedDict, total=False):
     "One entry per extracted fact that was written. `tokens_in` /"
 
     written: NotRequired[list["BulkSetResult"]]
+    refused: NotRequired[list["RefusedFact"]]
     tokens_in: NotRequired[int]
     tokens_out: NotRequired[int]
     llm_provider: NotRequired[str]
@@ -12708,6 +12709,11 @@ class MemorySetFromMessagesOutput(TypedDict, total=False):
     extract_prompt_keys: NotRequired[list[str]]
     llm_cache_hits: NotRequired[int]
     llm_cache_misses: NotRequired[int]
+
+
+class RefusedFact(TypedDict, total=False):
+    memory_key: Required[str]
+    verdict: Required[str]
 
 
 class MemoryStackInput(TypedDict, total=False):

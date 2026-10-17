@@ -389,3 +389,6 @@ async def test_a_refused_record_gets_no_evidence_and_no_count(
     )
     assert linked == [linked_keys] and counted == [len(linked_keys)]
     assert [r.memory_key for r in out.written] == linked_keys
+    # The caller is told which fact a key refused, apart from one never extracted.
+    refused = [] if linked_keys else [("rec1", verdict)]
+    assert [(r.memory_key, r.verdict) for r in out.refused] == refused

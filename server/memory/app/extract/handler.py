@@ -27,6 +27,7 @@ from server.memory.api.models_bulk import (
     _BulkSetEntry,
     _BulkSetResult,
     _ExtractionQueueRow,
+    _RefusedFact,
 )
 from server.memory.app.bulk_set import (
     detect_updates_override,
@@ -271,8 +272,12 @@ async def _set_record_from_messages(
                 },
             )
     _account_build(input.namespace, llm.tokens_in, llm.tokens_out, len(written), len(msgs))
+    refused = [r for r in bulk_out.written if r.conflict_verdict in REFUSED]
     return MemorySetFromMessagesOutput(
         written=[r.model_copy() for r in written],
+        refused=[
+            _RefusedFact(memory_key=r.memory_key, verdict=r.conflict_verdict) for r in refused
+        ],
         tokens_in=llm.tokens_in,
         tokens_out=llm.tokens_out,
         llm_provider=llm.provider,
@@ -619,6 +624,7 @@ async def handle_memory_set_from_messages(
     )
     return MemorySetFromMessagesOutput(
         written=[_BulkSetResult.model_validate(w) for w in state.written],
+        refused=[_RefusedFact.model_validate(r) for r in state.refused],
         tokens_in=state.tokens_in,
         tokens_out=state.tokens_out,
         llm_provider=state.llm_provider,

@@ -1984,6 +1984,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `written` | `list[_BulkSetResult]` | Key and version of each extracted fact written; empty on a deferred call. |
+| `refused` | `list[_RefusedFact]` | The extracted facts the write refused (a blacklisted, pinned or locked key, or a pinned row close by), with the verdict; not in `written` or the counts. |
 | `tokens_in` | `int` | Prompt tokens of the extraction LLM calls. |
 | `tokens_out` | `int` | Completion tokens of the extraction LLM calls. |
 | `llm_provider` | `str` | The LLM provider that ran the extraction; '' when deferred. |

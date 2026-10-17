@@ -206,6 +206,13 @@ class MemorySetFromMessagesInput(_Identity):
     defer: bool = False
 
 
+class _RefusedFact(BaseModel):
+    # The key of an extracted fact the write refused.
+    memory_key: str
+    # Why: blacklisted | pinned | locked | rejected (close to a pinned row).
+    verdict: str
+
+
 class MemorySetFromMessagesOutput(BaseModel):
     """One entry per extracted fact that was written. `tokens_in` /
     `tokens_out` are reported back so the caller can attribute LLM cost
@@ -213,6 +220,9 @@ class MemorySetFromMessagesOutput(BaseModel):
 
     # Key and version of each extracted fact written; empty on a deferred call.
     written: list[_BulkSetResult] = Field(default_factory=list)
+    # The extracted facts the write refused (a blacklisted, pinned or locked key, or a
+    # pinned row close by), with the verdict; not in `written` or the counts.
+    refused: list[_RefusedFact] = Field(default_factory=list)
     # Prompt tokens of the extraction LLM calls.
     tokens_in: int = 0
     # Completion tokens of the extraction LLM calls.
