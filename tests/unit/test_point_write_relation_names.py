@@ -46,8 +46,32 @@ def _refusal(relation) -> str:
 def test_a_refused_relation_names_what_it_was_stored_as(verb, stored):
     message = _refusal(("Alice", verb, "cat"))
     assert f"{verb!r} is stored as {stored}" in message
-    assert "copulas" in message and "non-Latin letters" in message
+    assert "copulas" in message and "letters outside a–z" in message
     assert "content verb such as 'owns'" in message
+
+
+@pytest.mark.parametrize(
+    ("verb", "says"),
+    [
+        # Only too short: nothing was dropped, so the refusal names no drop.
+        ("x", "'x' is too short: a relation needs at least 2 characters"),
+        # Punctuation and a Latin letter outside a-z are dropped, and named as such.
+        ("!!", "'!!' is stored as '' (copulas, auxiliaries, punctuation and letters outside a–z"),
+        ("é", "'é' is stored as '' (copulas, auxiliaries, punctuation and letters outside a–z"),
+    ],
+)
+def test_a_refusal_names_a_drop_only_when_there_was_one(verb, says):
+    message = _refusal(("Alice", verb, "cat"))
+    assert says in message
+    assert ("dropped" in message) is (verb != "x")
+    assert "non-Latin" not in message
+
+
+def test_a_subject_that_is_only_too_short_says_so():
+    message = _refusal(("x", "owns", "cat"))
+    assert message.endswith(
+        "'x' is too short: a subject needs at least 2 characters, such as a name"
+    )
 
 
 def test_a_refused_subject_names_what_it_was_stored_as():

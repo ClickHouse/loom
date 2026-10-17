@@ -221,16 +221,17 @@ class MemoryGetOutput(ProjectedRow):
 # row, each part capped at 256. The lengths the triple writer needs are checked on the
 # canonical form it stores, so "I" (stored as "user") is a subject and "  " is refused
 # rather than dropped. A bulk entry's `relations` stay unchecked: an extractor's surplus
-# is cut, not refused. The refusal says what the value was stored as and why, since
-# "has" and "is a" look long enough until the copula is dropped.
-def _canonical_at_least(
-    min_chars: int, canonical: Any, dropped: str, advice: str
-) -> AfterValidator:
+# is cut, not refused. When the canonical form dropped something, the refusal says what
+# it was stored as and why, since "has" and "is a" look long enough until the copula is
+# dropped; a part that is only too short ("x") just says so.
+def _canonical_at_least(min_chars: int, canonical: Any, dropped: str, needs: str) -> AfterValidator:
     def check(raw: str) -> str:
         stored = canonical(raw)
-        if len(stored) < min_chars:
-            raise ValueError(f"{raw!r} is stored as {stored!r} ({dropped} are dropped); {advice}")
-        return raw
+        if len(stored) >= min_chars:
+            return raw
+        if stored == raw.strip().lower():  # nothing dropped, only lowercased
+            raise ValueError(f"{raw!r} is too short: {needs}")
+        raise ValueError(f"{raw!r} is stored as {stored!r} ({dropped} are dropped); {needs}")
 
     return AfterValidator(check)
 
@@ -256,8 +257,8 @@ _FactRelation = Annotated[
     _canonical_at_least(
         2,
         _relation_verb,
-        "copulas, auxiliaries and non-Latin letters",
-        "name it with a content verb such as 'owns'",
+        "copulas, auxiliaries, punctuation and letters outside a–z",
+        "a relation needs at least 2 characters: name it with a content verb such as 'owns'",
     ),
 ]
 _FactObject = Annotated[
