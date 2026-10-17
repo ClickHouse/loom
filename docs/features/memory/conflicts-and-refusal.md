@@ -175,7 +175,8 @@ The tab's Undo calls `memory.restore` with `if_superseded_by`: the row comes bac
 `memory.unsupersede` is recorded, only while it is still retired behind the memory the
 record names; a row deleted, revived or retired again since shows "Changed since". It
 comes back `active`, or `conflicted` when it was under review when it retired: it still
-lists its peers, as they list it.
+lists its peers, as they list it. A retired duplicate comes back `duplicate` while its
+original is still served, and `active` once it is not.
 
 The Undo holds the key's write lock from its read of the row to its insert, as a
 conditional write (`if_match_sha256`) does: a conditional revision made meanwhile lands
