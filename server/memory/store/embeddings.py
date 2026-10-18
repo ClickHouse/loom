@@ -118,7 +118,11 @@ async def mirror_status_to_embeddings(
             str(m.get("memory_key") or ""),
         )
         overrides: dict[str, Any] = {"status": m.get("status")}
-        if m.get("invalid_at") is not None:
+        # A served head's None is its value too: a vector served again loses the end a
+        # retirement stamped on it.
+        if m.get("invalid_at") is not None or (
+            "invalid_at" in m and m.get("status") in SERVED_STATUSES
+        ):
             overrides["invalid_at"] = m.get("invalid_at")
         if m.get("tombstoned_at") is not None:
             overrides["tombstoned_at"] = m.get("tombstoned_at")

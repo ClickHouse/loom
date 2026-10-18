@@ -1702,6 +1702,20 @@ async def test_a_pin_whose_vector_landed_first_keeps_its_vector_served(
     assert head["pinned"] and head["status"] == "active" and head["version"] == drawn
     (served,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
     assert served["status"] == "active", "the pin's vector, not the retirement's copy"
+    assert served["invalid_at"] is None, "nor its end"
+    # A knowledge-time read of now admits the pinned row's vector, as it does the row.
+    from datetime import UTC, datetime
+
+    from server.memory.domain.temporal_sql import as_of_predicate
+
+    known = as_of_predicate("knowledge_time", invalid_col="invalid_at", tomb_col="tombstoned_at")
+    (n,) = await ch.query_all(
+        f"SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {{org:String}}"
+        f" AND memory_key = 'office_city' AND {known}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "as_of": datetime.now(UTC).replace(tzinfo=None)},
+    )
+    assert n["n"] == 1
 
 
 async def test_the_status_mirror_repair_never_serves_a_row_retired_during_it(ch, wired) -> None:
