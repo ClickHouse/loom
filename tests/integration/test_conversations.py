@@ -334,12 +334,15 @@ async def test_the_embedding_row_keeps_the_embedded_text_and_a_hit_shows_its_sta
     await agent.conversations.append(tid, mid, "user", content)
 
     stored = ch_client.query(
-        "SELECT agent, thread_id, role, content_excerpt, embedding_dim > 0, tombstoned_at "
+        "SELECT agent, thread_id, role, content_excerpt, embedding_dim > 0, tombstoned_at, "
+        "user_id, run_id, embed_attempts, embed_last_error, embedding_model != '' "
         "FROM loom.conversation_embeddings FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND msg_id = {mid:String}",
         parameters={"org": agent.org, "ns": agent.namespace, "mid": mid},
     ).result_rows
-    assert [tuple(r) for r in stored] == [(agent.agent, tid, "user", content[:2048], True, None)]
+    assert [tuple(r) for r in stored] == [
+        (agent.agent, tid, "user", content[:2048], True, None, "-", "-", 1, "", True)
+    ]
 
     hits = await agent.conversations.search(f"gazelle {nonce}", thread_id=tid)
     [hit] = [h for h in hits["hits"] if h["msg_id"] == mid]
@@ -389,3 +392,40 @@ async def test_a_turn_another_agent_relogged_after_compaction_is_not_counted_on_
 
     hits = await agent.conversations.search(f"tapir {nonce}", thread_id=tid, agent_id="*")
     assert {h["msg_id"] for h in hits["hits"]} == {shared}, hits["hits"]
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_thread_takes_an_embedding_no_message_backs(
+    agent, control_plane_url: str, ch_client, mint_test_token
+) -> None:
+    """An append whose message insert failed after its embed landed leaves an embedding
+    row alone; deleting the thread tombstones it too."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    orphan = uuid.uuid4().hex
+    await agent.conversations.append(tid, uuid.uuid4().hex, "user", f"quokka {nonce} 0")
+    await agent.conversations.append(tid, orphan, "assistant", f"quokka {nonce} 1")
+    ch_client.command(
+        "ALTER TABLE loom.conversations DELETE "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND msg_id = {mid:String} SETTINGS mutations_sync = 2",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid, "mid": orphan},
+    )
+
+    out = await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    assert out["rows_affected"]["loom.conversation_embeddings"] == 2
+
+    hits = await agent.conversations.search(f"quokka {nonce}", thread_id=tid, agent_id="*")
+    assert hits["hits"] == [], hits["hits"]

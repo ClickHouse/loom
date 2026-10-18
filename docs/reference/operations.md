@@ -267,7 +267,7 @@ Fields for every `conversation` op: [operations/conversation.md](operations/conv
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
 | [`conversation.append`](operations/conversation.md#conversationappend) | Log one chat turn (role + content) to the active thread. | writer | idempotent | yes |  |
-| [`conversation.compact`](operations/conversation.md#conversationcompact) | Summarize messages older than `keep_recent` (from the tail) via an LLM, write the summary as a synthetic role='system' message with metadata.compacted_from=[msg_ids], embedded so search finds it… | writer | idempotent | no | yes |
+| [`conversation.compact`](operations/conversation.md#conversationcompact) | Summarize messages older than `keep_recent` into one embedded system message, then tombstone the originals and their embeddings. | writer | idempotent | no | yes |
 | [`conversation.create`](operations/conversation.md#conversationcreate) | Open a thread container. | writer | idempotent | yes |  |
 | [`conversation.delete`](operations/conversation.md#conversationdelete) | Soft-delete one thread: sets `tombstoned_at` on messages + thread row + embeddings; read paths filter tombstoned rows, retention TTL hard-deletes. | admin | idempotent | no | yes |
 | [`conversation.get`](operations/conversation.md#conversationget) | Fetch one thread by id: thread metadata + optional messages. | viewer | read | no |  |

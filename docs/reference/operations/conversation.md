@@ -38,7 +38,7 @@ Log one chat turn (role + content) to the active thread.
 
 ## `conversation.compact`
 
-Summarize messages older than `keep_recent` (from the tail) via an LLM, write the summary as a synthetic role='system' message with metadata.compacted_from=[msg_ids], embedded so search finds it…
+Summarize messages older than `keep_recent` into one embedded system message, then tombstone the originals and their embeddings.
 
 `POST /v1/conversation.compact` · MCP `loom_conversation_compact` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
 

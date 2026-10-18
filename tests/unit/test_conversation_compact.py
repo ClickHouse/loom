@@ -42,6 +42,23 @@ class _FakeCH:
         self.executed.append((sql, params or {}))
 
 
+_EMBEDDING_FIELDS = (
+    "org",
+    "namespace",
+    "agent",
+    "thread_id",
+    "msg_id",
+    "role",
+    "content_excerpt",
+    "user_id",
+    "run_id",
+    "ts",
+    "embed_attempts",
+    "embed_last_error",
+    "embed_failed_at",
+)
+
+
 class _FakeLLM:
     provider = "fake"
     model = "fake"
@@ -84,11 +101,22 @@ def test_compact_reads_without_final_and_carries_the_threads_user(monkeypatch) -
     assert summary["ts"] == T0
     # The summary is embedded, so search finds what it replaced.
     [vec] = fake.embedded
-    assert (vec["msg_id"], vec["role"], vec["content_excerpt"]) == (
-        summary["msg_id"],
-        "system",
-        "a summary",
-    )
+    assert {k: vec[k] for k in _EMBEDDING_FIELDS} == {
+        "org": "o",
+        "namespace": "n",
+        "agent": "a",
+        "thread_id": "t",
+        "msg_id": summary["msg_id"],
+        "role": "system",
+        "content_excerpt": "a summary",
+        "user_id": "alice",  # erasure-by-user finds the summary's vector too
+        "run_id": "run-1",
+        "ts": T0,
+        "embed_attempts": 1,
+        "embed_last_error": "",
+        "embed_failed_at": None,
+    }
+    assert vec["embedding_dim"] > 0 and len(vec["embedding"]) == vec["embedding_dim"]
 
 
 def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> None:
@@ -164,3 +192,45 @@ def test_a_long_thread_is_tombstoned_in_chunks() -> None:
     chunks = [p["due"] for sql, p in fake.executed if "conversation_embeddings" in sql]
     assert [len(c) for c in chunks] == [repo._TOMBSTONE_CHUNK, repo._TOMBSTONE_CHUNK, 5]
     assert sum(chunks, []) == due
+
+
+def test_a_summary_that_cannot_be_embedded_compacts_nothing(monkeypatch) -> None:
+    """Without the summary's vector the compacted turns would leave search for good,
+    so nothing is written and the originals stay as they are."""
+    import server.core.ch
+    import server.llm.client
+
+    class _DownEmbedder:
+        model_name = "fake"
+        dim = 3
+
+        async def embed(self, text):
+            raise RuntimeError("embedder down")
+
+    rows = [
+        {
+            "msg_id": f"m{i}",
+            "role": "user",
+            "content": f"turn {i}",
+            "ts": T0 + timedelta(seconds=i),
+            "metadata": "{}",
+            "user_id": "alice",
+            "run_id": "run-1",
+        }
+        for i in range(6)
+    ]
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
+    monkeypatch.setattr(ch_mod, "get_embedder", lambda: _DownEmbedder())
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=2
+            )
+        )
+    )
+    assert (out.compacted, out.reason) == (False, "embed-failed")
+    assert fake.inserted == [] and fake.embedded == []
+    assert not [sql for sql, _ in fake.executed if "ALTER TABLE" in sql]

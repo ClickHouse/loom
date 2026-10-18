@@ -321,10 +321,11 @@ class ConversationThreadsOutput(BaseModel):
 
 
 class ConversationCompactInput(BaseModel):
-    """Summarize messages older than `keep_recent` (from the tail) via an LLM,
-    write the summary as a synthetic role='system' message with
-    metadata.compacted_from=[msg_ids], embedded so search finds it, then tombstone
-    the originals and their embeddings.
+    """Summarize messages older than `keep_recent` into one embedded system message, then
+    tombstone the originals and their embeddings.
+
+    The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
+    nothing is written (`reason="embed-failed"`).
 
     Idempotent: re-running on an already-summarized window is a no-op.
     """

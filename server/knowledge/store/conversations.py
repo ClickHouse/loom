@@ -741,7 +741,8 @@ async def _tombstone_embeddings(
     count: bool = True,
 ) -> int:
     """Tombstone the embeddings of `agent`'s turns in one thread (`msg_ids`, or every
-    turn it logged there, live or tombstoned) and, with `count`, return how many of
+    turn it logged there, live or tombstoned, and its embedding rows no message backs)
+    and, with `count`, return how many of
     those turns have a tombstoned embedding. The embeddings key has no agent: a turn several agents
     logged is one row, so it goes by turn, and only once no other agent's copy is
     live. The turns are read first and the mutation names them, so it evaluates no
@@ -752,6 +753,15 @@ async def _tombstone_embeddings(
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND agent = {{agent:String}} AND thread_id = {{tid:String}} {within}
         )"""
+    if msg_ids is None:
+        # The whole thread also takes the agent's embedding rows no message row backs
+        # (an append whose message insert failed after its embed landed).
+        turns = f"""({turns}
+          OR (agent = {{agent:String}} AND msg_id NOT IN (
+            SELECT msg_id FROM loom.conversations
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND thread_id = {{tid:String}}
+          )))"""
     params: dict[str, Any] = {"org": org, "ns": namespace, "agent": agent, "tid": thread_id}
     if msg_ids is not None:
         params["ids"] = msg_ids

@@ -7435,7 +7435,7 @@ class ConversationAppendOutput(TypedDict, total=False):
 
 
 class ConversationCompactInput(TypedDict, total=False):
-    "Summarize messages older than `keep_recent` (from the tail) via an LLM,"
+    "Summarize messages older than `keep_recent` into one embedded system message, then"
 
     org: Required[str]
     namespace: Required[str]
@@ -7446,7 +7446,7 @@ class ConversationCompactInput(TypedDict, total=False):
 
 
 class ConversationCompactBody(TypedDict, total=False):
-    "Summarize messages older than `keep_recent` (from the tail) via an LLM,"
+    "Summarize messages older than `keep_recent` into one embedded system message, then"
 
     org: NotRequired[str]
     namespace: NotRequired[str]

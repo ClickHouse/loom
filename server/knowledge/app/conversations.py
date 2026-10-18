@@ -169,22 +169,53 @@ async def handle_conversation_append(
     # depends on the other, and run sequentially the ~66 ms insert would sit in front of a
     # ~210 ms embed. Both still complete before the response, so conversation.search keeps
     # its read-your-write guarantee.
-    await asyncio.gather(
-        _insert_message(),
-        _store_embedding(
+    async def _embed_and_store() -> None:
+        embedded = await _embed_turn(
+            input.content,
+            org=input.org,
+            namespace=input.namespace,
+            thread_id=input.thread_id,
+            msg_id=msg_id,
+        )
+        await _store_embedding(
             org=input.org,
             namespace=input.namespace,
             agent=input.agent,
             thread_id=input.thread_id,
             msg_id=msg_id,
             role=input.role,
-            content=input.content,
             user_id=input.user_id,
             run_id=input.run_id,
             ts=now,
-        ),
-    )
+            embedded=embedded,
+        )
+
+    await asyncio.gather(_insert_message(), _embed_and_store())
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
+
+
+async def _embed_turn(
+    content: str, *, org: str, namespace: str, thread_id: str, msg_id: str
+) -> tuple[str, list[float], int, str]:
+    """`(excerpt, vector, dim, error)` for one turn: its first `_EMBED_EXCERPT_LIMIT`
+    characters, embedded. Fail-open: a failed embed returns no vector and the error."""
+    embedder = get_embedder()
+    excerpt = content[:_EMBED_EXCERPT_LIMIT]
+    try:
+        with traced(
+            "embed.compute.conversation", model=embedder.model_name, excerpt_len=len(excerpt)
+        ):
+            return excerpt, await embedder.embed(excerpt), embedder.dim, ""
+    except Exception as e:  # noqa: BLE001 — embed failure still stores the turn
+        log.warning(
+            "conversation embed failed (org=%s ns=%s thread=%s msg=%s): %s",
+            org,
+            namespace,
+            thread_id,
+            msg_id,
+            e,
+        )
+        return excerpt, [], 0, f"{type(e).__name__}: {e}"
 
 
 async def _store_embedding(
@@ -195,36 +226,16 @@ async def _store_embedding(
     thread_id: str,
     msg_id: str,
     role: str,
-    content: str,
     user_id: str,
     run_id: str,
     ts: datetime,
+    embedded: tuple[str, list[float], int, str],
 ) -> None:
-    """Embed one turn's first `_EMBED_EXCERPT_LIMIT` characters and store its
-    embedding row. Fail-open: a failed embed still stores the row, with the
-    dead-letter columns set, so a re-embed can fill it."""
+    """Store one turn's embedding row from `_embed_turn`'s result. A failed embed is
+    stored too, with the dead-letter columns recording the error."""
     from server.knowledge.store import conversations as conversation_repo
 
-    embedder = get_embedder()
-    excerpt = content[:_EMBED_EXCERPT_LIMIT]
-    embedding: list[float] = []
-    embedding_dim, embed_err = 0, ""
-    try:
-        with traced(
-            "embed.compute.conversation", model=embedder.model_name, excerpt_len=len(excerpt)
-        ):
-            embedding = await embedder.embed(excerpt)
-        embedding_dim = embedder.dim
-    except Exception as e:  # noqa: BLE001 — embed failure still stores the turn for retry
-        log.warning(
-            "conversation embed failed (org=%s ns=%s thread=%s msg=%s): %s",
-            org,
-            namespace,
-            thread_id,
-            msg_id,
-            e,
-        )
-        embed_err = f"{type(e).__name__}: {e}"
+    excerpt, embedding, embedding_dim, embed_err = embedded
     embedding_row: ConversationEmbeddingRow = {
         "org": org,
         "namespace": namespace,
@@ -235,7 +246,7 @@ async def _store_embedding(
         # The text the vector was built from, which a re-embed starts from again;
         # search hits show its first HIT_EXCERPT_CHARS characters.
         "content_excerpt": excerpt,
-        "embedding_model": embedder.model_name,
+        "embedding_model": get_embedder().model_name,
         "embedding_dim": embedding_dim,
         "embedding": embedding,
         "user_id": user_id,
@@ -766,6 +777,23 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     summary_msg_id = f"compact-{_uuid.uuid4().hex[:12]}"
+    # The summary is what search finds once the turns it replaces are tombstoned, so
+    # it is embedded before anything is written; without a vector nothing changes.
+    embedded = await _embed_turn(
+        summary_text,
+        org=input.org,
+        namespace=input.namespace,
+        thread_id=input.thread_id,
+        msg_id=summary_msg_id,
+    )
+    if embedded[3]:
+        return ConversationCompactOutput(
+            compacted=False,
+            messages_summarized=0,
+            reason="embed-failed",
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+        )
     # The summary restates these messages, so it carries their user_id:
     # erasure-by-user tombstones on user_id alone, and a '-' summary would
     # outlive the erased user's messages. A mixed-user window takes the most
@@ -804,8 +832,6 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             ts=earliest_ts,
         )
     )
-    # The summary is embedded, unlike other system turns: it is what search finds
-    # once the turns it replaces are tombstoned.
     await _store_embedding(
         org=input.org,
         namespace=input.namespace,
@@ -813,10 +839,10 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         thread_id=input.thread_id,
         msg_id=summary_msg_id,
         role="system",
-        content=summary_text,
         user_id=summary_user_id,
         run_id=summary_run_id,
         ts=earliest_ts,
+        embedded=embedded,
     )
     await conversation_repo.tombstone_messages(
         input.org,
