@@ -298,7 +298,8 @@ async def tombstone_thread(
     when: datetime,
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
-    """Soft-delete one thread: messages + thread row + embeddings.
+    """Soft-delete one thread: messages + thread row + the embeddings no other agent
+    holds (see `_tombstone_embeddings`).
 
     Sets `tombstoned_at = when`; read paths here filter
     `tombstoned_at IS NULL`, so rows vanish from subsequent fetch / list

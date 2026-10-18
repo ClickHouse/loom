@@ -7497,7 +7497,7 @@ class ConversationCreateOutput(TypedDict, total=False):
 
 
 class ConversationDeleteInput(TypedDict, total=False):
-    "Soft-delete one thread: sets `tombstoned_at` on messages + thread row +"
+    "Soft-delete one thread: its messages, thread row and embeddings no other agent holds."
 
     org: Required[str]
     namespace: Required[str]
@@ -7507,7 +7507,7 @@ class ConversationDeleteInput(TypedDict, total=False):
 
 
 class ConversationDeleteBody(TypedDict, total=False):
-    "Soft-delete one thread: sets `tombstoned_at` on messages + thread row +"
+    "Soft-delete one thread: its messages, thread row and embeddings no other agent holds."
 
     org: NotRequired[str]
     namespace: NotRequired[str]

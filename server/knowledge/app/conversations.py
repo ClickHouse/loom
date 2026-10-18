@@ -324,7 +324,7 @@ async def handle_conversation_update(
 async def handle_conversation_delete(
     input: ConversationDeleteInput,
 ) -> ConversationDeleteOutput:
-    """Soft-delete one thread (messages + thread row + embeddings).
+    """Soft-delete one thread (messages, thread row, and embeddings no other agent holds).
 
     Tombstone, not hard-delete: rows disappear from reader queries
     immediately because the read paths filter `tombstoned_at IS NULL`;
@@ -746,8 +746,9 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     fit = max(fit, folded.index(False) + 1)
     candidates = candidates[:fit]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
+    # The fit counted each folded line's newline; the cap adds back only its text.
     cap = _COMPACT_TRANSCRIPT_CHARS + sum(
-        len(line) + 1 for line, f in zip(lines[:fit], folded[:fit], strict=True) if f
+        len(line) for line, f in zip(lines[:fit], folded[:fit], strict=True) if f
     )
     transcript = "\n".join(lines[:fit])[:cap]
 

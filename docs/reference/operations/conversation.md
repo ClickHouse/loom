@@ -84,7 +84,7 @@ Open a thread container.
 
 ## `conversation.delete`
 
-Soft-delete one thread: sets `tombstoned_at` on messages + thread row + embeddings; read paths filter tombstoned rows, retention TTL hard-deletes.
+Soft-delete one thread: its messages, thread row and embeddings no other agent holds.
 
 `POST /v1/conversation.delete` · MCP `loom_conversation_delete` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 

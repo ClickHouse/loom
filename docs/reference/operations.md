@@ -269,7 +269,7 @@ Fields for every `conversation` op: [operations/conversation.md](operations/conv
 | [`conversation.append`](operations/conversation.md#conversationappend) | Log one chat turn (role + content) to the active thread. | writer | idempotent | yes |  |
 | [`conversation.compact`](operations/conversation.md#conversationcompact) | Summarize old turns into one embedded system turn and tombstone the originals. | writer | idempotent | no | yes |
 | [`conversation.create`](operations/conversation.md#conversationcreate) | Open a thread container. | writer | idempotent | yes |  |
-| [`conversation.delete`](operations/conversation.md#conversationdelete) | Soft-delete one thread: sets `tombstoned_at` on messages + thread row + embeddings; read paths filter tombstoned rows, retention TTL hard-deletes. | admin | idempotent | no | yes |
+| [`conversation.delete`](operations/conversation.md#conversationdelete) | Soft-delete one thread: its messages, thread row and embeddings no other agent holds. | admin | idempotent | no | yes |
 | [`conversation.get`](operations/conversation.md#conversationget) | Fetch one thread by id: thread metadata + optional messages. | viewer | read | no |  |
 | [`conversation.list`](operations/conversation.md#conversationlist) | Enumerate stored conversation threads for an agent / namespace. | viewer | read | no |  |
 | [`conversation.search`](operations/conversation.md#conversationsearch) | Rank conversation messages by embedding similarity to `query`. | viewer | read | no |  |
