@@ -158,6 +158,7 @@ async def test_a_turn_appended_during_the_delete_leaves_search(ch, scope) -> Non
         when=datetime.now(UTC).replace(tzinfo=None),
         ch=_AppendDuring(),
     )
+    assert out["loom.conversations"] == 2  # the mid-delete turn's message was caught too
     assert out["loom.conversation_embeddings"] == 2
     assert await _rows(ch, scope) == [("1", "first", False), ("2", "second", False)]
 
