@@ -561,8 +561,9 @@ async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
         if row is None:
             continue
         ident = (row.namespace, row.agent, row.user_id, row.session_id, row.memory_key)
-        # Read again and mirrored under the key's lock, which a retirement holds: one
-        # landing meanwhile is never served again.
+        # Read again and mirrored under the key's lock, which the resolver's retirements
+        # and an Undo hold: one of those landing meanwhile is never served again. A
+        # write-path supersede (apply_refines under newest_wins) takes no lock.
         try:
             async with key_write_locks.hold(failure.org, *ident, wait_s=1.0):
                 row = await head_of(mid)
