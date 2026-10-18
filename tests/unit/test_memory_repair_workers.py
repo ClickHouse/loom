@@ -148,7 +148,7 @@ async def test_status_mirrors_queued_first_do_not_hold_back_a_real_failure(
     assert "entity_edges" in retried and retried.count(pf.STATUS_MIRROR) == 30
 
 
-async def test_a_pass_reads_each_orgs_erasure_and_marks_its_failures_once(
+async def test_a_pass_reads_the_erasure_per_failure_and_marks_its_failures_once(
     monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
 ) -> None:
     from server.memory.app import projection_failures as pf
@@ -184,7 +184,41 @@ async def test_a_pass_reads_each_orgs_erasure_and_marks_its_failures_once(
     result = await projection_repair.run_pass()
     assert result.resolved == 30
     assert sum("ALTER TABLE" in m for m in mutations) == 1
-    assert reads == ["acme"], "the org's erasure is read once a pass"
+    assert reads == ["acme"] * 30, "the erasure is read right before each failure's write"
+
+
+async def test_an_erasure_requested_mid_batch_stops_the_remaining_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.store import conflict_resolver as queue
+
+    failures = [_failure(i, pf.STATUS_MIRROR) for i in range(5)]
+    marked: list[Any] = []
+    written: list[str] = []
+
+    class CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            marked.append(params["failure_ids"])
+
+    async def _mirrored(f: ProjectionFailureRow, **_: Any) -> str:
+        written.append(f.failure_id)
+        return ""
+
+    reads = 0
+
+    async def erasing_after_two(org: str, **kw: Any) -> bool:
+        nonlocal reads
+        reads += 1
+        return reads > 2
+
+    monkeypatch.setattr(pf, "_retry_status_mirror", _mirrored)
+    monkeypatch.setattr(pf, "_younger_than", lambda f, s: False)
+    monkeypatch.setattr(queue, "under_erasure", erasing_after_two)
+    out = await pf.retry_failures(failures, ch=CH())
+    assert written == ["f0", "f1"]
+    assert [r.reason for r in out[2:]] == ["pending"] * 3
+    assert marked == [["f0", "f1"]], "the failures left under the erasure stay active"
 
 
 @pytest.mark.parametrize(("seconds", "want"), [(60.0, 701), (0.0, 301)])

@@ -316,21 +316,12 @@ async def retry_failures(
 ) -> list[ProjectionFailureRetryResult]:
     """Retry each failure, then mark the repaired ones in one mutation per org and the
     abandoned ones per org and reason: each mark is a mutation. A retry cut short leaves
-    the rest active, and every kind is safe to replay. Each org's erasure is read once."""
-    from server.memory.store.conflict_resolver import under_erasure
-
+    the rest active, and every kind is safe to replay."""
     ch = ch or get_client()
     out: list[ProjectionFailureRetryResult] = []
-    erasing: dict[str, bool] = {}
     try:
         for failure in failures:
-            if failure.org not in erasing:
-                try:
-                    erasing[failure.org] = await under_erasure(failure.org, ch=ch)
-                except Exception as e:  # noqa: BLE001 — unread: taken as erasing, nothing written
-                    log.warning("projection repair: erasure of %s unread: %s", failure.org, e)
-                    erasing[failure.org] = True
-            out.append(await _retry(failure, ch=ch, erasing=erasing[failure.org]))
+            out.append(await _retry(failure, ch=ch))
     finally:
         done: dict[tuple[str, str], list[str]] = {}
         for failure, r in zip(failures, out, strict=False):
@@ -346,16 +337,18 @@ async def retry_failures(
     return out
 
 
-async def _retry(
-    failure: ProjectionFailureRow, *, ch: Any, erasing: bool
-) -> ProjectionFailureRetryResult:
+async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailureRetryResult:
     """One failure's retry, unmarked. Every kind writes in the failure's org: under an
     erasure it waits (`pending`), and once the saga ends its replay finds an erased row
     gone."""
+    from server.memory.store.conflict_resolver import under_erasure
+
     reason = ""
     try:
+        # Read for each failure, right before its write: an erasure can be requested
+        # mid-batch. A failed read raises below and leaves the row active.
         if (
-            erasing
+            await under_erasure(failure.org, ch=ch)
             or (failure.projection == FOLLOW_OWED and await _retirement_pending(failure, ch=ch))
             or (
                 failure.projection == STATUS_MIRROR
