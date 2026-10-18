@@ -263,3 +263,45 @@ async def test_a_wildcard_agent_reads_the_keys_history_namespace_wide() -> None:
     ch = _Hist([], [])
     await memory_repo.list_history(_IDENT, "k", ch=ch, scope=WHOLE_NAMESPACE)
     assert all("agent = {a:String}" in sql for sql in ch.sqls)
+
+
+# The row columns memory.bulk_get copies onto each answer (server/memory/app/query.py).
+_BULK_GET_ROW_FIELDS = {
+    "memory_type",
+    "value",
+    "confidence",
+    "version",
+    "created_at",
+    "updated_at",
+    "expires_at",
+    "valid_at",
+    "valid_to",
+    "pinned",
+    "agent",
+    "status",
+    "sensitivity",
+    "source_class",
+    "actor",
+    "tags",
+    "entities",
+    "content_sha256",
+    "char_limit",
+    "verified_by",
+    "verified_at",
+    "verified_sha256",
+}
+
+
+def _selected(sql: str) -> set[str]:
+    """The column names (or aliases) a statement's SELECT list returns."""
+    select = re.sub(r"--[^\n]*", "", sql.split("SELECT", 1)[1].split("FROM loom.memory", 1)[0])
+    return {re.findall(r"\w+", part)[-1] for part in re.split(r",(?![^(]*\))", select)}
+
+
+def test_the_bulk_fetch_selects_every_column_bulk_get_answers_with() -> None:
+    # A column left out reads as its default: `sensitivity` as "" let export publish
+    # high rows, and `valid_to` as null rewrote every row carrying one on each import.
+    from server.memory.store import reads
+
+    for sql in (reads._BULK_FETCH_SQL, reads._BULK_FETCH_WHOLE_SQL):
+        assert _BULK_GET_ROW_FIELDS <= _selected(sql), _BULK_GET_ROW_FIELDS - _selected(sql)

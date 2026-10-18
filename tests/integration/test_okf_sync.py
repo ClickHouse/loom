@@ -86,6 +86,19 @@ def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
         "memory.link",
         {"namespace": src, "from_key": keys[0], "to_key": keys[1], "relation": "supports"},
     )
+    # A high row stays on the source side.
+    _op(
+        url,
+        tok,
+        "memory.set",
+        {
+            "namespace": src,
+            "agent": "writer-a",
+            "memory_key": "secret",
+            "value": "s3cret",
+            "sensitivity": "high",
+        },
+    )
     # Another writer's row in the copy's namespace: prune must leave it.
     _op(
         url,
@@ -101,8 +114,15 @@ def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
             url, tok, "import-okf", str(bundle), "--namespace", dst, "--agent", "okf-sync", *flags
         )
 
+    def get(agent: str, key: str) -> dict[str, Any]:
+        return _op(url, tok, "memory.get", {"namespace": dst, "agent": agent, "memory_key": key})
+
     first = sync(1)
     assert "3 written, 0 unchanged, 0 failed" in first
+    assert not get("okf-sync", "secret")["found"]
+    copied = get("okf-sync", keys[0])
+    assert str(copied["valid_to"]).startswith("2030-01-01")
+    assert copied["source_class"] == "derived"
     versions = {k: _versions(url, tok, dst, k) for k in keys}
     audit = _audit_rows(ch_client, dst)
 
@@ -117,10 +137,6 @@ def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
     assert "0 written, 2 unchanged, 0 failed" in third
     assert "1 pruned" in third
 
-    def found(agent: str, key: str) -> bool:
-        got = _op(url, tok, "memory.get", {"namespace": dst, "agent": agent, "memory_key": key})
-        return bool(got["found"])
-
-    assert not found("okf-sync", keys[2])
-    assert found("okf-sync", keys[0])
-    assert found("bot", "bot-note")
+    assert not get("okf-sync", keys[2])["found"]
+    assert get("okf-sync", keys[0])["found"]
+    assert get("bot", "bot-note")["found"]
