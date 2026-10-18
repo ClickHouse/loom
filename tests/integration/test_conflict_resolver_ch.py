@@ -343,6 +343,13 @@ async def test_one_pass_retires_clears_and_leaves_the_rest_then_changes_nothing(
     assert undone.restored
     assert (await _rows(ch, org))["office_city"]["status"] == "active"
     assert await _paris_open(ch, org, True)
+    # The Undo holds: the next pass does not judge the pair again, or retire it.
+    calls = len(llm.calls)
+    after_undo = await run_pass()
+    assert len(llm.calls) == calls and after_undo["retired"] == 0, after_undo
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"
+    marks = await _marks(ch, org)
+    assert 1 not in (marks["office_city"], marks["office_location"]), "neither row is owed"
 
 
 async def test_a_write_with_a_peer_past_the_floor_is_owed_a_judgement(ch, wired) -> None:
