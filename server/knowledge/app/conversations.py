@@ -701,7 +701,7 @@ def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, int] 
         _COMPACT_TRANSCRIPT_CHARS,
     )
     fit = max(fit, free.index(False) + 1)
-    if not folded[:fit].count(False):
+    if all(folded[:fit]):
         return None
     # The fit counted each free line's newline; the cap adds back only its text.
     cap = _COMPACT_TRANSCRIPT_CHARS + sum(

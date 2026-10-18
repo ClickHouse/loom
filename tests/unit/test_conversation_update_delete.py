@@ -259,8 +259,9 @@ async def test_delete_op_registered_with_admin_role_and_audit() -> None:
 
 @pytest.mark.asyncio
 async def test_a_long_thread_is_tombstoned_in_chunks() -> None:
-    """conversation.delete's embeddings tombstone names at most `_TOMBSTONE_CHUNK` turns
-    per mutation, so every statement's id list stays bounded however long the thread."""
+    """conversation.delete's embeddings tombstone names at most `_TOMBSTONE_CHUNK`
+    embedding rows per mutation, so every statement's list stays bounded however long
+    the thread."""
     from server.knowledge.store import conversations as repo
 
     due = [f"m{i}" for i in range(2 * repo._TOMBSTONE_CHUNK + 5)]
