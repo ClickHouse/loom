@@ -10,10 +10,13 @@ def tag_filter(
     tags: Sequence[str], *, any_case: bool = False, every: bool = False
 ) -> tuple[str, list[str]]:
     """The predicate over a row's `tags` and its values: any one of `tags` (OR), or with
-    `every` all of them; exact, or with `any_case` the row's tags and the asked ones compared
-    lowercased (`lowerUTF8`: ClickHouse's `lower` folds only A–Z, Python's every letter)."""
+    `every` all of them; exact, or with `any_case` both sides lowercased by ClickHouse's
+    `lowerUTF8`. The asked tags are bound as typed, since Python's `str.lower` folds some
+    letters differently (a final Σ to ς, İ to i and a combining dot)."""
     fn = "hasAll" if every else "hasAny"
+    values = [str(t) for t in tags]
     if any_case:
-        values = [str(t).lower() for t in tags]
-        return f"{fn}(arrayMap(t -> lowerUTF8(t), tags), {{tags:Array(String)}})", values
-    return f"{fn}(tags, {{tags:Array(String)}})", [str(t) for t in tags]
+        row = "arrayMap(t -> lowerUTF8(t), tags)"
+        asked = "arrayMap(t -> lowerUTF8(t), {tags:Array(String)})"
+        return f"{fn}({row}, {asked})", values
+    return f"{fn}(tags, {{tags:Array(String)}})", values

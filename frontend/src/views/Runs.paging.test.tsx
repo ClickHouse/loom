@@ -7,7 +7,8 @@ import { Runs } from "./Runs";
 
 // run.list pages, sorts and searches on the server: the page asks for one page at a time
 // (offset, limit, order_by, q) and shows the server's total in the toolbar and the pager.
-// A server a release behind sends no total: the pager then stops on a short page.
+// A server a release behind sends no total: the page then reads its newest 200 runs once and
+// pages, searches and sorts them here.
 
 // A 50-row Click UI Table renders in about half a second in jsdom, and the paging, search
 // and sort cases render several: about 2 s alone, past the 5 s default under a full parallel
@@ -342,6 +343,28 @@ describe("Runs paging, sorting and search on the server", () => {
     );
     expect(await screen.findByRole("button", { name: "goal 51" })).toBeInTheDocument();
     expect(listRunsPage).toHaveBeenCalledTimes(2);
+  });
+
+  // A paged list that meets a server with no total mid-session (a new filter answered by the
+  // release before) shows neither that answer nor the previous filter's rows while the newest
+  // 200 are read: only the loader, and no count.
+  it("shows the loader, no rows and no count while it switches to the local mode", async () => {
+    let release: (v: RunListPage) => void = () => {};
+    listRunsPage.mockImplementation(async (_id, opts = {}) => {
+      if (opts.limit === 200) return new Promise<RunListPage>((r) => (release = r));
+      const runs = Array.from({ length: 50 }, (_, i) => run(i + 1));
+      return { runs, total: opts.status ? null : 120 };
+    });
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    expect(toolbar()).toHaveTextContent("1–50 of 120");
+    fireEvent.click(within(screen.getByLabelText("Filter runs by status")).getByRole("button", { name: "Failed" }));
+    await waitFor(() => expect(lastOpts()).toMatchObject({ status: "failed", limit: 200 }));
+    expect(screen.queryByRole("button", { name: /^goal / })).toBeNull();
+    expect(toolbar()).not.toHaveTextContent(/\d–\d/);
+    act(() => release({ runs: [run(7, { status: "failed" })], total: null }));
+    expect(await screen.findByRole("button", { name: "goal 7" })).toBeInTheDocument();
+    expect(toolbar()).toHaveTextContent("1–1");
   });
 
   // Runs that started together keep run.list's order: run_id in the direction of the sort.

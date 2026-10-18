@@ -14,6 +14,9 @@ import pytest
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 
+# Both sides of an any-case tag match, folded by ClickHouse.
+_FOLDED = "arrayMap(t -> lowerUTF8(t), tags), arrayMap(t -> lowerUTF8(t), {tags:Array(String)})"
+
 
 class StubCH:
     def __init__(self) -> None:
@@ -94,8 +97,8 @@ async def test_the_store_compares_lowercased_tags_only_when_asked() -> None:
         identity, scope=scope, tags=["API"], tags_any_case=True, ch=ch
     )
     any_sql, any_case = ch.calls[-1]
-    assert "hasAny(arrayMap(t -> lowerUTF8(t), tags), {tags:Array(String)})" in any_sql
-    assert any_case["tags"] == ["api"]
+    assert f"hasAny({_FOLDED})" in any_sql
+    assert any_case["tags"] == ["API"]
 
 
 @pytest.mark.asyncio
@@ -108,8 +111,8 @@ async def test_the_store_requires_every_tag_when_asked() -> None:
         identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tags_any_case=True, tags_all=True, ch=ch
     )
     sql, params = ch.calls[-1]
-    assert "hasAll(arrayMap(t -> lowerUTF8(t), tags), {tags:Array(String)})" in sql
-    assert params["tags"] == ["a", "b"]
+    assert f"hasAll({_FOLDED})" in sql
+    assert params["tags"] == ["A", "b"]
 
 
 @pytest.mark.asyncio
@@ -131,13 +134,13 @@ async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
 
 @pytest.mark.asyncio
 async def test_a_non_ascii_tag_folds_the_same_on_both_sides() -> None:
-    """ClickHouse `lower` folds only A–Z: `Ärger` must reach the store as `ärger` and meet
-    the row's tags folded by `lowerUTF8`, or the dashboard could not find it at all."""
+    """ClickHouse folds both sides: Python's `str.lower` turns `ΟΔΟΣ` into `οδος` (final ς)
+    where `lowerUTF8` gives `οδοσ`, so the asked tag is bound as typed and folded in SQL."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
-        identity, scope=WHOLE_NAMESPACE, tags=["Ärger"], tags_any_case=True, ch=ch
+        identity, scope=WHOLE_NAMESPACE, tags=["ΟΔΟΣ"], tags_any_case=True, ch=ch
     )
     sql, params = ch.calls[-1]
-    assert "lowerUTF8(t)" in sql and "lower(t)" not in sql.replace("lowerUTF8(t)", "")
-    assert params["tags"] == ["ärger"]
+    assert f"hasAny({_FOLDED})" in sql
+    assert params["tags"] == ["ΟΔΟΣ"]

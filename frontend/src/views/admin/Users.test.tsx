@@ -131,8 +131,8 @@ describe("Users count, times and failure", () => {
   });
 });
 
-// Refresh and Retry abort the read in flight, so an answer for the set the page has left
-// (service accounts in or out) never lands after the new one's.
+// A read started by Refresh or Retry is dropped when a newer read overtakes it, so an answer
+// for the set the page has left (service accounts in or out) never lands after the new one's.
 describe("Users late answers", () => {
   it("drops a Refresh's answer that lands after the service-accounts toggle's", async () => {
     adminListUsers.mockResolvedValueOnce(result([user(1)]));

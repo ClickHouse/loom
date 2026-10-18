@@ -18,6 +18,9 @@ import pytest
 from server.knowledge.store import documents as documents_repo
 from server.memory.store import shared as shared_repo
 
+# Both sides of an any-case tag match, folded by ClickHouse.
+_FOLDED = "arrayMap(t -> lowerUTF8(t), tags), arrayMap(t -> lowerUTF8(t), {tags:Array(String)})"
+
 
 class StubCH:
     def __init__(self) -> None:
@@ -347,8 +350,8 @@ async def test_list_with_chunk_counts_matches_tags_in_any_case_when_asked() -> N
         "clickhouse", "ns", tags=["Specs"], tags_any_case=True, ch=ch
     )
     sql, params = ch.query_all_calls[1]
-    assert "hasAny(arrayMap(t -> lowerUTF8(t), tags), {tags:Array(String)})" in sql
-    assert params["tags"] == ["specs"]
+    assert f"hasAny({_FOLDED})" in sql
+    assert params["tags"] == ["Specs"]
 
 
 @pytest.mark.asyncio
@@ -361,5 +364,5 @@ async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
         "clickhouse", "ns", tags=["Specs", "onboarding"], tags_any_case=True, tags_all=True, ch=ch
     )
     sql, params = ch.query_all_calls[0]
-    assert "hasAll(arrayMap(t -> lowerUTF8(t), tags), {tags:Array(String)})" in sql
-    assert params["tags"] == ["specs", "onboarding"]
+    assert f"hasAll({_FOLDED})" in sql
+    assert params["tags"] == ["Specs", "onboarding"]

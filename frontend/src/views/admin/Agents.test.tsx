@@ -106,8 +106,8 @@ describe("Agents: count and failure", () => {
   });
 });
 
-// Refresh and Retry abort the read in flight, so an answer for the window the page has left
-// never lands after the new window's and draws stale rows.
+// A read started by Refresh or Retry is dropped when a newer read overtakes it, so an answer
+// for the window the page has left never lands after the new window's and draws stale rows.
 describe("Agents: late answers", () => {
   it("drops a Refresh's answer that lands after a new window's", async () => {
     listConnectedAgents.mockResolvedValueOnce({ rows: [ROW] });

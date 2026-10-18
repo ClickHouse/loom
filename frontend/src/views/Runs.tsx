@@ -610,22 +610,24 @@ export function Runs() {
     )
       .then((p) => {
         if (!live) return;
-        // No total: a server that does not page. Read its newest runs once and page here.
-        // Only another namespace leaves `local`: behind one URL a release and the one before
-        // it answer in turn, and flipping back on each total never settles.
+        // No total: a server that does not page. Read its newest runs once and page here,
+        // still loading, with nothing from the page that answered on screen. Only another
+        // namespace leaves `local`: behind one URL a release and the one before it answer in
+        // turn, and flipping back on each total never settles.
         if (p.total === null && !local) {
+          setShown(null);
           setLocal(true);
           return;
         }
         setShown({ runs: p.runs, total: p.total, page });
+        setLoading(false);
         const seen = p.runs.map((r) => r.agent).filter(Boolean);
         setAgents((prev) => (seen.every((a) => prev.includes(a)) ? prev : [...new Set([...prev, ...seen])].sort()));
       })
       .catch((e: unknown) => {
-        if (live) setError(e);
-      })
-      .finally(() => {
-        if (live) setLoading(false);
+        if (!live) return;
+        setError(e);
+        setLoading(false);
       });
     return () => {
       live = false;

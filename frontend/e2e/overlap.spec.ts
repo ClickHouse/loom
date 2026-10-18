@@ -129,7 +129,7 @@ test.describe("phone library", () => {
   });
 });
 
-// The whole row opens it, the hover-tinted padding included.
+// A click anywhere on a row opens it, the hover-tinted padding included.
 test("a click on a row's padding opens it, on Memories and in the Library", async ({ page }) => {
   await memories(page);
   const row = page.locator("[data-card]").first();

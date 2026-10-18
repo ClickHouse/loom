@@ -18,7 +18,8 @@ const row = (over: Partial<BlacklistRow>): BlacklistRow => ({
   ...over,
 });
 
-// A pattern's last hit is the list's one time format, a <time> with the absolute UTC time behind it.
+// A pattern's last hit is the list's one time format, a <time> with the absolute UTC time
+// behind it.
 describe("a privacy filter's hits", () => {
   it("draws the last hit with ListTime", () => {
     render(<PrivacyFilterHits row={row({})} />);

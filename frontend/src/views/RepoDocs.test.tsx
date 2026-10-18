@@ -99,7 +99,8 @@ describe("RepoDocsList", () => {
     expect(await axeViolations(document.body)).toEqual([]);
   });
 
-  // A document's "added" time is the list's one time format, quiet in the row (no tab stop of its own).
+  // A document's "added" time is the list's one time format, quiet in the row (no tab stop of
+  // its own).
   it("draws each document's added time with ListTime, without a tab stop", async () => {
     vi.mocked(listKnowledge).mockResolvedValue({ rows: [DOC], next_cursor: null });
     mount();

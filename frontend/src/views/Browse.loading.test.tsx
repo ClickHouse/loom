@@ -59,7 +59,8 @@ describe("Browse: loading", () => {
   });
 });
 
-// A failed read is the list's error state, never "No public namespaces yet", with its request id and a Retry that reads again.
+// A failed read is the list's error state, never "No public namespaces yet", with its request
+// id and a Retry that reads again.
 describe("Browse: a failed read", () => {
   it("says the read failed, never that there is nothing, and Retry reads again", async () => {
     const { ApiError } = await import("../api");
