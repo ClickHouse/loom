@@ -3,6 +3,9 @@ op and status classes, the auth refusal reasons, the health-problem series."""
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
+import re
 from typing import Any
 
 import pytest
@@ -140,8 +143,6 @@ def test_every_code_the_transports_record_without_an_exception_is_classified() -
     """A refusal written by code alone (no exception) must still be the
     caller's; INTERNAL_ERROR is the server's, and so is HANDLER_HTTP_ERROR
     without the handler's exception, whose status is the only one that counts."""
-    import re
-
     from server.core.paths import REPO_ROOT
 
     literals = set()
@@ -162,8 +163,6 @@ class _Counter:
 
 
 def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None:
-    import pytest
-
     from server.auth import bearer
     from server.observability import metrics
     from server.transport import mcp_auth
@@ -216,9 +215,6 @@ def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None
 
 
 def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
-    import asyncio
-
-    import pytest
     from starlette.requests import Request
 
     from server.auth import routes
@@ -261,14 +257,10 @@ def test_mcp_refusals_before_dispatch_are_ledgered_as_the_token_alone(monkeypatc
     call named, and carries nothing a batch's previous entry left behind.
     Run in a copied context: the previous entry it stands up (a run, a
     consumer, spend) must not reach the tests after it."""
-    import contextvars
-
     contextvars.copy_context().run(_mcp_refusals_before_dispatch, monkeypatch)
 
 
 def _mcp_refusals_before_dispatch(monkeypatch) -> None:
-    import asyncio
-
     from server.auth.jwt import AuthInfo
     from server.observability import consumer, cost_accumulator, events
     from server.observability.run_context import set_ledger_run
@@ -384,8 +376,6 @@ def _mcp_refusals_before_dispatch(monkeypatch) -> None:
 def test_a_wildcard_token_s_mcp_refusal_names_no_org_but_the_one_it_was_authorized_in(
     monkeypatch,
 ) -> None:
-    import asyncio
-
     from server.auth.jwt import AuthInfo
     from server.observability import events
     from server.transport import mcp_auth, mcp_op
@@ -418,8 +408,6 @@ def test_a_wildcard_token_s_mcp_refusal_names_no_org_but_the_one_it_was_authoriz
 
 
 def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypatch) -> None:
-    import pytest
-
     from server.auth.jwt import AuthInfo
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import http
@@ -439,7 +427,6 @@ def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypat
         http._validate_payload(op, "r", {"org": "acme", "namespace": "n"}, eve)
     assert (bodies[-1]["org"], bodies[-1]["namespace"]) == ("eve-org", "-")
     # A misspelled write argument, refused while the body is read.
-    import asyncio
 
     class _Request:
         async def json(self) -> dict:
