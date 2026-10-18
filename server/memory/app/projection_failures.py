@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -332,16 +331,16 @@ async def retry_each(
     failures: list[ProjectionFailureRow],
     *,
     ch: Any | None = None,
-    until: float | None = None,
+    expired: Callable[[], bool] | None = None,
     first: bool = False,
 ) -> AsyncIterator[Retried]:
     """Retry each failure and yield it with its result, unmarked: the caller marks what
-    it collected with `mark_retried`. Once `until` (a `time.monotonic()` deadline) has
-    passed, the failures not yet retried stay active; with `first`, the first one is
-    retried even then."""
+    it collected with `mark_retried`. Once `expired()` says the deadline has passed, the
+    failures not yet retried stay active; with `first`, the first one is retried even
+    then."""
     ch = ch or get_client()
     for i, failure in enumerate(failures):
-        if until is not None and not (first and i == 0) and time.monotonic() >= until:
+        if expired is not None and not (first and i == 0) and expired():
             return
         yield failure, await _retry(failure, ch=ch)
 

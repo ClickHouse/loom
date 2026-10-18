@@ -200,14 +200,12 @@ async def test_a_pass_reads_the_erasure_per_failure_and_marks_its_failures_once(
 async def test_past_the_deadline_only_a_first_failure_is_retried(
     monkeypatch: pytest.MonkeyPatch, first: bool, want: list[str]
 ) -> None:
-    import time
-
     from server.memory.app import projection_failures as pf
 
     _fake_retry(monkeypatch, _resolved)
     failures = [_failure(i, pf.STATUS_MIRROR) for i in range(3)]
-    past = time.monotonic() - 1
-    got = [f.failure_id async for f, _ in pf.retry_each(failures, until=past, first=first)]
+    retried = pf.retry_each(failures, expired=lambda: True, first=first)
+    got = [f.failure_id async for f, _ in retried]
     assert got == want
 
 
@@ -401,7 +399,6 @@ async def test_a_mirror_batch_stops_once_the_pass_deadline_passes(
     from tests.unit.clock_fake import ManualClock
 
     clock = ManualClock(t=1000.0)
-    monkeypatch.setattr(projection_repair.time, "monotonic", clock.monotonic)
 
     async def _busy(f: ProjectionFailureRow) -> ProjectionFailureRetryResult:
         clock.advance(pf.STATUS_MIRROR_LOCK_WAIT_S)
@@ -410,7 +407,9 @@ async def test_a_mirror_batch_stops_once_the_pass_deadline_passes(
     monkeypatch.setattr(pf, "scan_active_projection_failures", _paged(_mirrors(300)))
     marks = _fake_retry(monkeypatch, _busy)
     result = await projection_repair.run_pass(
-        projection_repair.ProjectionRepairConfig(status_mirror_seconds=5.0)
+        projection_repair.ProjectionRepairConfig(
+            status_mirror_seconds=5.0, monotonic=clock.monotonic
+        )
     )
     assert result.scanned == 5
     assert sum(len(m["failure_ids"]) for m in marks) == 5, "the other 295 stay active"

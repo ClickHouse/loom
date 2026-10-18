@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from server.settings import settings
@@ -30,6 +31,8 @@ class ProjectionRepairConfig:
     status_mirror_seconds: float = field(
         default_factory=lambda: settings.projection_repair_status_mirror_seconds
     )
+    # The clock the status-mirror budget is measured on.
+    monotonic: Callable[[], float] = time.monotonic
 
 
 @dataclass
@@ -58,7 +61,11 @@ async def run_pass(
         )
 
         mirrored: list[Retried] = []
-        until = time.monotonic() + float(cfg.status_mirror_seconds)
+        until = cfg.monotonic() + float(cfg.status_mirror_seconds)
+
+        def expired() -> bool:
+            return cfg.monotonic() >= until
+
         try:
             after = None
             while True:
@@ -66,9 +73,9 @@ async def run_pass(
                     limit=STATUS_MIRROR_BATCH, status_mirror=True, after=after
                 )
                 # The first mirror of a pass always runs: a zero budget still moves the queue.
-                async for retried in retry_each(batch, until=until, first=not mirrored):
+                async for retried in retry_each(batch, expired=expired, first=not mirrored):
                     mirrored.append(retried)
-                if len(batch) < STATUS_MIRROR_BATCH or time.monotonic() >= until:
+                if len(batch) < STATUS_MIRROR_BATCH or expired():
                     break
                 # Past the batch's last row: a row left pending, or retried and not marked
                 # yet, is not read again this pass.
