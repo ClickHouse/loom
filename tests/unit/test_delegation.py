@@ -853,3 +853,32 @@ async def test_a_mint_judges_each_ancestor_by_its_own_issue_time(world, monkeypa
     with pytest.raises(HTTPException) as e:
         await _child(parent, {"a": None})
     assert e.value.status_code == 401
+
+
+async def test_a_mint_from_an_ended_sign_in_session_is_refused(world, monkeypatch) -> None:
+    # A logout ends a first-party session too; a stale replica still takes its token.
+    monkeypatch.setattr(delegation, "_refuse_a_revoked_parent", _REFUSE_A_REVOKED_PARENT)
+
+    async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
+        return {}
+
+    async def revoked_outright(jti: str) -> bool:
+        return jti == "sess-1"
+
+    monkeypatch.setattr(revocation, "cutoffs", cutoffs)
+    monkeypatch.setattr(revocation, "revoked_outright", revoked_outright)
+    parent = _login(session_id="sess-1", first_party=True)
+    with pytest.raises(HTTPException) as e:
+        await _child(parent, {"a": None})
+    assert e.value.status_code == 401
+
+
+async def test_a_mint_whose_revocation_read_fails_mints_nothing(world, monkeypatch) -> None:
+    monkeypatch.setattr(delegation, "_refuse_a_revoked_parent", _REFUSE_A_REVOKED_PARENT)
+
+    async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
+        raise RuntimeError("ClickHouse is away")
+
+    monkeypatch.setattr(revocation, "cutoffs", cutoffs)
+    with pytest.raises(RuntimeError):  # the caller's error: no child, no saved row
+        await _child(_delegated_list(), {"a": None})

@@ -554,7 +554,7 @@ async def unknown(rest: str, request: Request) -> Response:
             method
             for r in router.routes
             if isinstance(r, APIRoute) and r.endpoint is not unknown and r.path_regex.match(path)
-            for method in r.methods
+            for method in r.methods or ()
         }
     )
     if allowed:

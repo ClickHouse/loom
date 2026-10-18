@@ -108,7 +108,9 @@ async def _refuse_a_revoked_parent(parent: AuthInfo, issued_at: int, tokens: lis
     """401 when ClickHouse says `parent` is revoked, judged as the gate judges it
     (`jwt._check_revoked`): this replica's snapshot may not have the revocation
     yet, and a child minted meanwhile would be dead at the gate but listed live,
-    holding its name. `tokens`: its ancestor tokens, it and a third-party session."""
+    holding its name. `tokens`: its ancestor tokens and itself. A revocation
+    landing between this read and the child's save leaves the child dead at the
+    gate but listed live, a window of a few round trips."""
     from server.auth import revocation
 
     chain = zip(parent.parent_subjects, parent.parent_iats, strict=True)
@@ -116,7 +118,9 @@ async def _refuse_a_revoked_parent(parent: AuthInfo, issued_at: int, tokens: lis
     judged.append((parent.creator or parent.subject, min(iat for _, iat in judged)))
     cut = await revocation.cutoffs(sorted({s for s, _ in judged} | set(tokens)))
     by_subject = any(s in cut and _dead(cut[s], iat) for s, iat in judged)
-    if by_subject or any(t in cut for t in tokens):
+    # The sign-in session, first-party too (a logout ends it), owed revocations included.
+    ended = bool(parent.session_id) and await revocation.revoked_outright(parent.session_id)
+    if by_subject or any(t in cut for t in tokens) or ended:
         raise HTTPException(
             status_code=401,
             detail={
