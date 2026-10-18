@@ -312,19 +312,18 @@ async def _set_active(
     was_active = bool(row["active"])
     new = {**row, **changes, "active": int(active)}
     unwritten = "version" not in row
-    if active and was_active:  # no revocation to make or lift: no subject lease
+    if active and was_active and not asked:  # nothing to revoke or lift: no subject lease
         if new != row or unwritten:
             await _write(new)
-        # A provider retrying a reactivation that timed out waits out what is
-        # left of the first try's cutoff; other no-op requests skip the read.
-        cutoff = await _lifted_before(row["subjects"]) if asked and row["subjects"] else None
-        return new, cutoff
-    found = {} if active else await _subjects(row["email"])
+        return new, None
+    # `active: true` on an active row also lifts what a deactivation revoked
+    # before its row's write failed, and a retry waits out the first try's cutoff.
+    found = await _subjects(row["email"]) if was_active or not active else {}
     known = set(row["subjects"])
     cutoff = None
     async with _subject_leases([*known, *found]):
         if active:
-            cutoff = await _lift(row["id"], row["subjects"])
+            cutoff = await _lift(row["id"], sorted(known | set(found)))
         else:
             new["subjects"] = sorted(known | set(found))
             # Going inactive, or retrying a try that stopped short of writing the
@@ -430,7 +429,7 @@ async def _lift(uid: str, subjects: list[str]) -> datetime | None:
     # No skew ahead: sign-in is refused while deactivated, so only a replica behind matters.
     cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
     rows = await revocation.scim_revocations(subjects)
-    outright = {s for s, r in rows.items() if r["issued_before"] is None}
+    outright = {s for s, r in rows.items() if r["issued_before"] is None and r["revoked_by"] == _BY}
     lifted = False
     for subject in subjects:
         if subject not in outright:
@@ -450,9 +449,12 @@ async def _lift(uid: str, subjects: list[str]) -> datetime | None:
 
 
 async def _lifted_before(subjects: list[str]) -> datetime | None:
-    """The newest cutoff SCIM's revocation of one of `subjects` is narrowed to."""
+    """The newest cutoff a reactivation narrowed SCIM's revocation of one of
+    `subjects` to; an operator's (`--scim`) is never waited out."""
     rows = await revocation.scim_revocations(subjects)
-    cutoffs: list[datetime] = [r["issued_before"] for r in rows.values() if r["issued_before"]]
+    cutoffs: list[datetime] = [
+        r["issued_before"] for r in rows.values() if r["issued_before"] and r["revoked_by"] == _BY
+    ]
     if not cutoffs:
         return None
     cutoff = max(cutoffs)

@@ -258,7 +258,6 @@ async def revoke(
     reason: str = "",
     revoked_by: str = "",
     issued_before: datetime | None = None,
-    reread: bool = True,
 ) -> dict[str, Any]:
     """Revoke every token whose `jti` OR `sub` equals `token_id` and refresh
     this process's snapshot so `is_revoked` answers True at once.
@@ -285,7 +284,7 @@ async def revoke(
         reason=reason,
         revoked_by=revoked_by,
         issued_before=issued_before,
-        reread=reread,
+        reread=True,
     )
 
 

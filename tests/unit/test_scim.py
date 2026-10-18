@@ -905,6 +905,33 @@ async def test_a_reactivation_leaves_a_subject_given_back_as_it_is(world) -> Non
     assert world.ours["alice"] == cutoff and world.ours["lee"] is not None
 
 
+async def test_an_operators_cutoff_ahead_is_never_waited_out(world) -> None:
+    # `--scim --issued-before <in 40 s>`: a reactivation, its retry and a
+    # retried re-create answer at once, and the operator's cutoff stays.
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    ahead = await _given_back("lee", _now() + timedelta(seconds=40))
+    await scim.set_active(uid, True)
+    await scim.set_active(uid, True)
+    with pytest.raises(scim.Exists):
+        await _create("lee@example.com")
+    assert world.waits == [] and world.ours == {"lee": ahead}
+
+
+async def test_a_deactivation_whose_row_write_failed_is_lifted_by_active_true(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    world.table.fail_insert = True
+    with pytest.raises(RuntimeError):  # the revocation landed, the row did not
+        await scim.set_active(uid, False)
+    world.table.fail_insert = False
+    assert world.ours == {"lee": None} and not await _DEACTIVATED("lee@example.com")
+    row = await scim.set_active(uid, True)  # the provider gives up and reactivates
+    assert row is not None and row["active"] and world.ours["lee"] is not None
+    assert not await world.keeps_out("lee", issued_at=_issued(60))
+
+
 async def test_an_email_with_no_account_is_refused_by_email(world) -> None:
     uid = await _create("new@example.com", active=False)
     assert await _DEACTIVATED("new@example.com") and world.ours == {}
