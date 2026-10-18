@@ -1,7 +1,8 @@
 """The statements that keep 'high' rows home, run on clickhouse-local against the real
-tables: high_keys finds a key with any high version, overwritten since or under an id
-since re-created (loom.memory_versions keeps every version; loom.memory merges them); a `contains` search skips a high row's value; and the usage overlay reads the
-epoch non-recall events write as no recall."""
+tables: high_keys finds a key with any high version, overwritten since or under an id since
+re-created (loom.memory_versions keeps every version; loom.memory merges them); a `contains`
+search skips a high row's value; and the usage overlay reads the epoch non-recall events
+write as no recall."""
 
 from __future__ import annotations
 

@@ -67,7 +67,10 @@ async def test_chunks_behind_a_high_key_or_holding_a_credential_stay_home(eviden
     assert [c.chunk_index for c in every.chunks] == [0, 1, 2] and every.held_high == 0
     # released on request, and audited as key reads of a high row are
     assert evidence == [
-        [{"session_id": "s", "memory_keys": ["vault"]}, {"session_id": "s", "memory_keys": []}]
+        [
+            {"kind": "chunks", "session_id": "s", "chunk_index": 1, "memory_keys": ["vault"]},
+            {"kind": "chunks", "session_id": "s", "chunk_index": 2, "memory_keys": []},
+        ]
     ]
 
 

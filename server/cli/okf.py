@@ -191,7 +191,8 @@ async def _fetch_namespace(
             g = full.get(r["memory_key"])
             if g is None and r.get("value_truncated") and r["memory_key"] not in held:
                 # Not answered by bulk_get (a tombstoned row, or one deleted since the
-                # list), and the list holds only a cut preview.
+                # list), and the list does not carry its full value (a cut preview, or
+                # none for a high row).
                 unreadable.append(r["memory_key"])
                 continue
             merged = {**r, **{k: v for k, v in (g or {}).items() if v not in (None, "", [], {})}}
@@ -439,8 +440,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             )
         if unreadable:
             print(
-                f"  {len(unreadable)} row(s) left out: bulk_get did not answer them and their "
-                "value is longer than the list preview: "
+                f"  {len(unreadable)} row(s) left out: bulk_get did not answer them (a "
+                "tombstoned row) and the list does not carry their full value: "
                 + ", ".join(unreadable[:5])
                 + (" …" if len(unreadable) > 5 else "")
             )

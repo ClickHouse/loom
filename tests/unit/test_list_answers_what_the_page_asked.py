@@ -108,7 +108,8 @@ def test_the_memories_page_asks_for_the_fields_it_renders() -> None:
     ]
     fields = set(json.loads("[" + fields_src.split("[", 1)[1].rstrip().rstrip(",") + "]"))
     assert "entities" not in fields and {"memory_key", "value", "tags", "verification"} <= fields
-    assert len(fields) == 12, "cut 54: the twelve fields the page reads"
+    # The thirteen fields the page reads; `sensitivity` marks a high row sent without its value.
+    assert len(fields) == 13 and "sensitivity" in fields
     known = set(memory_crud._MemoryListEntry.model_fields)
     assert fields <= known, sorted(fields - known)
     assert re.search(

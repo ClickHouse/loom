@@ -87,7 +87,7 @@ def _preview_for_list(row: MemoryRow, max_chars: int) -> tuple[Any, bool]:
         return None, True
     raw = row.value
     value = _truncate_value_for_list(raw, max_chars)
-    stored_cut = bool(getattr(row, "value_truncated", False))
+    stored_cut = row.value_truncated
     decoded = _decode_value(raw)
     if isinstance(decoded, str):
         text = decoded

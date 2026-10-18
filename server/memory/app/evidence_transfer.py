@@ -235,7 +235,12 @@ async def _without_high(input: MemoryExportEvidenceInput, items: list[Any]) -> l
         namespace=input.namespace,
         actor=writer_actor("-"),
         subjects=[
-            {"session_id": item.session_id, "memory_keys": [k for k in evidence_keys(item) if k]}
+            {
+                "kind": input.kind,
+                "session_id": item.session_id,
+                **({"chunk_index": item.chunk_index} if input.kind == "chunks" else {}),
+                "memory_keys": [k for k in evidence_keys(item) if k],
+            }
             for item in items
             if evidence_is_high(item, high)
         ],

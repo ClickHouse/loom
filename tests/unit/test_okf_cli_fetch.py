@@ -133,7 +133,14 @@ class _MixedClient:
                     entry("secret", sensitivity="high"),
                     entry("gone-short", status="tombstoned", sensitivity=""),
                     entry("gone-long", status="tombstoned", sensitivity="", value_truncated=True),
-                    entry("gone-high", status="tombstoned", sensitivity="high"),
+                    # memory.list sends a high row without its value
+                    entry(
+                        "gone-high",
+                        status="tombstoned",
+                        sensitivity="high",
+                        value=None,
+                        value_truncated=True,
+                    ),
                 ],
                 "truncated": False,
             }
@@ -232,3 +239,17 @@ async def test_export_never_reads_the_value_of_a_row_the_list_calls_high() -> No
     )
     assert "secret" not in asked and "split" not in asked and "plain" in asked
     assert {r["memory_key"] for r in rows} >= {"secret", "split"}  # listed, kept home
+
+
+@pytest.mark.asyncio
+async def test_include_high_cannot_export_a_tombstoned_high_row() -> None:
+    # bulk_get does not answer a tombstoned row and the list sends no high value, so even
+    # --include-high has nothing to write for it: it is named, not exported empty.
+    _rows, unreadable = await cli_okf._fetch_namespace(
+        _MixedClient(),  # type: ignore[arg-type]
+        "o",
+        "ns",
+        include_tombstoned=True,
+        include_high=True,
+    )
+    assert "gone-high" in unreadable

@@ -484,7 +484,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         code=links,
         resolved_from=resolved_from,
         conflict_verdict=_cd.verdict_from_row(
-            str(row.memory_id), getattr(row, "status", None), duplicate_of, pending=judge_pending
+            str(row.memory_id), row.status, duplicate_of, pending=judge_pending
         ),
         recall_by_agent=recall_by_agent,
     )

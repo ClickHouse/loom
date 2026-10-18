@@ -48,11 +48,12 @@ import { shortcutOff } from "../lib/shortcuts";
 // The browse feed pages up to this; past it, search covers the whole namespace.
 // Page size for the paginated browse feed (server caps memory.list at 1000/call).
 const PAGE_SIZE = 100;
-// The twelve fields the page and its cards read, and the preview length a card shows (140
+// The thirteen fields the page and its cards read, and the preview length a card shows (140
 // characters; the base64 envelope check needs 64). Unprojected, a page of a hundred is
 // 166 kB of JSON — 2 KB previews, entities, timestamps nothing reads; twelve fields at
 // 160 characters is 55 kB. Field names are a quarter of a row, so a field the page does
-// not read costs on every row.
+// not read costs on every row. `sensitivity` because a high row comes without its value and the
+// card says it is sensitive.
 const MEMORIES_LIST_FIELDS = [
   "memory_key",
   "memory_type",
@@ -66,6 +67,7 @@ const MEMORIES_LIST_FIELDS = [
   "tombstoned_at",
   "verified_by",
   "verification",
+  "sensitivity",
 ];
 const MEMORIES_PREVIEW_CHARS = 160;
 

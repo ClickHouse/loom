@@ -528,9 +528,10 @@ Raw evidence (conversation chunks, session digests, the passages `bodies: "sourc
 has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked
 to a key with any `high` version, and those whose text the detector reads as a credential,
 unless asked with `include_high` (each one it then releases is audited). `bodies: "source"`
-leaves out a passage whose text reads as a credential. A caller-labelled `high` value that
-shares a passage with a plain row, and `memory.recall`'s raw turns, are served to readers of
-the namespace as they are.
+leaves out a passage whose text reads as a credential. Other raw text is served to readers of
+the namespace as it is: a caller-labelled `high` value that shares a passage with a plain
+row, `memory.search`'s `chunk` and `summary` hits (which `memory.ask` also hands its model),
+and `memory.recall`'s raw turns.
 
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
