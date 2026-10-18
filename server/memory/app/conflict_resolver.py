@@ -42,9 +42,9 @@ class ModelUnavailable(RuntimeError):
     answer for every row, so the pass stops and the rows stay owed."""
 
 
-class CutOff(RuntimeError):
-    """The answer stopped at the output cap twice: no judgement, and asking again gets
-    the same, so the row is stamped judged and counted errored."""
+class Unanswered(RuntimeError):
+    """Two answers with nothing usable (cut at the output cap, or malformed): asking
+    again gets the same, so the row is stamped judged and counted errored."""
 
 
 # The stop reasons of an answer cut at the output cap (OpenAI, Anthropic).
@@ -105,11 +105,10 @@ def model_missing() -> str | None:
 
 async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVerdict], str]:
     """One call over the cluster: ({peer memory_id: verdict}, the model that answered).
-    Malformed output is {}. Never answered by the fallback model: the thresholds are
-    this model's. Raises `ModelUnavailable` when the provider refuses the
-    model or the key, `Unjudgeable` when it refuses this request, `CutOff` when the
-    answer is cut at the output cap even with twice the room, and any other failure
-    as it came."""
+    Never answered by the fallback model: the thresholds are this model's. Raises
+    `ModelUnavailable` when the provider refuses the model or the key, `Unjudgeable`
+    when it refuses this request, `Unanswered` when the answer has nothing usable even
+    with twice the room, and any other failure as it came."""
     import httpx
 
     from server.llm.fake import FakeLLMClient
@@ -120,22 +119,24 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
         # The stand-in for a missing key: its echo is no judgement. The rows stay owed.
         raise ModelUnavailable(f"no key for {settings.conflict_resolver_model}")
     cap = cr.max_output_tokens(len(peers))
+
+    async def ask(max_tokens: int) -> tuple[Any, dict[str, cr.PeerVerdict]]:
+        res = await llm.complete(
+            cr.SYSTEM_PROMPT,
+            cr.user_prompt(new, peers),
+            max_tokens=max_tokens,
+            response_format=cr.RESPONSE_FORMAT,
+        )
+        if str(getattr(res, "stop_reason", "") or "") in _CUT:
+            return res, {}  # a cut JSON answer parses to nothing
+        return res, cr.parse_verdicts(str(getattr(res, "text", "") or ""), peers)
+
     try:
         with llm_stage("conflict_resolver"):
-            res = await llm.complete(
-                cr.SYSTEM_PROMPT,
-                cr.user_prompt(new, peers),
-                max_tokens=cap,
-                response_format=cr.RESPONSE_FORMAT,
-            )
-            if str(getattr(res, "stop_reason", "") or "") in _CUT:
-                # Cut at the cap: a cut JSON answer parses to nothing. Once more with room.
-                res = await llm.complete(
-                    cr.SYSTEM_PROMPT,
-                    cr.user_prompt(new, peers),
-                    max_tokens=2 * cap,
-                    response_format=cr.RESPONSE_FORMAT,
-                )
+            res, verdicts = await ask(cap)
+            if not verdicts:
+                # Cut at the cap, or malformed: once more, with room.
+                res, verdicts = await ask(2 * cap)
     except httpx.HTTPStatusError as e:
         status, reason = e.response.status_code, str(e).splitlines()[0]
         if status in (401, 403, 404):
@@ -143,10 +144,9 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
         if 400 <= status < 500 and status not in (408, 409, 429):
             raise Unjudgeable(reason) from e
         raise  # 408, 409, 429, 5xx: transient, the row stays owed
-    if str(getattr(res, "stop_reason", "") or "") in _CUT:
-        raise CutOff(f"the answer stopped at the output cap ({2 * cap} tokens) twice")
-    answered = str(getattr(res, "model", "") or settings.conflict_resolver_model)
-    return cr.parse_verdicts(str(getattr(res, "text", "") or ""), peers), answered
+    if not verdicts:
+        raise Unanswered(f"nothing usable in two answers (output cap {2 * cap} tokens)")
+    return verdicts, str(getattr(res, "model", "") or settings.conflict_resolver_model)
 
 
 async def _head(org: str, memory_id: str) -> Any:
@@ -614,9 +614,6 @@ async def _judge_and_act(
     order = await _assertion_order(org, namespace, [row, *peers])
     verdicts, model = await judge(new, notes)
     counts.judged += 1
-    if not verdicts:
-        counts.errored += 1  # an answer with nothing usable in it: nothing changes
-        return
     acting = asyncio.ensure_future(
         _act_on_verdicts(org, namespace, row, peers, verdicts, policy, order, counts, model)
     )

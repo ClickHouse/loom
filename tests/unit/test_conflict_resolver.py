@@ -543,19 +543,35 @@ async def test_each_verdict_branch_acts_on_the_pair(
     [
         _answer(_entry("p1", "update", 0.85)),
         _answer({**_entry("p1", "update", 0.99), "same_entity": False}),
-        _answer(),
-        "not json",
-        "",
     ],
 )
-async def test_unsure_missing_or_malformed_output_changes_nothing_but_stamps(
+async def test_an_unsure_or_self_contradicting_answer_changes_nothing_but_stamps(
     row_env: NS, answer: str
 ) -> None:
     row_env.answer = answer
     counts = await _resolve()
     assert row_env.acted == [] and row_env.audits == []
     assert row_env.stamped == ["office_city"], "judged once: the row leaves the queue"
-    assert counts.skipped_no_action + counts.errored == 1
+    assert counts.skipped_no_action == 1
+
+
+@pytest.mark.parametrize("bad", [_answer(), "not json", ""])
+async def test_the_judge_asks_once_more_after_an_answer_with_nothing_usable(
+    monkeypatch, bad: str
+) -> None:
+    import server.llm.client as llm_client
+
+    answers = [bad, _answer(_entry("p1")), bad, bad]
+
+    class LLM:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            return NS(text=answers.pop(0), model="m")
+
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: LLM())
+    verdicts, _ = await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
+    assert list(verdicts) == [_PEERS[0].memory_id]
+    with pytest.raises(resolver.Unanswered):
+        await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
 
 
 async def test_a_failed_call_leaves_the_row_owed(row_env: NS, monkeypatch) -> None:
@@ -995,7 +1011,7 @@ async def test_a_refused_request_is_stamped_and_a_transient_failure_stays_owed(
     pass_env.raise_for = {
         "k1": resolver.Unjudgeable("400 Bad Request"),
         "k2": RuntimeError("503 Service Unavailable"),
-        "k4": resolver.CutOff("cut twice"),
+        "k4": resolver.Unanswered("cut twice"),
     }
     out = await pass_env.run()
     assert sorted(pass_env.stamped) == ["k1", "k4"], "a refusal or a cut answer holds no place"

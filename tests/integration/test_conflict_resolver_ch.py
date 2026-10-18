@@ -1024,12 +1024,13 @@ async def test_a_retirement_clears_the_winners_flag_against_the_retired_row(ch, 
 
 
 @pytest.mark.parametrize("cut_times", [1, 2])
-async def test_an_answer_cut_at_the_cap_is_asked_again_then_left_owed(
-    ch, wired, monkeypatch, cut_times: int
+@pytest.mark.parametrize("stop_reason", ["length", ""])
+async def test_an_answer_with_nothing_usable_is_asked_again_then_stamped(
+    ch, wired, monkeypatch, cut_times: int, stop_reason: str
 ) -> None:
-    """The provider stops at the output cap: the call is made once more with twice
-    the room; cut again, the row is stamped judged and counts errored, so the next
-    pass does not pay for it again."""
+    """The answer is cut at the output cap, or malformed: the call is made once more
+    with twice the room; nothing usable again, the row is stamped judged and counts
+    errored, so the next pass does not pay for it again."""
     from types import SimpleNamespace
 
     from server.memory.workers.conflict_resolver import run_pass
@@ -1042,7 +1043,8 @@ async def test_an_answer_cut_at_the_cap_is_asked_again_then_left_owed(
     async def complete(system: str, user: str, **kw: Any) -> Any:
         caps.append(int(kw["max_tokens"]))
         if len(caps) <= cut_times:
-            return SimpleNamespace(text='{"peers": [{"peer_id": "p1", "rea', stop_reason="length")
+            text = '{"peers": [{"peer_id": "p1", "rea'
+            return SimpleNamespace(text=text, stop_reason=stop_reason)
         return await real(system, user, **kw)
 
     monkeypatch.setattr(llm, "complete", complete)

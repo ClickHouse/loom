@@ -107,7 +107,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
             # The same answer for every row: stop before paying for more calls.
             p.unavailable = p.unavailable or e
-        except (resolver.Unjudgeable, resolver.CutOff) as e:
+        except (resolver.Unjudgeable, resolver.Unanswered) as e:
             # Asking again gets the same answer: stamp it, so it holds no place.
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {e}")
