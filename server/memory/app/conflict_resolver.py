@@ -20,6 +20,7 @@ import httpx
 import server.memory.store as memory_repo
 from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.errors import PreconditionFailedError
+from server.core.leases import LeaseUnavailable
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.llm.fake import FakeLLMClient
 from server.memory.domain import conflict_resolution as cr
@@ -757,8 +758,8 @@ async def _judge_and_act(
         # their records, follows and audit row, and the pass ends only after them.
         await asyncio.wait([acting])
         raise
-    except PreconditionFailedError:
-        raise  # a busy key: the row stays owed, as before the call
+    except (PreconditionFailedError, LeaseUnavailable):
+        raise  # a busy key, or no lease store: the row stays owed (the latter stops the pass)
     except Exception as e:
         raise JudgedThenFailed(f"{type(e).__name__}: {e}") from e
     return {str(p["memory_id"]) for p in peers} - set(verdicts)

@@ -2629,3 +2629,29 @@ async def test_a_row_owed_past_the_max_age_is_no_longer_judged(ch, wired, monkey
     )
     owed = {r["memory_key"] for r in await queue.owed_rows(limit=10, max_age_days=30)}
     assert owed == {"office_location"}, owed
+
+
+async def test_the_lease_store_down_while_acting_stops_the_pass_and_keeps_the_row_owed(
+    ch, wired, monkeypatch
+) -> None:
+    """The judge answers, then the keys' lease store stops answering: the pass stops and
+    the row stays owed, not paid for every pass and then stamped with nothing done."""
+    from contextlib import asynccontextmanager
+
+    from server.core.leases import LeaseUnavailable
+    from server.memory.store import key_write_lock
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 1700)
+
+    @asynccontextmanager
+    async def down(*a: Any, **kw: Any) -> Any:
+        raise LeaseUnavailable("keeper down", operation="memory.set")
+        yield
+
+    monkeypatch.setattr(key_write_lock.key_write_locks, "hold", down)
+    for _ in range(3):
+        await run_pass()
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"
+    assert (await _marks(ch, org))["office_location"] == 1, llm.calls
