@@ -137,7 +137,7 @@ async def stamp_checked(
 async def still_current(ident: Any, content_sha256: str) -> bool:
     """Whether the key's live memory row is still the judged write: a verdict for
     an older revision must not land on the newer one, which owes its own judge.
-    True when the write's hash is unknown (a row from before 038). The identity is
+    True when the write's hash is unknown (a row stored without `content_sha256`). The identity is
     the content: a later revision that wrote the same bytes back shares the
     verdict, which differs from its own only by what its peers did meanwhile."""
     import server.memory.store as memory_repo

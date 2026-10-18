@@ -551,7 +551,7 @@ export function parseOpMix(d: unknown): OpMixData | null {
 
 /** ops.health's op_mix answer: a report ({check, data}), a check the server ran but could
  *  not compute (data: null — status "fail", detail says why), or null when the request
- *  did not answer or its answer carries no op_mix check. */
+ *  did not answer (an answer always carries the op_mix check). */
 export function OpMixPanel() {
   const identity = useIdentity();
   const [op, setOp] = useState<{ check: OpsHealthCheck; data: OpMixData | null } | null | undefined>(undefined);
