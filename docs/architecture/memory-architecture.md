@@ -267,8 +267,8 @@ actions, verdicts and confidences, never the text.
   again before each call, so
   at most the calls already in flight cross it. Each call bills its namespace
   (`worker.conflict_resolver`).
-- A provider that refuses the model or the key (401, 403, 404) gets one warning per
-  pass and no further call; the rows stay owed. A transient failure (408, 409, 429, 5xx,
+- A provider that refuses the model or the key (401, 403, 404) stops the pass with no
+  further call; the rows stay owed, and the worker warns once per change, not per pass. A transient failure (408, 409, 429, 5xx,
   a timeout) leaves the row owed. Any other 4xx refuses this row's request, and asking
   again gets the same answer: the row is stamped judged and counted `errored`. An
   answer cut at the output cap (`length`, `max_tokens`) is asked once more with twice
@@ -280,8 +280,9 @@ version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged
 `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` resolves at load: off when `LOOM_LLM_PROVIDER` or
 the provider of `LOOM_CONFLICT_RESOLVER_MODEL` is `fake`, else on; an explicit value wins.
 Without the model's key (one boot warning), writes are still marked, and the judge never
-takes the fake client that stands in for the key: each pass warns once and leaves the
-rows owed, so they are judged once the key is set, in the environment or the dashboard.
+takes the fake client that stands in for the key: the pass reads nothing, the worker
+warns once (and logs once when the key is back), and the rows stay owed, so they are
+judged once the key is set, in the environment or the dashboard.
 
 ## `memory.bulk_set` and `memory.set_from_messages`
 

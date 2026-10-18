@@ -15,8 +15,8 @@ request, or an answer cut at the cap twice, stamps it judged and counts it error
 does not come back every pass. The keys' locks unavailable stop the pass, rows owed. A
 row is stamped judged only after its actions, so a pass cut short judges it again and
 acting twice changes nothing. With no key for the model the pass reads nothing; if the
-provider refuses the model or the key, the pass stops. Either logs one warning when it
-starts, not one per pass; nothing else fails.
+provider refuses the model or the key, the pass stops. Either logs a warning once per
+change (and an INFO line when the model is back), not once per pass; nothing else fails.
 Leader-only, like every worker.
 """
 
@@ -157,6 +157,8 @@ async def run_pass() -> dict[str, Any]:
     p = _Pass()
     with record_pass(NAME) as rec:
         missing = resolver.model_missing()
+        if missing is None and (_unavailable or "").startswith(resolver.NO_KEY):
+            _note_availability(None)  # the key is back, whether or not a row is queued
         if missing is not None:
             # Known before any read: the queue is not read for rows no call can judge.
             _note_availability(missing)

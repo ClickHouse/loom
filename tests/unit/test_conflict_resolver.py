@@ -968,6 +968,20 @@ async def test_with_no_key_a_pass_reads_nothing_and_warns_once(pass_env: NS, cap
     assert sum("available again" in r.message for r in caplog.records) == 1
 
 
+async def test_the_key_coming_back_is_noted_with_nothing_queued(pass_env: NS, caplog) -> None:
+    # No key; the key is set while nothing is queued; then the provider refuses it.
+    pass_env.missing = "no key for gpt-6.1-sol"
+    with caplog.at_level("INFO"):
+        await pass_env.run()
+        pass_env.missing = None
+        await pass_env.run()
+        pass_env.owed = [_q(memory_key="k1")]
+        pass_env.raise_for = {"k1": resolver.ModelUnavailable("401 invalid key")}
+        await pass_env.run()
+    assert sum("unavailable" in r.message for r in caplog.records) == 2
+    assert sum("available again" in r.message for r in caplog.records) == 1
+
+
 async def test_a_pass_judges_its_rows_at_the_configured_concurrency(
     pass_env: NS, monkeypatch
 ) -> None:

@@ -62,6 +62,8 @@ class CutOff(RuntimeError):
     the same, so the row is stamped judged and counted errored."""
 
 
+NO_KEY = "no key for"
+
 # The stop reasons of an answer cut at the output cap (OpenAI, Anthropic).
 _CUT = ("length", "max_tokens")
 
@@ -114,7 +116,7 @@ def model_missing() -> str | None:
     from server.llm.fake import FakeLLMClient
 
     if isinstance(_client(), FakeLLMClient):
-        return f"no key for {settings.conflict_resolver_model}"
+        return f"{NO_KEY} {settings.conflict_resolver_model}"
     return None
 
 
@@ -133,7 +135,7 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
     llm = _client()
     if isinstance(llm, FakeLLMClient):
         # The stand-in for a missing key: its echo is no judgement. The rows stay owed.
-        raise ModelUnavailable(f"no key for {settings.conflict_resolver_model}")
+        raise ModelUnavailable(f"{NO_KEY} {settings.conflict_resolver_model}")
     cap = cr.max_output_tokens(len(peers))
     try:
         with llm_stage("conflict_resolver"):
