@@ -169,8 +169,8 @@ class _SQLCapture:
 async def test_the_heads_a_touch_writes_from_are_whole_rows() -> None:
     """The strong bulk read feeds build_memory_version_row, so
     its fetch selects every column the builder carries forward. A bulk_get-style
-    subset without duplicate_of and last_reinforced_at would fail the insert on
-    the None DateTime, or zero duplicate_of. Locate
+    subset without last_reinforced_at would fail the insert on the None
+    DateTime. Locate
     under FINAL, fetch without it."""
     import re
 
@@ -187,4 +187,4 @@ async def test_the_heads_a_touch_writes_from_are_whole_rows() -> None:
     # the plain bulk read (memory.bulk_get) keeps its narrower fetch
     ch = _SQLCapture()
     await mr.get_many_by_keys(ident, ["k"], ch=ch, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
-    assert "duplicate_of" not in ch.sql[1].split("FROM loom.memory", 1)[0]
+    assert "last_reinforced_at" not in ch.sql[1].split("FROM loom.memory", 1)[0]
