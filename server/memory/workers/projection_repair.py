@@ -62,7 +62,7 @@ async def run_pass(
                 batch = await scan_active_projection_failures(
                     limit=STATUS_MIRROR_BATCH, status_mirror=True, after=after
                 )
-                await retry_each(batch, mirrored)
+                await retry_each(batch, mirrored, until=until)
                 # Past the batch's last row: a row left pending, or retried and not marked
                 # yet, is not read again this pass.
                 last = batch[-1] if len(batch) == STATUS_MIRROR_BATCH else None

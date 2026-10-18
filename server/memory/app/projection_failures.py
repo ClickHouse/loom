@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -86,6 +87,8 @@ STATUS_MIRROR = "memory_status_mirror"
 # A STATUS_MIRROR intent waits this long: a same-content write in flight when it was
 # queued (an unlocked pin) has landed its memory row by then.
 STATUS_MIRROR_GRACE_S = 60
+# How long a status mirror waits for its row's key lock before it is left for the next pass.
+STATUS_MIRROR_LOCK_WAIT_S = 1.0
 # Triples a follow closed but could not re-check for a live row holding them.
 TRIPLES_REOPEN = "triples_reopen"
 # The facts of rows a revision or an Undo changed, not yet reconciled with them.
@@ -322,12 +325,20 @@ async def retry_failures(
 
 
 async def retry_each(
-    failures: list[ProjectionFailureRow], done: list[Retried], *, ch: Any | None = None
+    failures: list[ProjectionFailureRow],
+    done: list[Retried],
+    *,
+    ch: Any | None = None,
+    until: float | None = None,
 ) -> None:
     """Retry each failure and append it with its result to `done`, unmarked: the caller
-    marks `done` with `mark_retried` once it has retried all it will."""
+    marks `done` with `mark_retried` once it has retried all it will. Once `until` (a
+    `time.monotonic()` deadline) has passed, the failures not yet retried stay active;
+    the first one is always retried, so a zero budget still moves the queue."""
     ch = ch or get_client()
     for failure in failures:
+        if until is not None and done and time.monotonic() >= until:
+            return
         done.append((failure, await _retry(failure, ch=ch)))
 
 
@@ -572,7 +583,7 @@ async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
         # and an Undo hold: one of those landing meanwhile is never served again. A
         # write-path supersede (apply_refines under newest_wins) takes no lock.
         try:
-            async with key_write_locks.hold(failure.org, *ident, wait_s=1.0):
+            async with key_write_locks.hold(failure.org, *ident, wait_s=STATUS_MIRROR_LOCK_WAIT_S):
                 row = await head_of(mid)
                 if row is None:
                     continue

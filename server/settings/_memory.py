@@ -155,7 +155,8 @@ class MemorySettings(BaseModel):
     # Recorded projection failures one pass retries (at least 1).
     projection_repair_max_failures_per_pass: int = Field(default=25, ge=1)
     # Seconds a pass spends replaying status-mirror intents (one per conflict-resolver
-    # retirement), 300 at a time ahead of the other failures, until a read comes back short.
+    # retirement, at least one a pass), 300 at a time ahead of the other failures, until
+    # a read comes back short.
     projection_repair_status_mirror_seconds: float = Field(default=60.0, ge=0.0)
 
     # Fold loom.memory_usage_totals onto the ranking columns (reinforcement

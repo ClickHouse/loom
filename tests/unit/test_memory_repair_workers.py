@@ -230,7 +230,7 @@ async def test_an_erasure_requested_mid_batch_stops_the_remaining_writes(
     assert marked == [["f0", "f1"]], "the failures left under the erasure stay active"
 
 
-@pytest.mark.parametrize(("seconds", "want"), [(60.0, 701), (0.0, 301)])
+@pytest.mark.parametrize(("seconds", "want"), [(60.0, 701), (0.0, 2)])
 async def test_a_pass_reads_mirror_batches_until_one_comes_back_short(
     monkeypatch: pytest.MonkeyPatch,
     _own_registry: worker_status.WorkerStatusRegistry,
@@ -238,7 +238,7 @@ async def test_a_pass_reads_mirror_batches_until_one_comes_back_short(
     want: int,
 ) -> None:
     """Batches of 300 until one is short, while projection_repair_status_mirror_seconds
-    lasts; with none, one batch."""
+    lasts; with none, one mirror (and the other failure)."""
     import dataclasses
     from datetime import datetime, timedelta
 
@@ -342,6 +342,31 @@ async def test_a_pass_cut_short_marks_the_mirrors_it_finished(
         await projection_repair.run_pass()
     assert sum(len(m["failure_ids"]) for m in marks) == 600
     assert len(marks) == 2
+
+
+async def test_a_mirror_batch_stops_once_the_pass_deadline_passes(
+    monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
+) -> None:
+    """Each retry waits on a busy key; the deadline stops the batch, not just the loop."""
+    from server.memory.app import projection_failures as pf
+    from server.memory.workers import projection_repair
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(projection_repair.time, "monotonic", clock.monotonic)
+
+    async def _busy(f: ProjectionFailureRow) -> ProjectionFailureRetryResult:
+        clock.advance(pf.STATUS_MIRROR_LOCK_WAIT_S)
+        return await _resolved(f)
+
+    monkeypatch.setattr(pf, "scan_active_projection_failures", _paged(_mirrors(300)))
+    marks = _fake_retry(monkeypatch, _busy)
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "projection_repair_status_mirror_seconds", 5.0)
+    result = await projection_repair.run_pass()
+    assert result.scanned == 5
+    assert sum(len(m["failure_ids"]) for m in marks) == 5, "the other 295 stay active"
 
 
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(
