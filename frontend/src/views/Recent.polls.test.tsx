@@ -178,20 +178,24 @@ describe("Recent change-driven refresh", () => {
       if (a[0] === "abort") attached.delete(a[1]);
       return remove.apply(this, a);
     });
-    seed({ ...viewer, roles: ["ADMIN"] }, null);
-    render(<Recent />);
-    await screen.findByRole("button", { name: "k0" });
-    const before = attached.size;
-    // Three refreshes, each with a new row, each row's highlight cleared 4 s later.
-    for (const k of ["k1", "k2", "k3"]) {
-      keys.unshift(k);
-      await vi.advanceTimersByTimeAsync(8000);
-      await screen.findByRole("button", { name: k });
+    // Restored even when an assertion fails, so no later test runs on the spies.
+    try {
+      seed({ ...viewer, roles: ["ADMIN"] }, null);
+      render(<Recent />);
+      await screen.findByRole("button", { name: "k0" });
+      const before = attached.size;
+      // Three refreshes, each with a new row, each row's highlight cleared 4 s later.
+      for (const k of ["k1", "k2", "k3"]) {
+        keys.unshift(k);
+        await vi.advanceTimersByTimeAsync(8000);
+        await screen.findByRole("button", { name: k });
+      }
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(attached.size).toBe(before);
+    } finally {
+      onAdd.mockRestore();
+      onRemove.mockRestore();
     }
-    await vi.advanceTimersByTimeAsync(4000);
-    expect(attached.size).toBe(before);
-    onAdd.mockRestore();
-    onRemove.mockRestore();
   });
 
   it("polls with known_version and holds it across an unchanged answer", async () => {
