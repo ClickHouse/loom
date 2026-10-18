@@ -327,7 +327,7 @@ async def tombstone_thread(
           AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
           AND {_THREAD_TURNS}
         """,
-        params={"org": org, "ns": namespace, "agent": agent, "tid": thread_id},
+        params=params,
     )
     counts["loom.conversation_embeddings"] = int(emb_n["n"]) if emb_n else 0
 

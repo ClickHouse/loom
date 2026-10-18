@@ -32,7 +32,7 @@ class _FakeCH:
         return self.rows
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
-        return {"n": len((params or {}).get("ids", []))}
+        return None  # the shared embedding cache reads it as a miss
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **kw: Any) -> None:
         (self.embedded if table == "loom.conversation_embeddings" else self.inserted).extend(rows)
