@@ -19,16 +19,17 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
 - **Nothing, when nothing changed.** The import reads the live rows under its identity
   first and skips a concept whose row already holds the same value, type, tags,
   confidence, `valid_at`, `valid_to`, `source_trace`, and the entities and
-  `source_class` when the bundle carries them. Tags the server adds on every write
-  (`sensitivity:`, `attribute:`) are not a difference. It skips an edge that is already live.
+  `source_class` when the bundle carries them. Tags `memory.set` adds itself
+  (`sensitivity:`, `attribute:`, `retyped_from:`) are not a difference. It skips an edge that is already live.
   When several concepts in the bundle share a key (rows of different writers), the most
   recently updated one is written. Re-sending an identical row would count as a
   reinforcement: a version row, an audit row and a higher ranking boost on every run.
 - **One `memory.set` per new or changed concept**, through the conflict, blacklist and
   audit checks of any other write, as `source_class: imported`.
 - **One `memory.delete` per pruned row.** `--prune` deletes only rows under the import's
-  `--agent` whose `source_trace` starts with `okf:`, and whose key is no longer in the
-  bundle. Rows anyone else wrote in the namespace stay. A delete is a tombstone:
+  `--agent`, written by its token, whose `source_trace` starts with `okf:` and whose key is
+  no longer in the bundle. Rows anyone else wrote in the namespace stay. Give each bundle
+  imported into the namespace its own `--agent` (`--prune` refuses without one). A delete is a tombstone:
   `memory.restore` brings the row back within its 14-day window.
 
 The last line reports the counts:
@@ -47,12 +48,16 @@ A non-zero exit means a write, link or delete failed.
   gone, and the agent name alone is the caller's choice.
 - The import runs only when the export exited 0 (`sh -e`), and each run writes its bundle
   to a fresh `emptyDir`, so a bundle left by an earlier run is never imported.
-- `--dry-run` lists what would be written and deleted, and writes nothing.
+- `--dry-run` lists what would be written and deleted, after the same checks, and writes
+  nothing.
 - `concurrencyPolicy: Forbid` keeps two runs from interleaving.
 
 There is no cap on how many rows one run may prune. A source namespace that loses most of
 its rows on purpose propagates on the next run without an operator. A key pruned by
-mistake is written again by the next run whose bundle holds it.
+mistake is written again by the next run whose bundle holds it. That also covers the one
+race the guards leave: export pages the source by offset, so a source row deleted while a
+large export is paging can push one live row out of that bundle, and its copy is pruned
+until the next run.
 
 ## Tokens
 
@@ -73,7 +78,9 @@ kubectl create secret generic okf-sync \
   --from-file=public-writer=./public-writer.jwt
 ```
 
-Re-mint before the TTL runs out and replace the Secret; `loom revoke-token` retires a
+Re-mint before the TTL runs out, with the same `--subject`, and replace the Secret. Prune
+deletes only rows its token's subject wrote, so a token with another subject leaves the
+earlier copies in place (the last line counts them as kept); `loom revoke-token` retires a
 leaked one.
 
 - On the public Loom, the job's token is the only writer on the namespace. Its readers
@@ -88,7 +95,9 @@ Everything in the namespace reaches the public Loom within one schedule interval
 write to it on the private side as publishing: keep anything confidential in another
 namespace. Rows marked `sensitivity: high` stay on the private side (the export leaves
 them out unless `--include-high`), and a row that becomes `high` is pruned from the
-public side on the next run.
+public side on the next run. A prune is a tombstone: the value stays restorable for 14
+days and in the public Loom's version history. Content that must leave the public Loom
+goes through [erasure](../features/memory/retention-and-erasure.md).
 
 ## Network
 

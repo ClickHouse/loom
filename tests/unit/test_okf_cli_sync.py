@@ -151,12 +151,13 @@ def loom(monkeypatch: pytest.MonkeyPatch) -> _FakeLoom:
     return fake
 
 
-def _run(root: Path, *flags: str) -> int:
+def _run(root: Path, *flags: str, agent: str | None = "okf-sync") -> int:
     parser = argparse.ArgumentParser()
     cli_okf.register_okf_cli(parser.add_subparsers())
     args = parser.parse_args(
         ["import-okf", str(root), "--token", _TOKEN, "--org", "acme", "--namespace", "dst"]
-        + ["--agent", "okf-sync", *flags]
+        + (["--agent", agent] if agent else [])
+        + list(flags)
     )
     return int(args.func(args))
 
@@ -386,3 +387,28 @@ def test_prune_refuses_an_export_into_a_reused_directory(tmp_path: Path, loom: _
     _bundle(root, [_entry("a")])  # the file of `gone` stays behind
     assert _run(root, "--prune", "--no-lint") == 2
     assert loom.calls == []
+
+
+def test_prune_needs_an_explicit_agent(tmp_path: Path, loom: _FakeLoom) -> None:
+    assert _run(_bundle(tmp_path / "b", [_entry("a")]), "--prune", agent=None) == 2
+    assert loom.calls == []
+
+
+def test_two_bundles_in_one_namespace_never_prune_each_other(tmp_path: Path, loom: _FakeLoom):
+    assert _run(_bundle(tmp_path / "a" / "kb", [_entry("from-a")]), agent="sync-a") == 0
+    root_b = _bundle(tmp_path / "b" / "kb", [_entry("from-b")])
+    assert _run(root_b, "--prune", agent="sync-b") == 0
+    assert "memory.delete" not in loom.writes()
+    assert ("sync-a", "-", "from-a") in loom.rows
+
+
+def test_prune_dry_run_skips_and_counts_rows_another_token_wrote(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a")])) == 0
+    loom.put("okf-sync", "theirs", source_trace="okf:other/x.md", tags=[], actor="human:bob")
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune", "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert "would delete" not in out
+    assert "0 would be pruned (1 kept: written by another token under this --agent)" in out
