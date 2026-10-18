@@ -188,6 +188,16 @@ describe("ListPager, page size", () => {
     expect(screen.getByRole("button", { name: "Rows per page" })).toBeInTheDocument();
   });
 
+  it("says nothing of a page when a filter leaves one page in the same render", () => {
+    const props = { label: "Users", pageSize: 50, onPage: vi.fn(), onPageSize: () => {} };
+    const { rerender } = render(<ListPager {...props} page={0} total={120} shown={50} />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    rerender(<ListPager {...props} page={1} total={120} shown={50} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 3");
+    rerender(<ListPager {...props} page={0} total={30} shown={30} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 3");
+  });
+
   it("says the new page size after paging, not only the page it starts again from", async () => {
     function Paged() {
       const [page, setPage] = useState(0);

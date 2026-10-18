@@ -363,8 +363,8 @@ class RunListInput(BaseModel):
     # duration_ms (0 while a run is active), `relied_on_*` by how many memories
     # the run relied on (memories_used). Each breaks ties on started_at and then
     # run_id, so pages never repeat or skip a run. "started_desc" (default) is
-    # newest first, the order before this field; a replica a release behind
-    # serves that order and names the key in `ignored_args`.
+    # newest first; a replica a release behind serves that order and names the
+    # key in `ignored_args`.
     order_by: Literal[
         "started_desc",
         "started_asc",

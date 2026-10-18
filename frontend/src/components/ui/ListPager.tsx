@@ -102,7 +102,12 @@ export function ListPager({
   }, [pastEnd, pages, onPage]);
   useEffect(() => {
     const asked = saidPage.current;
-    if (asked === null || page === asked) return;
+    if (asked === null) return;
+    if (page === asked) {
+      // The page asked for is there: nothing will send the reader back from it.
+      if (pages !== undefined && page <= pages - 1) saidPage.current = null;
+      return;
+    }
     saidPage.current = null;
     // A filter, a search or a sort also moves the page (to the first): only a move back to
     // the last page is the view's answer to the page asked for.
