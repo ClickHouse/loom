@@ -21,10 +21,12 @@ from server.settings import Settings, settings
 
 @pytest.fixture(autouse=True)
 def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A pair is settled under the peer's key write lock (a Keeper lease, faked here).
+    # A pair is settled under the peer's key write lock (a Keeper lease, faked here). No
+    # test here waits on a held key, and a short wait passes its deadline on a loaded
+    # runner: the pair then reads busy and the row is left owed instead of acted on.
     from tests.unit.claims_fake import fake_key_locks
 
-    fake_key_locks(monkeypatch)
+    fake_key_locks(monkeypatch, wait_s=10.0)
 
 
 # --- the fold ------------------------------------------------------------------------

@@ -172,12 +172,13 @@ class FakeLockTable:
             raise AssertionError(sql)
 
 
-def fake_key_locks(monkeypatch: Any) -> None:
+def fake_key_locks(monkeypatch: Any, *, wait_s: float = 0.3) -> None:
     """The keys' write locks (Keeper leases) over a `FakeLockTable`, for a test that
-    takes one, as an Undo does."""
+    takes one, as an Undo does. `wait_s`: how long a take waits before the key reads
+    busy; a test that never holds a key wants it long, so a loaded runner is not busy."""
     from server.memory.store import key_write_lock as kl
 
-    locks = kl.KeyWriteLocks(FakeLockTable(), wait_s=0.3)  # type: ignore[arg-type]
+    locks = kl.KeyWriteLocks(FakeLockTable(), wait_s=wait_s)  # type: ignore[arg-type]
     monkeypatch.setattr(kl, "key_write_locks", locks)
 
 
