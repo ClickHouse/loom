@@ -942,6 +942,24 @@ describe("Tasks page", () => {
     }
   });
 
+  it("a failed poll after a good read keeps the tasks and says it could not refresh", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      seed(admin, [row("admin")]);
+      render(<Tasks />);
+      await screen.findByRole("row", { name: "Task urgent" });
+      vi.mocked(listTasks).mockRejectedValueOnce(new Error("down"));
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await waitFor(() => expect(screen.getByText(/Couldn't refresh the tasks/)).toBeInTheDocument());
+      expect(screen.getByRole("row", { name: "Task urgent" })).toBeInTheDocument();
+      expect(screen.queryByText("Couldn't load tasks")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("an empty board column under a filter says none match", async () => {
     localStorage.setItem("loom_tasks_mode", "board");
     try {

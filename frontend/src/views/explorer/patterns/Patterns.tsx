@@ -145,6 +145,8 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
         setBoardStatus(b.status);
       } catch (e) {
         if (!live()) return;
+        // The previous window's board is not this one's: no counts from it stay on screen.
+        setFull(null);
         setBoardStatus("error");
         setBoardError(humanizeError(e));
       }

@@ -667,8 +667,8 @@ export function OpMixPanel() {
       </LoadingSkeleton>
     );
   // The scope row stays above every state: a scope whose read failed is left with it. Its
-  // badge names the scope of what is shown: the figures' scope over a report (a toggle's
-  // read has not yet replaced them), the asked one over any other state.
+  // badge names the scope of what is shown: the read's scope over a report or a failed
+  // check (a toggle's read has not yet replaced it), the asked one over a failed read.
   const scopeRow = (shown: typeof scope, summary?: ReactNode) => (
     <div className="flex flex-wrap items-center gap-3">
       {shown === "namespace" ? (
@@ -688,18 +688,20 @@ export function OpMixPanel() {
       {summary}
     </div>
   );
-  const withScope = (body: ReactNode) => (
+  const withScope = (shown: typeof scope, body: ReactNode) => (
     <div className="space-y-4" aria-busy={refreshing || undefined}>
-      {scopeRow(scope)}
+      {scopeRow(shown)}
       {body}
     </div>
   );
   if (error)
     return withScope(
+      scope,
       <ListState kind="error" things="the operation mix" error={error} onRetry={() => setReads((n) => n + 1)} />,
     );
   if (!op) {
     return withScope(
+      scope,
       <EmptyState
         icon="pie-chart"
         title="Operation mix unavailable"
@@ -709,7 +711,9 @@ export function OpMixPanel() {
   }
   const { check, data } = op;
   if (data === null) {
+    // The check's detail is the read for op.scope, which the badge names.
     return withScope(
+      op.scope,
       <EmptyState
         icon="pie-chart"
         title="Operation mix check failed"

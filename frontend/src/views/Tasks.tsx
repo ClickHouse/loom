@@ -24,6 +24,7 @@ import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { useVisiblePoll } from "../lib/hooks";
+import { humanizeError } from "../lib/format";
 import {
   ACTION_LABEL,
   DIALOG_ACTIONS,
@@ -193,6 +194,11 @@ export function Tasks() {
   const [rows, setRows] = useState<TaskListRow[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [rowsError, setRowsError] = useState<unknown>(null);
+  // A failed poll or refresh after a good read keeps the rows and says it could not
+  // refresh; only a failed first read is the list's error state.
+  const [refreshError, setRefreshError] = useState<unknown>(null);
+  const rowsNow = useRef(rows);
+  rowsNow.current = rows;
   const [mode, setMode] = useState<Mode>(() => {
     try {
       return localStorage.getItem("loom_tasks_mode") === "board" ? "board" : "list";
@@ -314,9 +320,14 @@ export function Tasks() {
         setRows(results.flatMap((r) => r.tasks));
         setTruncated(results.some((r) => r.truncated));
         setRowsError(null);
+        setRefreshError(null);
       })
       .catch((e) => {
         if (seq !== rowsSeq.current) return;
+        if (rowsNow.current !== null) {
+          setRefreshError(e);
+          return;
+        }
         setRowsError(e);
         setRows([]);
       });
@@ -326,6 +337,7 @@ export function Tasks() {
     if (!picked) return;
     setRows(null);
     setRowsError(null);
+    setRefreshError(null);
     setViewParam("inbox", picked);
     refresh();
   }, [picked, refresh]);
@@ -816,6 +828,11 @@ export function Tasks() {
               )}
               {rows !== null && rowsError !== null && (
                 <ListState kind="error" things="tasks" error={rowsError} onRetry={refresh} />
+              )}
+              {refreshError !== null && rowsError === null && (
+                <div className="mb-2 text-xs text-text-muted" role="status">
+                  {`Couldn't refresh the tasks (${humanizeError(refreshError)}); showing the last read.`}
+                </div>
               )}
               {emptyInbox && (
                 <ListState

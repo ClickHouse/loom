@@ -161,6 +161,15 @@ describe("an entity on a memory opens in place", () => {
     expect(useStore.getState().inspectedMemoryKey).not.toBe("api/quota");
   });
 
+  it("on the Graph, a redirect follows into the page's own drawer", async () => {
+    vi.mocked(getMemory).mockResolvedValue({ ...DETAIL, status: "duplicate", canonical_key: "api/limits" });
+    const onInspectMemory = vi.fn();
+    await open({ onInspectMemory });
+    await userEvent.click(screen.getByTestId("redirect-badge"));
+    expect(onInspectMemory).toHaveBeenCalledWith("api/limits");
+    expect(useStore.getState().inspectedMemoryKey).not.toBe("api/limits");
+  });
+
   it("a click opens a popover with the memories that mention it and its neighbours, focus on the first link", async () => {
     await open();
     await userEvent.click(chip("rate limiting"));

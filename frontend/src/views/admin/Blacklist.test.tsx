@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BlacklistRow } from "../../api";
 import { useStore } from "../../lib/state";
@@ -70,5 +70,24 @@ describe("privacy filters, a failed read", () => {
     expect(screen.getByLabelText("Loading privacy filters")).toBeInTheDocument();
     answer({ rows: [row({})] });
     expect(await screen.findByText("sk-")).toBeInTheDocument();
+  });
+});
+
+describe("privacy filters across a namespace switch", () => {
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ identity: null, whoami: null });
+  });
+
+  it("never draws the old namespace's patterns under the new one", async () => {
+    useStore.setState({
+      identity: { org: "dev", namespace: "ns", agent: "loom-ui" },
+      whoami: { authenticated: true, subject: "a@x", org: "dev", roles: ["ADMIN"], namespaces: ["ns", "other"] },
+    });
+    listBlacklist.mockResolvedValueOnce({ rows: [row({})] }).mockReturnValueOnce(new Promise(() => {}));
+    render(<PrivacyFilters />);
+    expect(await screen.findByText("sk-")).toBeInTheDocument();
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } }));
+    expect(screen.queryByText("sk-")).toBeNull();
   });
 });

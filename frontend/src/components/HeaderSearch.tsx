@@ -20,7 +20,7 @@ import {
   type SearchHit,
 } from "../api";
 import { sharedMine } from "../lib/sharedReads";
-import { useStore, viewHref } from "../lib/state";
+import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { displayAgent } from "../lib/format";
 import { Kbd, Loading, TagList } from "./ui";
@@ -553,15 +553,8 @@ export function HeaderSearch({
                 {namespacesShown.map((r, i) => {
                   const idx = offNs + i;
                   return (
-                    <a
-                      key={r.namespace}
-                      {...optionProps(idx)}
-                      href={viewHref("memories")}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        switchNs(r.namespace);
-                      }}
-                    >
+                    // A button, not a link: the switch keeps the page it is made on.
+                    <button type="button" key={r.namespace} {...optionProps(idx)} onClick={() => switchNs(r.namespace)}>
                       <div className="flex items-center gap-2">
                         <TypeIcon kind="namespace" />
                         <span className="font-mono text-xs">{r.namespace}</span>
@@ -575,7 +568,7 @@ export function HeaderSearch({
                       {r.description && (
                         <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">{r.description}</div>
                       )}
-                    </a>
+                    </button>
                   );
                 })}
               </OptionGroup>

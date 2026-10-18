@@ -642,7 +642,7 @@ export function MemoryInspector({
               </Dialog.Title>
               <LifecycleBadge status={detail?.status} pinned={!!detail?.pinned} />
               {detail?.status === "duplicate" && detail.canonical_key && (
-                <RedirectBadge canonicalKey={detail.canonical_key} onFollow={inspect} />
+                <RedirectBadge canonicalKey={detail.canonical_key} onFollow={openMemory} />
               )}
             </div>
             <div className="flex items-center gap-1 shrink-0">

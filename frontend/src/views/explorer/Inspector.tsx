@@ -330,8 +330,15 @@ export function Inspector({
       setHitsError(null);
       const id = { org: identity.org, namespace: identity.namespace };
       const prov = provenance.size ? [...provenance] : undefined;
+      // Reads still out when the selection's effect is aborted (a new model mid-read) leave
+      // the key unclaimed, so the re-run reads again instead of keeping nothing.
+      let unsettled = 0;
+      const settled = () => {
+        unsettled -= 1;
+      };
       const timer = window.setTimeout(() => {
         keyRef.current = key;
+        unsettled = node ? 2 : 1;
         if (node) {
           listFacts(id, { entity: node.entity, limit: 12, as_of: asOfInstant(asOf), provenance: prov, signal })
             .then((r) => {
@@ -339,7 +346,8 @@ export function Inspector({
             })
             .catch((e) => {
               if (live()) setFactsError(e);
-            });
+            })
+            .finally(settled);
           const both = node.entity === model.seed ? [model.seed] : [model.seed, node.entity];
           // entity_filter is an OR boost, so the list is "memories naming
           // these entities"; the type and tag facets narrow it server-side.
@@ -358,7 +366,8 @@ export function Inspector({
             })
             .catch((e) => {
               if (live()) setHitsError(e);
-            });
+            })
+            .finally(settled);
         } else if (edge) {
           const a = edge.parent;
           const b = edge.child.entity;
@@ -371,10 +380,14 @@ export function Inspector({
             })
             .catch((e) => {
               if (live()) setFactsError(e);
-            });
+            })
+            .finally(settled);
         }
       }, 250);
-      signal.addEventListener("abort", () => window.clearTimeout(timer));
+      signal.addEventListener("abort", () => {
+        window.clearTimeout(timer);
+        if (unsettled > 0 && keyRef.current === key) keyRef.current = "";
+      });
     },
     [model, node, edge, asOf, provKey, typesKey, tagsKey, identity.org, identity.namespace, retries],
   );

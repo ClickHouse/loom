@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -91,16 +91,18 @@ export function PrivacyFilters({
   const [loadError, setLoadError] = useState<unknown>(null);
   const [reads, setReads] = useState(0);
   const reload = () => setReads((n) => n + 1);
-  // Another namespace's patterns are not this one's: start from the skeleton.
+  // Another namespace's patterns are not this one's: start from the skeleton, during
+  // render, so the old namespace's rows (and their Remove buttons) never paint under it.
   const scopeKey = `${identity.org}/${identity.namespace}`;
-  const rowsFor = useRef(scopeKey);
+  const [rowsFor, setRowsFor] = useState(scopeKey);
+  if (rowsFor !== scopeKey) {
+    setRowsFor(scopeKey);
+    setRows(null);
+    setLoadError(null);
+  }
   useAbortableEffect(
     (signal, live) => {
       if (!canList) return;
-      if (rowsFor.current !== scopeKey) {
-        rowsFor.current = scopeKey;
-        setRows(null);
-      }
       setRefreshing(true);
       setLoadError(null);
       listBlacklist({ org: identity.org, namespace: identity.namespace }, { signal })

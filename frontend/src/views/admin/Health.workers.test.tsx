@@ -445,6 +445,26 @@ describe("OpMixPanel", () => {
     expect(await screen.findByText("Operation mix unavailable")).toBeInTheDocument();
   });
 
+  it("over a failed check, the badge names the scope that check was read for while a toggle reads", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls > 1) return new Promise(() => {});
+        return new Response(JSON.stringify(opMix({ status: "fail", detail: "boom" })), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+    render(<OpMixPanel />);
+    expect(await screen.findByText("Operation mix check failed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Whole org" }));
+    await waitFor(() => expect(calls).toBe(2));
+    expect(screen.queryByText("org · dev")).toBeNull();
+  });
+
   it("a failed org-wide read keeps the scope toggle, so the reader can go back to the namespace", async () => {
     const report = opMix({
       detail: "healthy mix",

@@ -64,15 +64,21 @@ describe("HealthTab: a failed poll", () => {
     try {
       codeCoverage.mockResolvedValue(null);
       codeIndexErrors.mockResolvedValue({ rows: [], total: 0 });
+      codeRecentCommits.mockResolvedValue({ rows: [] });
       render(<HealthTab id={{ org: "dev", namespace: "code-app" }} />);
       expect(await screen.findByText(/generic profile/)).toBeInTheDocument();
       sharedIndexStatus.mockRejectedValueOnce(new Error("boom"));
+      codeIndexErrors.mockRejectedValueOnce(new Error("boom"));
+      codeRecentCommits.mockRejectedValueOnce(new Error("boom"));
       await act(async () => {
         vi.advanceTimersByTime(60_000);
       });
       await waitFor(() => expect(screen.getByText(/Couldn't refresh the index status/)).toBeInTheDocument());
       expect(screen.getByText(/generic profile/)).toBeInTheDocument();
       expect(screen.queryByText("Couldn't load index status")).toBeNull();
+      // The sections read before keep their reads too.
+      expect(screen.queryByText("Couldn't load the index errors.")).toBeNull();
+      expect(screen.queryByText("Couldn't load the recent commits.")).toBeNull();
     } finally {
       vi.useRealTimers();
     }

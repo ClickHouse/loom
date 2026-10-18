@@ -197,6 +197,21 @@ describe("Inspector failed reads", () => {
     await waitFor(() => expect(screen.queryByText("Couldn't load the facts")).toBeNull());
   });
 
+  it("reads again when a new model lands while the selection's read is out", async () => {
+    vi.mocked(listFacts).mockImplementationOnce(
+      (_id, opts) =>
+        new Promise((_, reject) =>
+          opts?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+        ),
+    );
+    const before = vi.mocked(listFacts).mock.calls.length;
+    const view = mount();
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBe(before + 1), { timeout: 2000 });
+    view.rerender(inspector({ model: { ...model, nodes: new Map(model.nodes) } }));
+    expect(await screen.findByText(/No typed triple names this entity/, {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.queryByText("Loading facts")).toBeNull();
+  });
+
   it("keeps a failed read's error when an Expand or a re-walk hands it a new model for the same selection", async () => {
     vi.mocked(listFacts).mockRejectedValueOnce(new Error("down"));
     const view = mount();

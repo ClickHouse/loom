@@ -1854,12 +1854,14 @@ export function HealthTab({ id }: { id: CodeId }) {
         .catch((e) => {
           if (live()) setError(e);
         });
+      // A failed poll after a good read keeps that read, as the status above does; only a
+      // section with nothing read yet says its read failed.
       codeCoverage(id, { signal })
         .then((c) => {
           if (live()) setCov(c);
         })
         .catch(() => {
-          if (live()) setCov(null);
+          if (live()) setCov((c) => c ?? null);
         });
       codeRecentCommits(id, 15, { signal })
         .then((r) => {
@@ -1867,14 +1869,14 @@ export function HealthTab({ id }: { id: CodeId }) {
         })
         .catch(() => {
           // Said as a failure: "no commits recorded yet" would be a claim.
-          if (live()) setRecent("failed");
+          if (live()) setRecent((r) => (Array.isArray(r) ? r : "failed"));
         });
       codeIndexErrors(id, 100, { signal })
         .then((e) => {
           if (live()) setErrs(e);
         })
         .catch(() => {
-          if (live()) setErrs(null);
+          if (live()) setErrs((x) => x ?? null);
         });
       listCostRollup(id, { days: 7, groupBy: ["operation"], signal })
         .then((r) => {
@@ -1886,7 +1888,7 @@ export function HealthTab({ id }: { id: CodeId }) {
           });
         })
         .catch(() => {
-          if (live()) setSpend(null);
+          if (live()) setSpend((x) => x ?? null);
         });
     },
     // `id` is a fresh object each parent render; its two fields are the identity.

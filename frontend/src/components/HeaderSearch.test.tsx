@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { HeaderSearch } from "./HeaderSearch";
+import { sharedMine } from "../lib/sharedReads";
 
 // The header search is a WAI-ARIA combobox: focus stays in the input while ↑↓ move the
 // highlighted option, which the input names through aria-activedescendant.
@@ -87,6 +88,21 @@ describe("HeaderSearch", () => {
     expect(library).not.toHaveTextContent("#beans");
     // The outlined chip a row's TagList draws.
     expect(screen.getByText("beans").closest(".rounded-full")?.className).toMatch(/click-badge-opaque-color-stroke/);
+  });
+
+  it("draws a Jump to namespace as a button: the switch keeps the page, so it has no href", async () => {
+    vi.mocked(sharedMine).mockResolvedValueOnce([
+      { namespace: "coffee-team", visibility: "private", description: "", role: "writer", status: "active" },
+    ] as never);
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    const input = screen.getByRole("combobox", { name: "Search Loom" });
+    await user.click(input);
+    await user.type(input, "coffee");
+    const jump = await screen.findByRole("group", { name: "Jump to" });
+    const option = within(jump).getByText("coffee-team").closest("button, a");
+    expect(option?.tagName).toBe("BUTTON");
+    expect(option).not.toHaveAttribute("href");
   });
 
   it("names each best match's agent, so two agents' rows of one key tell apart", async () => {
