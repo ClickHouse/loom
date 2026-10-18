@@ -22,6 +22,7 @@ from server.memory.app import conflicts
 from server.memory.app.auto_resolution import (
     SAME_KEY_NEWEST_WINS,
     RetirementTracker,
+    follow_retirements,
     schedule_auto_supersessions,
 )
 from server.memory.domain import lock
@@ -213,14 +214,16 @@ async def supersede_same_key_rows(
         finally:
             # Beside the response: a point write does not wait on the record. What
             # reached loom.memory is recorded even when the embeddings mirror failed.
+            retired = [
+                {**v, "superseded_by_key": v["memory_key"]} for v in tracker.retired(victims)
+            ]
             schedule_auto_supersessions(
-                org=org,
-                namespace=namespace,
-                retired=[
-                    {**v, "superseded_by_key": v["memory_key"]} for v in tracker.retired(victims)
-                ],
-                reason=SAME_KEY_NEWEST_WINS,
+                org=org, namespace=namespace, retired=retired, reason=SAME_KEY_NEWEST_WINS
             )
+        # The retired rows' facts close, as a bulk write's do.
+        await follow_retirements(
+            org=org, namespace=namespace, retired=retired, op=SAME_KEY_NEWEST_WINS
+        )
         log.info(
             "same-key supersession (%s): %d older rows retired behind %d keys in %s/%s",
             policy,

@@ -6521,3 +6521,47 @@ async def test_a_pass_that_repaired_4000_failures_marks_them_all(ch: Any, org: s
     assert not await list_projection_failures(org=org, limit=1, ch=ch)
     resolved = await list_projection_failures(org=org, status="resolved", limit=5000, ch=ch)
     assert len(resolved) == 4000
+
+
+async def test_a_point_write_retirement_closes_the_retired_rows_facts(ch, org, monkeypatch) -> None:
+    """Under newest_wins s2's "Alice likes tennis" retires s1's "Alice likes chess" under
+    the same key. `likes` holds many values, so no interval repair closes chess: the
+    retirement's follow does, and the graph no longer serves it as current."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, conflicts
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.conflicts import ConflictResult
+
+    async def _clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    monkeypatch.setattr(conflicts, "check_on_commit", _clear)
+    now = datetime.now(UTC)
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "created_at": now,
+                "updated_at": now,
+                "active": True,
+                "default_conflict_policy": "newest_wins",
+            }
+        ],
+    )
+    for session, game in (("s1", "chess"), ("s2", "tennis")):
+        await handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id=session,
+                memory_key="alice_likes",
+                value=f"Alice likes {game}",
+                relations=[("alice", "likes", game)],
+            )
+        )
+        await after_write.drain()
+    assert await _open_facts(ch, org, {("like", "tennis")}) == {("like", "tennis")}

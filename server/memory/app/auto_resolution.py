@@ -184,3 +184,37 @@ def schedule_auto_supersessions(
         )
     except Exception as e:  # noqa: BLE001 — the retirement stands; its record is best effort
         log.warning("auto_resolution: scheduling the record failed (non-fatal): %s", e)
+
+
+async def follow_retirements(
+    *, org: str, namespace: str, retired: Sequence[Mapping[str, Any]], op: str
+) -> None:
+    """The triple plane follows rows a point write just retired, as a bulk write's
+    (`entity_projections.follow_row_supersessions`): the retired row's open facts the
+    winner does not state close. What it could not follow is left to the projection
+    repair (FOLLOW_ROWS). Never raises."""
+    pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in retired]
+    if not pairs:
+        return
+    from types import SimpleNamespace
+
+    from server.core.ch import get_client
+    from server.memory.app.entity_projections import follow_row_supersessions
+    from server.memory.app.projection_errors import record_input_projection_failure
+    from server.memory.app.projection_failures import FOLLOW_ROWS
+
+    scope = SimpleNamespace(org=org, namespace=namespace, agent="")
+    try:
+        left = (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed
+    except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them
+        log.warning("%s: triples follow failed (recorded for repair): %s", op, e)
+        left = pairs
+    if left:
+        await record_input_projection_failure(
+            scope,
+            projection=FOLLOW_ROWS,
+            error=f"supersession pairs left for the repair to follow: {len(left)}",
+            payload={"pairs": [list(p) for p in left]},
+            source_operation=op,
+            source_resource_id=f"{op}:{pairs[0][1]}",
+        )
