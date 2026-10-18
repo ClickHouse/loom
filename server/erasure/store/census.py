@@ -399,7 +399,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     # -- configuration, not content ------------------------------------------
     "loom.deployment_config": (
         "The deployment's published settings every replica checks itself against (one "
-        "JSON row, secrets stripped) — configuration, keyed by name, holding no memory, "
+        "JSON row, no secrets) — configuration, keyed by name, holding no memory, "
         "conversation, document or code content."
     ),
     "loom.provider_configuration": (

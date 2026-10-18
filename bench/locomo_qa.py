@@ -690,8 +690,7 @@ def footprint_from_health(resp: dict[str, Any]) -> dict[str, Any]:
     """Memory footprint of one namespace from a memory.health response: live
     (active) rows and the server's stored-value token estimate (chars/4,
     `footprint.value_tokens_est`) — the stored footprint per LoCoMo
-    conversation (the raw transcript is about 26k tokens). `tokens_est` is None on a
-    server whose health report predates the footprint section."""
+    conversation (the raw transcript is about 26k tokens)."""
     fp = resp.get("footprint") or {}
     tokens = fp.get("value_tokens_est")
     return {

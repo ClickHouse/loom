@@ -452,6 +452,11 @@ def test_a_pem_root_signs_rs256_as_default(
     assert pyjwt.decode(token, public, algorithms=["RS256"], audience=settings.jwt_audience)
     assert verify_token(token).subject == "s"
     assert keyring.public_keys() == {"default": public}
+    # The PEM root's internal kid is not a name a token may carry.
+    claims = {"sub": "s", "iss": settings.jwt_issuer, "aud": settings.jwt_audience, "iat": 1}
+    internal = pyjwt.encode(claims, pem, algorithm="RS256", headers={"kid": keyring.ROOT_RS256_KID})
+    with pytest.raises(TokenError):
+        verify_token(internal)
     # A retired `default` takes the PEM root with it.
     _load([{**_row("default", at=_now()), "sealed_key": "", "retired": True}])
     with pytest.raises(keyring.NoSigningKey):

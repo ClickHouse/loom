@@ -297,7 +297,7 @@ def signing_key() -> SigningKey:
             "LOOM_JWT_SECRET is neither an HMAC secret nor an RSA private key, and no "
             "signing key is active here: run `loom signing-key rotate`"
         )
-    if key.kid == ROOT_RS256_KID and ROOT_KID not in _view.retired:
+    if key.kid == ROOT_RS256_KID:
         # A PEM root signs as `default`.
         return dataclasses.replace(key, kid=ROOT_KID)
     return key
@@ -327,12 +327,11 @@ def verification_keys(kid: str, algorithm: str) -> list[str]:
     gateway's `default` both. A retire
     stops this deployment's keys only: the gateway's are its operator's."""
     keys = _keys(_view)  # never a retired kid
-    key = keys.get(kid)
+    key = None if kid == ROOT_RS256_KID else keys.get(kid)
     if key is None and kid == ROOT_KID:
         if algorithm == "HS256":
             return [_root().secret] if _root_signs(_view.retired) else []
-        if ROOT_KID not in _view.retired:
-            key = keys.get(ROOT_RS256_KID)
+        key = keys.get(ROOT_RS256_KID)
     out: list[str] = []
     if key is not None and key.algorithm == algorithm:
         out.append(key.public_pem if algorithm == "RS256" else key.secret)

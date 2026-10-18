@@ -147,7 +147,7 @@ docs/design/
 .eval/
 *.draft.md
 
-# Local operator artefacts: blob store, pre-migration vector backups.
+# Local operator artefacts: code mirrors and checkouts, vector backups.
 var/
 
 # Third-party agent skills installed via `npx skills add`. They carry

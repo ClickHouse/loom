@@ -181,7 +181,7 @@ as request latency. A single container gets the same: its lease holder runs the 
 in a child process ([N identical replicas](#n-identical-replicas)). Both containers read
 the same `.env` and mount the same `var/code_repos` directory,
 so on one host they share the git mirrors. Documents, keys and the workers lease are in
-ClickHouse, so replicas on other hosts need neither mount: each keeps its own mirrors, and
+ClickHouse, so replicas on other hosts need not share it: each keeps its own mirrors, and
 the mount only keeps them across a restart. `LOOM_SERVES_TRAFFIC=false` keeps the workers container out of the
 replica count the rate limits are divided by. Whichever boots first applies pending
 migrations ([upgrades](./upgrades.md#how-migrations-run)).
