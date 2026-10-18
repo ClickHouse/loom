@@ -1004,7 +1004,7 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
             body: JSON.stringify({ detail: "Not Found" }),
           });
         }
-        return json({ sources: trackerSources });
+        return json({ sources: trackerSources, self_service: true });
       case "/v1/namespace.join": {
         calls.join.push({ op: "join", ...body });
         const code = codeRow(ns);
