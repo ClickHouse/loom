@@ -137,7 +137,7 @@ A verdict on a CLOSED run, usually days after it — a maintainer confirmed the 
 
 ## `run.list`
 
-One page of a namespace's agent runs, filtered by agent, session, status, memory activity, grade or text, in the asked order, with the count of every match.
+One page of a namespace's agent runs, filtered by agent, session, status, memory activity, grade or text, in the asked order; `total` when the page cannot tell it.
 
 `POST /v1/run.list` · MCP `loom_run_list` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -149,9 +149,9 @@ One page of a namespace's agent runs, filtered by agent, session, status, memory
 | `session_id` | `str` | `''` | The session or conversation the row belongs to; `'-'` for none. |
 | `status` | `Literal['', 'active', 'completed', 'failed', 'cancelled']` | `''` | Only runs in this status; "" lists every status. |
 | `limit` | `int` | `50` | At most this many runs, in `order_by` order; the server caps it at 200. |
-| `offset` | `int` | `0` | Runs to skip before the page (0-100,000), for paging past the first `limit`; 0 (default) is the first page. |
-| `order_by` | `Literal['started_desc', 'started_asc', 'duration_desc', 'duration_asc', 'relied_on_desc', 'relied_on_asc']` | `'started_desc'` | Sort by start time, duration or memories relied on, ascending or descending; default `started_desc` (newest first). |
-| `q` | `str \| None` | `None` | Only runs whose goal, run id or agent holds this text, any case. |
+| `offset` | `int` | `0` | Runs to skip before the page (0-100,000); default 0, the first page. |
+| `order_by` | `Literal['started_desc', 'started_asc', 'duration_desc', 'duration_asc', 'relied_on_desc', 'relied_on_asc']` | `'started_desc'` | Sort by start time, duration (0 while active) or memories relied on; default newest first. |
+| `q` | `str \| None` | `None` | Only runs whose goal, run id or agent holds this text, in any case; unset, no filter. |
 | `memory_activity` | `Literal['', 'with', 'without']` | `''` | The Runs page folds runs that neither relied on nor wrote a memory. |
 | `grade` | `Literal['', 'ungraded', 'graded', 'pass', 'fail']` | `''` | `ungraded` / `graded` / a verdict (`pass`, `fail`); "" = every run. |
 | `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |
@@ -159,6 +159,6 @@ One page of a namespace's agent runs, filtered by agent, session, status, memory
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `runs` | `list[RunRow]` | Matching runs in `order_by` order (newest `started_at` first by default), projected to `fields` when given. |
-| `total` | `int \| None` | How many runs match every filter (status, agent, session_id, memory_activity, grade, q), whatever `limit` and `offset` cut, sent on the first page, the last page and a page past the end; null on a full page after the first, where the… |
+| `total` | `int \| None` | How many runs match the filters; null on a full page after the first. |
 
 <!-- prettier-ignore-end -->

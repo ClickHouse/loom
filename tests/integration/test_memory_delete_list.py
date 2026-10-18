@@ -123,3 +123,21 @@ async def test_delete_under_another_user_leaves_the_row(agent) -> None:
     assert tombstoned is False  # the SDK returns the tombstoned flag
     alice = await agent.memory.get("prefers_tabs_owned", user_id="alice")
     assert alice is not None and alice["value"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_tags_match_in_any_case(agent) -> None:
+    """`api` finds a row tagged `API`, `ärger` one tagged `ÄRGER`, and `tags_all` needs every tag."""
+    await agent.memory.set("upper", 1, memory_type="semantic", tags=["API"])
+    await agent.memory.set("umlaut", 2, memory_type="semantic", tags=["ÄRGER"])
+    await agent.memory.set("both", 3, memory_type="semantic", tags=["api", "Docs"])
+    await agent.memory.set("untagged", 4, memory_type="semantic")
+
+    def keys(page: dict) -> set[str]:
+        return {e["memory_key"] for e in page["entries"]}
+
+    assert keys(await agent.memory.list(tags=["api"])) == {"upper", "both"}
+    assert keys(await agent.memory.list(tags=["ärger"])) == {"umlaut"}
+    every = await agent.call("memory.list", tags=["API", "docs"], tags_all=True)
+    assert keys(every) == {"both"}
+    assert every["total"] == 1

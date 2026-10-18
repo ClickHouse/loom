@@ -358,12 +358,9 @@ class KnowledgeListInput(BaseModel):
 
     org: str
     namespace: str
-    # Documents carrying any one of these tags (every one with `tags_all`), in any case:
-    # `specs` matches a document tagged `Specs`.
+    # Documents carrying any one of these tags (every one with `tags_all`), in any case.
     tags: list[str] = Field(default_factory=list)
-    # Require every one of `tags` (the Library's stacked `tag:a tag:b`); off, any one. A
-    # dashboard flag: hidden from the MCP listing and not a parameter of the SDK's list(). A
-    # build that predates it ignores it and matches any one.
+    # Require every one of `tags` instead of any one; default off.
     tags_all: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Directory scope: documents whose source_uri starts
     # with one of these prefixes; empty = whole namespace.

@@ -634,7 +634,7 @@ async def list_by_namespace(
     source_trace: str | None = None,
     tags: Sequence[str] | None = None,
     tags_all: bool = False,
-    search_tags: Sequence[str] | None = None,
+    exact_tags: bool = False,
     contains: str | None = None,
     order_by: str = "created_at_desc",
     limit: int = 200,
@@ -654,10 +654,8 @@ async def list_by_namespace(
       - memory_type: exact match (e.g. "preference", "procedural")
       - pinned_only: only rows where pinned=1
       - key_prefix:  startsWith(memory_key, prefix) — for hierarchical key spaces
-      - tags:        any one, or every one with tags_all, in any case (both sides
-                     lowercased) — memory.list's filter
-      - search_tags: any one, exactly — memory.search's hard filter (`tag_predicate`),
-                     for its run-scoped tiers
+      - tags:        any one (every one with tags_all), in any case; with exact_tags
+                     any one exactly, as memory.search matches
       - contains:    case-insensitive substring of the value or the key — the
                      keyword filter a browse page's search box applies
 
@@ -711,12 +709,11 @@ async def list_by_namespace(
     if source_trace is not None:
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
-    if tags:
-        clause, params["tags"] = tag_filter(tags, every=tags_all)
-        where.append(clause)
-    elif search_tags:
+    if tags and exact_tags:
         where.append(tag_predicate(alias=""))
-        params["tags"] = [str(t) for t in search_tags]
+        params["tags"] = [str(t) for t in tags]
+    elif tags:
+        where.append(tag_filter(tags, params, every=tags_all))
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains
@@ -887,8 +884,7 @@ async def count_by_namespace(
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
     if tags:
-        clause, params["tags"] = tag_filter(tags, every=tags_all)
-        where.append(clause)
+        where.append(tag_filter(tags, params, every=tags_all))
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains

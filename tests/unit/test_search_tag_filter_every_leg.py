@@ -320,16 +320,16 @@ async def test_tiers_pass_the_hard_filter_only_when_set(monkeypatch: pytest.Monk
     monkeypatch.setattr(repo, "list_by_namespace", fake_list)
     base = dict(org="o", namespace="ns", agent="*", user_id="-", session_id="-", run_id="", top_k=3)
     await _prepend_recent([], SimpleNamespace(recent_first=1, **base))
-    assert "search_tags" not in calls[-1] and "tags" not in calls[-1]
+    assert "tags" not in calls[-1]
     await _prepend_recent([], SimpleNamespace(recent_first=1, tags=["x"], tags_soft=False, **base))
-    # memory.search's exact match, not memory.list's any-case `tags`.
-    assert calls[-1]["search_tags"] == ["x"] and "tags" not in calls[-1]
+    # memory.search's exact match, not memory.list's any-case one.
+    assert calls[-1]["tags"] == ["x"] and calls[-1]["exact_tags"] is True
     await _prepend_anchor([], SimpleNamespace(anchor_first=1, tags=["x"], tags_soft=True, **base))
-    assert "search_tags" not in calls[-1] and "tags" not in calls[-1]
+    assert "tags" not in calls[-1]
 
 
 @pytest.mark.asyncio
-async def test_the_tier_read_matches_search_tags_exactly() -> None:
+async def test_exact_tags_reads_the_search_predicate() -> None:
     """The tiers are memory.search rows: their store read carries the exact predicate every
     search leg carries, not memory.list's lowercased one."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -343,7 +343,9 @@ async def test_the_tier_read_matches_search_tags_exactly() -> None:
             return []
 
     ident = repo.Identity(org="o", namespace="ns", agent="*")
-    await repo.list_by_namespace(ident, scope=WHOLE_NAMESPACE, search_tags=["API"], ch=_CH())
+    await repo.list_by_namespace(
+        ident, scope=WHOLE_NAMESPACE, tags=["API"], exact_tags=True, ch=_CH()
+    )
     sql, params = seen[-1]
     assert "hasAny(tags, {tags:Array(String)})" in sql
     assert "lowerUTF8" not in sql

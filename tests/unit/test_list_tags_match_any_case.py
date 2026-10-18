@@ -55,15 +55,6 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[dict[str, Any]]]:
     return seen
 
 
-def test_the_list_inputs_have_no_case_flag() -> None:
-    """One behaviour: there is no field to ask for an exact match."""
-    from server.knowledge.api.models_knowledge import KnowledgeListInput
-    from server.memory.api.models_crud import MemoryListInput
-
-    assert "tags_any_case" not in MemoryListInput.model_fields
-    assert "tags_any_case" not in KnowledgeListInput.model_fields
-
-
 @pytest.mark.asyncio
 async def test_an_upper_case_tag_matches_a_lower_case_row_with_no_flag() -> None:
     """`tags=["API"]` with nothing else set reaches ClickHouse as the folded predicate, so a
@@ -90,7 +81,6 @@ async def test_the_page_and_both_counts_get_the_same_tags(
     )
     assert [c["tags"] for c in calls["list"]] == [["API"]]
     assert [c["tags"] for c in calls["count"]] == [["API"], ["API"]], "total and today"
-    assert all("tags_any_case" not in c for c in calls["list"] + calls["count"])
 
 
 @pytest.mark.asyncio
