@@ -449,17 +449,8 @@ def _emit_mcp_event(
 
 
 def emit_refusal(op_name: str, code: str, auth: Any, org: str = "") -> None:
-    """The ledger row for a call MCP refuses before dispatch (an org or
-    namespace the token may not use, an op kept off MCP, a write on a
-    read-only connection) to the registered op `op_name`, so the SLIs count
-    it as the caller's, as they do HTTP's refusals.
-
-    The caller is not bound yet, so the row is the token's: `org` when the
-    screen has authorized the one the call named, else the token's own (`-`
-    for a wildcard token), its subject and consumer, `-` for the rest, no
-    arguments. It is built in a copy of the request context, from a reset
-    state: the previous call of a batch leaves nothing on it, and it leaves
-    nothing on the caller's context."""
+    """Emit a token-attributed refusal row in an isolated request context.
+    The copy is reset so earlier batch entries cannot contaminate the row."""
     contextvars.copy_context().run(_emit_refusal, op_name, code, auth, org)
 
 

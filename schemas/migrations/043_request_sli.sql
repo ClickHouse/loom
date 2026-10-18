@@ -2,11 +2,16 @@
 -- transport that served it, its SLO class, whether a failure was the caller's
 -- (`client`) or the server's (`server`), and the latency budget it was held to
 -- (budgets.effective_budget_ms, 0 = none). '' and 0 on rows written before them.
+-- `ingested_at` is when ClickHouse took the row, never sent by a writer: the
+-- rollup below resumes from it rather than from `ts`, so a row whose flush was
+-- delayed still lands in its own minute.
 ALTER TABLE loom.agent_events
     ADD COLUMN IF NOT EXISTS `transport` LowCardinality(String) DEFAULT '',
     ADD COLUMN IF NOT EXISTS `slo_class` LowCardinality(String) DEFAULT '',
     ADD COLUMN IF NOT EXISTS `status_class` LowCardinality(String) DEFAULT '',
-    ADD COLUMN IF NOT EXISTS `budget_ms` UInt32 DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS `budget_ms` UInt32 DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS `ingested_at` DateTime64(3) DEFAULT now64(3),
+    ADD INDEX IF NOT EXISTS ingested_at_idx ingested_at TYPE minmax GRANULARITY 1;
 
 -- Telemetry Loom derives from its own tables lives outside `loom`.
 CREATE DATABASE IF NOT EXISTS loom_telemetry;
@@ -15,8 +20,8 @@ CREATE DATABASE IF NOT EXISTS loom_telemetry;
 -- alert rules to read, so an evaluation scans minutes rather than the ledger.
 -- `rate_limited` is among `client_errors`; `slow` counts successful requests
 -- over their budget; `latency` holds the quantile state of successful
--- requests; `ts_hwm` is the newest ledger row folded in, where the next
--- refresh resumes.
+-- requests; `ingested_hwm` is the newest `ingested_at` folded in, where the
+-- next refresh resumes.
 CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
 (
     `minute` DateTime,
@@ -31,7 +36,7 @@ CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
     `rate_limited` SimpleAggregateFunction(sum, UInt64),
     `slow` SimpleAggregateFunction(sum, UInt64),
     `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32),
-    `ts_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3)
+    `ingested_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3)
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(minute)
@@ -39,12 +44,17 @@ ORDER BY (slo_class, minute, operation, transport, traffic_class, org)
 TTL minute + toIntervalDay(400)
 SETTINGS ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000;
 
--- Folds the ledger in once a minute, rows at least 10 s old, so a ledger
--- insert never waits on it. The first refresh starts 31 days back, enough for
--- every SLO window without reading the whole ledger; the high-water mark is
--- read from those 31 days too, since an older one loses to that floor. Rows
--- with no SLO class (the `/v1/me/*` routes, and MCP calls that name no
--- registered op, such as initialize) are left out.
+-- Folds the ledger in once a minute. Each row is folded once, by when
+-- ClickHouse took it, into the minute of its `ts`, so a row whose flush was
+-- delayed still counts. A refresh reads rows taken at least 10 s ago: an insert
+-- (at most 500 rows) commits well within that, and one that took longer would
+-- be missed. Rows with a `ts` over 31 days old, past every SLO window, are left
+-- out, which keeps the read to the newest partitions. Rows with no SLO class
+-- (the `/v1/me/*` routes, and MCP calls that name no registered op, such as
+-- initialize) are left out. The high-water mark is a sentinel row, all keys ''
+-- but the refresh's minute and all counts 0, so reading it is a range read on
+-- the sort key and a reader's sums are unchanged by it. Its branch filters on
+-- no column it renames: `'' AS slo_class` would shadow `slo_class`.
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_refresh
 REFRESH EVERY 1 MINUTE APPEND TO loom_telemetry.sli_minute
 DEFINER = CURRENT_USER SQL SECURITY DEFINER
@@ -61,12 +71,37 @@ AS SELECT
     countIf(error_code = 'RATE_LIMITED') AS rate_limited,
     countIf(success AND budget_ms > 0 AND latency_ms > budget_ms) AS slow,
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
-    max(ts) AS ts_hwm
+    max(ingested_at) AS ingested_hwm
 FROM loom.agent_events
 WHERE kind = 'request' AND slo_class != ''
-  AND ts > greatest(
-      (SELECT max(ts_hwm) FROM loom_telemetry.sli_minute
-       WHERE minute >= toStartOfMinute(now() - toIntervalDay(31))),
+  AND ts >= now64(3) - toIntervalDay(31)
+  AND ingested_at > greatest(
+      (SELECT max(ingested_hwm) FROM loom_telemetry.sli_minute
+       WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))),
       now64(3) - toIntervalDay(31))
-  AND ts <= now64(3) - toIntervalSecond(10)
-GROUP BY minute, slo_class, operation, transport, traffic_class, org;
+  AND ingested_at <= now64(3) - toIntervalSecond(10)
+GROUP BY minute, slo_class, operation, transport, traffic_class, org
+UNION ALL
+SELECT
+    toStartOfMinute(now()) AS minute,
+    '' AS slo_class,
+    '' AS operation,
+    '' AS transport,
+    '' AS traffic_class,
+    '' AS org,
+    0 AS requests,
+    0 AS server_errors,
+    0 AS client_errors,
+    0 AS rate_limited,
+    0 AS slow,
+    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, false) AS latency,
+    max(ingested_at) AS ingested_hwm
+FROM loom.agent_events
+WHERE kind = 'request'
+  AND ts >= now64(3) - toIntervalDay(31)
+  AND ingested_at > greatest(
+      (SELECT max(ingested_hwm) FROM loom_telemetry.sli_minute
+       WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))),
+      now64(3) - toIntervalDay(31))
+  AND ingested_at <= now64(3) - toIntervalSecond(10)
+HAVING count() > 0;

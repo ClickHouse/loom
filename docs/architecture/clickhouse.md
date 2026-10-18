@@ -250,7 +250,9 @@ of three mechanisms:
    `entity_degree_mv` fold their source rows into totals.
 2. **Refreshable materialized views** (`REFRESH EVERY 1 MINUTE APPEND`) append rows newer
    than their high-water mark: BM25 statistics, the daily cost rollup, hourly exposure
-   breadth, last seen per subject, the request SLIs per minute.
+   breadth, last seen per subject, the request SLIs per minute. The SLI rollup's mark is
+   `agent_events.ingested_at`, when ClickHouse took the row, so a delayed flush is not
+   skipped.
 3. **Workers** poll for rows that need work and write new versions: stub embeddings
    (`embedding_worker`, `code_embed_recovery`), entities (`entity_extractor`), usage folds
    (`usage_fold`), deferred extraction (`extraction_queue`, `observe_extract`), failed

@@ -85,7 +85,9 @@ CREATE TABLE IF NOT EXISTS loom.agent_events
     `slo_class` LowCardinality(String) DEFAULT '',
     `status_class` LowCardinality(String) DEFAULT '',
     `budget_ms` UInt32 DEFAULT 0,
-    INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1
+    `ingested_at` DateTime64(3) DEFAULT now64(3),
+    INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX ingested_at_idx ingested_at TYPE minmax GRANULARITY 1
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
@@ -3602,7 +3604,7 @@ CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
     `rate_limited` SimpleAggregateFunction(sum, UInt64),
     `slow` SimpleAggregateFunction(sum, UInt64),
     `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32),
-    `ts_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3)
+    `ingested_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3)
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(minute)
@@ -4275,18 +4277,18 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_refresh
 REFRESH EVERY 1 MINUTE APPEND TO loom_telemetry.sli_minute
 (
     `minute` DateTime,
-    `slo_class` LowCardinality(String),
-    `operation` LowCardinality(String),
-    `transport` LowCardinality(String),
-    `traffic_class` LowCardinality(String),
-    `org` LowCardinality(String),
+    `slo_class` String,
+    `operation` String,
+    `transport` String,
+    `traffic_class` String,
+    `org` String,
     `requests` UInt64,
     `server_errors` UInt64,
     `client_errors` UInt64,
     `rate_limited` UInt64,
     `slow` UInt64,
     `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32),
-    `ts_hwm` DateTime64(3)
+    `ingested_hwm` DateTime64(3)
 )
 DEFINER = loom SQL SECURITY DEFINER
 AS SELECT
@@ -4302,17 +4304,39 @@ AS SELECT
     countIf(error_code = 'RATE_LIMITED') AS rate_limited,
     countIf(success AND (budget_ms > 0) AND (latency_ms > budget_ms)) AS slow,
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
-    max(ts) AS ts_hwm
+    max(ingested_at) AS ingested_hwm
 FROM loom.agent_events
-WHERE (kind = 'request') AND (slo_class != '') AND (ts > greatest((
-    SELECT max(ts_hwm)
+WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > greatest((
+    SELECT max(ingested_hwm)
     FROM loom_telemetry.sli_minute
-    WHERE minute >= toStartOfMinute(now() - toIntervalDay(31))
-), now64(3) - toIntervalDay(31))) AND (ts <= (now64(3) - toIntervalSecond(10)))
+    WHERE (slo_class = '') AND (minute >= toStartOfMinute(now() - toIntervalDay(31)))
+), now64(3) - toIntervalDay(31))) AND (ingested_at <= (now64(3) - toIntervalSecond(10)))
 GROUP BY
     minute,
     slo_class,
     operation,
     transport,
     traffic_class,
-    org;
+    org
+UNION ALL
+SELECT
+    toStartOfMinute(now()) AS minute,
+    '' AS slo_class,
+    '' AS operation,
+    '' AS transport,
+    '' AS traffic_class,
+    '' AS org,
+    0 AS requests,
+    0 AS server_errors,
+    0 AS client_errors,
+    0 AS rate_limited,
+    0 AS slow,
+    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, false) AS latency,
+    max(ingested_at) AS ingested_hwm
+FROM loom.agent_events
+WHERE (kind = 'request') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > greatest((
+    SELECT max(ingested_hwm)
+    FROM loom_telemetry.sli_minute
+    WHERE (slo_class = '') AND (minute >= toStartOfMinute(now() - toIntervalDay(31)))
+), now64(3) - toIntervalDay(31))) AND (ingested_at <= (now64(3) - toIntervalSecond(10)))
+HAVING count() > 0;

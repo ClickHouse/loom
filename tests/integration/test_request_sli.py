@@ -89,89 +89,101 @@ async def test_an_mcp_call_is_ledgered_with_its_transport(
     assert rows[0][4] > 0
 
 
+def _insert_requests(ch_client, org: str, ts, rows: list[tuple]) -> None:
+    """Ledger request rows as the ledger writes them, one insert, all at `ts`;
+    ClickHouse stamps `ingested_at`. Each row is (operation, transport,
+    slo_class, success, error_code, status_class, latency_ms, budget_ms)."""
+    base = {"org": org, "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
+    columns = ["ts", *base, "operation", "request_id", "transport", "slo_class", "success",
+               "error_code", "status_class", "latency_ms", "budget_ms", "kind"]  # fmt: skip
+    ch_client.insert(
+        "loom.agent_events",
+        [[ts, *base.values(), r[0], uuid.uuid4().hex, *r[1:], "request"] for r in rows],
+        column_names=columns,
+    )
+
+
+def _rolled(ch_client, org: str) -> tuple:
+    """(requests, server errors, client errors, rate limited, slow, p99) in
+    `sli_minute` for `org`."""
+    return ch_client.query(
+        "SELECT sum(requests), sum(server_errors), sum(client_errors), sum(rate_limited), "
+        "sum(slow), quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)[3] "
+        "FROM loom_telemetry.sli_minute WHERE org = {org:String}",
+        parameters={"org": org},
+    ).result_rows[0]
+
+
+async def _rolled_once(ch_client, org: str, requests: int) -> tuple:
+    """Refresh until `org` has `requests` folded. Rows qualify 10 s after
+    ClickHouse took them, so the first polls fold nothing."""
+
+    async def _seen() -> tuple | None:
+        ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
+        ch_client.command("SYSTEM WAIT VIEW loom_telemetry.sli_minute_refresh")
+        got = _rolled(ch_client, org)
+        return got if got[0] >= requests else None
+
+    return await eventually(_seen, max_wait=45.0, interval=2.0, description="the rollup")
+
+
 @pytest.mark.asyncio
 async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassified_ones(
     ch_client,
 ) -> None:
-    """Rows written as the ledger writes them, stamped now: a refresh folds
-    rows at least 10 s old past the newest one folded, so a row stamped
-    earlier could fall behind what the scheduled refreshes already folded.
-    The two with no SLO class are left out: one with no transport either, as
+    """The two with no SLO class are left out: one with no transport either, as
     the `/v1/me/*` routes write theirs, and one for a call that names no
     registered op."""
     from datetime import UTC, datetime
 
     org = unique_org("sli-rollup")
-    ts = datetime.now(UTC)
-    base = {"org": org, "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
-    rows = [
-        # (operation, transport, slo_class, success, error_code, status_class, latency_ms,
-        #  budget_ms)
-        ("memory.get", "http", "read", True, "", "ok", 50, 100),
-        ("memory.get", "http", "read", True, "", "ok", 500, 100),  # slow
-        ("memory.get", "mcp", "read", False, "RATE_LIMITED", "client", 0, 100),
-        # a server error, not in the quantiles
-        ("memory.get", "http", "read", False, "INTERNAL_ERROR", "server", 5000, 100),
-        # no transport or SLO class, as a /v1/me/* route writes it
-        ("me.sharing-summary", "", "", False, "HTTP_500", "server", 20, 0),
-        ("mcp.initialize", "mcp", "", True, "", "ok", 5, 0),  # no registered op
-    ]
-    ch_client.insert(
-        "loom.agent_events",
+    _insert_requests(
+        ch_client,
+        org,
+        datetime.now(UTC),
         [
-            [
-                ts,
-                *base.values(),
-                op,
-                uuid.uuid4().hex,
-                t,
-                c,
-                s,
-                b,
-                ok,
-                e,
-                lat,
-                "request",
-            ]
-            for op, t, c, ok, e, s, lat, b in rows
+            ("memory.get", "http", "read", True, "", "ok", 50, 100),
+            ("memory.get", "http", "read", True, "", "ok", 500, 100),  # slow
+            ("memory.get", "mcp", "read", False, "RATE_LIMITED", "client", 0, 100),
+            # a server error, not in the quantiles
+            ("memory.get", "http", "read", False, "INTERNAL_ERROR", "server", 5000, 100),
+            # no transport or SLO class, as a /v1/me/* route writes it
+            ("me.sharing-summary", "", "", False, "HTTP_500", "server", 20, 0),
+            ("mcp.initialize", "mcp", "", True, "", "ok", 5, 0),  # no registered op
         ],
-        column_names=[
-            "ts",
-            *base.keys(),
-            "operation",
-            "request_id",
-            "transport",
-            "slo_class",
-            "status_class",
-            "budget_ms",
-            "success",
-            "error_code",
-            "latency_ms",
-            "kind",
-        ],  # fmt: skip
     )
-
-    def _rolled() -> tuple | None:
-        got = ch_client.query(
-            "SELECT sum(requests), sum(server_errors), sum(client_errors), sum(rate_limited), "
-            "sum(slow), quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)[3] "
-            "FROM loom_telemetry.sli_minute WHERE org = {org:String}",
-            parameters={"org": org},
-        ).result_rows[0]
-        return got if got[0] else None
-
-    async def _seen() -> tuple | None:
-        # Nothing qualifies for the first 10 s; refreshing each poll folds them then.
-        ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
-        return _rolled()
-
-    requests, server, client, limited, slow, p99 = await eventually(
-        _seen, max_wait=45.0, interval=2.0, description="the rollup of the inserted rows"
-    )
+    requests, server, client, limited, slow, p99 = await _rolled_once(ch_client, org, 4)
     assert (requests, server, client, limited, slow) == (4, 1, 1, 1, 1)
     assert 50 <= p99 <= 500  # the failure's 5000 ms is not among the latencies
 
     # The next refresh resumes past the high-water mark: nothing is folded twice.
     ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
     ch_client.command("SYSTEM WAIT VIEW loom_telemetry.sli_minute_refresh")
-    assert _rolled()[:5] == (4, 1, 1, 1, 1)
+    assert _rolled(ch_client, org)[:5] == (4, 1, 1, 1, 1)
+
+
+@pytest.mark.asyncio
+async def test_a_row_flushed_late_is_still_rolled_up(ch_client) -> None:
+    """A server error whose flush was delayed reaches ClickHouse after a newer
+    success was folded: it still counts, in its own minute, and only once."""
+    from datetime import UTC, datetime, timedelta
+
+    org = unique_org("sli-late")
+    now = datetime.now(UTC)
+    ok = ("memory.get", "http", "read", True, "", "ok", 20, 100)
+    _insert_requests(ch_client, org, now, [ok])
+    assert (await _rolled_once(ch_client, org, 1))[:2] == (1, 0)
+
+    late = ("memory.get", "http", "read", False, "INTERNAL_ERROR", "server", 20, 100)
+    _insert_requests(ch_client, org, now - timedelta(minutes=5), [late])
+    _insert_requests(ch_client, org, now + timedelta(seconds=1), [ok])
+    assert (await _rolled_once(ch_client, org, 3))[:2] == (3, 1)
+
+    ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
+    ch_client.command("SYSTEM WAIT VIEW loom_telemetry.sli_minute_refresh")
+    assert _rolled(ch_client, org)[:2] == (3, 1)
+    minutes = ch_client.query(
+        "SELECT count(DISTINCT minute) FROM loom_telemetry.sli_minute WHERE org = {org:String}",
+        parameters={"org": org},
+    ).result_rows[0][0]
+    assert minutes >= 2  # the late row is in the minute of its ts
