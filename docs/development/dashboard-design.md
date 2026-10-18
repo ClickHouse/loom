@@ -113,7 +113,7 @@ Every list-page change is checked against these before it is reviewed; each line
 - **Focus**: anything that unmounts while focused (a button, a bar, a page) hands focus somewhere named; a page change lands on a visible heading.
 - **Phone**: 375 px, a coarse pointer: nothing clipped or zero-width, 44 px targets, the first row within the chrome budget.
 - **Primitives, not copies**: a second copy of a hook, a time format or a state pattern goes into `lib/` or `components/ui` instead; a raw skeleton, a hex colour or a glyph icon is a bug.
-- **Unicode**: a case-insensitive match folds both sides in one place (ClickHouse `lowerUTF8` on the row and on the asked value; not `lower`, which folds only A–Z, and not Python's `str.lower`, which folds a final Σ to ς); test with a non-ASCII value.
+- **Unicode**: a case-insensitive match folds both sides in one place (ClickHouse `lowerUTF8` on the row and on the asked value, not `lower`, which folds only A–Z, and not a second fold in Python); test with a non-ASCII value.
 - **Late answers**: every read a page starts (load, reload, Refresh, Retry, Load more) can be overtaken by a newer one; an answer for a scope or filter the page has left is dropped (abort it, or check a scope stamp).
 - **Tab stops**: a row list is one tab stop: every control inside a row other than the current one is out of the tab order.
 - **Measure as a phone**: chrome budgets and targets are measured with a touch pointer (`hasTouch`), where every control is 44 px.

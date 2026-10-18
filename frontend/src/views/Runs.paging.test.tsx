@@ -362,6 +362,9 @@ describe("Runs paging, sorting and search on the server", () => {
     await waitFor(() => expect(lastOpts()).toMatchObject({ status: "failed", limit: 200 }));
     expect(screen.queryByRole("button", { name: /^goal / })).toBeNull();
     expect(toolbar()).not.toHaveTextContent(/\d–\d/);
+    const table = screen.getByRole("table", { name: "Runs" });
+    expect(table).toHaveAttribute("aria-busy", "true");
+    expect(await within(table).findByRole("status", { name: "Loading runs" })).toHaveAttribute("aria-busy", "true");
     act(() => release({ runs: [run(7, { status: "failed" })], total: null }));
     expect(await screen.findByRole("button", { name: "goal 7" })).toBeInTheDocument();
     expect(toolbar()).toHaveTextContent("1–1");

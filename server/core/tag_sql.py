@@ -11,8 +11,8 @@ def tag_filter(
 ) -> tuple[str, list[str]]:
     """The predicate over a row's `tags` and its values: any one of `tags` (OR), or with
     `every` all of them; exact, or with `any_case` both sides lowercased by ClickHouse's
-    `lowerUTF8`. The asked tags are bound as typed, since Python's `str.lower` folds some
-    letters differently (a final Σ to ς, İ to i and a combining dot)."""
+    `lowerUTF8`. The asked tags are bound as typed: one fold, in one place, so the two sides
+    match whatever case mapping the server's release applies."""
     fn = "hasAll" if every else "hasAny"
     values = [str(t) for t in tags]
     if any_case:

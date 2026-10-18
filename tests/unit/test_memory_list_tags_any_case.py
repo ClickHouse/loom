@@ -134,8 +134,9 @@ async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
 
 @pytest.mark.asyncio
 async def test_a_non_ascii_tag_folds_the_same_on_both_sides() -> None:
-    """ClickHouse folds both sides: Python's `str.lower` turns `ΟΔΟΣ` into `οδος` (final ς)
-    where `lowerUTF8` gives `οδοσ`, so the asked tag is bound as typed and folded in SQL."""
+    """ClickHouse folds both sides: the asked tag is bound as typed and lowercased by the same
+    `lowerUTF8` as the row's tags (not `lower`, which folds only A–Z), so a non-ASCII tag such
+    as `ΟΔΟΣ` meets the row's tags under one case mapping."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
