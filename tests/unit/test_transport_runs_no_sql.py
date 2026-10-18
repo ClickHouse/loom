@@ -49,11 +49,22 @@ def test_a_subject_with_no_slug_defaults_to_the_provisioned_name(
     async def _aliases(org: str, subject: str, **_k: Any) -> list[str]:
         return [subject]
 
+    async def _none_owner(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def _none_restricted(org: str) -> frozenset[str]:
+        return frozenset()
+
     monkeypatch.setattr(settings, "identity_provider", "trust-network")
     monkeypatch.setattr(caller_defaults, "saved_default", _none)
     monkeypatch.setattr(caller_defaults, "ranked_grants", _no_grants)
     monkeypatch.setattr("server.auth.aliases.subject_aliases", _aliases)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
+    # Nobody owns the personal namespace yet: first contact provisions it.
+    monkeypatch.setattr("server.auth.personal_namespace.namespace_owner", _none_owner)
+    monkeypatch.setattr(
+        "server.identity.app.namespace_classification.restricted_set", _none_restricted
+    )
     auth = AuthInfo(
         subject="@@@", org="o", namespaces=(), roles=(Role.WRITER,), is_service_account=False
     )

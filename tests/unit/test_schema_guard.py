@@ -167,7 +167,7 @@ def test_statement_matching_is_by_whole_table_name() -> None:
 
 
 def test_a_pending_table_outside_loom_is_matched_by_its_database() -> None:
-    tables = {"loom_telemetry.sli_minute": "039_request_sli.sql"}
+    tables = {"loom_telemetry.sli_minute": "043_request_sli.sql"}
     named = ch_schema_guard.pending_table_named
     assert named("SELECT sum(requests) FROM loom_telemetry.sli_minute", tables) == (
         "loom_telemetry.sli_minute"

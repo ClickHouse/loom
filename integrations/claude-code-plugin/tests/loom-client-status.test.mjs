@@ -86,3 +86,24 @@ test("status reports stranded capture jobs without reading their contents", asyn
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("an agent with no token is told its workload-token exchange failed", async () => {
+  const saved = { id: process.env.LOOM_CLIENT_ID, wl: process.env.LOOM_WORKLOAD_TOKEN };
+  process.env.LOOM_CLIENT_ID = "ci";
+  process.env.LOOM_WORKLOAD_TOKEN = "proof";
+  try {
+    const { fetchImpl } = responses();
+    const result = await clientStatus({ serverUrl, token: "", scope, now, fetchImpl });
+    const check = result.checks.find((c) => c.name === "token");
+    assert.equal(check.grade, "FAIL");
+    assert.match(check.detail, /workload-token exchange at https:\/\/loom\.test failed/);
+  } finally {
+    for (const [k, v] of [
+      ["LOOM_CLIENT_ID", saved.id],
+      ["LOOM_WORKLOAD_TOKEN", saved.wl],
+    ]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});

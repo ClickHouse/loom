@@ -12,8 +12,10 @@
  * call; the dotted name is the one that appears in the server's ledger.
  */
 
+import { AccountClient } from "./account.js";
 import { type Capabilities, capabilities as fetchCapabilities } from "./capabilities.js";
 import { OP_BY_NAME, OPS, type OpMap, type OpName, type OpSpec } from "./generated/ops.js";
+import { machineLogin } from "./machine.js";
 import { envVar } from "./runtime.js";
 import { type CallOptions, type CallResult, Transport, type TransportOptions } from "./transport.js";
 
@@ -44,10 +46,13 @@ export type LoomClientOptions = TransportOptions;
 // biome-ignore lint/suspicious/noUnsafeDeclarationMerging: the constructor defines every group property the interface declares.
 export class LoomClient {
   readonly transport: Transport;
+  /** Your own tokens: `loom.account.createServiceAccount(...)`, outside the op registry. */
+  readonly account: AccountClient;
   private caps: { promise: Promise<Capabilities>; at: number } | undefined;
 
   constructor(opts: LoomClientOptions | Transport) {
     this.transport = opts instanceof Transport ? opts : new Transport(readEnv(opts));
+    this.account = new AccountClient(this.transport);
     for (const group of new Set(OPS.map((o) => o.group))) {
       Object.defineProperty(this, group, {
         value: this.group(group as Groups),
@@ -113,11 +118,16 @@ export class LoomClient {
 export interface LoomClient extends LoomClientGroups {}
 export type LoomClientGroups = { readonly [G in Groups]: GroupClient<G> };
 
-/** `LOOM_BASE_URL` / `LOOM_API_KEY` fill what the options leave out. */
+/**
+ * `LOOM_BASE_URL` / `LOOM_API_KEY` fill what the options leave out; with
+ * neither key nor `tokenProvider`, a bot's LOOM_CLIENT_ID signs in as that bot.
+ */
 export function readEnv(opts: LoomClientOptions): LoomClientOptions {
   const baseUrl = (opts.baseUrl || envVar("LOOM_BASE_URL") || "").trim();
+  if (!baseUrl) throw new Error("LoomClient: baseUrl is required (or set LOOM_BASE_URL)");
+  if (opts.tokenProvider) return { ...opts, baseUrl };
   // A blank value is unset: `LOOM_API_KEY=""` in a shell profile counts as no key.
   const apiKey = [opts.apiKey, envVar("LOOM_API_KEY")].map((v) => v?.trim()).find((v) => v) || undefined;
-  if (!baseUrl) throw new Error("LoomClient: baseUrl is required (or set LOOM_BASE_URL)");
-  return { ...opts, baseUrl, apiKey };
+  if (apiKey) return { ...opts, baseUrl, apiKey };
+  return { ...opts, baseUrl, apiKey, tokenProvider: machineLogin(baseUrl, { fetch: opts.fetch, now: opts.now }) };
 }

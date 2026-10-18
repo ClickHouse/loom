@@ -256,7 +256,7 @@ def test_token_mint_minimum_namespaces(client: TestClient) -> None:
     """namespaces must have at least one entry."""
     r = client.post(
         "/v1/admin/token.mint",
-        json={"subject": "x", "org": "y", "namespaces": []},
+        json={"name": "x", "org": "y", "namespaces": []},
     )
     assert r.status_code == 422
 
@@ -265,17 +265,33 @@ def test_token_mint_happy_path_when_auth_not_required(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When LOOM_AUTH_REQUIRED=false, anyone can mint (dev mode)."""
+    """When LOOM_AUTH_REQUIRED=false, anyone can mint (dev mode), and the token
+    is saved to the token list like any other."""
     from server import settings as settings_mod
 
     monkeypatch.setattr(settings_mod.settings, "auth_required", False)
     from server.auth import jwt as jwt_mod
 
+    saved: list[dict] = []
+
+    class _CH:
+        async def query_one(self, sql: str, params: object = None) -> None:
+            return None
+
+        async def insert(self, table: str, rows: list[dict], **kw: object) -> None:
+            saved.extend(rows)
+
     monkeypatch.setattr(jwt_mod, "mint_token", lambda **kwargs: "jwt-x")
+
+    async def no_restricted(*a: object) -> list[str]:
+        return []
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    monkeypatch.setattr("server.identity.app.token_grants.grant_restricted_to_token", no_restricted)
     r = client.post(
         "/v1/admin/token.mint",
         json={
-            "subject": "alice",
+            "name": "alice-bot",
             "org": "clickhouse",
             "namespaces": ["personal-alice"],
         },
@@ -283,8 +299,9 @@ def test_token_mint_happy_path_when_auth_not_required(
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["token"] == "jwt-x"
-    assert body["roles"] == ["writer"]
-    assert body["is_service_account"] is True
+    assert body["roles"] == ["writer"] and body["ttl_seconds"] == 90 * 86400
+    assert body["subject"].startswith("sa:alice-bot-")
+    assert [row["sa_subject"] for row in saved] == [body["subject"]]
 
 
 def test_customer_list_endpoint_removed(client: TestClient) -> None:

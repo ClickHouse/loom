@@ -26,6 +26,7 @@ import httpx
 
 from loom._logging import logger, redact_headers, redact_secret
 from loom._version import __version__
+from loom.credentials import StoredLogin
 from loom.errors import (
     DEFAULT_RETRY_AFTER_S,
     INVALID_RESPONSE_CODE,
@@ -35,6 +36,7 @@ from loom.errors import (
     RateLimited,
     from_response,
 )
+from loom.machine import MachineLogin
 from loom.retry import DEFAULT_MAX_RETRY_AFTER_S, DEFAULT_RETRY_POLICY, RetryPolicy, coerce_policy
 from loom.token import TokenClaims, decode_token_claims
 
@@ -252,6 +254,7 @@ class Transport:
         ratelimit_max_wait_s: float | None = None,
         retry: RetryPolicy | dict[str, Any] | None = None,
         consumer: str = "",
+        auth: StoredLogin | MachineLogin | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         #: The consumer this process speaks for. Stamped into every body that
@@ -263,7 +266,12 @@ class Transport:
         # A blank or whitespace credential is no credential (an exported but
         # empty LOOM_API_KEY must not send `Bearer ` and confuse the 401).
         api_key = (api_key or "").strip() or None
-        self._key_hint = redact_secret(api_key) if api_key else "none"
+        # `auth` (a `loom login` profile) sends and refreshes its own token.
+        self._auth = auth
+        if auth is not None:
+            self._key_hint = f"login:{auth.profile}"
+        else:
+            self._key_hint = redact_secret(api_key) if api_key else "none"
         # The credential lives in the httpx client's header set only; this
         # object's attributes and repr never carry it.
         self._hints_seen: set[str] = set()
@@ -278,6 +286,7 @@ class Transport:
             http2=True,
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
             headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+            auth=auth,
         )
         self._timeout_s = float(timeout_s)
         self._pacing = pacing
@@ -313,11 +322,13 @@ class Transport:
     @property
     def has_credential(self) -> bool:
         """Whether an `Authorization` header goes out with every request."""
-        return "Authorization" in self._client.headers
+        return self._auth is not None or "Authorization" in self._client.headers
 
     def token_claims(self) -> TokenClaims | None:
         """The bearer token's payload (org, namespaces, roles, ns_roles),
         decoded, not verified; None without a JWT."""
+        if self._auth is not None:
+            return decode_token_claims(self._auth.current_token() or None)
         auth = self._client.headers.get("Authorization", "")
         return decode_token_claims(auth[7:] if auth.startswith("Bearer ") else None)
 
@@ -367,6 +378,45 @@ class Transport:
             op_path, payload, idempotency_key, timeout_s=timeout_s, retry=retry
         )
         return result.data
+
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> httpx.Response:
+        """One request to a route outside the op registry (`/v1/me/...`,
+        `/v1/admin/...`, `/v1/health`): the body goes as given, with no
+        identity or consumer added, and is not retried. Raises the typed
+        error for a 4xx/5xx; returns the response for the caller to read.
+        `path` is a path on this server: the credential goes nowhere else."""
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError(f"not a path on {self.base_url}: {path!r}")
+        request_id = str(uuid.uuid4())
+        headers = {**self._ident_headers, "X-Request-Id": request_id}
+        try:
+            resp = await self._client.request(
+                method, path, json=json, params=params, headers=headers
+            )
+        except httpx.RequestError as e:
+            raise unreachable_error(self.base_url, e, request_id=request_id) from e
+        if resp.status_code >= 400:
+            raise self._error_for(path, resp, resp.headers.get("X-Request-Id") or request_id)
+        return resp
+
+    async def request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """`request`, decoded: the JSON object the route answers."""
+        resp = await self.request(method, path, json=json, params=params)
+        return _json_object(path, resp, resp.headers.get("X-Request-Id", ""))
 
     async def post_with_meta(
         self,
@@ -530,21 +580,44 @@ class Transport:
                     op_path, json=payload, headers=sent, **request_kwargs
                 )
             except _CONNECTION_ERRORS as e:
-                delay = self._retry_delay(
-                    op_path, policy, attempt, slept_s, allowed=policy.retry_connection_errors
+                slept_s += await self._retry_or_raise(
+                    op_path,
+                    policy,
+                    attempt,
+                    slept_s,
+                    allowed=policy.retry_connection_errors,
+                    why=f"connection failed: {type(e).__name__}",
+                    request_id=request_id,
+                    error=unreachable_error(self.base_url, e, request_id=request_id),
                 )
-                if delay is None:
-                    raise unreachable_error(self.base_url, e, request_id=request_id) from e
-                why = f"connection failed: {type(e).__name__}"
-                slept_s += await self._backoff(op_path, policy, attempt, delay, why, request_id)
+                continue
+            except BackendUnavailable as e:
+                # The token provider (the auth flow) could not get a token: the
+                # op did not run (at most a 401 came back before a fresh token
+                # was asked for), so it is retried as a connection failure.
+                call.sent -= 1
+                slept_s += await self._retry_or_raise(
+                    op_path,
+                    policy,
+                    attempt,
+                    slept_s,
+                    allowed=policy.retry_connection_errors,
+                    why=f"token unavailable: {e}",
+                    request_id=request_id,
+                    error=e,
+                )
                 continue
             except _TIMEOUT_ERRORS as e:
-                allowed = policy.retries_timeout(idempotent=deduplicated)
-                delay = self._retry_delay(op_path, policy, attempt, slept_s, allowed=allowed)
-                if delay is None:
-                    raise unreachable_error(self.base_url, e, request_id=request_id) from e
-                why = f"timed out ({type(e).__name__}); idempotent"
-                slept_s += await self._backoff(op_path, policy, attempt, delay, why, request_id)
+                slept_s += await self._retry_or_raise(
+                    op_path,
+                    policy,
+                    attempt,
+                    slept_s,
+                    allowed=policy.retries_timeout(idempotent=deduplicated),
+                    why=f"timed out ({type(e).__name__}); idempotent",
+                    request_id=request_id,
+                    error=unreachable_error(self.base_url, e, request_id=request_id),
+                )
                 continue
             except httpx.RequestError as e:
                 # Any other failure (a response cut off, a protocol or proxy
@@ -640,6 +713,27 @@ class Transport:
             )
             return None
         return delay
+
+    async def _retry_or_raise(
+        self,
+        op_path: str,
+        policy: RetryPolicy,
+        attempt: int,
+        slept_s: float,
+        *,
+        allowed: bool,
+        why: str,
+        request_id: str,
+        error: BaseException,
+    ) -> float:
+        """Sleep before the next attempt of a request that got no response and
+        return the seconds slept; raise `error` when the policy stops
+        (`_retry_delay`). `error` keeps its own `__cause__`: the httpx error
+        `unreachable_error` attaches, or what the token provider raised from."""
+        delay = self._retry_delay(op_path, policy, attempt, slept_s, allowed=allowed)
+        if delay is None:
+            raise error
+        return await self._backoff(op_path, policy, attempt, delay, why, request_id)
 
     @staticmethod
     async def _backoff(

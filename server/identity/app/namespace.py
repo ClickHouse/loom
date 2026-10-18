@@ -13,10 +13,12 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from server.auth.grant_claims import account_change
 from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
-from server.core.errors import PreconditionFailedError
+from server.core.errors import PreconditionFailedError, ValidationError
+from server.core.naming import SSO_NAMESPACE_PREFIX, reserved_for_sso
 from server.identity.api.models import (
     NamespaceBrowseInput,
     NamespaceBrowseOutput,
@@ -122,9 +124,13 @@ def registry_row(
     # (one tag; a re-registration replaces it); a bench class with no explicit kind registers
     # the namespace as bench, so the namespace gc worker retires it by idleness.
     # Lazy: the auto-register module imports the operation registry, which imports this one.
+    from server.auth.agents import TAG_PREFIX as MACHINE_TAG
     from server.identity.app.namespace_autoregister import classify_kind
 
-    tags = list(input.tags)
+    # A workload trust's mark is the trust's to give: dropped from the form,
+    # carried forward from the row.
+    stored = [str(t) for t in (existing or {}).get("tags") or [] if str(t).startswith(MACHINE_TAG)]
+    tags = [t for t in input.tags if not str(t).startswith(MACHINE_TAG)] + stored
     kind = input.kind
     if input.traffic_class:
         from server.observability.traffic_class import TAG_PREFIX
@@ -136,7 +142,8 @@ def registry_row(
     return {
         "org": input.org,
         "namespace": input.namespace,
-        "owner_email": input.owner_email,
+        # An agent's namespace is bound to the agent (its exchange checks it).
+        "owner_email": existing["owner_email"] if existing and stored else input.owner_email,
         "description": _set_or_stored(input.description, existing, "description", ""),
         # A fresh row with no explicit kind is classified by name, the same call the
         # first-write hook makes, so registering a bench-prefixed name first and writing
@@ -316,6 +323,14 @@ async def require_admin_of_existing(
         )
 
 
+def refuse_sso_name(namespace: str) -> None:
+    """A new namespace may not take a name single sign-on creates from an email."""
+    if reserved_for_sso(namespace):
+        raise ValidationError(
+            f"'{SSO_NAMESPACE_PREFIX}' names are reserved for the accounts single sign-on creates"
+        )
+
+
 async def handle_namespace_register(
     input: NamespaceRegisterInput,
 ) -> NamespaceRegisterOutput:
@@ -325,25 +340,29 @@ async def handle_namespace_register(
     # Create-or-update. Fresh row ⇒ caller becomes admin; existing row ⇒
     # only an admin may update it. The whole stored row is read, so every setting the
     # call omits (and the login fields the form never carries) is written forward.
-    existing = await namespaces_repo.fetch_row(input.org, input.namespace, ch=ch)
+    # Held from the read to the write: a release or a password set rewrites the row too.
+    async with account_change(input.org, input.namespace):
+        existing = await namespaces_repo.fetch_row(input.org, input.namespace, ch=ch)
 
-    if existing is not None:
-        await require_admin_of_existing(
-            existing, input.org, input.namespace, caller, visibility=input.visibility
-        )
-        if owner_moved(existing, input.owner_email):
-            # The account's login signs in as its owner, and the claim cap ties the
-            # owner to the email: neither may move to someone else here.
-            raise PreconditionFailedError(
-                f"{input.namespace!r} is an account with a login, owned by "
-                f"{existing.get('owner_email')!r}: send that owner_email to update its "
-                "settings. To hand it to someone else, release it (loom claim-release), "
-                "which ends its grants and its login."
+        if existing is not None:
+            await require_admin_of_existing(
+                existing, input.org, input.namespace, caller, visibility=input.visibility
             )
+            if owner_moved(existing, input.owner_email):
+                # The account's login signs in as its owner, and the claim cap ties the
+                # owner to the email: neither may move to someone else here.
+                raise PreconditionFailedError(
+                    f"{input.namespace!r} is an account with a login, owned by "
+                    f"{existing.get('owner_email')!r}: send that owner_email to update its "
+                    "settings. To hand it to someone else, release it (loom claim-release), "
+                    "which ends its grants and its login."
+                )
+        else:
+            refuse_sso_name(input.namespace)
 
-    now = naive_utc_now_seconds()
-    row = registry_row(input, existing, now)
-    await ch.insert("loom.namespaces", [row])
+        now = naive_utc_now_seconds()
+        row = registry_row(input, existing, now)
+        await ch.insert("loom.namespaces", [row])
     # The claim cap reads which accounts tie a person's spellings from this table.
     grant_cache.invalidate(input.org)
     # The class this row implies is what the next request in this process runs as — no
@@ -569,18 +588,19 @@ async def handle_namespace_delete(
     ch = get_client()
     # SELECT * so the soft-delete row mirrors EVERY column forward; a
     # partial RMT insert would reset omitted columns to schema defaults.
-    existing = await namespaces_repo.fetch_row(input.org, input.namespace, ch=ch)
-    now = naive_utc_now_seconds()
-    if existing is None or not bool(existing.get("active", False)):
-        return NamespaceDeleteOutput(
-            deleted=False,
-            namespace=input.namespace,
-            updated_at=now,
-        )
-    row = dict(existing)
-    row["active"] = False
-    row["updated_at"] = now
-    await ch.insert("loom.namespaces", [row])
+    async with account_change(input.org, input.namespace):  # as register holds it
+        existing = await namespaces_repo.fetch_row(input.org, input.namespace, ch=ch)
+        now = naive_utc_now_seconds()
+        if existing is None or not bool(existing.get("active", False)):
+            return NamespaceDeleteOutput(
+                deleted=False,
+                namespace=input.namespace,
+                updated_at=now,
+            )
+        row = dict(existing)
+        row["active"] = False
+        row["updated_at"] = now
+        await ch.insert("loom.namespaces", [row])
     # The claim cap reads which accounts tie a person's spellings from this table.
     grant_cache.invalidate(input.org)
     return NamespaceDeleteOutput(

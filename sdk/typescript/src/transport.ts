@@ -19,9 +19,17 @@
  * `X-Loom-SDK`, `X-Loom-Runtime`, `X-Loom-Retry-Count`); `Retry-After` is
  * parsed as seconds or an HTTP-date; `postWithMeta` returns the response
  * metadata (`CallResult`) alongside the body.
+ *
+ * `get` reads a path outside the op registry (`me/service_accounts`) the same
+ * way: same credential, retries and errors, no body and no Idempotency-Key.
+ *
+ * Instead of a static `apiKey`, a `tokenProvider` (a bot's `MachineLogin`)
+ * hands over the token for each request; a 401 is sent once more with a fresh
+ * one, and the token never goes to an origin other than the provider's.
  */
 
 import {
+  AuthError,
   BackendUnavailable,
   errorFromResponse,
   INVALID_RESPONSE_CODE,
@@ -42,6 +50,7 @@ import {
   redactSecret,
   withLevel,
 } from "./logging.js";
+import type { TokenProvider } from "./machine.js";
 import {
   backoffDelayMs,
   DEFAULT_RETRY_POLICY,
@@ -59,7 +68,9 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 export interface TransportOptions {
   baseUrl: string;
   apiKey?: string;
-  /** Per-call timeout; overridable per request. Default 60 s. */
+  /** A credential fetched per request (a bot's `MachineLogin`); not with `apiKey`. */
+  tokenProvider?: TokenProvider;
+  /** Per-call timeout, on each attempt: the wait for the token and then for the response; overridable per request. Default 60 s. */
   timeoutMs?: number;
   /** The retry policy; every field optional, validated by name. */
   retry?: RetryOverride;
@@ -137,6 +148,8 @@ export class Transport {
   private readonly hintsSeen = new Set<string>();
   /** The bearer token; a private field, invisible to JSON.stringify / inspect. */
   #apiKey: string | undefined;
+  /** Hands over the bearer token per request, when there is no static key. */
+  #provider: TokenProvider | undefined;
   /** Every non-credential header sent with each request. */
   private readonly headers: Record<string, string>;
   private readonly timeoutMs: number;
@@ -156,6 +169,8 @@ export class Transport {
     // A blank or whitespace key is no key: an exported-but-empty LOOM_API_KEY
     // must not send `Bearer ` and turn a clear 401 into a puzzle.
     this.#apiKey = opts.apiKey?.trim() || undefined;
+    if (this.#apiKey && opts.tokenProvider) throw new LoomError("Transport: pass apiKey or tokenProvider, not both");
+    this.#provider = opts.tokenProvider;
     this.headers = {
       "Content-Type": "application/json",
       Accept: "application/json",
@@ -187,17 +202,21 @@ export class Transport {
 
   /** Whether an `Authorization` header goes out with every request. */
   get hasCredential(): boolean {
-    return this.#apiKey !== undefined;
+    return this.#apiKey !== undefined || this.#provider !== undefined;
   }
 
-  /** Redacted: `…1234`, or `none`. */
+  /** Redacted: `…1234`, the provider's label (`bot:<client id>`), or `none`. */
   get apiKeyHint(): string {
+    if (this.#provider) return this.#provider.label ?? "token provider";
     return this.#apiKey ? redactSecret(this.#apiKey) : "none";
   }
 
-  /** The bearer token's payload (org, namespaces, roles, ns_roles), decoded, not verified; undefined without a JWT. */
+  /**
+   * The bearer token's payload (org, namespaces, roles, ns_roles), decoded, not verified;
+   * undefined without a JWT. A provider's token is the one in hand: none before the first request.
+   */
   tokenClaims(): TokenClaims | undefined {
-    return decodeTokenClaims(this.#apiKey);
+    return decodeTokenClaims(this.#provider ? this.#provider.current?.() : this.#apiKey);
   }
 
   /** What JSON.stringify and inspect show: never the credential. */
@@ -217,30 +236,46 @@ export class Transport {
   }
 
   /** `post`, returning the body with the response metadata. */
-  async postWithMeta<T = unknown>(op: string, body: unknown, opts: CallOptions = {}): Promise<CallResult<T>> {
+  postWithMeta<T = unknown>(op: string, body: unknown, opts: CallOptions = {}): Promise<CallResult<T>> {
+    return this.send<T>("POST", op, body, opts);
+  }
+
+  /** GET `{baseUrl}/v1/{path}`: a read, so retried like a read-only op. */
+  async get<T = unknown>(path: string, opts: CallOptions = {}): Promise<T> {
+    return (await this.send<T>("GET", path, undefined, opts)).data;
+  }
+
+  private async send<T>(method: "GET" | "POST", op: string, body: unknown, opts: CallOptions): Promise<CallResult<T>> {
     const headers: Record<string, string> = { ...this.headers };
     if (this.#apiKey) headers.Authorization = `Bearer ${this.#apiKey}`;
     const requestId = opts.requestId ?? randomId();
     headers["X-Request-Id"] = requestId;
-    const spec = OP_BY_NAME[op as OpName];
+    const isGet = method === "GET";
+    if (isGet) delete headers["Content-Type"];
+    const spec = isGet ? undefined : OP_BY_NAME[op as OpName];
     // The server keeps no replay of a read-only op: its retry just runs again.
-    const idem = opts.idempotencyKey ?? (spec?.idempotent && !spec.readOnly ? randomId() : undefined);
+    const idem = isGet
+      ? undefined
+      : (opts.idempotencyKey ?? (spec?.idempotent && !spec.readOnly ? randomId() : undefined));
     if (idem) headers["Idempotency-Key"] = idem;
-    const sent = this.withConsumer(body);
-    const payload = JSON.stringify(sent);
+    const payload = isGet ? undefined : JSON.stringify(this.withConsumer(body));
     const url = `${this.baseUrl}/v1/${op}`;
     const policy = resolveRetryPolicy(this.retry, opts.retry, `call ${op}`);
     const ctx: AttemptContext = {
       op,
+      method,
       url,
       payload,
       headers,
       opts,
       policy,
-      idempotent: spec?.idempotent === true,
+      idempotent: isGet || spec?.idempotent === true,
       deduplicated: spec?.idempotent === true && !spec.readOnly,
       startedAt: this.now(),
       sent: 0,
+      bearer: "",
+      reauthed: false,
+      resending: false,
     };
     const deadline = this.now() + this.ratelimitMaxWaitMs;
     for (;;) {
@@ -290,7 +325,7 @@ export class Transport {
     throwIfAborted(ctx);
   }
 
-  /** One POST and its body, under the per-call timeout and the caller's signal. */
+  /** One request and its body, under the per-call timeout and the caller's signal. */
   private async exchange(ctx: AttemptContext, timeoutMs: number): Promise<Exchange> {
     const signal = ctx.opts.signal;
     const ctrl = new AbortController();
@@ -301,7 +336,7 @@ export class Transport {
       let res: Response;
       try {
         res = await this.fetchImpl(ctx.url, {
-          method: "POST",
+          method: ctx.method,
           headers: ctx.headers,
           body: ctx.payload,
           signal: ctrl.signal,
@@ -320,6 +355,21 @@ export class Transport {
     }
   }
 
+  /** The provider's token on this attempt's headers; after a 401, a fresh one. */
+  private async authorize(ctx: AttemptContext, timeoutMs: number): Promise<void> {
+    const provider = this.#provider;
+    if (!provider) return;
+    if (provider.origin && new URL(ctx.url).origin !== provider.origin)
+      throw new AuthError(`refusing to send ${provider.label ?? "the provider"}'s token to ${new URL(ctx.url).host}`, {
+        op: ctx.op,
+      });
+    throwIfAborted(ctx);
+    // The caller may give up on its wait, or time out; a renewal other calls share goes on.
+    ctx.bearer = await untilTimeoutOrAbort(provider.token(ctx.refused), timeoutMs, ctx);
+    ctx.refused = undefined;
+    ctx.headers.Authorization = `Bearer ${ctx.bearer}`;
+  }
+
   private recordRate(op: string, r: Response): void {
     const limit = Number(r.headers.get("X-RateLimit-Limit") ?? "");
     const remaining = Number(r.headers.get("X-RateLimit-Remaining") ?? "");
@@ -335,7 +385,7 @@ export class Transport {
   }
 
   private async postWithRetries<T>(ctx: AttemptContext): Promise<CallResult<T>> {
-    const { op, url, payload, headers, opts, policy } = ctx;
+    const { op, method, url, payload, headers, opts, policy } = ctx;
     const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
     const requestId = headers["X-Request-Id"] ?? "";
     let sleptMs = 0;
@@ -355,22 +405,48 @@ export class Transport {
       return true;
     };
     for (let attempt = 1; ; attempt++) {
-      ctx.sent++;
+      // A resend with a fresh token is the same attempt, as the Python SDK counts it.
+      if (!ctx.resending) ctx.sent++;
+      ctx.resending = false;
       headers["X-Loom-Retry-Count"] = String(ctx.sent - 1);
+      const asked = Date.now();
+      if (this.#provider) {
+        try {
+          await this.authorize(ctx, timeoutMs);
+        } catch (e) {
+          // The token endpoint was away: the op was never sent, so it is retried
+          // as a connection failure is, under the same send count.
+          if (
+            e instanceof BackendUnavailable &&
+            policy.retryConnectionErrors &&
+            (await retryAfter(attempt, `token unavailable: ${describe(e)}`))
+          ) {
+            ctx.resending = true;
+            continue;
+          }
+          throw e;
+        }
+      }
+      // What the token wait left of this attempt's timeout.
+      const responseMs = Math.max(0, timeoutMs - (Date.now() - asked));
       this.log.debug(
-        `${op} → POST ${url} attempt ${attempt} timeout ${timeoutMs} ms bytes ${payload.length}`,
+        `${op} → ${method} ${url} attempt ${attempt} waits ${responseMs} of ${timeoutMs} ms bytes ${payload?.length ?? 0}`,
         redactHeaders(headers),
       );
       throwIfAborted(ctx);
       const t0 = this.now();
-      const ex = await this.exchange(ctx, timeoutMs);
+      const ex = await this.exchange(ctx, responseMs);
       if ("failed" in ex) {
         const e = ex.error;
         if (isAbort(e)) {
           throwIfAborted(ctx, e);
-          const err = new TimeoutError(`${op}: no response within ${timeoutMs} ms`, { op, cause: e, requestId });
+          const err = new TimeoutError(`${op}: no response within the call's ${timeoutMs} ms timeout`, {
+            op,
+            cause: e,
+            requestId,
+          });
           const may = policy.retryTimeouts === "always" || (policy.retryTimeouts === "idempotent" && ctx.deduplicated);
-          if (may && (await retryAfter(attempt, `timed out after ${timeoutMs} ms`))) continue;
+          if (may && (await retryAfter(attempt, `ran past the call's ${timeoutMs} ms timeout`))) continue;
           throw err;
         }
         if (ex.failed === "body") {
@@ -395,6 +471,16 @@ export class Transport {
       }
       const { res, text } = ex;
       this.recordRate(op, res);
+      if (res.status === 401 && this.#provider && !ctx.reauthed) {
+        // The token may have been revoked or rotated: once more with a fresh
+        // one. The server refused before dispatch, and this is no policy retry.
+        ctx.reauthed = true;
+        ctx.resending = true;
+        ctx.refused = ctx.bearer;
+        this.log.info(`${op} 401; retrying once with a fresh token (rid=${requestId})`);
+        attempt--;
+        continue;
+      }
       const echoed = res.headers.get("X-Request-Id") ?? requestId;
       const elapsed = this.now() - t0;
       if (res.ok) {
@@ -476,8 +562,10 @@ function neverRan(status: number, code: string): boolean {
 
 interface AttemptContext {
   op: string;
+  method: "GET" | "POST";
   url: string;
-  payload: string;
+  /** The JSON body; none on a GET. */
+  payload: string | undefined;
   headers: Record<string, string>;
   opts: CallOptions;
   policy: RetryPolicy;
@@ -487,6 +575,14 @@ interface AttemptContext {
   startedAt: number;
   /** HTTP attempts sent so far, across every 429 pacing round. */
   sent: number;
+  /** The provider's token on the last attempt. */
+  bearer: string;
+  /** A 401 has been answered with a fresh token; not again. */
+  reauthed: boolean;
+  /** The next send repeats this attempt with a fresh token. */
+  resending: boolean;
+  /** The token the server just refused, which the next attempt replaces. */
+  refused?: string;
 }
 
 function resolveLogger(sink: Logger | undefined, level: LogLevel | undefined): Logger {
@@ -535,7 +631,36 @@ function abortError(): Error {
   return Object.assign(new Error("aborted"), { name: "AbortError" });
 }
 
-/** Rejects the call once the caller's signal has fired. */
+/**
+ * `work`, or a TimeoutError once `ms` pass, or the caller's abort, whichever
+ * comes first. Either way the timer and the abort listener go, so a cancelled
+ * call holds nothing open; `work` itself goes on for whoever else waits on it.
+ */
+function untilTimeoutOrAbort<T>(work: T | Promise<T>, ms: number, ctx: AttemptContext): Promise<T> {
+  const signal = ctx.opts.signal;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const cut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const requestId = ctx.headers["X-Request-Id"] ?? "";
+      reject(new TimeoutError(`${ctx.op}: no token within ${ms} ms`, { op: ctx.op, requestId }));
+    }, ms);
+    onAbort = () => {
+      try {
+        throwIfAborted(ctx);
+      } catch (e) {
+        reject(e);
+      }
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  return Promise.race([Promise.resolve(work), cut]).finally(() => {
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+  });
+}
+
+/** Throws once the caller's signal has fired. */
 function throwIfAborted(ctx: AttemptContext, cause?: unknown): void {
   if (!ctx.opts.signal?.aborted) return;
   const requestId = ctx.headers["X-Request-Id"] ?? "";

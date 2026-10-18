@@ -62,23 +62,29 @@ def verify_bearer_header(authorization: str | None) -> AuthInfo | None:
     return None if token is None else verify_bearer(token)
 
 
+def auth_unavailable(e: AuthUnavailable) -> HTTPException:
+    """503 AUTH_UNAVAILABLE with Retry-After: the token may be good, try again."""
+    return HTTPException(
+        status_code=503,
+        detail={"code": "AUTH_UNAVAILABLE", "message": str(e)},
+        headers={"Retry-After": "5"},
+    )
+
+
 def verify_bearer(token: str) -> AuthInfo:
     """The principal `token` names; HTTPException 401 / 503 otherwise. The
     rest of the request's ClickHouse queries carry its quota key, so routes
     outside the op registry draw the caller's bucket too."""
     try:
         info = verify_token(token)
+    except AuthUnavailable as e:
+        record_auth_refusal(e, transport="http")
+        raise auth_unavailable(e) from e
     except TokenError as e:
         record_auth_refusal(e, transport="http")
-        if not isinstance(e, AuthUnavailable):
-            raise HTTPException(
-                status_code=401,
-                detail={"code": "AUTH_INVALID", "message": str(e)},
-            ) from e
         raise HTTPException(
-            status_code=503,
-            detail={"code": "AUTH_UNAVAILABLE", "message": str(e)},
-            headers={"Retry-After": "5"},
+            status_code=401,
+            detail={"code": "AUTH_INVALID", "message": str(e)},
         ) from e
     set_quota_key(quota_key_for(info))
     return info

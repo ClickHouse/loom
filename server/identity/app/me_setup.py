@@ -3,15 +3,22 @@ token for one MCP client and returns that client's config entry."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
 from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import BackendUnavailableError
 from server.identity.app import me_callers, token_grants
-from server.identity.app.me_service_accounts import dev_parent, parse_ttl_days
+from server.identity.app.caller_home import caller_org, default_namespace
+from server.identity.app.me_service_accounts import (
+    dev_parent,
+    new_token_subject,
+    parse_ttl_days,
+    save_token,
+)
 from server.settings import settings
 
 router = APIRouter()
@@ -142,13 +149,11 @@ MCP_SETUP_CLIENT_LABELS: dict[str, str] = {
 }
 
 
-async def _validate_restricted_request(
-    org: str, subject: str, raw: object, persist: bool
-) -> list[str]:
+async def _validate_restricted_request(org: str, subject: str, raw: object) -> list[str]:
     """Parse `restricted_namespaces` on the Setup mint: each must be classified restricted
-    (422 NOT_RESTRICTED otherwise — a standard namespace needs no naming) and the token
-    must be persisted (422) so the grant has a subject to belong to and a revocation to die
-    with. `delegate` then refuses (403) one the caller holds no grant on."""
+    (422 NOT_RESTRICTED otherwise — a standard namespace needs no naming). The grant
+    belongs to the token's own subject and dies with its revocation. `delegate` then
+    refuses (403) one the caller holds no grant on."""
     from server.identity.app.namespace_classification import is_restricted
 
     if not raw:
@@ -159,14 +164,6 @@ async def _validate_restricted_request(
             detail={
                 "code": "VALIDATION_FAILED",
                 "message": "restricted_namespaces must be an array of namespace names",
-            },
-        )
-    if not persist:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "restricted_namespaces requires persist=true",
             },
         )
     names: list[str] = []
@@ -223,55 +220,26 @@ def _mcp_token_name(client_label: str, now: datetime, sa_hash: str) -> str:
     return f"{client_label} · {now.strftime('%Y-%m-%d %H:%M:%S')} · {sa_hash}"
 
 
-async def _persist_mcp_token(
+async def _save_mcp_token(
     *,
     subject: str,
     client: str,
     delegated: Delegated,
     restricted_names: list[str],
-) -> tuple[str, str]:
+) -> tuple[str, str, datetime | None]:
     """Track a Setup-page token in `service_accounts` (kind='mcp') so it is revocable from
     the Tokens list, minted under its own `sa:` subject so revocation-by-sub kills this
     token and not the person's JWT. Restricted namespaces get the token's own direct grant.
-    Returns (minted token, sa_subject)."""
-    import hashlib
-    import time as _time
-
+    Returns (minted token, sa_subject, the saved row's expires_at)."""
     org = delegated.org
-    sa_hash = hashlib.sha1(
-        f"mcp:{org}:{client}:{subject}:{_time.time_ns()}".encode(),
-    ).hexdigest()[:6]
-    sa_subject = f"sa:{client}-{sa_hash}"
-    now = naive_utc_now_seconds()
+    sa_subject = new_token_subject(org, client, subject)
+    sa_hash = sa_subject.removeprefix(f"sa:{client}-")
     minted = delegated.mint(sa_subject)
+    now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat
     client_label = MCP_SETUP_CLIENT_LABELS.get(client, client)
     token_name = _mcp_token_name(client_label, now, sa_hash)
-
-    from server.core.ch import get_client
-
-    await get_client().insert(
-        "loom.service_accounts",
-        [
-            {
-                "org": org,
-                "name": token_name,
-                "sa_subject": sa_subject,
-                "namespaces": delegated.namespaces,
-                "roles": delegated.roles,
-                "ttl_days": delegated.ttl_days,
-                "created_by": subject,
-                "created_at": now,
-                "expires_at": now + timedelta(seconds=delegated.ttl_seconds),
-                "revoked_at": None,
-                "revoked_by": "",
-                "version": _time.time_ns(),
-                "kind": "mcp",
-                "client": client,
-                # The token's `creator` claim does the inheriting now; the
-                # flag stays true so the Tokens list reads the same.
-                "inherit_creator_grants": True,
-            }
-        ],
+    await save_token(
+        token_name, sa_subject, delegated, created_by=subject, now=now, kind="mcp", client=client
     )
     if restricted_names:
         caller_roles = {
@@ -280,20 +248,20 @@ async def _persist_mcp_token(
         }
         await token_grants.grant_restricted_to_token(org, sa_subject, subject, caller_roles)
 
-    return minted, sa_subject
+    return minted, sa_subject, delegated.expires_at(now)
 
 
 def _setup_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
     """The token the setup token is delegated from: the caller's bearer, or in dev
-    mode (no auth, no bearer) a flat writer for the body's subject and org."""
+    mode (auth off) `dev_parent`."""
     from server.auth.bearer import missing_bearer, verify_bearer_header
 
+    if not settings.auth_actually_required():
+        return dev_parent(request, payload)
     info = verify_bearer_header(request.headers.get("Authorization"))
-    if info is not None:
-        return info
-    if settings.auth_actually_required():
+    if info is None:
         raise missing_bearer()
-    return dev_parent(payload)
+    return info
 
 
 @router.post("/v1/me/setup/mcp_config")
@@ -307,8 +275,10 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
       {
         client: str,             # a key of MCP_SETUP_CLIENT_LABELS (claude-code, codex, cursor, …)
         namespace?: str,         # defaults to caller's namespace
-        ttl_days?: int | null,   # null = 90 days (the delegation default)
+        ttl_days?: int | null,   # null = 90 days, 0 = never
       }
+
+    The token is saved to the caller's token list, where it is revoked.
 
     Returns:
       {
@@ -317,6 +287,10 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         config_key: str,         # "mcpServers" (most clients) or "servers" (VS Code)
         config: dict,            # the JSON block to merge into the client's config file
         token: str,              # the minted JWT
+        sa_subject: str,         # its subject in the token list
+        expires_at: str | null,  # ISO-8601; null: never expires
+        namespace: str,          # where unaddressed calls land; "": none, calls must name one
+        …                        # and the namespace, scope and URL it reads
       }
     """
     parent = _setup_parent(request, payload)
@@ -339,25 +313,12 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     namespace_payload = payload.get("namespace")
     if namespace_payload:
         requested: dict[str, str | None] = {str(namespace_payload): None}
-        displayed_namespace = str(namespace_payload)
     else:
         requested = {"*": None}
-        displayed_namespace = next((ns for ns in parent.namespaces if ns != "*"), "default")
     # Restricted namespaces the token should read are named in the claim and, once the token
     # has a subject, granted to it directly.
-    persist = bool(payload.get("persist") or False)
-    if parent.is_service_account and not persist:
-        # delegate() refuses it too; this says what to send instead.
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "AUTH_INSUFFICIENT",
-                "message": "a service-account token must pass persist=true, so the "
-                "token it mints is recorded and revocable",
-            },
-        )
     restricted_names = await _validate_restricted_request(
-        org, subject, payload.get("restricted_namespaces"), persist
+        org, subject, payload.get("restricted_namespaces")
     )
     for ns in restricted_names:
         requested.setdefault(ns, None)
@@ -368,22 +329,25 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         requested=requested,
         scoped=False,
         ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
-        is_service_account=persist,
+        is_service_account=True,
     )
-
-    # persist=True tracks the token in service_accounts (kind='mcp') so
-    # it's revocable from the Tokens list. Skipped for preview-only calls.
-    sa_subject = ""
-    if persist:
-        minted, sa_subject = await _persist_mcp_token(
-            subject=subject,
-            client=client,
-            delegated=delegated,
-            restricted_names=restricted_names,
-        )
-    else:
-        minted = delegated.mint(subject)
+    minted, sa_subject, expires_at = await _save_mcp_token(
+        subject=subject,
+        client=client,
+        delegated=delegated,
+        restricted_names=restricted_names,
+    )
     reads_everywhere = "*" in delegated.namespaces
+    # The page names where this token's unaddressed MCP calls land: the MCP
+    # transport's own resolver, asked about the token just minted.
+    token = delegated.as_auth(sa_subject)
+    try:
+        displayed_namespace: str | None = await default_namespace(token, caller_org(token) or org)
+    except BackendUnavailableError:
+        # The token is already minted and listed: hand it over without a name
+        # rather than fail, or a retry would mint a second one. None (not "",
+        # which means it has no default): each call resolves it.
+        displayed_namespace = None
 
     # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.
     from server.auth.public_url import public_base_url
@@ -410,7 +374,12 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         # Restricted namespaces this token reads by name, each with a direct grant of its own
         # that dies with the token.
         "restricted_namespaces": restricted_names,
+        # The namespace claim as minted: `*`, or the namespaces the token reads (a `*`
+        # request under a narrower sign-in becomes that sign-in's list).
+        "namespaces": list(delegated.namespaces),
         "mcp_url": mcp_url,
-        "persisted": bool(sa_subject),
         "sa_subject": sa_subject,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        # `persist` is ignored: every Setup token is saved and listed.
+        **({"ignored_args": ["persist"]} if "persist" in payload else {}),
     }

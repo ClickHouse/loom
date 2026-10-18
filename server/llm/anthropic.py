@@ -17,15 +17,15 @@ import httpx
 from server.clients._http import get_client as _http_client
 from server.clients._http_errors import raise_for_status_with_detail as _raise_for_status
 from server.core.provider_keys import provider_key
-from server.llm import traits
+from server.llm import gateway, traits
 from server.llm._retry import retrying
 from server.llm.client import LLMResult
 from server.llm.json_text import strip_code_fence
 
 log = logging.getLogger(__name__)
 
-_ENDPOINT = "https://api.anthropic.com/v1/messages"
 _API_VERSION = "2023-06-01"
+_ANTHROPIC_ROOT = "https://api.anthropic.com"
 
 # Fields a model may refuse; server/llm/traits.py learns which, per model, from
 # the 400 that names them (e.g. "`temperature` is deprecated for this model").
@@ -118,13 +118,17 @@ def _thinking_tokens(data: dict[str, Any]) -> int:
 async def _post(client: Any, model: str, api_key: str, payload: dict[str, Any]) -> httpx.Response:
     from server.settings import settings
 
+    root = settings.anthropic_base_url.rstrip("/")
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": _API_VERSION,
+        "Content-Type": "application/json",
+    }
+    if root != _ANTHROPIC_ROOT:
+        headers["Authorization"] = f"Bearer {api_key}"  # what gateways in front of it take
     r: httpx.Response = await client.post(
-        _ENDPOINT,
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": _API_VERSION,
-            "Content-Type": "application/json",
-        },
+        f"{root}/v1/messages",
+        headers=headers,
         json=payload,
         timeout=settings.llm_request_timeout_s,
     )
@@ -137,7 +141,7 @@ class AnthropicLLMClient:
     def __init__(self, model: str, *, api_key: str | None = None) -> None:
         self.model = model
         self._api_key = provider_key("anthropic") if api_key is None else api_key
-        if not self._api_key:
+        if not self._api_key and not gateway.exchanging():
             raise RuntimeError(
                 "ANTHROPIC_API_KEY not set; AnthropicLLMClient requires a key. "
                 "Use LOOM_LLM_PROVIDER=fake for local dev."
@@ -162,6 +166,7 @@ class AnthropicLLMClient:
         payload = _payload(self.model, system, user, max_tokens, temperature)
         from server.observability.genai import generation_span
         from server.observability.provider_health import recording
+        from server.settings import settings
 
         # Span covers the WHOLE retry loop: tenacity retries up to 4
         # attempts and only the last one's usage is returned, so timing a
@@ -171,16 +176,18 @@ class AnthropicLLMClient:
             # Retries exhausted or non-retryable: health reports a
             # configured-but-failing provider. Cancellation is not recorded.
             with recording("anthropic:messages"):
+                root = settings.anthropic_base_url.rstrip("/")
+                key = await gateway.bearer(self._api_key, root)  # an outage is the provider's
                 async for attempt in retrying():
                     with attempt:
                         _gen.note_attempt()
-                        r = await _post(client, self.model, self._api_key, payload)
+                        r = await _post(client, self.model, key, payload)
                         for _ in range(traits.MAX_NEGOTIATION):
                             # A refused field: re-send without it.
                             if not _learn_from_refusal(self.model, r, payload):
                                 break
                             payload = _payload(self.model, system, user, max_tokens, temperature)
-                            r = await _post(client, self.model, self._api_key, payload)
+                            r = await _post(client, self.model, key, payload)
                         _raise_for_status(r, "anthropic:messages")
                         data = r.json()
                         hidden = _thinking_tokens(data)
@@ -190,7 +197,7 @@ class AnthropicLLMClient:
                             payload["max_tokens"] = traits.starved_cap(
                                 self.model, int(payload["max_tokens"]), hidden
                             )
-                            r = await _post(client, self.model, self._api_key, payload)
+                            r = await _post(client, self.model, key, payload)
                             _raise_for_status(r, "anthropic:messages")
                             data = r.json()
             text = "".join(

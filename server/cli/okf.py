@@ -39,7 +39,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from server.cli._client import default_base_url, error_line, jwt_claims, resolve_token
+from server.cli._client import (
+    default_base_url,
+    error_line,
+    jwt_claims,
+    refused_for_agent,
+    resolve_token,
+)
 from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
 
@@ -48,7 +54,9 @@ _BULK = 500
 
 
 def _resolve_token(args: argparse.Namespace) -> str:
-    token, _ = resolve_token(args.token)
+    token, source = resolve_token(args.token)
+    if refused_for_agent(source):
+        sys.exit(2)
     if not token:
         print(
             "No token: pass --token, set $LOOM_API_KEY, or write one to ~/.loom/token",

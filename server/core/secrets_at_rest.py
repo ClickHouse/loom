@@ -55,6 +55,19 @@ def unseal(purpose: str, enc: str, *, warn: bool = True) -> str:
         return ""
 
 
+def open_sealed(purpose: str, enc: str) -> str | None:
+    """`unseal` for a value from outside (a cookie): None, and no log line,
+    when it was not sealed here for `purpose`. The root secret only: a
+    previous one opens stored values during a rotation, never what a caller
+    hands in."""
+    if not enc:
+        return None
+    try:
+        return str(_fernet(purpose, str(settings.jwt_secret)).decrypt(enc.encode()).decode())
+    except Exception:  # noqa: BLE001 — forged or foreign: the caller refuses it
+        return None
+
+
 def resealed(purpose: str, enc: str) -> str | None:
     """`enc` sealed again under the root secret when only
     LOOM_JWT_SECRET_PREVIOUS opens it; None when it already opens with the

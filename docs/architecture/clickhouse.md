@@ -105,7 +105,7 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
 | `MergeTree`                                        | Append-only logs: `events`, `agent_events`, `audit_log`, `conversations`, `task_events`, `entity_edges`, traces                                                                                                                      | Rows are facts about a moment.                                                        |
 | `SummingMergeTree`                                 | Counters: `entity_degree`, `memory_usage_totals`, `code_unit_signal`                                                                                                                                                                 | A counter is an INSERT of a delta, never a read-modify-write.                         |
 | `AggregatingMergeTree`                             | Non-additive rollups: `memory_term_freq`, `chunk_term_freq`, `code_term_freq`, `agent_cost_rollup_daily`, `memory_exposure_breadth_hourly`, `query_nodes`, `namespace_write_marks`, `subject_last_seen`, `loom_telemetry.sli_minute` | Partial aggregate states (a distinct count cannot be summed), finished with `-Merge`. |
-| `KeeperMap`                                        | `task_leases`, `agent_run_claims` and the migration lock `loom._migration_lock` (also the `workers_supervisor` lease, the claims and the compiler-tier `scip_entry:*` keys)                                                          | Linearizable compare-and-swap across processes.                                       |
+| `KeeperMap`                                        | `task_leases`, `agent_run_claims`, `oauth_signin_state` and the migration lock `loom._migration_lock` (also the `workers_supervisor` lease, the claims and the compiler-tier `scip_entry:*` keys)                                    | Linearizable compare-and-swap across processes.                                       |
 
 **One `keeper_map_path_prefix` per deployment.** The KeeperMap paths are fixed in the
 migrations (`/loom/migration_lock`, `/loom/instances`, `/loom/task_leases`,
@@ -429,19 +429,26 @@ with `purge=true` and runner state.
   takes the free claim reads the row and goes to a fresh id. `run.complete` and the
   erasure saga's `agent_runs.delete` step also drop claims, for a key a process that
   died mid-begin left behind. All are Keeper key drops, not MergeTree mutations.
-- **OAuth exchange and grant change claims** are leases (`server.core.leases`): keys
-  of `loom._migration_lock`. An
-  exchange claims its credential, reads it, decides, consumes and releases; when the
-  consume did not finish the claim is kept to expire after two minutes. A grant change
-  holds the grant's claim from its read to its write, so a concurrent change of the same
-  grant waits for it. Its reads are sequentially consistent, and it is cut off after 20 s
-  (each statement after 10 s), well before its 60 s claim may be taken over. A repository
-  maintainer's change across branches (a revoke's fan-out, a sync's mirrors) first holds
-  one claim per (repository, subject), `repo:<owner/name>`, then its branches' claims in
-  namespace order, and writes the branches in one insert inside that bound. A change that
-  may remove an admin first holds the namespace's admins claim (the key with no subject)
-  and counts the admins under it. `loom.oauth_claims` and `loom.grant_claims`, the
-  KeeperMap tables builds before 033 claimed in, are no longer written.
+- **Sign-in state** (`loom.oauth_signin_state`, KeeperMap) holds each code, device
+  grant, finished IdP round trip and session's current refresh token. A value changes
+  only by a strict-mode compare-and-set: an `INSERT` for a new key, otherwise an
+  `ALTER … UPDATE` conditioned on the value the writer read. Keys carry their credential's expiry, and a sweep every five
+  minutes drops the expired ones with one `ALTER … DELETE`; all are Keeper key
+  operations, not MergeTree mutations. `loom.oauth_claims` (migration 028) is used only by a
+  previous build still serving during a rolling upgrade.
+- **Grant change and account claims** are leases (`server.core.leases`): keys of
+  `loom._migration_lock`. A grant change holds the grant's claim from its read to its
+  write, so a concurrent change of the same grant waits for it. Its reads are sequentially
+  consistent, and it is cut off after 20 s (each statement after 10 s), well before its
+  60 s claim may be taken over. A repository maintainer's change across branches (a
+  revoke's fan-out, a sync's mirrors) first holds one claim per (repository, subject),
+  `repo:<owner/name>`, then its branches' claims in namespace order, and writes the
+  branches in one insert inside that bound. A change that may remove an admin first holds
+  the namespace's admins claim (the key with no subject) and counts the admins under it.
+  A change that rewrites an account's registry row (a release, a password set, a
+  namespace register or delete) holds that account's claim the same way.
+  `loom.grant_claims`, the KeeperMap table builds before 033 claimed in, is no longer
+  written.
 - **Graph projections and graph writes** (`loom.graph_projections`, KeeperMap where the
   server has a Keeper): a projection holds one of 32 slot keys of its namespace and its
   end drops it (a begin whose insert failed uncertainly leaves its slot to go stale); a

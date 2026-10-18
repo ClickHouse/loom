@@ -33,6 +33,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Final
 
+from server.core.naming import reserved_for_sso
 from server.identity.api.models import NamespaceRegisterInput
 from server.operations.base import Operation, Role
 from server.settings import settings
@@ -98,8 +99,8 @@ async def ensure_registered(
 ) -> bool:
     """Insert the registry row for (org, namespace) if none exists. Returns
     True when a row was inserted. Never raises."""
-    if (org, namespace) in _known:
-        return False
+    if (org, namespace) in _known or reserved_for_sso(namespace):
+        return False  # an SSO account's row is single sign-on's to create
     try:
         if ch is None:
             from server.core.ch import get_client

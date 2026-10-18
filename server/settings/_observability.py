@@ -107,7 +107,8 @@ class ObservabilitySettings(BaseModel):
     # The `deployment.environment` value.
     otel_environment: str = "dev"
     # Comma-separated path regexes the FastAPI instrumentation opens no span
-    # for (health polls). "" = instrument every path.
+    # for (health polls). "" = instrument every path but the sign-in routes
+    # (/oauth/), which are always left out: their URLs carry codes.
     otel_excluded_urls: str = "/v1/health"
 
     # Scales every per-op `budget_p99_ms` (tuned for local CH) at the

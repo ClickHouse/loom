@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // The MCP entry's headers helper. It authenticates from the same places the
-// hooks do: LOOM_API_KEY, the install option, ~/.loom/config.json, then
-// ~/.loom/token.
+// hooks do: LOOM_API_KEY; for an agent (LOOM_CLIENT_ID with a workload token)
+// its exchanged token and nothing else; otherwise the install option,
+// ~/.loom/config.json, then ~/.loom/token.
 //
 // It also names the checkout's code namespace. Claude Code runs the helper
 // in the project directory; the checkout's resolved repository (the cache
@@ -9,15 +10,16 @@
 // `X-Loom-Code-Scope: org/namespace`, which the server applies to every
 // loom_code_* call that names no namespace. LOOM_MCP_CODE_SCOPE=off disables.
 //
-// No token → the helper waits for the SessionStart hook, which Claude Code runs
-// while it connects the MCP entry and which knows the configured server, to
-// save the first-session credential; only then does it sign up itself, through
-// the same locked path, so one account results.
-// Sign-up off, refused or unreachable → `{}`: the server then answers 401 and
-// Claude Code shows the connection as failed, which is the honest state.
+// No token and not an agent → the helper waits for the SessionStart hook,
+// which Claude Code runs while it connects the MCP entry and which knows the
+// configured server, to save the first-session credential; only then does it
+// sign up itself, through the same locked path, so one account results.
+// Sign-up off, refused or unreachable → `{}`: the server then answers 401
+// and Claude Code shows the connection as failed, which is the honest state.
 // Stdout is exactly one JSON object; nothing else is written.
 import { ensureCredential } from "../lib/first-session.mjs";
 import {
+  agentMode,
   envNumber,
   envSwitch,
   gitToplevel,
@@ -82,6 +84,7 @@ export async function hookToken({
   pollMs = 200,
   read = () => readConfigFile(loomConfigPath(env)),
 } = {}) {
+  if (agentMode(env)) return ""; // an agent never takes the person's saved token
   const deadline = Date.now() + waitMs;
   for (;;) {
     const cfg = read();

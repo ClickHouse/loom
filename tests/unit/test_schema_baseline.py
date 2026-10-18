@@ -96,7 +96,11 @@ def test_the_journal_files() -> None:
         "036_shared_replica_state.sql",
         "037_carry_acks.sql",
         "038_embedding_write_sha.sql",
-        "039_request_sli.sql",
+        "039_oauth_sessions.sql",
+        "040_oauth_signin_state.sql",
+        "041_sso_links.sql",
+        "042_machine_identities.sql",
+        "043_request_sli.sql",
     ]
 
 

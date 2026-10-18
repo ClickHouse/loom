@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 DATABASE = "loom"
-# Telemetry Loom derives from its own tables (039_request_sli.sql). Only the
+# Telemetry Loom derives from its own tables (043_request_sli.sql). Only the
 # migrations write it: its refreshable view runs as the user that created it.
 TELEMETRY_DATABASE = "loom_telemetry"
 TELEMETRY_GRANTS = "CREATE DATABASE, CREATE TABLE, CREATE VIEW, INSERT, SELECT"

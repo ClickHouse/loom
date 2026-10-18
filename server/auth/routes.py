@@ -8,9 +8,9 @@ import base64
 from typing import Any
 
 import jwt as pyjwt
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
-from server.auth.bearer import bearer_token
+from server.auth.bearer import auth_unavailable, bearer_token
 from server.auth.jwt import AuthUnavailable, TokenError, verify_token
 from server.observability.metrics import record_auth_refusal
 
@@ -91,11 +91,7 @@ async def whoami(request: Request) -> dict[str, object]:
             return {"authenticated": False, "reason": str(e)}
         # Transient: the token may be fine. authenticated=false would make the SPA
         # drop it, so answer 503 and let the client retry.
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "AUTH_UNAVAILABLE", "message": str(e)},
-            headers={"Retry-After": "5"},
-        ) from e
+        raise auth_unavailable(e) from e
 
     try:
         header = pyjwt.get_unverified_header(token)

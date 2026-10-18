@@ -27,15 +27,26 @@ Commands fall into two kinds:
   (`migrate`, `reembed`, `code backfill`, `revoke-token`, the backfills and
   repairs). They run with the deployment's credentials, so run them where those
   credentials live.
-- **Client commands** talk to a running server over HTTP with a URL and a token
-  (`install`, `init`, `demo`, `memory-search`, `ingest-transcript`,
-  `export-okf`, `import-okf`). They take `--server-url` (`--base-url` on
-  `demo`) and, except `init`, `--token`, resolved in the plugin hooks' order: the URL from
-  `LOOM_BASE_URL`, then `~/.loom/config.json` `url`, else `http://localhost:7777`; the token from
-  `LOOM_API_KEY`, then `~/.loom/config.json` `token`, then `~/.loom/token` (moved by
-  `LOOM_API_KEY_FILE`). `LOOM_CONFIG_FILE` moves the config file.
+- **Client commands** talk to a running server over HTTP with a URL and a token (`install`,
+  `init`, `demo`, `memory-search`, `ingest-transcript`, `export-okf`, `import-okf`). They take
+  `--server-url` (`--base-url` on `demo`) and, except `init`, `--token`, resolved in the plugin
+  hooks' order: the URL from `LOOM_BASE_URL`, then `~/.loom/config.json` `url`, else
+  `http://localhost:7777`; the token from `LOOM_API_KEY`, then `~/.loom/config.json` `token`,
+  then `~/.loom/token` (moved by `LOOM_API_KEY_FILE`). `LOOM_CONFIG_FILE` moves the config file.
+  For an agent (`LOOM_CLIENT_ID` with a workload token) they use only `--token` or
+  `LOOM_API_KEY`, never a saved token, and refuse (exit 2) without one; `loom install` refuses
+  whatever `--token` says; `loom call` exchanges the workload token itself.
 
 `loom mint-token` needs only `LOOM_JWT_SECRET`: it signs a token locally.
+
+**Session commands** (`login`, `logout`, `whoami`, `call`, `token`) are the Python SDK's
+own (`loom.cli`; `python -m loom …` with only the SDK installed), so `loom`
+needs `pip install clickhouse-loom` for them. `loom login [--server URL]
+[--profile NAME] [--no-browser]` signs in with a one-time code;
+`loom call <op|/path> [key=text|key:=json …] [--data JSON] [--org] [--namespace]` reaches
+any operation or route with that session, and `loom token create|list|revoke`
+makes, lists and revokes your own tokens for CI and agents. See
+[use Loom without the dashboard](../guides/without-the-dashboard.md).
 
 ## Conventions
 
@@ -270,6 +281,15 @@ python scripts/codegen/docs_reference.py
 | `loom claim-release` | Release a self-signup claim: revoke its grants, clear the owner, deactivate it. | `--org`, `--namespace`, `-y` |
 | `loom mint-token` | Mint a JWT locally (requires LOOM_JWT_SECRET). | `--subject`, `--org`, `--namespaces`, `--roles`, `--namespace-role`, `--ttl-days`, `--save`, `--read-scope`, `--read-user-id`, `--traffic-class`, `--consumer`, `--service-account`, `--user-token`, `--json` |
 | `loom revoke-token` | Revoke one token by jti or subject (writes loom.revoked_tokens through the revocation module; needs the configured ClickHouse). | `--jti`, `--subject`, `--list`, `--issued-before`, `--reason`, `--expires-at`, `--json` |
+| `loom sso` | Carry password accounts over to single sign-on. |  |
+| `loom sso adopt` | Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. | `--domain`, `--org`, `--skip`, `--keep-tokens`, `--apply`, `--dry-run` |
+| `loom sso link` | Let one person's SSO sign-ins reach their password account registered under another address (a personal one, a +tag). | `--email`, `--org`, `--namespace`, `--apply`, `--dry-run` |
+| `loom sso unlink` | Undo the links of one email. | `--email`, `--apply`, `--dry-run` |
+| `loom sso password-link` | Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off. | `--email`, `--org` |
+| `loom bot` | Bots and CI jobs that sign in with a key or their CI's identity. |  |
+| `loom bot create` | Register a bot: its namespaces, and a key (--generate-key or --public-key) and/or a CI trust (--issuer, --audience, --claim). | `--name`, `--org`, `--namespace-role`, `--generate-key`, `--public-key`, `--issuer`, `--audience`, `--claim`, `--jwks-uri`, `--max-token-age`, `--max-agents`, `--agent-claim`, `--replace` |
+| `loom bot list` | Every bot, active or disabled. |  |
+| `loom bot disable` | Refuse its proofs and revoke the tokens it holds. | `--name` |
 | `loom doctor` | Diagnose pre-boot misconfig (Python version, settings, JWT, CH reachability) and print the problem list /v1/health carries, each with its fix. | `--json`, `--client`, `--server-url`, `--token` |
 | `loom report` | Print the bug form's Environment field: versions and the `loom doctor` checks. | `--open` |
 | `loom drops` | Print the memory ingest drop ledger (loom.memory_drops) for a namespace, by stage/reason — what the pipeline discarded, truncated or gave up on. | `--namespace`, `--org`, `--hours` |
@@ -292,6 +312,11 @@ python scripts/codegen/docs_reference.py
 | `loom ingest-transcript` | Pipe a chat-history file (markdown / JSON) into Loom's conversation table as one thread. | `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--thread-id`, `--file`, `--dry-run` |
 | `loom memory-search` | Run a memory.search from the shell. | `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--query`, `--top-k`, `--search-mode`, `--json-agent` |
 | `loom set-host` | Designate the Loom host(s) for this deployment. | `<emails>`, `--env-file`, `--append`, `--dry-run` |
+| `loom login` | Sign in to a Loom server on any browser with a one-time code. |  |
+| `loom logout` | End the stored session on the server and forget it here. |  |
+| `loom whoami` | Show who the stored session signs you in as. |  |
+| `loom call` | Call any operation or API route with the stored session (`loom call --help`). |  |
+| `loom token` | Make, list and revoke your own tokens for CI and agents (`loom token --help`). |  |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: cli -->

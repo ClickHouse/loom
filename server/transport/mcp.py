@@ -34,6 +34,7 @@ from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
 
+from server.identity.app.caller_home import caller_org
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
 from server.transport.mcp_auth import (
@@ -69,7 +70,6 @@ from server.transport.mcp_identity import (
     _client_name_to_agent,
     _remember_client_for_session,
     _resolve_client_name,
-    caller_org,
     new_session_id,
 )
 from server.transport.mcp_op import route as route_loom_op

@@ -19,6 +19,7 @@ from server.embedding._provider import (
     store,
     vector,
 )
+from server.llm import gateway
 from server.observability.genai import embedding_span
 from server.observability.provider_health import recording
 
@@ -27,7 +28,6 @@ __all__ = ["EmbedderInputTooLarge", "OpenAIEmbedder"]
 # OpenAI's documented input cap for text-embedding-3-*. Tokens, not chars.
 _MAX_INPUT_TOKENS = 8191
 _OPENAI_BATCH_LIMIT = 100
-_ENDPOINT = "https://api.openai.com/v1/embeddings"
 _HEALTH = "openai:embeddings"
 
 
@@ -61,7 +61,7 @@ class OpenAIEmbedder:
         self.model_name = model
         self.dim = dim or self.DEFAULT_DIMS.get(model, 1536)
         self._api_key = provider_key("openai") if api_key is None else api_key
-        if not self._api_key:
+        if not self._api_key and not gateway.exchanging():
             raise RuntimeError(
                 "OPENAI_API_KEY not set; OpenAIEmbedder requires a key. "
                 "Use LOOM_EMBEDDING_MODEL=fake-ngram-3072 for local dev."
@@ -87,8 +87,14 @@ class OpenAIEmbedder:
         return payload
 
     async def _post(self, payload: dict[str, object]) -> dict[str, Any]:
+        from server.settings import settings
+
+        url = f"{settings.openai_base_url.rstrip('/')}/embeddings"
+        bearer = await gateway.bearer(self._api_key, url)
         resp = await _http_client().post(
-            _ENDPOINT, json=payload, headers={"Authorization": f"Bearer {self._api_key}"}
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {bearer}"},
         )
         _raise_for_status(resp, _HEALTH)
         data: dict[str, Any] = resp.json()

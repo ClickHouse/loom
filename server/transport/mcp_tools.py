@@ -117,8 +117,8 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                 # `namespace` / `namespace_scope` deliberately omitted: the
                 # LLM would guess namespaces from query text and waste a
                 # round-trip on the NAMESPACE_NOT_ACCESSIBLE error. Server
-                # defaults handle selection; power users can call
-                # loom_memory_search directly for explicit scoping.
+                # defaults handle selection; a token with no default namespace
+                # searches its first readable claim.
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},

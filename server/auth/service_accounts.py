@@ -12,8 +12,11 @@ they agree on what the token may read.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
+
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -27,12 +30,25 @@ class SACreator:
     inherits: bool
 
 
+# (org, sa_subject) -> (time.monotonic() of the read, its creator). Kept for
+# the revocation refresh interval, as `delegation._creator_account` keeps the
+# creator's account; a revoke also revokes the token by subject at once. The
+# cap bounds it.
+_creators: dict[tuple[str, str], tuple[float, SACreator]] = {}
+_CREATOR_CACHE_MAX = 4096
+
+
 async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SACreator | None:
     """The creator of the unrevoked service account `sa_subject` in `org`;
     None for a subject that is not one, a row with no creator, or a failed
-    read (fail closed: no inheritance)."""
+    read (fail closed: no inheritance). A found row is cached for the
+    revocation refresh interval; a miss or a failed read is not."""
     if not sa_subject.startswith("sa:"):
         return None
+    key = (org, sa_subject)
+    hit = _creators.get(key)
+    if hit is not None and time.monotonic() - hit[0] < settings.jwt_revocation_cache_ttl_seconds:
+        return hit[1]
     if ch is None:
         from server.core.ch import get_client
 
@@ -54,7 +70,11 @@ async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SAC
     creator = str((row or {}).get("created_by") or "")
     if not creator:
         return None
-    return SACreator(subject=creator, inherits=bool((row or {}).get("inherit_creator_grants")))
+    found = SACreator(subject=creator, inherits=bool((row or {}).get("inherit_creator_grants")))
+    if len(_creators) >= _CREATOR_CACHE_MAX:
+        _creators.clear()
+    _creators[key] = (time.monotonic(), found)
+    return found
 
 
 async def inheriting_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> str | None:
