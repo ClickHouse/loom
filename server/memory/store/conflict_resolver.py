@@ -160,7 +160,8 @@ def _same_write(row: Mapping[str, Any], judged: Mapping[str, Any]) -> bool:
     sha = str(judged.get("content_sha256") or "")
     if sha:
         return str(row.get("content_sha256") or "") == sha
-    # A row from before content hashes: the version judged.
+    # A vector row stored without its write's hash (the column, from
+    # 038_embedding_write_sha.sql, is empty on rows written before it): the version judged.
     return int(row.get("version") or 0) == int(judged.get("version") or 0)
 
 
