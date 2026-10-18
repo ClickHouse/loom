@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CodeContextPackRow } from "../api";
 import { PacksTab } from "./Code";
@@ -69,6 +70,43 @@ describe("PR packs pages", () => {
     expect(within(screen.getByRole("navigation", { name: "PR pack pages" })).getByRole("status")).toHaveTextContent(
       "Page 1 of 1",
     );
+  });
+
+  it("starts again from the first page when the page size changes on a later page", async () => {
+    listCodeContextPacks.mockImplementation(async (_id, opts: { offset: number; limit: number }) => ({
+      rows: Array.from({ length: Math.max(0, Math.min(opts.limit, 120 - opts.offset)) }, (_, i) =>
+        pack(1000 - opts.offset - i),
+      ),
+      total: 120,
+    }));
+    render(<PacksTab id={ID} repo="acme/app" />);
+    await screen.findByText("PR 1000");
+    const pager = () => screen.getByRole("navigation", { name: "PR pack pages" });
+    fireEvent.click(within(pager()).getByRole("button", { name: "Next page" }));
+    await screen.findByText("PR 950");
+    fireEvent.click(within(pager()).getByRole("button", { name: "Next page" }));
+    await screen.findByText("PR 900");
+    await userEvent.click(within(pager()).getByRole("button", { name: "Rows per page" }));
+    await userEvent.click(await screen.findByText(/^100/));
+    await waitFor(() => expect(listCodeContextPacks.mock.calls.at(-1)?.[1]).toMatchObject({ limit: 100, offset: 0 }));
+    expect(await screen.findByText("PR 1000")).toBeInTheDocument();
+    expect(screen.queryByText("PR 900")).toBeNull();
+  });
+
+  it("keeps focus on the list when a page steps back to an empty first page", async () => {
+    let total = 60;
+    listCodeContextPacks.mockImplementation(async (_id, opts: { offset: number; limit: number }) => ({
+      rows: Array.from({ length: Math.max(0, Math.min(opts.limit, total - opts.offset)) }, (_, i) =>
+        pack(1000 - opts.offset - i),
+      ),
+      total,
+    }));
+    render(<PacksTab id={ID} repo="acme/app" />);
+    await screen.findByText("PR 1000");
+    total = 0;
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("No packs yet")).toBeInTheDocument();
+    expect(document.getElementById("packs-list")).toHaveFocus();
   });
 
   it("draws no pager when one page holds every pack", async () => {

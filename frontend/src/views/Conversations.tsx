@@ -102,6 +102,7 @@ export function Conversations() {
   // The agent filter those threads were read for: under another, the pager pages from the
   // page asked for instead.
   const [shownThreadAgent, setShownThreadAgent] = useState<string | null>(null);
+  const [threadsReading, setThreadsReading] = useState(false);
   const [threadsPaged, setThreadsPaged] = useState(true);
   // Known only once the page after the last full one comes back empty (without a total the
   // pager goes no further than the next page).
@@ -156,6 +157,7 @@ export function Conversations() {
   useAbortableEffect(
     (signal, live) => {
       setThreadsError(null);
+      setThreadsReading(true);
       listConversationThreads(
         { org: identity.org, namespace: identity.namespace },
         {
@@ -169,6 +171,7 @@ export function Conversations() {
       )
         .then((r) => {
           if (!live()) return;
+          setThreadsReading(false);
           const rows = r.threads || [];
           // A build that predates `offset` answers the first page again: stay on it and
           // offer no further page rather than show the same threads twice.
@@ -191,6 +194,7 @@ export function Conversations() {
         })
         .catch((e) => {
           if (!live()) return;
+          setThreadsReading(false);
           // An empty list that is really a failed read looked like "no
           // conversations yet".
           setThreadsError(e);
@@ -417,6 +421,7 @@ export function Conversations() {
             label="Thread pages"
             page={pagerPage}
             shown={threadsCurrent ? threads.length : 0}
+            busy={threadsReading}
             resetKey={`${identity.org}\n${identity.namespace}\n${agentFilter}`}
             pageSize={THREADS_PAGE}
             total={threadsTotal}

@@ -555,8 +555,7 @@ describe("Conversations: thread pages", () => {
       expect(listConversationThreads.mock.calls.at(-1)?.[1]).toMatchObject({ agent: "beta", offset: 0 }),
     );
     // The new filter's first page has not answered: the old rows give the pager nothing to page.
-    const nav = screen.queryByRole("navigation", { name: "Thread pages" });
-    if (nav) expect(within(nav).getByRole("button", { name: "Next page" })).toBeDisabled();
+    expect(screen.queryByRole("navigation", { name: "Thread pages" })).toBeNull();
     act(() => answerBeta());
     expect(await screen.findByText("Thread 500")).toBeInTheDocument();
     const betaOffsets = listConversationThreads.mock.calls

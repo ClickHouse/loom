@@ -42,6 +42,8 @@ export interface ListPagerProps {
   maxOffset?: number;
   /** What the list holds (its filters): a change clears what the pager last said. */
   resetKey?: string;
+  /** A read is in flight: the pager moves nowhere until it answers. */
+  busy?: boolean;
   onPage: (page: number) => void;
   /** With it, a page-size choice sits beside the pages. */
   onPageSize?: (size: number) => void;
@@ -65,6 +67,7 @@ export function ListPager({
   capped,
   maxOffset,
   resetKey,
+  busy,
   onPage,
   onPageSize,
   topId,
@@ -153,6 +156,7 @@ export function ListPager({
 
   const go = (typed: number, { focusList }: { focusList: boolean }) => {
     setDraft(null);
+    if (busy) return;
     // Without a total the pages past the next one are unknown (and a short page is the last):
     // a typed page goes at most there.
     const last = pages ?? Math.min(shown < pageSize ? page + 1 : page + 2, reachable ?? Number.POSITIVE_INFINITY);
@@ -191,7 +195,7 @@ export function ListPager({
         onPrevPageClick={() => go(pending.current, { focusList: true })}
         onNextPageClick={() => go(pending.current, { focusList: true })}
         onPageNumberBlur={() => draft !== null && go(draft, { focusList: false })}
-        disableNextButton={lastKnown}
+        disableNextButton={lastKnown || busy}
         {...(sizeChoice
           ? {
               pageSize,

@@ -430,6 +430,29 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(within(pager()).getByRole("status")).toHaveTextContent("100 rows per page, page 1");
   });
 
+  // A filter's first page is read before the pager moves again: a Next before it answers
+  // would open the new list's second page unseen.
+  it("pages nowhere while a new filter's first page is read", async () => {
+    let answer: (v: RunListPage) => void = () => {};
+    listRunsPage.mockImplementation(async (_id, opts = {}) => {
+      if (opts.status === "failed") return new Promise<RunListPage>((r) => (answer = r));
+      const from = opts.offset ?? 0;
+      return { runs: Array.from({ length: 50 }, (_, i) => run(from + i + 1)), total: 1200 };
+    });
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    fireEvent.click(within(screen.getByLabelText("Filter runs by status")).getByRole("button", { name: "Failed" }));
+    await waitFor(() => expect(lastOpts()).toMatchObject({ status: "failed", offset: 0 }));
+    const next = within(screen.getByRole("navigation", { name: "Runs pages" })).getByRole("button", {
+      name: "Next page",
+    });
+    expect(next).toBeDisabled();
+    fireEvent.click(next);
+    expect(lastOpts()).toMatchObject({ status: "failed", offset: 0 });
+    act(() => answer({ runs: [run(777, { status: "failed" })], total: 1 }));
+    expect(await screen.findByRole("button", { name: "goal 777" })).toBeInTheDocument();
+  });
+
   // Runs that started together keep run.list's order: run_id in the direction of the sort.
   it("against a server that does not page, breaks a tie in start by run_id, newest first", async () => {
     const at = { started_at: "2026-09-20T07:00:00Z" };

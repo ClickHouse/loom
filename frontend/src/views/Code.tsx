@@ -2653,10 +2653,16 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
   // Settle the typed PR number for 250 ms before asking, like every other search box on
   // the dashboard.
   const [prSettled, setPrSettled] = useState("");
+  // The page goes back to the first when the filter settles, in the same render, so one read
+  // asks for the new filter's first page.
   useEffect(() => {
-    const t = setTimeout(() => setPrSettled(prFilter), 250);
+    if (prFilter === prSettled) return;
+    const t = setTimeout(() => {
+      setPrSettled(prFilter);
+      setOffset(0);
+    }, 250);
     return () => clearTimeout(t);
-  }, [prFilter]);
+  }, [prFilter, prSettled]);
 
   // A new filter or page keeps the rows on screen, marked busy, until it answers; another
   // branch's rows are not this one's, so a new branch starts from the skeleton.
@@ -2699,7 +2705,8 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
     },
     [id.org, id.namespace, offset, pageSize, prSettled],
   );
-  const pagerOffset = rowsKey === `${prSettled}\n${pageSize}` ? rowsOffset : offset;
+  const rowsCurrent = rowsKey === `${prSettled}\n${pageSize}`;
+  const pagerOffset = rowsCurrent ? rowsOffset : offset;
 
   const toggle = async (pr: number) => {
     if (open === pr) {
@@ -2731,10 +2738,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           <TextField
             aria-label="Filter by PR number"
             value={prFilter}
-            onChange={(v) => {
-              setOffset(0);
-              setPrFilter(v.replace(/\D/g, ""));
-            }}
+            onChange={(v) => setPrFilter(v.replace(/\D/g, ""))}
             placeholder="PR #"
           />
         </div>
@@ -2750,74 +2754,73 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
         </LoadingSkeleton>
       )}
 
-      {rows !== null && rows.length === 0 && pagerOffset === 0 && (
-        <EmptyState
-          icon="cards"
-          title="No packs yet"
-          description={
-            prFilter
-              ? `No precomputed pack for PR #${prFilter}. Unmerged PRs get an orientation pack on demand.`
-              : "Packs appear as merges are ingested."
-          }
-        />
-      )}
-
       {/* Rows expand inline into their pack, so this stays a list of disclosure rows
-          rather than a table. Mounted on an empty later page too: the pager moved focus here,
-          and the step-back to the last page keeps it. */}
-      {rows !== null && (rows.length > 0 || pagerOffset > 0) && (
-        <div
-          id="packs-list"
-          tabIndex={-1}
-          className={rows.length > 0 ? "rounded-xl border border-border overflow-hidden outline-none" : "outline-none"}
-          aria-busy={refreshing || undefined}
-        >
-          {rows.map((r) => (
-            <div key={r.pr_number} className="border-b border-border last:border-b-0">
-              <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2">
-                <button
-                  type="button"
-                  onClick={() => void toggle(r.pr_number)}
-                  aria-expanded={open === r.pr_number}
-                  className="min-w-0 flex-1 text-left flex items-center gap-3"
-                >
-                  <Icon
-                    name={open === r.pr_number ? "chevron-down" : "chevron-right"}
-                    size="sm"
-                    aria-hidden="true"
-                    className="shrink-0"
-                  />
-                  <span className="font-mono text-xs tabular shrink-0">#{r.pr_number}</span>
-                  <span className="text-sm truncate flex-1">
-                    {r.title || <span className="text-text-muted">(title not in history yet)</span>}
-                  </span>
-                  <span className="text-xs text-text-muted tabular shrink-0 hidden md:inline">{r.author}</span>
-                  <span className="text-xs text-text-muted tabular shrink-0">{fmtInt(r.pack_tokens)} tok</span>
-                  <span className="text-xs text-text-muted tabular shrink-0">{listTime(r.created_at)}</span>
-                </button>
-                <ExternalLink
-                  href={`https://github.com/${repo}/pull/${r.pr_number}`}
-                  label={`PR #${r.pr_number} on GitHub`}
-                />
-              </div>
-              {open === r.pr_number && (
-                <div className="px-4 pb-4 bg-bg">
-                  {!pack || pack.pr !== r.pr_number ? (
-                    <Loading layout="inline" label="Loading the pack" className="py-2" />
-                  ) : (
-                    <>
-                      <div className="text-xs text-text-muted py-2 tabular">
-                        {pack.source} · {fmtInt(pack.tokens)} tokens · merge <Mono>{short(r.merge_commit_sha)}</Mono>
-                      </div>
-                      <pre className="text-xs font-mono whitespace-pre-wrap text-text-muted max-h-[32rem] overflow-auto">
-                        {pack.text}
-                      </pre>
-                    </>
+          rather than a table. The pager moves focus here, and the empty state sits inside,
+          so focus stays when a page steps back to an empty first page. */}
+      {rows !== null && (
+        <div id="packs-list" tabIndex={-1} className="outline-none" aria-busy={refreshing || undefined}>
+          {rows.length === 0 && pagerOffset === 0 && (
+            <EmptyState
+              icon="cards"
+              title="No packs yet"
+              description={
+                prFilter
+                  ? `No precomputed pack for PR #${prFilter}. Unmerged PRs get an orientation pack on demand.`
+                  : "Packs appear as merges are ingested."
+              }
+            />
+          )}
+          {rows.length > 0 && (
+            <div className="rounded-xl border border-border overflow-hidden">
+              {rows.map((r) => (
+                <div key={r.pr_number} className="border-b border-border last:border-b-0">
+                  <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2">
+                    <button
+                      type="button"
+                      onClick={() => void toggle(r.pr_number)}
+                      aria-expanded={open === r.pr_number}
+                      className="min-w-0 flex-1 text-left flex items-center gap-3"
+                    >
+                      <Icon
+                        name={open === r.pr_number ? "chevron-down" : "chevron-right"}
+                        size="sm"
+                        aria-hidden="true"
+                        className="shrink-0"
+                      />
+                      <span className="font-mono text-xs tabular shrink-0">#{r.pr_number}</span>
+                      <span className="text-sm truncate flex-1">
+                        {r.title || <span className="text-text-muted">(title not in history yet)</span>}
+                      </span>
+                      <span className="text-xs text-text-muted tabular shrink-0 hidden md:inline">{r.author}</span>
+                      <span className="text-xs text-text-muted tabular shrink-0">{fmtInt(r.pack_tokens)} tok</span>
+                      <span className="text-xs text-text-muted tabular shrink-0">{listTime(r.created_at)}</span>
+                    </button>
+                    <ExternalLink
+                      href={`https://github.com/${repo}/pull/${r.pr_number}`}
+                      label={`PR #${r.pr_number} on GitHub`}
+                    />
+                  </div>
+                  {open === r.pr_number && (
+                    <div className="px-4 pb-4 bg-bg">
+                      {!pack || pack.pr !== r.pr_number ? (
+                        <Loading layout="inline" label="Loading the pack" className="py-2" />
+                      ) : (
+                        <>
+                          <div className="text-xs text-text-muted py-2 tabular">
+                            {pack.source} · {fmtInt(pack.tokens)} tokens · merge{" "}
+                            <Mono>{short(r.merge_commit_sha)}</Mono>
+                          </div>
+                          <pre className="text-xs font-mono whitespace-pre-wrap text-text-muted max-h-[32rem] overflow-auto">
+                            {pack.text}
+                          </pre>
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
-              )}
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
 
@@ -2827,8 +2830,9 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           label="PR pack pages"
           page={Math.floor(pagerOffset / pageSize)}
           resetKey={`${id.org}\n${id.namespace}\n${prSettled}`}
+          busy={refreshing}
           pageSize={pageSize}
-          shown={rows.length}
+          shown={rowsCurrent ? rows.length : 0}
           total={total}
           onPage={(n) => setOffset(n * pageSize)}
           onPageSize={(n) => {
