@@ -6,7 +6,6 @@ import { Select } from "@clickhouse/click-ui/Select";
 import {
   getMemory,
   listMemories,
-  MEMORY_LIST_MAX_OFFSET,
   bulkGetMemories,
   pinMemory,
   deleteMemory,
@@ -1279,7 +1278,6 @@ function MemoryList() {
           // A tag or agent read the server cut short holds its newest matches, not every one.
           // A status is kept among the rows read, which the note under the toolbar says.
           capped={truncated && listFilter.status === "live" && (listFilter.tags.length > 0 || listFilter.agent !== "")}
-          maxOffset={MEMORY_LIST_MAX_OFFSET}
           onPage={setPage}
           onPageSize={(n) => {
             setPageSize(n);
