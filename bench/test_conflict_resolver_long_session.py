@@ -22,6 +22,45 @@ def test_two_arms_on_one_clickhouse_are_refused() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("ch", "match"),
+    [("of=ch2:8123", "names no --base-url arm"), ("off=ch2", "HOST:PORT"), ("off=:x", "HOST:PORT")],
+)
+def test_a_ch_flag_that_names_no_arm_or_no_port_is_refused(ch: str, match: str) -> None:
+    args = ls._parse(["--base-url", "on=http://on", "--base-url", "off=http://off"])
+    args.ch = ["on=ch1:8123", ch]
+    with pytest.raises(SystemExit, match=match):
+        ls._arm_clickhouses(args, ls._servers(args.base_url))
+
+
+def test_each_arm_opens_one_clickhouse_client_and_closes_it(monkeypatch) -> None:
+    clients: list[Any] = []
+
+    class Client:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    def _ch(args: Any, target: tuple[str, int]) -> Client:
+        clients.append(Client())
+        return clients[-1]
+
+    used: list[Any] = []
+
+    def run_arm(post: Any, ch: Any, label: str, variant: str, args: Any) -> dict[str, Any]:
+        used.append(ch)
+        return {"namespace_cost_usd": 0.0, "treatment": "ok"}
+
+    monkeypatch.setattr(ls, "_ch", _ch)
+    monkeypatch.setattr(ls, "run_arm", run_arm)
+    monkeypatch.setattr(ls, "print_table", lambda results: None)
+    argv = ["--base-url", "on=http://on", "--base-url", "off=http://off", "--variant", "both"]
+    assert ls.main([*argv, "--ch", "on=ch1:8123", "--ch", "off=ch2:8123", "--keep-namespaces"]) == 0
+    assert len(clients) == 2 and all(c.closed for c in clients)
+    assert used == [clients[0], clients[0], clients[1], clients[1]]
+
+
 def _arm(monkeypatch: pytest.MonkeyPatch, drained: float | None, owed: int) -> dict[str, Any]:
     queue = {"owed": owed, "recheck": 0, "judged": 1}
     replies = {

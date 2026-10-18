@@ -229,11 +229,17 @@ def _arm_clickhouses(
 ) -> dict[str, tuple[str, int]]:
     """Each arm's ClickHouse (host, port): its `--ch label=HOST:PORT`, else `--ch-host`
     and `--ch-port`. Two arms on one store are refused: the resolver judges every
-    namespace of its store, the control's too."""
+    namespace of its store, the control's too. So is a `--ch` naming no arm (a typo
+    would put that arm on the default store) or without HOST:PORT."""
+    labels = [label for label, _ in servers]
     named = {}
     for item in args.ch:
         label, _, target = item.partition("=")
+        if label not in labels:
+            raise SystemExit(f"--ch {item!r} names no --base-url arm (arms: {', '.join(labels)})")
         host, _, port = target.rpartition(":")
+        if not host or not port.isdigit():
+            raise SystemExit(f"--ch takes {label}=HOST:PORT, got {item!r}")
         named[label] = (host, int(port))
     out = {label: named.get(label, (args.ch_host, args.ch_port)) for label, _ in servers}
     if len(out) > 1 and len(set(out.values())) < len(out):
@@ -542,15 +548,19 @@ def main(argv: list[str] | None = None) -> int:
                     client, f"{url}/v1/{op.removeprefix('/v1/')}", body, token=args.token
                 )
 
-            with erase_on_exit_sync(post, org=ORG, keep=args.keep_namespaces):
-                for v in variants:
-                    if spent > args.budget_usd:
-                        print(f"budget ${args.budget_usd} spent; skipping {label}/{v}")
-                        continue
-                    r = run_arm(post, _ch(args, stores[label]), label, v, args)
-                    spent += float(r["namespace_cost_usd"])
-                    results.append(r)
-                    print(json.dumps(r), file=sys.stderr)
+            ch = _ch(args, stores[label])
+            try:
+                with erase_on_exit_sync(post, org=ORG, keep=args.keep_namespaces):
+                    for v in variants:
+                        if spent > args.budget_usd:
+                            print(f"budget ${args.budget_usd} spent; skipping {label}/{v}")
+                            continue
+                        r = run_arm(post, ch, label, v, args)
+                        spent += float(r["namespace_cost_usd"])
+                        results.append(r)
+                        print(json.dumps(r), file=sys.stderr)
+            finally:
+                ch.close()
     print_table(results)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
