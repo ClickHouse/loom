@@ -43,10 +43,10 @@ FOLD_MARGIN_S = 70
 
 # Refusals a transport records by code alone, counted as the caller's: MCP's
 # refusals before dispatch (server.transport.mcp_tools.emit_refusal) and the
-# transports' other literal codes. Each answers a 4xx but
-# IDEMPOTENT_IN_PROGRESS, a 503 with Retry-After that a client causes by
-# retrying a key still running. HANDLER_HTTP_ERROR is not one: its status is
-# the handler's, read from the exception recorded with it.
+# transports' other literal codes. Each is a refusal the caller caused: a 4xx
+# on HTTP (IDEMPOTENT_IN_PROGRESS a 503 with Retry-After, for a retried key
+# still running), an `isError` result on MCP. HANDLER_HTTP_ERROR is not one:
+# its status is the handler's, read from the exception recorded with it.
 CLIENT_CODES = frozenset(
     {
         "IDEMPOTENT_CONFLICT",

@@ -56,9 +56,10 @@ SETTINGS ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000;
 --    folded yet, so catching up after a stall is many small inserts (an hour
 --    stays one insert block up to about 17k active operation, transport,
 --    traffic class and org combinations a minute) rather than one large one
---    that could commit partly; and no later than 70 s ago, longer than a
---    ledger insert may run (LOOM_CH_TIMEOUT_WRITE_S, 60 s), so a slow insert
---    is not passed over before it commits.
+--    that could commit partly; with nothing left to fold, straight to the
+--    margin. Never later than 70 s ago, longer than a ledger insert may run
+--    (LOOM_CH_TIMEOUT_WRITE_S, 60 s), so a slow insert is not passed over
+--    before it commits.
 -- Rows with a `ts` over 31 days old, past every SLO window, are left out,
 -- which keeps the read to the newest partitions. Rows with no SLO class (the
 -- `/v1/me/*` routes, and MCP calls that name no registered op, such as
@@ -74,8 +75,9 @@ AS WITH
     (SELECT min(ingested_at) FROM loom.agent_events
      WHERE kind = 'request' AND slo_class != '' AND ts >= now64(3) - toIntervalDay(31)
        AND ingested_at > folded) AS first_unfolded,
-    least(greatest(first_unfolded, folded) + toIntervalHour(1),
-          now64(3) - toIntervalSecond(70)) AS fold_to
+    if(first_unfolded > folded,
+       least(first_unfolded + toIntervalHour(1), now64(3) - toIntervalSecond(70)),
+       now64(3) - toIntervalSecond(70)) AS fold_to
 SELECT
     toStartOfMinute(ts) AS minute,
     slo_class,

@@ -4,6 +4,7 @@ class and budget, and `loom_telemetry.sli_minute` rolls the rows up per minute."
 from __future__ import annotations
 
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -213,10 +214,18 @@ def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client
         insert(now - timedelta(hours=10), now - timedelta(hours=10), "ok")
         assert refresh() == (1, 1, 1)  # an hour past the first: the second waits
         assert refresh() == (2, 1, 2)
-        assert refresh() == (2, 1, 2)  # an idle refresh moves the mark an hour, folds nothing
+        # Nothing left to fold: the mark moves straight to the 70 s margin.
+        assert refresh() == (2, 1, 2)
+        lag = ch_client.query(
+            f"SELECT dateDiff('second', max(ingested_hwm), now64(3)) FROM {db}.sli_minute "
+            "WHERE slo_class = ''"
+        ).result_rows[0][0]
+        assert 70 <= lag < 80
 
-        # Arrives now, but its request ended 20 hours ago, in the first row's minute.
-        insert(now - timedelta(hours=20), datetime.now(UTC) - timedelta(seconds=71), "server")
+        # Arrives now, past that mark, but its request ended 20 hours ago, in
+        # the first row's minute.
+        time.sleep(2)
+        insert(now - timedelta(hours=20), datetime.now(UTC) - timedelta(seconds=70.5), "server")
         assert refresh() == (3, 2, 2)
         assert refresh() == (3, 2, 2)
     finally:

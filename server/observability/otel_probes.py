@@ -570,6 +570,17 @@ _VIEW_REFRESH_SQL = """
 """
 
 
+# How far the SLI rollup's mark trails now, from its sentinel rows (a range
+# read on the sort key). A refresh that runs but lags reads as healthy to the
+# refresh gauges while burn-rate windows read nothing; this one shows it.
+_SLI_LAG_SQL = """
+        SELECT dateDiff('millisecond', max(ingested_hwm), now64(3)) / 1000
+        FROM loom_telemetry.sli_minute
+        WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))
+        HAVING count() > 0
+"""
+
+
 def _storage_series_from_rows(
     parts_rows: list[Any], refresh_rows: list[Any], *, now: Any
 ) -> dict[str, list[tuple[float, dict[str, str]]]]:
@@ -613,7 +624,15 @@ def _probe_storage() -> dict[str, list[tuple[float, dict[str, str]]]]:
     except Exception as e:  # noqa: BLE001 — half a reading beats none
         log.debug("view_refreshes probe failed: %s", e)
         refreshes = []
-    return _storage_series_from_rows(parts, refreshes, now=_dt.datetime.now(_dt.UTC))
+    series = _storage_series_from_rows(parts, refreshes, now=_dt.datetime.now(_dt.UTC))
+    try:
+        lag = list(client.query(_SLI_LAG_SQL).result_rows)
+    except Exception as e:  # noqa: BLE001 — a login without SELECT on loom_telemetry
+        log.debug("sli rollup lag probe failed: %s", e)
+        lag = []
+    if lag:
+        series["sli_rollup_lag_s"] = [(float(lag[0][0]), {})]
+    return series
 
 
 def _state_gauge_probes() -> dict[str, Any]:

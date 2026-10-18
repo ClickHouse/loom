@@ -1313,10 +1313,11 @@ async def test_reliance_split_statements_pass_the_analyzer(ch_client) -> None:
 
 
 def test_storage_housekeeping_statements_pass_the_analyzer(ch_client) -> None:
-    """The two storage gauge statements (system.parts over the
-    closed table list; system.view_refreshes for the loom roll-ups) with
-    their real parameter types. Metadata only — no loom.* table is read."""
+    """The storage gauge statements (system.parts over the closed table list;
+    system.view_refreshes for the loom roll-ups; the SLI rollup's sentinel)
+    with their real parameter types. No loom.* table is read."""
     from server.observability.otel_probes import (
+        _SLI_LAG_SQL,
         _STORAGE_PARTS_SQL,
         _VIEW_REFRESH_SQL,
         STORAGE_TABLES,
@@ -1325,6 +1326,7 @@ def test_storage_housekeeping_statements_pass_the_analyzer(ch_client) -> None:
     for sql, params in (
         (_STORAGE_PARTS_SQL, {"tables": list(STORAGE_TABLES)}),
         (_VIEW_REFRESH_SQL, {}),
+        (_SLI_LAG_SQL, {}),
     ):
         try:
             ch_client.query(f"EXPLAIN QUERY TREE {sql}", parameters=params)

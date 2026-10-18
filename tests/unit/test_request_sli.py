@@ -816,13 +816,13 @@ def test_a_5xx_from_the_gate_is_ledgered_on_both_transports(monkeypatch) -> None
         is_service_account=False,
     )
     op = OPERATIONS_BY_NAME["memory.get"]
-    target = SimpleNamespace(org="eve-org", namespace="n")
-    # HTTP's body names another org: the row is still the token's.
+    # HTTP's call names another org: the row is still the token's.
+    payload = SimpleNamespace(org="acme", namespace="n")
     call = http._HttpCall(request_id="r", raw_body={"org": "acme", "namespace": "n"}, auth=eve)
     with pytest.raises(BackendUnavailableError):
-        asyncio.run(http._authorize(op, Response(), call, target))
+        asyncio.run(http._authorize(op, Response(), call, payload))
     with pytest.raises(BackendUnavailableError):
-        asyncio.run(mcp_call._authorize_call(1, op, target, {}, eve, "r"))
+        asyncio.run(mcp_call._authorize_call(1, op, payload, {}, eve, "r"))
     screened = {"name": "loom_memory_get", "arguments": {"org": "eve-org", "namespace": "n"}}
     with pytest.raises(BackendUnavailableError):
         asyncio.run(

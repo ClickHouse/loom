@@ -182,6 +182,13 @@ _STORAGE_GAUGES: tuple[tuple[str, str, str, str], ...] = (
         "on a one-minute view is a stalled refresh",
         "s",
     ),
+    (
+        "loom.sli.rollup_lag_s",
+        "sli_rollup_lag_s",
+        "Seconds loom_telemetry.sli_minute's mark trails now: about 70 to 130 "
+        "when current; more is a rollup catching up, whose newest minutes read empty",
+        "s",
+    ),
 )
 
 
