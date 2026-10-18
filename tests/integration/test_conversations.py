@@ -263,6 +263,12 @@ async def test_a_compacted_turn_leaves_search(agent, ch_client) -> None:
         rows[0]["ts"].replace("Z", "+00:00")
     ).replace(tzinfo=None, microsecond=0)
 
+    # A re-run finds only the summary before the kept turn: nothing new to compact.
+    again = await agent.call(
+        "conversation.compact", {"thread_id": tid, "keep_recent": 1, "min_to_compact": 1}
+    )
+    assert (again["compacted"], again["reason"]) == (False, "already-compacted"), again
+
 
 @pytest.mark.asyncio
 async def test_a_turn_another_agent_logged_survives_compaction(agent) -> None:

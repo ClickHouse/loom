@@ -224,8 +224,7 @@ async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
     dead-letter columns recording the error."""
     from server.knowledge.store import conversations as conversation_repo
 
-    if msg.ts is None:
-        raise ValueError("a turn's embedding row takes its message row's ts")
+    assert msg.ts is not None  # both callers set it: the two rows carry one time
     embedding_row: ConversationEmbeddingRow = {
         "org": msg.org,
         "namespace": msg.namespace,
@@ -680,6 +679,17 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
     return len(lines)
 
 
+def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
+    """A system turn conversation.compact wrote: its metadata names what it replaced."""
+    if row.get("role") != "system":
+        return False
+    try:
+        meta = json.loads(row.get("metadata") or "{}")
+    except (ValueError, TypeError):
+        return False
+    return isinstance(meta, dict) and bool(meta.get("compacted_from"))
+
+
 @staged("compact")
 async def handle_conversation_compact(input: ConversationCompactInput) -> ConversationCompactOutput:
     """LLM-summarize messages older than `keep_recent`, write the summary as one
@@ -708,31 +718,21 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     candidates = rows[: -input.keep_recent]
+    # A re-run: an earlier summary sits where the turns it replaced began, so it is
+    # the oldest live row and falls among the candidates. A window of nothing but
+    # earlier summaries has no new turn to compact.
+    if all(_is_compaction_summary(r) for r in candidates):
+        return ConversationCompactOutput(
+            compacted=False,
+            messages_summarized=0,
+            reason="already-compacted",
+        )
     if len(candidates) < input.min_to_compact:
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
             reason="below-min-to-compact",
         )
-
-    # Idempotency guard: bail if a kept system message already covers
-    # every candidate msg_id via compacted_from (this is a re-run).
-    kept = rows[-input.keep_recent :]
-    candidate_ids = {str(r["msg_id"]) for r in candidates}
-    for k in kept:
-        if k.get("role") != "system":
-            continue
-        try:
-            meta = _json.loads(k.get("metadata") or "{}")
-        except (ValueError, TypeError):
-            meta = {}
-        prev = set(meta.get("compacted_from") or [])
-        if prev and candidate_ids.issubset(prev):
-            return ConversationCompactOutput(
-                compacted=False,
-                messages_summarized=0,
-                reason="already-compacted",
-            )
 
     # The summary replaces exactly the messages the summarizer read: the window
     # is cut to the oldest messages whose lines fit the prompt, and the rest stay

@@ -217,3 +217,50 @@ def test_a_summary_that_cannot_be_embedded_compacts_nothing(monkeypatch) -> None
     assert (out.compacted, out.reason) == (False, "embed-failed")
     assert fake.inserted == [] and fake.embedded == []
     assert not [sql for sql, _ in fake.executed if "ALTER TABLE" in sql]
+
+
+def test_a_rerun_on_a_compacted_thread_compacts_nothing(monkeypatch) -> None:
+    """The earlier summary sits where the turns it replaced began, so a re-run finds it
+    among the candidates: a window of nothing but summaries is already compacted, and
+    no LLM call is made."""
+    import server.core.ch
+    import server.llm.client
+
+    summary = {
+        "msg_id": "compact-1",
+        "role": "system",
+        "content": "a summary",
+        "ts": T0,
+        "metadata": '{"compacted_from": ["m0", "m1"]}',
+        "user_id": "alice",
+        "run_id": "run-1",
+    }
+    kept = [
+        {
+            "msg_id": f"m{i}",
+            "role": "user",
+            "content": f"turn {i}",
+            "ts": T0 + timedelta(seconds=i),
+            "metadata": "{}",
+            "user_id": "alice",
+            "run_id": "run-1",
+        }
+        for i in range(2, 4)
+    ]
+    fake = _FakeCH([summary, *kept])
+
+    class _NoLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            raise AssertionError("a re-run must not summarise the summary again")
+
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _NoLLM())
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=2, min_to_compact=1
+            )
+        )
+    )
+    assert (out.compacted, out.reason) == (False, "already-compacted")
+    assert fake.inserted == [] and fake.embedded == []
