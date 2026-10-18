@@ -495,6 +495,7 @@ async def _bulk_post_insert_links(
                 org=input.org,
                 namespace=input.namespace,
                 rows=_live_rows,
+                agent=input.agent,
                 embeddings_by_key={
                     str(e.get("memory_key") or ""): list(e.get("embedding") or [])
                     for e in state.embedding_rows

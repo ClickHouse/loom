@@ -738,6 +738,7 @@ async def _value_updates(
         org="o",
         namespace="ns",
         rows=rows,
+        agent="a",
         embeddings_by_key={r["memory_key"]: [0.1] for r in rows},
         ch=object(),
     )

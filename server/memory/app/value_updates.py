@@ -327,13 +327,15 @@ async def link_value_updates(
     namespace: str,
     rows: list[dict[str, Any]],
     embeddings_by_key: dict[str, list[float]],
+    agent: str = "",
     min_cosine: float = 0.75,
     concurrency: int = 6,
     ch: Any = None,
 ) -> UpdateReport:
     """For every freshly written memory row (dicts with memory_id, memory_key,
     memory_type, value, valid_at, created_at), find value-update peers and
-    write the supersession onto the older side. Returns what was linked."""
+    write the supersession onto the older side (`agent`: the write's, named on an owed
+    record). Returns what was linked."""
     import server.memory.store as memory_repo
 
     if ch is None:
@@ -470,8 +472,6 @@ async def link_value_updates(
             retired.append(
                 retired_entry(r, superseded_by=ln.newer_id, superseded_by_key=ln.newer_key)
             )
-    # The rows are one write's: its agent is the winners' writer.
-    agent = str(rows[0].get("agent") or "") if rows else ""
     await record_or_owe(
         org=org, namespace=namespace, retired=retired, reason=VALUE_UPDATE, agent=agent
     )
