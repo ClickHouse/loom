@@ -433,7 +433,7 @@ export function useMemoryListRead({
           setTruncated(filtered && r.truncated);
           if (filtered) {
             const ignored = r.ignored_args ?? [];
-            setServerMatches(r.truncated && !ignored.includes("tags_all") ? r.total : null);
+            setServerMatches(r.truncated && !ignored.includes("tags_every") ? r.total : null);
           }
           // The namespace's total follows every browsed answer, the 8 s refresh included.
           if (!filtered && !showDeleted) setBrowsedTotal(r.total);

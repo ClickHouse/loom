@@ -48,8 +48,8 @@ export async function listKnowledge(
     org: id.org,
     namespace: id.namespace,
     tags: opts.tags || [],
-    // Two or more must all match (a build that predates `tags_all` matches any one).
-    ...((opts.tags?.length ?? 0) > 1 ? { tags_all: true } : {}),
+    // Two or more must all match (a build that predates `tags_every` matches any one).
+    ...((opts.tags?.length ?? 0) > 1 ? { tags_every: true } : {}),
     include_superseded: opts.include_superseded || false,
     limit: opts.limit || 100,
     ...(opts.uriPrefix?.length ? { uri_prefix: opts.uriPrefix } : {}),

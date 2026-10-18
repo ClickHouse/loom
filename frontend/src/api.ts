@@ -313,9 +313,9 @@ export async function listMemories(
       ...(opts.previewChars ? { preview_chars: opts.previewChars } : {}),
       ...(opts.contains ? { contains: opts.contains } : {}),
       // Tags as typed; the server matches them in any case. Two or more must all match (a
-      // build that predates `tags_all` matches any one, and the page then requires every tag
+      // build that predates `tags_every` matches any one, and the page then requires every tag
       // itself).
-      ...(opts.tags?.length ? { tags: opts.tags, ...(opts.tags.length > 1 ? { tags_all: true } : {}) } : {}),
+      ...(opts.tags?.length ? { tags: opts.tags, ...(opts.tags.length > 1 ? { tags_every: true } : {}) } : {}),
     },
     opts.signal,
   );

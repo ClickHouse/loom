@@ -312,7 +312,7 @@ describe("Memories list chrome", () => {
               total: 300,
               today: 0,
               truncated: true,
-              ignored_args: ["tags_all"],
+              ignored_args: ["tags_every"],
             }
           : { entries: ROWS, total: 1234, today: 0, truncated: false },
     );

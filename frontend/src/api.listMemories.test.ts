@@ -61,14 +61,14 @@ describe("listMemories", () => {
     expect(out.unchanged).toBe(true);
   });
 
-  // Stacked tags must all match (a build that predates `tags_all` matches any one, and the
+  // Stacked tags must all match (a build that predates `tags_every` matches any one, and the
   // page then requires every tag itself).
   it("asks for the tags as typed, every one when there are several", async () => {
     const bodies = stub({ entries: [], truncated: false, total: 0, today: 0 });
     await listMemories(id, 50, { tags: ["API"] });
     await listMemories(id, 50, { tags: ["API", "beta"] });
     expect(bodies[0]).toMatchObject({ tags: ["API"] });
-    expect(bodies[0]).not.toHaveProperty("tags_all");
-    expect(bodies[1]).toMatchObject({ tags: ["API", "beta"], tags_all: true });
+    expect(bodies[0]).not.toHaveProperty("tags_every");
+    expect(bodies[1]).toMatchObject({ tags: ["API", "beta"], tags_every: true });
   });
 });
