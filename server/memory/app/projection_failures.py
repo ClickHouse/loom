@@ -350,11 +350,11 @@ async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:
     """Mark the repaired failures of `done` per org and the abandoned ones per org and
     reason, `MARK_CHUNK` ids to a mutation."""
     ch = ch or get_client()
-    by_org: dict[tuple[str, str], list[str]] = {}
+    by_org_reason: dict[tuple[str, str], list[str]] = {}
     for failure, r in done:
         if r.resolved or r.abandoned:
-            by_org.setdefault((failure.org, r.reason), []).append(r.failure_id)
-    for (org, reason), ids in by_org.items():
+            by_org_reason.setdefault((failure.org, r.reason), []).append(r.failure_id)
+    for (org, reason), ids in by_org_reason.items():
         for start in range(0, len(ids), MARK_CHUNK):
             chunk = ids[start : start + MARK_CHUNK]
             if reason:
