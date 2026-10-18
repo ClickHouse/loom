@@ -446,8 +446,9 @@ async def scan_active_projection_failures(
     retirement queues one, so they get their own budget and order."""
 
     ch = ch or get_client()
+    kind = "=" if status_mirror else "!="
     rows = await ch.query_all(
-        """
+        f"""
         SELECT
             toString(failure_id) AS failure_id,
             org,
@@ -464,11 +465,11 @@ async def scan_active_projection_failures(
             created_at,
             resolved_at
         FROM loom.memory_projection_failures
-        WHERE status = 'active' AND (projection = {mirror_kind:String}) = {mirror:Bool}
+        WHERE status = 'active' AND projection {kind} {{mirror_kind:String}}
         ORDER BY created_at ASC, failure_id ASC
-        LIMIT {lim:UInt32}
+        LIMIT {{lim:UInt32}}
         """,
-        params={"lim": int(limit), "mirror_kind": STATUS_MIRROR, "mirror": status_mirror},
+        params={"lim": int(limit), "mirror_kind": STATUS_MIRROR},
     )
     return [_row_from_ch(dict(row)) for row in rows]
 
