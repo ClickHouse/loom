@@ -108,7 +108,7 @@ class ScriptedJudge:
         self.unexpected: list[tuple[str, str]] = []
 
     async def complete(self, system: str, user: str, **kw: Any) -> Any:
-        new = re.search(r"NEW note \(key ([^)]+)\)", user)
+        new = re.search(r"NEW note \(key ([^,)]+)", user)
         if new is None:
             return SimpleNamespace(text="")  # not the resolver's prompt
         key = new.group(1)

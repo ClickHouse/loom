@@ -61,7 +61,7 @@ class _ScriptedLLM:
     async def complete(self, system: str, user: str, **kw: Any) -> Any:
         from types import SimpleNamespace
 
-        key = re.search(r"NEW note \(key ([^)]+)\)", user).group(1)  # type: ignore[union-attr]
+        key = re.search(r"NEW note \(key ([^,)]+)", user).group(1)  # type: ignore[union-attr]
         self.calls.append(key)
         verdict, confidence = _SCRIPT.get(key, ("related", 0.5))
         peers = re.findall(r"^\[(p\d+)\]", user, re.M)
@@ -602,7 +602,7 @@ async def test_a_row_the_provider_refuses_does_not_stop_another_orgs_update(
     real = llm.complete
 
     async def complete(system: str, user: str, **kw: Any) -> Any:
-        if "NEW note (key x_location)" in user:
+        if "NEW note (key x_location," in user:
             req = httpx.Request("POST", "https://llm.example/v1")
             raise httpx.HTTPStatusError(
                 "400 Bad Request", request=req, response=httpx.Response(400, request=req)
@@ -2111,3 +2111,34 @@ async def test_a_pass_that_dies_after_the_supersede_is_finished_by_the_next_and_
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
     assert len(await _audit(ch, org, "memory.auto_supersede")) == 1
     assert len(await _audit(ch, org, "memory.conflict_resolver")) == 1
+
+
+async def test_an_update_across_an_agents_sessions_with_no_user_changes_nothing(
+    ch, wired, monkeypatch
+) -> None:
+    """With no real user (`-`), the subject is one agent, whose sessions are separate
+    tasks: a confident update from another session neither retires nor flags."""
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "office_city", "The office is in Paris", user="-")
+        await _later()
+        await _set(org, "s2", "office_location", "The office moved to Rome", user="-")
+        await after_write.drain()
+    await _place(ch, org, "s1", "office_city", _vec((260, 1.0)), owed=False, user="-")
+    await _place(
+        ch, org, "s2", "office_location", _vec((260, 0.8), (261, 0.6)), owed=True, user="-"
+    )
+    out = await run_pass()
+    assert llm.calls == ["office_location"], "judged, with the session shown"
+    assert out["retired"] == out["flagged"] == 0 and out["skipped_no_action"] == 1, out
+    rows = await _rows(ch, org)
+    assert (rows["office_city"]["status"], rows["office_city"]["conflict_with"]) == ("active", [])

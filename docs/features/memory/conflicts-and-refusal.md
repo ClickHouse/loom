@@ -135,7 +135,10 @@ leader-only worker judges each write that has a live peer of its type at cosine
 - any other update, and a contradiction, at 0.90 or more flags both rows for review;
 - a compatible pair (elaboration, restatement, related, unrelated) at 0.90 or more has its
   flag cleared;
-- anything less sure changes nothing.
+- anything less sure changes nothing, and so does an update between two sessions of the
+  anonymous user `-` (an agent's sessions are separate tasks).
+
+The judge sees when each note's statement holds and which session it comes from.
 
 It also re-checks pairs flagged before it judged them, so a false flag is cleared once.
 A pinned row is never touched, a row that changed since it was judged is left to its

@@ -629,13 +629,48 @@ async def _still_unprotected(
     return fresh, [p for p in peers if str(p["memory_id"]) not in high]
 
 
-def _action(v: cr.PeerVerdict, policy: str) -> str:
+def _action(v: cr.PeerVerdict, policy: str, *, cross_session: bool = False) -> str:
     return cr.action_for(
         v,
         policy=policy,
         retire_at=float(settings.memory_conflict_resolver_retire_confidence),
         clear_at=float(settings.memory_conflict_resolver_clear_confidence),
+        cross_session=cross_session,
     )
+
+
+def _cross_session(row: Any, peer: Mapping[str, Any]) -> bool:
+    """A peer from another session of a subject with no real user: the anonymous user is
+    one subject per agent (the cluster reads only its agent's rows), and an agent's
+    sessions are separate tasks."""
+    return str(row.user_id) == "-" and str(peer["session_id"]) != str(row.session_id)
+
+
+def notes_for(
+    row: Any, peers: list[dict[str, Any]], holds: Mapping[str, int]
+) -> tuple[cr.Note, list[cr.Note]]:
+    """The judged row and its peers as the prompt shows them; `holds`: {memory_id: when its
+    statement holds, in ns}, the order a retirement checks (`_assertion_order`)."""
+    new = cr.Note(
+        str(row.memory_id),
+        str(row.memory_key),
+        _plain(memory_repo.stored_value_text(row)),
+        written=cr.written_at(holds.get(str(row.memory_id)), row.valid_at),
+    )
+    notes = [
+        cr.Note(
+            str(p["memory_id"]),
+            str(p["memory_key"]),
+            _plain(str(p["value"])),
+            p["similarity"],
+            written=cr.written_at(holds.get(str(p["memory_id"])), p.get("valid_at")),
+            session=cr.session_relation(
+                str(row.agent), str(row.session_id), str(p["agent"]), str(p["session_id"])
+            ),
+        )
+        for p in peers
+    ]
+    return new, notes
 
 
 async def _judge_and_act(
@@ -648,13 +683,8 @@ async def _judge_and_act(
     counts: Counts,
 ) -> set[str]:
     """Judge the row and act on the answer; the ids of the peers it gave no verdict."""
-    new = cr.Note(
-        str(row.memory_id), str(row.memory_key), _plain(memory_repo.stored_value_text(row))
-    )
-    notes = [
-        cr.Note(str(p["memory_id"]), str(p["memory_key"]), _plain(str(p["value"])), p["similarity"])
-        for p in peers
-    ]
+    order = await _assertion_order(org, namespace, [row, *peers])
+    new, notes = notes_for(row, peers, {mid: when for mid, (when, _) in order.items()})
     verdicts, model = await judge(new, notes)
     counts.judged += 1
     acting = asyncio.ensure_future(
@@ -686,7 +716,8 @@ async def _act_on_verdicts(
     try:
         for peer in peers:
             v = verdicts.get(str(peer["memory_id"]))
-            action = cr.NOTHING if v is None else _action(v, policy)
+            cross = _cross_session(row, peer)
+            action = cr.NOTHING if v is None else _action(v, policy, cross_session=cross)
             if v is None or action == cr.NOTHING:
                 # Unsure, self-contradicting, or a peer the answer left out: the pair
                 # stays as it is.

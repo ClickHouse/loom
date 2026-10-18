@@ -77,6 +77,60 @@ _PEERS = [
 ]
 
 
+def test_an_update_from_another_session_of_an_agent_changes_nothing() -> None:
+    # The anonymous user is one subject per agent, whose sessions are separate tasks: a
+    # confident update across them is neither retired nor flagged.
+    v = _v("update", 0.99)
+    kw = {"policy": "auto_reinforce", "retire_at": 0.95, "clear_at": 0.90}
+    assert cr.action_for(v, **kw, cross_session=True) == cr.NOTHING
+    assert cr.action_for(v, **kw) == cr.RETIRE
+    assert cr.action_for(_v("related", 0.99), **kw, cross_session=True) == cr.CLEAR
+
+
+def test_cross_session_is_another_session_of_a_subject_with_no_user() -> None:
+    row = NS(user_id="-", session_id="s1")
+    assert resolver._cross_session(row, {"session_id": "s2"})
+    assert not resolver._cross_session(row, {"session_id": "s1"})
+    assert not resolver._cross_session(NS(user_id="u", session_id="s1"), {"session_id": "s2"})
+
+
+def test_each_note_shows_when_it_holds_and_its_session() -> None:
+    row = _mem("m1", agent="a", session_id="s1", valid_at=None, value_text='"Office in Rome"')
+    peers = [
+        {
+            "memory_id": "m2",
+            "memory_key": "office_city",
+            "value": '"Office in Paris"',
+            "similarity": 0.8,
+            "agent": "a",
+            "session_id": "s2",
+            "valid_at": None,
+        },
+        {
+            "memory_id": "m3",
+            "memory_key": "team",
+            "value": '"Lead is Ana"',
+            "similarity": 0.7,
+            "agent": "b",
+            "session_id": "s1",
+            "valid_at": datetime(2026, 1, 2),
+        },
+    ]
+    ns = 1_000_000_000
+    holds = {"m1": 1_767_225_600 * ns, "m2": 1_767_139_200 * ns, "m3": 1_767_312_000 * ns}
+    new, notes = resolver.notes_for(row, peers, holds)
+    text = cr.user_prompt(new, notes)
+    # The time a retirement orders the pair by, not the row's first write.
+    assert text.startswith("NEW note (key office_city, written 2026-01-01 00:00):")
+    assert (
+        "(key office_city, cosine 0.80, written 2025-12-31 00:00, other session, same agent)"
+        in text
+    )
+    # A writer-given fact date is shown as a date.
+    assert "(key team, cosine 0.70, written 2026-01-02, other agent)" in text
+    assert "same session" in cr.session_relation("a", "s1", "a", "s1")
+
+
 def test_the_prompt_names_each_peer_by_a_short_id_with_its_key_and_cosine() -> None:
     text = cr.user_prompt(cr.Note("n", "office_city_now", "Office moved to Rome"), _PEERS)
     assert text.startswith(

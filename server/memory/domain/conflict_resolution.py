@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 UPDATE = "update"
@@ -50,14 +51,15 @@ SYSTEM_PROMPT = (
     "2. Attribute: which property of that entity does each note state (location, owner, "
     "status, version, count, rate, date, decision, verdict...)?\n"
     "3. Verdict:\n"
-    '- "update": same entity AND same attribute, and NEW gives a different, newer value, so '
-    "EXISTING is no longer current. Includes: moved, changed, replaced, reversed, upgraded, "
-    "rescheduled; a status change (open -> fixed, closed, rejected, false positive); a later "
-    "verdict on the same finding or hypothesis; a rolling summary or tally of the same "
+    '- "update": same entity AND same attribute, NEW gives a different value and is the '
+    "later statement, so EXISTING is no longer current. Includes: moved, changed, "
+    "replaced, reversed, upgraded, rescheduled; a status change (open -> fixed, closed, "
+    "rejected, false positive); a later verdict on the same finding or hypothesis, even "
+    "when EXISTING holds more detail; a rolling summary or tally of the same "
     'area/metric with new numbers (e.g. "X BUG: 10 findings, 6 accepted" -> "X BUG: 11 '
     'findings, 5 accepted"), even if the example lists differ.\n'
-    '- "contradiction": same entity AND same attribute, values incompatible, and nothing '
-    "says which is newer.\n"
+    '- "contradiction": same entity AND same attribute, values incompatible, and either '
+    "nothing says which is newer or EXISTING is the later statement.\n"
     '- "elaboration": same entity; NEW keeps everything EXISTING says and adds detail. '
     "EXISTING could be dropped without losing a fact.\n"
     '- "restatement": same information in other words.\n'
@@ -68,6 +70,17 @@ SYSTEM_PROMPT = (
     'Never answer "update" or "contradiction" unless same_entity and same_attribute are both '
     'true. Two notes about different items are "related" or "unrelated", never '
     '"contradiction".\n'
+    "Each note shows when it was written and whether it comes from NEW's session. A value "
+    "tied to one session's work (a task id, a deadline, a build, a slot, a test run, the PR "
+    "under work) stated in another session is about that session's task: a different "
+    "entity, unless the text names the same item.\n"
+    'A note that does not name its area or item ("findings are accepted 60% of the time") '
+    "is not the same entity as a note about a named area, nor as another such note whose "
+    "focus or examples differ.\n"
+    "A PR summary and a finding that PR fixes are different entities, unless the PR note "
+    "names the finding and states its new status.\n"
+    'A later version of a list of advice or rules is an "update" only if it keeps every '
+    'item of EXISTING; if it drops items, EXISTING stays current ("related").\n'
     "confidence: your probability (0 to 1) that the verdict is correct.\n"
     "Return JSON matching the schema, one entry per existing note id, reason first (one "
     "short sentence naming both entities)."
@@ -114,12 +127,31 @@ RESPONSE_FORMAT: dict[str, Any] = {
 
 @dataclass(frozen=True)
 class Note:
-    """One memory as the prompt shows it."""
+    """One memory as the prompt shows it. `written` is when it was stated, `session` how
+    its session relates to the judged row's (for a peer)."""
 
     memory_id: str
     memory_key: str
     value: str
     similarity: float = 1.0
+    written: str = ""
+    session: str = ""
+
+
+def written_at(holds_ns: int | None, valid_at: Any = None) -> str:
+    """The time a note is shown with: when its statement holds (`holds_ns`, wall-clock ns,
+    the order a retirement checks), as a date when the writer gave the fact's date."""
+    if not holds_ns:
+        return ""
+    t = datetime.fromtimestamp(holds_ns / 1e9, UTC)
+    return t.strftime("%Y-%m-%d" if valid_at else "%Y-%m-%d %H:%M")
+
+
+def session_relation(row_agent: str, row_session: str, agent: str, session: str) -> str:
+    """How a peer's session relates to the judged row's."""
+    if (agent, session) == (row_agent, row_session):
+        return "same session"
+    return "other session, same agent" if agent == row_agent else "other agent"
 
 
 @dataclass(frozen=True)
@@ -143,13 +175,15 @@ def short_id(i: int) -> str:
 
 def user_prompt(new: Note, peers: list[Note]) -> str:
     """The new row, then each peer under its short id with its key and cosine."""
+    written = f", written {new.written}" if new.written else ""
     parts = [
-        f"NEW note (key {new.memory_key}):\n{new.value[:MAX_VALUE_CHARS]}",
+        f"NEW note (key {new.memory_key}{written}):\n{new.value[:MAX_VALUE_CHARS]}",
         "EXISTING notes:",
     ]
     for i, p in enumerate(peers):
+        meta = "".join(f", {x}" for x in (p.written and f"written {p.written}", p.session) if x)
         parts.append(
-            f"[{short_id(i)}] (key {p.memory_key}, cosine {p.similarity:.2f})\n"
+            f"[{short_id(i)}] (key {p.memory_key}, cosine {p.similarity:.2f}{meta})\n"
             f"{p.value[:MAX_VALUE_CHARS]}"
         )
     return "\n\n".join(parts)
@@ -220,20 +254,26 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
     return out
 
 
-def action_for(v: PeerVerdict, *, policy: str, retire_at: float, clear_at: float) -> str:
+def action_for(
+    v: PeerVerdict, *, policy: str, retire_at: float, clear_at: float, cross_session: bool = False
+) -> str:
     """What the resolver does for one judged pair.
 
     An update or contradiction about a different entity or attribute contradicts
     itself: nothing changes. Below `clear_at` nothing changes either. An update retires the
     older row under `newest_wins` and `auto_reinforce` at `retire_at` or above; any other
-    update, and a contradiction, goes to the review queue. Every compatible
-    verdict clears."""
+    update, and a contradiction, goes to the review queue. `cross_session`: the peer is
+    another session's row of a subject with no real user, whose sessions are an agent's
+    separate tasks: an update between them changes nothing. Every compatible verdict
+    clears."""
     verdict = v.verdict
     if verdict in (UPDATE, CONTRADICTION) and not (v.same_entity and v.same_attribute):
         return NOTHING
     if v.confidence < clear_at:
         return NOTHING
     if verdict == UPDATE:
+        if cross_session:
+            return NOTHING
         return RETIRE if policy in RETIRING_POLICIES and v.confidence >= retire_at else FLAG
     if verdict == CONTRADICTION:
         return FLAG

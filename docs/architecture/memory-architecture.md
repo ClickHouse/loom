@@ -210,25 +210,32 @@ another user's row. A `sensitivity='high'` row is never a peer, so its value nev
 judged row is re-read strongly and the cluster's labels checked again right before the
 prompt is built: a row relabelled `high` since it was read is not sent.
 
-**The call.** The prompt names each peer `p1`..`p8` with its key and cosine, values cut
-to 700 characters, and asks for a strict JSON schema: per peer a reason, `same_entity`,
-`same_attribute`, a verdict (`update`, `contradiction`, `elaboration`, `restatement`,
-`related`, `unrelated`) and a confidence; an entry with a field missing or mistyped is
-dropped and its peer left unresolved. An answer may name a peer as `p2`, `[p2]`, its id,
-or its key (`key <key>`) when no other peer shares it. The model is `LOOM_CONFLICT_RESOLVER_MODEL`, asked at
-reasoning effort `low`, where the thresholds below were measured, whatever
-`LOOM_LLM_OPENAI_REASONING_EFFORT` pins for other calls; `LOOM_LLM_FALLBACK_MODEL` never
-answers for it, so rows stay owed while the model is down.
+**The call.** The prompt names each peer `p1`..`p8` with its key, its cosine, when its
+statement holds (the order a retirement checks, `_assertion_order`; a date when the
+writer gave the fact's date) and whether it comes from the judged row's session, another
+session of its agent, or another agent; the judged row shows its own time. The rubric
+asks for an update only when the judged row is the later statement, and reads a value tied
+to one session's task (a task id, a deadline, a build) stated in another session as a
+different entity. Values are cut to 700 characters, and the answer is a strict JSON schema:
+per peer a reason, `same_entity`, `same_attribute`, a verdict (`update`, `contradiction`,
+`elaboration`, `restatement`, `related`, `unrelated`) and a confidence; an entry with a
+field missing or mistyped is dropped and its peer left unresolved. An answer may name a
+peer as `p2`, `[p2]`, its id, or its key (`key <key>`) when no other peer shares it. The
+model is `LOOM_CONFLICT_RESOLVER_MODEL`, asked at reasoning effort `low`, where the
+thresholds below were measured, whatever `LOOM_LLM_OPENAI_REASONING_EFFORT` pins for other
+calls; `LOOM_LLM_FALLBACK_MODEL` never answers for it, so rows stay owed while the model is
+down.
 
 **The fold** (`memory/domain/conflict_resolution.py`), precision first:
 
-| Verdict                                                          | Confidence   | Action                                  |
-| ---------------------------------------------------------------- | ------------ | --------------------------------------- |
-| `update` or `contradiction` with a different entity or attribute | any          | nothing (the answer contradicts itself) |
-| any                                                              | below 0.90   | nothing                                 |
-| `update`, namespace `auto_reinforce` or `newest_wins`            | 0.95 or more | retire the peer if stated first         |
-| `update` (0.90 to 0.95, or `manual_review`), `contradiction`     | 0.90 or more | flag both rows `conflicted` for review  |
-| `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair           |
+| Verdict                                                          | Confidence   | Action                                           |
+| ---------------------------------------------------------------- | ------------ | ------------------------------------------------ |
+| `update` or `contradiction` with a different entity or attribute | any          | nothing (the answer contradicts itself)          |
+| `update` from another session, for the anonymous user `-`        | any          | nothing (an agent's sessions are separate tasks) |
+| any                                                              | below 0.90   | nothing                                          |
+| `update`, namespace `auto_reinforce` or `newest_wins`            | 0.95 or more | retire the peer if stated first                  |
+| `update` (0.90 to 0.95, or `manual_review`), `contradiction`     | 0.90 or more | flag both rows `conflicted` for review           |
+| `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair                    |
 
 The two thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.95) and
 `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90): an update retires only at the
