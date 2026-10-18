@@ -8,7 +8,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.ch import get_client
@@ -565,6 +565,9 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
     )
     from server.memory.store import get_by_id
 
+    # The intent is committed before its retirement: a record from before it is an
+    # earlier retirement of the pair, since undone. A few seconds cover clock skew.
+    since = to_naive_utc(failure.created_at or datetime(1970, 1, 1)) - timedelta(seconds=5)
     for entry in failure.payload.get("retired") or []:
         loser, winner = str(entry["memory_id"]), str(entry["superseded_by"])
         head = await get_by_id(loser, org=failure.org, ch=ch, scope=WHOLE_NAMESPACE, strong=True)
@@ -573,12 +576,14 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
         found = await ch.query_all(
             "SELECT count() AS n FROM loom.audit_log"
             " WHERE org = {org:String} AND namespace = {ns:String} AND event_type = {e:String}"
+            " AND ts >= {since:DateTime64(3)}"
             " AND position(subject, {loser:String}) > 0 AND position(subject, {winner:String}) > 0"
             " SETTINGS select_sequential_consistency = 1",
             params={
                 "org": failure.org,
                 "ns": failure.namespace,
                 "e": EVENT_TYPE,
+                "since": since,
                 "loser": loser,
                 "winner": winner,
             },

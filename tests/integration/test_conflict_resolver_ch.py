@@ -1223,12 +1223,15 @@ async def test_an_erasure_requested_while_a_pair_waits_for_its_lock_gets_no_writ
     assert (await _marks(ch, org))["office_location"] == 1, "owed, left to after the saga"
 
 
+@pytest.mark.parametrize("earlier", [False, True])
 async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
-    ch, wired, monkeypatch
+    ch, wired, monkeypatch, earlier: bool
 ) -> None:
     """The record's emit fails after the supersede: the follow intent stays active with
     the record's entry, and its replay writes the record the Auto-resolved list reads,
-    once."""
+    once. A record of an earlier retirement of the same pair (since undone) is not it."""
+    from datetime import UTC, datetime, timedelta
+
     from server.insights.api.models_audit import AuditListInput
     from server.insights.app.audit import handle_audit_list
     from server.memory.app import projection_failures
@@ -1237,6 +1240,26 @@ async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
 
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 88)
+    if earlier:
+        rows = await _rows(ch, org)
+        pair = {
+            "memory_id": rows["office_city"]["id"],
+            "superseded_by": rows["office_location"]["id"],
+        }
+        await ch.insert(
+            "loom.audit_log",
+            [
+                {
+                    "ts": datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1),
+                    "event_type": "memory.auto_supersede",
+                    "org": org,
+                    "namespace": NS,
+                    "actor": "process:loom",
+                    "subject": json.dumps({"earlier": True, "retired": [pair]}),
+                    "request_id": "",
+                }
+            ],
+        )
     real = audit.emit
 
     async def emit(event_type: str, **kw: Any) -> str:
@@ -1247,7 +1270,7 @@ async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
     monkeypatch.setattr(audit, "emit", emit)
     assert (await run_pass())["retired"] == 1
     monkeypatch.setattr(audit, "emit", real)
-    assert await _audit(ch, org, "memory.auto_supersede") == []
+    assert len(await _audit(ch, org, "memory.auto_supersede")) == earlier
     (intent,) = await _follow_intents(ch, org, want_active=1)
     assert intent["status"] == "active"
 
@@ -1256,7 +1279,8 @@ async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
             org=org, projection="triples_follow_owed"
         )
     rows = await _rows(ch, org)
-    (record,) = await _audit(ch, org, "memory.auto_supersede")
+    records = await _audit(ch, org, "memory.auto_supersede")
+    (record,) = [r for r in records if "earlier" not in r]
     (entry,) = record["retired"]
     assert record["reason"] == "conflict_resolver"
     assert (entry["memory_id"], entry["superseded_by"]) == (
@@ -1266,7 +1290,7 @@ async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
     listed = await handle_audit_list(
         AuditListInput(org=org, namespace=NS, event_type="memory.auto_supersede")
     )
-    assert len(listed.rows) == 1
+    assert len(records) == len(listed.rows) == 1 + earlier
     assert [r["status"] for r in await _follow_intents(ch, org, want_active=0)] == ["resolved"]
 
 
