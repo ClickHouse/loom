@@ -202,13 +202,13 @@ answers for it, so rows stay owed while the model is down.
 
 **The fold** (`memory/domain/conflict_resolution.py`), precision first:
 
-| Verdict                                                          | Confidence   | Action                                 |
-| ---------------------------------------------------------------- | ------------ | -------------------------------------- |
-| `update` or `contradiction` with a different entity or attribute | any          | read as `related`                      |
-| any                                                              | below 0.90   | nothing                                |
-| `update`, namespace `newest_wins`                                | 0.95 or more | retire the peer if stated first        |
-| `update` (0.90 to 0.95, or any other policy), `contradiction`    | 0.90 or more | flag both rows `conflicted` for review |
-| `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair          |
+| Verdict                                                          | Confidence   | Action                                  |
+| ---------------------------------------------------------------- | ------------ | --------------------------------------- |
+| `update` or `contradiction` with a different entity or attribute | any          | nothing (the answer contradicts itself) |
+| any                                                              | below 0.90   | nothing                                 |
+| `update`, namespace `newest_wins`                                | 0.95 or more | retire the peer if stated first         |
+| `update` (0.90 to 0.95, or any other policy), `contradiction`    | 0.90 or more | flag both rows `conflicted` for review  |
+| `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair           |
 
 The two thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.95) and
 `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90). On held-out pairs, update

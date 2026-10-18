@@ -221,14 +221,14 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
 def action_for(v: PeerVerdict, *, policy: str, retire_at: float, clear_at: float) -> str:
     """What the resolver does for one judged pair.
 
-    An update or contradiction about a different entity or attribute is not one:
-    it reads as `related`. Below `clear_at` nothing changes. An update retires the
+    An update or contradiction about a different entity or attribute contradicts
+    itself: nothing changes. Below `clear_at` nothing changes either. An update retires the
     older row only under `newest_wins` and at `retire_at` or above; any other
     update, and a contradiction, goes to the review queue. Every compatible
     verdict clears."""
     verdict = v.verdict
     if verdict in (UPDATE, CONTRADICTION) and not (v.same_entity and v.same_attribute):
-        verdict = RELATED
+        return NOTHING
     if v.confidence < clear_at:
         return NOTHING
     if verdict == UPDATE:

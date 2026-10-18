@@ -57,9 +57,11 @@ def test_below_the_clear_confidence_nothing_changes() -> None:
         assert _action(_v(verdict, 0.89)) == cr.NOTHING, verdict
 
 
-def test_an_update_about_another_entity_or_attribute_reads_as_related() -> None:
-    assert _action(_v("update", 0.99, entity=False)) == cr.CLEAR
-    assert _action(_v("contradiction", 0.99, attribute=False)) == cr.CLEAR
+def test_an_update_about_another_entity_or_attribute_changes_nothing() -> None:
+    # A change of value, yet not the same thing: the answer contradicts itself, and a
+    # flag between the pair stays.
+    assert _action(_v("update", 0.99, entity=False)) == cr.NOTHING
+    assert _action(_v("contradiction", 0.99, attribute=False)) == cr.NOTHING
     assert _action(_v("update", 0.5, entity=False)) == cr.NOTHING
 
 
