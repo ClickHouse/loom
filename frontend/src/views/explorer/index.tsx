@@ -851,6 +851,8 @@ export function Explorer() {
             setInspectKey(null);
             walkFrom(entity);
           }}
+          // Another memory opens in this drawer, not in a second one over it.
+          onInspectMemory={setInspectKey}
         />
       )}
     </div>

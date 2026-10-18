@@ -196,4 +196,15 @@ describe("Inspector failed reads", () => {
     await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
     await waitFor(() => expect(screen.queryByText("Couldn't load the facts")).toBeNull());
   });
+
+  it("keeps a failed read's error when an Expand or a re-walk hands it a new model for the same selection", async () => {
+    vi.mocked(listFacts).mockRejectedValueOnce(new Error("down"));
+    const view = mount();
+    expect(await screen.findByText("Couldn't load the facts", {}, { timeout: 2000 })).toBeInTheDocument();
+    view.rerender(inspector({ model: { ...model, nodes: new Map(model.nodes) } }));
+    // Past the panel's 250 ms beat before a read, so a read it started would have begun.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(screen.getByText("Couldn't load the facts")).toBeInTheDocument();
+    expect(screen.queryByText("Loading facts")).toBeNull();
+  });
 });

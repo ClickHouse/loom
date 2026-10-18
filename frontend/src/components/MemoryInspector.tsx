@@ -111,6 +111,9 @@ interface InspectorProps {
   /** "Open in Graph" on an entity, where the drawer already sits on the Graph: walk from
    *  it there. Elsewhere the Graph opens as a new history entry (`openGraphAt`). */
   onWalkEntity?: (entity: string) => void;
+  /** Open another memory in this drawer, where the drawer is the page's own (the Graph's):
+   *  elsewhere it is the store's `inspect`, which drives the app's drawer. */
+  onInspectMemory?: (key: string) => void;
 }
 
 /**
@@ -128,7 +131,14 @@ interface InspectorProps {
  * instantly.
  */
 
-export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWalkEntity }: InspectorProps) {
+export function MemoryInspector({
+  identity,
+  memoryKey,
+  onClose,
+  onChanged,
+  onWalkEntity,
+  onInspectMemory,
+}: InspectorProps) {
   const [detail, setDetail] = useState<MemoryDetail | null>(null);
   const [history, setHistory] = useState<MemoryHistoryEntry[] | null>(null);
   const [related, setRelated] = useState<RelatedMemoryRow[] | null>(null);
@@ -176,6 +186,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
     return el instanceof HTMLElement ? el : null;
   });
   const inspect = useStore((s) => s.inspect);
+  const openMemory = onInspectMemory ?? inspect;
   const searchByTag = useStore((s) => s.searchByTag);
   const openConversationThread = useStore((s) => s.openConversationThread);
   // A dialog over the drawer (Copy to…, the source conversation) owns the keys and the
@@ -184,7 +195,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
   // An entity popover's memory link swaps the drawer in place; the focus goes to the
   // drawer, as on any open, since the chip that had it is about to go.
   const inspectInPlace = (key: string) => {
-    inspect(key);
+    openMemory(key);
     contentRef.current?.focus();
   };
   const walkEntity = (entity: string) => {
@@ -565,7 +576,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
         toast(`Reload failed: ${humanizeError(e)}`, "error");
       }
     } else {
-      inspect(r.to_key);
+      openMemory(r.to_key);
     }
   };
 
@@ -840,7 +851,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
                   ) : provenance && provenance.found ? (
                     <ProvenanceSection
                       provenance={provenance}
-                      onInspect={inspect}
+                      onInspect={openMemory}
                       onOpenThread={(threadId, agent) =>
                         setSourceThread({
                           thread_id: threadId,
@@ -878,7 +889,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
                         >
                           <button
                             type="button"
-                            onClick={() => inspect(r.memory_key)}
+                            onClick={() => openMemory(r.memory_key)}
                             className="w-full text-left font-mono text-xs text-text truncate group-hover:text-accent"
                           >
                             {r.memory_key}

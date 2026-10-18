@@ -666,11 +666,12 @@ export function OpMixPanel() {
         <Skeleton className="h-40 w-full" />
       </LoadingSkeleton>
     );
-  // The scope row stays above every state: a scope whose read failed is left with it.
-  const scopeRow = (summary?: ReactNode) => (
+  // The scope row stays above every state: a scope whose read failed is left with it. Its
+  // badge names the scope of what is shown: the figures' scope over a report (a toggle's
+  // read has not yet replaced them), the asked one over any other state.
+  const scopeRow = (shown: typeof scope, summary?: ReactNode) => (
     <div className="flex flex-wrap items-center gap-3">
-      {/* The scope the figures were read for, which a toggle's read has not yet replaced. */}
-      {(op ? op.scope : scope) === "namespace" ? (
+      {shown === "namespace" ? (
         <ScopeBadge kind="namespace" value={identity.namespace} />
       ) : (
         <Badge size="sm" state="neutral" text={`org · ${identity.org}`} />
@@ -689,7 +690,7 @@ export function OpMixPanel() {
   );
   const withScope = (body: ReactNode) => (
     <div className="space-y-4" aria-busy={refreshing || undefined}>
-      {scopeRow()}
+      {scopeRow(scope)}
       {body}
     </div>
   );
@@ -725,6 +726,7 @@ export function OpMixPanel() {
   return (
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       {scopeRow(
+        op.scope,
         <span className="text-xs text-text-muted">
           last {data.window_days} d · {fmt(total)} calls · {data.agents} agent{data.agents === 1 ? "" : "s"}
         </span>,

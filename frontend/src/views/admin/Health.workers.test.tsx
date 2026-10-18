@@ -462,6 +462,8 @@ describe("OpMixPanel", () => {
     expect(await screen.findByText("healthy mix")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Whole org" }));
     expect(await screen.findByText("Couldn't load the operation mix")).toBeInTheDocument();
+    // The badge names the scope of what is shown: the org read that failed.
+    expect(screen.getByText("org · dev")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "This namespace" }));
     expect(await screen.findByText("healthy mix")).toBeInTheDocument();
   });

@@ -312,18 +312,22 @@ export function Inspector({
   useAbortableEffect(
     (signal, live) => {
       const sel = node ? `n:${node.entity}` : edge ? `e:${edge.parent}>${edge.child.entity}` : null;
-      setFactsError(null);
-      setHitsError(null);
       if (!model || sel === null) {
         setFacts(null);
         setHits(null);
+        setFactsError(null);
+        setHitsError(null);
         keyRef.current = "";
         return;
       }
       const key = `${model.seed}|${sel}|${asOf}|${provKey}|${typesKey}|${tagsKey}|${retries}`;
+      // The same selection under a new model (an Expand, a re-walk) keeps what it read,
+      // its failures included.
       if (keyRef.current === key) return;
       setFacts(null);
       setHits(null);
+      setFactsError(null);
+      setHitsError(null);
       const id = { org: identity.org, namespace: identity.namespace };
       const prov = provenance.size ? [...provenance] : undefined;
       const timer = window.setTimeout(() => {

@@ -101,7 +101,7 @@ const mine: MyNamespaceEntry[] = [
 ];
 const identity = { org: "dev", namespace: "ns", agent: "loom-ui" };
 
-async function open(props: { onWalkEntity?: (e: string) => void } = {}) {
+async function open(props: { onWalkEntity?: (e: string) => void; onInspectMemory?: (k: string) => void } = {}) {
   render(
     <MemoryInspector
       identity={identity}
@@ -149,6 +149,16 @@ describe("an entity on a memory opens in place", () => {
     vi.mocked(getMemory).mockResolvedValue({ ...DETAIL, tags: ["ops"] });
     await open();
     expect(screen.getByRole("button", { name: "ops" }).textContent).toBe("ops");
+  });
+
+  it("on the Graph, a mention opens in the page's own drawer, not the app's", async () => {
+    const onInspectMemory = vi.fn();
+    await open({ onInspectMemory });
+    await userEvent.click(chip("rate limiting"));
+    const pop = await screen.findByRole("dialog", { name: "Entity rate limiting" });
+    await userEvent.click(await within(pop).findByRole("button", { name: "api/quota" }));
+    expect(onInspectMemory).toHaveBeenCalledWith("api/quota");
+    expect(useStore.getState().inspectedMemoryKey).not.toBe("api/quota");
   });
 
   it("a click opens a popover with the memories that mention it and its neighbours, focus on the first link", async () => {

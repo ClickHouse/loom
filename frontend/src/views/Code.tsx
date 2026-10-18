@@ -443,7 +443,8 @@ function RepositoriesHome({
   }, [repos, cards]);
   const pendingRows = (repos ?? []).filter((r) => branchState(r) === "pending");
   const busy = actions.busy ?? record.busy;
-  const loaded = repos !== null && !error;
+  // A failed poll after a read keeps the cards; only a failed first read replaces them.
+  const loaded = repos !== null;
   const empty = loaded && repos.length === 0 && cards.length === 0;
   // The toolbar's count: the whole list, or what the filter matches.
   const count = !loaded
@@ -664,7 +665,14 @@ function RepositoriesHome({
           </div>
         </LoadingSkeleton>
       )}
-      {error && <ListState kind="error" things="repositories" error={error} onRetry={() => onChanged()} />}
+      {error && repos === null && (
+        <ListState kind="error" things="repositories" error={error} onRetry={() => onChanged()} />
+      )}
+      {error && repos !== null && (
+        <div className="mb-3 text-xs text-text-muted" role="status">
+          {`Couldn't refresh the repositories (${error}); showing the last read.`}
+        </div>
+      )}
 
       {empty && (
         <EmptyState
