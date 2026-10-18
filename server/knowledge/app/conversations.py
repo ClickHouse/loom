@@ -684,32 +684,21 @@ def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str] 
     """`(fit, transcript)`: how many leading candidate lines the summary replaces, and
     the prompt transcript. None for a window of summaries alone, or when no new turn
     fits the prompt (widening it would cut a turn the summarizer never read)."""
-    if all(folded):
-        return None
     lines = list(lines)
-    if folded[0]:
+    if folded and folded[0]:
         # The summary the last run wrote always folds in, clipped: a dense one must not
         # keep the turn behind it from compacting.
         lines[0] = lines[0][:_FOLDED_SUMMARY_CHARS]
-    free = [False] * len(lines)
-    allowance = _FOLDED_SUMMARY_CHARS
-    for i, (line, f) in enumerate(zip(lines, folded, strict=True)):
-        if not f or len(line) > allowance:
-            break
-        free[i] = True
-        allowance -= len(line)
-    fit = _fitting_prefix(
-        ["" if f else line for line, f in zip(lines, free, strict=True)],
-        _COMPACT_TRANSCRIPT_CHARS,
-    )
-    fit = max(fit, free.index(False) + 1)
+    # Leading summaries within the allowance cost no budget; the rest fits on its own.
+    k, allowance = 0, _FOLDED_SUMMARY_CHARS
+    while k < len(lines) and folded[k] and len(lines[k]) <= allowance:
+        allowance -= len(lines[k])
+        k += 1
+    fit = k + _fitting_prefix(lines[k:], _COMPACT_TRANSCRIPT_CHARS)
     if all(folded[:fit]):
         return None
-    # The fit counted each free line's newline; the cap adds back only its text.
-    cap = _COMPACT_TRANSCRIPT_CHARS + sum(
-        len(line) for line, f in zip(lines[:fit], free[:fit], strict=True) if f
-    )
-    return fit, "\n".join(lines[:fit])[:cap]
+    turns = "\n".join(lines[k:fit])[:_COMPACT_TRANSCRIPT_CHARS]
+    return fit, "\n".join([*lines[:k], turns])
 
 
 def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
