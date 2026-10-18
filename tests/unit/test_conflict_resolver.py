@@ -1325,6 +1325,25 @@ def test_the_queue_knows_an_abandoned_erasure_as_the_ledger_writes_it() -> None:
     assert queue.ERASURE_ABANDONED_PREFIX == ABANDONED_REASON_PREFIX
 
 
+@pytest.mark.parametrize(("owed", "reads"), [(3, 2), (1, 1)])
+async def test_a_full_batch_takes_the_next_one_at_once_and_a_short_one_ends_the_pass(
+    pass_env: NS, monkeypatch: pytest.MonkeyPatch, owed: int, reads: int
+) -> None:
+    monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 2)
+    pass_env.owed = [_q(memory_key=f"k{i}") for i in range(owed)]
+    read: list[int] = []
+
+    async def unjudged(*, limit: int, capped: Any = (), **kw: Any) -> list[dict[str, Any]]:
+        done = {k for _, _, k, _ in pass_env.resolved}
+        rows = [r for r in pass_env.owed if r["memory_key"] not in done][:limit]
+        read.append(len(rows))
+        return rows
+
+    monkeypatch.setattr(queue, "owed_rows", unjudged)
+    out = await pass_env.run()
+    assert len(read) == reads and out["judged"] == owed
+
+
 async def test_the_recheck_waits_once_it_comes_back_short(
     pass_env: NS, monkeypatch: pytest.MonkeyPatch
 ) -> None:

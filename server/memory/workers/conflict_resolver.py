@@ -2,7 +2,8 @@
 verdicts (`memory.app.conflict_resolver`). Up to `memory_conflict_resolver_concurrency`
 rows are judged at once.
 
-Each pass reads up to `memory_conflict_resolver_batch` marked rows, then up to
+Each pass reads up to `memory_conflict_resolver_batch` marked rows (a full read is a
+backlog: the pass reads the next batch at once, for up to `BURST_S`), then up to
 `memory_conflict_resolver_recheck_batch` rows already `conflicted` that no resolver
 judged (flags from the cosine check, or from an older build's judge), so a false flag is
 cleared once. That read scans every conflicted row, so once it comes back short it waits
@@ -44,6 +45,9 @@ NAME = "conflict_resolver"
 # backlog drains a batch per pass; once a read comes back short, the next waits this long.
 RECHECK_IDLE_S = 300.0
 _recheck_after = 0.0  # time.monotonic() before which the recheck is not read
+# A pass whose owed read came back full reads the next batch at once, for up to this
+# long (half the pass's deadline); a short read ends it, and the interval follows.
+BURST_S = 300.0
 # Why the model was unavailable at the last pass that knew (None: available). The
 # warning is logged when this changes, not on every pass.
 _unavailable: str | None = None
@@ -66,9 +70,10 @@ class _Pass:
         self.unavailable: Exception | None = None
 
 
-async def _queued(p: _Pass) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """The pass's rows, each identity once, grouped by (org, namespace). A namespace
-    over its cost cap is left out of the read, so its rows take no place in the pass."""
+async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]], bool]:
+    """The pass's rows, each identity once, grouped by (org, namespace), and whether the
+    owed read came back full. A namespace over its cost cap is left out of the read, so
+    its rows take no place in the pass."""
     from server.observability.budget import namespaces_over_cap
 
     global _recheck_after
@@ -78,7 +83,9 @@ async def _queued(p: _Pass) -> dict[tuple[str, str], list[dict[str, Any]]]:
     over = await namespaces_over_cap(pairs) if pairs else {}
     capped = sorted(pair for pair, is_over in over.items() if is_over)
     p.counts.capped_namespaces = len(capped)
-    rows = await queue.owed_rows(limit=int(settings.memory_conflict_resolver_batch), capped=capped)
+    batch = int(settings.memory_conflict_resolver_batch)
+    rows = await queue.owed_rows(limit=batch, capped=capped)
+    full = len(rows) >= batch
     if due:
         found = await queue.unjudged_conflicted_rows(limit=recheck, capped=capped)
         if len(found) < recheck:
@@ -90,7 +97,7 @@ async def _queued(p: _Pass) -> dict[tuple[str, str], list[dict[str, Any]]]:
         if _identity(r) not in seen:
             seen.add(_identity(r))
             groups.setdefault((str(r["org"]), str(r["namespace"])), []).append(dict(r))
-    return groups
+    return groups, full
 
 
 async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
@@ -166,10 +173,23 @@ async def run_pass() -> dict[str, Any]:
             idle: dict[str, Any] = p.counts.as_dict()
             rec.outcome = idle
             return idle
-        groups = await _queued(p)
-        if not groups:
-            pass_context.mark_idle()
-        await _resolve_all(p, groups)
+        started = time.monotonic()
+        while True:
+            groups, full = await _queued(p)
+            if not groups:
+                pass_context.mark_idle()
+            judged, errored = p.counts.judged, p.counts.errored
+            await _resolve_all(p, groups)
+            # A full batch means a backlog: take the next one now, not after the interval,
+            # while batches judge cleanly and the pass is well inside its deadline.
+            if not (
+                full
+                and p.unavailable is None
+                and p.counts.judged > judged
+                and p.counts.errored == errored
+                and time.monotonic() - started < BURST_S
+            ):
+                break
         if isinstance(p.unavailable, LeaseUnavailable):
             p.errors.append(f"stopped: {p.unavailable}")
         elif p.unavailable is not None:
