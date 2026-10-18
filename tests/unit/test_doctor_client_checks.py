@@ -203,6 +203,26 @@ def test_rejected_token_is_the_named_cause_of_vanishing_captures(tmp_path: Path)
     assert _grades(checks)["client:namespace"] == "WARN"
 
 
+def test_a_rejected_token_tells_an_agent_to_drop_it_not_to_sign_up(tmp_path: Path) -> None:
+    get_json, post_json, _ = _http(
+        mine=(401, {"detail": {"code": "AUTH_INVALID", "message": "expired"}})
+    )
+    env = {"LOOM_API_KEY": TOKEN, "LOOM_CLIENT_ID": "ci", "LOOM_WORKLOAD_TOKEN": "proof"}
+    checks = dc.client_checks(
+        _args(),
+        get_json=get_json,
+        post_json=post_json,
+        home=tmp_path,
+        env=env,
+        tmp=tmp_path,
+        now=NOW,
+    )
+    d = _detail(checks, "client:auth")
+    assert _grades(checks)["client:auth"] == "FAIL"
+    assert "drop --token and LOOM_API_KEY" in d and "namespace.list_mine" in d
+    assert "loom init" not in d
+
+
 def test_viewer_on_the_write_namespace_fails_with_the_writer_fix(tmp_path: Path) -> None:
     get_json, post_json, _ = _http(
         mine=(200, {"rows": [{"namespace": "coding", "role": "viewer"}]})
