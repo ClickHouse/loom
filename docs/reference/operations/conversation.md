@@ -100,7 +100,7 @@ Soft-delete one thread: sets `tombstoned_at` on messages + thread row + embeddin
 | --- | --- | --- |
 | `tombstoned_at` | `datetime` | The tombstone time stamped on every affected row. |
 | `thread_id` | `str` | Echo of the input `thread_id`. |
-| `rows_affected` | `dict[str, int]` | {table_name: rows_tombstoned} |
+| `rows_affected` | `dict[str, int]` | {table_name: rows tombstoned}; for loom.conversation_embeddings, turns (one per turn however many embedding models hold it). |
 | `total` | `int` | Sum of `rows_affected` across tables. |
 
 ## `conversation.get`

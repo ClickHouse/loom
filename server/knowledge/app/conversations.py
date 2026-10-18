@@ -580,11 +580,7 @@ async def _search_substring_fallback(
             thread_id=r.thread_id,
             msg_id=r.msg_id,
             role=r.role,
-            content_excerpt=(
-                r.content[:HIT_EXCERPT_CHARS] + "…"
-                if len(r.content) > HIT_EXCERPT_CHARS
-                else r.content
-            ),
+            content_excerpt=r.content[:HIT_EXCERPT_CHARS],
             ts=r.ts,
             namespace=r.namespace,
         )

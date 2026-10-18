@@ -158,7 +158,9 @@ class ConversationDeleteOutput(BaseModel):
     tombstoned_at: datetime
     # Echo of the input `thread_id`.
     thread_id: str
-    rows_affected: dict[str, int]  # {table_name: rows_tombstoned}
+    # {table_name: rows tombstoned}; for loom.conversation_embeddings, turns (one per
+    # turn however many embedding models hold it).
+    rows_affected: dict[str, int]
     # Sum of `rows_affected` across tables.
     total: int
 

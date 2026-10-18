@@ -788,7 +788,7 @@ async def _tombstone_embeddings(
         )
     n = await ch.query_one(
         f"""
-        SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings
+        SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
           AND {turns}
