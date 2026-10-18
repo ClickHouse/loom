@@ -165,10 +165,10 @@ async def run_pass() -> dict[str, Any]:
             rec.outcome = idle
             return idle
         started = time.monotonic()
+        found = False  # any batch of the pass held rows
         while True:
             groups, full = await _queued(p)
-            if not groups:
-                pass_context.mark_idle()
+            found = found or bool(groups)
             judged, errored = p.counts.judged, p.counts.errored
             await _resolve_all(p, groups)
             # A full batch means a backlog: take the next one now, not after the interval,
@@ -181,6 +181,8 @@ async def run_pass() -> dict[str, Any]:
                 and time.monotonic() - started < BURST_S
             ):
                 break
+        if not found:
+            pass_context.mark_idle()
         if isinstance(p.unavailable, LeaseUnavailable):
             p.errors.append(f"stopped: {p.unavailable}")
         elif p.unavailable is not None:
@@ -189,7 +191,7 @@ async def run_pass() -> dict[str, Any]:
             _note_availability(None)
         outcome: dict[str, Any] = p.counts.as_dict()
         rec.outcome = outcome
-        if groups:
+        if found:
             log.info("%s: %s", NAME, " ".join(f"{k}={v}" for k, v in outcome.items()))
         log_pass_errors(log, NAME, p.errors)
     return outcome

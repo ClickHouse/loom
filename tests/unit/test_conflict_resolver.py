@@ -1010,6 +1010,29 @@ async def test_a_failed_cap_read_stays_inside_its_row(pass_env: NS, monkeypatch)
     assert [k for _, _, k, _ in pass_env.resolved] == ["k2"] and out["errored"] == 1
 
 
+async def test_a_burst_ending_on_an_empty_read_is_not_idle(
+    pass_env: NS, monkeypatch, caplog
+) -> None:
+    from server.workers import pass_context
+
+    idle: list[bool] = []
+    monkeypatch.setattr(pass_context, "mark_idle", lambda: idle.append(True))
+    monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 1)
+    pass_env.owed = [_q(memory_key="k1")]
+    real = queue.owed_rows
+
+    async def once(**kw: Any) -> list[dict[str, Any]]:
+        rows = await real(**kw)
+        pass_env.owed = []  # judged: the next read of the burst finds nothing
+        return rows
+
+    monkeypatch.setattr(queue, "owed_rows", once)
+    with caplog.at_level("INFO"):
+        out = await pass_env.run()
+    assert out["judged"] == 1 and idle == []
+    assert any("judged=1" in r.message for r in caplog.records)
+
+
 async def test_a_failed_stamp_stays_inside_its_row(pass_env: NS, monkeypatch) -> None:
     async def stamp(q: Any, **kw: Any) -> int:
         raise RuntimeError("ClickHouse blip")
