@@ -47,6 +47,8 @@ from pathlib import Path
 from typing import Any
 
 from server.cli._client import default_base_url, error_line, jwt_claims, resolve_token
+from server.core.datetimes import naive_utc_now as _now
+from server.core.datetimes import to_naive_utc
 from server.core.hashing import sha256_value
 from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
@@ -599,7 +601,7 @@ async def _live_rows(
     (session_id, memory_key), with every field memory.set writes that a read returns."""
     ident = {"org": org, "namespace": args.namespace, "agent": args.agent, "user_id": args.user_id}
     rows: dict[tuple[str, str], dict[str, Any]] = {}
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = _now()
     offset = 0
     while True:
         page = await client.post(
@@ -650,12 +652,10 @@ def _when(v: Any) -> datetime | str | None:
     if not v:
         return None
     try:
-        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        d = datetime.fromisoformat(str(v))
     except ValueError:
         return str(v)  # never equal to a parsed time, so the server sees and judges it
-    if d.tzinfo:
-        d = d.astimezone(UTC).replace(tzinfo=None)
-    return d.replace(microsecond=0)
+    return to_naive_utc(d).replace(microsecond=0)
 
 
 def _one_per_row(

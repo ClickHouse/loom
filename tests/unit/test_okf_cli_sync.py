@@ -708,20 +708,24 @@ def test_conflicts_found_inline_and_by_the_judge_are_counted(
 
 
 def test_a_row_past_its_expiry_is_written_again_and_never_pruned(
-    tmp_path: Path, loom: _FakeLoom
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(cli_okf, "_now", lambda: datetime(2026, 9, 1, 12, 0, 0))
     assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
     for key in ("a", "gone"):
-        loom.rows[("okf-sync", "-", key)]["expires_at"] = "2000-01-01T00:00:00"
+        loom.rows[("okf-sync", "-", key)]["expires_at"] = "2026-09-01T11:59:59"
     loom.calls.clear()
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
     assert loom.writes() == ["memory.set"]
 
 
-def test_a_row_with_an_expiry_still_ahead_is_left_alone(tmp_path: Path, loom: _FakeLoom):
+def test_a_row_with_an_expiry_still_ahead_is_left_alone(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli_okf, "_now", lambda: datetime(2026, 9, 1, 12, 0, 0))
     root = _bundle(tmp_path / "b", [_entry("a")])
     assert _run(root) == 0
-    loom.rows[("okf-sync", "-", "a")]["expires_at"] = "2999-01-01T00:00:00"  # retention_days
+    loom.rows[("okf-sync", "-", "a")]["expires_at"] = "2026-09-01T12:00:01"  # retention_days
     loom.calls.clear()
     assert _run(root) == 0
     assert loom.writes() == []

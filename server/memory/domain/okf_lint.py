@@ -273,7 +273,8 @@ def _check_concept(
             "source_class derived at confidence 1.0: an inference written as a fact",
             WARNING,
         )
-    if str(loom.get("sensitivity") or "").strip().lower() == "high":
+    # A row is high by its column or by its sensitivity:high tag; a bundle can carry only the tag.
+    if not okf.is_exportable({"sensitivity": loom.get("sensitivity"), "tags": fm.get("tags")}):
         rep.add(
             "high_sensitivity_present",
             rel,
