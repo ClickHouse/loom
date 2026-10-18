@@ -1,5 +1,5 @@
 """Tag predicates: the any-case matches memory.list and knowledge.list share, and the exact
-match every other tag filter uses."""
+match memory.search's legs use."""
 
 from __future__ import annotations
 
