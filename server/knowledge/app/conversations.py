@@ -41,6 +41,7 @@ from server.knowledge.api.models_conversations import (
     _ConversationEntry,
     _ConversationHit,
 )
+from server.knowledge.app.conversation_search import HIT_EXCERPT_CHARS
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
@@ -51,7 +52,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_EXCERPT_LIMIT = 240
+_EXCERPT_LIMIT = HIT_EXCERPT_CHARS
 _EMBED_EXCERPT_LIMIT = 2048
 
 
