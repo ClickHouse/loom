@@ -277,7 +277,7 @@ async def test_a_long_thread_is_tombstoned_in_chunks() -> None:
 
     ch = _CH()
     await repo._tombstone_embeddings(
-        "o", "n", "a", "t", None, when=datetime(2026, 9, 1, 12, 0, 0), ch=ch
+        "o", "n", "a", "t", msg_ids=None, when=datetime(2026, 9, 1, 12, 0, 0), ch=ch
     )
     chunks = [p["due"] for sql, p in ch.executed if "conversation_embeddings" in sql]
     assert [len(c) for c in chunks] == [repo._TOMBSTONE_CHUNK, repo._TOMBSTONE_CHUNK, 5]

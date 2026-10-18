@@ -317,7 +317,7 @@ async def tombstone_thread(
     counts: dict[str, int] = {}
 
     # 1. Embeddings: every turn the agent logged in the thread, a compacted one too.
-    await _tombstone_embeddings(org, namespace, agent, thread_id, None, when=when, ch=ch)
+    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
     # One per turn (FINAL, however many embedding models hold it), earlier calls'
     # tombstones included, as the messages count is.
     emb_n = await ch.query_one(
@@ -711,7 +711,7 @@ async def tombstone_messages(
     next read sees a coherent thread. The embeddings go first: a retry after a
     failure still finds the messages live and repeats both."""
     ch = ch or _default_client()
-    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids, when=when, ch=ch)
+    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
     await ch.execute(
         """
         ALTER TABLE loom.conversations
@@ -759,8 +759,8 @@ async def _tombstone_embeddings(
     namespace: str,
     agent: str,
     thread_id: str,
-    msg_ids: list[str] | None,
     *,
+    msg_ids: list[str] | None,
     when: datetime,
     ch: _CHClient,
 ) -> None:
