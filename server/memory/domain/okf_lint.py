@@ -239,7 +239,7 @@ def _check_concept(
     tags = fm.get("tags")
     if tags is not None and not isinstance(tags, list):
         rep.add("frontmatter", rel, "`tags` is not a list")
-        tags = None  # the import reads such a file with no tags; check the rest as that
+        tags = None  # parse_concept reads it as no tags; lint the rest of the file the same way
     raw_loom = fm.get("loom")
     loom: dict[str, Any] = raw_loom if isinstance(raw_loom, dict) else {}
     directory = rel.rsplit("/", 1)[0] if "/" in rel else ""
