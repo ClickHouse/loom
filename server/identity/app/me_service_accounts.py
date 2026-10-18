@@ -230,11 +230,13 @@ def dev_bearer(request: Request) -> AuthInfo | None:
     a bearer cannot be checked yet, as `verify_bearer` answers."""
     from server.auth.bearer import auth_unavailable, bearer_token
     from server.auth.jwt import AuthUnavailable, TokenError, verify_token
+    from server.observability.metrics import record_auth_refusal
 
     try:
         token = bearer_token(request.headers.get("Authorization"))
         return None if token is None else verify_token(token)
     except AuthUnavailable as e:
+        record_auth_refusal(e, transport="http")
         raise auth_unavailable(e) from e
     except TokenError:
         return None

@@ -77,11 +77,10 @@ def verify_bearer(token: str) -> AuthInfo:
     outside the op registry draw the caller's bucket too."""
     try:
         info = verify_token(token)
-    except AuthUnavailable as e:
-        record_auth_refusal(e, transport="http")
-        raise auth_unavailable(e) from e
     except TokenError as e:
         record_auth_refusal(e, transport="http")
+        if isinstance(e, AuthUnavailable):
+            raise auth_unavailable(e) from e
         raise HTTPException(
             status_code=401,
             detail={"code": "AUTH_INVALID", "message": str(e)},

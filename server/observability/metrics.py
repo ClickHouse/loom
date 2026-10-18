@@ -362,7 +362,7 @@ def _init_auth_instruments(meter: Any) -> None:
     # getting 503 while the revocation list is unloaded.
     _auth_refusals = meter.create_counter(
         name="loom.auth.refusals",
-        description="Requests refused before a principal was known, by reason and transport",
+        description="Bearer tokens refused before a principal was known, by reason and transport",
         unit="1",
     )
 

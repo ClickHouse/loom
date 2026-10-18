@@ -5,9 +5,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi import HTTPException
 
-from server.auth.jwt import AuthUnavailable, TokenError
+from server.auth import revocation
+from server.auth.bearer import bearer_token
+from server.auth.jwt import AuthUnavailable, TokenError, mint_token, verify_token
 from server.core.errors import BackendTimeoutError, RateLimitedError, ValidationError
 from server.observability import sli
 from server.observability.metrics import AUTH_REFUSAL_REASONS, auth_refusal_reason
@@ -79,6 +82,35 @@ def test_auth_refusal_reasons_come_from_where_the_token_was_refused() -> None:
     for error, reason in cases.items():
         assert auth_refusal_reason(error) == reason
         assert reason in AUTH_REFUSAL_REASONS
+
+
+def test_verify_token_tags_each_refusal_with_its_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reasons come from the raise sites, not from the test building the error."""
+    secret = "unit-test-secret-for-refusal-reasons"
+    monkeypatch.setattr(revocation, "_revoked_before", {})
+
+    def refusal(token: str, revoked: frozenset[str] = frozenset()) -> str:
+        monkeypatch.setattr(revocation, "_revoked_jtis", revoked)
+        try:
+            verify_token(token, secret=secret)
+        except TokenError as e:
+            return auth_refusal_reason(e)
+        return "accepted"
+
+    token = mint_token(
+        "sa:bot", "acme", ["shop"], ["viewer"], secret=secret, jti="j1", session_id="s1"
+    )
+    assert refusal(token) == "accepted"
+    assert refusal(token, frozenset({"j1"})) == "revoked"
+    assert refusal(token, frozenset({"s1"})) == "revoked"
+    assert refusal(token, frozenset({"sa:bot"})) == "revoked"
+    expired = mint_token("sa:bot", "acme", ["shop"], ["viewer"], secret=secret, ttl_seconds=-3600)
+    assert refusal(expired) == "expired"
+    assert refusal(token + "x") == "invalid"
+    assert refusal("not-a-jwt") == "invalid"
+    with pytest.raises(TokenError) as header:
+        bearer_token("Basic abc")
+    assert auth_refusal_reason(header.value) == "malformed"
 
 
 def test_health_problem_series_splits_the_provider_out_of_the_code() -> None:
