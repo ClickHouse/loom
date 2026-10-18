@@ -27,7 +27,8 @@ def unreadable() -> bool:
 
 def marks_unverified[**P](check: Callable[P, Awaitable[None]]) -> Callable[P, Awaitable[None]]:
     """A PermissionError `check` raises after `note_unreadable` gets
-    `unverified = True`."""
+    `unverified = True`. A failed read stays noted for the enclosing check,
+    which may refuse on its own account after this one returned."""
 
     @functools.wraps(check)
     async def checked(*args: P.args, **kwargs: P.kwargs) -> None:
@@ -39,6 +40,7 @@ def marks_unverified[**P](check: Callable[P, Awaitable[None]]) -> Callable[P, Aw
                 setattr(e, "unverified", True)  # noqa: B010 — PermissionError declares no field
             raise
         finally:
-            _unreadable.reset(token)
+            if not _unreadable.get():
+                _unreadable.reset(token)
 
     return checked

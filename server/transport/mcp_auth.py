@@ -302,18 +302,17 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
     if req_ns and not (readable := await _may_read(auth, target_org, str(req_ns))):
         # A code/tracker tool's `namespace` that is not a namespace resolves
         # to one or says so — never the claim text meant for a real refusal.
-        fixed, unverified = await _plane_namespace(tool_name, auth, req_ns)
-        refusal = fixed if isinstance(fixed, dict) else None
-        if not fixed:
-            refusal = _not_accessible_result(tool_name, auth, req_ns)
-            unverified = readable is None
-        if refusal is not None:
-            # The org the token may act in, as HTTP records the same refusal.
-            code = str(refusal["structuredContent"]["code"])
-            _ledger_refusal(
-                tool_name, auth, error_code=code, org=target_org, server_fault=unverified
-            )
-            return _ok(req.get("id"), refusal)
-        args["namespace"] = fixed
+        resolved, unverified = await _plane_namespace(tool_name, auth, req_ns)
+        if isinstance(resolved, str):  # a namespace the caller may read
+            args["namespace"] = resolved
+            return None
+        if isinstance(resolved, dict):  # refused on the name it resolved to, or unknown
+            refusal = resolved
+        else:  # the name exists: refused on it
+            refusal, unverified = _not_accessible_result(tool_name, auth, req_ns), readable is None
+        # The org the token may act in, as HTTP records the same refusal.
+        code = str(refusal["structuredContent"]["code"])
+        _ledger_refusal(tool_name, auth, error_code=code, org=target_org, server_fault=unverified)
+        return _ok(req.get("id"), refusal)
     # Readable: the op's own gate enforces the role it requires.
     return None

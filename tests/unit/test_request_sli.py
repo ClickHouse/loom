@@ -681,20 +681,23 @@ def test_a_refusal_made_without_readable_grants_is_the_server_s(monkeypatch) -> 
 
     asyncio.run(_read_account())
 
-    # The code-member rule reads a grant after the gate refused: its failure marks
-    # the gate's refusal too.
-    from server.auth.fail_closed import note_unreadable
+    # The code-member rule runs a second gate after the first refused a write;
+    # a read that second gate could not make marks the refusal the caller gets.
+    from server.auth.fail_closed import marks_unverified, note_unreadable
     from server.code.app import member_writes
 
-    async def _refuse(*a: Any, **k: Any) -> None:
+    @marks_unverified
+    async def _gate(auth: Any, role: Role, **k: Any) -> None:
+        if role == Role.VIEWER:
+            note_unreadable()
         raise PermissionError("refused")
 
-    async def _member_unreadable(*a: Any, **k: Any) -> bool:
-        note_unreadable()
-        return False
+    async def _member_grant(*a: Any) -> Role:
+        return Role.VIEWER
 
-    monkeypatch.setattr(authz, "check_authorized", _refuse)
-    monkeypatch.setattr(member_writes, "code_member_may_write", _member_unreadable)
+    monkeypatch.setattr(authz, "check_authorized", _gate)
+    monkeypatch.setattr(authz, "_is_code_namespace", lambda org, ns: True)
+    monkeypatch.setattr(authz, "_lookup_grant", _member_grant)
     op = SimpleNamespace(name="memory.set", required_role=Role.WRITER)
     with pytest.raises(PermissionError) as e:
         asyncio.run(member_writes.authorize_op(person, op, org="o", namespace="code-x"))
