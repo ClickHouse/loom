@@ -187,9 +187,15 @@ async def test_a_pass_reads_each_orgs_erasure_and_marks_its_failures_once(
     assert reads == ["acme"], "the org's erasure is read once a pass"
 
 
+@pytest.mark.parametrize(("seconds", "want"), [(60.0, 701), (0.0, 301)])
 async def test_a_pass_reads_mirror_batches_until_one_comes_back_short(
-    monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
+    monkeypatch: pytest.MonkeyPatch,
+    _own_registry: worker_status.WorkerStatusRegistry,
+    seconds: float,
+    want: int,
 ) -> None:
+    """Batches of 300 until one is short, while projection_repair_status_mirror_seconds
+    lasts; with none, one batch."""
     import dataclasses
     from datetime import datetime, timedelta
 
@@ -215,10 +221,13 @@ async def test_a_pass_reads_mirror_batches_until_one_comes_back_short(
         retried.append(f.failure_id)
         return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
 
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "projection_repair_status_mirror_seconds", seconds)
     monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
     monkeypatch.setattr(pf, "retry_failures", _retries(_retry))
     await projection_repair.run_pass()
-    assert len(retried) == 701 and len(set(retried)) == 701
+    assert len(retried) == want and len(set(retried)) == want
 
 
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(
