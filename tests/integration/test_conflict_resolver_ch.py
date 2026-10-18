@@ -1519,3 +1519,39 @@ async def test_an_undone_retirement_is_not_retired_again_by_the_next_pass(
     assert after["office_city"]["status"] == "active", "the Undo holds"
     assert out["judged"] == 0 and out["retired"] == 0 and len(llm.calls) == calls, out
     assert len(await _audit(ch, org, "memory.auto_supersede")) == 1
+
+
+async def test_a_pin_whose_vector_landed_first_keeps_its_vector_served(ch, wired, monkeypatch) -> None:
+    """A memory.pin of the loser takes no key lock: its vector lands before the
+    retirement's mirror reads, its memory row after the supersede's head re-read. The
+    pin is the memory head, so recall must serve its vector, not a superseded copy."""
+    import server.memory.store as M
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import embeddings, lifecycle
+    from server.memory.store.embeddings import live_embedding_rows_for_key
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 204)
+    peer_id = (await _rows(ch, org))["office_city"]["id"]
+    peer = await M.get_by_id(peer_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
+    drawn = M.next_version()
+    pinned = M.build_memory_version_row(peer, version=drawn, pinned=1)
+    ident = {"agent": "bot", "user_id": USER, "session_id": "s1", "memory_key": "office_city"}
+    (vector,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
+    cols = {c: v for c, v in vector.items() if c in M.EMBEDDING_PERSISTED_COLS}
+    await M.insert_embedding_rows([M.build_embedding_row(**(cols | {"version": drawn}))], ch=ch)
+    real = embeddings.insert_embedding_rows
+
+    async def insert(rows: list[dict[str, Any]], **kw: Any) -> Any:
+        out = await real(rows, **kw)
+        if any(r.get("status") == "superseded" for r in rows):
+            await lifecycle.insert_memory_versions([pinned], ch=ch)  # the pin lands now
+        return out
+
+    monkeypatch.setattr(embeddings, "insert_embedding_rows", insert)
+    await run_pass()
+    head = (await _rows(ch, org))["office_city"]
+    assert head["pinned"] and head["status"] == "active" and head["version"] == drawn
+    (served,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
+    assert served["status"] == "active", "the pin's vector, not the retirement's copy"

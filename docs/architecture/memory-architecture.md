@@ -158,6 +158,8 @@ memory.set, memory.pin, memory.delete, Undo and erasure requests):
 
 - No user write or pin is lost: every resolver write re-reads its row under the row's key
   lock and lands at the read version + 1, so a write that started after the read is newer.
+  Its vector copy is re-checked against the memory head once it lands: a pin whose
+  memory row landed meanwhile has its status served again.
 - Every retirement has a `memory.auto_supersede` record and can be undone.
 - Nothing changes below confidence 0.90.
 - No other user's or tenant's text reaches a prompt.

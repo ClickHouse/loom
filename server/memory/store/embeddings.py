@@ -101,11 +101,14 @@ async def mirror_status_to_embeddings(
     drawn before a sequential read. Every metadata copy of that vector sits at
     its read + 1, far below, on either side of the mirror; a newer revision's
     vector has another hash, or was written after the draw and stays newer. A
-    vector a retire hid meanwhile (status not served) is left hidden."""
+    vector a retire hid meanwhile (status not served) is left hidden. The draw
+    also outranks the vector of a same-content write still in flight (an unlocked
+    pin), so the heads are read again after the insert (`_follow_newer_heads`)."""
     ch = ch or _default_client()
     drawn = next_version() if judged else 0
     wanted: dict[EmbeddingKey, dict[str, Any]] = {}
     shas: dict[EmbeddingKey, str] = {}
+    judged_at: dict[EmbeddingKey, int] = {}
     for m in memory_rows:
         key = (
             str(m.get("org") or ""),
@@ -123,6 +126,7 @@ async def mirror_status_to_embeddings(
         if judged:
             overrides["version"] = drawn
             shas[key] = str(m.get("content_sha256") or "")
+            judged_at[key] = int(m.get("version") or 0)
         elif m.get("version"):
             overrides["version"] = int(m["version"])
         wanted[key] = overrides
@@ -162,7 +166,47 @@ async def mirror_status_to_embeddings(
                 raise
             _log.warning("status mirror: embeddings re-emit failed (%d rows): %s", len(out), e)
             return 0
+        if judged:
+            await _follow_newer_heads(out, judged_at, ch=ch)
     return len(out)
+
+
+async def _follow_newer_heads(
+    copies: list[dict[str, Any]], judged_at: dict[EmbeddingKey, int], *, ch: _CHClient
+) -> None:
+    """After a judged mirror: a key whose memory head is now another write of the same
+    content (a pin or a same-value set whose vector the mirror copied, its memory row
+    landing since) gets its copy re-emitted one above with the head's status, so recall
+    follows the head. A head landing after this read is left to `loom reconcile-status`."""
+    from server.memory.store.sql import _SEQUENTIAL
+
+    try:
+        heads = await ch.query_all(
+            f"""
+            SELECT org, namespace, agent, user_id, session_id, memory_key, status, version,
+                   toString(content_sha256) AS content_sha256
+            FROM loom.memory FINAL
+            PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
+                     IN {{keys:Array(Tuple(String, String, String, String, String, String))}}
+            WHERE tombstoned_at IS NULL
+            {_SEQUENTIAL}
+            """,
+            params={"keys": sorted({embedding_key(r) for r in copies})},
+        )
+        by_key = {embedding_key(h): h for h in heads}
+        again = [
+            row
+            for r in copies
+            if (h := by_key.get(embedding_key(r))) is not None
+            and int(h["version"]) != judged_at.get(embedding_key(r))
+            and str(h["content_sha256"]) == str(r.get("content_sha256") or "")
+            and str(h["status"]) != str(r.get("status") or "")
+            and (row := _copy_row(r, {"status": str(h["status"])})) is not None
+        ]
+        if again:
+            await insert_embedding_rows(again, ch=ch)
+    except Exception as e:  # noqa: BLE001 — the mirror landed; reconcile-status finds a miss
+        _log.warning("status mirror: head re-check failed for %d rows: %s", len(copies), e)
 
 
 def status_divergence_sql() -> str:
