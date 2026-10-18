@@ -730,6 +730,8 @@ function OptionGroup({
 
 /** A result's type, as a 16 px icon at the start of its row: the group heading names the
  *  type, so a coloured badge on every row would only decorate. */
+// A row's type, by the icon the sidebar gives it (Memories is the clock). The groups tell
+// "Best matches" from "Recent memories" by their own heading icons.
 const TYPE_ICONS: Record<"namespace" | "profile" | "memory" | "document", IconName> = {
   namespace: "folder-closed",
   profile: "user",

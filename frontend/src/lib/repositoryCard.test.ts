@@ -8,7 +8,6 @@ import {
   maintainsOutOfScope,
   primaryAction,
   soleMembership,
-  standingPhrase,
   verbForState,
   visibleBranches,
 } from "./repositoryCard";
@@ -123,7 +122,6 @@ describe("buildCards joins code.repos and tracker.source.list by repository", ()
     );
     expect(stranger.code).toBeNull();
     expect(stranger.record?.namespaces[0].ns.namespace).toBe("tracker-other");
-    expect(stranger.standing).toBe("not joined");
   });
 
   it("a namespace declaring no repository is headed by its source's name; the join is case-insensitive", () => {
@@ -164,7 +162,7 @@ describe("buildCards joins code.repos and tracker.source.list by repository", ()
   });
 
   it("a member of a restricted repository still sees it as restricted", () => {
-    // the standing-based reading said "open" to the maintainer; the server's class decides
+    // The server's class decides, not the caller's standing as a maintainer.
     const member = buildCards(
       [branch({ join_policy: "approval", classification: "restricted", my_status: "member", my_role: "admin" })],
       [],
@@ -184,40 +182,6 @@ describe("buildCards joins code.repos and tracker.source.list by repository", ()
     expect(buildCards([branch({ my_role: "admin", my_status: "member" })], [])[0].maintained).toBe(true);
     expect(buildCards([branch()], [source({ namespaces: [ns({ member_role: "admin" })] })])[0].maintained).toBe(true);
     expect(buildCards([branch()], [source()])[0].maintained).toBe(false);
-  });
-});
-
-describe("standingPhrase: the caller's standing in one phrase", () => {
-  it("'you read 8 of 10 branches · tracker: not joined'", () => {
-    const rows = TEN.map((b, i) => (i < 8 ? { ...b, my_status: "member" as const } : b));
-    const [c] = buildCards(rows, [source()]);
-    expect(c.standing).toBe("you read 8 of 10 branches · tracker: not joined");
-  });
-  it("nothing joined anywhere is 'not joined'", () => {
-    expect(buildCards([branch()], [source()])[0].standing).toBe("not joined");
-    expect(buildCards([branch()], [])[0].standing).toBe("not joined");
-  });
-  it("a pending branch and a read record", () => {
-    const [c] = buildCards(
-      [branch({ my_status: "pending", join_policy: "approval" })],
-      [source({ namespaces: [ns({ member_role: "viewer" })] })],
-    );
-    expect(c.standing).toBe("1 branch requested · tracker: reading");
-  });
-  it("code read, record requested", () => {
-    const [c] = buildCards(
-      [branch({ my_status: "member" })],
-      [source({ namespaces: [ns({ pending_role: "viewer", join_policy: "approval" })] })],
-    );
-    expect(c.standing).toBe("you read 1 of 1 branch · tracker: requested");
-  });
-  it("a record-only card says only its record", () => {
-    expect(
-      standingPhrase({
-        code: null,
-        record: buildRecordFacet([{ ns: ns({ member_role: "viewer" }), source: source() }]),
-      }),
-    ).toBe("tracker: reading");
   });
 });
 

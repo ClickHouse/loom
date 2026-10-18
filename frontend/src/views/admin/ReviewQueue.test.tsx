@@ -240,6 +240,23 @@ describe("ReviewQueue", () => {
     expect(promoted.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("does not count the old namespace's total over the new one's queue", async () => {
+    vi.mocked(countConflicts).mockImplementation(async (id: { namespace: string }) =>
+      id.namespace === "ns-a" ? 120 : new Promise<number>(() => {}),
+    );
+    vi.mocked(listConflicts).mockImplementation(async (id: { namespace: string }) =>
+      id.namespace === "ns-a"
+        ? { rows: [conflict("a/one"), conflict("a/two")], next_before_version: 7 }
+        : { rows: [conflict("b/one")], next_before_version: null },
+    );
+    seed("ns-a");
+    render(<ReviewQueue />);
+    expect(await screen.findByText("2 of 120", {}, WAIT)).toBeInTheDocument();
+    seed("ns-b");
+    await screen.findByText("value of b/one", {}, WAIT);
+    expect(screen.queryByText(/of 120/)).toBeNull();
+  });
+
   it("lists the queue in a table, says how many of the total it holds, and loads more", async () => {
     vi.mocked(countConflicts).mockResolvedValue(3);
     vi.mocked(listConflicts).mockImplementation(async (_id, opts) =>

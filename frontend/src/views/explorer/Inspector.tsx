@@ -118,7 +118,7 @@ function seedNode(m: WalkModel): XNode {
   };
 }
 
-/** Rows a list shows before "Show all N" (SPEC §7.2). */
+/** Rows a list shows before "Show all N". */
 const CAP = 20;
 
 /** The rows to draw: the first 20 of a longer list until "Show all N" is pressed. */

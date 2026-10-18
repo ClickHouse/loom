@@ -43,7 +43,7 @@ export interface RowContext {
   onDrop: (r: TaskListRow, to: Group) => void;
 }
 
-/** A lane lists this many rows before "Show all N" (SPEC 7.2: no pager on Tasks). */
+/** A lane lists this many rows before "Show all N": Tasks has no pager. */
 export const LANE_ROWS = 20;
 
 /** A row's second line. `plain` writes an outcome's URL as text, for a card that is itself a button. */
@@ -215,11 +215,15 @@ export function TaskList({ groups, ctx, collapsed, onToggle, forceOpen }: ListPr
   const tabStop =
     active && keys.includes(active) ? active : selectedKey && keys.includes(selectedKey) ? selectedKey : keys[0];
 
-  // "Show all N" opens the rest in place and takes the reader to the first row it added.
+  // "Show all N" opens the rest in place and takes the reader to the first row it added. It
+  // moves focus only: selecting the row would also open it in place of the task in the panel.
   const showAll = (g: Group) => {
     const first = groups[g][LANE_ROWS];
     setAll((s) => new Set(s).add(g));
-    if (first) window.setTimeout(() => ctx.onSelect(first), 0);
+    if (!first) return;
+    const key = `task:${first.task_id}`;
+    setActive(key);
+    window.setTimeout(() => document.querySelector<HTMLElement>(`[data-nav="${CSS.escape(key)}"]`)?.focus(), 0);
   };
 
   const onFocus = (e: FocusEvent<HTMLDivElement>) => {

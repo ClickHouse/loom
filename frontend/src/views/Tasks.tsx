@@ -117,7 +117,8 @@ function readQuery(key: string): string | null {
 // beside it. The one place the breakpoint lives: styles.css keys on what this decides.
 const SHEET_QUERY = "(max-width: 1279px)";
 // Below md the inbox rail is a Select and the toolbar's filters sit on a row under it.
-const PHONE_QUERY = "(max-width: 767px)";
+// Below this the inbox rail folds into the page: wider than lib/useMedia's phone.
+const RAIL_QUERY = "(max-width: 767px)";
 
 // A row's menu, in this order: the move forward, the other ways out, then the hand-offs.
 // Accept is the triage row's inline button; Edit brief needs the full task (the panel).
@@ -232,7 +233,7 @@ export function Tasks() {
   const [editing, setEditing] = useState<TaskRow | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const sheetLayout = useMedia(SHEET_QUERY);
-  const phone = useMedia(PHONE_QUERY);
+  const phone = useMedia(RAIL_QUERY);
 
   // Only the latest task.counts may write the counts: a namespace switch while A's read is
   // in flight drops A's answer, so B's tiles never show A's numbers.
@@ -617,11 +618,14 @@ export function Tasks() {
   // A phone always draws the list, whatever mode is saved.
   const listed = mode === "list" || phone;
   const onlyClosed = listed && !filtering && openCount === 0 && visible.length > 0 && collapsed.closed;
+  // An inbox reads its first 200 tasks: when one held more, the count and a search say they
+  // cover those, not every task the inbox holds.
+  const cut = truncated ? " in the first 200 per inbox" : "";
   const count =
     loaded && !emptyInbox
       ? filtering
-        ? `${visible.length} ${visible.length === 1 ? "match" : "matches"}`
-        : `${visible.length} ${visible.length === 1 ? "task" : "tasks"}`
+        ? `${visible.length} ${visible.length === 1 ? "match" : "matches"}${cut}`
+        : `${visible.length} ${visible.length === 1 ? "task" : "tasks"}${cut}`
       : undefined;
   const clearFilters = () => setFilters(NO_FILTERS);
 
@@ -818,7 +822,13 @@ export function Tasks() {
                 />
               )}
               {loaded && !emptyInbox && visible.length === 0 && (
-                <ListState kind="filtered" things="tasks" filter={filterSummary(filters)} onClear={clearFilters} />
+                <ListState
+                  kind="filtered"
+                  things="tasks"
+                  filter={filterSummary(filters)}
+                  among={truncated ? "the first 200 per inbox" : undefined}
+                  onClear={clearFilters}
+                />
               )}
               {onlyClosed && (
                 <ListState

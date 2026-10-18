@@ -115,7 +115,10 @@ for (const path of ["/memories", "/library", "/conversations"]) {
 for (const path of ["/memories", "/library", "/conversations", "/profile", "/spaces", "/repositories"]) {
   test(`${path}: no row but the current one has a tab stop`, async ({ page }) => {
     await open(page, path);
-    await page.waitForTimeout(300);
+    // The roving tab stop is set once a row is current.
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll("main .list-row [data-row-open]")].some((el) => (el as HTMLElement).tabIndex === 0),
+    );
     const outside = await page.evaluate(() => {
       const rows = [...document.querySelectorAll("main .list-row")];
       const current = rows.find((r) => r.querySelector<HTMLElement>("[data-row-open]")?.tabIndex === 0);

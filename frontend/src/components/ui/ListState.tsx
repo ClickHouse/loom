@@ -19,8 +19,9 @@ export interface ListFilteredProps {
   kind: "filtered";
   /** The plural noun: "documents", "memories". */
   things: string;
-  /** What is in force, as the reader typed or picked it: "tag:billing". */
-  filter: string;
+  /** What is in force, as the reader typed it: "tag:billing". Without one (a toggle or a
+   *  select, nothing typed), the row says "the filters in force". */
+  filter?: string;
   /** The rows the filter ran over when they are not the whole list ("the first 50 loaded"). */
   among?: string;
   onClear: () => void;
@@ -57,7 +58,8 @@ export function ListState(props: ListStateProps) {
     return (
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm text-text-muted" role="status">
         <span className="min-w-0 break-words">
-          No {props.things} match <span className="font-mono text-text">{props.filter}</span>
+          No {props.things} match{" "}
+          {props.filter ? <span className="font-mono text-text">{props.filter}</span> : "the filters in force"}
           {props.among && ` in ${props.among}`}
         </span>
         <Button

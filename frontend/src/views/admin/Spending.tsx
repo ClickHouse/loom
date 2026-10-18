@@ -367,8 +367,9 @@ export function Spending() {
           {visibleRows.length === 0 && (
             <ListState
               kind="filtered"
-              things="cost-bearing operations"
-              filter="this window"
+              // The filter in force is the hidden no-cost operations: Clear filters shows them.
+              things="operations"
+              among="this window"
               onClear={() => setShowAllOps(true)}
             />
           )}

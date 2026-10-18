@@ -1386,7 +1386,7 @@ tr:hover .recall-bar > span {
 /* Repositories: a row's one action is Click UI's SplitButton. Its root clips
    its two halves, so each half's focus ring is drawn inside it; on a phone it takes the
    row's width under the summary line; under a coarse pointer its menu half (a div that
-   RepositoryCard makes a button) is a 44 px target like every other button. */
+   ui/SplitButton makes a button) is a 44 px target like every other button. */
 .repo-action button:focus-visible,
 .repo-action [data-testid="split-button-dropdown"]:focus-visible {
   outline-offset: -2px;

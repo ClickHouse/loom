@@ -15,8 +15,7 @@ interface Props {
   source: Identity;
   memoryKey: string;
   // Called after a successful copy so the caller can refresh.
-  /** The namespace the copy landed in. */
-  onCopied?: (targetNamespace: string) => void;
+  onCopied?: () => void;
 }
 
 // Roles that can WRITE a namespace (viewers can read but not accept a copy).
@@ -80,7 +79,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey, o
         rationale: rationale.trim() || undefined,
       });
       toast(`Copied to ${res.target_namespace} as ${res.target_key}`, "ok");
-      onCopied?.(res.target_namespace);
+      onCopied?.();
       reset();
       onOpenChange(false);
     } catch (e) {

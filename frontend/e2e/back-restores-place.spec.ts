@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { installApi } from "./fixtures";
 import { violations } from "./axe";
 
-// Reading something keeps you where you are, and Back puts you back (spec 4). A memory's
+// Reading something keeps you where you are, and Back puts you back. A memory's
 // entity opens a popover in the drawer; "Open in Graph" is a new history entry that offers
 // "Back to memory <key>"; Back restores the list's scroll, reopens the drawer on that memory
 // and focuses the entity chip. The open memory is the URL, so a reload reopens it. Run at

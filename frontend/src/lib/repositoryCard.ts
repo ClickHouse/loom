@@ -14,8 +14,8 @@ import {
  * for "Acme/widgets" meets the repository once, in one vocabulary. This module
  * is the pure part: it joins `code.repos` rows and `tracker.source.list` namespaces on
  * the repository name — a tracker namespace's `repos[]` names the repositories its record
- * covers — into one card per repository, derives the caller's standing in one phrase, and
- * picks the card's one primary verb. Nothing here reads or renders.
+ * covers — into one card per repository, and picks the card's one primary verb. Nothing
+ * here reads or renders.
  *
  * Five words, both facets: Open · Join · Request access · Withdraw
  * request · Leave. A chip or a button never says a namespace slug.
@@ -28,7 +28,6 @@ type FacetKind = "code" | "record";
 // One noun for the linked database — a tracker (issues, PRs, incidents). "issues & PRs"
 // says what one holds, never what it is called.
 export const RECORD_NOUN = "tracker";
-const CODE_NOUN = "code";
 
 /** ONE verb per state, the same five words on both facets. `closed` and `registering`
  *  have no verb: nothing can be done from here. */
@@ -102,8 +101,8 @@ export function buildCodeFacet(repo: string, list: readonly CodeRepoSummary[]): 
     branches,
     primary: branches[0],
     head: joined[0] ?? branches[0],
-    // the class, when the server states it: a member of a restricted repository
-    // is not "open" (the standing-based reading showed "open" to maintainers)
+    // The class, when the server states it: a member of a restricted repository still sees
+    // it as restricted, whatever their own standing.
     restricted: branches.every((b) =>
       b.classification ? b.classification === "restricted" : branchState(b) === "approval" || b.readable === false,
     ),
@@ -213,8 +212,6 @@ export interface RepositoryCard {
   maintained: boolean;
   joinedCount: number;
   pendingCount: number;
-  /** The caller's standing in one phrase ("you read 8 of 10 branches · tracker: not joined"). */
-  standing: string;
 }
 
 const norm = (repo: string) => repo.trim().toLowerCase();
@@ -272,9 +269,7 @@ export function buildCards(repos: readonly CodeRepoSummary[], sources: readonly 
       maintained: (code?.maintained ?? false) || (record?.maintained ?? false),
       joinedCount,
       pendingCount,
-      standing: "",
     };
-    card.standing = standingPhrase(card);
     cards.push(card);
   }
   // Repositories you read first, then the ones you can join at once, then by name.
@@ -284,32 +279,6 @@ export function buildCards(repos: readonly CodeRepoSummary[], sources: readonly 
       (a.restricted ? 1 : 0) - (b.restricted ? 1 : 0) ||
       a.repo.localeCompare(b.repo),
   );
-}
-
-/** The caller's standing on the whole card in one phrase. */
-export function standingPhrase(card: Pick<RepositoryCard, "code" | "record">): string {
-  if (!card.code && !card.record) return "";
-  const parts: string[] = [];
-  if (card.code) {
-    const n = card.code.branches.length,
-      j = card.code.joinedCount,
-      p = card.code.pendingCount;
-    if (j > 0) parts.push(`you read ${j} of ${n} branch${n === 1 ? "" : "es"}`);
-    else if (p > 0) parts.push(`${p} branch${p === 1 ? "" : "es"} requested`);
-    else parts.push(`${CODE_NOUN}: not joined`);
-  }
-  if (card.record) {
-    const word =
-      card.record.joined.length > 0 ? "reading" : card.record.pending.length > 0 ? "requested" : "not joined";
-    parts.push(`${RECORD_NOUN}: ${word}`);
-  }
-  const nothing =
-    (card.code?.joinedCount ?? 0) +
-      (card.code?.pendingCount ?? 0) +
-      (card.record?.joined.length ?? 0) +
-      (card.record?.pending.length ?? 0) ===
-    0;
-  return nothing ? "not joined" : parts.join(" · ");
 }
 
 /** The header's one primary button. */

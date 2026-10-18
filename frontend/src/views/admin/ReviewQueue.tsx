@@ -1,3 +1,4 @@
+import { BusyButton } from "../../components/ui/BusyButton";
 import { useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -141,6 +142,8 @@ export function ReviewQueue() {
 
 // ─── Conflicts panel ───────────────────────────────────────────────────
 
+// One read of learnings: a list as long as this may hold more.
+const LEARNINGS_READ = 50;
 const CONFLICT_PAGE = 50;
 
 function ConflictsPanel() {
@@ -165,7 +168,10 @@ function ConflictsPanel() {
     (signal, live) => {
       if (rowsFor.current !== `${identity.org}/${identity.namespace}`) {
         rowsFor.current = `${identity.org}/${identity.namespace}`;
+        // The count and the cursor are the queue's too: none of them carries over.
         setRows(null);
+        setTotal(null);
+        setNext(null);
       }
       setError(null);
       listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: CONFLICT_PAGE, signal })
@@ -270,7 +276,7 @@ function ConflictsPanel() {
   return (
     <div>
       <div className="mb-3 text-sm text-text-muted tabular">
-        Conflict {index + 1} of {rows.length} · resolve in order
+        Conflict {index + 1} of {(held ?? rows.length).toLocaleString()} · resolve in order
       </div>
       <Panel>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
@@ -334,17 +340,16 @@ function ConflictsPanel() {
       </div>
       <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} />
       {next !== null && (
-        <Button
+        <BusyButton
           type="secondary"
           htmlType="button"
           fillWidth
           className="mt-3"
-          loading={loadingMore}
-          disabled={loadingMore}
+          busy={loadingMore}
           onClick={() => void loadMore()}
         >
           Load more
-        </Button>
+        </BusyButton>
       )}
     </div>
   );
@@ -435,7 +440,7 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
       }
       setRefreshing(true);
       setError(null);
-      listLearnings({ org: identity.org, namespace: identity.namespace }, status, 50, { signal })
+      listLearnings({ org: identity.org, namespace: identity.namespace }, status, LEARNINGS_READ, { signal })
         .then((r) => {
           if (live()) setRows(r.rows || []);
         })
@@ -463,7 +468,12 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
     <div>
       <ListToolbar
         label="Learning status"
-        count={!error && rows !== null ? `${rows.length} ${rows.length === 1 ? "learning" : "learnings"}` : undefined}
+        // A full read may not be every learning: it says it holds the newest.
+        count={
+          !error && rows !== null
+            ? `${rows.length >= LEARNINGS_READ ? "the newest " : ""}${rows.length} ${rows.length === 1 ? "learning" : "learnings"}`
+            : undefined
+        }
       >
         <ButtonGroup
           aria-label="Learning status"

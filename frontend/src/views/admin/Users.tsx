@@ -1,3 +1,4 @@
+import { BusyButton } from "../../components/ui/BusyButton";
 import { useMemo, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -141,15 +142,15 @@ export function Users() {
         <PageHeader
           title="Users"
           actions={
-            <Button
+            <BusyButton
               type="secondary"
               htmlType="button"
               iconLeft="refresh"
               onClick={() => setReads((n) => n + 1)}
-              loading={refreshing}
+              busy={refreshing}
             >
               Refresh
-            </Button>
+            </BusyButton>
           }
         >
           <ScopeBadge kind="namespace" value={identity.namespace} />

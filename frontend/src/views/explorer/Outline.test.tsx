@@ -7,7 +7,7 @@ import type { XNode } from "./model";
 // The walk's outline is a tree described by both lines above it: the visible counts
 // summary and the one line naming its keys. Each row's entity name is its primary line at
 // 14 px; under it, muted at 12 px, "hop 1 · co-mentioned 20×". A tree of more than 20 rows
-// shows the first 20 and "Show all N" (SPEC §7.2).
+// shows the first 20 and "Show all N".
 
 function node(entity: string, over: Partial<XNode> = {}): XNode {
   return {
@@ -89,5 +89,27 @@ describe("Outline", () => {
       { selection: { kind: "node", entity: "e25" } },
     );
     expect(screen.getAllByRole("treeitem")).toHaveLength(31);
+  });
+
+  // Past the 20-row cap, the tree keeps its one tab stop: a move to a row not drawn draws it
+  // and focuses it, and the cap never comes back over the focused row.
+  it("draws and focuses a row past the cap that a key moves to", async () => {
+    const user = userEvent.setup();
+    const hop1 = Array.from({ length: 25 }, (_, i) => node(`n${i}`));
+    const deep = node("deep", { hop: 2, parent: "n18", path: ["loom", "n18", "deep"] });
+    const order = [...hop1, deep];
+    mount(order, {
+      children: new Map([
+        ["loom", hop1],
+        ["n18", [deep]],
+      ]),
+    });
+    const tree = screen.getByRole("tree", { name: "Walk outline" });
+    expect(within(tree).queryByRole("treeitem", { name: /^deep/ })).toBeNull();
+    within(tree).getByRole("treeitem", { name: /^n18 / }).focus();
+    await user.keyboard("{ArrowRight}");
+    const row = await within(tree).findByRole("treeitem", { name: /^deep/ });
+    expect(row).toHaveFocus();
+    expect(row).toHaveAttribute("tabindex", "0");
   });
 });

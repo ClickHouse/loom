@@ -240,6 +240,27 @@ describe("Memories list chrome", () => {
     expect(screen.getByText(/among the newest ones read/)).toBeInTheDocument();
   });
 
+  it("counts a cut-short tag read plainly once a status narrows it here too", async () => {
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, limit = 50): Promise<MemoryListResponse> =>
+        limit === 1000
+          ? {
+              entries: Array.from({ length: 100 }, (_, i) => entry(`t${i}`, { tags: ["api"], pinned: i < 60 })),
+              total: 340,
+              today: 0,
+              truncated: true,
+            }
+          : { entries: ROWS, total: 1234, today: 0, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
+    await waitFor(() => expect(toolbar()).toHaveTextContent("340 matches"));
+    await pick("Status", "pinned");
+    await waitFor(() => expect(toolbar()).toHaveTextContent("60 matches"));
+    expect(screen.getByRole("navigation", { name: "Memories pages" })).not.toHaveTextContent("newest");
+  });
+
   it("counts the rows on screen when the read was not cut short, whatever the server total", async () => {
     // The page keeps profile rows out; the server counted them.
     vi.mocked(listMemories).mockImplementation(

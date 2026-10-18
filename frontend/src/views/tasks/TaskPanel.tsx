@@ -482,12 +482,14 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
           // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of action buttons, not form fields
           <div className="mt-3 flex gap-2 items-center justify-end flex-wrap" role="group" aria-label="Actions">
             <Menu items={menu} />
+            {/* The page's keys do nothing while the panel is a sheet (a dialog holds them
+                off), so a sheet names none. */}
             {secondary && (
-              <Tip content={secondary.tip} disabled={!secondary.tip}>
+              <Tip content={secondary.tip} disabled={!secondary.tip || sheet}>
                 <Button
                   type="secondary"
                   htmlType="button"
-                  aria-keyshortcuts={secondary.key}
+                  aria-keyshortcuts={sheet ? undefined : secondary.key}
                   onClick={() => act(secondary.action)}
                 >
                   {secondary.label}
@@ -495,11 +497,11 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
               </Tip>
             )}
             {primary && (
-              <Tip content={primary.tip} disabled={!primary.tip}>
+              <Tip content={primary.tip} disabled={!primary.tip || sheet}>
                 <Button
                   type="primary"
                   htmlType="button"
-                  aria-keyshortcuts={primary.key}
+                  aria-keyshortcuts={sheet ? undefined : primary.key}
                   onClick={() => act(primary.action)}
                 >
                   {primary.label}

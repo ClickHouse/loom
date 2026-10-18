@@ -1,7 +1,7 @@
+import { BusyButton } from "../../components/ui/BusyButton";
 import { useState } from "react";
 import { useAbortableEffect } from "../../lib/hooks";
 import { Badge } from "@clickhouse/click-ui/Badge";
-import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Table } from "@clickhouse/click-ui/Table";
 import { useStore } from "../../lib/state";
@@ -75,15 +75,15 @@ export function Agents() {
       <PageHeader
         title="Agents"
         actions={
-          <Button
+          <BusyButton
             type="secondary"
             htmlType="button"
             iconLeft="refresh"
             onClick={() => setReads((n) => n + 1)}
-            loading={refreshing}
+            busy={refreshing}
           >
             Refresh
-          </Button>
+          </BusyButton>
         }
       >
         <ScopeBadge kind="namespace" value={identity.namespace} />

@@ -395,7 +395,17 @@ function MemoryList() {
         const r = await (kwKeys.size > 0 ? ranked.catch(() => null) : ranked);
         if (cancelled) return;
         setRanking(false);
-        if (r === null) return;
+        if (r === null) {
+          // The new ranking failed: the hits kept from the last one are not today's, so the
+          // list goes back to the keyword rows.
+          if (kept.length > 0) {
+            rankedShownRef.current = null;
+            setSearchHits([...kwKeys]);
+            setSearchExtra(new Map(kwExtra));
+            setSearchWhy(new Map());
+          }
+          return;
+        }
         const results = r.results || [];
         const hits = keywordThenRanked(
           kwEntries.map((e) => e.memory_key),

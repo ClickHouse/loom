@@ -1077,7 +1077,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
                   </Dropdown.Item>
                 </Dropdown.Content>
               </Dropdown>
-              {/* Verify moved into More; who attested stays in view. */}
+              {/* Verify sits in More; who attested stays in view. */}
               {(verified || detail.verification === "stale") && (
                 <span className="min-w-0 inline-flex items-center gap-1 text-xs text-text-muted">
                   <Icon name={verified ? "check-in-circle" : "warning"} size="sm" aria-hidden="true" />
@@ -1092,17 +1092,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
               </Button>
             </footer>
           )}
-          <CopyToNamespaceDialog
-            open={copyOpen}
-            onOpenChange={setCopyOpen}
-            source={identity}
-            memoryKey={memoryKey}
-            // A copy changes only the namespace it lands in: this one's list reads again only
-            // when that is the namespace on screen.
-            onCopied={(target) => {
-              if (target === identity.namespace) onChanged();
-            }}
-          />
+          <CopyToNamespaceDialog open={copyOpen} onOpenChange={setCopyOpen} source={identity} memoryKey={memoryKey} />
           {/* Reading the source conversation keeps the drawer: the replay opens over it, and
               Conversations is one link away. */}
           <ThreadReplayDialog
@@ -1803,8 +1793,8 @@ function EntitySummary({
   onInspect: (key: string) => void;
   onWalk: () => void;
 }) {
-  const [mentions, setMentions] = useState<{ keys: string[]; capped: boolean } | null>(null);
-  const [neighbours, setNeighbours] = useState<string[] | null>(null);
+  const [mentions, setMentions] = useState<{ keys: string[]; capped: boolean } | null | "failed">(null);
+  const [neighbours, setNeighbours] = useState<string[] | null | "failed">(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   // The focus moves to the first link once the mentions are in, unless the person has
   // already moved it.
@@ -1824,14 +1814,15 @@ function EntitySummary({
         setMentions({ keys, capped: rows.length >= MENTION_READ });
       })
       .catch(() => {
-        if (live) setMentions({ keys: [], capped: false });
+        // A failed read says so: "mentioned only in this memory" would be a claim.
+        if (live) setMentions("failed");
       });
     relatedFacts({ org: identity.org, namespace: identity.namespace }, want, { top_k: POPOVER_LIST })
       .then((r) => {
         if (live) setNeighbours((r.related || []).map((n) => n.entity).slice(0, POPOVER_LIST));
       })
       .catch(() => {
-        if (live) setNeighbours([]);
+        if (live) setNeighbours("failed");
       });
     return () => {
       live = false;
@@ -1839,7 +1830,7 @@ function EntitySummary({
   }, [entity, identity, readMentions]);
 
   // This memory mentions it too.
-  const total = mentions ? mentions.keys.length + 1 : 0;
+  const total = mentions && mentions !== "failed" ? mentions.keys.length + 1 : 0;
   return (
     <div
       ref={rootRef}
@@ -1855,6 +1846,8 @@ function EntitySummary({
       <section aria-label="Memories that mention it">
         {mentions === null ? (
           <Loading layout="inline" label="Loading memories" />
+        ) : mentions === "failed" ? (
+          <div className="text-xs text-text-muted">Couldn't load the memories that mention it.</div>
         ) : (
           <>
             <div className="text-xs text-text-muted mb-1">
@@ -1886,6 +1879,8 @@ function EntitySummary({
         <div className="text-xs text-text-muted mb-1">Neighbours</div>
         {neighbours === null ? (
           <Loading layout="inline" label="Loading neighbours" />
+        ) : neighbours === "failed" ? (
+          <div className="text-xs text-text-muted">Couldn't load neighbours.</div>
         ) : neighbours.length === 0 ? (
           <div className="text-xs text-text-muted">None recorded</div>
         ) : (

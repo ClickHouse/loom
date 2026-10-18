@@ -2,6 +2,7 @@ import { cleanup, render, screen, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationThreadDetail } from "../api";
 import { listTime } from "../lib/format";
+import { listMemories } from "../api";
 import { ThreadReplayDialog, threadTitle } from "./ThreadReplayDialog";
 
 // The replay's turns are told apart by a neutral role badge, not by coloured rails; the
@@ -47,6 +48,23 @@ describe("ThreadReplayDialog", () => {
     );
     expect(await screen.findByText("Loading thread", {}, { timeout: 2000 })).toBeInTheDocument();
     expect(screen.queryByText("Loading…")).toBeNull();
+  });
+
+  it("counts every memory the thread produced, and says when it shows the newest", async () => {
+    getConversationThread.mockResolvedValue(detail);
+    const entry = (memory_key: string) =>
+      ({ memory_key, memory_type: "semantic", confidence: 1, version: 1, created_at: now, tags: [] }) as never;
+    vi.mocked(listMemories).mockResolvedValueOnce({
+      entries: Array.from({ length: 20 }, (_, i) => entry(`m${i}`)),
+      truncated: true,
+      total: 37,
+      today: 0,
+    });
+    render(
+      <ThreadReplayDialog identity={identity} thread={{ thread_id: "t-1", namespace: "ns" }} onClose={() => {}} />,
+    );
+    expect(await screen.findByText("Showing the newest 20.")).toBeInTheDocument();
+    expect(screen.getByText("37")).toBeInTheDocument();
   });
 
   it("names each turn's role in a neutral badge on a neutral rail, and strokes the hit's turn", async () => {

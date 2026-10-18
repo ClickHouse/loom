@@ -391,6 +391,34 @@ describe("Tasks page", () => {
     expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
   });
 
+  it("Show all N leaves the task open in the panel where it is", async () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      task(`t${String(i).padStart(2, "0")}`, { created_at: iso(100 - i) }),
+    );
+    vi.mocked(listTasks).mockResolvedValue({ tasks: many, truncated: false });
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await user.click(await screen.findByRole("row", { name: "Task t03" }));
+    const panel = await screen.findByRole("complementary", { name: "Task detail" });
+    expect(within(panel).getByRole("heading", { name: "Task t03" })).toBeInTheDocument();
+    const before = window.location.search;
+    await user.click(screen.getByRole("button", { name: "Show all 25" }));
+    expect(screen.getByRole("row", { name: "Task t20" })).toHaveFocus();
+    // The panel still holds t03: Show all moved focus, it opened nothing.
+    expect(window.location.search).toBe(before);
+    const still = screen.getByRole("complementary", { name: "Task detail" });
+    expect(within(still).getByRole("heading", { name: "Task t03" })).toBeInTheDocument();
+  });
+
+  it("says its count covers the first 200 tasks when an inbox holds more", async () => {
+    vi.mocked(listTasks).mockResolvedValue({ tasks: ROWS, truncated: true });
+    seed(admin, [row("admin")]);
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("in the first 200 per inbox");
+  });
+
   it("every row has an actions menu with the moves its status allows; the triage row's one inline action is Accept", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();

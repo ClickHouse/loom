@@ -26,13 +26,14 @@ const ST = {
 
 const codeCoverage = vi.fn();
 const codeIndexErrors = vi.fn();
+const codeRecentCommits = vi.fn(async () => ({ rows: [] }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
     codeCoverage: (...a: unknown[]) => codeCoverage(...a),
     codeIndexErrors: (...a: unknown[]) => codeIndexErrors(...a),
-    codeRecentCommits: async () => ({ rows: [] }),
+    codeRecentCommits: (...a: unknown[]) => codeRecentCommits(...(a as [])),
     listCostRollup: async () => ({ rows: [] }),
   };
 });
@@ -44,11 +45,14 @@ vi.mock("../lib/sharedReads", async (importOriginal) => {
 afterEach(() => cleanup());
 
 describe("HealthTab: failed reads", () => {
-  it("states that coverage and the index errors could not be read, instead of loading forever", async () => {
+  it("states that coverage, the index errors and the recent commits could not be read", async () => {
     codeCoverage.mockRejectedValue(new Error("boom"));
     codeIndexErrors.mockRejectedValue(new Error("boom"));
+    codeRecentCommits.mockRejectedValueOnce(new Error("boom"));
     render(<HealthTab id={{ org: "dev", namespace: "code-app" }} />);
     expect(await screen.findByText("Couldn't load coverage.")).toBeInTheDocument();
     expect(screen.getByText("Couldn't load the index errors.")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load the recent commits.")).toBeInTheDocument();
+    expect(screen.queryByText("No commits recorded yet.")).toBeNull();
   });
 });

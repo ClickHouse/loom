@@ -8,6 +8,7 @@
  * (search/symbol/callers — the same ops agents call), PR packs (precomputed
  * per-PR context), Access (who can read it, how tokens get the claim).
  */
+import { BusyButton } from "../components/ui/BusyButton";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -409,7 +410,8 @@ function RepositoriesHome({
   const [registering, setRegistering] = useState<{ group: RepoGroup | null } | null>(null);
   const org = useStore((s) => s.identity)?.org ?? repos?.[0]?.org ?? "";
   const [query, setQuery] = useState("");
-  // Most orgs hold a handful of repositories: no pages until there are more than 50.
+  // Most orgs hold a handful of repositories: the pager draws once there are more than fit
+  // the smallest page.
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = usePageSize("repositories");
   // The record facet — the tracker namespaces whose `repos` name a repository — is read
@@ -1688,17 +1690,20 @@ function RepoDetail({
             Access
           </TabTrigger>
         </Tabs.TriggersList>
+        {/* Each tab is keyed by branch: another branch starts each one fresh (its status,
+            results, open pack and filter), and the tab the reader is on stays selected. */}
         <Tabs.Content value="health">
-          <HealthTab id={id} />
+          <HealthTab key={repo.namespace} id={id} />
         </Tabs.Content>
         <Tabs.Content value="explore">
-          <ExploreTab id={id} />
+          <ExploreTab key={repo.namespace} id={id} />
         </Tabs.Content>
         <Tabs.Content value="packs">
-          <PacksTab id={id} repo={repo.repo} />
+          <PacksTab key={repo.namespace} id={id} repo={repo.repo} />
         </Tabs.Content>
         <Tabs.Content value="access">
           <AccessTab
+            key={repo.namespace}
             id={id}
             siblings={siblings}
             repo={repo}
@@ -1824,7 +1829,7 @@ export function HealthTab({ id }: { id: CodeId }) {
   const [showState, setShowState] = useState(false);
   // undefined while the first read is out, null once a read failed.
   const [cov, setCov] = useState<CodeCoverage | null | undefined>(undefined);
-  const [recent, setRecent] = useState<CodeRecentCommitRow[] | null>(null);
+  const [recent, setRecent] = useState<CodeRecentCommitRow[] | "failed" | null>(null);
   const [errs, setErrs] = useState<{ rows: CodeIndexErrorRow[]; total: number } | null | undefined>(undefined);
   const [showErrs, setShowErrs] = useState(false);
   const [spend, setSpend] = useState<{ usd: number; ops: number } | null | undefined>(undefined);
@@ -1853,7 +1858,8 @@ export function HealthTab({ id }: { id: CodeId }) {
           if (live()) setRecent(r.rows);
         })
         .catch(() => {
-          if (live()) setRecent([]);
+          // Said as a failure: "no commits recorded yet" would be a claim.
+          if (live()) setRecent("failed");
         });
       codeIndexErrors(id, 100, { signal })
         .then((e) => {
@@ -2121,6 +2127,8 @@ export function HealthTab({ id }: { id: CodeId }) {
           </div>
           {recent === null ? (
             <Loading layout="inline" label="Loading recent commits" />
+          ) : recent === "failed" ? (
+            <div className="text-xs text-text-muted">Couldn't load the recent commits.</div>
           ) : recent.length === 0 ? (
             <div className="text-xs text-text-muted">No commits recorded yet.</div>
           ) : (
@@ -2493,9 +2501,9 @@ function ExploreTab({ id }: { id: CodeId }) {
             placeholder="path prefix (optional)"
           />
         </div>
-        <Button type="primary" htmlType="submit" iconLeft="search" disabled={busy || !q.trim()} loading={busy}>
+        <BusyButton type="primary" htmlType="submit" iconLeft="search" disabled={!q.trim()} busy={busy}>
           Search
-        </Button>
+        </BusyButton>
       </form>
       <p className="text-xs text-text-muted">
         Runs the same <span className="font-mono">code.search</span> / <span className="font-mono">code.symbol</span> /{" "}
@@ -2621,9 +2629,9 @@ function ExploreTab({ id }: { id: CodeId }) {
               Not sure where to start? Load the repo orientation map agents get from{" "}
               <span className="font-mono">code.map</span>.
             </div>
-            <Button type="secondary" htmlType="button" onClick={loadMap} loading={mapBusy}>
+            <BusyButton type="secondary" htmlType="button" onClick={loadMap} busy={mapBusy}>
               Show map
-            </Button>
+            </BusyButton>
           </div>
           {map && (
             <pre className="mt-3 text-xs font-mono whitespace-pre-wrap text-text-muted max-h-[32rem] overflow-auto">
@@ -2674,18 +2682,9 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
   const [rowsKey, setRowsKey] = useState("");
   // The PR filter alone: the total holds across a page-size change.
   const [rowsPr, setRowsPr] = useState<string | null>(null);
-  const rowsFor = useRef(`${id.org}/${id.namespace}`);
+  // Another branch mounts a fresh tab (RepoDetail keys each tab by branch).
   useAbortableEffect(
     (signal, live) => {
-      if (rowsFor.current !== `${id.org}/${id.namespace}`) {
-        rowsFor.current = `${id.org}/${id.namespace}`;
-        setRows(null);
-        // Another branch starts at its first page; the read runs again with it.
-        if (offset !== 0) {
-          setOffset(0);
-          return;
-        }
-      }
       setRefreshing(true);
       setError(null);
       const pr = parseInt(prSettled, 10);

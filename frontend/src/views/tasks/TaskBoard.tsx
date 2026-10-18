@@ -94,7 +94,13 @@ export function TaskBoard({ groups, ctx }: { groups: Record<Group, TaskListRow[]
                   onClick={() => {
                     const first = rows[LANE_ROWS];
                     setAll((s) => new Set(s).add(g));
-                    if (first) window.setTimeout(() => ctx.onSelect(first), 0);
+                    // Focus only: selecting the card would open it in place of the open task.
+                    if (first)
+                      window.setTimeout(
+                        () =>
+                          document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(first.task_id)}"]`)?.focus(),
+                        0,
+                      );
                   }}
                 >
                   {`Show all ${rows.length}`}

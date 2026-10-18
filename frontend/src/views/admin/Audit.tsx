@@ -389,7 +389,7 @@ export function Audit() {
               kind="filtered"
               // The filter covers the events loaded so far; older ones may still match.
               things={older ? "loaded events" : "events"}
-              filter={q ? filterQuery.trim() : "the filters set"}
+              filter={q ? filterQuery.trim() : undefined}
               onClear={() => {
                 setFilterQuery("");
                 setOnlyMe(false);

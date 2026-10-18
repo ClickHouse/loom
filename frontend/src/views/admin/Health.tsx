@@ -1,3 +1,4 @@
+import { BusyButton } from "../../components/ui/BusyButton";
 import { useRef, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -367,16 +368,16 @@ export function WorkersPanel() {
           ) : (
             <span className="truncate text-sm text-text-muted">No workers reporting</span>
           ))}
-        <Button
+        <BusyButton
           type="secondary"
           htmlType="button"
           iconLeft="refresh"
           onClick={() => setRefreshKey((k) => k + 1)}
-          loading={refreshing}
+          busy={refreshing}
           className="ml-auto shrink-0"
         >
           Refresh
-        </Button>
+        </BusyButton>
       </ListToolbar>
       {!error && rows !== null && colours.length > 0 && (
         <p className="-mt-1 mb-3 text-xs text-text-muted" data-testid="reporting-colours">
@@ -936,15 +937,15 @@ function ExtractionQualityPanel() {
       </div>
       <div className="flex items-center justify-between">
         <div className="text-xs text-text-muted">By namespace, org={identity.org}</div>
-        <Button
+        <BusyButton
           type="secondary"
           htmlType="button"
           iconLeft="refresh"
           onClick={() => setRefreshKey((k) => k + 1)}
-          loading={refreshing}
+          busy={refreshing}
         >
           Refresh
-        </Button>
+        </BusyButton>
       </div>
       <Table
         size="sm"

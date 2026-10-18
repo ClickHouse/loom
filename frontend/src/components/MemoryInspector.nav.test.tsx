@@ -8,7 +8,7 @@ import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { invalidateShared } from "../lib/sharedReads";
 import { MemoryInspector } from "./MemoryInspector";
 
-// Reading something keeps you where you are (spec 4). An entity opens a popover in the
+// Reading something keeps you where you are. An entity opens a popover in the
 // drawer — the memories that also mention it swap the drawer in place, its neighbours are
 // listed, and "Open in Graph" is a new history entry with a way back. The source
 // conversation replays in a dialog over the drawer. The footer keeps Edit and Delete and
@@ -169,6 +169,18 @@ describe("an entity on a memory opens in place", () => {
     expect(graph).toHaveAttribute("href", "/graph?seed=rate+limiting");
     expect(graph.textContent).not.toContain("→");
     await waitFor(() => expect(document.activeElement).toBe(within(pop).getByRole("button", { name: "api/quota" })));
+  });
+
+  it("says a failed read failed, never that the entity is mentioned only here or has no neighbours", async () => {
+    vi.mocked(memoryRelated).mockRejectedValueOnce(new Error("down"));
+    vi.mocked(relatedFacts).mockRejectedValueOnce(new Error("down"));
+    await open();
+    await userEvent.click(chip("rate limiting"));
+    const pop = await screen.findByRole("dialog", { name: "Entity rate limiting" });
+    expect(await within(pop).findByText("Couldn't load the memories that mention it.")).toBeInTheDocument();
+    expect(await within(pop).findByText("Couldn't load neighbours.")).toBeInTheDocument();
+    expect(within(pop).queryByText("Mentioned only in this memory")).toBeNull();
+    expect(within(pop).queryByText("None recorded")).toBeNull();
   });
 
   it("reads memory.related once for the memory, however many entity popovers open", async () => {

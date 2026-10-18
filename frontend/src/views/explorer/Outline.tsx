@@ -17,7 +17,7 @@ import { shortcutOff } from "../../lib/shortcuts";
  * the row selects its node; the edge that reached it has its own button at the row's end,
  * clear of the name and the metadata. The other actions are drawn on the selected row
  * only, so 200 rows stay 200 rows. A tree of more than 20 rows shows the first 20 and
- * "Show all N" (SPEC §7.2), unless the selection sits further down.
+ * "Show all N", unless the selection sits further down.
  */
 
 /** Rows shown before "Show all N". */
@@ -94,15 +94,27 @@ export function Outline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, visible]);
 
+  // A row past the cap is drawn once it is the active one; focus waits for it to be.
+  const pendingFocus = useRef<string | null>(null);
   const focusRow = useCallback((entity: string) => {
     setActive(entity);
-    refs.current.get(entity)?.focus();
+    const row = refs.current.get(entity);
+    if (row) row.focus();
+    else pendingFocus.current = entity;
   }, []);
+  useEffect(() => {
+    const want = pendingFocus.current;
+    if (want === null) return;
+    pendingFocus.current = null;
+    refs.current.get(want)?.focus();
+  });
 
   const selectedEntity = selection?.kind === "node" ? selection.entity : null;
   const selectedEdgeChild = selection?.kind === "edge" ? selection.child : null;
   const selectedAt = rows.findIndex((r) => r.entity === selectedEntity || r.entity === selectedEdgeChild);
-  const capped = !all && rows.length > CAP && selectedAt < CAP;
+  // The cap never hides the selected row or the row holding the tree's one tab stop.
+  const activeAt = rows.findIndex((r) => r.entity === active);
+  const capped = !all && rows.length > CAP && selectedAt < CAP && activeAt < CAP;
   const shown = capped ? rows.slice(0, CAP) : rows;
 
   const onKey = (e: ReactKeyboardEvent<HTMLDivElement>, n: XNode, index: number) => {
@@ -215,7 +227,7 @@ export function Outline({
               aria-level={n.hop + 1}
               aria-selected={isSelected}
               aria-expanded={hasKids ? !isCollapsed : undefined}
-              aria-label={`${n.entity} · hop ${n.hop}${n.parent ? ` · ${typed && n.via_relation ? relationLabel(n.via_relation) : `co-mentioned ${n.via_co_occur}×`}` : ""}${pinned.has(n.entity) ? " · pinned" : ""}${hidden ? ` · ${hidden} hidden` : ""}`}
+              aria-label={`${n.entity} · hop ${n.hop}${n.parent ? ` · ${relation}` : ""}${pinned.has(n.entity) ? " · pinned" : ""}${hidden ? ` · ${hidden} hidden` : ""}`}
               tabIndex={active === n.entity ? 0 : -1}
               onFocus={() => setActive(n.entity)}
               onKeyDown={(e) => onKey(e, n, i)}

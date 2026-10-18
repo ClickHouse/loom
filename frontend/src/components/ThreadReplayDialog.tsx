@@ -1,3 +1,4 @@
+import { BusyButton } from "./ui/BusyButton";
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -165,6 +166,8 @@ export function ThreadReplayDialog({
   const [threadLoading, setThreadLoading] = useState(false);
   // Durable memories this thread produced (via source_trace=conversation:<id>).
   const [threadMemories, setThreadMemories] = useState<MemoryListEntry[]>([]);
+  // How many memories the thread produced in all: the panel reads the first 20.
+  const [threadMemoriesTotal, setThreadMemoriesTotal] = useState(0);
   // When a thread is opened from a search hit, scroll to + highlight that message.
   // The turn a search hit names: its id and the start of its text, since two agents' turns
   // in one thread can share an id.
@@ -187,6 +190,7 @@ export function ThreadReplayDialog({
     setMoreCursor(null);
     setLoadingMore(false);
     setThreadMemories([]);
+    setThreadMemoriesTotal(0);
     if (!thread) {
       setThreadLoading(false);
       setHighlight(null);
@@ -205,7 +209,9 @@ export function ThreadReplayDialog({
       signal,
     })
       .then((r) => {
-        if (!signal.aborted) setThreadMemories(r.entries);
+        if (signal.aborted) return;
+        setThreadMemories(r.entries);
+        setThreadMemoriesTotal(r.total);
       })
       .catch(() => {
         if (!signal.aborted) setThreadMemories([]);
@@ -351,18 +357,24 @@ export function ThreadReplayDialog({
         {thread && <SessionBriefPanel org={identity.org} namespace={thread.namespace} sessionId={thread.thread_id} />}
         {threadMemories.length > 0 && (
           <div className="mb-4 p-3 rounded-lg bg-surface-2 border border-border">
-            <SectionHeading label="Memories this thread produced" count={threadMemories.length} />
+            <SectionHeading
+              label="Memories this thread produced"
+              count={Math.max(threadMemoriesTotal, threadMemories.length)}
+            />
             <div className="flex flex-wrap gap-1.5">
               {threadMemories.map((m) => (
                 <Chip key={m.memory_key} label={m.memory_key} mono />
               ))}
             </div>
+            {threadMemoriesTotal > threadMemories.length && (
+              <p className="mt-2 text-xs text-text-muted">{`Showing the newest ${threadMemories.length}.`}</p>
+            )}
           </div>
         )}
         {threadLoading && <Loading label="Loading thread" />}
         {!threadLoading && threadDetail && !threadDetail.found && (
           <div className="text-center text-sm text-text-muted py-12">
-            {/* "or upgraded" goes with the previous-release fallback above. */}
+            {/* The upgrade clause goes with the previous-release fallback above. */}
             Thread not found. It may have been deleted, or a server is being upgraded: try again shortly.
           </div>
         )}
@@ -404,9 +416,9 @@ export function ThreadReplayDialog({
             })}
             {moreCursor && (
               <div className="pt-3 flex justify-center">
-                <Button type="secondary" htmlType="button" loading={loadingMore} onClick={loadMoreMessages}>
+                <BusyButton type="secondary" htmlType="button" busy={loadingMore} onClick={loadMoreMessages}>
                   {`Load more (${threadDetail.msg_count - threadDetail.messages.length} remaining)`}
-                </Button>
+                </BusyButton>
               </div>
             )}
             {/* No cursor though turns remain: a replica of the previous release read it. */}

@@ -136,7 +136,7 @@ describe("Inspector links", () => {
   });
 });
 
-// A list of more than 20 shows the first 20 and "Show all N" (SPEC §7.2): an edge reads
+// A list of more than 20 shows the first 20 and "Show all N": an edge reads
 // its rows in both directions, up to 24.
 describe("Inspector lists", () => {
   it("an edge's rows over 20 show the first 20 and Show all N", async () => {

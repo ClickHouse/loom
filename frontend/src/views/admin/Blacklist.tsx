@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -16,6 +16,7 @@ import { ScopeBadge } from "../../components/ScopeBadge";
 import { oneOf } from "../../lib/oneOf";
 import { IconButton } from "../../components/IconButton";
 import { Chip, ListTime, LoadingSkeleton, PageHeader } from "../../components/ui";
+import { ListState } from "../../components/ui/ListState";
 
 /** What a visitor who cannot list the patterns reads instead of a request: the token's
  * role here is unknown, so the panel says who manages the
@@ -83,29 +84,39 @@ export function PrivacyFilters({
   const canAdd = canCall("blacklist.add", role, whoami);
   const canRemove = canCall("blacklist.remove", role, whoami);
 
-  // A reload after an add or a remove keeps the patterns on screen, marked busy.
+  // A reload after an add or a remove keeps the patterns on screen, marked busy. It runs
+  // through the read effect, so an answer for a namespace the page has left is dropped.
   const [refreshing, setRefreshing] = useState(false);
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
-    if (!canList) return;
-    setRefreshing(true);
-    listBlacklist({ org: identity.org, namespace: identity.namespace }, { signal })
-      .then((r) => {
-        if (live()) setRows(r.rows || []);
-      })
-      .catch(() => {
-        if (live()) setRows([]);
-      })
-      .finally(() => {
-        if (live()) setRefreshing(false);
-      });
-  };
+  // A failed read is said as a failure, with Retry: never as "no patterns".
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [reads, setReads] = useState(0);
+  const reload = () => setReads((n) => n + 1);
   // Another namespace's patterns are not this one's: start from the skeleton.
+  const scopeKey = `${identity.org}/${identity.namespace}`;
+  const rowsFor = useRef(scopeKey);
   useAbortableEffect(
     (signal, live) => {
-      setRows(null);
-      load(signal, live);
+      if (!canList) return;
+      if (rowsFor.current !== scopeKey) {
+        rowsFor.current = scopeKey;
+        setRows(null);
+      }
+      setRefreshing(true);
+      setLoadError(null);
+      listBlacklist({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((r) => {
+          if (live()) setRows(r.rows || []);
+        })
+        .catch((e) => {
+          if (!live()) return;
+          setLoadError(e);
+          setRows([]);
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
+        });
     },
-    [identity.org, identity.namespace, canList],
+    [scopeKey, canList, reads],
   );
 
   const add = async () => {
@@ -119,7 +130,7 @@ export function PrivacyFilters({
       setPattern("");
       setReason("");
       toast("Pattern added", "ok");
-      load();
+      reload();
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     }
@@ -128,7 +139,7 @@ export function PrivacyFilters({
   const remove = async (pattern_id: string) => {
     try {
       await removeBlacklist({ org: identity.org }, pattern_id);
-      load();
+      reload();
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     }
@@ -215,12 +226,13 @@ export function PrivacyFilters({
           <Skeleton className={compact ? "h-10 w-full" : "h-40 w-full"} />
         </LoadingSkeleton>
       )}
-      {rows !== null && rows.length === 0 && compact && (
+      {loadError !== null && <ListState kind="error" things="privacy filters" error={loadError} onRetry={reload} />}
+      {loadError === null && rows !== null && rows.length === 0 && compact && (
         <p className="text-xs text-text-muted" role="status">
           {canAdd ? "No patterns yet." : "Nothing is refused here yet."}
         </p>
       )}
-      {rows !== null && rows.length === 0 && !compact && (
+      {loadError === null && rows !== null && rows.length === 0 && !compact && (
         <EmptyState
           icon="line-in-circle"
           title="No patterns"

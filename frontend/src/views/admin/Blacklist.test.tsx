@@ -1,7 +1,14 @@
-import { render, screen } from "../../test/rtl";
-import { describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BlacklistRow } from "../../api";
-import { PrivacyFilterHits } from "./Blacklist";
+import { useStore } from "../../lib/state";
+import { PrivacyFilterHits, PrivacyFilters } from "./Blacklist";
+
+const listBlacklist = vi.fn();
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return { ...actual, listBlacklist: (...a: unknown[]) => listBlacklist(...a), isAuthDisabled: () => false };
+});
 
 const row = (over: Partial<BlacklistRow>): BlacklistRow => ({
   pattern_id: "p1",
@@ -35,5 +42,26 @@ describe("a privacy filter's hits", () => {
     expect(screen.getByText("never matched")).toBeInTheDocument();
     rerender(<PrivacyFilterHits row={row({ last_hit_at: null })} />);
     expect(screen.getByText("last hit unknown")).toBeInTheDocument();
+  });
+});
+
+describe("privacy filters, a failed read", () => {
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ identity: null, whoami: null });
+  });
+
+  it("says the read failed, with Retry, never that there are no patterns", async () => {
+    useStore.setState({
+      identity: { org: "dev", namespace: "ns", agent: "loom-ui" },
+      whoami: { authenticated: true, subject: "a@x", org: "dev", roles: ["ADMIN"], namespaces: ["ns"] },
+    });
+    listBlacklist.mockRejectedValueOnce(new Error("down")).mockResolvedValue({ rows: [row({})] });
+    render(<PrivacyFilters />);
+    expect(await screen.findByText("Couldn't load privacy filters")).toBeInTheDocument();
+    expect(screen.queryByText("No patterns")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByText("Couldn't load privacy filters")).toBeNull());
+    expect(await screen.findByText("sk-")).toBeInTheDocument();
   });
 });

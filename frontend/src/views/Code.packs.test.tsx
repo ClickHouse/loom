@@ -154,13 +154,14 @@ describe("PR packs pages", () => {
       rows: Array.from({ length: Math.min(opts.limit, 120 - opts.offset) }, (_, i) => pack(1000 - opts.offset - i)),
       total: 120,
     }));
-    const { rerender } = render(<PacksTab id={ID} repo="acme/app" />);
+    // RepoDetail keys the tab by branch, as here.
+    const { rerender } = render(<PacksTab key={ID.namespace} id={ID} repo="acme/app" />);
     await screen.findByText("PR 1000");
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(await screen.findByText("PR 950")).toBeInTheDocument();
 
     const other = { org: "dev", namespace: "code-acme-release" };
-    rerender(<PacksTab id={other} repo="acme/app" />);
+    rerender(<PacksTab key={other.namespace} id={other} repo="acme/app" />);
     expect(await screen.findByText("PR 1000")).toBeInTheDocument();
     const reads = listCodeContextPacks.mock.calls.filter(([id]) => id.namespace === other.namespace);
     expect(reads.map(([, opts]) => opts.offset)).toEqual([0]);
