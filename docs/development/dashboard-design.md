@@ -107,7 +107,7 @@ Loom keeps a few elements of its own, on Click UI tokens:
 Every list-page change is checked against these before it is reviewed; each line is a defect class list pages are prone to.
 
 - **A server a release behind**: every new request input is ignored by it (and named in `ignored_args`); the page still works with what that server answers (no total, the first page again, exact matching). Test it with a fake server that ignores the input.
-- **Case**: a typed filter matches in any case, on the server and in the browser; a value sent to an exact-match field is sent as it is stored.
+- **Case**: a typed filter matches in any case, on the server and in the browser; a value sent to an exact-match field is sent as it is stored. The one exception is a typed agent on Memories: `memory.list` matches agents exactly, so an agent the list has not seen yet is sent as typed.
 - **States**: loading, empty, a filter that matches nothing, an error, and a read still in flight are five different screens; the toolbar shows in every one, and "nothing matches" is said only of a read of the current filter.
 - **The whole set**: a filter, a sort, a count or a select-all covers what the server holds, or says what it covers ("the newest 1,000").
 - **Focus**: anything that unmounts while focused (a button, a bar, a page) hands focus somewhere named; a page change lands on a visible heading.

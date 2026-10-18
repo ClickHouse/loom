@@ -19,6 +19,9 @@ export interface Place {
   /** The memory the drawer showed, and the writer agent it was read as. */
   inspected: string | null;
   inspectedAgent: string;
+  /** The namespace the entry was left in: under another, Back reopens nothing it names (a
+   *  memory, a document, a thread). */
+  namespace: string | null;
 }
 
 /** How long a restore waits for the page to draw what it restores (a lazy chunk, a list
@@ -47,7 +50,10 @@ function mainElement(): HTMLElement | null {
 /** Write the current place into the entry about to be left. `focusKey` names the element
  *  Back should focus when the focused one is not it (a popover link that opened the jump,
  *  where Back should land on the chip that opened the popover). */
-export function rememberPlace(inspected: { key: string | null; agent: string }, focusKey?: string | null): void {
+export function rememberPlace(
+  inspected: { key: string | null; agent: string; namespace: string | null },
+  focusKey?: string | null,
+): void {
   if (typeof window === "undefined") return;
   const active = document.activeElement;
   const keyed = active instanceof Element ? active.closest("[data-focus-key]") : null;
@@ -56,6 +62,7 @@ export function rememberPlace(inspected: { key: string | null; agent: string }, 
     focusKey: focusKey ?? keyed?.getAttribute("data-focus-key") ?? null,
     inspected: inspected.key,
     inspectedAgent: inspected.agent,
+    namespace: inspected.namespace,
   };
   patchEntry({ loomPlace: place });
 }
@@ -71,6 +78,7 @@ export function readPlace(state: unknown): Place | null {
     focusKey: typeof r.focusKey === "string" ? r.focusKey : null,
     inspected: typeof r.inspected === "string" ? r.inspected : null,
     inspectedAgent: typeof r.inspectedAgent === "string" ? r.inspectedAgent : "",
+    namespace: typeof r.namespace === "string" ? r.namespace : null,
   };
 }
 

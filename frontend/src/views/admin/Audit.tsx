@@ -335,8 +335,9 @@ export function Audit() {
           <ListToolbar
             label="Filter audit events"
             count={
+              // With older events still to load, the count is of those loaded: "100+ events".
               !error && rows !== null
-                ? `${visibleRows.length} ${visibleRows.length === 1 ? "event" : "events"}`
+                ? `${visibleRows.length}${older ? "+" : ""} ${visibleRows.length === 1 && !older ? "event" : "events"}`
                 : undefined
             }
           >
@@ -381,7 +382,8 @@ export function Audit() {
           {rows !== null && rows.length > 0 && visibleRows.length === 0 && (
             <ListState
               kind="filtered"
-              things="events"
+              // The filter covers the events loaded so far; older ones may still match.
+              things={older ? "loaded events" : "events"}
               filter={q ? filterQuery.trim() : "the filters set"}
               onClear={() => {
                 setFilterQuery("");

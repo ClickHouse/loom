@@ -582,7 +582,9 @@ function MemoryList() {
     return () => clearTimeout(t);
   }, [typedKey]);
   const filterPending = typedKey !== typedFilter;
-  // The server matches an agent exactly: a typed one is sent as the list has seen it written.
+  // memory.list matches an agent exactly: a typed agent the list has seen is sent as it is
+  // written; one it has not (its rows all past the first page) is sent as typed, so its case
+  // must match.
   const typed = JSON.parse(typedFilter) as { tags: string[]; agent: string };
   const typedAgent = typed.agent
     ? (seenAgents.find((a) => a.toLowerCase() === typed.agent.toLowerCase()) ?? typed.agent)

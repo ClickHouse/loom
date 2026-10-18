@@ -1040,7 +1040,7 @@ List memory keys under this identity, optionally filtered.
 | `include_superseded` | `bool` | `False` | `status='superseded'` rows (a later write replaced them) are skipped unless asked for; a served entry carries its `status`. |
 | `include_proposed` | `bool` | `False` | `status='proposed'` rows (facts on trial) are skipped unless asked for; `memory.proposals` lists them with their graded counts. |
 | `as_of` | `datetime \| None` | `None` | see MemoryGetInput.as_of |
-| `tags` | `list[str]` | *(computed)* | Hard OR-filter on the row's tags — the same `hasAny(tags, …)` predicate memory.search applies — so a tagged subset (`kind:false_positive`, `subsystem:Storages`) is one list call, not a recency page followed by a get per key. |
+| `tags` | `list[str]` | *(computed)* | Hard filter on the row's tags: any one of them by default (the `hasAny` predicate memory.search applies), every one with `tags_all`, exact unless `tags_any_case`. |
 | `tags_any_case` | `bool` | `False` | Match `tags` in any case (a browse page's `tag:api` finds rows tagged `API`); off, exactly, as agents rely on. |
 | `tags_all` | `bool` | `False` | Require every one of `tags` (a browse page's stacked `tag:a tag:b`); off, any one, as agents rely on. |
 | `contains` | `str \| None` | `None` | Only rows whose value or key holds this text, any case — the keyword filter of a browse page's search box, which must find every row that names a word (a ranked search returns its top k and misses the rest). |

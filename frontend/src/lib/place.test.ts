@@ -22,19 +22,20 @@ describe("rememberPlace / readPlace", () => {
     const main = page('<div data-focus-key="memory:a"><button>open a</button></div>');
     main.scrollTop = 300;
     main.querySelector("button")!.focus();
-    rememberPlace({ key: "a", agent: "bot" });
+    rememberPlace({ key: "a", agent: "bot", namespace: "team" });
     expect(history.state.graphSeed).toBe("x");
     expect(readPlace(history.state)).toEqual({
       scrollTop: 300,
       focusKey: "memory:a",
       inspected: "a",
       inspectedAgent: "bot",
+      namespace: "team",
     });
   });
 
   it("an explicit focus key wins over the focused element", () => {
     page("<button>popover link</button>");
-    rememberPlace({ key: null, agent: "" }, "entity:redis");
+    rememberPlace({ key: null, agent: "", namespace: null }, "entity:redis");
     expect(readPlace(history.state)?.focusKey).toBe("entity:redis");
   });
 
@@ -53,7 +54,10 @@ describe("restorePlace and arriveAt", () => {
   it("scrolls back once the page is tall enough, then focuses the keyed element", () => {
     const main = page("<h1>Memories</h1>");
     tall(main, 600);
-    restorePlace({ scrollTop: 900, focusKey: "entity:redis", inspected: "k", inspectedAgent: "" }, true);
+    restorePlace(
+      { scrollTop: 900, focusKey: "entity:redis", inspected: "k", inspectedAgent: "", namespace: null },
+      true,
+    );
     vi.advanceTimersByTime(20);
     expect(main.scrollTop).toBe(0);
     // The list and the drawer arrive.
@@ -73,7 +77,7 @@ describe("restorePlace and arriveAt", () => {
         '<button role="checkbox" aria-label="Select a"></button><button data-row-open="">a</button></div>',
     );
     tall(main, 2000);
-    restorePlace({ scrollTop: 0, focusKey: "memory:a", inspected: null, inspectedAgent: "" }, true);
+    restorePlace({ scrollTop: 0, focusKey: "memory:a", inspected: null, inspectedAgent: "", namespace: null }, true);
     vi.advanceTimersByTime(20);
     expect(document.activeElement).toBe(main.querySelector("[data-row-open]"));
   });
@@ -81,7 +85,7 @@ describe("restorePlace and arriveAt", () => {
   it("without a focus key, a changed view focuses its h1", () => {
     const main = page("<h1>Library</h1>");
     tall(main, 2000);
-    restorePlace({ scrollTop: 0, focusKey: null, inspected: null, inspectedAgent: "" }, true);
+    restorePlace({ scrollTop: 0, focusKey: null, inspected: null, inspectedAgent: "", namespace: null }, true);
     vi.advanceTimersByTime(20);
     expect(document.activeElement).toBe(main.querySelector("h1"));
     expect(main.querySelector("h1")!.getAttribute("tabindex")).toBe("-1");

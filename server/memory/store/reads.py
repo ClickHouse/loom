@@ -639,7 +639,8 @@ async def list_by_namespace(
       - memory_type: exact match (e.g. "preference", "procedural")
       - pinned_only: only rows where pinned=1
       - key_prefix:  startsWith(memory_key, prefix) — for hierarchical key spaces
-      - tags:        hasAny(tags, [...]) — the OR filter memory.search applies
+      - tags:        any one (hasAny, the filter memory.search applies), or every one with
+                     tags_all; exact, or lowercased on both sides with tags_any_case
       - contains:    case-insensitive substring of the value or the key — the
                      keyword filter a browse page's search box applies
 

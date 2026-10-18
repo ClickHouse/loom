@@ -87,6 +87,21 @@ describe("Audit filter", () => {
   });
 });
 
+describe("Audit counts over a partial load", () => {
+  it("counts the loaded events with a + and says a filter covers only those", async () => {
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [row("alice", "{}"), row("bob", "{}")],
+      next_cursor: "c1",
+    });
+    render(<Audit />);
+    await screen.findAllByText("Created namespace (private)");
+    const bar = document.querySelector<HTMLElement>('search[aria-label="Filter audit events"]');
+    expect(bar).toHaveTextContent("2+ events");
+    await userEvent.setup().type(screen.getByRole("textbox", { name: "Filter audit events" }), "carol");
+    expect(await screen.findByText(/No loaded events match/)).toBeInTheDocument();
+  });
+});
+
 describe("Audit failure", () => {
   it("says a failed read failed, with its request id and Retry, never 'No audit events'", async () => {
     vi.mocked(api.listAuditLog).mockRejectedValueOnce(

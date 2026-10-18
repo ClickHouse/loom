@@ -282,16 +282,63 @@ describe("a navigation leaves a place for Back to restore", () => {
   });
 
   it("Back reopens the memory the entry remembers, and is not a navigation", () => {
-    useStore.setState({ view: "graph", inspectedMemoryKey: null });
+    useStore.setState({
+      view: "graph",
+      inspectedMemoryKey: null,
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+    });
     const seq = useStore.getState().navSeq;
-    useStore
-      .getState()
-      .arriveFromHistory("memories", { scrollTop: 420, focusKey: null, inspected: "k", inspectedAgent: "bot" });
+    useStore.getState().arriveFromHistory("memories", {
+      scrollTop: 420,
+      focusKey: null,
+      inspected: "k",
+      inspectedAgent: "bot",
+      namespace: "team",
+    });
     expect(useStore.getState()).toMatchObject({
       view: "memories",
       inspectedMemoryKey: "k",
       inspectedAgent: "bot",
       navSeq: seq,
     });
+  });
+
+  it("Back to an entry left in another namespace does not reopen its memory here", () => {
+    useStore.setState({
+      view: "graph",
+      inspectedMemoryKey: null,
+      identity: { org: "dev", namespace: "other", agent: "loom-ui" },
+    });
+    // The entry as the app wrote it in "team": the URL names the memory, the state its namespace.
+    history.replaceState({ loomInspect: { key: "k", agent: "bot", namespace: "team" } }, "", "/memories?memory=k");
+    useStore.getState().arriveFromHistory("memories", {
+      scrollTop: 0,
+      focusKey: null,
+      inspected: "k",
+      inspectedAgent: "bot",
+      namespace: "team",
+    });
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+  });
+
+  it("a namespace switch takes the open memory and thread out of the URL", () => {
+    useStore.setState({ view: "memories", identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
+    history.replaceState(null, "", "/memories?memory=k");
+    useStore.getState().inspect("k", { agent: "bot" });
+    useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" });
+    expect(window.location.search).toBe("");
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+    // A reload of this entry opens nothing.
+    useStore.getState().bootView("memories");
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+  });
+
+  it("a reload opens the memory the URL names when the entry was left in this namespace", () => {
+    useStore.setState({ view: "memories", identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
+    history.replaceState(null, "", "/memories");
+    useStore.getState().inspect("k", { agent: "bot" });
+    useStore.setState({ inspectedMemoryKey: null });
+    useStore.getState().bootView("memories");
+    expect(useStore.getState()).toMatchObject({ inspectedMemoryKey: "k", inspectedAgent: "bot" });
   });
 });

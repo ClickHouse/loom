@@ -4,6 +4,8 @@ import type { MyNamespaceEntry, RunRow, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { RUNS_FIELDS, Runs } from "./Runs";
+import { getRun } from "../api";
+import userEvent from "@testing-library/user-event";
 import runsSource from "./Runs.tsx?raw";
 
 // The Runs page asks run.list for a field list and the server blanks every field it does
@@ -78,6 +80,9 @@ describe("Runs: the projected field list covers what the row reads", () => {
     // Row parameters in this file are `r`; a `r.<field>` read is a field the list must carry.
     const read = new Set(Array.from(runsSource.matchAll(/\br\.([a-z_]+)/g), (m: RegExpMatchArray) => m[1]));
     for (const field of read) expect(RUNS_FIELDS, `row reads r.${field}`).toContain(field);
+    // The opened row (`open`) is a list row too: the replay reads anything else off run.get.
+    const opened = new Set(Array.from(runsSource.matchAll(/\bopen\??\.([a-z_]+)/g), (m: RegExpMatchArray) => m[1]));
+    for (const field of opened) expect(RUNS_FIELDS, `the replay reads open.${field}`).toContain(field);
     expect(RUNS_FIELDS).toContain("memories_used");
     expect(RUNS_FIELDS).toContain("memories_written");
   });
@@ -106,6 +111,25 @@ describe("Runs: the projected field list covers what the row reads", () => {
       const [, opts] = listRuns.mock.calls[0];
       expect(opts?.fields).toEqual(RUNS_FIELDS);
       expect(await screen.findByText("fix the thing")).toBeInTheDocument();
+    });
+
+    it("the replay shows what only run.get carries: the request, the outcome, the response", async () => {
+      listRuns.mockResolvedValue([projected(RUNS_FIELDS, FULL)]);
+      vi.mocked(getRun).mockResolvedValue({
+        found: true,
+        run: { ...FULL, user_request: "make the tests pass", final_response: "done", confidence: 0.8 },
+        recalled: 0,
+        recalled_keys: [],
+        memories_written: [],
+        observations: 0,
+        turns: 0,
+        cost_usd: 0,
+      } as never);
+      render(<Runs />);
+      await userEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+      expect(await screen.findByText("make the tests pass")).toBeInTheDocument();
+      expect(screen.getByText("done")).toBeInTheDocument();
+      expect(screen.getByText("confidence 0.80")).toBeInTheDocument();
     });
 
     it("a row missing a list field renders as zero, never a crash (the 93bf0598f defect)", async () => {

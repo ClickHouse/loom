@@ -244,8 +244,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
     import server.memory.store as memory_repo
     from server.operations import read_projection
 
-    # The entry field whitelist (None = every field) and the hard OR tag filter, the predicate
-    # memory.search applies.
+    # The entry field whitelist (None = every field) and the hard tag filter: any one tag (the
+    # predicate memory.search applies), or every one with `tags_all`.
     keep = read_projection.resolve(
         _MemoryListEntry,
         list(input.fields or []),

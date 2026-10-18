@@ -45,8 +45,8 @@ import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 
-// The nine fields a run row reads of the twenty a run carries; run.get carries the rest
-// for the opened run.
+// The ten fields a run row reads of the twenty a run carries; the replay reads the rest
+// (the request, the expected outcome, the response, the confidence) from run.get.
 export const RUNS_FIELDS = [
   "run_id",
   "agent",
@@ -692,6 +692,8 @@ export function Runs() {
   const capped = local && shown !== null && shown.runs.length >= LOCAL_LIMIT;
   const rows = localRows ? localRows.slice(page * pageSize, (page + 1) * pageSize) : (shown?.runs ?? []);
   const busy = loading && shown !== null;
+  // The opened run as run.get answers it: the list row carries only RUNS_FIELDS.
+  const replayed = detail?.run ?? open;
   // The page the rows on screen are: the pager pages from it while they are what the list
   // shows, so a second Next during a read asks for the same page; for another filter or
   // page size it pages from the page asked for.
@@ -989,10 +991,10 @@ export function Runs() {
                 <span>took {fmtDuration(open.duration_ms)}</span>
               </>
             )}
-            {open.confidence > 0 && (
+            {(replayed?.confidence ?? 0) > 0 && (
               <>
                 <span>·</span>
-                <span>confidence {open.confidence.toFixed(2)}</span>
+                <span>confidence {replayed?.confidence.toFixed(2)}</span>
               </>
             )}
           </div>
@@ -1016,14 +1018,14 @@ export function Runs() {
               }, naming nothing it relied on, and no write carried its run_id. The fields below say what each one would have needed.`}
             />
           )}
-          {open?.user_request && (
+          {replayed?.user_request && (
             <Section title="User request">
-              <div className="text-sm whitespace-pre-wrap">{open.user_request}</div>
+              <div className="text-sm whitespace-pre-wrap">{replayed.user_request}</div>
             </Section>
           )}
-          {open?.expected_outcome && (
+          {replayed?.expected_outcome && (
             <Section title="Expected outcome">
-              <div className="text-sm whitespace-pre-wrap">{open.expected_outcome}</div>
+              <div className="text-sm whitespace-pre-wrap">{replayed.expected_outcome}</div>
             </Section>
           )}
           <Section title="Memories the agent relied on">
@@ -1115,9 +1117,9 @@ export function Runs() {
             )}
             {!detailLoading && !detail && <div className="text-xs text-text-muted">Could not load the replay.</div>}
           </Section>
-          {open?.final_response && (
+          {replayed?.final_response && (
             <Section title="Final response">
-              <div className="text-sm whitespace-pre-wrap">{open.final_response}</div>
+              <div className="text-sm whitespace-pre-wrap">{replayed.final_response}</div>
             </Section>
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (

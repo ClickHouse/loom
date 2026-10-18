@@ -133,7 +133,10 @@ function pushView(v: View, opts: NavOptions = {}, remember = true): void {
   if (window.location.pathname + window.location.search !== want) {
     if (remember) {
       const s = useStore.getState();
-      rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent }, opts.focusKey);
+      rememberPlace(
+        { key: s.inspectedMemoryKey, agent: s.inspectedAgent, namespace: s.identity?.namespace ?? null },
+        opts.focusKey,
+      );
     }
     history.pushState(opts.back ? { loomBack: opts.back } : null, "", want);
   }
@@ -168,9 +171,21 @@ function linkedAgent(key: string): string {
   return "*";
 }
 
-/** What the URL opens on view `v`: the memory, document or thread its query names. */
-function openedByUrl(v: View): Partial<AppState> {
-  const memory = v === "memories" ? urlParam("memory") : null;
+/** The namespace the entry's open memory was opened in, when the entry says. */
+function linkedNamespace(key: string): string | null {
+  const s: unknown = typeof history === "undefined" ? null : history.state;
+  const remembered = s && typeof s === "object" ? (s as Record<string, unknown>).loomInspect : null;
+  if (!remembered || typeof remembered !== "object") return null;
+  const r = remembered as Record<string, unknown>;
+  return r.key === key && typeof r.namespace === "string" ? r.namespace : null;
+}
+
+/** What the URL opens on view `v`: the memory, document or thread its query names. A memory
+ *  the entry remembers from another namespace than `namespace` stays closed. */
+function openedByUrl(v: View, namespace: string | null): Partial<AppState> {
+  const named = v === "memories" ? urlParam("memory") : null;
+  const from = named ? linkedNamespace(named) : null;
+  const memory = named && (from === null || from === namespace) ? named : null;
   const doc = v === "knowledge" ? urlParam("doc") : null;
   const thread = v === "sessions" ? urlParam("thread") : null;
   return {
@@ -309,12 +324,15 @@ export const useStore = create<AppState>((set, get) => ({
   setMyNamespaces: (myNamespaces) => set({ myNamespaces }),
   setWhoami: (whoami) => set({ whoami }),
   // A memory belongs to its namespace: a switch, from any picker, closes the open one.
-  setIdentity: (identity) =>
-    set((s) =>
-      s.identity && identity && s.identity.namespace !== identity.namespace
-        ? { identity, inspectedMemoryKey: null }
-        : { identity },
-    ),
+  // Its URL goes with it (`?memory=`, `?thread=`), or a reload would reopen it in the new one.
+  setIdentity: (identity) => {
+    const s = get();
+    if (s.identity && identity && s.identity.namespace !== identity.namespace) {
+      if (urlParam("memory") !== null) setViewParam("memory", null, { loomInspect: null });
+      if (urlParam("thread") !== null) setViewParam("thread", null);
+      set({ identity, inspectedMemoryKey: null, pendingConversationThread: null });
+    } else set({ identity });
+  },
   setView: (view) => get().navigate(view),
   navigate: (view, opts = {}) => {
     // Mirror the view into the URL first (skipping no-op pushes): the entry being left
@@ -329,15 +347,19 @@ export const useStore = create<AppState>((set, get) => ({
   },
   bootView: (view) => {
     pushView(view, {}, false);
-    set({ view, ...openedByUrl(view) });
+    set({ view, ...openedByUrl(view, get().identity?.namespace ?? null) });
   },
   arriveFromHistory: (view, place) => {
-    const opened = openedByUrl(view);
+    const namespace = get().identity?.namespace ?? null;
+    // An entry left in another namespace reopens nothing it names in this one.
+    const here = !place || place.namespace === namespace;
+    const opened = here ? openedByUrl(view, namespace) : {};
+    const inspected = here ? (place?.inspected ?? null) : null;
     set({
       view,
       ...opened,
-      inspectedMemoryKey: place?.inspected ?? opened.inspectedMemoryKey ?? null,
-      inspectedAgent: place?.inspected ? place.inspectedAgent : (opened.inspectedAgent ?? ""),
+      inspectedMemoryKey: inspected ?? opened.inspectedMemoryKey ?? null,
+      inspectedAgent: inspected ? (place?.inspectedAgent ?? "") : (opened.inspectedAgent ?? ""),
     });
   },
   namespacePickerOpen: false,
@@ -349,7 +371,9 @@ export const useStore = create<AppState>((set, get) => ({
     // read as in the entry's state for a reload.
     if (get().view === "memories") {
       setViewParam("memory", inspectedMemoryKey, {
-        loomInspect: inspectedMemoryKey ? { key: inspectedMemoryKey, agent } : null,
+        loomInspect: inspectedMemoryKey
+          ? { key: inspectedMemoryKey, agent, namespace: get().identity?.namespace ?? null }
+          : null,
       });
     }
   },

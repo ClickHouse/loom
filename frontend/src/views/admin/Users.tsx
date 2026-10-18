@@ -99,9 +99,11 @@ export function Users() {
   }
 
   const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
+  // One read holds at most 1,000 accounts: past that the list says it holds the first ones.
+  const cut = data !== null && data.total > data.users.length;
   const count =
     !error && data && rows.length > 0
-      ? `${(page * pageSize + 1).toLocaleString()}–${(page * pageSize + pageRows.length).toLocaleString()} of ${rows.length.toLocaleString()}`
+      ? `${(page * pageSize + 1).toLocaleString()}–${(page * pageSize + pageRows.length).toLocaleString()} of ${rows.length.toLocaleString()}${cut ? ` · the first ${data.users.length.toLocaleString()} of ${data.total.toLocaleString()} accounts` : ""}`
       : undefined;
   const pick = (value: string) => {
     setFilter(value as Filter);
@@ -109,7 +111,7 @@ export function Users() {
   };
   const options = data
     ? [
-        { value: "all", label: "All", count: data.users.length },
+        { value: "all", label: "All", count: data.total },
         { value: "pending", label: "Pending elevation", count: data.total_pending_elevations, icon: "clock" as const },
         { value: "active7d", label: "Active last 7d", count: data.total_active_last_7d },
       ]

@@ -359,7 +359,8 @@ class RunListInput(BaseModel):
     # (default) is the first page. A replica a release behind has no `offset`: it serves the
     # first page and names the key in `ignored_args`.
     offset: int = Field(default=0, ge=0, le=100_000)
-    # The page's order. `started_*` by when the run began, `duration_*` by
+    # Sort by start time, duration or memories relied on, ascending or descending; default
+    # `started_desc` (newest first). `started_*` by when the run began, `duration_*` by
     # duration_ms (0 while a run is active), `relied_on_*` by how many memories
     # the run relied on (memories_used). Each breaks ties on started_at and then
     # run_id, so pages never repeat or skip a run. "started_desc" (default) is

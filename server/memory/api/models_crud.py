@@ -555,9 +555,9 @@ class MemoryListInput(_Identity):
     # unless asked for; `memory.proposals` lists them with their graded counts.
     include_proposed: bool = False
     as_of: datetime | None = None  # see MemoryGetInput.as_of
-    # Hard OR-filter on the row's tags — the same
-    # `hasAny(tags, …)` predicate memory.search applies — so a tagged subset
-    # (`kind:false_positive`, `subsystem:Storages`) is one list call, not a
+    # Hard filter on the row's tags: any one of them by default (the `hasAny` predicate
+    # memory.search applies), every one with `tags_all`, exact unless `tags_any_case`. A
+    # tagged subset (`kind:false_positive`, `subsystem:Storages`) is one list call, not a
     # recency page followed by a get per key. Empty = no tag filter.
     tags: list[str] = Field(default_factory=list, max_length=64)
     # Match `tags` in any case (a browse page's `tag:api` finds rows tagged `API`); off,

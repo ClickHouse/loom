@@ -101,6 +101,17 @@ describe("Users table", () => {
 const toolbar = () => document.querySelector<HTMLElement>('search[aria-label="Filter users"]');
 
 describe("Users count, times and failure", () => {
+  it("says the list holds the first 1,000 accounts when the org has more", async () => {
+    adminListUsers.mockResolvedValue({
+      ...result(Array.from({ length: 1000 }, (_, i) => user(i + 1))),
+      total: 3421,
+    });
+    render(<Users />);
+    await screen.findByText("user-1@example.com");
+    expect(toolbar()).toHaveTextContent("the first 1,000 of 3,421 accounts");
+    expect(screen.getByRole("button", { name: /All/ })).toHaveTextContent("All3421");
+  });
+
   it("counts the page in the toolbar, once", async () => {
     adminListUsers.mockResolvedValue(result(Array.from({ length: 120 }, (_, i) => user(i + 1))));
     render(<Users />);
