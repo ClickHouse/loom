@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 
 
 DATABASE = "loom"
+# Telemetry Loom derives from its own tables (039_request_sli.sql). Only the
+# migrations write it: its refreshable view runs as the user that created it.
+TELEMETRY_DATABASE = "loom_telemetry"
+TELEMETRY_GRANTS = "CREATE DATABASE, CREATE TABLE, CREATE VIEW, INSERT, SELECT"
 # The oldest server that applies every migration: 26.3 still gates stem() and
 # 25.12 the text index. CI tests the latest release (dev/clickhouse_release.sh);
 # features of newer servers (the Quantized codec, aiEmbed) are probed where used.
@@ -262,14 +266,14 @@ def _require(ch: Client, user: str, grants: str) -> None:
         raise _lacks(user, ", ".join(missing))
 
 
-def _granted(ch: Client, grants: str) -> bool:
-    return str(ch.command(f"CHECK GRANT {grants} ON {DATABASE}.*")) == "1"
+def _granted(ch: Client, grants: str, database: str = DATABASE) -> bool:
+    return str(ch.command(f"CHECK GRANT {grants} ON {database}.*")) == "1"
 
 
-def _lacks(user: str, grants: str) -> PreflightError:
+def _lacks(user: str, grants: str, database: str = DATABASE) -> PreflightError:
     return PreflightError(
-        f"{user!r} is missing {grants} on {DATABASE}.*: "
-        f"an admin has to run GRANT CURRENT GRANTS ON {DATABASE}.* TO `{user}`",
+        f"{user!r} is missing {grants} on {database}.*: "
+        f"an admin has to run GRANT CURRENT GRANTS ON {database}.* TO `{user}`",
         needs_admin=True,
     )
 
@@ -342,6 +346,14 @@ def check(
                 "migrations need: an admin has to run Loom's setup SQL",
                 needs_admin=True,
             )
+            if migrating:
+                raise error
+            later.append(error)
+        if not _granted(ch, TELEMETRY_GRANTS, TELEMETRY_DATABASE):
+            missing = [
+                g for g in TELEMETRY_GRANTS.split(", ") if not _granted(ch, g, TELEMETRY_DATABASE)
+            ]
+            error = _lacks(user, ", ".join(missing), TELEMETRY_DATABASE)
             if migrating:
                 raise error
             later.append(error)

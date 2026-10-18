@@ -154,6 +154,36 @@ def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None
     ]
 
 
+def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
+    import asyncio
+
+    import pytest
+    from starlette.requests import Request
+
+    from server.auth import routes
+    from server.identity.app import me_callers
+    from server.observability import metrics
+    from server.tasks.app import watch_routes
+    from server.transport import http
+
+    counter = _Counter()
+    monkeypatch.setattr(metrics, "_auth_refusals", counter)
+    monkeypatch.setattr(type(http.settings), "auth_actually_required", lambda self: True)
+    request = Request({"type": "http", "headers": []})
+    for refuse in (http._extract_auth, me_callers._authed, watch_routes._bearer_auth):
+        with pytest.raises(HTTPException) as e:
+            refuse(request)
+        assert e.value.status_code == 401
+    assert counter.calls == [{"reason": "missing", "loom.transport": "http"}] * 3
+
+    # The token check counts a refused token, not a signed-out caller.
+    counter.calls.clear()
+    assert asyncio.run(routes.whoami(request)) == {"authenticated": False}
+    bad = Request({"type": "http", "headers": [(b"authorization", b"Bearer not-a-jwt")]})
+    assert asyncio.run(routes.whoami(bad))["authenticated"] is False
+    assert counter.calls == [{"reason": "invalid", "loom.transport": "http"}]
+
+
 def test_health_problems_need_no_clickhouse() -> None:
     from server.health import health_problems
 

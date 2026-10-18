@@ -4251,9 +4251,10 @@ AS SELECT
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
     max(ts) AS ts_hwm
 FROM loom.agent_events
-WHERE (kind = 'request') AND (transport != '') AND (ts > greatest((
+WHERE (kind = 'request') AND (transport != '') AND (slo_class != '') AND (ts > greatest((
     SELECT max(ts_hwm)
     FROM loom_telemetry.sli_minute
+    WHERE minute >= toStartOfMinute(now() - toIntervalDay(31))
 ), now64(3) - toIntervalDay(31))) AND (ts <= (now64(3) - toIntervalSecond(10)))
 GROUP BY
     minute,

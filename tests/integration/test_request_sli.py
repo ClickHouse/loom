@@ -94,23 +94,27 @@ async def test_an_mcp_call_is_ledgered_with_its_transport(
 
 
 @pytest.mark.asyncio
-async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_rows_without_a_transport(
+async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassified_ones(
     ch_client,
 ) -> None:
-    """Rows written as the ledger writes them; one has no transport, as a
-    build without the SLI columns writes it, and is left out."""
-    from datetime import UTC, datetime, timedelta
+    """Rows written as the ledger writes them, stamped now: a refresh folds
+    rows at least 10 s old past the newest one folded, so a row stamped
+    earlier could fall behind what the scheduled refreshes already folded.
+    One has no transport, as a build without the SLI columns writes it, and
+    one no SLO class, as MCP's initialize; both are left out."""
+    from datetime import UTC, datetime
 
     org = unique_org("sli-rollup")
-    ts = datetime.now(UTC) - timedelta(seconds=30)
+    ts = datetime.now(UTC)
     base = {"org": org, "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
     rows = [
-        # (transport, success, error_code, status_class, latency_ms, budget_ms)
-        ("http", True, "", "ok", 50, 100),
-        ("http", True, "", "ok", 500, 100),  # slow
-        ("mcp", False, "RATE_LIMITED", "client", 0, 100),
-        ("http", False, "INTERNAL_ERROR", "server", 20, 100),
-        ("", False, "INTERNAL_ERROR", "", 20, 0),  # an older build's row
+        # (transport, slo_class, success, error_code, status_class, latency_ms, budget_ms)
+        ("http", "read", True, "", "ok", 50, 100),
+        ("http", "read", True, "", "ok", 500, 100),  # slow
+        ("mcp", "read", False, "RATE_LIMITED", "client", 0, 100),
+        ("http", "read", False, "INTERNAL_ERROR", "server", 20, 100),
+        ("", "", False, "INTERNAL_ERROR", "", 20, 0),  # an older build's row
+        ("mcp", "", True, "", "ok", 5, 0),  # no registered op
     ]
     ch_client.insert(
         "loom.agent_events",
@@ -121,7 +125,7 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_rows_witho
                 "memory.get",
                 uuid.uuid4().hex,
                 t,
-                "read",
+                c,
                 s,
                 b,
                 ok,
@@ -129,7 +133,7 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_rows_witho
                 lat,
                 "request",
             ]
-            for t, ok, e, s, lat, b in rows
+            for t, c, ok, e, s, lat, b in rows
         ],
         column_names=[
             "ts",
@@ -146,7 +150,6 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_rows_witho
             "kind",
         ],  # fmt: skip
     )
-    ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
 
     def _rolled() -> tuple | None:
         got = ch_client.query(
@@ -158,10 +161,12 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_rows_witho
         return got if got[0] else None
 
     async def _seen() -> tuple | None:
+        # Nothing qualifies for the first 10 s; refreshing each poll folds them then.
+        ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
         return _rolled()
 
     requests, server, client, limited, slow, p99 = await eventually(
-        _seen, max_wait=30.0, description="the rollup of the inserted rows"
+        _seen, max_wait=45.0, interval=2.0, description="the rollup of the inserted rows"
     )
     assert (requests, server, client, limited, slow) == (4, 1, 1, 1, 1)
     assert 50 <= p99 <= 500  # successful requests only

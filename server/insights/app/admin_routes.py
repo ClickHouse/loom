@@ -77,16 +77,13 @@ async def require_org_admin(request: Request) -> AuthInfo | None:
 def _verified_admin(request: Request, needed: Role) -> AuthInfo | None:
     """A per-namespace admin (a flat `admin` role, or a scoped token's
     `ns_roles`) is not deployment or org authority and never passes."""
-    from server.auth.bearer import verify_bearer_header
+    from server.auth.bearer import missing_bearer, verify_bearer_header
 
     if not settings.auth_actually_required():
         return None
     info = verify_bearer_header(request.headers.get("Authorization"))
     if info is None:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
-        )
+        raise missing_bearer()
     if info.has_ns_roles() or not info.has_role(needed):
         raise HTTPException(
             status_code=403,

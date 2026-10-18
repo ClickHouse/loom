@@ -33,8 +33,9 @@ _SEARCH_OPS = frozenset(
     }
 )
 
-# Refusals the transports record without the exception that raised them;
-# every one answers a 4xx.
+# Refusals the transports record without the exception that raised them,
+# counted as the caller's. Each answers a 4xx but IDEMPOTENT_IN_PROGRESS, a 503
+# with Retry-After that a client causes by retrying a key still running.
 CLIENT_CODES = frozenset(
     {
         "AUTH_INVALID",

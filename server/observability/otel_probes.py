@@ -561,10 +561,12 @@ _STORAGE_PARTS_SQL = """
         GROUP BY table
 """
 
+# A view outside `loom` is named with its database (loom_telemetry.sli_minute_refresh).
 _VIEW_REFRESH_SQL = """
-        SELECT view, status, last_success_time, exception
+        SELECT if(database = 'loom', view, concat(database, '.', view)) AS view,
+               status, last_success_time, exception
         FROM system.view_refreshes
-        WHERE database = 'loom'
+        WHERE database IN ('loom', 'loom_telemetry')
 """
 
 

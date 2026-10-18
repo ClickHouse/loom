@@ -171,7 +171,7 @@ HTTP 403, raised as `server.core.errors.AuthInsufficientError`. A public 403 tha
 
 #### `AUTH_INVALID`
 
-Raised in `server/auth/bearer.py`, `server/auth/login.py`, `server/identity/app/me_callers.py`, `server/identity/app/me_setup.py`, `server/insights/app/admin_routes.py`, `server/knowledge/app/download_routes.py`, `server/transport/http.py`. What to do: [common errors](#common-errors-and-what-to-do).
+Raised in `server/auth/bearer.py`, `server/auth/login.py`. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `AUTH_UNAVAILABLE`
 

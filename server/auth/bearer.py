@@ -37,6 +37,16 @@ def bearer_token(authorization: str | None) -> str | None:
     return token
 
 
+def missing_bearer() -> HTTPException:
+    """The 401 for a request that carries no bearer where one is required,
+    counted in `loom.auth.refusals` as `missing`."""
+    record_auth_refusal(None, transport="http")
+    return HTTPException(
+        status_code=401,
+        detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
+    )
+
+
 def verify_bearer_header(authorization: str | None) -> AuthInfo | None:
     """The principal an `Authorization` header names, None when it carries
     no credential; HTTPException 401 / 503 as `verify_bearer`."""

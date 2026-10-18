@@ -23,7 +23,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 
-from server.auth.bearer import verify_bearer_header
+from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.jwt import AuthInfo
 from server.code.app.common import (
     schedule_code_trace_validation_failure,
@@ -121,16 +121,10 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     Raises HTTPException(401) on present-but-invalid tokens, or on missing
     tokens when auth_required=True.
     """
-    from server.observability.metrics import record_auth_refusal
-
     auth = verify_bearer_header(request.headers.get("Authorization"))  # counts its own refusals
     if auth is None:
         if settings.auth_actually_required():
-            record_auth_refusal(None, transport="http")
-            raise HTTPException(
-                status_code=401,
-                detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
-            )
+            raise missing_bearer()
         return None
 
     # Trusted-caller impersonation: a subject on LOOM_TRUSTED_CALLERS carrying

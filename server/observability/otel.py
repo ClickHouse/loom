@@ -248,7 +248,7 @@ def _make_metric_exporter(exporter_mode: str, endpoint: str) -> Any:
     )
 
 
-def _init_metrics(resource: Any, exporter_mode: str = "ch", endpoint: str = "") -> None:
+def _init_metrics(resource: Any, exporter_mode: str, endpoint: str) -> None:
     """The MeterProvider, the per-op request instruments, the domain metrics and
     the state gauges. Never raises: metrics must not stop startup."""
     global _meter_provider, _request_counter, _request_duration
