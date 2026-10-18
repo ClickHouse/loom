@@ -232,7 +232,8 @@ winner does not stay on the review queue against a retired row. The follow is ow
 committed `triples_follow_owed` projection-failure row holds the pair and is resolved once
 the follow lands, so a failure or a crash in between leaves it for the projection repair,
 which follows a pair only while its loser is retired behind its winner. The acting of a
-judged row (its pairs, records, follows and audit row) is shielded from cancellation. A flag is
+judged row (its pairs, records, follows and audit row) is shielded from cancellation, and
+a cancelled pass ends only once it has finished. A flag is
 `mark_peers_conflicted`; a clear removes the pair from each side's `conflict_with`, and a
 row left with no flag is `active` again, on its vector row too. One hash-only
 `memory.conflict_resolver` audit row per judged row that changed memory lists the pairs,
@@ -250,12 +251,13 @@ actions, verdicts and confidences, never the text.
 - A row is stamped judged only after its actions. A pass cut short judges it again, and
   acting twice changes nothing: a retired row is no longer live, an existing flag is left
   as it is, and a cleared flag has nothing left to clear.
-- A pass judges `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` (8) rows at once. The re-read
-  and the action of each judged row run under one lock per pass, so when two rows judged
-  at once both call the same peer stale, the second re-reads it retired and leaves it.
-  Inside it, the peer's key write lock is held from the re-read to the write, as a
-  conditional revision holds it from its read to its insert, so a retirement never lands
-  over a revision; no writer takes the pass lock, so the two cannot deadlock.
+- A pass judges `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` (8) rows at once. A pair is
+  re-read and written under both rows' key write locks, taken in lock-name order, as a
+  conditional revision holds its key from its read to its insert: a resolver write never
+  lands over a revision, and when two rows judged at once both call the same peer stale,
+  the second re-reads it retired and leaves it. A writer takes one key, so nothing
+  deadlocks; a key held past the lock's wait leaves the pair to that write's own mark.
+  The record and the follow of a retirement run after the locks are released.
 - The queue reads leave out a namespace over its daily LLM cost cap
   (`observability.budget`) and an org with an erasure queued, running or failed and due a
   retry (an abandoned saga does not count), so their rows stay owed without taking places

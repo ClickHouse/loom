@@ -29,7 +29,8 @@ import asyncio
 import calendar
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from types import SimpleNamespace
@@ -232,16 +233,16 @@ async def _assertion_order(org: str, namespace: str, rows: list[Any]) -> dict[st
     return out
 
 
-async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
-    """Supersede `peer` behind the judged row `row`, recorded and followed. The
-    caller has checked that `peer` was stated first.
+async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
+    """Supersede `peer` behind the judged row `row`; the caller has checked that `peer`
+    was stated first. Returns what `_after_retire` records and follows, or None.
 
     The follow is queued for the projection repair before the supersede commits
     (FOLLOW_OWED; the repair follows a pair only while its loser is retired behind
     its winner, so an intent whose retirement never landed changes nothing), and
     resolved once the follow lands: a crash between the two leaves the fact for the
     repair, not open forever. No intent, no retirement."""
-    from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
+    from server.memory.app.auto_resolution import CONFLICT_RESOLVER
     from server.memory.app.conflicts import apply_refines
     from server.memory.app.projection_failures import FOLLOW_OWED, record_projection_failure
 
@@ -274,14 +275,21 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> bool:
     retired = [{**r, "label": cr.UPDATE} for r in into.get(CONFLICT_RESOLVER, [])]
     if not retired:
         await _done(org, intent)
-        return False
+        return None
+    return SimpleNamespace(intent=intent, retired=retired, agent=str(winner.agent))
+
+
+async def _after_retire(org: str, namespace: str, done: Any) -> None:
+    """The retirement's record and follow, outside the keys' locks: neither writes a
+    memory row."""
+    from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
+
     await record_auto_supersessions(
-        org=org, namespace=namespace, retired=retired, reason=CONFLICT_RESOLVER
+        org=org, namespace=namespace, retired=done.retired, reason=CONFLICT_RESOLVER
     )
-    pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in retired]
-    if await _follow(org, namespace, str(winner.agent), pairs):
-        await _done(org, intent)
-    return True
+    pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in done.retired]
+    if await _follow(org, namespace, done.agent, pairs):
+        await _done(org, done.intent)
 
 
 async def _done(org: str, intent: str) -> None:
@@ -389,7 +397,7 @@ async def _clear(org: str, row: Any, peer: Any) -> bool:
     return a or b
 
 
-async def _act(action: str, org: str, namespace: str, row: Any, peer: Any) -> bool:
+async def _act(action: str, org: str, namespace: str, row: Any, peer: Any) -> Any:
     if action == cr.RETIRE:
         return await _retire(org, namespace, row, peer)
     if action == cr.FLAG:
@@ -400,73 +408,97 @@ async def _act(action: str, org: str, namespace: str, row: Any, peer: Any) -> bo
 _COUNTED = {cr.RETIRE: "retired", cr.FLAG: "flagged", cr.CLEAR: "cleared"}
 
 
+def _identity(r: Any) -> tuple[str, str, str, str]:
+    return (
+        str(_field(r, "agent")),
+        str(_field(r, "user_id")),
+        str(_field(r, "session_id")),
+        str(_field(r, "memory_key")),
+    )
+
+
+@asynccontextmanager
+async def _pair_locks(org: str, namespace: str, row: Any, peer: Any) -> AsyncIterator[None]:
+    """Both rows' key write locks, taken in lock-name order: every resolver write to a
+    row is made under its key's lock, from its re-read to its write, as a conditional
+    revision holds it from its read to its insert. A writer takes one key, and two
+    settles of a pair take the two in the same order, so none waits on another."""
+    from server.memory.store.key_write_lock import key_write_locks, lock_name
+
+    keys = sorted({_identity(row), _identity(peer)}, key=lambda k: lock_name(org, namespace, *k))
+    async with AsyncExitStack() as stack:
+        for k in keys:
+            await stack.enter_async_context(key_write_locks.hold(org, namespace, *k))
+        yield
+
+
 async def _settle_pair(
     org: str,
     namespace: str,
-    judged: tuple[str, str],
+    row: Any,
     peer: Mapping[str, Any],
     action: str,
+    order: Mapping[str, tuple[int, int]],
     counts: Counts,
 ) -> dict[str, Any] | None:
     """Act on one pair after re-reading both rows; what was done ({"action": ...}, for
-    the audit row) when something changed, else None.
+    the audit row) when something changed, else None. A key another write holds past
+    the lock's wait leaves the pair alone: that write's own mark brings it back."""
+    from server.core.errors import PreconditionFailedError
 
-    Under the peer's key write lock: a conditional revision holds it from its read to
-    its insert, and a retirement written in between would land over that revision.
-    The lock is taken under the pass's `acting` lock; no writer takes `acting`."""
-    from server.memory.store.key_write_lock import key_write_locks
-
-    async with key_write_locks.hold(
-        org,
-        namespace,
-        str(peer["agent"]),
-        str(peer["user_id"]),
-        str(peer["session_id"]),
-        str(peer["memory_key"]),
-    ):
-        return await _settle_locked_pair(org, namespace, judged, peer, action, counts)
+    try:
+        async with _pair_locks(org, namespace, row, peer):
+            taken, retired = await _settle_locked_pair(
+                org, namespace, row, peer, action, order, counts
+            )
+    except PreconditionFailedError:
+        counts.skipped_changed += 1
+        return None
+    if retired is not None:
+        await _after_retire(org, namespace, retired)
+    return taken
 
 
 async def _settle_locked_pair(
     org: str,
     namespace: str,
-    judged: tuple[str, str],
+    judged: Any,
     peer: Mapping[str, Any],
     action: str,
+    order: Mapping[str, tuple[int, int]],
     counts: Counts,
-) -> dict[str, Any] | None:
-    row_id, row_sha = judged
-    row, head = await _head(org, row_id), await _head(org, str(peer["memory_id"]))
+) -> tuple[dict[str, Any] | None, Any]:
+    row, head = await _head(org, str(judged.memory_id)), await _head(org, str(peer["memory_id"]))
     if not (
-        _holds(row, namespace, row_sha) and _holds(head, namespace, str(peer["content_sha256"]))
+        _holds(row, namespace, str(judged.content_sha256 or ""))
+        and _holds(head, namespace, str(peer["content_sha256"]))
     ):
         counts.skipped_changed += 1
-        return None
+        return None, None
     if row.pinned or head.pinned:
         counts.skipped_pinned += 1
-        return None
+        return None, None
     # Right before the write: an erasure requested meanwhile deletes what this writes.
     if await queue.under_erasure(org):
-        return None
+        return None, None
     if action == cr.CLEAR and not (
         str(head.memory_id) in row.conflict_with or str(row.memory_id) in head.conflict_with
     ):
-        return None  # nothing flagged between them: nothing to clear
-    if action == cr.RETIRE:
-        order = await _assertion_order(org, namespace, [row, head])
-        if not order[str(head.memory_id)] < order[str(row.memory_id)]:
-            # "update" says the judged row is newer; the order does not show it. A person
-            # decides.
-            action = cr.FLAG
-    if not await _act(action, org, namespace, row, head):
-        return None
+        return None, None  # nothing flagged between them: nothing to clear
+    if action == cr.RETIRE and not order[str(head.memory_id)] < order[str(row.memory_id)]:
+        # "update" says the judged row is newer; the order does not show it. A person
+        # decides.
+        action = cr.FLAG
+    done = await _act(action, org, namespace, row, head)
+    if not done:
+        return None, None
     setattr(counts, _COUNTED[action], getattr(counts, _COUNTED[action]) + 1)
     taken: dict[str, Any] = {"action": action}
     if action == cr.RETIRE and str(head.memory_id) in row.conflict_with:
         # The pair is settled: the winner's flag against the row it retired goes too,
         # or it stays on the review queue, stamped and never re-checked.
         taken["flag_cleared"] = await _unlink(org, row, str(head.memory_id))
-    return taken
+    return taken, (done if action == cr.RETIRE else None)
 
 
 async def _audit(
@@ -504,15 +536,10 @@ async def _current(q: Mapping[str, Any]) -> Any:
     return rows.get(key)
 
 
-async def resolve_row(
-    q: Mapping[str, Any], *, policy: str, counts: Counts, acting: asyncio.Lock | None = None
-) -> None:
+async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> None:
     """Judge one queue row and act on its pairs, then stamp it judged. A row whose
     head is no longer the queued write is skipped unstamped: its new write carries
-    its own mark. A provider failure raises, and the row stays owed.
-
-    Rows judged at the same time share `acting`: it is held from the re-read of a
-    pair to its write, so two rows that judged the same peer act on it once."""
+    its own mark. A provider failure raises, and the row stays owed."""
     org, namespace, sha = str(q["org"]), str(q["namespace"]), str(q.get("content_sha256") or "")
     row = await _current(q)
     if row is not None and sha and str(row.content_sha256 or "") != sha:
@@ -534,15 +561,7 @@ async def resolve_row(
     if peers:
         row, peers = await _still_unprotected(org, row, peers)
     if row is not None and peers:
-        await _judge_and_act(
-            org,
-            namespace,
-            row,
-            peers,
-            policy=policy,
-            counts=counts,
-            acting=acting or asyncio.Lock(),
-        )
+        await _judge_and_act(org, namespace, row, peers, policy=policy, counts=counts)
     await queue.stamp_judged(q)  # under erasure it writes nothing: the row stays owed
 
 
@@ -576,9 +595,9 @@ async def _judge_and_act(
     *,
     policy: str,
     counts: Counts,
-    acting: asyncio.Lock,
 ) -> None:
-    """Judge the row and act on the answer."""
+    """Judge the row and act on the answer. What the acting reads (the assertion
+    order) is read before the call, so a failure there costs no call."""
     new = cr.Note(
         str(row.memory_id), str(row.memory_key), _plain(memory_repo.stored_value_text(row))
     )
@@ -586,16 +605,22 @@ async def _judge_and_act(
         cr.Note(str(p["memory_id"]), str(p["memory_key"]), _plain(str(p["value"])), p["similarity"])
         for p in peers
     ]
+    order = await _assertion_order(org, namespace, [row, *peers])
     verdicts, model = await judge(new, notes)
     counts.judged += 1
     if not verdicts:
         counts.errored += 1  # an answer with nothing usable in it: nothing changes
         return
-    # Shielded: a cancellation (the pass deadline, a shutdown) lets the pairs already
-    # being acted on finish with their records, follows and audit row.
-    await asyncio.shield(
-        _act_on_verdicts(org, namespace, row, peers, verdicts, policy, counts, model, acting)
+    acting = asyncio.ensure_future(
+        _act_on_verdicts(org, namespace, row, peers, verdicts, policy, order, counts, model)
     )
+    try:
+        await asyncio.shield(acting)
+    except asyncio.CancelledError:
+        # A cancellation (the pass deadline, a shutdown) lets the pairs finish with
+        # their records, follows and audit row, and the pass ends only after them.
+        await asyncio.wait([acting])
+        raise
 
 
 async def _act_on_verdicts(
@@ -605,30 +630,28 @@ async def _act_on_verdicts(
     peers: list[dict[str, Any]],
     verdicts: dict[str, cr.PeerVerdict],
     policy: str,
+    order: Mapping[str, tuple[int, int]],
     counts: Counts,
     model: str,
-    acting: asyncio.Lock,
 ) -> None:
-    """Settle each pair the answer acts on, then one audit row for the row, all under
-    `acting` (held here, inside the shield, so it is held for as long as this runs).
-    The audit row is written even when a later pair fails, for the pairs done."""
+    """Settle each pair the answer acts on, then one audit row for the row, written
+    even when a later pair fails, for the pairs done."""
     acted: list[dict[str, Any]] = []
-    judged = (str(row.memory_id), str(row.content_sha256 or ""))
-    async with acting:
-        try:
-            await _settle_pairs(org, namespace, judged, peers, verdicts, policy, counts, acted)
-        finally:
-            if acted:
-                await _audit(org, namespace, row, acted, model)
+    try:
+        await _settle_pairs(org, namespace, row, peers, verdicts, policy, order, counts, acted)
+    finally:
+        if acted:
+            await _audit(org, namespace, row, acted, model)
 
 
 async def _settle_pairs(
     org: str,
     namespace: str,
-    judged: tuple[str, str],
+    row: Any,
     peers: list[dict[str, Any]],
     verdicts: dict[str, cr.PeerVerdict],
     policy: str,
+    order: Mapping[str, tuple[int, int]],
     counts: Counts,
     acted: list[dict[str, Any]],
 ) -> None:
@@ -640,7 +663,7 @@ async def _settle_pairs(
             # Unsure, or a peer the answer left out: the pair stays as it is.
             counts.skipped_low_confidence += 1
             continue
-        taken = await _settle_pair(org, namespace, judged, peer, action, counts)
+        taken = await _settle_pair(org, namespace, row, peer, action, order, counts)
         if taken is not None:
             acted.append(
                 {

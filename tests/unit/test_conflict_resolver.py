@@ -362,7 +362,12 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     monkeypatch.setattr(queue, "protected_ids", protected)
     monkeypatch.setattr(queue, "under_erasure", under_erasure)
     monkeypatch.setattr(resolver, "_head", head)
+
+    async def after_retire(org: str, namespace: str, done: Any) -> None:
+        e.after_retire = done
+
     monkeypatch.setattr(resolver, "_act", act)
+    monkeypatch.setattr(resolver, "_after_retire", after_retire)
     monkeypatch.setattr(resolver, "_audit", audit)
     return e
 
@@ -380,6 +385,24 @@ async def test_a_confident_update_under_newest_wins_retires_and_stamps(row_env: 
     assert row_env.audits[0][0]["action"] == cr.RETIRE
     assert row_env.notes[0].value == "Office is in Paris", "the prompt shows text, not JSON"
     assert row_env.audit_model == "gpt-6.1-sol-2026-09-01"
+
+
+async def test_the_record_and_follow_run_after_the_keys_locks_are_released(
+    row_env: NS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.store import key_write_lock as kl
+
+    taken: list[str] = []
+
+    async def after_retire(org: str, namespace: str, done: Any) -> None:
+        # Both keys are free again: a revision of the peer does not wait for the graph.
+        for session in ("s1", "s2"):
+            async with kl.key_write_locks.hold("o", "ns", "a", "u", session, "office_city"):
+                taken.append(session)
+
+    monkeypatch.setattr(resolver, "_after_retire", after_retire)
+    await _resolve()
+    assert taken == ["s1", "s2"]
 
 
 async def test_an_erasure_requested_during_the_call_leaves_everything_owed(row_env: NS) -> None:
@@ -597,7 +620,7 @@ async def test_a_cancellation_while_acting_lets_the_act_and_its_audit_finish(
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    await asyncio.sleep(0.1)
+    # Done by the time the cancellation returns: the next pass never overlaps it.
     assert row_env.acted == [(cr.RETIRE, "m1", "m2")]
     assert row_env.audits and row_env.audits[0][0]["action"] == cr.RETIRE
     assert row_env.stamped == [], "cut short before its stamp: judged again next pass"
@@ -741,7 +764,10 @@ async def test_the_follow_is_owed_before_the_supersede_and_settled_after_it(
     retire_env.retires, retire_env.follow_ok = retires, follow_ok
     late = _mem("m1", content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
-    assert await resolver._retire("o", "ns", current, late) is retires
+    done = await resolver._retire("o", "ns", current, late)
+    assert (done is not None) is retires
+    if done is not None:
+        await resolver._after_retire("o", "ns", done)
     assert retire_env.log[0] == ("intent", "triples_follow_owed", [["m1", "m2"]])
     assert retire_env.log[1] == "supersede"
     # A follow that failed stays owed to the repair; nothing retired, nothing owed.
@@ -753,7 +779,7 @@ async def test_a_retirement_behind_the_newer_row_of_the_pair(retire_env: NS) -> 
     # The peer, an older statement, retires behind the judged row.
     late = _mem("m1", valid_at=datetime(2024, 1, 1), content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
-    assert await resolver._retire("o", "ns", current, late) is True
+    await resolver._after_retire("o", "ns", await resolver._retire("o", "ns", current, late))
     assert seen["new_memory_id"] == "m2" and seen["expected_sha256"] == "sha-cur"
     assert [p.memory_id for p in seen["refined_peers"]] == ["m1"]
     assert seen["skip_peer"](NS(content_sha256="sha-late")) is False
@@ -833,7 +859,7 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def over(org, namespace):
         return (org, namespace) in e.over
 
-    async def resolve(q, *, policy, counts, acting):
+    async def resolve(q, *, policy, counts):
         e.in_flight += 1
         e.most_in_flight = max(e.most_in_flight, e.in_flight)
         await asyncio.sleep(e.slow)

@@ -60,7 +60,6 @@ class _Pass:
         self.counts = resolver.Counts()
         self.errors: list[str] = []
         self.slots = asyncio.Semaphore(int(settings.memory_conflict_resolver_concurrency))
-        self.acting = asyncio.Lock()
         self.unavailable: resolver.ModelUnavailable | None = None
 
 
@@ -109,7 +108,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         # in its own task, so the accumulator is this row's alone.
         cost_accumulator.begin_op()
         try:
-            await resolver.resolve_row(r, policy=policy, counts=p.counts, acting=p.acting)
+            await resolver.resolve_row(r, policy=policy, counts=p.counts)
         except resolver.ModelUnavailable as e:
             p.unavailable = p.unavailable or e
         except resolver.Unjudgeable as e:
