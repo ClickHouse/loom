@@ -460,15 +460,18 @@ export function useMemoryListRead({
             if (fresh.size > 0) {
               setEntries(r.entries);
               setNewKeys((prev) => new Set([...prev, ...fresh]));
-              // Clear the "new" highlight after 4s, unless the effect is left first.
+              // Clear the "new" highlight after 4s, unless the effect is left first. A timer
+              // that fires drops its abort listener, so a long-lived poll does not pile them up.
+              const cancel = () => clearTimeout(timer);
               const timer = setTimeout(() => {
+                signal.removeEventListener("abort", cancel);
                 setNewKeys((prev) => {
                   const next = new Set(prev);
                   fresh.forEach((k) => next.delete(k));
                   return next;
                 });
               }, 4000);
-              signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+              signal.addEventListener("abort", cancel, { once: true });
             }
           }
         } catch (e) {

@@ -153,6 +153,47 @@ describe("Recent change-driven refresh", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("a highlight timer that fires takes its abort listener with it", async () => {
+    const entry = (k: string) => ({ memory_key: k, value: k, tags: [], agent: "a", memory_type: "fact" }) as never;
+    const keys = ["k0"];
+    vi.mocked(listMemories).mockImplementation(async () => {
+      const entries = keys.map(entry);
+      return { entries, truncated: false, total: entries.length, today: 0, namespace_version: String(keys.length) };
+    });
+    // The abort listeners on the list's signal that are still attached.
+    const attached = new Set<unknown>();
+    const add = AbortSignal.prototype.addEventListener;
+    const remove = AbortSignal.prototype.removeEventListener;
+    const onAdd = vi.spyOn(AbortSignal.prototype, "addEventListener").mockImplementation(function (
+      this: AbortSignal,
+      ...a
+    ) {
+      if (a[0] === "abort") attached.add(a[1]);
+      return add.apply(this, a);
+    });
+    const onRemove = vi.spyOn(AbortSignal.prototype, "removeEventListener").mockImplementation(function (
+      this: AbortSignal,
+      ...a
+    ) {
+      if (a[0] === "abort") attached.delete(a[1]);
+      return remove.apply(this, a);
+    });
+    seed({ ...viewer, roles: ["ADMIN"] }, null);
+    render(<Recent />);
+    await screen.findByRole("button", { name: "k0" });
+    const before = attached.size;
+    // Three refreshes, each with a new row, each row's highlight cleared 4 s later.
+    for (const k of ["k1", "k2", "k3"]) {
+      keys.unshift(k);
+      await vi.advanceTimersByTimeAsync(8000);
+      await screen.findByRole("button", { name: k });
+    }
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(attached.size).toBe(before);
+    onAdd.mockRestore();
+    onRemove.mockRestore();
+  });
+
   it("polls with known_version and holds it across an unchanged answer", async () => {
     vi.mocked(listMemories)
       .mockResolvedValueOnce({ entries: [], truncated: false, total: 0, today: 0, namespace_version: "7" })
