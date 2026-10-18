@@ -54,6 +54,9 @@ class _Pass:
         self.slots = asyncio.Semaphore(int(settings.memory_conflict_resolver_concurrency))
         # Why the pass stopped: the model, or the keys' locks, is unavailable.
         self.unavailable: Exception | None = None
+        # The last refusal and how many rows in a row got it.
+        self.refusal = ""
+        self.refusals_in_a_row = 0
 
 
 async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]], bool]:
@@ -108,6 +111,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
                 p.counts.skipped_budget += 1
                 return
             await resolver.resolve_row(r, policy=policy, counts=p.counts)
+            p.refusals_in_a_row = 0
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
             # The same answer for every row: stop before paying for more calls.
             p.unavailable = p.unavailable or e
@@ -119,6 +123,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
                 await queue.stamp_judged(r)
             except Exception as stamp_error:  # noqa: BLE001 — stamped again next pass
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: stamp: {stamp_error}")
+            _count_refusal(p, e)
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
@@ -128,6 +133,19 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             )
             # The next row's cap read follows at once: the spend must be readable by then.
             await get_emitter().flush_now()
+
+
+# The same refusal this many rows in a row is the request's fault, not the rows': the
+# pass stops and the rest stay owed, instead of being stamped judged unjudged.
+SAME_REFUSAL_STOP = 3
+
+
+def _count_refusal(p: _Pass, e: Exception) -> None:
+    reason = f"{type(e).__name__}: {e}"
+    p.refusals_in_a_row = p.refusals_in_a_row + 1 if reason == p.refusal else 1
+    p.refusal = reason
+    if p.refusals_in_a_row >= SAME_REFUSAL_STOP:
+        p.unavailable = p.unavailable or e
 
 
 async def _resolve_all(p: _Pass, groups: dict[tuple[str, str], list[dict[str, Any]]]) -> None:

@@ -301,13 +301,15 @@ actions, verdicts and confidences, never the text.
   at most the calls already in flight cross it. Each call bills its namespace
   (`worker.conflict_resolver`).
 - A provider that refuses the model or the key (401, 403, 404) stops the pass with no
-  further call; the rows stay owed, and the worker warns once per change, not per pass. A transient failure (408, 409, 429, 5xx,
-  a timeout) leaves the row owed. Any other 4xx refuses this row's request, and asking
-  again gets the same answer: the row is stamped judged and counted `errored`. An
-  answer with nothing usable (cut at the output cap, `length` or `max_tokens`, or
-  malformed) is asked once more with twice the room; nothing usable again, the row is
-  stamped judged and counted `errored`. The keys' write
-  locks unavailable (Keeper down) stop the pass after that call; the rows stay owed.
+  further call; the rows stay owed, and the worker warns once per change, not per pass.
+  A transient failure (408, 409, 429, 5xx, a timeout) leaves the row owed. Any other 4xx
+  refuses this row's request, and asking again gets the same answer: the row is stamped
+  judged and counted `errored`. An answer with nothing usable (cut at the output cap,
+  `length` or `max_tokens`, or malformed) is asked once more with twice the room; nothing
+  usable again, the row is stamped judged and counted `errored`. The same refusal three
+  rows in a row is the request's fault, not the rows': it stops the pass like a refused
+  model, and the rest stay owed. The keys' write locks unavailable (Keeper down) stop the
+  pass after that call; the rows stay owed.
 
 **Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written
 version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged. The

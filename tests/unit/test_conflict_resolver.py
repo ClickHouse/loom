@@ -1083,6 +1083,31 @@ async def test_a_pass_handles_each_tenant_on_its_own_and_each_row_once(pass_env:
     assert out["judged"] == 3
 
 
+async def test_the_same_refusal_row_after_row_stops_the_pass_and_leaves_the_rest_owed(
+    pass_env: NS, monkeypatch
+) -> None:
+    """A request the provider refuses for every row (a bad model id, a prompt it rejects):
+    three in a row stop the pass, instead of stamping the whole backlog judged. One
+    slot, so the rows run in order (with more, the calls already in flight finish)."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
+    keys = [f"k{i}" for i in range(6)]
+    pass_env.owed = [_q(memory_key=k) for k in keys]
+    pass_env.raise_for = {k: resolver.Unjudgeable("400 Bad Request") for k in keys}
+    out = await pass_env.run()
+    assert pass_env.stamped == ["k0", "k1", "k2"]
+    assert out["errored"] == 3
+
+
+async def test_a_judged_row_between_refusals_keeps_the_pass_going(pass_env: NS) -> None:
+    keys = ["k0", "k1", "ok", "k2", "k3"]
+    pass_env.owed = [_q(memory_key=k) for k in keys]
+    pass_env.raise_for = {k: resolver.Unjudgeable("400 Bad Request") for k in keys if k != "ok"}
+    out = await pass_env.run()
+    assert sorted(pass_env.stamped) == ["k0", "k1", "k2", "k3"] and out["judged"] == 1
+
+
 async def test_each_pass_draws_a_new_namespace_order_for_both_reads(
     pass_env: NS, monkeypatch
 ) -> None:
