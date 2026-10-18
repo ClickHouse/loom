@@ -16,6 +16,7 @@ import pytest
 from server.cli import okf as cli_okf
 from server.core.hashing import sha256_value
 from server.memory.domain import okf_bundle as okf
+from server.memory.domain import okf_lint
 from server.memory.domain.edge_relations import canonical_edge
 from server.memory.domain.graph_quality import canonical_entities
 
@@ -69,7 +70,12 @@ class _FakeLoom:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def put(self, agent: str, key: str, session_id: str = "-", **row: Any) -> None:
-        self.rows[(agent, session_id, key)] = {"memory_key": key, "session_id": session_id, **row}
+        self.rows[(agent, session_id, key)] = {
+            "memory_key": key,
+            "session_id": session_id,
+            "agent": agent,
+            **row,
+        }
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((op, body))
@@ -78,17 +84,22 @@ class _FakeLoom:
                 (
                     r
                     for (a, s, _k), r in self.rows.items()
-                    if a == body["agent"] and body["session_id"] in ("*", s)
+                    if body["agent"] in ("*", a) and body["session_id"] in ("*", s)
                 ),
                 key=lambda r: r["memory_key"],
             )
             page = mine[body["offset"] : body["offset"] + body["limit"]]
-            return {"entries": page, "truncated": body["offset"] + len(page) < len(mine)}
+            return {
+                "entries": [_project(r, body) for r in page],
+                "truncated": body["offset"] + len(page) < len(mine),
+            }
         if op == "memory.bulk_get":
             got = {
-                k: self.rows[(body["agent"], body["session_id"], k)]
-                for k in body["memory_keys"]
-                if (body["agent"], body["session_id"], k) in self.rows
+                k: _project(r, body)
+                for (a, s, k), r in self.rows.items()
+                if k in body["memory_keys"]
+                and body["agent"] in ("*", a)
+                and s == body["session_id"]
             }
             return {"results": got}
         if op == "memory.get":
@@ -120,6 +131,7 @@ class _FakeLoom:
                 memory_type=body["memory_type"],
                 confidence=body["confidence"],
                 source_trace=body["source_trace"],
+                value=body["value"],
                 valid_at=body.get("valid_at"),
                 valid_to=body.get("valid_to"),
                 tags=[*body["tags"], *labels],
@@ -143,11 +155,21 @@ class _FakeLoom:
             return {"tombstoned": gone is not None}
         raise AssertionError(op)
 
-    async def close(self) -> None:
+    async def __aenter__(self) -> _FakeLoom:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
         pass
 
     def writes(self) -> list[str]:
         return [op for op, _ in self.calls if op in ("memory.set", "memory.link", "memory.delete")]
+
+
+def _project(row: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    """The row as a read with `fields` returns it: the key and the fields asked for."""
+    if "fields" not in body:
+        return row
+    return {k: v for k, v in row.items() if k == "memory_key" or k in body["fields"]}
 
 
 @pytest.fixture
@@ -155,6 +177,18 @@ def loom(monkeypatch: pytest.MonkeyPatch) -> _FakeLoom:
     fake = _FakeLoom()
     monkeypatch.setattr(cli_okf, "_Client", lambda *_a: fake)
     return fake
+
+
+def _export(out: Path, *flags: str) -> dict[str, Any]:
+    """Export namespace `dst` from the fake and return the root index's pointer."""
+    parser = argparse.ArgumentParser()
+    cli_okf.register_okf_cli(parser.add_subparsers())
+    args = parser.parse_args(
+        ["export-okf", "--token", _TOKEN, "--org", "acme", "--namespace", "dst"]
+        + ["--out", str(out), "--no-evidence", "--no-links", *flags]
+    )
+    assert int(args.func(args)) == 0
+    return okf_lint.generation_pointer(okf_lint.read_bundle(out))
 
 
 def _run(root: Path, *flags: str, agent: str | None = "okf-sync", namespace: str = "dst") -> int:
@@ -533,3 +567,25 @@ def test_prune_dry_run_skips_and_counts_rows_another_token_wrote(
     out = capsys.readouterr().out
     assert "would delete" not in out
     assert "0 would be pruned (1 kept: written by another token under this --agent)" in out
+
+
+def test_a_limit_the_export_did_not_reach_is_not_recorded(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli_okf, "_server_build", lambda _url: "")
+    assert _run(_bundle(tmp_path / "b", [_entry("a"), _entry("c")])) == 0
+    assert "limit" not in _export(tmp_path / "all", "--limit", "10")
+    assert _export(tmp_path / "part", "--limit", "1")["limit"] == 1
+
+
+def test_a_field_the_import_does_not_read_would_rewrite_every_row(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The fake returns only the fields asked for, so _LIVE_FIELDS must name each one compared.
+    root = _bundle(tmp_path / "b", [_entry("a")])
+    assert _run(root) == 0
+    fields = [f for f in cli_okf._LIVE_FIELDS if f != "valid_at"]
+    monkeypatch.setattr(cli_okf, "_LIVE_FIELDS", fields)
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == ["memory.set"]

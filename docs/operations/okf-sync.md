@@ -24,8 +24,8 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
   live. When several concepts in the bundle share a key (rows of different writers), the
   most recently updated one is written. Re-sending an identical row would count as a
   reinforcement: a version row, an audit row and a higher ranking boost on every run. A
-  concept with `sources:` is the exception: it is written on every run, because no read
-  returns the source it links to. So is a concept the target merges into another key's
+  concept with `sources:` is the exception: it is written on every run, because the reads
+  the import makes do not return the source it links to. So is a concept the target merges into another key's
   row: each run sends it again and reinforces that row, and the last line counts it as
   merged.
 - **One `memory.set` per new or changed concept**, through the conflict, blacklist and

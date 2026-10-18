@@ -107,8 +107,8 @@ tags, confidence, `valid_at`, `valid_to`, `source_trace`, and the entities and
 Concepts that land on the same row (one key exported for several writers) are written
 once: the most recently updated wins. Re-sending an identical row would count as a
 reinforcement, so importing the same bundle twice writes no concept or edge the second
-time, except a concept with `sources:`, which no read can compare and which is written on
-every run. The last line counts the target rows written, unchanged and failed.
+time, except a concept with `sources:`, which is written on every run because the reads
+the import makes do not return its source. The last line counts the target rows written, unchanged and failed.
 
 The bundle's `evidence/` and `digests/` are written back through `memory.import_evidence`
 (`--no-evidence` skips them) and re-embedded by the importing server on every import,

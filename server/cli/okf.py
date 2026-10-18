@@ -41,6 +41,7 @@ import asyncio
 import math
 import os
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,12 @@ class _Client:
 
     async def close(self) -> None:
         await self._c.aclose()
+
+    async def __aenter__(self) -> _Client:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
 
 
 # ------------------------------------------------------------------
@@ -362,11 +369,10 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
     out_dir = Path(args.out)
 
     async def _go() -> int:
-        client = _Client(args.server_url, token)
         chunks: list[okf_ev.ChunkRecord] = []
         digests: list[okf_ev.DigestRecord] = []
         edges: list[dict[str, Any]] = []
-        try:
+        async with _Client(args.server_url, token) as client:
             entries = await _fetch_namespace(
                 client,
                 org,
@@ -378,8 +384,6 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
                 chunks, digests = await _fetch_evidence(client, org, args.namespace)
             if not args.no_links:
                 edges = await _fetch_edges(client, org, args.namespace)
-        finally:
-            await client.close()
         files, orphans, skipped_high = _plan_export(
             entries,
             edges,
@@ -389,7 +393,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             title=args.title,
             include_high=bool(args.include_high),
             server_url=args.server_url,
-            limit=args.limit,
+            # Fewer rows than --limit is the whole namespace, so the bundle is complete.
+            limit=args.limit if args.limit is not None and len(entries) >= args.limit else None,
         )
         n_concepts = len(entries) - skipped_high
         evidence_note = (
@@ -614,7 +619,7 @@ async def _live_rows(
             break
         offset += len(entries)
 
-    # valid_to and source_class come only from memory.get.
+    # memory.list does not return valid_to or source_class.
     by_session: dict[str, list[str]] = {}
     for sid, key in rows:
         by_session.setdefault(sid, []).append(key)
@@ -680,7 +685,7 @@ def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
     """True when the live row already holds everything memory.set would write.
     `content_sha256` covers the value only, so the metadata is compared too."""
     if payload.get("source_resource_id"):
-        return False  # no read returns source_resource_id, so it cannot be compared
+        return False  # memory.list and bulk_get do not return source_resource_id
     return (
         row.get("content_sha256") == sha256_value(payload["value"])
         and row.get("memory_type") == payload["memory_type"]
@@ -863,8 +868,8 @@ async def _prune(
     actor: str,
 ) -> dict[str, int]:
     """memory.delete each row an earlier import wrote whose key has left the bundle. Only
-    rows under the import's identity with its source_trace stamp qualify, so rows anyone
-    else wrote in the namespace are never touched."""
+    rows under the import's identity with its source_trace stamp, whose live version this
+    token wrote, qualify, so rows anyone else wrote in the namespace are never touched."""
     gone = sorted(
         k
         for k, r in live.items()
@@ -904,7 +909,7 @@ async def _prune(
 
 
 def _print_import_summary(
-    n: dict[str, int],
+    n: Counter[str],
     args: argparse.Namespace,
     org: str,
     rows: int,
@@ -944,7 +949,24 @@ def _print_import_summary(
     print(", ".join(parts))
 
 
+async def _read_target(
+    client: _Client, org: str, args: argparse.Namespace, with_edges: bool
+) -> tuple[dict[tuple[str, str], dict[str, Any]], set[tuple[str, str, str]]]:
+    """The live rows under the import's identity and, when asked, the namespace's edges."""
+    live = await _live_rows(client, org, args)
+    if not with_edges:
+        return live, set()
+    edges = await _fetch_edges(client, org, args.namespace)
+    return live, {(e["from_key"], e["to_key"], e["relation"]) for e in edges}
+
+
 def _cmd_import_okf(args: argparse.Namespace) -> int:
+    if args.prune and not args.agent:
+        # Prune deletes every import row of its agent that this bundle lacks, so each
+        # bundle imported into a namespace needs an agent of its own.
+        print("refusing to prune: --prune needs an explicit --agent", file=sys.stderr)
+        return 2
+    args.agent = args.agent or "okf-import"
     # Absolute, so `import-okf .` names the bundle directory in every source_trace; not
     # resolved, so a symlink to each run's export keeps the name the import was given.
     root = Path(os.path.abspath(args.path))
@@ -955,12 +977,6 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
     if refused is not None:
         return refused
     concepts = _walk_bundle(root)
-    if args.prune and not args.agent:
-        # Prune deletes every import row of its agent that this bundle lacks, so each
-        # bundle imported into a namespace needs an agent of its own.
-        print("refusing to prune: --prune needs an explicit --agent", file=sys.stderr)
-        return 2
-    args.agent = args.agent or "okf-import"
     if args.prune:
         reason = _prune_refusal(root, concepts)
         if reason:
@@ -974,31 +990,14 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         return 0
 
     async def _go() -> int:
-        client = _Client(args.server_url, token)
-        n = {
-            "written": 0,
-            "unchanged": 0,
-            "merged": 0,
-            "conflicted": 0,
-            "verified": 0,
-            "failed": 0,
-            "links": 0,
-            "links_unchanged": 0,
-            "links_failed": 0,
-            "links_unresolved": 0,
-            "pruned": 0,
-            "prune_kept": 0,
-            "prune_failed": 0,
-        }
         planned = _one_per_row(concepts, org, args, root)
         links, unresolved = okf.resolve_relates_to(concepts)
-        try:
+        n: Counter[str] = Counter()
+        async with _Client(args.server_url, token) as client:
             try:
-                live = await _live_rows(client, org, args)
-                live_edges: set[tuple[str, str, str]] = set()
-                if not args.no_links and links:
-                    edges = await _fetch_edges(client, org, args.namespace)
-                    live_edges = {(e["from_key"], e["to_key"], e["relation"]) for e in edges}
+                live, live_edges = await _read_target(
+                    client, org, args, with_edges=bool(links) and not args.no_links
+                )
             except RuntimeError as e:
                 print(f"cannot read {org}/{args.namespace}: {e}", file=sys.stderr)
                 return 1
@@ -1026,11 +1025,10 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                     + (f", {ev['skipped']} skipped" if ev["skipped"] else "")
                     + (f", {ev['failed']} FAILED" if ev["failed"] else "")
                 )
-                n["failed"] += ev["failed"]
-        finally:
-            await client.close()
+                n["evidence_failed"] = ev["failed"]
         _print_import_summary(n, args, org, len(planned), ev_chunks, ev_digests)
-        return 1 if n["failed"] or n["links_failed"] or n["prune_failed"] else 0
+        failures = ("failed", "links_failed", "prune_failed", "evidence_failed")
+        return 1 if any(n[k] for k in failures) else 0
 
     return asyncio.run(_go())
 
