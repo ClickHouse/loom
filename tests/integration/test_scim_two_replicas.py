@@ -100,6 +100,8 @@ def test_a_deactivation_on_one_replica_ends_tokens_on_the_other(replicas) -> Non
         headers=_bearer(session),
         json={"name": "late-bot", "namespaces": [ns], "role": "viewer"},
     )
+    # B's snapshot is stale, so it takes the session; a refusal would do as well.
+    assert late.status_code in (200, 401, 403), late.text
     minted = [late.json()["token"]] if late.status_code == 200 else []
     assert not any(_authenticated(a, t) for t in minted)
     window = _seconds_until(

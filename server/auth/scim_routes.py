@@ -131,7 +131,8 @@ def parse_filter(text: str) -> tuple[str, str]:
             return ("userName" if m.group(1).lower() == "username" else "email"), value
     raise ScimError(
         400,
-        'the filters served are userName eq "<v>" and emails[type eq "work"].value eq "<email>"',
+        'the filters served are userName eq "<v>", and emails[type eq "work"].value eq '
+        '"<email>" or emails.value eq "<email>"',
         "invalidFilter",
     )
 

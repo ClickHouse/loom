@@ -445,7 +445,8 @@ deactivates or reactivates anyone any more, and leaves everyone as they are:
 SSO sign-in with a deactivated email is still refused, and a deactivated
 person's subjects stay revoked, new tokens included, until an operator lifts
 each with `loom revoke-token --subject <it> --issued-before <now> --scim`.
-That gives back their tokens, not their sign-in: to let a deactivated person
+That lets the subject's new tokens work (its old ones stay revoked), not its
+sign-in: to let a deactivated person
 sign in again once SCIM is off, set `LOOM_SCIM_TOKEN` again and send
 `active: true` for them, from the provider or by hand. Reactivate at the
 provider first anyone who should keep Loom.

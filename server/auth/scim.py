@@ -395,7 +395,9 @@ async def _converge_active(
         await _write_audited(row, new)
         lifted = await _lift(row, subjects, lift_to)
     await revocation.refresh()
-    return new, lift_to if lifted else _newest_cutoff(rows) if reactivating else None
+    if lifted:
+        return new, lift_to
+    return new, _newest_cutoff(rows) if reactivating else None
 
 
 async def _write_audited(row: dict[str, Any], new: dict[str, Any]) -> None:
