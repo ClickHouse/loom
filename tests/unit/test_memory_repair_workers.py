@@ -237,8 +237,8 @@ async def test_a_pass_reads_mirror_batches_until_one_comes_back_short(
     seconds: float,
     want: int,
 ) -> None:
-    """Batches of 300 until one is short, while projection_repair_status_mirror_seconds
-    lasts; with none, one mirror (and the other failure)."""
+    """Batches of 300 until one is short, while status_mirror_seconds lasts; with none,
+    one mirror (and the other failure)."""
     import dataclasses
     from datetime import datetime, timedelta
 
@@ -264,12 +264,11 @@ async def test_a_pass_reads_mirror_batches_until_one_comes_back_short(
         retried.append(f.failure_id)
         return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
 
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "projection_repair_status_mirror_seconds", seconds)
     monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
     _fake_retry(monkeypatch, _retry)
-    await projection_repair.run_pass()
+    await projection_repair.run_pass(
+        projection_repair.ProjectionRepairConfig(status_mirror_seconds=seconds)
+    )
     assert len(retried) == want and len(set(retried)) == want
 
 
@@ -361,10 +360,9 @@ async def test_a_mirror_batch_stops_once_the_pass_deadline_passes(
 
     monkeypatch.setattr(pf, "scan_active_projection_failures", _paged(_mirrors(300)))
     marks = _fake_retry(monkeypatch, _busy)
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "projection_repair_status_mirror_seconds", 5.0)
-    result = await projection_repair.run_pass()
+    result = await projection_repair.run_pass(
+        projection_repair.ProjectionRepairConfig(status_mirror_seconds=5.0)
+    )
     assert result.scanned == 5
     assert sum(len(m["failure_ids"]) for m in marks) == 5, "the other 295 stay active"
 

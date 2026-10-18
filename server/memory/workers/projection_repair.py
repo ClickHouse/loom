@@ -27,6 +27,9 @@ class ProjectionRepairConfig:
     max_failures_per_pass: int = field(
         default_factory=lambda: settings.projection_repair_max_failures_per_pass
     )
+    status_mirror_seconds: float = field(
+        default_factory=lambda: settings.projection_repair_status_mirror_seconds
+    )
 
 
 @dataclass
@@ -55,7 +58,7 @@ async def run_pass(
         )
 
         mirrored: list[Retried] = []
-        until = time.monotonic() + float(settings.projection_repair_status_mirror_seconds)
+        until = time.monotonic() + float(cfg.status_mirror_seconds)
         try:
             after = None
             while True:
