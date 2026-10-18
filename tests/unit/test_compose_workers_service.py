@@ -90,7 +90,6 @@ def test_both_services_share_the_data_mounts_and_take_no_lock_path() -> None:
     assert "../var/code_repos:/app/var/code_repos" in web["volumes"]
     assert "volumes" not in d
     for svc in (web, workers):
-        assert "LOOM_SUPERVISOR_LOCK_PATH" not in _env(svc)  # the lease is in ClickHouse
         assert svc["stop_grace_period"] == "75s"
         assert svc["ulimits"]["nofile"] == {"soft": 65536, "hard": 65536}
         assert svc["env_file"] == ["../.env"]

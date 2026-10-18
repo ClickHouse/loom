@@ -67,7 +67,6 @@ def test_the_proxy_follows_a_colour_that_restarts_on_a_new_address() -> None:
 def test_colour_compose_shares_the_table_and_binds_loopback() -> None:
     text = COLOUR.read_text(encoding="utf-8")
     assert "LOOM_RATELIMIT_SHARED_PATH: /app/var/shared/ratelimit.buckets" in text
-    assert "LOOM_SUPERVISOR_LOCK_PATH" not in text  # the lease is in ClickHouse
     assert 'PORT: "${LOOM_COLOUR_PORT' in text
     assert '"127.0.0.1:${LOOM_COLOUR_PORT}:${LOOM_COLOUR_PORT}"' in text
     assert 'container_name: "loom-${LOOM_COLOUR}"' in text

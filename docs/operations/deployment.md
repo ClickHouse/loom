@@ -152,8 +152,8 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
 - **Ports.** If `8123` or `9000` is taken, set `LOOM_CH_HOST_PORT` or
   `LOOM_CH_NATIVE_HOST_PORT` in `.env`. These are compose variables for the host side
   only; containers always talk to `clickhouse:8123`.
-- **Volumes.** `loom-ch-data` holds ClickHouse's data. `make down` keeps it;
-  `make down-all` deletes it.
+- **Volumes.** `loom-ch-data` (ClickHouse) and `loom-code-repos` (the git mirrors).
+  `make down` keeps them; `make down-all` deletes them.
 - **No external systems.** The local stack runs no Langfuse or ClickStack;
   the erasure steps for them do nothing until configured.
 - **From source.** `make server` runs uvicorn on `:7777` with reload against the
@@ -183,8 +183,8 @@ the same `.env` and mount the same `var/code_repos` directory, so on one host th
 the git mirrors. Documents, keys and the workers lease are in ClickHouse, so replicas on
 other hosts need not share that directory: each keeps its own mirrors, and the mount
 only keeps them across a restart. `LOOM_SERVES_TRAFFIC=false` keeps the workers
-container out of the replica count the rate limits are divided by. Whichever boots first applies pending
-migrations ([upgrades](./upgrades.md#how-migrations-run)).
+container out of the replica count the rate limits are divided by. Whichever boots
+first applies pending migrations ([upgrades](./upgrades.md#how-migrations-run)).
 
 ## How settings are read
 

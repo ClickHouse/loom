@@ -17,7 +17,7 @@ Shape:
 2. `fetch_raw_evidence` — the evidence rows linked to those memory keys,
    scoped rows first (`extracted_from`, `lexical_support`),
    window rows only if nothing scoped exists, bounded per memory and in
-   total by characters so a legacy window-linked memory cannot expand into
+   total by characters so a whole-window memory cannot expand into
    its whole conversation.
 3. `render_raw_evidence` — the block the synthesizer reads, each turn dated,
    role-tagged and labelled with the memory key it supports so citations
@@ -42,8 +42,8 @@ log = logging.getLogger(__name__)
 
 # support_type values written by the extract path; the first
 # two are scoped to the supporting message(s), "window" is every message in
-# the extraction call and the legacy (0,0)-span rows carry "extracted_from"
-# with a zero-length span.
+# the extraction call, and rows written with a (0,0) span carry
+# "extracted_from" with a zero-length span.
 _SCOPED_SUPPORT = ("extracted_from", "lexical_support")
 
 _SELECT_SYSTEM = (
@@ -303,7 +303,7 @@ async def fetch_raw_evidence(
     seen: set[tuple[str, str]] = set()
     total = 0
     # A memory that has any scoped row never opens its window rows: the
-    # window is the legacy fallback and only worth reading when it is all
+    # window is the fallback and only worth reading when it is all
     # there is.
     has_scoped = {
         str(r.get("memory_key") or "")
