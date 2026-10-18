@@ -9,12 +9,14 @@ import { installApi, stringArray } from "./fixtures";
 const LCP_BUDGET_MS = 1500;
 
 // What a page of a hundred rows costs the browser — DOM nodes, and the main-thread time
-// in long tasks after the rows land. The budgets are ~30 % above what the pages cost at
-// 4x CPU; a regression that doubles a row template trips them.
+// in long tasks after the rows land.
 const ROWS = 100;
-// A Library row costs 31 nodes (about 3,400 for the page), six of them its More button, which
-// is always drawn: Click UI's IconButton is a button, a wrapper and its icon's svg.
+// The node count does not vary between runs, so each budget is the measured count (3,150
+// for Memories, 3,413 for Library) plus a small margin: about two more nodes per row trip
+// it. A Library row's More button is always drawn, since its menu shows without a hover.
 const NODE_BUDGET = { memories: 3400, library: 3600 };
+// Long tasks vary with the runner, so their budget is about four times what the pages cost
+// at 4x CPU.
 const LONG_TASK_BUDGET_MS = 2500;
 // The shell alone — a page with a handful of rows — costs about 110 ms of long tasks at
 // 4x on a production build; the budget is generous for CI's slower runners and trips when
