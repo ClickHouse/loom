@@ -79,3 +79,17 @@ async def test_digests_behind_a_high_key_or_holding_a_credential_stay_home(evide
     out = await evidence_transfer.handle_memory_export_evidence(_input("digests"))
     assert [d.session_id for d in out.digests] == ["s1"]
     assert out.held_high == 2
+
+
+@pytest.mark.asyncio
+async def test_include_high_releases_held_digests_and_audits_each(evidence) -> None:
+    out = await evidence_transfer.handle_memory_export_evidence(
+        _input("digests", include_high=True)
+    )
+    assert [d.session_id for d in out.digests] == ["s1", "s2", "s3"] and out.held_high == 0
+    assert evidence == [
+        [
+            {"kind": "digests", "session_id": "s2", "memory_keys": ["vault"]},
+            {"kind": "digests", "session_id": "s3", "memory_keys": []},
+        ]
+    ]

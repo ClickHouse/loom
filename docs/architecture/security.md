@@ -536,7 +536,8 @@ and `memory.recall`'s raw turns.
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 
-The detector runs on `memory.set` and extraction. The `sensitivity_sweep` worker (on,
+The detector runs on `memory.set` and extraction, as the setting says. `memory.export_evidence` and
+`bodies: "source"` also run it on raw text, whatever the setting: raw text has no level to fall back on. The `sensitivity_sweep` worker (on,
 daily) labels rows from paths that skip it: a new version per row and, for `high`,
 tombstoned embedding rows and entity vectors.
 

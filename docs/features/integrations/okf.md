@@ -157,7 +157,8 @@ uv run --project .okf-lint-loom --frozen --python 3.12 loom okf-lint <OKF_ROOT> 
   its `sensitivity` field or its `sensitivity:high` tag. A row whose sensitivity the export
   could not read, or read as a level it does not know, stays home too. So do the raw chunks
   and session digests linked to such a row, and any whose text holds a credential shape (raw
-  text has no sensitivity column, so the detector `memory.set` runs decides). The lint warns
+  text has no sensitivity column, so the detector `memory.set` runs decides, whatever
+  `LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). The lint warns
   when a high row travelled.
 
 ## Related

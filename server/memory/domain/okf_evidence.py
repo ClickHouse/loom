@@ -22,7 +22,7 @@ re-hashed.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import yaml
 
@@ -72,18 +72,36 @@ class DigestRecord:
         return f"{DIGEST_DIR}/{slugify(self.session_id)}.md"
 
 
-def evidence_keys(item: Any) -> list[str]:
-    """The memory keys a chunk or digest (a record here or its wire model) is linked to."""
-    if hasattr(item, "summary_text"):
+@runtime_checkable
+class ChunkLike(Protocol):
+    """A raw chunk: `ChunkRecord` here, or `EvidenceChunk` on the wire."""
+
+    parent_memory_key: str
+    memory_keys: list[str]
+    content: str
+
+
+@runtime_checkable
+class DigestLike(Protocol):
+    """A session digest: `DigestRecord` here, or `EvidenceDigest` on the wire."""
+
+    summary_text: str
+    key_facts: list[str]
+    derived_from: list[str]
+
+
+def evidence_keys(item: ChunkLike | DigestLike) -> list[str]:
+    """The memory keys a chunk or digest is linked to."""
+    if isinstance(item, DigestLike):
         return list(item.derived_from)
     return [item.parent_memory_key, *item.memory_keys]
 
 
-def evidence_is_high(item: Any, held_keys: set[str]) -> bool:
+def evidence_is_high(item: ChunkLike | DigestLike, held_keys: set[str]) -> bool:
     """A chunk or digest stays home when it is linked to a key held home, or when its text
     reads as a credential: raw text has no sensitivity column, so the detector memory.set
     runs decides."""
-    if hasattr(item, "summary_text"):
+    if isinstance(item, DigestLike):
         text = "\n".join([item.summary_text, *item.key_facts])
     else:
         text = item.content

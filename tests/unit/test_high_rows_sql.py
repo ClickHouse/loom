@@ -50,6 +50,8 @@ async def test_high_keys_finds_any_high_version_of_a_key() -> None:
         _version(_B, "recreated", 1, "high"),
         _version(_C, "recreated", 2, ""),
         _version(_D, "plain", 1, ""),
+        # a merge keeps every version: `version` is in the sort key
+        "OPTIMIZE TABLE loom.memory_versions FINAL",
     )
     got = await memory_repo.high_keys(
         "o", "n", ["overwritten", "recreated", "plain", "absent"], ch=ch

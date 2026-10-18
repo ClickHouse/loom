@@ -20,8 +20,9 @@ primitive, not a compliance certification.
 | The server itself                                     | `budget.violated`, `ratelimit.exceeded`, `worker.failed`, `audit.tamper_detected`, …                                                                   | what the event is about                                                                                                      |
 
 The **Audit** column of the generated [operations reference](../../reference/operations.md)
-lists every audited op (the `audit` flag on each `Operation`). Read ops are never audited;
-`audit.list` is `audit=False`, so reading the trail does not add to it.
+lists every audited op (the `audit` flag on each `Operation`). No read op is declared
+`audit=True`; a read of a `high` row writes `memory.sensitive_read` (above). `audit.list` is
+`audit=False`, so reading the trail does not add to it.
 
 The transport writes the row after the handler succeeds (`emit_op_audit` in
 `server/transport/_common.py`, for HTTP and MCP). The write is **fail-open**: a failed
