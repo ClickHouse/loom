@@ -166,3 +166,8 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
     )
     assert (requests, server, client, limited, slow) == (4, 1, 1, 1, 1)
     assert 50 <= p99 <= 500  # successful requests only
+
+    # The next refresh resumes past the high-water mark: nothing is folded twice.
+    ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
+    ch_client.command("SYSTEM WAIT VIEW loom_telemetry.sli_minute_refresh")
+    assert _rolled()[:5] == (4, 1, 1, 1, 1)
