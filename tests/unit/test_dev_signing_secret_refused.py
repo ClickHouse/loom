@@ -72,28 +72,3 @@ def test_the_dev_compose_stack_carries_the_exempt_label() -> None:
     assert f'LOOM_INSTANCE_LABEL: "{DEV_PROFILE_LABEL}"' in compose
     assert 'LOOM_JWT_SECRET: "${LOOM_JWT_SECRET:?' in compose
     assert "dev-only-jwt-secret-do-not-use-in-prod" not in compose
-
-
-def test_the_former_key_map_env_refuses_boot(monkeypatch, tmp_path) -> None:
-    """Its kids' tokens would be refused without a word: import, then delete it."""
-    from server.auth.jwt import KeyMapEnvRefused, require_no_key_map_env
-
-    monkeypatch.delenv("LOOM_JWT_SECRETS_JSON", raising=False)
-    monkeypatch.delenv("LOOM_JWT_ACTIVE_KID", raising=False)
-    env = tmp_path / ".env"
-    env.write_text("LOOM_JWT_SECRETS_JSON=\nLOOM_JWT_ACTIVE_KID=\n")
-    require_no_key_map_env(str(env))  # set but empty: nothing to lose
-    env.write_text('LOOM_JWT_SECRETS_JSON={"k2":"s"}\n')
-    with pytest.raises(KeyMapEnvRefused, match="signing-key import"):
-        require_no_key_map_env(str(env))
-    monkeypatch.setenv("LOOM_JWT_ACTIVE_KID", "default")
-    require_no_key_map_env(None)  # the root secret signed: nothing to import
-    monkeypatch.setenv("LOOM_JWT_ACTIVE_KID", "k2")
-    with pytest.raises(KeyMapEnvRefused, match="LOOM_JWT_ACTIVE_KID"):
-        require_no_key_map_env(None)
-    monkeypatch.delenv("LOOM_JWT_ACTIVE_KID")
-    monkeypatch.setenv("LOOM_JWT_ALGORITHM", "RS256")
-    require_no_key_map_env(None)  # a PEM root signs RS256 as `default` here too
-    env.write_text('LOOM_JWT_SECRETS_JSON={"k2":"s"}\n')
-    with pytest.raises(KeyMapEnvRefused, match="--algorithm RS256"):
-        require_no_key_map_env(str(env))

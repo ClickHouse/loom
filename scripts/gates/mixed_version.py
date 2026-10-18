@@ -10,15 +10,15 @@ Then it writes from each build and reads from the other, and checks:
   other, and survive the other build's version writes;
 - a column only a newer schema has (`ALTER ADD` here, as N+1's migration
   would) survives a version write by a build that does not know it
-  (server/core/rmt_carry.py) — checked on each build that carries;
+  (server/core/rmt_carry.py);
 - a build that boots on a ledger with migrations it does not carry logs the
   WARNING naming them;
 - every asset a build's dashboard page names loads from a replica of the other
-  build — checked between builds that publish their bundle (needs npm);
-- after the cross-boot each build that has `/v1/health/ready` answers ready;
-- with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one of those
-  that elect through ClickHouse runs the workers, and it is N+1: its tree
-  carries one no-op migration more, so N hands the lease over to it.
+  build (needs npm);
+- after the cross-boot each build answers ready;
+- with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one process
+  runs the workers, and it is N+1: its tree carries one no-op migration more,
+  so N hands the lease over to it.
 
 The rules these check are docs/architecture/rolling-upgrades.md. ClickHouse
 runs in a throwaway container (the CI image and config), so the gate needs
@@ -175,15 +175,6 @@ def build_frontend(tree: Path, *, node_modules: Path | None = None) -> bool:
     return True
 
 
-def publishes_bundle(tree: Path) -> bool:
-    return (tree / "server" / "storage" / "frontend_assets.py").exists()
-
-
-def elects_in_clickhouse(tree: Path) -> bool:
-    leader = tree / "server" / "workers" / "leader.py"
-    return leader.exists() and 'LEASE_NAME = "workers_supervisor"' in leader.read_text()
-
-
 def base_tree(rev: str, into: Path) -> Path:
     into.mkdir(parents=True)
     archive = subprocess.run(
@@ -249,9 +240,6 @@ class Server:
                     return
             time.sleep(1)
         raise RuntimeError(f"{self.name} never became healthy:\n{self.tail()}")
-
-    def has_ready_probe(self) -> bool:
-        return '"/v1/health/ready"' in (self.tree / "server" / "health.py").read_text()
 
     def ready(self) -> tuple[bool, list[str]]:
         """Whether `/v1/health/ready` answers 200 within SETTLE_S, and the
@@ -329,14 +317,6 @@ def mint(org: str, ns: str) -> str:
     return jwt.encode(claims, JWT_SECRET, algorithm="HS256", headers={"kid": "default"})
 
 
-def carries(tree: Path) -> bool:
-    return (tree / "server" / "core" / "rmt_carry.py").exists()
-
-
-def warns_newer_schema(tree: Path) -> bool:
-    return "warn_newer_schema" in (tree / "server" / "boot.py").read_text()
-
-
 class Scenario:
     """The checks, each run in both directions between the two builds."""
 
@@ -377,9 +357,6 @@ class Scenario:
 
     def all_ready(self) -> None:
         for label, srv in {**self.builds, "N+1": self.next}.items():
-            if not srv.has_ready_probe():
-                print(f"  note  {label} predates /v1/health/ready; its readiness is not checked")
-                continue
             ok, failing = srv.ready()
             self.check(
                 ok,
@@ -438,7 +415,7 @@ class Scenario:
         # What N+1's boot does before it writes the column: wait for every carrying
         # process to acknowledge it. The version writes below then come at once.
         self.await_carry_acks()
-        for label, srv in self.builds.items():
+        for label in self.builds:
             where = f"org = '{self.org}' AND memory_key = 'facts/{label}'"
             sql(
                 self.ch_port,
@@ -446,9 +423,6 @@ class Scenario:
                 "('kept' AS gate_probe, version + 1 AS version) "
                 f"FROM loom.memory FINAL WHERE {where}",
             )
-            if not carries(srv.tree):
-                print(f"  note  {label} predates the column carry; its version writes reset it")
-                continue
             tags = {"org": self.org, "memory_id": ids[label], "tags": ["v2"]}
             self.call(label, "memory.update_by_id", tags)
             probe = sql(self.ch_port, f"SELECT gate_probe FROM loom.memory FINAL WHERE {where}")
@@ -480,8 +454,6 @@ class Scenario:
             time.sleep(0.5)
 
     def newer_ledger_warns(self) -> None:
-        if not warns_newer_schema(self.new.tree):
-            return
         sql(
             self.ch_port,
             "INSERT INTO loom._migrations (filename, checksum, applied_by) "
@@ -498,9 +470,6 @@ class Scenario:
         """A sign-in whose steps land on both builds fails cleanly, as a client
         can retry, and leaves the grant to the build that started it."""
         new, old = self.builds["N"], self.builds["N-1"]
-        if not (new.tree / "server" / "auth" / "device.py").exists():
-            print("  note  N has no device grant; sign-in across builds is not checked")
-            return
         r = httpx.post(
             f"{new.url}/oauth/device_authorization", data={"client_id": "loom-cli"}, timeout=30
         )
@@ -575,8 +544,8 @@ class Scenario:
             return
         for a, b in (("N", "N+1"), ("N+1", "N"), ("N", "N-1"), ("N-1", "N")):
             page, other = pages[a], pages[b]
-            if not (built[a] and publishes_bundle(page.tree) and publishes_bundle(other.tree)):
-                print(f"  note  {a} or {b} predates the shared bundle; {a}'s page is not checked")
+            if not built[a]:
+                print(f"  note  {a}'s bundle is not built; its page is not checked")
                 continue
             assets = page.page_assets()
             missing = [p for p in assets if not self.resolves(other, p)]
@@ -599,15 +568,12 @@ class Scenario:
             time.sleep(2)
 
     def one_leader(self) -> None:
-        """Every process on `auto`: one of those electing through ClickHouse holds
-        the workers lease, and it is N+1, the build with the higher schema_version."""
+        """Every process on `auto`: one holds the workers lease, and it is N+1,
+        the build with the higher schema_version."""
         servers = {"N-1": self.builds["N-1"], "N": self.new, "N+1": self.next}
         for srv in servers.values():
             srv.workers = "auto"
             srv.restart()
-        electing = {k: s for k, s in servers.items() if elects_in_clickhouse(s.tree)}
-        if "N-1" not in electing:
-            print("  note  N-1 elects its workers per host (a file lock), outside the lease")
         # N takes the lease first and hands it over once N+1's beats name it. A
         # first beat goes out before its lease exists, so N+1 may hold it before
         # the older builds read a beat of N+1's naming it: wait for both.
@@ -616,10 +582,10 @@ class Scenario:
         holders: list[str] = []
         reasons: dict[str, str] = {}
         while time.monotonic() < deadline and steady < 3:
-            state = {k: s.leader() for k, s in electing.items()}
+            state = {k: s.leader() for k, s in servers.items()}
             holders = [k for k, (held, _) in state.items() if held]
             reasons = {k: why for k, (_, why) in state.items()}
-            aside = all("to a newer build" in reasons[k] for k in ("N-1", "N") if k in electing)
+            aside = all("to a newer build" in reasons[k] for k in ("N-1", "N"))
             steady = steady + 1 if holders == ["N+1"] and aside else 0
             time.sleep(2)
         self.check(
@@ -627,11 +593,10 @@ class Scenario:
             f"one process of the newest build runs the workers ({holders}; {reasons})",
         )
         for label in ("N-1", "N"):
-            if label in electing:
-                self.check(
-                    "to a newer build" in reasons[label],
-                    f"{label} leaves the lease to N+1 ({reasons[label]})",
-                )
+            self.check(
+                "to a newer build" in reasons[label],
+                f"{label} leaves the lease to N+1 ({reasons[label]})",
+            )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -678,8 +643,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"next carries {add_noop_migration(nxt.tree)}")
             if build_frontend(ROOT):
                 print("dashboard bundles: base, head, and head with one line more")
-                if publishes_bundle(old.tree):
-                    build_frontend(old.tree)
+                build_frontend(old.tree)
                 with (nxt.tree / "frontend" / "src" / "main.tsx").open("a") as f:
                     f.write(NEXT_BUNDLE_LINE)
                 build_frontend(nxt.tree, node_modules=ROOT / "frontend" / "node_modules")

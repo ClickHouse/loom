@@ -249,7 +249,7 @@ class AuthSettings(BaseModel):
         raw = self.jwt_public_keys_json.strip()
         if not raw:
             return {}
-        return dict(json_map_items(raw, "jwt_public_keys_json", non_empty=False))
+        return dict(json_map_items(raw, "jwt_public_keys_json"))
 
     # Kill switch for restricted namespaces. True: served to a principal whose
     # token names the namespace AND who holds a live direct grant. False: every

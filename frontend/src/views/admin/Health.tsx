@@ -550,8 +550,8 @@ export function parseOpMix(d: unknown): OpMixData | null {
 }
 
 /** ops.health's op_mix answer: a report ({check, data}), a check the server ran but could
- *  not compute (data: null — status "fail", detail says why), or null when the check is
- *  absent or the request was refused. */
+ *  not compute (data: null — status "fail", detail says why), or null when the request
+ *  did not answer (an answer always carries the op_mix check). */
 export function OpMixPanel() {
   const identity = useIdentity();
   const [op, setOp] = useState<{ check: OpsHealthCheck; data: OpMixData | null } | null | undefined>(undefined);
@@ -582,7 +582,7 @@ export function OpMixPanel() {
       <EmptyState
         icon="pie-chart"
         title="Operation mix unavailable"
-        description="ops.health needs an org-admin token, or the server predates the op_mix check."
+        description="ops.health did not answer (it needs an org-admin token)."
       />
     );
   }

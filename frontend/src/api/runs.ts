@@ -29,8 +29,8 @@ export interface RunRow {
   memories_used: string[];
   memories_written: string[];
   metadata: Record<string, unknown>;
-  budget_usd?: number; // 0 = none; absent on a server without budgets
-  budget_seconds?: number;
+  budget_usd: number; // 0 = none
+  budget_seconds: number;
 }
 
 export interface RunGetResponse {
@@ -42,9 +42,9 @@ export interface RunGetResponse {
   observations: number;
   turns: number;
   cost_usd: number;
-  unpriced_turns?: number;
-  elapsed_seconds?: number;
-  over_budget?: ("cost" | "time")[];
+  unpriced_turns: number;
+  elapsed_seconds: number;
+  over_budget: ("cost" | "time")[];
 }
 
 export async function listRuns(

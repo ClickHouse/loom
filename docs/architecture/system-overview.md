@@ -69,7 +69,7 @@ append it to its group's `OPERATIONS` list
 
 A few HTTP routes are not registry ops: `/v1/health`, `/v1/whoami`, `/v1/operations`,
 `/v1/.well-known/jwks.json`, `/v1/knowledge.download`, `/v1/auth/login`, the dashboard's
-`/v1/me/*` and `/v1/admin/*` helpers, the OAuth and OIDC endpoints, and `/me`. The
+`/v1/me/*` and `/v1/admin/*` helpers, and the OAuth and OIDC endpoints. The
 [HTTP API reference](../reference/http-api.md) lists them.
 
 ### Dependency direction
@@ -335,9 +335,8 @@ flowchart LR
   originals live in ClickHouse. A new Loom with the same ClickHouse, env config and
   `LOOM_JWT_SECRET` gets every feature back.
 - **State outside ClickHouse.** The code plane's git mirrors under `var/code_repos` (a
-  cache: a host without them re-clones); the document originals an older build left in
-  `LOOM_BLOB_DIR` (default `var/blobs`) until `loom blobs import`; the rate-limit buckets on
-  the `loom-shared` volume. None is the system of record.
+  cache: a host without them re-clones) and the rate-limit buckets on the `loom-shared`
+  volume. None is the system of record.
 - **Two containers, one image.** `dev/docker-compose.cloud.yml` runs `loom-server`
   (`LOOM_BACKGROUND_WORKERS=off`) and `loom-workers` (`auto`: it runs the workers while it
   holds the lease), so a long worker pass never shares an event loop with requests.

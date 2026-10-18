@@ -191,9 +191,9 @@ async def _refresh_cache() -> None:
         pattern_type = r["pattern_type"]
         compiled: re.Pattern[str] | None = None
         if pattern_type == "regex":
-            # A row that predates add-time validation (or was written past
-            # it) is dropped from the hot path rather than run on every
-            # write; the refusal is logged so the operator can remove it.
+            # A row written past add-time validation is dropped from the hot
+            # path rather than run on every write; the refusal is logged so
+            # the operator can remove it.
             reason = validate_regex(r["pattern"])
             if reason is not None:
                 log.warning(

@@ -327,5 +327,5 @@ class TokenMintOutput(BaseModel):
     ns_roles: dict[str, str] | None = None
     consumer: str = ""
     ttl_seconds: int | None  # None: never expires
-    # Body fields this route no longer reads (`subject`, `is_service_account`).
+    # Body fields this route ignores (`subject`, `is_service_account`).
     ignored_args: list[str] = Field(default_factory=list)

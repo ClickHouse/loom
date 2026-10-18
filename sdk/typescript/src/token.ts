@@ -19,7 +19,7 @@ export interface TokenClaims {
   subject?: string;
   org?: string;
   namespaces: string[];
-  /** Flat roles (legacy / wildcard tokens). */
+  /** Flat roles (unscoped and wildcard tokens). */
   roles: string[];
   /** Per-namespace role for scoped tokens: authoritative where present. */
   nsRoles: Array<[namespace: string, role: string]>;

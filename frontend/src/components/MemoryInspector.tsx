@@ -1055,7 +1055,7 @@ function ProvenanceSection({
 }: {
   provenance: MemoryProvenance | null;
   onInspect: (key: string) => void;
-  onOpenThread: (threadId: string, agent: string) => void;
+  onOpenThread: (threadId: string) => void;
   /** Inside a Disclosure: the heading is the disclosure's. */
   embedded?: boolean;
 }) {
@@ -1087,7 +1087,7 @@ function ProvenanceSection({
                     component="button"
                     type="button"
                     size="sm"
-                    onClick={() => onOpenThread(p.thread_id, p.agent)}
+                    onClick={() => onOpenThread(p.thread_id)}
                     className="break-all text-left"
                   >
                     {p.thread_title || "View source conversation"}

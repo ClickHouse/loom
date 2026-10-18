@@ -121,9 +121,9 @@ describe("navigating actions mirror the view into the URL", () => {
   });
 
   it("opening a conversation thread lands on /conversations", () => {
-    useStore.getState().openConversationThread("t-1", "claude-code");
+    useStore.getState().openConversationThread("t-1");
     expect(useStore.getState().view).toBe("sessions");
-    expect(useStore.getState().pendingConversationThread).toEqual({ threadId: "t-1", agent: "claude-code" });
+    expect(useStore.getState().pendingConversationThread).toEqual({ threadId: "t-1" });
     expect(window.location.pathname).toBe("/conversations");
   });
 

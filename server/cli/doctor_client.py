@@ -802,8 +802,8 @@ def _toml_str(text: str, key: str) -> str:
     return m.group(1) if m else ""
 
 
-# The hook bounds derive from a measured round trip; these
-# env values override them (typically left over from a hand-tuned setup).
+# The hook bounds derive from a measured round trip; these env values
+# override them.
 _HOOK_BOUND_DEFAULT_MS = 3000
 _HOOK_OVERRIDES = ("LOOM_HOOK_TIMEOUT_MS", "LOOM_HOOK_EXIT_MS", "LOOM_SHUNT_READ_CAP")
 
@@ -811,7 +811,7 @@ _HOOK_OVERRIDES = ("LOOM_HOOK_TIMEOUT_MS", "LOOM_HOOK_EXIT_MS", "LOOM_SHUNT_READ
 def hook_override_check(home: Path, env: dict[str, str]) -> list[Check]:
     """One WARN per hook override found in the environment or in
     ~/.claude/settings.json `env` (which Claude Code applies to its hooks),
-    saying what it does now that the bounds are derived."""
+    saying what each one does."""
     try:
         raw_settings = _read(home / ".claude" / "settings.json") or "{}"
         settings_env = json.loads(raw_settings).get("env") or {}
@@ -843,7 +843,7 @@ def hook_override_check(home: Path, env: dict[str, str]) -> list[Check]:
         elif value > _HOOK_BOUND_DEFAULT_MS:
             why = (
                 f"{name}={raw} in {source}: every blocking hook (session primer, code shunt, file "
-                f"context, blast radius) may now hold a tool call for {value / 1000:.0f} s. The "
+                f"context, blast radius) may hold a tool call for {value / 1000:.0f} s. The "
                 "bound derives from the round trip measured at session start "
                 "(5× rtt, 3–8 s) — remove the override."
             )

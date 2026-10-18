@@ -117,9 +117,6 @@ plugin change:
 claude plugin update loom@loom
 ```
 
-(The server-side symptom of a stale client is a live `observe.record` stream
-with zero `run.begin`: the client predates the run ledger hook.)
-
 That's it — the hooks wire themselves (Claude Code injects `${CLAUDE_PLUGIN_ROOT}`;
 no `settings.json` editing). All you supply is a **writer token**: export
 `LOOM_API_KEY` or write it to `~/.loom/token` (one line). **Org and namespace are

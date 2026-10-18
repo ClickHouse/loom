@@ -127,7 +127,6 @@ def _row(participant: UUID, proof: str, **over: Any) -> dict[str, Any]:
         "transition_id": UUID(int=0),
         "state": "running",
         "version": 5,
-        "stale_after_s": 60,
         "expired": False,
         "host_proof": proof,
         **over,

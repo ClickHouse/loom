@@ -255,12 +255,9 @@ python scripts/codegen/docs_reference.py
 | `loom secrets reseal` | Seal again under LOOM_JWT_SECRET what only LOOM_JWT_SECRET_PREVIOUS opens. | `--dry-run`, `--check` |
 | `loom signing-key` | The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse. |  |
 | `loom signing-key rotate` | Add a key; it signs once every process has loaded it. | `--algorithm`, `--activate-in` |
-| `loom signing-key import` | Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. | `--map-env`, `--active`, `--algorithm`, `--activate-in` |
 | `loom signing-key retire` | Stop a key (or 'default') verifying tokens. | `<kid>` |
 | `loom signing-key record-root` | Record this LOOM_JWT_SECRET as the deployment's root secret, after replacing it on purpose (keys sealed under the old one stay unusable). |  |
 | `loom signing-key list` | List the keys. |  |
-| `loom blobs` | Uploaded document originals. |  |
-| `loom blobs import` | Move the originals of a filesystem blob directory (the old LOOM_BLOB_DIR) into ClickHouse. | `<blob_dir>`, `--apply`, `--dry-run`, `--accept-missing` |
 | `loom provider-lock` | The provider configuration lock. |  |
 | `loom provider-lock clear` | Free the provider configuration lock of a holder whose process stopped (refused while it renews, heartbeats or has a query running). | `--holder` |
 | `loom reembed` | Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). | `--org`, `--namespace`, `--batch-size`, `--in-database`, `--dry-run`, `--delete-old`, `--key-only`, `--resume` |
@@ -275,7 +272,6 @@ python scripts/codegen/docs_reference.py
 | `loom period-digest` | Write period digests — one derived episodic memory over K consecutive session digests of each identity in one namespace. | `--org`, `--namespace`, `--sessions`, `--max-identities`, `--max-periods`, `--apply`, `--dry-run`, `--rewrite` |
 | `loom demote-activity-narration` | Find a namespace's extracted facts that narrate tool activity ('User read lines 1-1000 of X', 'Claude ran a command on …') with no durable outcome and demote (confidence x0.25) or label them through… | `--org`, `--namespace`, `--action`, `--classifier`, `--days`, `--limit`, `--apply`, `--dry-run` |
 | `loom recalibrate` | Re-probe the embedder + run per-NS calibration immediately (otherwise this runs weekly via the recalibration worker). |  |
-| `loom backfill-chunks` | Backfill loom.memory_chunks from existing memory rows in one namespace. | `--org`, `--namespace`, `--dry-run` |
 | `loom import-clickgap` | Import a ClickGap (Detector→Validator→Reviewer) SQLite export into Loom (lessons + typed entities + categories). | `--sqlite`, `--org`, `--namespace`, `--agent`, `--dry-run`, `--batch-size`, `--seed-recall-events` |
 | `loom import-recall` | Import an external vector-recall agent-memory SQLite export into Loom. | `--sqlite`, `--org`, `--namespace`, `--agent`, `--base-url`, `--token`, `--dry-run` |
 | `loom import-brain` | Import a markdown agent 'brain' directory into Loom: MEMORY.md (always-injected HOT layer) → profile.set sections; memory/contexts/*.md (read-on-demand WARM layer) → knowledge.add docs. | `--dir`, `--org`, `--namespace`, `--agent`, `--base-url`, `--token`, `--dry-run` |

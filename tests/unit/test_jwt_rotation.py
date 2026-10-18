@@ -1,7 +1,9 @@
 """JWT kid-based key rotation through the signing keyring.
 
 In-process tests against `server.auth.jwt` + `server.auth.keyring`, loaded
-from a fake `loom.signing_keys`; the RS256 path lives in test_jwt_rs256.py.
+from a fake `loom.signing_keys`. RS256 tokens are covered in test_signing_keyring.py
+and test_signing_keyring_guards.py, and against a server in
+tests/integration/test_jwt_rs256.py.
 """
 
 from __future__ import annotations

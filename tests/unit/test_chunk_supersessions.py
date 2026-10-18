@@ -25,8 +25,9 @@ def test_no_server_code_updates_loom_chunks_in_place() -> None:
 
 
 def test_liveness_is_decided_in_one_place() -> None:
-    """The legacy column alone is not liveness; only the predicate
-    (and erasure's own ALTER mutation, which writes that column) names it."""
+    """Erasure's `doc_superseded_at` column alone is not liveness; only the
+    predicate (and erasure's own ALTER mutation, which writes that column)
+    names it."""
     allowed = {"server/knowledge/domain/live_chunks.py", "server/erasure/store/steps_memory.py"}
     hits = []
     for p in _server_py():
