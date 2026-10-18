@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import type { MemoryDetail, MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Recent } from "./Recent";
@@ -59,7 +59,7 @@ vi.mock("../api", async (importOriginal) => {
     })),
   };
 });
-import { conflictKeys, listMemories, searchMemory } from "../api";
+import { bulkGetMemories, conflictKeys, listMemories, searchMemory } from "../api";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
@@ -224,6 +224,45 @@ describe("Recent search after a local write", () => {
     await act(async () => answerRanked({ results: [hit("oat_pref")], embedding_model: "m" }));
     await waitFor(() => expect(screen.queryByText("old_pref")).toBeNull());
     expect(screen.getByText("oat_pref")).toBeInTheDocument();
+  });
+
+  it("while a write ranks again, keeps no hit read from outside the page before the write", async () => {
+    let written = false;
+    vi.mocked(listMemories).mockResolvedValue({ entries: [entry("milk_note")], total: 1, today: 0, truncated: false });
+    onTestFinished(() => {
+      vi.mocked(bulkGetMemories).mockImplementation(async () => ({ results: {}, missing: [] }));
+    });
+    vi.mocked(bulkGetMemories).mockImplementation(async (_id, keys) => ({
+      results: Object.fromEntries(keys.map((k) => [k, { ...entry(k), value: k } as unknown as MemoryDetail])),
+      missing: [],
+    }));
+    vi.mocked(searchMemory).mockImplementation(async () => {
+      if (written) return new Promise(() => {}) as never;
+      return {
+        results: [
+          {
+            memory_key: "far_pref",
+            memory_type: "semantic",
+            content_excerpt: "far_pref",
+            distance: 0.3,
+            similarity: 0.7,
+          },
+        ],
+        embedding_model: "m",
+      } as never;
+    });
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    expect((await screen.findAllByText("far_pref", {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+    // A write (far_pref may be gone): its copy from before the write is not drawn again.
+    written = true;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk")).toHaveLength(2), {
+      timeout: 3000,
+    });
+    await waitFor(() => expect(screen.queryAllByText("far_pref")).toHaveLength(0));
+    expect(screen.getAllByText("milk_note").length).toBeGreaterThan(0);
   });
 
   it("a search that failed outright brings none of its earlier ranked hits back on the next run", async () => {

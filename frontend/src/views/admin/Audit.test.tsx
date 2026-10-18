@@ -223,6 +223,26 @@ describe("Audit: older events", () => {
     );
   });
 
+  // The reader moved on while the last page read: the focus stays where they put it.
+  it("leaves the focus where the reader moved it while the last page read", async () => {
+    let answer: (v: { rows: AuditEntry[]; next_cursor: null }) => void = () => {};
+    vi.mocked(api.listAuditLog)
+      .mockResolvedValueOnce({ rows: [row("alice", '{"namespace":"team","visibility":"org"}')], next_cursor: "c1" })
+      .mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    render(<Audit />);
+    await screen.findByText("Created namespace team (org)");
+    const button = screen.getByRole("button", { name: "Load older" });
+    button.focus();
+    fireEvent.click(button);
+    const filter = screen.getByRole("textbox", { name: "Filter audit events" });
+    filter.focus();
+    await act(async () =>
+      answer({ rows: [row("dave", '{"namespace":"last","visibility":"org"}')], next_cursor: null }),
+    );
+    await screen.findByText("Created namespace last (org)");
+    expect(filter).toHaveFocus();
+  });
+
   // The last page holds only system events, hidden by default: no new row to focus, so the
   // focus goes to the last row shown rather than falling to the page.
   it("moves focus to the last row shown when every row of the last page is hidden", async () => {

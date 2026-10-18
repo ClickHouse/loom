@@ -1,5 +1,4 @@
 import { Button, type ButtonProps } from "@clickhouse/click-ui/Button";
-import { forwardRef } from "react";
 
 /**
  * BusyButton — a Click UI Button that stays on the page while its own read runs (Refresh,
@@ -7,14 +6,10 @@ import { forwardRef } from "react";
  * to the page mid-read; this one stays focusable, says it is busy (`aria-busy`, dimmed with
  * a progress cursor in styles.css) and ignores a press until the work ends.
  */
-export const BusyButton = forwardRef<HTMLButtonElement, ButtonProps & { busy: boolean }>(function BusyButton(
-  { busy, onClick, ...props },
-  ref,
-) {
+export function BusyButton({ busy, onClick, ...props }: ButtonProps & { busy: boolean }) {
   return (
     <Button
       {...props}
-      ref={ref}
       aria-busy={busy || undefined}
       aria-disabled={busy || props.disabled || undefined}
       onClick={(e) => {
@@ -26,4 +21,4 @@ export const BusyButton = forwardRef<HTMLButtonElement, ButtonProps & { busy: bo
       }}
     />
   );
-});
+}

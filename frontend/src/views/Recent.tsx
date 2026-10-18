@@ -393,9 +393,9 @@ function MemoryList() {
         setRanking(false);
         if (r === null) {
           // The new ranking failed: the hits kept from the last one are not today's, so the
-          // list goes back to the keyword rows.
+          // list goes back to the keyword rows and the next run keeps none of them.
+          rankedShownRef.current = null;
           if (kept.length > 0) {
-            rankedShownRef.current = null;
             setSearchHits([...kwKeys]);
             setSearchExtra(new Map(kwExtra));
             setSearchWhy(new Map());
@@ -880,14 +880,18 @@ function MemoryList() {
     ...(queryAgent ? [`agent:${queryAgent}`] : agentFilter != null ? [displayAgent(agentFilter)] : []),
     ...(status !== "live" ? [STATUSES.find((o) => o.value === status)?.label ?? status] : []),
   ].join(", ");
-  // What the reader typed, for the no-match row; a select's value is not quoted back.
-  const typedWords = [
-    searchActive ? `"${rawQuery.trim()}"` : "",
-    ...queryTags.map((t) => `tag:${t}`),
-    queryAgent ? `agent:${queryAgent}` : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
+  // What the reader typed, for the no-match row. With a select in force too (agent, a
+  // status but Live) the row says "the filters in force", not blame the words alone.
+  const typedWords =
+    agentFilter != null || status !== "live"
+      ? ""
+      : [
+          searchActive ? rawQuery.trim() : "",
+          ...queryTags.map((t) => `tag:${t}`),
+          queryAgent ? `agent:${queryAgent}` : "",
+        ]
+          .filter(Boolean)
+          .join(", ");
   const clearFilters = () => {
     // Every Clear leaves with the filters it clears: focus goes to the search.
     searchInputRef.current?.focus();

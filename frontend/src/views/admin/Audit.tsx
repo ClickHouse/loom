@@ -260,8 +260,8 @@ export function Audit() {
     }
   };
 
-  // The button keeps focus while the page reads; the last page removes it, so focus goes to
-  // the first row that page added — or, when it added none that are shown (all system
+  // The button keeps focus while the page reads; the last page removes it, so focus that
+  // fell to the page goes to the first row that page added — or, when it added none that are shown (all system
   // events), the last row shown, else the table. Only the render where a load ends moves
   // focus: another render in between (the deferred rows' transition) must not spend it.
   const wasLoadingOlder = useRef(false);
@@ -271,7 +271,8 @@ export function Audit() {
     const at = focusAfterLoad.current;
     if (!ended || at === null) return;
     focusAfterLoad.current = null;
-    if (older) return;
+    // Not when the reader moved on during the read (typing in the filter).
+    if (older || document.activeElement !== document.body) return;
     const shown = eventsTable.current?.querySelectorAll<HTMLElement>("tbody tr") ?? [];
     const target = shown[at] ?? shown[shown.length - 1] ?? eventsTable.current;
     if (target) {

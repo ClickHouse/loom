@@ -263,11 +263,12 @@ export function ThreadReplayDialog({
   const focusTurn = useRef<string | null>(null);
   const transcriptRef = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (!focusTurn.current) return;
+    if (focusTurn.current === null) return;
     // The transcript takes focus, not the turn: a tabbable region, so Tab moves on from
-    // it inside the dialog; the first new turn is scrolled into view.
+    // it inside the dialog; the first new turn ("" when the page brought none) is
+    // scrolled into view.
     transcriptRef.current?.focus({ preventScroll: true });
-    document.getElementById(focusTurn.current)?.scrollIntoView?.({ block: "start" });
+    if (focusTurn.current) document.getElementById(focusTurn.current)?.scrollIntoView?.({ block: "start" });
     focusTurn.current = null;
   }, [threadDetail]);
 
@@ -301,8 +302,8 @@ export function ThreadReplayDialog({
       const next = fellBack ? null : r.next_cursor;
       setMoreCursor(next);
       // The last page removes Load more; its focus moves to the transcript, at the first
-      // turn the page brought.
-      if (!next && r.rows.length > 0) focusTurn.current = turnId(r.rows[0]);
+      // turn the page brought, if any.
+      if (!next) focusTurn.current = r.rows.length > 0 ? turnId(r.rows[0]) : "";
     } catch (e) {
       if (signal.aborted) return;
       toast(`Load more failed: ${humanizeError(e)}`, "error");

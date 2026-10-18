@@ -264,7 +264,7 @@ export function Spending() {
 
       {!!error && <ListState kind="error" things="usage" error={error} onRetry={() => setReload((n) => n + 1)} />}
       {!error && rows === null && (
-        <LoadingSkeleton label="Loading spending">
+        <LoadingSkeleton label="Loading usage">
           <Skeleton className="h-40 w-full" />
         </LoadingSkeleton>
       )}

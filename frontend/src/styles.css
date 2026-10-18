@@ -388,9 +388,10 @@ body {
 }
 
 /* A button whose read is in flight stays focusable (components/ui/BusyButton) and shows
-   it is working the way Click UI's loading button does: dimmed, with a progress cursor. */
+   it is working: dimmed, with a progress cursor. Click UI's own loading button is
+   disabled and keeps its look. */
 @layer components {
-  button[aria-busy="true"] {
+  button[aria-busy="true"]:not(:disabled) {
     cursor: progress;
     opacity: 0.7;
   }

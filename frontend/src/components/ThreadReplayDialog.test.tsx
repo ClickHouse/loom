@@ -1,6 +1,6 @@
-import { cleanup, render, screen, within } from "../test/rtl";
+import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listMemories, type ConversationThreadDetail } from "../api";
+import { listConversationMessages, listMemories, type ConversationThreadDetail } from "../api";
 import { listTime } from "../lib/format";
 import { ThreadReplayDialog, threadTitle } from "./ThreadReplayDialog";
 
@@ -64,6 +64,19 @@ describe("ThreadReplayDialog", () => {
     );
     expect(await screen.findByText("Showing the newest 20.")).toBeInTheDocument();
     expect(screen.getByText("37")).toBeInTheDocument();
+  });
+
+  it("moves the focus to the transcript when the last page comes back empty", async () => {
+    getConversationThread.mockResolvedValue({ ...detail, msg_count: 5, next_cursor: "c1" } as ConversationThreadDetail);
+    vi.mocked(listConversationMessages).mockResolvedValueOnce({ rows: [], next_cursor: null } as never);
+    render(
+      <ThreadReplayDialog identity={identity} thread={{ thread_id: "t-1", namespace: "ns" }} onClose={() => {}} />,
+    );
+    const more = await screen.findByRole("button", { name: /^Load more/ }, { timeout: 2000 });
+    more.focus();
+    more.click();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^Load more/ })).toBeNull());
+    expect(screen.getByLabelText("Transcript")).toHaveFocus();
   });
 
   it("names each turn's role in a neutral badge on a neutral rail, and strokes the hit's turn", async () => {

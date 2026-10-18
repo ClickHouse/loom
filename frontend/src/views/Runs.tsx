@@ -890,7 +890,13 @@ export function Runs() {
         ))}
       {/* Said only of a read of what is asked now: a new filter's read in flight is not it. */}
       {nothingShown && searching && (
-        <ListState kind="filtered" things="runs" filter={q || undefined} onClear={clearFilters} />
+        <ListState
+          kind="filtered"
+          things="runs"
+          // The typed words alone; with a status or agent picked too, "the filters in force".
+          filter={(!filter && !agent && q) || undefined}
+          onClear={clearFilters}
+        />
       )}
       {nothingShown && !searching && (
         <ListState

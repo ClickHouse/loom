@@ -195,6 +195,14 @@ function ConflictsPanel() {
     [identity.org, identity.namespace, reload],
   );
 
+  // A decision that empties the queue reads it again: more may wait past what was loaded.
+  const decided = useRef(false);
+  useEffect(() => {
+    if (!decided.current || rows === null) return;
+    decided.current = false;
+    if (rows.length === 0) setReload((n) => n + 1);
+  }, [rows]);
+
   // The last page removes Load more, which held the focus: it goes to the first conflict
   // that page added, else the last one in the queue.
   const queueBox = useRef<HTMLDivElement>(null);
@@ -249,9 +257,9 @@ function ConflictsPanel() {
     );
   }
 
-  const current = rows[index];
-  if (!current)
-    return <ListState kind="empty" icon="secure" title="All clear" description="You worked through the queue." />;
+  // Deciding the last conflict on hand leaves the one before it current.
+  const at = Math.min(index, rows.length - 1);
+  const current = rows[at];
 
   const peerId = current.conflict_with?.[0];
   // The server's count is cached for a minute; it is never less than the rows on hand.
@@ -271,13 +279,12 @@ function ConflictsPanel() {
       // The namespace changed while the decision was out: its queue is not this one's.
       if (rowsFor.current !== key) return;
       setReason("");
-      // The decided conflict leaves the queue; the next one takes its place.
-      const rest = rows.filter((c) => c.memory_id !== current.memory_id);
+      // The decided conflict leaves the queue as it is now (a page Load more added meanwhile
+      // stays); the next one takes its place.
+      decided.current = true;
+      setRows((prev) => prev && prev.filter((c) => c.memory_id !== current.memory_id));
+      setIndex(at);
       if (held !== null) setTotal(held - 1);
-      if (rest.length > 0) {
-        setRows(rest);
-        setIndex(Math.min(index, rest.length - 1));
-      } else setReload((n) => n + 1);
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {
@@ -288,7 +295,7 @@ function ConflictsPanel() {
   return (
     <div>
       <div className="mb-3 text-sm text-text-muted tabular">
-        Conflict {index + 1} of {(held ?? rows.length).toLocaleString()} · resolve in order
+        Conflict {at + 1} of {(held ?? rows.length).toLocaleString()} · resolve in order
       </div>
       <Panel>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
@@ -315,7 +322,7 @@ function ConflictsPanel() {
             htmlType="button"
             iconLeft="slide-in"
             onClick={() => setIndex((i) => Math.min(rows.length - 1, i + 1))}
-            disabled={busy || index >= rows.length - 1}
+            disabled={busy || at >= rows.length - 1}
           >
             Skip
           </Button>

@@ -177,6 +177,22 @@ describe("Library list", () => {
     expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
   });
 
+  // The last page takes Load more with it: focus goes to the document that page added,
+  // wherever the sort puts it, not to the row at the old length.
+  it("moves focus to the document the last page added when Load more goes", async () => {
+    api.listKnowledge.mockResolvedValueOnce({ rows: ROWS, next_cursor: "c-2" }).mockResolvedValueOnce({
+      rows: [doc({ source_uri: "docs/new.md", title: "Newest note", ingested_at: "2026-10-01T12:00:00Z" })],
+      next_cursor: null,
+    });
+    render(<Documents />);
+    await screen.findByText("Refund escalation");
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await screen.findByText("Newest note");
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    const added = screen.getByText("Newest note").closest("[data-doc-row]") as HTMLElement;
+    await waitFor(() => expect(added.querySelector("[data-row-open]")).toHaveFocus());
+  });
+
   // The reload after a delete is dropped when the namespace changes while it is in flight,
   // so the old namespace's documents never draw under the new one.
   it("drops a reload after a delete that lands once the namespace has changed", async () => {

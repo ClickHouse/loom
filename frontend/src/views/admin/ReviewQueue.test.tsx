@@ -321,6 +321,28 @@ describe("ReviewQueue", () => {
     expect(within(table).getByRole("button", { name: "k/two" })).toBeInTheDocument();
   });
 
+  it("keeps the page Load more added while a decision was out", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(3);
+    vi.mocked(listConflicts).mockImplementation(async (_id, opts) =>
+      opts?.before_version
+        ? { rows: [conflict("k/three")], next_before_version: null }
+        : { rows: [conflict("k/one"), conflict("k/two")], next_before_version: 7 },
+    );
+    let decided: (v: never) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (decided = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(within(table).getByRole("button", { name: "k/three" })).toBeInTheDocument(), WAIT);
+    await act(async () => decided(undefined as never));
+    await waitFor(() => expect(within(table).queryByRole("button", { name: "k/one" })).toBeNull(), WAIT);
+    expect(within(table).getByRole("button", { name: "k/two" })).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: "k/three" })).toBeInTheDocument();
+  });
+
   it("counts the queue in its toolbar and shows each conflict's time as a list time", async () => {
     vi.mocked(countConflicts).mockResolvedValue(4);
     vi.mocked(listConflicts).mockResolvedValue({

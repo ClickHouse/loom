@@ -154,14 +154,14 @@ const SECONDARY_ACTIONS: ActionButton[] = [
 ];
 // The page's keys do nothing while the panel is a sheet (a dialog holds them off), so a
 // sheet's tooltip names no key.
-function actionTip(b: ActionButton, sheet: boolean): string {
+export function actionTip(b: ActionButton, sheet: boolean): string {
   const key = b.key && !sheet ? b.key.toUpperCase() : "";
   return [b.tip ?? (key ? b.label.replace(/…$/, "") : ""), key].filter(Boolean).join(" · ");
 }
 // Everything else the status allows, under More, in this order.
 const MENU_ACTIONS: TaskAction[] = ["block", "defer", "wont_do", "edit", "reassign", "cancel"];
 
-interface ActionButton {
+export interface ActionButton {
   action: TaskAction;
   label: string;
   tip?: string;

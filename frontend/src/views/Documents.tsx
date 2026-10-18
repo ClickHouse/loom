@@ -163,7 +163,7 @@ export function Documents() {
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     const scope = scopeRef.current;
-    focusAdded.current = shownRows?.length ?? 0;
+    focusAdded.current = new Set(shownRows?.map((r) => r.source_uri));
     setLoadingMore(true);
     try {
       const r = await listKnowledge(
@@ -188,16 +188,17 @@ export function Documents() {
   };
 
   // The last page removes Load more, which held the focus: it goes to the first document
-  // that page added, else the last one shown.
+  // in the list's order that the page added, else the last one shown.
   const listBox = useRef<HTMLDivElement | null>(null);
-  const focusAdded = useRef<number | null>(null);
+  const focusAdded = useRef<Set<string> | null>(null);
   useEffect(() => {
-    const at = focusAdded.current;
-    if (at === null || loadingMore) return;
+    const before = focusAdded.current;
+    if (before === null || loadingMore) return;
     focusAdded.current = null;
     if (nextCursor || document.activeElement !== document.body) return;
-    const opens = listBox.current?.querySelectorAll<HTMLElement>("[data-row-open]") ?? [];
-    (opens[at] ?? opens[opens.length - 1])?.focus();
+    const rows = [...(listBox.current?.querySelectorAll<HTMLElement>("[data-doc-row]") ?? [])];
+    const row = rows.find((el) => !before.has(el.dataset.docRow ?? "")) ?? rows[rows.length - 1];
+    row?.querySelector<HTMLElement>("[data-row-open]")?.focus();
   });
 
   useEffect(() => {
@@ -640,7 +641,7 @@ export function Documents() {
             return (
               <ListRow
                 key={r.source_uri}
-                data-doc-row
+                data-doc-row={r.source_uri}
                 checked={selected.has(r.source_uri)}
                 leading={
                   <Checkbox
