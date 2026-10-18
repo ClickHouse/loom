@@ -152,6 +152,25 @@ describe("Memories list chrome", () => {
     expect(screen.queryByRole("navigation", { name: "Memories pages" })).toBeNull();
   });
 
+  it("drops what the pager said of a page when a filter replaces its read", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, limit = 50, opts): Promise<MemoryListResponse> => {
+      if (limit === 1000) {
+        const entries = Array.from({ length: 30 }, (_, i) => entry(`pin${i}`, { pinned: true }));
+        return { entries, total: 30, today: 0, truncated: false };
+      }
+      if ((opts?.offset ?? 0) > 0) return new Promise<MemoryListResponse>(() => {});
+      return { entries: Array.from({ length: 50 }, (_, i) => entry(`k${i}`)), total: 1234, today: 0, truncated: false };
+    });
+    render(<Recent />);
+    await screen.findByText("k0");
+    const pager = () => screen.getByRole("navigation", { name: "Memories pages" });
+    fireEvent.click(within(pager()).getByRole("button", { name: "Next page" }));
+    expect(within(pager()).getByRole("status")).toHaveTextContent("Page 2 of 25");
+    await pick("Status", "pinned");
+    expect(await screen.findByText("pin0")).toBeInTheDocument();
+    expect(within(pager()).getByRole("status")).toBeEmptyDOMElement();
+  });
+
   // Next waits for the page's read, and the pager pages from the rows on screen.
   it("asks for the next page once when Next is pressed twice while it loads", async () => {
     const offsets: number[] = [];

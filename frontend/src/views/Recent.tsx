@@ -756,8 +756,8 @@ function MemoryList() {
       fetchOnceRef.current = fetchOnce;
       return fetchOnce(true);
     },
-    // A filtered list holds every match already: its pages need no read.
-    [identity, listFiltered ? 0 : page, pageSize, memoriesVersion, showDeleted, listFilter],
+    // A filtered list holds every match already: its pages and page size need no read.
+    [identity, listFiltered ? 0 : page, listFiltered ? 0 : pageSize, memoriesVersion, showDeleted, listFilter],
   );
   // The 8 s refresh sleeps while the tab is hidden and catches up once on
   // return; it always runs the current effect's fetchOnce, so a response
@@ -1024,7 +1024,7 @@ function MemoryList() {
         !emptyNamespace &&
         flatList.length === 0 &&
         !searching &&
-        readFor === JSON.stringify(listFilter) &&
+        filterRead &&
         !filterPending &&
         (showDeleted && !narrowed ? null : (
           <ListState
@@ -1039,20 +1039,15 @@ function MemoryList() {
             }}
           />
         ))}
-      {entries !== null &&
-        !failed &&
-        showDeleted &&
-        flatList.length === 0 &&
-        !narrowed &&
-        readFor === JSON.stringify(listFilter) && (
-          <ListState
-            kind="empty"
-            icon="trash"
-            title="No recently deleted memories"
-            description="Deleted memories stay here for 14 days so you can restore them — nothing has been deleted recently."
-            action={{ label: "Show live memories", onClick: () => setStatus("live") }}
-          />
-        )}
+      {entries !== null && !failed && showDeleted && flatList.length === 0 && !narrowed && filterRead && (
+        <ListState
+          kind="empty"
+          icon="trash"
+          title="No recently deleted memories"
+          description="Deleted memories stay here for 14 days so you can restore them — nothing has been deleted recently."
+          action={{ label: "Show live memories", onClick: () => setStatus("live") }}
+        />
+      )}
 
       {truncated && (
         <p className="mb-3 text-xs text-text-muted">
@@ -1167,6 +1162,7 @@ function MemoryList() {
           label="Memories pages"
           page={!listFiltered && browsedCurrent ? entriesAt.page : page}
           busy={refreshing}
+          resetKey={pageScope}
           pageSize={pageSize}
           shown={(listFiltered && filterRead) || (!listFiltered && browsedCurrent) ? pageList.length : 0}
           total={listFiltered ? (filterRead ? listTotal : undefined) : browsedTotal}

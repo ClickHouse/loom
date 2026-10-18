@@ -127,8 +127,10 @@ describe("Recent change-driven refresh", () => {
     render(<Recent />);
     const pager = await screen.findByRole("navigation", { name: "Memories pages" });
     expect(pager).toHaveTextContent("of 1,234");
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1–50 of 1,234");
     await vi.advanceTimersByTimeAsync(8000);
     await waitFor(() => expect(pager).toHaveTextContent("of 1,235"));
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1–50 of 1,235");
   });
 
   it("polls with known_version and holds it across an unchanged answer", async () => {
