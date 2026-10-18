@@ -36,10 +36,9 @@ A refreshable materialized view folds rows older than 10 seconds into
 `loom_telemetry.sli_minute` once a minute (requests, server and client errors,
 rate-limited requests, which are among the client errors, over-budget successes, latency
 quantiles, kept 400 days), for SLO dashboards and alert rules to read without scanning
-the ledger. Calls that name no registered op (MCP's `initialize`) have no
-SLO class and are left out. A minute can arrive as several rows until they merge, so a
-reader groups by its keys with `sum()` for the counts and
-`quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)` for the latencies.
+the ledger. Rows with no SLO class (the `/v1/me/*` routes, MCP's `initialize`) are left
+out. A minute can arrive as several rows until they merge, so a reader groups by its keys
+with `sum()` for the counts and `quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)` for the latencies.
 
 The emitter is batched and never fails a request; a crash can lose the unflushed queue.
 

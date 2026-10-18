@@ -96,8 +96,9 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
     """Rows written as the ledger writes them, stamped now: a refresh folds
     rows at least 10 s old past the newest one folded, so a row stamped
     earlier could fall behind what the scheduled refreshes already folded.
-    The two with no SLO class, as calls that name no registered op write
-    them, are left out."""
+    The two with no SLO class, one written without the SLI columns (as the
+    `/v1/me/*` routes write theirs) and one for a call that names no
+    registered op, are left out."""
     from datetime import UTC, datetime
 
     org = unique_org("sli-rollup")
@@ -109,7 +110,7 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
         ("http", "read", True, "", "ok", 500, 100),  # slow
         ("mcp", "read", False, "RATE_LIMITED", "client", 0, 100),
         ("http", "read", False, "INTERNAL_ERROR", "server", 5000, 100),  # not in the quantiles
-        ("", "", False, "INTERNAL_ERROR", "", 20, 0),  # no transport or SLO class
+        ("", "", False, "INTERNAL_ERROR", "", 20, 0),  # no SLI columns, as /v1/me/*
         ("mcp", "", True, "", "ok", 5, 0),  # no registered op
     ]
     ch_client.insert(
