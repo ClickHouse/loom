@@ -1,24 +1,8 @@
-"""Judge the writes the conflict check marked, one LLM call per row, and act on the
-verdicts (`memory.app.conflict_resolver`). Up to `memory_conflict_resolver_concurrency`
-rows are judged at once.
-
-Each pass reads up to `memory_conflict_resolver_batch` marked rows (a full read is a
-backlog: the pass reads the next batch at once, for up to `BURST_S`), then up to
-`memory_conflict_resolver_recheck_batch` rows already `conflicted` that no resolver
-judged (flags from the cosine check, or from an older build's judge), so a false flag is
-cleared once. That read scans every conflicted row, so once it comes back short it waits
-`RECHECK_IDLE_S` before the next. Both take rows in turns across namespaces, so one
-namespace's backlog does not hold the others back. The queue leaves out a namespace over
-its daily LLM cost cap and an org with an erasure queued, running or due a retry; their
-rows stay owed. The cap is read again before each call, for a namespace that crosses it
-mid-pass. A transient provider error leaves the row owed; a refusal of the row's own
-request, or an answer cut at the cap twice, stamps it judged and counts it errored, so it
-does not come back every pass. The keys' locks unavailable stop the pass, rows owed. A
-row is stamped judged only after its actions, so a pass cut short judges it again and
-acting twice changes nothing. With no key for the model the pass reads nothing; if the
-provider refuses the model or the key, the pass stops. Either logs a warning once per
-change (and an INFO line when the model is back), not once per pass; nothing else fails.
-Leader-only, like every worker.
+"""Judge the writes the conflict check marked, one LLM call per row, up to
+`memory_conflict_resolver_concurrency` at once, and act on the verdicts
+(`memory.app.conflict_resolver`). The queue reads, the cost cap, the failure rule and
+the backlog drain are in docs/architecture/memory-architecture.md (the conflict
+resolver). Leader-only, like every worker.
 """
 
 from __future__ import annotations

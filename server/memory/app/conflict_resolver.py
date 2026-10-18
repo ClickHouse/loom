@@ -1,27 +1,12 @@
 """The conflict resolver: one LLM judgement per marked row, against its nearest live
-peers, and what it does about each pair.
+peers, and what it does about each pair (`domain.conflict_resolution.action_for`):
+retire the peer behind the row (`apply_refines`, recorded and followed), flag the pair,
+clear a flag between them, or nothing.
 
-A write marks its row when a live peer of its memory_type sits at cosine >= the
-resolver floor, or when it was flagged `conflicted` (`store.conflict_resolver`).
-The leader's worker (`memory.workers.conflict_resolver`) hands each marked row
-here. The verdicts are folded by `domain.conflict_resolution.action_for`:
-
-- retire: the peer is superseded behind the judged row through `apply_refines`, only
-  when the peer was stated strictly first (else the pair is flagged), with its
-  `memory.auto_supersede` record (reason `conflict_resolver`, so `memory.restore`
-  undoes it), the triple plane following the retirement, and the judged row's
-  flag against the peer removed;
-- flag: both rows go to the review queue (`conflicted`, `conflict_with`);
-- clear: a flag between the pair is removed, both rows stay live;
-- nothing: below the confidence floor, a peer the answer did not name, or an answer
-  that could not be parsed.
-
-Before it acts on a pair it re-reads both rows strongly and acts only while both
-still hold the judged content; a row changed since is left to its new mark. A
-pinned row is never retired, flagged or cleared. The row is then stamped judged
-at its content hash, so no write is judged twice. Acting again is a no-op: an
-already-retired row is not live, an existing flag is left alone, and a removed
-flag has nothing left to remove."""
+Every write follows one rule: re-read the row under its key's write lock, check the
+org's erasure, and write at the read version + 1, only while the row still holds the
+content judged. A pinned row is never touched. The row is then stamped judged at its
+content hash. The invariants are listed in docs/architecture/memory-architecture.md."""
 
 from __future__ import annotations
 
