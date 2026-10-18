@@ -104,8 +104,9 @@ These are HTTP, SDK (`agent.conflicts.*`) and dashboard operations, not MCP tool
 | `contract` | The chosen row is wrong: it is tombstoned and its peers return to `active`.                                           |
 | `allow`    | Both are distinct: every row returns to `active` and each key pair goes on the allowlist (`loom.conflict_allowlist`). |
 
-A resolve decides only open pairs, where both rows are live and each lists the other in
-`conflict_with`, and a decision removes the pair from both rows' `conflict_with`. A named
+A resolve decides only open pairs, where both rows are live, each lists the other in
+`conflict_with` and at least one of them is conflicted; a decision removes the pair from both
+rows' `conflict_with`. A named
 `peer_id` whose pair is not open answers `resolved=False` and writes nothing; with no `peer_id`
 it decides every open pair. The answer carries `total`, the namespace's conflicted count after
 the writes, which `conflicts.list(count_only=true, fresh=true)` also reads without the cache.

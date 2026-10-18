@@ -76,7 +76,8 @@ class ConflictsResolveInput(BaseModel):
     # the peers; `allow` reactivates all and allowlists each key pair.
     decision: ResolveDecision
     # Optional: decide only the pair with this peer. If unset, the resolve decides every
-    # open pair: both rows live and each listing the other in conflict_with.
+    # open pair: both rows live, each listing the other in conflict_with, and at least
+    # one of them conflicted.
     peer_id: str | None = None
     # Why; appended to tombstoned rows' `source_trace` and stored on allowlist rows
     # (first 512 characters).

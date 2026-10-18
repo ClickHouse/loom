@@ -9,7 +9,8 @@ like an unknown id: resolved=False, nothing written.
 `peer_id` narrows a resolve to one peer. A peer_id outside the target's
 conflict_with answers resolved=False rather than widening to every peer.
 
-A resolve decides only open pairs (both rows live, each listing the other), and a
+A resolve decides only open pairs (both rows live, each listing the other, at least
+one conflicted), and a
 decision removes the pair from both rows' conflict_with.
 
 The repository is faked as one table keyed by memory_id.
@@ -398,3 +399,15 @@ async def test_the_rows_and_the_count_are_read_with_sequential_consistency(
     # One read of the target, then one of the target and both peers together.
     assert table.row_reads_consistent == [True, True]
     assert table.count_reads_consistent == [True]
+
+
+@pytest.mark.parametrize("peer_id", [P_OWN2, None])
+async def test_two_active_rows_that_still_list_each_other_are_not_decided(
+    table: _Table, admin_of_a: None, peer_id: str | None
+) -> None:
+    # A pair decided before decisions pruned conflict_with: both active, still linked.
+    table.rows[T_OWN].update(status="active", conflict_with=[P_OWN2])
+    table.rows[P_OWN2].update(status="active", conflict_with=[T_OWN])
+    out = await _resolve(T_OWN, "contract", peer_id=peer_id)
+    assert out.resolved is False and out.affected_memory_ids == []
+    assert table.tombstoned == table.activated == [] and table.allowlisted == []

@@ -234,8 +234,9 @@ async def _open_pairs(
     the body's namespace does not cover them: the target must live in that
     namespace and the caller must hold ADMIN on every row it writes, or the
     answer is the same resolved=False as for an unknown id. A pair is open
-    while both rows are live and each lists the other; a decision removes the
-    pair from both rows' conflict_with, so a stale view cannot decide it again."""
+    while both rows are live, each lists the other and at least one is
+    conflicted; a decision removes the pair from both rows' conflict_with, so a
+    stale view cannot decide it again."""
     from server.auth.authz import row_in_scope
     from server.core.ch import own_write_reads
     from server.memory.store import conflicts as conflicts_repo
@@ -262,7 +263,10 @@ async def _open_pairs(
     peers = [
         p
         for p in candidates
-        if p in rows and p in target.conflict_with and input.memory_id in rows[p].conflict_with
+        if p in rows
+        and p in target.conflict_with
+        and input.memory_id in rows[p].conflict_with
+        and "conflicted" in (target.status, rows[p].status)
     ]
     # A conflicted target whose peers are all gone is still decided on its own.
     alone = target.status == "conflicted" and not any(p in rows for p in candidates)
