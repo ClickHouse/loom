@@ -777,7 +777,7 @@ async def _tombstone_embeddings(
         "embedded": EMBEDDED_EXCERPT_CHARS,
     }
     select = """
-        SELECT DISTINCT embedding_model, msg_id, agent, toUnixTimestamp64Milli(ts) AS ts_ms
+        SELECT embedding_model, msg_id, agent, toUnixTimestamp64Milli(ts) AS ts_ms
         FROM loom.conversation_embeddings FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND thread_id = {{tid:String}} AND tombstoned_at IS NULL
