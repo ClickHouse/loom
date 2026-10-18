@@ -843,12 +843,6 @@ async def test_an_unconfirmed_retirement_is_left_for_the_reconcile(monkeypatch) 
             cols = ("namespace", "agent", "user_id", "session_id", "memory_key")
             return [{**dict(zip(cols, k, strict=True)), "version": 1} for k in params["keys"]]
 
-    queued: list = []
-
-    async def queue(batch):
-        queued.extend(r["memory_id"] for r in batch)
-
-    monkeypatch.setattr(ar, "queue_status_mirror", queue)
     monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
     monkeypatch.setattr(lifecycle, "build_memory_version_row", _version_row)
     monkeypatch.setattr(lifecycle, "insert_memory_versions", insert)
@@ -865,234 +859,18 @@ async def test_an_unconfirmed_retirement_is_left_for_the_reconcile(monkeypatch) 
             on_written=tracker.written,
             on_unconfirmed=tracker.unconfirmed,
         )
-        assert n == 0 and mirrored == [] and queued[-2:] == ["a", "b"]
+        assert n == 0 and mirrored == []
         # Recorded and followed as unconfirmed; no result counts them.
         assert [v.get("unconfirmed") for v in tracker.retired(victims)] == [True, True]
     assert Failing.reads == 2, "the head read is tried twice"
 
 
-async def test_unconfirmed_rows_are_queued_one_failure_per_namespace(monkeypatch) -> None:
-    from server.memory.app import projection_failures as pf
-
-    queued: list[dict] = []
-
-    async def record(**kw):
-        queued.append(kw)
-
-    monkeypatch.setattr(pf, "record_projection_failure", record)
-    rows = [
-        {"org": "o", "namespace": "a", "memory_id": "m2", "memory_key": "k"},
-        {"org": "o", "namespace": "a", "memory_id": "m1", "memory_key": "k"},
-        {"org": "o", "namespace": "b", "memory_id": "m3", "memory_key": "j"},
-    ]
-    await pf.queue_status_mirror(rows)
-    assert [(q["namespace"], q["projection"], q["payload"]) for q in queued] == [
-        ("a", pf.STATUS_MIRROR, {"memory_ids": ["m1", "m2"]}),
-        ("b", pf.STATUS_MIRROR, {"memory_ids": ["m3"]}),
-    ]
-
-
-def _stored(dump: dict[str, Any]) -> Any:
-    """A memory row as the reconcile reads it: its identity and its dump."""
-    ident = {"namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
-    return SimpleNamespace(model_dump=lambda: dump, memory_key=dump["memory_id"], **ident)
-
-
-async def test_the_reconcile_mirrors_each_rows_head(monkeypatch) -> None:
-    import server.memory.store as memory_repo
-    from server.memory.app import projection_failures
-    from tests.unit.claims_fake import fake_key_locks
-
-    fake_key_locks(monkeypatch)  # each head is read again and mirrored under its key's lock
-    heads = {
-        "kept": _stored({"memory_id": "kept", "status": "active", "version": 7}),
-        "deleted": _stored({"memory_id": "deleted", "tombstoned_at": "2026-10-14", "version": 9}),
-    }
-    mirrored: list = []
-
-    async def get_by_id(mid, **kw):
-        assert kw["strong"] and kw["include_tombstoned"]
-        return heads.get(mid)
-
-    async def mirror(rows, *, ch=None, strict=False):
-        assert strict, "a failed mirror must fail the repair"
-        mirrored.extend(rows)
-
-    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
-    monkeypatch.setattr(memory_repo, "mirror_status_to_embeddings", mirror)
-    failure = SimpleNamespace(
-        failure_id="f1",
-        org="o",
-        payload={"memory_ids": ["kept", "deleted", "erased"]},
-        projection=projection_failures.STATUS_MIRROR,
-        created_at=None,
-    )
-    resolved: list = []
-
-    async def mark(**kw):
-        resolved.extend(kw["failure_ids"])
-
-    monkeypatch.setattr(projection_failures, "mark_projection_failures_resolved", mark)
-    (out,) = await projection_failures.retry_failures([failure], ch=object())
-    # Live: mirrored as live, at read + 1 (above a judged copy over the head's
-    # version). Deleted since: its tombstone is mirrored at the head's version. Erased:
-    # the erasure took its embeddings, nothing to mirror.
-    assert mirrored == [
-        {"memory_id": "kept", "status": "active"},
-        {"memory_id": "deleted", "tombstoned_at": "2026-10-14", "version": 9},
-    ]
-    assert out.resolved and resolved == ["f1"]
-
-
-def _mirror_failure(fid: str, *ids: str) -> Any:
-    from server.memory.app import projection_failures
-
-    return SimpleNamespace(
-        failure_id=fid,
-        org="o",
-        payload={"memory_ids": list(ids)},
-        projection=projection_failures.STATUS_MIRROR,
-        created_at=None,
-    )
-
-
-def _timed_mirrors(monkeypatch) -> tuple[Any, list[str]]:
-    """Heads that read back live and a mirror that takes one lock wait on a manual clock."""
-    import server.memory.store as memory_repo
-    from server.memory.app import projection_failures
-    from tests.unit.claims_fake import fake_key_locks
-    from tests.unit.clock_fake import ManualClock
-
-    fake_key_locks(monkeypatch)
-    clock = ManualClock(t=0.0)
-    mirrored: list[str] = []
-
-    async def get_by_id(mid, **kw):
-        return _stored({"memory_id": mid, "status": "active"})
-
-    async def mirror(rows, *, ch=None, strict=False):
-        clock.advance(projection_failures.STATUS_MIRROR_LOCK_WAIT_S)
-        mirrored.extend(r["memory_id"] for r in rows)
-
-    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
-    monkeypatch.setattr(memory_repo, "mirror_status_to_embeddings", mirror)
-    return clock, mirrored
-
-
-async def test_a_mirror_past_the_deadline_leaves_its_other_rows_for_the_next_pass(
-    monkeypatch,
-) -> None:
-    """Each row may wait a second on its key's lock: the deadline is checked per row."""
-    from server.memory.app import projection_failures
-
-    clock, mirrored = _timed_mirrors(monkeypatch)
-    failures = [_mirror_failure("f1", "a1"), _mirror_failure("f2", "m1", "m2", "m3")]
-    retried = projection_failures.retry_each(
-        failures, ch=object(), expired=lambda: clock.t >= 1.5, retry_first=True
-    )
-    outs = [out async for _, out in retried]
-    assert mirrored == ["a1", "m1"]
-    assert [(o.resolved, o.reason) for o in outs] == [(True, ""), (False, "pending")]
-
-
-async def test_the_forced_first_mirror_finishes_past_the_deadline(monkeypatch) -> None:
-    """It runs whatever the budget (a zero one too): left pending, it would be the oldest
-    row of every later pass and stall the queue behind it."""
-    from server.memory.app import projection_failures
-
-    _, mirrored = _timed_mirrors(monkeypatch)
-    failures = [_mirror_failure("f1", "m1", "m2"), _mirror_failure("f2", "n1")]
-    retried = projection_failures.retry_each(
-        failures, ch=object(), expired=lambda: True, retry_first=True
-    )
-    ((_, out),) = [r async for r in retried]
-    assert mirrored == ["m1", "m2"]
-    assert out.resolved
-
-
-async def test_a_busy_key_leaves_the_reconcile_pending(monkeypatch) -> None:
-    import server.memory.store as memory_repo
-    from server.memory.app import projection_failures
-    from server.memory.store import key_write_lock as kl
-    from tests.unit.claims_fake import fake_key_locks
-
-    fake_key_locks(monkeypatch)
-
-    async def get_by_id(mid, **kw):
-        return _stored({"memory_id": mid, "status": "active"})
-
-    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
-    failure = SimpleNamespace(
-        failure_id="f1",
-        org="o",
-        payload={"memory_ids": ["m"]},
-        projection=projection_failures.STATUS_MIRROR,
-        created_at=None,
-    )
-    async with kl.key_write_locks.hold("o", "n", "a", "u", "s", "m"):  # a settle holds it
-        (out,) = await projection_failures.retry_failures([failure], ch=object())
-    assert (out.retried, out.resolved, out.reason, out.error) == (False, False, "key_busy", "")
-
-
-async def test_a_failed_reconcile_mirror_leaves_the_failure_open(monkeypatch) -> None:
-    from types import SimpleNamespace
-
-    import server.memory.store as memory_repo
-    from server.memory.app import projection_failures
-    from tests.unit.claims_fake import fake_key_locks
-
-    fake_key_locks(monkeypatch)
-
-    async def get_by_id(mid, **kw):
-        return _stored({"memory_id": mid})
-
-    async def mirror(rows, *, ch=None, strict=False):
-        raise TimeoutError("embeddings insert")
-
-    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
-    monkeypatch.setattr(memory_repo, "mirror_status_to_embeddings", mirror)
-    failure = SimpleNamespace(
-        failure_id="f1",
-        org="o",
-        payload={"memory_ids": ["m"]},
-        projection="memory_status_mirror",
-        created_at=None,
-    )
-    (out,) = await projection_failures.retry_failures([failure], ch=object())
-    assert out.retried and not out.resolved and "embeddings insert" in out.error
-
-
-async def test_a_fresh_status_mirror_waits_for_a_write_in_flight() -> None:
-    from types import SimpleNamespace
-
-    from server.core.datetimes import naive_utc_now
-    from server.memory.app import projection_failures
-
-    failure = SimpleNamespace(
-        failure_id="f1",
-        org="o",
-        payload={"memory_ids": ["m"]},
-        projection="memory_status_mirror",
-        created_at=naive_utc_now(),
-    )
-    (out,) = await projection_failures.retry_failures([failure], ch=object())
-    assert not out.retried and out.reason == "pending"
-
-
 async def test_an_unconfirmed_value_update_is_followed_but_not_counted(
     monkeypatch, emitted
 ) -> None:
-    from server.memory.app import auto_resolution as ar
 
-    queued: list = []
-
-    async def queue(rows):
-        queued.extend(r["memory_id"] for r in rows)
-
-    monkeypatch.setattr(ar, "queue_status_mirror", queue)
     report, _ = await _value_updates(monkeypatch, {"o1": {}}, unconfirmed=frozenset({"o1"}))
     assert report.links == [] and [ln.older_id for ln in report.follow_links] == ["o1"]
-    assert queued == ["o1"]
     (ev,) = emitted
     assert ev["subject"]["retired"][0]["unconfirmed"] == "true"
 

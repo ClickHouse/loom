@@ -12,7 +12,6 @@ import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from server.memory.app.projection_failures import queue_status_mirror
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 
 if TYPE_CHECKING:
@@ -94,11 +93,10 @@ class RetirementTracker:
         self.ids.update(str(r["memory_id"]) for r in rows)
 
     async def unconfirmed(self, rows: list[dict[str, Any]]) -> None:
-        """Rows the re-read could not confirm: recorded, and queued for the repair to
-        mirror their head onto recall, before the write goes on."""
+        """Rows the re-read could not confirm: recorded as such. Recall keeps its own
+        copy; `loom reconcile-status` mirrors a divergence it finds."""
         self.rows.extend(rows)
         self.unconfirmed_ids.update(str(r["memory_id"]) for r in rows)
-        await queue_status_mirror(rows)
 
     def retired(self, victims: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         """The victims whose retirement took effect or may have: those the re-read

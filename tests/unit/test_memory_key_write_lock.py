@@ -127,6 +127,20 @@ async def test_unconditional_set_takes_no_lock(monkeypatch: pytest.MonkeyPatch) 
     assert seen == [0]
 
 
+async def test_a_pin_holds_the_keys_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A retirement takes the key's lock too: a pin landing beside it waits for it."""
+    locks = _locks(FakeKeeper(), monkeypatch)
+    seen: list[int] = []
+
+    async def phases(input: Any) -> str:
+        seen.append(len(locks))
+        return "written"
+
+    monkeypatch.setattr(write_mod, "_memory_set_phases", phases)
+    assert await write_mod._handle_memory_set(_set_input("x", "", pinned=True)) == "written"
+    assert seen == [1]
+
+
 async def test_conditional_update_rereads_the_head_under_the_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -155,7 +169,7 @@ async def test_conditional_update_rereads_the_head_under_the_lock(
     assert held_during_read == [1] and written == [stale]
 
 
-def _set_input(value: str, if_match_sha256: str) -> Any:
+def _set_input(value: str, if_match_sha256: str, pinned: bool = False) -> Any:
     return SimpleNamespace(
         org="org",
         namespace="ns",
@@ -165,6 +179,7 @@ def _set_input(value: str, if_match_sha256: str) -> Any:
         memory_key=_IDENT[5],
         value=value,
         if_match_sha256=if_match_sha256,
+        pinned=pinned,
     )
 
 

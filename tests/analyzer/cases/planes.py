@@ -555,20 +555,6 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         ch=ch,
     )
     await PF.scan_active_projection_failures(ch=ch)
-    last = PF.ProjectionFailureRow(
-        failure_id=_UUID,
-        org=ORG,
-        namespace=NS,
-        agent=AGENT,
-        projection=PF.STATUS_MIRROR,
-        source_operation="",
-        source_resource_id="",
-        memory_keys=[],
-        error_type="",
-        error_message="",
-        created_at=_dt.datetime(2026, 1, 1),
-    )
-    await PF.scan_active_projection_failures(status_mirror=True, after=last, ch=ch)
     await PF.mark_projection_failures_resolved(org=ORG, failure_ids=[_UUID], ch=ch)
     await EQ.claim_batch(
         limit=10,

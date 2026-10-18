@@ -167,7 +167,10 @@ schema. These rules keep that safe. The operator procedure is in
     wrote can stamp its settle time over N's mark on that row; N then reads an older
     build's verdict, owed again only while the row is `conflicted`, and that one row may
     go unjudged. While N-1 holds the worker lease (a code-only release keeps it until it
-    stops) N's marks wait, and the first N leader judges them.
+    stops) N's marks wait, and the first N leader judges them. A pin is the other way
+    round: N's `memory.pin` holds the key's write lock, N-1's does not, so during the
+    rollout an N-1 pin racing an N retirement can leave the pinned row's vector
+    superseded until the row's next write (or `loom reconcile-status`).
 
 ## What checks them
 

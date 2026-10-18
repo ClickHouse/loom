@@ -797,14 +797,6 @@ async def apply_refines(
             logging.getLogger(__name__).warning("refines: supersede failed (non-fatal): %s", e)
         # What reached loom.memory, even when the embeddings mirror then failed.
         retired = [{**v, "superseded_by_key": new_memory_key} for v in tracker.retired(victims)]
-        if expected_sha256 and retired:
-            # A same-content write in flight (an unlocked pin) can land under the judged
-            # copy of its vector: the repair mirrors each head once it has landed.
-            from server.memory.app.projection_failures import queue_status_mirror
-
-            await queue_status_mirror(
-                [{**v, "org": org} for v in retired], reason="judged retirement to re-check"
-            )
         reason = reason or NEWEST_WINS_CONTRADICTION
         if record_into is not None:
             record_into.setdefault(reason, []).extend(retired)

@@ -1698,95 +1698,40 @@ async def test_an_undone_retirement_is_not_retired_again_by_the_next_pass(
     assert len(await _audit(ch, org, "memory.auto_supersede")) == 1
 
 
-async def test_a_pin_whose_vector_landed_first_keeps_its_vector_served(
+async def test_a_pin_racing_a_retirement_waits_for_the_key_and_ends_served(
     ch, wired, monkeypatch
 ) -> None:
-    """A memory.pin of the loser takes no key lock: its vector lands before the
-    retirement's mirror reads, its memory row after the retirement. The pin is the
-    memory head, so once the repair has run, recall serves its vector, not a
-    superseded copy."""
-    import server.memory.store as M
-    from server.identity.domain.read_scope import WHOLE_NAMESPACE
-    from server.memory.app import projection_failures
-    from server.memory.store import lifecycle
+    """A memory.pin of the loser arrives while the resolver retires it under the pair's
+    key locks: the pin waits for the lock, lands after the retirement, and the pinned
+    row and its vector are both served."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.app.handlers import handle_memory_pin
     from server.memory.store.embeddings import live_embedding_rows_for_key
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 204)
-    peer_id = (await _rows(ch, org))["office_city"]["id"]
-    peer = await M.get_by_id(peer_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
-    drawn = M.next_version()
-    pinned = M.build_memory_version_row(peer, version=drawn, pinned=1)
     ident = {"agent": "bot", "user_id": USER, "session_id": "s1", "memory_key": "office_city"}
-    (vector,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
-    cols = {c: v for c, v in vector.items() if c in M.EMBEDDING_PERSISTED_COLS}
-    await M.insert_embedding_rows([M.build_embedding_row(**(cols | {"version": drawn}))], ch=ch)
+    real = resolver._retire
+    pins: list[asyncio.Task[Any]] = []
+
+    async def retire_beside_a_pin(*a: Any) -> Any:
+        pin = MemorySetInput(org=org, namespace=NS, **ident, value="The office is in Paris")
+        pins.append(asyncio.create_task(handle_memory_pin(pin)))
+        await asyncio.sleep(0.5)
+        assert not pins[0].done(), "the pin waits for the key's lock"
+        return await real(*a)
+
+    monkeypatch.setattr(resolver, "_retire", retire_beside_a_pin)
     assert (await run_pass())["retired"] == 1
-    await lifecycle.insert_memory_versions([pinned], ch=ch)  # the pin lands now
-    monkeypatch.setattr(projection_failures, "STATUS_MIRROR_GRACE_S", 0)
-    await projection_failures.retry_projection_failures(
-        org=org, projection=projection_failures.STATUS_MIRROR
-    )
+    await pins[0]
+    await after_write.drain()
     head = (await _rows(ch, org))["office_city"]
-    assert head["pinned"] and head["status"] == "active" and head["version"] == drawn
+    assert head["pinned"] and head["status"] == "active", head
     (served,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
-    assert served["status"] == "active", "the pin's vector, not the retirement's copy"
-    assert served["invalid_at"] is None, "nor its end"
-    # A knowledge-time read of now admits the pinned row's vector, as it does the row.
-    from datetime import UTC, datetime
-
-    from server.memory.domain.temporal_sql import as_of_predicate
-
-    known = as_of_predicate("knowledge_time", invalid_col="invalid_at", tomb_col="tombstoned_at")
-    (n,) = await ch.query_all(
-        f"SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {{org:String}}"
-        f" AND memory_key = 'office_city' AND {known}"
-        " SETTINGS select_sequential_consistency = 1",
-        params={"org": org, "as_of": datetime.now(UTC).replace(tzinfo=None)},
-    )
-    assert n["n"] == 1
-
-
-async def test_the_status_mirror_repair_never_serves_a_row_retired_during_it(ch, wired) -> None:
-    """A retirement of the row, holding its key's lock, lands while the repair mirrors
-    the head it read: the row stays hidden."""
-    import server.memory.store as M
-    from server.memory.app import projection_failures
-    from server.memory.store.embeddings import live_embedding_rows_for_key
-    from server.memory.store.key_write_lock import key_write_locks
-
-    org, _ = wired
-    await _pair(ch, org, "office_city", "office_location", 210)
-    rows = await _rows(ch, org)
-    loser = rows["office_city"]
-    ident = {"agent": "bot", "user_id": USER, "session_id": "s1", "memory_key": "office_city"}
-    victim = {"memory_id": loser["id"], "namespace": NS, **ident}
-    await projection_failures.queue_status_mirror([{**victim, "org": org}])
-    real = M.mirror_status_to_embeddings
-    retiring: list[asyncio.Task[Any]] = []
-
-    async def retire() -> None:
-        async with key_write_locks.hold(org, NS, *ident.values()):
-            await M.supersede_duplicates(
-                org, [victim | {"superseded_by": rows["office_location"]["id"]}], ch=ch
-            )
-
-    async def mirror(heads: Any, **kw: Any) -> Any:
-        retiring.append(asyncio.create_task(retire()))
-        await asyncio.sleep(1.0)  # the retirement lands now, unless it waits for the lock
-        return await real(heads, **kw)
-
-    with pytest.MonkeyPatch.context() as m:
-        m.setattr(projection_failures, "STATUS_MIRROR_GRACE_S", 0)
-        m.setattr(M, "mirror_status_to_embeddings", mirror)
-        await projection_failures.retry_projection_failures(
-            org=org, projection=projection_failures.STATUS_MIRROR
-        )
-    await retiring[0]
-    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
-    (served,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
-    assert served["status"] == "superseded", "a retired row is never served again"
+    assert served["status"] == "active" and served["invalid_at"] is None
 
 
 async def test_a_supersede_whose_response_was_lost_is_still_followed(

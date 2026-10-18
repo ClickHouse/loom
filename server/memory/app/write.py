@@ -600,8 +600,9 @@ def _set_build_memory_row(w: _SetWrite) -> None:
 
 
 async def _handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
-    """memory.set; a conditional write holds the key's write lock."""
-    if not input.if_match_sha256:
+    """memory.set; a conditional write and a pin hold the key's write lock from their read
+    to their insert, as a resolver write does, so a retirement never lands between them."""
+    if not (input.if_match_sha256 or input.pinned):
         return await _memory_set_phases(input)
     async with key_write_lock.key_write_locks.hold(
         input.org,

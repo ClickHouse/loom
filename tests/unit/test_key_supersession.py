@@ -1019,8 +1019,6 @@ async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
 @pytest.mark.parametrize(
     ("projection", "payload"),
     [
-        ("memory_status_mirror", {}),
-        ("memory_status_mirror", {"memory_ids": []}),
         ("triples_follow_rows", {}),
         ("triples_follow_rows", {"pairs": [["only-one-id"]]}),
         ("triples_follow_rows", {"pairs": [5]}),

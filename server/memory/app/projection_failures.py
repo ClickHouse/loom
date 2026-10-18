@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,7 +13,6 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt, to_naive_utc
-from server.core.errors import PreconditionFailedError
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     WHOLE_NAMESPACE,
@@ -36,7 +35,7 @@ from server.memory.app.projection_errors import (
     restated_repair_payload,
 )
 from server.memory.domain.graph_quality import IntervalRepair
-from server.memory.domain.temporal_sql import HOLDS_VALUE_SQL, SERVED_STATUSES
+from server.memory.domain.temporal_sql import HOLDS_VALUE_SQL
 
 log = logging.getLogger(__name__)
 
@@ -83,12 +82,6 @@ FOLLOW_OWED = "triples_follow_owed"
 # and follows the retirement itself: the repair leaves it this long, so the two never
 # write the record side by side.
 FOLLOW_OWED_GRACE_S = 600
-STATUS_MIRROR = "memory_status_mirror"
-# A STATUS_MIRROR intent waits this long: a same-content write in flight when it was
-# queued (an unlocked pin) has landed its memory row by then.
-STATUS_MIRROR_GRACE_S = 60
-# How long a status mirror waits for its row's key lock before it is left for the next pass.
-STATUS_MIRROR_LOCK_WAIT_S = 1.0
 # Triples a follow closed but could not re-check for a live row holding them.
 TRIPLES_REOPEN = "triples_reopen"
 # The facts of rows a revision or an Undo changed, not yet reconciled with them.
@@ -97,30 +90,6 @@ TRIPLES_RECONCILE = "triples_reconcile"
 # updates) wrote for a value the row no longer holds, whose cleanup failed: payload
 # memory_id, content_sha256 and, when it was read, ended_at.
 EDGES_CLOSE = "entity_edges_close"
-
-
-async def queue_status_mirror(
-    rows: list[dict[str, Any]], *, reason: str = "retirement unconfirmed by the re-read"
-) -> None:
-    """Queue the mirror of each row's head onto recall, for the repair to make once it
-    can read it: a retirement the re-read could not confirm, or one a same-content write
-    may have landed under. If even this insert fails, `loom reconcile-status` finds the
-    divergence."""
-    by_ns: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for r in rows:
-        by_ns.setdefault((str(r["org"]), str(r["namespace"])), []).append(r)
-    for (org, namespace), group in by_ns.items():
-        try:
-            await record_projection_failure(
-                org=org,
-                namespace=namespace,
-                projection=STATUS_MIRROR,
-                memory_keys=sorted({str(r.get("memory_key") or "") for r in group}),
-                error=reason,
-                payload={"memory_ids": sorted({str(r["memory_id"]) for r in group})},
-            )
-        except Exception as e:  # noqa: BLE001 — the write stands; reconcile-status backs it
-            log.warning("status mirror for %d row(s) not queued: %s", len(group), e)
 
 
 async def record_projection_failure(
@@ -302,14 +271,6 @@ async def mark_projection_failures_abandoned(
     )
 
 
-class _KeyBusy(Exception):
-    """A row's key lock is held past the repair's short wait: retried next pass."""
-
-
-class _OutOfTime(Exception):
-    """The pass's deadline passed partway through a failure: left for the next pass."""
-
-
 # A failure and the result of its retry.
 Retried = tuple[ProjectionFailureRow, ProjectionFailureRetryResult]
 # Failure ids per mark: the ids travel as one HTTP parameter, which ClickHouse caps at
@@ -325,31 +286,11 @@ async def retry_failures(
     ch = ch or get_client()
     done: list[Retried] = []
     try:
-        async for retried in retry_each(failures, ch=ch):
-            done.append(retried)
+        for failure in failures:
+            done.append((failure, await _retry(failure, ch=ch)))
     finally:
         await mark_retried(done, ch=ch)
     return [r for _, r in done]
-
-
-async def retry_each(
-    failures: list[ProjectionFailureRow],
-    *,
-    ch: Any | None = None,
-    expired: Callable[[], bool] | None = None,
-    retry_first: bool = False,
-) -> AsyncIterator[Retried]:
-    """Retry each failure and yield it with its result, unmarked: the caller marks what
-    it collected with `mark_retried`. Once `expired()` says the deadline has passed, the
-    failures not yet retried stay active; with `retry_first`, the first one is retried, to
-    its end, even then."""
-    ch = ch or get_client()
-    for i, failure in enumerate(failures):
-        forced = retry_first and i == 0
-        if expired is not None and not forced and expired():
-            return
-        # No deadline for the forced one: left pending, it would come back first every pass.
-        yield failure, await _retry(failure, ch=ch, expired=None if forced else expired)
 
 
 async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:
@@ -389,9 +330,7 @@ def _pending(failure: ProjectionFailureRow) -> ProjectionFailureRetryResult:
     )
 
 
-async def _retry(
-    failure: ProjectionFailureRow, *, ch: Any, expired: Callable[[], bool] | None = None
-) -> ProjectionFailureRetryResult:
+async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailureRetryResult:
     """One failure's retry, unmarked. Every kind writes in the failure's org: under an
     erasure it waits (`pending`), and once the saga ends its replay finds an erased row
     gone."""
@@ -399,8 +338,7 @@ async def _retry(
 
     reason = ""
     try:
-        grace = {STATUS_MIRROR: STATUS_MIRROR_GRACE_S, FOLLOW_OWED: FOLLOW_OWED_GRACE_S}
-        if failure.projection in grace and _younger_than(failure, grace[failure.projection]):
+        if failure.projection == FOLLOW_OWED and _younger_than(failure, FOLLOW_OWED_GRACE_S):
             return _pending(failure)
         # Read for each failure, right before its write: an erasure can be requested
         # mid-batch. A failed read raises below and leaves the row active.
@@ -421,8 +359,6 @@ async def _retry(
             reason = await _retry_graph_projection(failure, ch=ch)
         elif failure.projection in (FOLLOW_ROWS, FOLLOW_OWED):
             reason = await _retry_follow_rows(failure, ch=ch)
-        elif failure.projection == STATUS_MIRROR:
-            reason = await _retry_status_mirror(failure, ch=ch, expired=expired)
         elif failure.projection == TRIPLES_REOPEN:
             reason = await _retry_triples_reopen(failure, ch=ch)
         elif failure.projection == TRIPLES_RECONCILE:
@@ -444,16 +380,6 @@ async def _retry(
             resolved=not reason,
             reason=reason,
             abandoned=bool(reason),
-        )
-    except _OutOfTime:
-        return _pending(failure)
-    except _KeyBusy:
-        return ProjectionFailureRetryResult(
-            failure_id=failure.failure_id,
-            projection=failure.projection,
-            retried=False,
-            resolved=False,
-            reason="key_busy",
         )
     except Exception as e:  # noqa: BLE001 — reported on the result; the row stays open
         return ProjectionFailureRetryResult(
@@ -490,21 +416,13 @@ async def retry_projection_failures(
 async def scan_active_projection_failures(
     *,
     limit: int = 50,
-    status_mirror: bool = False,
-    after: ProjectionFailureRow | None = None,
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
-    """Return active failures across orgs for the repair worker, oldest first: the
-    STATUS_MIRROR intents with `status_mirror`, else every other kind. Each judged
-    retirement queues one, so they get their own budget and order. `after`: only rows
-    past its (created_at, failure_id), the last row of the previous batch."""
+    """Return active failures across orgs for the repair worker, oldest first."""
 
     ch = ch or get_client()
-    kind = "=" if status_mirror else "!="
-    # failure_id is the toString alias here, as in the ORDER BY: compared as text.
-    past = "AND (created_at, failure_id) > ({at:DateTime}, {fid:String})" if after else ""
     rows = await ch.query_all(
-        f"""
+        """
         SELECT
             toString(failure_id) AS failure_id,
             org,
@@ -521,12 +439,11 @@ async def scan_active_projection_failures(
             created_at,
             resolved_at
         FROM loom.memory_projection_failures
-        WHERE status = 'active' AND projection {kind} {{mirror_kind:String}} {past}
+        WHERE status = 'active'
         ORDER BY created_at ASC, failure_id ASC
-        LIMIT {{lim:UInt32}}
+        LIMIT {lim:UInt32}
         """,
-        params={"lim": int(limit), "mirror_kind": STATUS_MIRROR}
-        | ({"at": after.created_at, "fid": after.failure_id} if after else {}),
+        params={"lim": int(limit)},
     )
     return [_row_from_ch(dict(row)) for row in rows]
 
@@ -571,66 +488,6 @@ async def _retry_belief_sources(
         support_type="extracted_from",
         ch=ch,
     )
-
-
-async def _retry_status_mirror(
-    failure: ProjectionFailureRow, *, ch: Any, expired: Callable[[], bool] | None = None
-) -> str:
-    """Mirror each row's current head onto recall, whatever it turned out to be: a
-    retirement that landed hides the row, one that did not leaves it live, and a
-    delete since tombstones it. A row no longer stored at all was erased, and the
-    erasure removed its embeddings with it: nothing is left to mirror. A payload
-    no retry can read returns the reason that abandons it. Once `expired()`, the
-    rows not yet mirrored wait for the next pass, so one failure overruns the
-    pass's deadline by one row's mirror at most (two reads, a lock wait and a write),
-    unless `expired` is None (the pass's forced first failure), which runs to its end."""
-    import server.memory.store as memory_repo
-
-    try:
-        ids = [str(i) for i in failure.payload["memory_ids"]]
-        if not ids:
-            raise ValueError("no memory_ids")
-    except (KeyError, TypeError, ValueError):
-        return "malformed_payload"
-    from server.memory.store.key_write_lock import key_write_locks
-
-    async def head_of(mid: str) -> Any:
-        return await memory_repo.get_by_id(
-            mid,
-            org=failure.org,
-            ch=ch,
-            scope=WHOLE_NAMESPACE,
-            fresh=True,
-            strong=True,
-            include_tombstoned=True,
-        )
-
-    for i, mid in enumerate(ids):
-        if i and expired is not None and expired():
-            raise _OutOfTime
-        row = await head_of(mid)
-        if row is None:
-            continue
-        ident = (row.namespace, row.agent, row.user_id, row.session_id, row.memory_key)
-        # Read again and mirrored under the key's lock, which the resolver's retirements
-        # and an Undo hold: one of those landing meanwhile is never served again. A
-        # write-path supersede (apply_refines under newest_wins) takes no lock.
-        try:
-            async with key_write_locks.hold(failure.org, *ident, wait_s=STATUS_MIRROR_LOCK_WAIT_S):
-                row = await head_of(mid)
-                if row is None:
-                    continue
-                head = row.model_dump()
-                # As reconcile-status: a hiding status at the head's version; a served one
-                # at read + 1, above a judged copy that sits over the head's version.
-                if head.get("status") in SERVED_STATUSES and head.get("tombstoned_at") is None:
-                    head.pop("version", None)
-                # Strict: a mirror that failed must leave the failure open for the next pass.
-                await memory_repo.mirror_status_to_embeddings([head], ch=ch, strict=True)
-        except PreconditionFailedError as e:
-            raise _KeyBusy from e  # a settle or an Undo holds it: the next pass
-
-    return ""
 
 
 async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:

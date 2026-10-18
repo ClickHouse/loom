@@ -8,18 +8,12 @@ belief write fail. This worker gives those soft failures a bounded replay path.
 from __future__ import annotations
 
 import logging
-import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from server.settings import settings
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
-
-# STATUS_MIRROR intents read at a time, before and apart from the other failures: one per
-# judged retirement, nearly all no-ops, so a burst of them never delays a real failure.
-STATUS_MIRROR_BATCH = 300
 
 
 @dataclass(frozen=True)
@@ -28,11 +22,6 @@ class ProjectionRepairConfig:
     max_failures_per_pass: int = field(
         default_factory=lambda: settings.projection_repair_max_failures_per_pass
     )
-    status_mirror_seconds: float = field(
-        default_factory=lambda: settings.projection_repair_status_mirror_seconds
-    )
-    # The clock the status-mirror budget is measured on.
-    monotonic: Callable[[], float] = time.monotonic
 
 
 @dataclass
@@ -53,42 +42,14 @@ async def run_pass(
     result = ProjectionRepairResult()
     with record_pass("projection_repair") as rec:
         from server.memory.app.projection_failures import (
-            Retried,
-            mark_retried,
-            retry_each,
             retry_failures,
             scan_active_projection_failures,
         )
 
-        mirrored: list[Retried] = []
-        until = cfg.monotonic() + float(cfg.status_mirror_seconds)
-
-        def expired() -> bool:
-            return cfg.monotonic() >= until
-
-        try:
-            after = None
-            while True:
-                batch = await scan_active_projection_failures(
-                    limit=STATUS_MIRROR_BATCH, status_mirror=True, after=after
-                )
-                # The first mirror of a pass always runs: a zero budget still moves the queue.
-                async for retried in retry_each(batch, expired=expired, retry_first=not mirrored):
-                    mirrored.append(retried)
-                if len(batch) < STATUS_MIRROR_BATCH or expired():
-                    break
-                # Past the batch's last row: a row left pending, or retried and not marked
-                # yet, is not read again this pass.
-                after = batch[-1]
-        finally:
-            # Marked once for the whole loop, per org and reason, MARK_CHUNK ids to a
-            # mutation; a pass cut short marks what it did.
-            await mark_retried(mirrored)
-        retries = [r for _, r in mirrored]
-        others = await scan_active_projection_failures(
-            limit=max(1, int(cfg.max_failures_per_pass)), status_mirror=False
+        failures = await scan_active_projection_failures(
+            limit=max(1, int(cfg.max_failures_per_pass))
         )
-        retries += await retry_failures(others)
+        retries = await retry_failures(failures)
         result.scanned = len(retries)
         for retry in retries:
             if retry.retried:

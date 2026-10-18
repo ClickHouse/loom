@@ -6474,7 +6474,7 @@ async def test_a_pass_that_repaired_4000_failures_marks_them_all(ch: Any, org: s
     """The ids of a mark go as one HTTP parameter, which ClickHouse caps at 128 KiB:
     4,000 UUIDs in one go is refused and every failure would stay active."""
     from server.memory.app.projection_failures import (
-        STATUS_MIRROR,
+        FOLLOW_ROWS,
         ProjectionFailureRetryResult,
         list_projection_failures,
         mark_retried,
@@ -6490,7 +6490,7 @@ async def test_a_pass_that_repaired_4000_failures_marks_them_all(ch: Any, org: s
                 "org": org,
                 "namespace": NS,
                 "agent": "bot",
-                "projection": STATUS_MIRROR,
+                "projection": FOLLOW_ROWS,
                 "source_operation": "",
                 "source_resource_id": "",
                 "memory_keys": [KEY],

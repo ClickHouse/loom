@@ -654,7 +654,6 @@ Source: `server/settings/_memory.py`
 | `LOOM_PROJECTION_REPAIR_ENABLED` | `bool` | `True` | Retry best-effort projections (chunks, evidence links, graph side tables) that failed after the primary write. Bounded and idempotent; unsupported ones stay in ops.projection_failures.list. |
 | `LOOM_PROJECTION_REPAIR_INTERVAL_SECONDS` | `int` | `300` | Seconds between projection repair passes. |
 | `LOOM_PROJECTION_REPAIR_MAX_FAILURES_PER_PASS` | `int` | `25` | Recorded projection failures one pass retries (at least 1). |
-| `LOOM_PROJECTION_REPAIR_STATUS_MIRROR_SECONDS` | `float` | `60.0` | Seconds a pass spends replaying status-mirror intents (one per conflict-resolver retirement, at least one a pass), 300 at a time ahead of the other failures, until a read comes back short. |
 | `LOOM_USAGE_FOLD_ENABLED` | `bool` | `True` | Fold loom.memory_usage_totals onto the ranking columns (reinforcement boost, memory.list sort_by=score, auto-promote gate); off, they freeze at write-time values. Cadence is fixed in server/memory/workers/usage_fold.py. |
 | `LOOM_ORPHAN_VECTOR_RECONCILE_ENABLED` | `bool` | `True` | Re-emit, with a tombstone, vector rows still live after their loom.memory row was tombstoned or erased, so search stops offering them. Bounded per pass; loom.integrity.orphan_vectors should read 0 between passes. |
 | `LOOM_ORPHAN_VECTOR_RECONCILE_INTERVAL_SECONDS` | `int` | `600` | Seconds between orphan vector reconcile passes. |

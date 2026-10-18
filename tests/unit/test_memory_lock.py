@@ -142,6 +142,9 @@ class _CH:
 
 
 def _stub_repo(monkeypatch: pytest.MonkeyPatch, row: MemoryRow | None) -> _CH:
+    from tests.unit.claims_fake import fake_key_locks
+
+    fake_key_locks(monkeypatch)  # an unpin and a pin hold the key's write lock
     ch = _CH()
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)

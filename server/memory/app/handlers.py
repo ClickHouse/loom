@@ -22,6 +22,7 @@ from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_narrowed, request_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     CodeLink,
     MemoryClearInput,
@@ -585,25 +586,32 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
     if existing is None:
         return MemoryUnpinOutput(unpinned=False, reason="not_found")
     assert_own_row(existing, op="memory.unpin")
-    if not bool(getattr(existing, "pinned", False)):
-        return MemoryUnpinOutput(
-            unpinned=False,
-            reason="not_pinned",
-            memory_id=str(existing.memory_id),
+    # Read again and written under the key's lock, as a pin and a resolver write are.
+    from server.memory.store.key_write_lock import key_write_locks
+
+    async with key_write_locks.hold(
+        input.org,
+        existing.namespace,
+        existing.agent,
+        existing.user_id,
+        existing.session_id,
+        existing.memory_key,
+    ):
+        head = await memory_repo.get_by_id(
+            str(existing.memory_id), org=input.org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
         )
-    version = next_version()
-    row = memory_repo.build_memory_version_row(
-        existing,
-        version=version,
-        updated_at=memory_repo.written_now(),
-        pinned=False,
-    )
-    await insert_memory_versions([row], ch=ch)
-    return MemoryUnpinOutput(
-        unpinned=True,
-        memory_id=str(existing.memory_id),
-        version=version,
-    )
+        if head is None:
+            return MemoryUnpinOutput(unpinned=False, reason="not_found")
+        if not bool(getattr(head, "pinned", False)):
+            return MemoryUnpinOutput(
+                unpinned=False, reason="not_pinned", memory_id=str(head.memory_id)
+            )
+        version = next_version()
+        row = memory_repo.build_memory_version_row(
+            head, version=version, updated_at=memory_repo.written_now(), pinned=False
+        )
+        await insert_memory_versions([row], ch=ch)
+    return MemoryUnpinOutput(unpinned=True, memory_id=str(head.memory_id), version=version)
 
 
 async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
