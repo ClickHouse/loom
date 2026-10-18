@@ -382,7 +382,8 @@ async def test_a_turn_another_agent_relogged_after_compaction_is_not_counted_on_
 ) -> None:
     """This agent's copy of a turn was compacted (message and embedding tombstoned);
     a peer then logs the turn again, a newer live row before any merge. Deleting the
-    thread keeps that row and counts only the turns it tombstoned."""
+    thread keeps that row and counts only the agent's turns whose embedding is
+    tombstoned, not the peer's live row."""
     tid = f"thr-{uuid.uuid4().hex[:6]}"
     nonce = uuid.uuid4().hex[:10]
     shared, own = uuid.uuid4().hex, uuid.uuid4().hex
@@ -476,6 +477,13 @@ async def test_a_delete_counts_a_turn_once_however_many_models_embed_it(
         "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String}",
         parameters={"org": agent.org, "ns": agent.namespace, "tid": tid},
     )
+    copies = ch_client.query(
+        "SELECT count() FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND embedding_model = 'next-model'",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid},
+    ).result_rows[0][0]
+    assert copies == 2  # the setup wrote the second model's rows
 
     out = await _admin_post(
         mint_test_token,

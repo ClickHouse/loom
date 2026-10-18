@@ -752,20 +752,21 @@ async def _tombstone_embeddings(
     mutation names them, so it evaluates no subquery (a replicated table refuses
     one). With `count`, it returns how many of those turns have a tombstoned
     embedding."""
-    within = "AND msg_id IN {ids:Array(String)}" if msg_ids is not None else ""
-    turns = f"""msg_id IN (
+    if msg_ids is not None:
+        # Named turns are the agent's own (compaction reads them from its live turns).
+        turns = "msg_id IN {ids:Array(String)}"
+    else:
+        # Every turn the agent logged in the thread, and its embedding rows no message
+        # row backs (an append whose message insert failed after its embed landed).
+        turns = """(msg_id IN (
             SELECT msg_id FROM loom.conversations
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND agent = {{agent:String}} AND thread_id = {{tid:String}} {within}
-        )"""
-    if msg_ids is None:
-        # The whole thread also takes the agent's embedding rows no message row backs
-        # (an append whose message insert failed after its embed landed).
-        turns = f"""({turns}
-          OR (agent = {{agent:String}} AND msg_id NOT IN (
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND agent = {agent:String} AND thread_id = {tid:String}
+          )
+          OR (agent = {agent:String} AND msg_id NOT IN (
             SELECT msg_id FROM loom.conversations
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND thread_id = {{tid:String}}
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND thread_id = {tid:String}
           )))"""
     params: dict[str, Any] = {"org": org, "ns": namespace, "agent": agent, "tid": thread_id}
     if msg_ids is not None:

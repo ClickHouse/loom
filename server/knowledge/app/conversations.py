@@ -165,10 +165,6 @@ async def handle_conversation_append(
         with traced("ch.insert.conversation", role=input.role):
             await conversation_repo.append(msg_row)
 
-    # Concurrent because they are independent: neither the transcript row nor the vector
-    # depends on the other, and run sequentially the ~66 ms insert would sit in front of a
-    # ~210 ms embed. Both still complete before the response, so conversation.search keeps
-    # its read-your-write guarantee.
     async def _embed_and_store() -> None:
         embedded = await _embed_turn(
             input.content,
@@ -190,6 +186,10 @@ async def handle_conversation_append(
             embedded=embedded,
         )
 
+    # Concurrent because they are independent: neither the transcript row nor the vector
+    # depends on the other, and run sequentially the ~66 ms insert would sit in front of a
+    # ~210 ms embed. Both still complete before the response, so conversation.search keeps
+    # its read-your-write guarantee.
     await asyncio.gather(_insert_message(), _embed_and_store())
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
@@ -218,7 +218,7 @@ async def _embed_turn(
         ):
             vector = await embedder.embed(excerpt)
         return EmbeddedTurn(excerpt, vector, embedder.dim, embedder.model_name, "")
-    except Exception as e:  # noqa: BLE001 — embed failure still stores the turn
+    except Exception as e:  # noqa: BLE001 — a failed embed is returned to the caller, not raised
         log.warning(
             "conversation embed failed (org=%s ns=%s thread=%s msg=%s): %s",
             org,
