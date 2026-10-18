@@ -110,6 +110,12 @@ def test_a_peer_id_is_accepted_in_every_spelling_a_model_uses(spelled: str) -> N
     assert list(got) == [_PEERS[0].memory_id] and got[_PEERS[0].memory_id].verdict == "update"
 
 
+def test_an_explicit_key_is_never_read_as_a_short_id() -> None:
+    peers = [cr.Note("m1", "p2", "City is Paris", 0.8), cr.Note("m2", "office", "Office", 0.7)]
+    assert list(cr.parse_verdicts(_answer(_entry("key p2")), peers)) == ["m1"]
+    assert list(cr.parse_verdicts(_answer(_entry("p2")), peers)) == ["m2"]
+
+
 def test_a_key_two_peers_share_names_neither() -> None:
     peers = [cr.Note("m2", "office_city", "Paris"), cr.Note("m3", "office_city", "Lyon")]
     assert cr.parse_verdicts(_answer(_entry("office_city")), peers) == {}

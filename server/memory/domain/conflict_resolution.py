@@ -159,13 +159,14 @@ def _peer_of(raw_id: str, peers: list[Note]) -> Note | None:
     memory key (`key <memory_key>`) when no other peer has that key: two sessions'
     rows can share one."""
     pid = raw_id.strip().strip("[]").strip()
-    if pid.lower().startswith("key "):
-        pid = pid[4:].strip()
+    by_key = pid.lower().startswith("key ")
+    if by_key:
+        pid = pid[4:].strip()  # an explicit key is only ever a key, never a short id
     m = re.fullmatch(r"[pP](\d+)", pid)
-    if m and 1 <= int(m.group(1)) <= len(peers):
+    if not by_key and m and 1 <= int(m.group(1)) <= len(peers):
         return peers[int(m.group(1)) - 1]
     for p in peers:
-        if pid == p.memory_id:
+        if not by_key and pid == p.memory_id:
             return p
     keyed = [p for p in peers if pid == p.memory_key]
     return keyed[0] if len(keyed) == 1 else None
