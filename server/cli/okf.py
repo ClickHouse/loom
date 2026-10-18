@@ -636,9 +636,7 @@ async def _live_rows(
                 },
             )
             for key, g in (got.get("results") or {}).items():
-                rows[(sid, key)].update(
-                    valid_to=g.get("valid_to"), source_class=g.get("source_class")
-                )
+                rows[(sid, key)].update({f: g.get(f) for f in _BULK_FIELDS})
     return rows
 
 

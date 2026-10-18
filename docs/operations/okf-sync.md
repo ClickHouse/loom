@@ -43,8 +43,8 @@ The last line reports the counts:
 `500 rows from the bundle into acme/shared-lessons: 0 written, 500 unchanged, 0 failed …,
 0 pruned`.
 Exit 1 means the target could not be read or a write, link, delete or evidence batch
-failed; exit 2 means the bundle was refused (a lint finding or a prune guard) before any
-request.
+failed; exit 2 means the import refused before any request: a lint finding, a prune
+guard, a path that is not a directory, or a missing `--agent`, token or org.
 
 ## Guards
 
