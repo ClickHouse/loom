@@ -187,8 +187,9 @@ async def _out_of_attempts(r: Mapping[str, Any], shown: frozenset[str] = frozens
     attempts = _state.attempts
     if len(attempts) > 10_000:
         attempts.clear()  # leader-local and bounded: a row seen again starts over
-    count = attempts.get(key, (0, frozenset()))[0] + 1
-    attempts[key] = (count, shown)
+    count, before = attempts.get(key, (0, frozenset()))
+    count += 1
+    attempts[key] = (count, before | shown)
     if count < MAX_ATTEMPTS:
         return False
     try:

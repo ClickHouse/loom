@@ -1379,6 +1379,17 @@ async def test_answers_cut_for_every_row_stop_the_pass_whatever_their_cap(
     assert out["errored"] == 3 and pass_env.stamped == []
 
 
+async def test_an_answered_failure_keeps_the_peers_judged_before(monkeypatch) -> None:
+    from server.memory.workers import conflict_resolver as worker
+
+    monkeypatch.setattr(worker, "_state", worker._State())
+    monkeypatch.setattr(queue, "stamp_judged", lambda q, **kw: asyncio.sleep(0))
+    row = _q(memory_key="k1")
+    await worker._out_of_attempts(row, frozenset({"m2"}))
+    await worker._out_of_attempts(row)  # a failure after the answer: no peers of its own
+    assert worker._state.attempts[worker._attempt_key(row)] == (2, frozenset({"m2"}))
+
+
 async def test_only_a_failure_after_the_answer_counts_as_an_attempt(pass_env: NS) -> None:
     """A ClickHouse error before the call paid for nothing: the row stays owed however
     often it fails. One after the judge answered was paid: the third stamps it."""
