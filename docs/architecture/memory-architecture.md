@@ -163,7 +163,9 @@ memory.set, memory.pin, memory.delete, Undo and erasure requests):
   retirement's vector copy has its status served again.
 - Every retirement has a `memory.auto_supersede` record and can be undone.
 - Nothing changes below confidence 0.90.
-- No other user's or tenant's text reaches a prompt.
+- No other user's or tenant's text reaches a prompt. A row's peers are its subject: the
+  same org, namespace and `user_id`, whichever agent or session wrote them; for the
+  anonymous user `-`, the same agent too.
 - Nothing is written in an org under erasure, even one requested while a row's call is in
   flight: the erasure is read again right before each write.
 - A row is judged once per written version: after a paid call the row is stamped judged,
