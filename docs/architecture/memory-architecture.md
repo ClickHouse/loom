@@ -253,8 +253,8 @@ removed as a clear removes it, and the audit row's pair says `flag_cleared`, so 
 winner does not stay on the review queue against a retired row. The follow and the record are owed before the supersede commits: one
 committed `triples_follow_owed` projection-failure row holds the pair and the record's
 entry, and is resolved once both land, so a failure or a crash in between leaves them for
-the projection repair, which follows a pair, and writes its record when none exists, only
-while its loser is retired behind its winner. While a loser is still live and the intent is
+the projection repair, which follows a pair, writes its record when none exists and clears
+the winner's flag against the loser, only while its loser is retired behind its winner. While a loser is still live and the intent is
 under ten minutes old, the supersede may not have committed yet: the repair leaves the
 intent as it is. The acting of a
 judged row (its pairs, records, follows and audit row) is shielded from cancellation, and

@@ -995,10 +995,15 @@ async def test_a_retirement_waits_for_a_conditional_revision_of_the_peer(ch, wir
     assert out["retired"] == 0 and out["skipped_changed"] == 1
 
 
-async def test_a_retirement_clears_the_winners_flag_against_the_retired_row(ch, wired) -> None:
+@pytest.mark.parametrize("clear_fails", [False, True])
+async def test_a_retirement_clears_the_winners_flag_against_the_retired_row(
+    ch, wired, monkeypatch, clear_fails: bool
+) -> None:
     """The write path flagged the pair; the resolver retires the older row. The winner
-    is active again, with no flag left, and the audit row says the flag went."""
-    from server.memory.app import conflicts
+    is active again, with no flag left, and the audit row says the flag went. A clear
+    that fails after the retirement is made by the follow intent's replay."""
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.app import conflicts, projection_failures
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
@@ -1008,6 +1013,21 @@ async def test_a_retirement_clears_the_winners_flag_against_the_retired_row(ch, 
         org=org, new_memory_id=rows["office_location"]["id"], peer_ids=[rows["office_city"]["id"]]
     )
     assert landed == "conflict"
+    if clear_fails:
+        real = resolver._unlink
+
+        async def fail_once(*a: Any) -> bool:
+            monkeypatch.setattr(resolver, "_unlink", real)
+            raise RuntimeError("ClickHouse went away")
+
+        monkeypatch.setattr(resolver, "_unlink", fail_once)
+        assert (await run_pass())["errored"] == 1
+        await projection_failures.retry_projection_failures(
+            org=org, projection="triples_follow_owed"
+        )
+        winner = (await _rows(ch, org))["office_location"]
+        assert (winner["status"], winner["conflict_with"]) == ("active", [])
+        return
     out = await run_pass()
     after = await _rows(ch, org)
     assert out["retired"] == 1 and after["office_city"]["status"] == "superseded"

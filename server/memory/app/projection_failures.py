@@ -556,13 +556,15 @@ async def _retirement_pending(failure: ProjectionFailureRow, *, ch: Any) -> bool
 async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) -> None:
     """The conflict resolver's `memory.auto_supersede` record of each retirement in the
     intent that is still in place (the loser retired behind the winner) and has none
-    yet. A failed emit raises, so the intent stays for the next replay."""
+    yet, and the winner's flag against the loser cleared. A failed emit raises, so the
+    intent stays for the next replay."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.app.auto_resolution import (
         CONFLICT_RESOLVER,
         EVENT_TYPE,
         record_auto_supersessions,
     )
+    from server.memory.app.conflict_resolver import clear_retired_flag
     from server.memory.store import get_by_id
 
     # The intent is committed before its retirement: a record from before it is an
@@ -573,6 +575,7 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
         head = await get_by_id(loser, org=failure.org, ch=ch, scope=WHOLE_NAMESPACE, strong=True)
         if head is None or head.status != "superseded" or str(head.superseded_by) != winner:
             continue
+        await clear_retired_flag(failure.org, failure.namespace, winner, loser)
         found = await ch.query_all(
             "SELECT count() AS n FROM loom.audit_log"
             " WHERE org = {org:String} AND namespace = {ns:String} AND event_type = {e:String}"

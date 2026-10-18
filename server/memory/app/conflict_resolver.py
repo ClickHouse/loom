@@ -397,6 +397,17 @@ async def _unlink(org: str, row: Any, other_id: str) -> bool:
     return bool(written)
 
 
+async def clear_retired_flag(org: str, namespace: str, winner_id: str, loser_id: str) -> None:
+    """The winner's flag against the row it retired, for the replay of a retirement
+    whose clear failed. Under the winner's key lock, as every resolver write."""
+    from server.memory.store.key_write_lock import key_write_locks
+
+    winner = await _head(org, winner_id)
+    if winner is not None and loser_id in winner.conflict_with:
+        async with key_write_locks.hold(org, namespace, *_identity(winner)):
+            await _unlink(org, winner, loser_id)
+
+
 async def _clear(org: str, row: Any, peer: Any) -> bool:
     a = await _unlink(org, row, str(peer.memory_id))
     b = await _unlink(org, peer, str(row.memory_id))
