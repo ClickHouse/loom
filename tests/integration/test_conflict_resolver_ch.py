@@ -1180,3 +1180,47 @@ async def test_a_write_that_started_before_a_retirement_stays_the_head(
         params={"org": org},
     )
     assert edges[0]["n"] == 0, "no supersedes edge for a retirement that did not land"
+
+
+async def test_an_erasure_requested_while_a_pair_waits_for_its_lock_gets_no_write(
+    ch, wired
+) -> None:
+    """The erasure is read under the pair's locks, right before the write: one requested
+    while the resolver waits for the peer's key leaves both rows and the mark as they were."""
+    import uuid
+    from datetime import UTC, datetime
+
+    from server.memory.store.key_write_lock import key_write_locks
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 86)
+    before = await _rows(ch, org)
+    async with key_write_locks.hold(org, NS, "bot", USER, "s1", "office_city"):
+        resolving = asyncio.create_task(run_pass())
+        await asyncio.sleep(2)
+        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+        await ch.insert(
+            "loom.erasure_requests",
+            [
+                {
+                    "id": str(uuid.uuid4()),
+                    "org": org,
+                    "scope_type": "org",
+                    "scope_value": org,
+                    "requester": "test",
+                    "status": "queued",
+                    "failure_reason": "",
+                    "requested_at": now,
+                    "last_checkpoint_at": now,
+                    "version": 1,
+                }
+            ],
+        )
+    out = await resolving
+    assert out["judged"] == 1 and out["retired"] == 0
+    after = await _rows(ch, org)
+    assert {k: r["version"] for k, r in after.items()} == {
+        k: r["version"] for k, r in before.items()
+    }
+    assert (await _marks(ch, org))["office_location"] == 1, "owed, left to after the saga"

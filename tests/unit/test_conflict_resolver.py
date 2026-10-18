@@ -322,6 +322,8 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         return cr.parse_verdicts(e.answer, notes), "gpt-6.1-sol-2026-09-01"
 
     async def stamp(q: Any, **kw: Any) -> int:
+        if e.erasing:  # as the store's stamp: nothing under erasure
+            return 0
         e.stamped.append(q["memory_key"])
         return 1
 
@@ -386,6 +388,20 @@ async def test_an_erasure_requested_during_the_call_leaves_everything_owed(row_e
     assert row_env.llm_calls == 1 and row_env.acted == [] and row_env.audits == []
     assert row_env.stamped == [], "the row stays owed; the queue leaves it out meanwhile"
     assert counts.retired == 0
+
+
+async def test_the_stamp_writes_nothing_under_erasure() -> None:
+    class CH:
+        def __init__(self) -> None:
+            self.sql: list[str] = []
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            self.sql.append(sql)
+            return [{"n": 1}]
+
+    ch = CH()
+    assert await queue.stamp_judged(_q(), ch=ch) == 0
+    assert len(ch.sql) == 1 and "erasure_requests" in ch.sql[0], "no vector read, no write"
 
 
 async def test_a_pair_that_fails_leaves_the_audit_row_of_the_pairs_done_before_it(

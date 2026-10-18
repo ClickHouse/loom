@@ -1,5 +1,5 @@
 """The conflict resolver's statements: its queue, its stamp, the cluster it judges
-a row in, and the erasure check it makes before acting.
+a row in, and the erasure check it makes before each write.
 
 The queue lives on `loom.memory_embeddings.conflict_checked_at`, the row a write
 already emits, so every replica reads the same queue and a write's mark goes with
@@ -142,8 +142,8 @@ async def unjudged_conflicted_rows(
 
 
 async def under_erasure(org: str, *, ch: _CHClient | None = None) -> bool:
-    """Whether `org` has an erasure the queue leaves it out for: checked again right
-    before acting, since one can be requested while a row's call is in flight."""
+    """Whether `org` has an erasure the queue leaves it out for: read again right
+    before each write, since one can be requested while a row's call is in flight."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"SELECT count() AS n FROM ({_ERASING_ORGS}) WHERE org = {{org:String}}"
@@ -163,8 +163,10 @@ def _same_write(row: Mapping[str, Any], judged: Mapping[str, Any]) -> bool:
 
 async def stamp_judged(judged: Mapping[str, Any], *, ch: _CHClient | None = None) -> int:
     """Stamp the vector rows of the judged write (`judged`: a queue row) `JUDGED_MARK`.
-    A newer write's row keeps its own mark."""
+    A newer write's row keeps its own mark. Nothing under erasure: the row stays owed."""
     ch = ch or _default_client()
+    if await under_erasure(str(judged["org"]), ch=ch):
+        return 0
     rows = await live_embedding_rows_for_key(
         ch,
         org=str(judged["org"]),

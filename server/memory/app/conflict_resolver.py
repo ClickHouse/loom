@@ -445,6 +445,9 @@ async def _settle_locked_pair(
     if row.pinned or head.pinned:
         counts.skipped_pinned += 1
         return None
+    # Right before the write: an erasure requested meanwhile deletes what this writes.
+    if await queue.under_erasure(org):
+        return None
     if action == cr.CLEAR and not (
         str(head.memory_id) in row.conflict_with or str(row.memory_id) in head.conflict_with
     ):
@@ -531,7 +534,7 @@ async def resolve_row(
     if peers:
         row, peers = await _still_unprotected(org, row, peers)
     if row is not None and peers:
-        settled = await _judge_and_act(
+        await _judge_and_act(
             org,
             namespace,
             row,
@@ -540,9 +543,7 @@ async def resolve_row(
             counts=counts,
             acting=acting or asyncio.Lock(),
         )
-        if not settled:
-            return  # the org came under erasure: nothing written, the row stays owed
-    await queue.stamp_judged(q)
+    await queue.stamp_judged(q)  # under erasure it writes nothing: the row stays owed
 
 
 async def _still_unprotected(
@@ -576,9 +577,8 @@ async def _judge_and_act(
     policy: str,
     counts: Counts,
     acting: asyncio.Lock,
-) -> bool:
-    """Judge the row and act on the answer; False when the org came under erasure
-    during the call, and nothing was written."""
+) -> None:
+    """Judge the row and act on the answer."""
     new = cr.Note(
         str(row.memory_id), str(row.memory_key), _plain(memory_repo.stored_value_text(row))
     )
@@ -590,16 +590,12 @@ async def _judge_and_act(
     counts.judged += 1
     if not verdicts:
         counts.errored += 1  # an answer with nothing usable in it: nothing changes
-        return True
-    # An erasure requested during the call: its saga deletes what this would write.
-    if await queue.under_erasure(org):
-        return False
+        return
     # Shielded: a cancellation (the pass deadline, a shutdown) lets the pairs already
     # being acted on finish with their records, follows and audit row.
     await asyncio.shield(
         _act_on_verdicts(org, namespace, row, peers, verdicts, policy, counts, model, acting)
     )
-    return True
 
 
 async def _act_on_verdicts(
