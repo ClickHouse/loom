@@ -342,7 +342,7 @@ async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
-        "clickhouse", "ns", tags=["Specs", "onboarding"], tags_all=True, ch=ch
+        "clickhouse", "ns", tags=["Specs", "onboarding"], tag_match="all", ch=ch
     )
     sql, params = ch.query_all_calls[0]
     assert f"hasAll({_FOLDED})" in sql

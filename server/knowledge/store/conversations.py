@@ -596,11 +596,10 @@ async def recent_threads(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The namespace's threads with a live message in the window. Most recent first, ties
-    by thread_id; `offset` skips that many. Each carries its
-    message count, first/last seen and the latest message's agent
-    (`last_agent`), role and 240-character excerpt. `count_turns`: the message
-    count is the thread's distinct turns, as an opened thread shows; off, the
-    window's raw row count (for a caller that does not read the count)."""
+    by thread_id; `offset` skips that many. Each carries its message count, first/last seen
+    and the latest message's agent (`last_agent`), role and 240-character excerpt.
+    `count_turns`: the message count is the thread's distinct turns, as an opened thread
+    shows; off, the window's raw row count (for a caller that does not read the count)."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,

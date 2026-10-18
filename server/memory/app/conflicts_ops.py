@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _sha256
@@ -26,6 +26,9 @@ from server.memory.api.models_conflicts import (
     _ConflictRow,
 )
 from server.operations.read_projection import project_rows
+
+if TYPE_CHECKING:
+    from server.memory.store.conflicts import ConflictTarget
 
 _COUNT_TTL_S = 60.0
 _count_cache: dict[tuple[str, str, ReadFilters], tuple[float, int]] = {}
@@ -253,14 +256,12 @@ async def _peers_in_scope(input: ConflictsResolveInput, peers: list[str]) -> lis
     return live
 
 
-async def _peer_still_conflicted(input: ConflictsResolveInput, target: Any) -> bool:
-    """Whether the named peer is still conflicted with `target` (a resolve of another peer
+async def _peer_still_conflicted(org: str, target: ConflictTarget, peer_id: str) -> bool:
+    """Whether `peer_id` is still conflicted with `target` (a resolve of another peer
     marked the target active)."""
     from server.memory.store import conflicts as conflicts_repo
 
-    if not input.peer_id:
-        return False
-    peer = await conflicts_repo.lookup_target(input.org, input.peer_id)
+    peer = await conflicts_repo.lookup_target(org, peer_id)
     return (
         peer is not None and peer.status == "conflicted" and target.memory_id in peer.conflict_with
     )
@@ -295,10 +296,13 @@ async def handle_conflicts_resolve(
     if input.peer_id and input.peer_id not in all_peers:
         # A stale or foreign peer id must not widen the resolve to every peer.
         return unresolved
-    if target.status != "conflicted" and not await _peer_still_conflicted(input, target):
+    named = [input.peer_id] if input.peer_id else all_peers
+    if target.status != "conflicted":
         # A pair an earlier decision already resolved is not decided again from a stale view.
-        return unresolved
-    peers = await _peers_in_scope(input, [input.peer_id] if input.peer_id else all_peers)
+        named = [p for p in named if await _peer_still_conflicted(input.org, target, p)]
+        if not named:
+            return unresolved
+    peers = await _peers_in_scope(input, named)
     if peers is None:
         return unresolved
     affected: list[str] = []

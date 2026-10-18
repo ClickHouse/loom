@@ -104,17 +104,17 @@ async def test_the_hidden_under_prefix_count_matches_tags_as_the_total_does(
     )
     assert len(calls["count"]) == 3, "total, today and every status under the prefix"
     assert [c["tags"] for c in calls["count"]] == [["a", "b"]] * 3
-    assert [c["tags_all"] for c in calls["count"]] == [True, True, True]
+    assert [c["tag_match"] for c in calls["count"]] == ["all", "all", "all"]
 
 
 @pytest.mark.asyncio
 async def test_the_store_requires_every_tag_when_asked() -> None:
-    """`tags_all`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
+    """`tag_match="all"`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
     of them are found past the newest rows that hold any one."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
-        identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tags_all=True, ch=ch
+        identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tag_match="all", ch=ch
     )
     sql, params = ch.calls[-1]
     assert f"hasAll({_FOLDED})" in sql
@@ -134,8 +134,8 @@ async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
                 org="acme", namespace="team", agent="*", tags=["a", "b"], tags_all=all_tags
             )
         )
-    assert [c["tags_all"] for c in calls["list"]] == [False, True]
-    assert [c["tags_all"] for c in calls["count"]] == [False, False, True, True]
+    assert [c["tag_match"] for c in calls["list"]] == ["any", "all"]
+    assert [c["tag_match"] for c in calls["count"]] == ["any", "any", "all", "all"]
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,7 @@ from server.core.ch import caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value_json as _sha256_value_json
-from server.core.tag_sql import tag_filter
+from server.core.tag_sql import TagMatch, tag_filter
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_bulk import MemoryBulkGetInput, MemoryBulkGetOutput
@@ -130,6 +130,11 @@ async def handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
     return out
 
 
+def _tag_match(input: MemoryListInput) -> TagMatch:
+    """`tags_all` asks for every tag; otherwise any one, in any case."""
+    return "all" if input.tags_all else "any"
+
+
 def _caller_is_below_writer(org: str, namespace: str) -> bool:
     """True when the verified token's role on (org, namespace) is below
     writer. Scoped tokens answer from ns_roles; unscoped tokens from their flat
@@ -215,7 +220,7 @@ async def _hidden_under_prefix(
         source_trace=input.source_trace or None,
         # The same tag match as `total`, so only the status filter makes the difference.
         tags=tags,
-        tags_all=input.tags_all,
+        tag_match=_tag_match(input),
         contains=input.contains or None,
         include_tombstoned=input.include_tombstoned,
         as_of=input.as_of,
@@ -297,7 +302,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
-            tags_all=input.tags_all,
+            tag_match=_tag_match(input),
             contains=input.contains or None,
             order_by="created_at_desc",
             limit=input.limit + 1,
@@ -344,7 +349,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
-            tags_all=input.tags_all,
+            tag_match=_tag_match(input),
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
             as_of=input.as_of,
@@ -359,7 +364,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
-            tags_all=input.tags_all,
+            tag_match=_tag_match(input),
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
             created_since=_today_start,
@@ -464,7 +469,7 @@ async def _list_by_score(
         where.append("startsWith(memory_key, {p:String})")
         params["p"] = input.prefix
     if tags:
-        where.append(tag_filter(tags, params, every=input.tags_all))
+        where.append(tag_filter(tags, params, match=_tag_match(input)))
     if input.contains:
         where.append(memory_repo.CONTAINS_PREDICATE)
         params["contains"] = input.contains

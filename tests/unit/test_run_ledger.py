@@ -543,15 +543,18 @@ def test_list_memory_activity_is_a_where_clause_not_a_client_slice(env) -> None:
         h.handle_run_list(RunListInput(org="o", namespace="n", memory_activity="with", limit=100))
     )
     assert [r.run_id for r in out.runs] == ["r9"]
-    _, sql, params = fake.calls[0]
+    # The page and its count run side by side; the page is the statement with an ORDER BY.
+    pages = [(sql, params) for _, sql, params in fake.calls if "ORDER BY" in sql]
+    sql, params = pages[0]
     clause = sql.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
     assert "(notEmpty(memories_used) OR notEmpty(memories_written))" in clause
     assert params == {"org": "o", "ns": "n", "lim": 100, "off": 0}
 
     fake.all.append([])
     asyncio.run(h.handle_run_list(RunListInput(org="o", namespace="n", memory_activity="without")))
-    # calls[1] is the first call's count; calls[2] is this call's page.
-    _, sql, _ = fake.calls[2]
+    pages = [sql for _, sql, _ in fake.calls if "ORDER BY" in sql]
+    assert len(pages) == 2
+    sql = pages[1]
     assert "(empty(memories_used) AND empty(memories_written))" in sql.split("WHERE", 1)[1]
 
     with pytest.raises(ValidationError):
