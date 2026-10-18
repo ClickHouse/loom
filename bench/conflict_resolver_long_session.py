@@ -387,7 +387,7 @@ def run_arm(
             namespace,
             description="conflict resolver long-session scenario",
             keep=args.keep_namespaces,
-            extra={"default_conflict_policy": "newest_wins"},
+            extra={"default_conflict_policy": args.policy},
         ),
     )
     start = datetime.now(UTC).replace(microsecond=0) - timedelta(weeks=SESSIONS + 1)
@@ -521,6 +521,12 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--drain-timeout", type=float, default=900.0, help="seconds")
     p.add_argument("--poll", type=float, default=5.0, help="seconds between queue reads")
     p.add_argument("--settle", type=float, default=5.0, help="seconds before the end reads")
+    p.add_argument(
+        "--policy",
+        choices=("newest_wins", "auto_reinforce", "manual_review", "append_only"),
+        default="newest_wins",
+        help="the namespace's default_conflict_policy (auto_reinforce is the product default)",
+    )
     p.add_argument("--budget-usd", type=float, default=1.0)
     p.add_argument("--keep-namespaces", action="store_true")
     p.add_argument("--out", default="", help="write the results as JSON here")

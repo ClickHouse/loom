@@ -61,7 +61,9 @@ def test_each_arm_opens_one_clickhouse_client_and_closes_it(monkeypatch) -> None
     assert used == [clients[0], clients[0], clients[1], clients[1]]
 
 
-def _arm(monkeypatch: pytest.MonkeyPatch, drained: float | None, owed: int) -> dict[str, Any]:
+def _arm(
+    monkeypatch: pytest.MonkeyPatch, drained: float | None, owed: int, policy: str = "newest_wins"
+) -> dict[str, Any]:
     queue = {"owed": owed, "recheck": 0, "judged": 1}
     replies = {
         ls._QUEUE_SQL: [queue],
@@ -74,8 +76,19 @@ def _arm(monkeypatch: pytest.MonkeyPatch, drained: float | None, owed: int) -> d
     monkeypatch.setattr(ls, "_top_hits", lambda *a, **k: {})
     monkeypatch.setattr(ls, "score_by_key", lambda rows, top: {})
     monkeypatch.setattr(ls, "remember_bench_namespace", lambda *a: None)
-    args = SimpleNamespace(keep_namespaces=False, drain_timeout=1.0, poll=0.0, settle=0.0)
+    args = SimpleNamespace(
+        keep_namespaces=False, drain_timeout=1.0, poll=0.0, settle=0.0, policy=policy
+    )
     return ls.run_arm(lambda op, body: {}, object(), "on", "set", args)  # type: ignore[arg-type]
+
+
+def test_the_arms_namespace_takes_the_policy_flag(monkeypatch) -> None:
+    assert ls._parse([]).policy == "newest_wins"
+    assert ls._parse(["--policy", "auto_reinforce"]).policy == "auto_reinforce"
+    registered: list[dict[str, Any]] = []
+    monkeypatch.setattr(ls, "register_body", lambda *a, **kw: registered.append(kw) or {})
+    _arm(monkeypatch, drained=3.0, owed=0, policy="auto_reinforce")
+    assert registered[0]["extra"] == {"default_conflict_policy": "auto_reinforce"}
 
 
 def test_an_on_arm_whose_drain_timed_out_does_not_count(monkeypatch) -> None:
