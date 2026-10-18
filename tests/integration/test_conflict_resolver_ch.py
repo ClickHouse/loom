@@ -1930,3 +1930,41 @@ async def test_the_resolver_stops_at_the_namespace_cap_within_one_round_in_fligh
     assert first["skipped_budget"] > 0 and owed > 0
     assert after_second == after_first, "the next pass spends nothing"
     assert second["capped_namespaces"] >= 1 and second["judged"] == 0
+
+
+async def test_a_flag_against_a_row_no_longer_live_is_cleared(ch, wired) -> None:
+    """office_location is flagged against office_city, retired since: a retired row never
+    joins a cluster, so no judgement would clear the flag. The pass clears it, with the
+    clear's audit row, and the row is active again."""
+    import server.memory.store as M
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.app.conflict_resolver import AUDIT_EVENT
+    from server.memory.store import lifecycle
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 230)
+    rows = await _rows(ch, org)
+    old_id, new_id = rows["office_city"]["id"], rows["office_location"]["id"]
+    old = await M.get_by_id(old_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
+    new = await M.get_by_id(new_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
+    await lifecycle.insert_memory_versions(
+        [
+            M.build_memory_version_row(
+                old, version=M.next_version(), status="superseded", superseded_by=new_id
+            ),
+            M.build_memory_version_row(
+                new, version=M.next_version(), status="conflicted", conflict_with=[old_id]
+            ),
+        ],
+        ch=ch,
+    )
+    out = await run_pass()
+    assert out["errored"] == 0 and out["cleared"] == 1, out
+    assert llm.calls == [], "nothing live is left to judge it against"
+    row = (await _rows(ch, org))["office_location"]
+    assert (row["status"], list(row["conflict_with"])) == ("active", [])
+    (audit,) = await _audit(ch, org, AUDIT_EVENT)
+    assert audit["memory_id"] == new_id
+    assert audit["pairs"] == [{"peer_id": old_id, "action": "clear", "reason": "peer_not_live"}]
+    assert (await run_pass())["cleared"] == 0

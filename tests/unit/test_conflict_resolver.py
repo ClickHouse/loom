@@ -392,6 +392,19 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def under_erasure(org: str, **kw: Any) -> bool:
         return e.erasing
 
+    e.dead: set[str] = set()
+
+    async def dead_flags(org: str, namespace: str, identity: Any, **kw: Any) -> list[str]:
+        return [str(x) for x in e.mem.conflict_with if str(x) in e.dead]
+
+    e.unlinked: list[tuple[str, tuple[str, ...]]] = []
+
+    async def unlink(org: str, row: Any, *ids: str) -> bool:
+        e.unlinked.append((row.memory_id, ids))
+        return True
+
+    monkeypatch.setattr(queue, "dead_flags", dead_flags)
+    monkeypatch.setattr(resolver, "_unlink", unlink)
     monkeypatch.setattr(queue, "asserted_versions", asserted)
     monkeypatch.setattr(queue, "protected_ids", protected)
     monkeypatch.setattr(queue, "under_erasure", under_erasure)
@@ -712,6 +725,45 @@ async def test_the_recheck_clears_a_false_flag_and_judges_the_flagged_peer(row_e
     counts = await _resolve()
     assert row_env.cluster_kw["prefer"] == frozenset({"m2"})
     assert row_env.acted == [(cr.CLEAR, "m1", "m2")] and counts.cleared == 1
+
+
+async def test_a_flag_against_a_row_no_longer_live_is_cleared_with_its_audit(
+    row_env: NS,
+) -> None:
+    # m9 was retired since it flagged the row: it never joins a cluster, so only this
+    # release clears it. The live flag (m2) is judged as before.
+    row_env.mem.status, row_env.mem.conflict_with = "conflicted", ["m2", "m9"]
+    row_env.dead = {"m9"}
+    row_env.answer = _answer(_entry("p1", "unrelated", 0.98))
+    counts = await _resolve()
+    assert row_env.unlinked == [("m1", ("m9",))]
+    assert row_env.audits[0] == [{"peer_id": "m9", "action": cr.CLEAR, "reason": "peer_not_live"}]
+    assert row_env.acted == [(cr.CLEAR, "m1", "m2")] and counts.cleared == 2
+    assert row_env.stamped == ["office_city"]
+
+
+async def test_a_row_whose_flags_are_all_dead_is_released_and_never_left_conflicted(
+    row_env: NS,
+) -> None:
+    row_env.mem.status, row_env.mem.conflict_with = "conflicted", ["m8", "m9"]
+    row_env.dead = {"m8", "m9"}
+    row_env.peers = []
+    counts = await _resolve()
+    assert row_env.unlinked == [("m1", ("m8", "m9"))] and counts.cleared == 2
+    assert row_env.llm_calls == 0 and row_env.stamped == ["office_city"]
+
+
+async def test_dead_flags_stay_on_a_pinned_row_and_under_an_erasure(row_env: NS) -> None:
+    row_env.mem.status, row_env.mem.conflict_with = "conflicted", ["m9"]
+    row_env.dead = {"m9"}
+    row_env.peers = []
+    row_env.heads["m1"].pinned = True
+    await _resolve()
+    assert row_env.unlinked == []
+    row_env.heads["m1"].pinned = False
+    row_env.erasing = True
+    await _resolve()
+    assert row_env.unlinked == [] and row_env.audits == []
 
 
 async def test_a_clear_with_no_flag_between_the_pair_does_nothing(row_env: NS) -> None:

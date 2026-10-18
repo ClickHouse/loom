@@ -339,6 +339,39 @@ async def cluster_peers(
     return kept
 
 
+# The ids the row's head flags whose row is no longer live (deleted, retired, rejected,
+# expired or ended): read from the head in ClickHouse, since it can flag thousands.
+_DEAD_FLAGS_SQL = """
+        WITH flags AS (
+            SELECT arrayJoin(conflict_with) AS id FROM loom.memory FINAL
+            WHERE org = {org:String} AND namespace = {ns:String} AND agent = {a:String}
+              AND user_id = {u:String} AND session_id = {s:String} AND memory_key = {k:String})
+        SELECT toString(id) AS id FROM flags
+        WHERE id NOT IN (
+            SELECT memory_id FROM loom.memory FINAL
+            PREWHERE org = {org:String} AND namespace = {ns:String}
+            WHERE memory_id IN (SELECT id FROM flags)
+              AND tombstoned_at IS NULL
+              AND status IN ('active', 'conflicted')
+              AND (expires_at IS NULL OR expires_at > now())
+              AND (valid_to IS NULL OR valid_to > now()))
+        SETTINGS select_sequential_consistency = 1
+        """
+
+
+async def dead_flags(
+    org: str, namespace: str, identity: tuple[str, str, str, str], *, ch: _CHClient | None = None
+) -> list[str]:
+    """The ids the head of `identity` (agent, user_id, session_id, memory_key) flags whose
+    row is no longer live, read strongly."""
+    ch = ch or _default_client()
+    a, u, s, k = identity
+    rows = await ch.query_all(
+        _DEAD_FLAGS_SQL, {"org": org, "ns": namespace, "a": a, "u": u, "s": s, "k": k}
+    )
+    return [str(r["id"]) for r in rows]
+
+
 # Ids bind as UUIDs: `memory_id` itself, not a cast of it, is what memory_id_skip prunes
 # (and no `toString(memory_id) AS memory_id` alias, which the WHERE would read instead).
 _PROTECTED_SQL = """
@@ -412,6 +445,7 @@ __all__ = [
     "OWED_MARK",
     "asserted_versions",
     "cluster_peers",
+    "dead_flags",
     "owed_rows",
     "protected_ids",
     "queued_namespaces",

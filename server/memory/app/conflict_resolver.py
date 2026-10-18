@@ -357,15 +357,16 @@ def _queue_key(org: str, row: Any) -> dict[str, Any]:
     )
 
 
-async def _unlink(org: str, row: Any, other_id: str) -> bool:
-    """Remove `other_id` from `row`'s flags; a row left with none is active again."""
+async def _unlink(org: str, row: Any, *other_ids: str) -> bool:
+    """Remove `other_ids` from `row`'s flags; a row left with none is active again."""
     from server.memory.app.conflicts import judged_write
 
     sha = str(row.content_sha256 or "")
     changed, version = judged_write(sha)
+    gone = set(other_ids)
 
     def update(r: Any) -> dict[str, Any]:
-        rest = [x for x in r.conflict_with if str(x) != other_id]
+        rest = [x for x in r.conflict_with if str(x) not in gone]
         cols: dict[str, Any] = {"conflict_with": rest, **version(r)}
         if r.status == "conflicted" and not rest:
             cols["status"] = "active"
@@ -374,7 +375,7 @@ async def _unlink(org: str, row: Any, other_id: str) -> bool:
     def skip(r: Any) -> bool:
         return (
             r.pinned
-            or other_id not in [str(x) for x in r.conflict_with]
+            or not gone & {str(x) for x in r.conflict_with}
             or (changed is not None and changed(r))
         )
 
@@ -561,6 +562,12 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> N
         counts.skipped_pinned += 1
         await queue.stamp_judged(q)
         return
+    if row.conflict_with:
+        try:
+            await _release_dead_flags(org, namespace, row, counts)
+        except PreconditionFailedError:
+            counts.skipped_changed += 1  # the key is busy: the row stays owed
+            return
     peers = await queue.cluster_peers(
         q,
         floor=float(settings.memory_conflict_resolver_min_similarity),
@@ -578,6 +585,28 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> N
             counts.skipped_changed += 1
             return
     await queue.stamp_judged(q)  # under erasure it writes nothing: the row stays owed
+
+
+async def _release_dead_flags(org: str, namespace: str, row: Any, counts: Counts) -> None:
+    """Clear the row's flags against rows that are no longer live (retired, rejected,
+    deleted, expired). Such a peer never joins a cluster, so no judgement clears its flag
+    and the row would stay on the review queue. Under the row's key lock, with the audit
+    row a clear writes."""
+    from server.memory.store.key_write_lock import key_write_locks
+
+    dead = await queue.dead_flags(org, namespace, _identity(row))
+    if not dead:
+        return
+    async with key_write_locks.hold(org, namespace, *_identity(row)):
+        head = await _head(org, str(row.memory_id))
+        if not _holds(head, namespace, str(row.content_sha256 or "")) or head.pinned:
+            return
+        if await queue.under_erasure(org) or not await _unlink(org, head, *dead):
+            return
+    counts.cleared += len(dead)
+    acted = [{"peer_id": x, "action": cr.CLEAR, "reason": "peer_not_live"} for x in dead]
+    if not await queue.under_erasure(org):
+        await _audit(org, namespace, head, acted, "")
 
 
 async def _still_unprotected(
