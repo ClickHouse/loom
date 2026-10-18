@@ -294,11 +294,11 @@ async def cluster_peers(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Up to `limit` live peers of the queue row `row`: its memory_type, its subject,
-    each with `similarity`. The places go to its flagged peers first (read from its head;
-    `prefer`, its flags, orders them), then to the nearest rows of its key in other
-    sessions, at most half the places, both read whatever the cutoff and the floor (a
-    re-check judges its flags; a write owed for its key's other rows is judged against
-    them), then to the nearest peers at cosine >= `floor`."""
+    each with `similarity`. Its flagged peers are read from its head; the flagged peers
+    that are also in `prefer` take the first places. Then the nearest rows of its key in
+    other sessions, at most half the places, both read whatever the cutoff and the floor
+    (a re-check judges its flags; a write owed for its key's other rows is judged against
+    them), then the nearest peers at cosine >= `floor`."""
     ch = ch or _default_client()
     emb = [float(x) for x in (row.get("embedding") or [])]
     if not emb:
