@@ -64,13 +64,13 @@ export function LeaseBar({
   now: number;
 }) {
   const left = leaseMinutesLeft(leaseUntil, now);
-  if (left === null) return <span className="text-xs text-text-muted">no lease</span>;
+  if (left === null) return <span className="text-xs text-text-muted">No lease</span>;
   // The bar is the lease's share left, against the inbox's lease length.
   const total = Math.max(1, leaseSeconds / 60);
   const pct = Math.max(4, Math.min(100, (left / total) * 100));
   return (
     <>
-      <span className="tq-lease" data-low={left <= 10} role="img" aria-label={`lease: ${left} min left`}>
+      <span className="tq-lease" data-low={left <= 10} role="img" aria-label={`Lease: ${left} min left`}>
         <i style={{ width: `${pct}%` }} />
       </span>
       <span className="tabular" aria-hidden="true">
@@ -80,10 +80,11 @@ export function LeaseBar({
   );
 }
 
+// The same colours as the lanes (LANE_STATE): one state, one colour.
 const STATUS_STATE: Record<TaskStatus, BadgeState> = {
-  triage: "default",
+  triage: "info",
   todo: "neutral",
-  in_progress: "info",
+  in_progress: "default",
   blocked: "warning",
   deferred: "neutral",
   done: "success",

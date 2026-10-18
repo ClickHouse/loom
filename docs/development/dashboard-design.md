@@ -47,6 +47,7 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - File pickers: a hidden native `file` input opened by a Click UI `Button`.
 - Sidebar nav items: anchors drawn with Click UI's `--click-sidebar-*` tokens. Click UI's `SidebarNavigationItem` is a `div` whose label may hold a link, which would put the selected state on the `div`, not the link.
 - Loom-specific widgets (the graph canvas, the task grid and board, the patterns board), with Click UI controls inside them.
+- A task's lease bar: a 56 × 4 px bar that turns the warning colour under ten minutes left. Click UI's small `ProgressBar` has one colour and a label row, and a lease about to lapse is a warning.
 
 ### Component or design values
 

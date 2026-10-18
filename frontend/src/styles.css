@@ -849,7 +849,7 @@ textarea[aria-invalid="true"]:focus-visible {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    padding: 8px 16px;
+    padding: var(--click-bigStat-space-all);
     text-align: left;
     border: var(--click-bigStat-stroke) solid var(--click-bigStat-color-stroke-default);
     border-radius: var(--click-bigStat-radii-all);
@@ -876,25 +876,29 @@ textarea[aria-invalid="true"]:focus-visible {
     font-weight: 500;
   }
   /* ---- the inbox rail */
+  /* An inbox in the rail: a sidebar navigation item (Click UI's --click-sidebar-* tokens). */
   .tq-inbox {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     width: 100%;
-    gap: 8px;
-    padding: 6px 8px;
-    border-radius: var(--radius-md);
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
+    gap: var(--click-sidebar-navigation-item-default-space-gap);
+    padding: var(--click-sidebar-navigation-item-default-space-y)
+      var(--click-sidebar-navigation-item-default-space-right) var(--click-sidebar-navigation-item-default-space-y)
+      var(--click-sidebar-navigation-item-default-space-left);
+    border-radius: var(--click-sidebar-navigation-item-radii-all);
+    color: var(--click-sidebar-main-navigation-item-color-text-default);
+    font: var(--click-sidebar-navigation-item-typography-default);
     text-align: left;
   }
   .tq-inbox:hover {
-    background: var(--click-card-horizontal-default-color-background-hover);
+    background: var(--click-sidebar-main-navigation-item-color-background-hover);
+    color: var(--click-sidebar-main-navigation-item-color-text-hover);
   }
   .tq-inbox[aria-current="true"] {
-    background: var(--click-table-row-color-background-active);
-    color: var(--color-text);
-    font-weight: 500;
+    background: var(--click-sidebar-main-navigation-item-color-background-active);
+    color: var(--click-sidebar-main-navigation-item-color-text-active);
+    font: var(--click-sidebar-navigation-item-typography-active);
   }
   .tq-inbox .nm {
     min-width: 0;
@@ -926,8 +930,9 @@ textarea[aria-invalid="true"]:focus-visible {
     align-items: center;
     gap: 10px;
     width: 100%;
-    padding: 10px 16px;
+    padding: var(--click-table-header-cell-space-sm-y) var(--click-table-header-cell-space-sm-x);
     text-align: left;
+    background: var(--click-table-header-color-background-default);
     border-bottom: 1px solid var(--color-border);
   }
   .tq-ghead:hover {
@@ -954,7 +959,7 @@ textarea[aria-invalid="true"]:focus-visible {
     gap: 4px 12px;
     align-items: center;
     width: 100%;
-    padding: 10px 12px 10px 16px;
+    padding: var(--click-table-body-cell-space-sm-y) var(--click-table-body-cell-space-sm-x);
     text-align: left;
     border-top: 1px solid var(--color-border);
     cursor: pointer;
@@ -1002,12 +1007,17 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-row[aria-selected="true"] {
     background: var(--click-table-row-color-background-active);
   }
+  /* Inset: a lane (.tq-group) and the rail clip their overflow, which would cut an outset
+     ring. A tile sits in no clipping box and takes the outset ring every list row has. */
   .tq-row:focus-visible,
   .tq-card:focus-visible,
-  .tq-tile:focus-visible,
   .tq-inbox:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: -2px;
+  }
+  .tq-tile:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
   }
   /* Two lines before it ellipsises, so a long title is read in the row. */
   .tq-row .title {

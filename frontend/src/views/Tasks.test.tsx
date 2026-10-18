@@ -258,7 +258,7 @@ describe("Tasks page", () => {
     expect(within(urgent).getByText("P1")).toBeInTheDocument();
     expect(within(urgent).getByText("For reporter, the inbox's agent")).toBeInTheDocument();
     expect(screen.getByText("blocked on human: needs a repro")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /lease: 6 min left/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Lease: 6 min left" })).toBeInTheDocument();
     expect(
       within(screen.getByRole("row", { name: "Task running" })).getByText("Claimed by reporter"),
     ).toBeInTheDocument();

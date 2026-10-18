@@ -82,15 +82,12 @@ export function TaskBoard({
         const listed = all.has(g) ? rows : rows.slice(0, LANE_ROWS);
         return (
           <section key={g} className="tq-col" aria-labelledby={`tq-col-${g}`} {...drag.target(g)}>
-            <Title
-              type="h2"
-              size="sm"
-              id={`tq-col-${g}`}
-              className="px-3 py-2.5 border-b border-border flex items-center gap-2"
-            >
-              <LaneBadge group={g} />
-              <span className="ml-auto text-xs font-medium text-text-muted tabular">{rows.length}</span>
-            </Title>
+            <div className="px-3 py-2 border-b border-border">
+              <Title type="h2" size="sm" id={`tq-col-${g}`} className="flex items-center gap-2">
+                <LaneBadge group={g} />
+                <span className="ml-auto text-xs font-medium text-text-muted tabular">{rows.length}</span>
+              </Title>
+            </div>
             <div className="p-2 flex flex-col gap-2">
               {rows.length === 0 ? (
                 <div className="p-4 text-xs text-text-muted">{filtering ? NO_MATCH : EMPTY_COLUMN[g]}</div>

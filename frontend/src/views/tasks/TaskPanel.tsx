@@ -191,7 +191,7 @@ function Track({
   return (
     <Section title="Poster's record in this inbox">
       {record === undefined && <Loading layout="inline" label="Loading the poster's record" />}
-      {record === null && <div className="text-xs text-text-muted">not readable</div>}
+      {record === null && <div className="text-xs text-text-muted">Not readable</div>}
       {record && (
         // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of counts, not form fields
         <div
@@ -201,10 +201,10 @@ function Track({
         >
           {(
             [
-              ["done", record.done],
-              ["won't do", record.wont_do],
-              ["failed", record.failed],
-              ["open", record.open],
+              ["Done", record.done],
+              ["Won't do", record.wont_do],
+              ["Failed", record.failed],
+              ["Open", record.open],
             ] as Array<[string, number]>
           ).map(([l, n]) => (
             <Stat key={l} label={l} value={n} />
@@ -432,7 +432,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
   const titleClass = "text-lg font-semibold m-0 mb-1 [text-wrap:balance] break-words";
   const body = (
     <>
-      <div className="px-3.5 pt-3 pb-3 border-b border-border">
+      <div className="px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2 flex-wrap mb-2">
           <StatusPill status={current.status} />
           <PriorityBadge priority={current.priority} />
@@ -511,7 +511,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
         )}
       </div>
 
-      <div className="overflow-y-auto px-3.5 pt-1 pb-3.5 flex-1 min-h-0">
+      <div className="overflow-y-auto px-4 pt-1 pb-4 flex-1 min-h-0">
         {error && <Alert role="alert" state="danger" size="small" text={error} className="my-2" />}
         {!missing && (
           <>
