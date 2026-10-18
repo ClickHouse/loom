@@ -732,9 +732,16 @@ def test_a_row_with_an_expiry_still_ahead_is_left_alone(
     assert loom.writes() == []
 
 
-def test_a_bundle_whose_tags_are_not_a_list_is_refused(tmp_path: Path, loom: _FakeLoom):
+def test_a_bundle_whose_tags_are_not_a_list_is_refused(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
     root = _bundle(tmp_path / "b", [_entry("a")])
     concept = root / "semantic" / "a.md"
     concept.write_text(concept.read_text().replace("tags:\n- lesson", "tags: 5"))
     assert _run(root) == 2
     assert loom.calls == []
+    assert "`tags` is not a list" in capsys.readouterr().err
+
+    assert _run(root, "--force-import") == 0  # read with no tags, not a traceback
+    (written,) = [b for op, b in loom.calls if op == "memory.set"]
+    assert "5" not in written["tags"]

@@ -265,6 +265,14 @@ def test_tags_that_are_not_a_list_are_critical(tags: Any) -> None:
     assert "frontmatter" in {f.id for f in lint.lint_files(files).criticals}
 
 
+def test_an_empty_tags_line_is_not_a_finding() -> None:
+    files = _fresh_files()
+    files["semantic/deploy_window.md"] = _with_frontmatter(
+        files["semantic/deploy_window.md"], tags=[]
+    ).replace("tags: []", "tags:")
+    assert "frontmatter" not in {f.id for f in lint.lint_files(files).criticals}
+
+
 def test_index_missing_okf_version_and_listing() -> None:
     files = _fresh_files()
     del files["procedural/index.md"]

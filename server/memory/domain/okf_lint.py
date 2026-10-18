@@ -236,7 +236,7 @@ def _check_concept(
     if not has_fm or not str(fm.get("type") or "").strip():
         rep.add("frontmatter", rel, "missing frontmatter or empty `type`")
         return
-    if not isinstance(fm.get("tags", []), list):
+    if fm.get("tags") is not None and not isinstance(fm["tags"], list):
         rep.add("frontmatter", rel, "`tags` is not a list")
         return
     raw_loom = fm.get("loom")

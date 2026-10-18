@@ -404,13 +404,15 @@ def parse_concept(rel_path: str, text: str) -> Concept:
     verified_raw = fm.get("verified") or []
     if isinstance(verified_raw, dict):
         verified_raw = [verified_raw]
+    # okf-lint reports a `tags` that is not a list; --force-import still reads the file.
+    tags = fm.get("tags")
     return Concept(
         id=cid,
         type=str(fm.get("type") or "").strip(),
         title=str(fm.get("title") or humanise_key(cid.rsplit("/", 1)[-1])),
         description=str(fm.get("description") or ""),
         body=body.strip("\n"),
-        tags=[str(t) for t in (fm.get("tags") or [])],
+        tags=[str(t) for t in tags] if isinstance(tags, list) else [],
         generated=(
             {str(k): _scalar(v) for k, v in fm["generated"].items()}
             if isinstance(fm.get("generated"), dict)
@@ -594,9 +596,7 @@ def is_high(sensitivity: Any, tags: Any) -> bool:
     """A row is high by its `sensitivity` or by the `sensitivity:high` tag memory.set adds."""
     if str(sensitivity or "").strip().lower() == HIGH:
         return True
-    if not isinstance(tags, list):  # a hand-edited bundle can carry `tags: 5`
-        return False
-    return SENSITIVITY_TAG_PREFIX + HIGH in {str(t).strip().lower() for t in tags}
+    return SENSITIVITY_TAG_PREFIX + HIGH in {str(t).strip().lower() for t in tags or []}
 
 
 # ------------------------------------------------------------------
