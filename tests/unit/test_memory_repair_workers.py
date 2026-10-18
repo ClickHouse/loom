@@ -144,7 +144,7 @@ async def test_status_mirrors_queued_first_do_not_hold_back_a_real_failure(
     assert "entity_edges" in retried and retried.count(pf.STATUS_MIRROR) == 30
 
 
-async def test_a_pass_marks_its_repaired_failures_in_one_mutation_per_org(
+async def test_a_pass_reads_each_orgs_erasure_and_marks_its_failures_once(
     monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
 ) -> None:
     from server.memory.app import projection_failures as pf
@@ -164,7 +164,10 @@ async def test_a_pass_marks_its_repaired_failures_in_one_mutation_per_org(
     async def _mirrored(f: ProjectionFailureRow, **_: Any) -> str:
         return ""
 
+    reads: list[str] = []
+
     async def no(org: str, **kw: Any) -> bool:
+        reads.append(org)
         return False
 
     monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
@@ -175,6 +178,7 @@ async def test_a_pass_marks_its_repaired_failures_in_one_mutation_per_org(
     result = await projection_repair.run_pass()
     assert result.resolved == 30
     assert sum("ALTER TABLE" in m for m in mutations) == 1
+    assert reads == ["acme"], "the org's erasure is read once a pass"
 
 
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(
