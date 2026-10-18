@@ -351,8 +351,11 @@ async def cluster_peers(
     peers.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
     key = str(row["memory_key"])
     flagged = [p for p in peers if str(p["memory_id"]) in prefer]
-    same_key = [p for p in peers if p not in flagged and str(p["memory_key"]) == key][:half]
-    rest = [p for p in peers if p not in flagged + same_key and _ident(p) in above_floor]
+    taken = {str(p["memory_id"]) for p in flagged}
+    same_key = [p for p in peers if str(p["memory_id"]) not in taken and p["memory_key"] == key]
+    same_key = same_key[:half]
+    taken |= {str(p["memory_id"]) for p in same_key}
+    rest = [p for p in peers if str(p["memory_id"]) not in taken and _ident(p) in above_floor]
     kept = (flagged + same_key + rest)[: max(int(limit), 0)]
     kept.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
     return kept
