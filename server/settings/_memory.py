@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from server.settings._env import CaseFolded
 
@@ -100,9 +100,8 @@ class MemorySettings(BaseModel):
     # verdict clears the pair's flag, and an update this build does not retire or a
     # contradiction flags the pair for review.
     memory_conflict_resolver_clear_confidence: float = Field(default=0.90, ge=0.0, le=1.0)
-    # Marked rows read per batch. 40 rows at 8 at once are 5 rounds of ~5 s calls (25 s).
-    # A full batch is followed at once by the next, for up to 300 s of a pass, so a backlog
-    # drains at ~96 rows a minute (~69 at 7 s a call, 120 at 4 s).
+    # Marked rows read per batch; a full batch with no errors is followed at once by the
+    # next, for up to 300 s of a pass.
     memory_conflict_resolver_batch: int = Field(default=40, ge=1)
     # Rows already `conflicted` that no resolver judged (a cosine flag, or an older build's
     # judge) re-checked per pass, after the marked rows. 0 = no re-check.
@@ -387,3 +386,17 @@ class MemorySettings(BaseModel):
     # loom.memory_embeddings (server/core/vectors/patch_parts.py); the fact leg
     # reads quantized codes only while the count is zero.
     memory_embeddings_patch_parts_probe_seconds: int = 60
+
+    @model_validator(mode="after")
+    def _check_resolver_confidences(self) -> MemorySettings:
+        """Retiring takes more confidence than clearing: the band between them is the
+        one that goes to review."""
+        if (
+            self.memory_conflict_resolver_retire_confidence
+            < self.memory_conflict_resolver_clear_confidence
+        ):
+            raise ValueError(
+                "LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE must not be below "
+                "LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE"
+            )
+        return self

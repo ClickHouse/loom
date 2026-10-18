@@ -632,7 +632,7 @@ Source: `server/settings/_memory.py`
 | `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS` | `int` | `8` | Most peers judged with a row in one call, nearest first. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | `float` | `0.95` | An update at or above this confidence retires the older row (auto_reinforce, newest_wins). |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` | `float` | `0.9` | Below this confidence a verdict changes nothing. At or above it a compatible verdict clears the pair's flag, and an update this build does not retire or a contradiction flags the pair for review. |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` | `int` | `40` | Marked rows read per batch. 40 rows at 8 at once are 5 rounds of ~5 s calls (25 s). A full batch is followed at once by the next, for up to 300 s of a pass, so a backlog drains at ~96 rows a minute (~69 at 7 s a call, 120 at 4 s). |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` | `int` | `40` | Marked rows read per batch; a full batch with no errors is followed at once by the next, for up to 300 s of a pass. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` | `int` | `8` | Rows already `conflicted` that no resolver judged (a cosine flag, or an older build's judge) re-checked per pass, after the marked rows. 0 = no re-check. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` | `int` | `8` | Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time; doubling it roughly doubles the rows judged a minute, up to the provider's rate limit. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | `float` | `10.0` | Seconds the resolver waits after a pass before the next one. |

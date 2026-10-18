@@ -73,3 +73,15 @@ def test_a_mode_is_case_folded_and_an_unknown_one_fails_at_load() -> None:
         Settings(_env_file=None, memory_search_default_mode="semantc")  # type: ignore[call-arg]
     with pytest.raises(ValidationError, match="memory_search_key_axis"):
         Settings(_env_file=None, memory_search_key_axis="true")  # type: ignore[call-arg]
+
+
+def test_a_retire_confidence_below_the_clear_confidence_fails_at_load() -> None:
+    with pytest.raises(ValidationError, match="RETIRE_CONFIDENCE must not be below"):
+        Settings(
+            memory_conflict_resolver_retire_confidence=0.85,
+            memory_conflict_resolver_clear_confidence=0.90,
+        )
+    Settings(
+        memory_conflict_resolver_retire_confidence=0.90,
+        memory_conflict_resolver_clear_confidence=0.90,
+    )
