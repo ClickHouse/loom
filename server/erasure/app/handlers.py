@@ -105,8 +105,13 @@ async def _audit_high_rows(org: str, rows: list[dict[str, object]]) -> None:
     by_ns: dict[str, list[dict[str, object]]] = {}
     for r in rows:
         if r.get("sensitivity") == "high":
-            subject = {"memory_key": r["memory_key"], "memory_id": r["memory_id"]}
-            by_ns.setdefault(str(r["namespace"]), []).append({**subject, "version": r["version"]})
+            by_ns.setdefault(str(r["namespace"]), []).append(
+                {
+                    "memory_key": r["memory_key"],
+                    "memory_id": r["memory_id"],
+                    "version": r["version"],
+                }
+            )
     for ns, subjects in by_ns.items():
         await audit.emit_many(
             "memory.sensitive_read",

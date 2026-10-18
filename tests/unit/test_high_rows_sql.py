@@ -356,3 +356,50 @@ async def test_the_profile_fold_never_reads_a_high_row(monkeypatch) -> None:
     cfg = fold.ProfileConsolidationConfig()
     await fold._consolidate_identity(ch, {"org": "o", "namespace": "n", "user_id": "-"}, cfg)
     assert [r["value"] for r in read] == ["likes tea"]
+
+
+@pytest.mark.asyncio
+async def test_the_entity_extractor_never_reads_a_high_row() -> None:
+    from server.memory.store import entities
+
+    ch = _memory(_row(_A, "tea", "likes tea"), _row(_B, "door", "code 4412", sensitivity="high"))
+    keys = await entities.find_unentitied_keys(batch_size=10, ch=ch)
+    assert [k["memory_key"] for k in keys] == ["tea"]
+    every_key = [dict(k, memory_key=name) for k in keys for name in ("tea", "door")]
+    rows = await entities.read_unentitied_rows(every_key, ch=ch)
+    assert [r["memory_key"] for r in rows] == ["tea"]
+
+
+@pytest.mark.asyncio
+async def test_namespace_validate_never_quotes_a_high_rows_evidence() -> None:
+    from server.identity.app import namespace_validate as nv
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, grounding, evidence) "
+        f"VALUES ('o', 'n', 'a', '-', '-', '{_A}', 'trip', 'semantic', 'v', 'active', '', 1, "
+        f"'unresolved', 'we flew'), ('o', 'n', 'a', '-', '-', '{_B}', 'door', 'semantic', 'v', "
+        "'active', 'high', 1, 'unresolved', 'the code is 4412')",
+    )
+    _s, _h, sql = nv._CHECKS["unresolved_evidence"]
+    rows = await ch.query_all(sql, {"org": "o", "ns": "n", "keys": [], "lim": 10})
+    assert [r["memory_key"] for r in rows] == ["trip"]
+
+
+@pytest.mark.asyncio
+async def test_the_graph_walk_never_seeds_from_a_high_rows_entities() -> None:
+    from server.memory.app import recent_seeds
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, entities) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'tea', 'semantic', 'v', 'active', '', 1, ['oolong']), "
+        f"('o', 'n', 'a', '-', '-', '{_B}', 'door', 'semantic', 'v', 'active', 'high', 1, ['4412'])",
+    )
+    sql, params = recent_seeds.build_query(
+        org="o", namespace="n", agent=None, user_id=None, session_id=None, memories=10, limit=10
+    )
+    rows = await ch.query_all(sql, params)
+    assert [r["entity"] for r in rows] == ["oolong"]

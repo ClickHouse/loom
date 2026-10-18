@@ -485,7 +485,7 @@ function Side({
       <div className="font-mono text-xs text-text mb-2 truncate">{memKey}</div>
       <div className="text-sm text-text mb-2 leading-snug min-h-10">
         {sensitive ? (
-          <span className="text-text-muted">Sensitive: open it to read</span>
+          <span className="text-text-muted">Sensitive: read it by key in Memories</span>
         ) : value == null ? (
           <span className="text-text-muted">
             Peer: <span className="font-mono">{peerId?.slice(0, 12)}…</span>

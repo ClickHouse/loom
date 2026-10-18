@@ -87,7 +87,7 @@ describe("ReviewQueue", () => {
     });
     seed("ns-a");
     render(<ReviewQueue />);
-    expect(await screen.findByText("Sensitive: open it to read", {}, WAIT)).toBeTruthy();
+    expect(await screen.findByText("Sensitive: read it by key in Memories", {}, WAIT)).toBeTruthy();
   });
 
   it("drops a post-decision reload that lands after a namespace switch", async () => {

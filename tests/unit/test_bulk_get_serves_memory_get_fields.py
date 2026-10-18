@@ -47,7 +47,7 @@ def _row(key: str, **over: Any) -> MemoryRow:
 @pytest.fixture
 def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     seen: dict[str, Any] = {"audits": [], "overlaid": 0}
-    rows = [_row("plain"), _row("secret", sensitivity="high")]
+    rows = [_row("plain"), _row("secret", sensitivity="high", entities=["vault"])]
 
     async def _rows(*_a: Any, **_k: Any) -> list[Any]:
         return rows
@@ -145,6 +145,7 @@ async def test_list_withholds_a_high_rows_value(served) -> None:
     out = await query._handle_memory_list(MemoryListInput(org="o", namespace="n", agent="a"))
     secret = next(e for e in out.entries if e.memory_key == "secret")
     assert secret.value is None and secret.value_truncated is True
+    assert secret.entities == [] and secret.content_sha256 == ""
     plain = next(e for e in out.entries if e.memory_key == "plain")
     assert plain.value == "v"
 

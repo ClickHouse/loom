@@ -413,7 +413,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                     last_recalled_at=r.last_recalled_at,
                     sensitivity=r.sensitivity,
                     tags=list(r.tags or []),
-                    entities=public_entities(r.entities),
+                    # An earlier build could mine a high row's value into its entities.
+                    entities=[] if r.sensitivity == "high" else public_entities(r.entities),
                     agent=r.agent or "",
                     user_id=r.user_id or "",
                     session_id=r.session_id or "",
@@ -548,7 +549,9 @@ async def _list_by_score(
                 recall_count=int(r.get("recall_count") or 0),
                 last_recalled_at=r.get("last_recalled_at"),
                 tags=list(r.get("tags") or []),
-                entities=public_entities(r.get("entities")),
+                entities=[]
+                if r.get("sensitivity") == "high"
+                else public_entities(r.get("entities")),
                 agent=r.get("agent") or "",
                 user_id=r.get("user_id") or "",
                 session_id=r.get("session_id") or "",

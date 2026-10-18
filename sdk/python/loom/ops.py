@@ -9350,7 +9350,7 @@ class MemoryAgentsListOutput(TypedDict, total=False):
 
 
 class MemoryAggregateInput(TypedDict, total=False):
-    "Templated SQL aggregation over typed records in loom.memory. A high row is never"
+    "Templated SQL aggregation over typed records in loom.memory."
 
     org: Required[str]
     namespace: Required[str]
@@ -9366,7 +9366,7 @@ class MemoryAggregateInput(TypedDict, total=False):
 
 
 class MemoryAggregateBody(TypedDict, total=False):
-    "Templated SQL aggregation over typed records in loom.memory. A high row is never"
+    "Templated SQL aggregation over typed records in loom.memory."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
