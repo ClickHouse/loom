@@ -9,8 +9,7 @@ runs on the first page, beside it, and on an empty page past the end.
 from __future__ import annotations
 
 import asyncio
-import types
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin
 from unittest.mock import patch
 
 import pytest
@@ -105,8 +104,6 @@ def test_every_order_ends_on_the_run_id(order_by: str, clause: str) -> None:
 def test_every_order_the_input_accepts_has_a_clause() -> None:
     """An `order_by` value with no LIST_ORDERS clause would pass validation and fail the read."""
     annotation = RunListInput.model_fields["order_by"].annotation
-    if get_origin(annotation) in (Union, types.UnionType):
-        (annotation,) = [a for a in get_args(annotation) if a is not type(None)]
     assert get_origin(annotation) is Literal
     assert set(LIST_ORDERS) == set(get_args(annotation))
 

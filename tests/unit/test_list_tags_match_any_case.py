@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from server.core.tag_sql import TagFilter, list_tag_filter
+from server.core.tag_sql import TagFilter, list_tag_filter, tag_where
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 
@@ -237,3 +237,10 @@ def test_a_tag_filter_needs_a_tag() -> None:
     with pytest.raises(ValueError):
         TagFilter((), "folded_any")
     assert list_tag_filter(["", ""], every=False) is None
+
+
+def test_exact_any_renders_the_tags_as_typed() -> None:
+    """memory.search's tiers match exactly: the exact filter never folds case."""
+    params: dict[str, Any] = {}
+    assert tag_where(TagFilter(("API",), "exact_any"), params) == _EXACT
+    assert params["tags"] == ["API"]

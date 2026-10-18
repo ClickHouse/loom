@@ -221,6 +221,13 @@ async def runs_to_grade(
     return rows
 
 
+# run.list's search: `{q:String}` anywhere in the goal, run id or agent, in any case.
+RUN_TEXT_MATCH = (
+    "(positionCaseInsensitiveUTF8(goal, {q:String}) > 0"
+    " OR positionCaseInsensitiveUTF8(run_id, {q:String}) > 0"
+    " OR positionCaseInsensitiveUTF8(agent, {q:String}) > 0)"
+)
+
 # run.list's orders. Each ends on started_at and run_id (unique in a namespace under
 # FINAL), so an OFFSET page boundary never repeats or skips a run.
 LIST_ORDERS: dict[str, str] = {
@@ -276,7 +283,7 @@ async def count_runs(
         """,
         params={**params, "org": org, "ns": ns},
     )
-    return int((row or {}).get("n") or 0)
+    return int(row["n"])
 
 
 async def recent_run_heads(

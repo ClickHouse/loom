@@ -512,6 +512,7 @@ def test_get_missing_run(env) -> None:
 def test_list_filters_and_orders_newest_first(env) -> None:
     fake, _, h = env
     fake.all.append([_run_row(run_id="r2"), _run_row(run_id="r1")])
+    fake.one.append({"n": 2})
     out = asyncio.run(
         h.handle_run_list(
             RunListInput(org="o", namespace="n", agent="claude", status="active", limit=2)
@@ -539,6 +540,7 @@ def test_list_memory_activity_is_a_where_clause_not_a_client_slice(env) -> None:
     runs — otherwise the newest 100 of a chatty consumer can all be hollow."""
     fake, _, h = env
     fake.all.append([_run_row(run_id="r9", memories_used=["k"])])
+    fake.one.append({"n": 1})
     out = asyncio.run(
         h.handle_run_list(RunListInput(org="o", namespace="n", memory_activity="with", limit=100))
     )
@@ -551,6 +553,7 @@ def test_list_memory_activity_is_a_where_clause_not_a_client_slice(env) -> None:
     assert params == {"org": "o", "ns": "n", "lim": 100, "off": 0}
 
     fake.all.append([])
+    fake.one.append({"n": 0})
     asyncio.run(h.handle_run_list(RunListInput(org="o", namespace="n", memory_activity="without")))
     pages = [sql for _, sql, _ in fake.calls if "ORDER BY" in sql]
     assert len(pages) == 2
