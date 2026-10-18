@@ -31,7 +31,10 @@ class _FakeCH:
         assert "loom.conversations FINAL" not in sql, "FINAL on plain MergeTree"
         if "FROM loom.conversation_embeddings" in sql:
             # Every compacted turn's embedding is live and held by no other agent.
-            return [{"embedding_model": "fake", "msg_id": m} for m in (params or {}).get("ids", [])]
+            return [
+                {"embedding_model": "fake", "msg_id": m, "agent": "a", "ts_ms": 0}
+                for m in (params or {}).get("ids", [])
+            ]
         return self.rows
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
@@ -160,7 +163,7 @@ def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> N
     # The compacted turns leave conversation.search too: their embeddings are
     # tombstoned with the messages, by the same ids.
     tombstoned = {
-        table: params.get("ids") or [m for _, m in params.get("due", [])]
+        table: params.get("ids") or [d[1] for d in params.get("due", [])]
         for sql, params in fake.executed
         for table in ("loom.conversations", "loom.conversation_embeddings")
         if f"ALTER TABLE {table}\n" in sql

@@ -681,20 +681,15 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
 
 
 def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str] | None:
-    """`(fit, transcript)` for a compaction: how many leading candidate lines the
-    summary replaces, and the prompt transcript. None when no new turn fits.
-
-    The window is the oldest turns whose lines fit `_COMPACT_TRANSCRIPT_CHARS`; a turn
-    past it stays live. Leading summaries (`folded`) cost no budget up to
-    `_FOLDED_SUMMARY_CHARS` together; the first one, which the last run wrote, always
-    folds in, clipped to that allowance. A summary past the allowance (a client can
-    write a system turn naming `compacted_from`) costs like any turn. The window
-    always reaches the first line past the free ones, and one holding no new turn
-    compacts nothing: widening it would cut a turn the summarizer never read."""
+    """`(fit, transcript)`: how many leading candidate lines the summary replaces, and
+    the prompt transcript. None for a window of summaries alone, or when no new turn
+    fits the prompt (widening it would cut a turn the summarizer never read)."""
     if all(folded):
         return None
     lines = list(lines)
     if folded[0]:
+        # The summary the last run wrote always folds in, clipped: a dense one must not
+        # keep the turn behind it from compacting.
         lines[0] = lines[0][:_FOLDED_SUMMARY_CHARS]
     free = [False] * len(lines)
     allowance = _FOLDED_SUMMARY_CHARS

@@ -12,7 +12,7 @@ from typing import Any, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from server.core.repo_base import _CHClient, _default_client
+from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
 
 
@@ -713,47 +713,37 @@ async def tombstone_messages(
     failure still finds the messages live and repeats both."""
     ch = ch or _default_client()
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
-    await ch.execute(
-        """
-        ALTER TABLE loom.conversations
-        UPDATE tombstoned_at = {now:DateTime}
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String}
-          AND msg_id IN {ids:Array(String)}
-        SETTINGS mutations_sync = 2
-        """,
-        params={
-            "now": when,
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-            "ids": msg_ids,
-        },
-    )
+    for part in param_slices(msg_ids):
+        await ch.execute(
+            """
+            ALTER TABLE loom.conversations
+            UPDATE tombstoned_at = {now:DateTime}
+            WHERE org = {org:String}
+              AND namespace = {ns:String}
+              AND agent = {agent:String}
+              AND thread_id = {tid:String}
+              AND msg_id IN {ids:Array(String)}
+            SETTINGS mutations_sync = 2
+            """,
+            params={
+                "now": when,
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "ids": part,
+            },
+        )
 
 
-# Embedding rows (one per turn per model) per tombstone mutation. A whole-thread delete
-# has no cap on its rows, so its list goes in chunks, one synchronous mutation each: a
-# thread of 10,000 turns under one model runs ten. A compaction's window is bounded by
-# its prompt budget.
-_TOMBSTONE_CHUNK = 1000
-
-
-# Every turn an agent logged in a thread (live or tombstoned), and its embedding rows
-# that no message row backs (the conversation retention TTL expires message rows only).
-_THREAD_TURNS = """(msg_id IN (
+# Every embedding row of an agent's turns in a thread: rows it wrote (one whose message
+# row is gone included: the conversation retention TTL expires message rows only), and
+# rows of a turn it logged that another agent wrote last.
+_THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
             SELECT msg_id FROM loom.conversations
             WHERE org = {org:String} AND namespace = {ns:String}
               AND agent = {agent:String} AND thread_id = {tid:String}
-          )
-          OR (agent = {agent:String} AND msg_id NOT IN (
-            SELECT msg_id FROM loom.conversations
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND thread_id = {tid:String}
-          )))"""
+          ))"""
 
 
 async def _tombstone_embeddings(
@@ -766,18 +756,15 @@ async def _tombstone_embeddings(
     when: datetime,
     ch: _CHClient,
 ) -> None:
-    """Tombstone the embeddings of `agent`'s turns in one thread.
+    """Tombstone the embeddings of `agent`'s turns in one thread: `msg_ids`, or every
+    turn it logged there (`_THREAD_TURNS`).
 
-    The turns are `msg_ids`, or every turn the agent logged in the thread
-    (`_THREAD_TURNS`). The embeddings key has no agent, so a turn several agents
-    logged is one row: it goes by turn, and stays only while another agent holds a
-    live copy with the row's text (a msg_id is unique per agent only, so another
-    agent's different turn under the same id does not keep it).
-    The turns are read first, with FINAL so a row's agent and tombstone are those
-    search and the delete count see, and the mutation names them, so it evaluates no
-    subquery (a replicated table refuses one)."""
-    # Named turns are the agent's own (compaction reads them from its live turns).
-    turns = "msg_id IN {ids:Array(String)}" if msg_ids is not None else _THREAD_TURNS
+    The embeddings key has no agent, so a turn several agents logged is one row; it
+    stays while another agent holds a live copy with the row's text (a msg_id is unique
+    per agent only). The rows are read with FINAL, and the mutation names each one by
+    its version (model, msg_id, agent, ts): it evaluates no subquery (a replicated
+    table refuses one), and a row another agent writes after the read is left alone.
+    Every id list is bound in byte-bounded slices (`param_slices`)."""
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
@@ -785,11 +772,9 @@ async def _tombstone_embeddings(
         "tid": thread_id,
         "embedded": EMBEDDED_EXCERPT_CHARS,
     }
-    if msg_ids is not None:
-        params["ids"] = msg_ids
-    rows = await ch.query_all(
-        f"""
-        SELECT DISTINCT embedding_model, msg_id FROM loom.conversation_embeddings FINAL
+    select = """
+        SELECT DISTINCT embedding_model, msg_id, agent, toUnixTimestamp64Milli(ts) AS ts_ms
+        FROM loom.conversation_embeddings FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND thread_id = {{tid:String}} AND tombstoned_at IS NULL
           AND {turns}
@@ -800,29 +785,33 @@ async def _tombstone_embeddings(
               AND thread_id = {{tid:String}} AND agent != {{agent:String}}
               AND tombstoned_at IS NULL
           )
-        """,
-        params=params,
-    )
-    # By (model, turn): during a re-embed a turn has a row per model, and each row's
-    # text decides on its own whether another agent still holds it.
-    due = [(str(r["embedding_model"]), str(r["msg_id"])) for r in rows]
-    for i in range(0, len(due), _TOMBSTONE_CHUNK):
+        """
+    if msg_ids is None:
+        rows = await ch.query_all(select.format(turns=_THREAD_TURNS), params=params)
+    else:
+        # Named turns are the agent's own (compaction reads them from its live turns).
+        named = select.format(turns="msg_id IN {ids:Array(String)}")
+        rows = []
+        for part in param_slices(msg_ids):
+            rows += await ch.query_all(named, params={**params, "ids": part})
+    # One row version at a time: during a re-embed a turn has a row per model, each
+    # judged on its own text, and a peer's row written since the read is not this one.
+    due = [
+        (str(r["embedding_model"]), str(r["msg_id"]), str(r["agent"]), int(r["ts_ms"]))
+        for r in rows
+    ]
+    for part in param_slices(due):
         await ch.execute(
             """
             ALTER TABLE loom.conversation_embeddings
             UPDATE tombstoned_at = {now:DateTime}
             WHERE org = {org:String} AND namespace = {ns:String}
               AND thread_id = {tid:String} AND tombstoned_at IS NULL
-              AND (embedding_model, msg_id) IN {due:Array(Tuple(String, String))}
+              AND (embedding_model, msg_id, agent, toUnixTimestamp64Milli(ts))
+                  IN {due:Array(Tuple(String, String, String, Int64))}
             SETTINGS mutations_sync = 2
             """,
-            params={
-                "now": when,
-                "org": org,
-                "ns": namespace,
-                "tid": thread_id,
-                "due": due[i : i + _TOMBSTONE_CHUNK],
-            },
+            params={"now": when, "org": org, "ns": namespace, "tid": thread_id, "due": part},
         )
 
 

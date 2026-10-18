@@ -258,20 +258,21 @@ async def test_delete_op_registered_with_admin_role_and_audit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_long_thread_is_tombstoned_in_chunks() -> None:
-    """conversation.delete's embeddings tombstone names at most `_TOMBSTONE_CHUNK`
-    embedding rows per mutation, so every statement's list stays bounded however long
-    the thread."""
+async def test_a_long_thread_is_tombstoned_in_byte_bounded_slices() -> None:
+    """conversation.delete binds its row versions a byte-bounded slice at a time
+    (`param_slices`), so long msg_ids cannot push one statement past the server's
+    form-field cap, and every row is still named."""
+    from server.core.repo_base import _PARAM_BYTES
     from server.knowledge.store import conversations as repo
 
-    due = [f"m{i}" for i in range(2 * repo._TOMBSTONE_CHUNK + 5)]
+    ids = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
 
     class _CH:
         def __init__(self) -> None:
             self.executed: list[tuple[str, dict[str, Any]]] = []
 
         async def query_all(self, sql: str, params: dict[str, Any] | None = None):
-            return [{"embedding_model": "fake", "msg_id": m} for m in due]
+            return [{"embedding_model": "m", "msg_id": i, "agent": "a", "ts_ms": 1} for i in ids]
 
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
             self.executed.append((sql, params or {}))
@@ -280,6 +281,7 @@ async def test_a_long_thread_is_tombstoned_in_chunks() -> None:
     await repo._tombstone_embeddings(
         "o", "n", "a", "t", msg_ids=None, when=datetime(2026, 9, 1, 12, 0, 0), ch=ch
     )
-    chunks = [p["due"] for sql, p in ch.executed if "conversation_embeddings" in sql]
-    assert [len(c) for c in chunks] == [repo._TOMBSTONE_CHUNK, repo._TOMBSTONE_CHUNK, 5]
-    assert [m for _, m in sum(chunks, [])] == due
+    slices = [p["due"] for sql, p in ch.executed if "conversation_embeddings" in sql]
+    assert len(slices) > 1
+    assert all(sum(len(str(v)) + 4 for v in part) <= _PARAM_BYTES for part in slices)
+    assert [d[1] for d in sum(slices, [])] == ids

@@ -471,8 +471,8 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
 # One turn whose embedding a tombstone finds live, so the mutation that names it runs.
 _CONVERSATION_ROWS = rows_by_substring(
     {
-        "SELECT DISTINCT embedding_model, msg_id FROM loom.conversation_embeddings FINAL": [
-            {"embedding_model": "m", "msg_id": "m1"}
+        "toUnixTimestamp64Milli(ts) AS ts_ms": [
+            {"embedding_model": "m", "msg_id": "m1", "agent": "a", "ts_ms": 0}
         ]
     }
 )
