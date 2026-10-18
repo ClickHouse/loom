@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -194,13 +194,15 @@ export function Policies() {
   // a write runs through this effect too, so an answer for a namespace left is dropped.
   const [reads, setReads] = useState(0);
   const scope = `${identity.org}/${identity.namespace}`;
-  const rulesFor = useRef(scope);
+  // During render, so the old rules (and their Delete buttons) never paint under it.
+  const [rulesFor, setRulesFor] = useState(scope);
+  if (rulesFor !== scope) {
+    setRulesFor(scope);
+    setRules(null);
+    setError(null);
+  }
   useAbortableEffect(
     (signal, live) => {
-      if (rulesFor.current !== scope) {
-        rulesFor.current = scope;
-        setRules(null);
-      }
       setError(null);
       setRefreshing(true);
       listPolicies({ org: identity.org, namespace: identity.namespace }, { signal })
@@ -730,15 +732,16 @@ function DecisionsPanel({ version }: { version: number }) {
   // A new rules version keeps the ledger on screen, marked busy; another namespace or
   // filter is another list, so it starts from the skeleton.
   const [refreshing, setRefreshing] = useState(false);
-  const rowsFor = useRef("");
+  const rowsKey = `${identity.org}/${identity.namespace}/${filter}`;
+  const [rowsFor, setRowsFor] = useState(rowsKey);
+  if (rowsFor !== rowsKey) {
+    setRowsFor(rowsKey);
+    setRows(null);
+    setError(null);
+  }
 
   useAbortableEffect(
     (signal, live) => {
-      const key = `${identity.org}/${identity.namespace}/${filter}`;
-      if (rowsFor.current !== key) {
-        rowsFor.current = key;
-        setRows(null);
-      }
       setError(null);
       setRefreshing(true);
       listPolicyDecisions(

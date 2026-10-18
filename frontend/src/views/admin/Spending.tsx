@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { NumberField } from "@clickhouse/click-ui/NumberField";
@@ -66,7 +66,6 @@ export function Spending() {
   // The breakdown the rows on screen were read by: another one's rows are not drawn under
   // the toolbar, which stays (with its focused Select) while the new pivot reads.
   const [rowsBy, setRowsBy] = useState<Breakdown | null>(null);
-  const rowsFor = useRef("");
   // Default OFF: read ops (memory.list, audit.list, conflicts.list) dominate
   // the row count but have $0 cost and no tokens, drowning the few rows that
   // actually matter for spend. Toggle exposes them for performance debugging.
@@ -99,13 +98,16 @@ export function Spending() {
   const canEditCap = canUpdateNamespace(whoami, myNamespaces, identity.namespace, nsRow);
 
   // Rows re-fetch when the pivot changes; the budget bars don't. Another namespace starts
-  // from the skeleton.
+  // from the skeleton, during render, so its usage never paints under the new badge.
+  const rowsKey = `${identity.org}/${identity.namespace}`;
+  const [rowsFor, setRowsFor] = useState(rowsKey);
+  if (rowsFor !== rowsKey) {
+    setRowsFor(rowsKey);
+    setRows(null);
+    setError(null);
+  }
   useAbortableEffect(
     (signal, live) => {
-      if (rowsFor.current !== `${identity.org}/${identity.namespace}`) {
-        rowsFor.current = `${identity.org}/${identity.namespace}`;
-        setRows(null);
-      }
       setError(null);
       listCostRollup(
         { org: identity.org, namespace: identity.namespace },

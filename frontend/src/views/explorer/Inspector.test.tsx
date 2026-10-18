@@ -198,14 +198,18 @@ describe("Inspector failed reads", () => {
   });
 
   it("reads the selection again in another namespace, keeping nothing from the last one", async () => {
+    const before = vi.mocked(listFacts).mock.calls.length;
     const view = mount();
-    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "bench" }), {
-      timeout: 2000,
-    });
+    // This mount's own read, settled, before the switch.
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
+    expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "bench" });
+    expect(await screen.findByText(/No typed triple names this entity/)).toBeInTheDocument();
+    const read = vi.mocked(listFacts).mock.calls.length;
     view.rerender(inspector({ identity: { ...identity, namespace: "other" } }));
-    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "other" }), {
-      timeout: 2000,
-    });
+    // The last namespace's answer goes; the panel reads the new one.
+    await waitFor(() => expect(screen.queryByText(/No typed triple names this entity/)).toBeNull());
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(read), { timeout: 2000 });
+    expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "other" });
   });
 
   it("reads again when a new model lands while the selection's read is out", async () => {

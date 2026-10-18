@@ -160,18 +160,24 @@ function ConflictsPanel() {
   // them: the refetch runs through the namespace-keyed effect, so a reply that lands after
   // a namespace switch is dropped.
   const [reload, setReload] = useState(0);
-  // The reload keeps what is on screen until it answers; another namespace starts over.
-  const rowsFor = useRef("");
+  // The reload keeps what is on screen until it answers; another namespace starts over,
+  // during render, so the old queue (and its decision buttons) never paints under it. The
+  // count and the cursor are the queue's too: none of them carries over.
+  const queueKey = `${identity.org}/${identity.namespace}`;
+  const [queueFor, setQueueFor] = useState(queueKey);
+  if (queueFor !== queueKey) {
+    setQueueFor(queueKey);
+    setRows(null);
+    setTotal(null);
+    setNext(null);
+    setError(null);
+  }
+  // The namespace a decision or a Load more was made in, for an answer that lands after.
+  const rowsFor = useRef(queueKey);
 
   useAbortableEffect(
     (signal, live) => {
-      if (rowsFor.current !== `${identity.org}/${identity.namespace}`) {
-        rowsFor.current = `${identity.org}/${identity.namespace}`;
-        // The count and the cursor are the queue's too: none of them carries over.
-        setRows(null);
-        setTotal(null);
-        setNext(null);
-      }
+      rowsFor.current = queueKey;
       setError(null);
       listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: CONFLICT_PAGE, signal })
         .then((r) => {
@@ -455,20 +461,22 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
   // status is another list, so it starts from the skeleton.
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const rowsFor = useRef("");
+  // Another namespace or status starts from the skeleton, during render, so the old list
+  // (and its Promote / Reject buttons) never paints under it.
+  const listKey = `${identity.org}/${identity.namespace}/${status}`;
+  const [listFor, setListFor] = useState(listKey);
+  if (listFor !== listKey) {
+    setListFor(listKey);
+    setRows(null);
+    setError(null);
+  }
 
   useAbortableEffect(
     (signal, live) => {
-      const key = `${identity.org}/${identity.namespace}/${status}`;
       // The first "pending" view was already fetched by the page's probe.
       if (seeded.current && status === "pending") {
         seeded.current = false;
-        rowsFor.current = key;
         return;
-      }
-      if (rowsFor.current !== key) {
-        rowsFor.current = key;
-        setRows(null);
       }
       setRefreshing(true);
       setError(null);
@@ -604,19 +612,21 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
   // starts from the skeleton.
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const rowsFor = useRef("");
+  // Another namespace starts from the skeleton, during render, so the old pairs (and
+  // their Remove buttons) never paint under it.
+  const listKey = `${identity.org}/${identity.namespace}`;
+  const [listFor, setListFor] = useState(listKey);
+  if (listFor !== listKey) {
+    setListFor(listKey);
+    setRows(null);
+    setError(null);
+  }
 
   useAbortableEffect(
     (signal, live) => {
-      const key = `${identity.org}/${identity.namespace}`;
       if (seeded.current) {
         seeded.current = false;
-        rowsFor.current = key;
         return;
-      }
-      if (rowsFor.current !== key) {
-        rowsFor.current = key;
-        setRows(null);
       }
       setRefreshing(true);
       setError(null);
