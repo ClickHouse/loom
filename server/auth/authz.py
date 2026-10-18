@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from enum import Enum
+from typing import TYPE_CHECKING
 
 from server.auth.directory import ClassificationUnavailable, directory
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
@@ -28,6 +29,7 @@ from server.operations.base import GRANT_ROLES, Role, grant_rank
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
+    from server.core.grant_cache import GrantMap
     from server.operations.base import Operation
 
 log = logging.getLogger(__name__)
@@ -47,7 +49,13 @@ def grant_role(name: str | None) -> Role | None:
     return _ROLE_NAME_TO_ENUM.get((name or "").strip().lower())
 
 
-_UNKNOWN_GRANT: Any = object()
+class _Unknown(Enum):
+    """Not read yet: a caller passes no grant it already holds."""
+
+    GRANT = "unknown"
+
+
+_UNKNOWN_GRANT = _Unknown.GRANT
 
 
 def may_act_in_org(auth: AuthInfo, org: str) -> bool:
@@ -66,7 +74,8 @@ async def check_authorized(
     *,
     deployment_scoped: bool = False,
     row_scoped: bool = False,
-    known_grant: Role | None | Any = _UNKNOWN_GRANT,
+    known_grant: Role | None | _Unknown = _UNKNOWN_GRANT,
+    grants: GrantMap | None = None,
 ) -> None:
     """Raise PermissionError if `auth` lacks `required_role` or access to `(org,
     namespace)`. Consults `loom.namespace_grants` as a fallback when the JWT role alone
@@ -75,7 +84,9 @@ async def check_authorized(
     scoped token is gated on its best per-namespace role instead of being refused as
     IDENTITY_INCOMPLETE. `row_scoped`: the op is addressed by an id and its handler
     checks the row's own namespace, so a scoped token passes here on its best role in
-    `org` and is decided there."""
+    `org` and is decided there. `known_grant` (the grant the gate would read, the
+    creator's for a delegated token) and `grants` (the subject's cached grant map, for
+    the restricted check): what a caller that already read them hands in."""
     from server.auth.jwt import AuthInfo  # circular import sidestep
 
     if auth is None:
@@ -113,13 +124,13 @@ async def check_authorized(
         )
 
     if auth.creator and org is not None and namespace is not None:
-        await _check_delegated(auth, required_role, org, namespace, known_grant)
+        await _check_delegated(auth, required_role, org, namespace, known_grant, grants)
         return
 
     # A restricted namespace is decided here and nowhere
     # below — none of the widening rules that follow may apply to it.
     if org is not None and namespace is not None and await _is_restricted(org, namespace):
-        await _check_restricted(auth, required_role, org, namespace)
+        await _check_restricted(auth, required_role, org, namespace, grants)
         return
 
     # Code namespaces are org-shared reference data, not anyone's memory. When
@@ -221,7 +232,7 @@ async def check_authorized(
 
 
 async def _grant_role(
-    auth: AuthInfo, org: str, namespace: str, cap: int | None, known_grant: Role | None
+    auth: AuthInfo, org: str, namespace: str, cap: int | None, known_grant: Role | None | _Unknown
 ) -> Role | None:
     """The grant the subject holds there. Where its claim is capped, the cap's
     read decides for the subject itself: it covers every spelling consistently,
@@ -270,7 +281,8 @@ async def _check_delegated(
     required_role: Role,
     org: str,
     namespace: str,
-    known_grant: Role | None | Any = _UNKNOWN_GRANT,
+    known_grant: Role | None | _Unknown = _UNKNOWN_GRANT,
+    grants: GrantMap | None = None,
 ) -> None:
     """The namespace gate for a delegated token (it carries `creator`). Its
     own claim is the ceiling and its creator's live grant must also reach the
@@ -279,7 +291,8 @@ async def _check_delegated(
     needs its two-factor check; an org-readable code namespace is read by
     anyone in the org; on any other code namespace the creator's grant alone
     admits a read (the join is the read). `_check_creator` has checked the
-    org. `known_grant` is the creator's grant when the caller already read it."""
+    org. `known_grant` is the creator's grant and `grants` the subject's map, when
+    the caller already read them."""
     from server.auth.delegation import ceiling_role
 
     refusal = _refused(
@@ -287,7 +300,7 @@ async def _check_delegated(
     )
     is_read = required_role.value <= Role.VIEWER.value
     if await _is_restricted(org, namespace):
-        await _check_restricted(auth, required_role, org, namespace)
+        await _check_restricted(auth, required_role, org, namespace, grants)
     elif is_read and auth.org == org and await _is_org_readable_code_namespace(org, namespace):
         return
     elif not (is_read and _is_code_namespace(org, namespace)):
@@ -409,7 +422,13 @@ async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> li
     return [ns for ns in namespaces if ns and ns != "*" and await claim_cap(auth, org, ns) != 0]
 
 
-async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:
+async def _check_restricted(
+    auth: AuthInfo,
+    required_role: Role,
+    org: str,
+    namespace: str,
+    grants: GrantMap | None = None,
+) -> None:
     """The two-factor gate for restricted namespaces. Raises PermissionError unless:
 
     1. the token belongs to `org` (no cross-org wildcard);
@@ -423,7 +442,8 @@ async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, names
     The refusal text is the generic "cannot access" line so a caller learns
     nothing about whether the namespace exists or why it was refused.
     `LOOM_RESTRICTED_SERVE=false` refuses everyone (kill switch: the plane
-    keeps ingesting, nobody reads).
+    keeps ingesting, nobody reads). `grants`: the subject's cached grant map,
+    when the caller already holds it, in place of a read of its own.
     """
     from server.settings import settings
 
@@ -445,36 +465,47 @@ async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, names
         own = max(auth.roles, default=None)
     if own is None or own.value < required_role.value:
         raise refusal
-    grant = await grant_role_for(org, namespace, auth.subject)
+    if grants is not None:
+        grant = _rank_role(grants.rank(namespace) or 0)
+    else:
+        grant = await grant_role_for(org, namespace, auth.subject)
     if grant is None or grant.value < required_role.value:
         raise refusal
 
 
-async def restricted_allows(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> bool:
+async def restricted_allows(
+    auth: AuthInfo,
+    required_role: Role,
+    org: str,
+    namespace: str,
+    *,
+    grants: GrantMap | None = None,
+) -> bool:
     """`_check_restricted` as a predicate, for the resolvers that build a
     caller's namespace list (server/auth/context.py)."""
     try:
-        await _check_restricted(auth, required_role, org, namespace)
+        await _check_restricted(auth, required_role, org, namespace, grants)
     except PermissionError:
         return False
     return True
 
 
 async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
-    """Granted role for exactly (org, namespace, subject), or None. Pending
-    grants are excluded: an unapproved writer-request must not elevate."""
+    """Granted role for (org, namespace, subject), or None. The subject matches
+    whatever its case, as the cached grant maps match it (`grant_cache`).
+    Pending grants are excluded: an unapproved writer-request must not elevate."""
     from server.auth.aliases import subject_aliases
     from server.core.ch import get_client
 
     try:
-        # The person's login handle and their email are one
-        # principal — a grant under either spelling counts; the highest wins
-        subjects = await subject_aliases(org, subject)
+        # The person's login handle and their email are one principal — a
+        # grant under either spelling, in any case, counts; the highest wins
+        subjects = [s.lower() for s in await subject_aliases(org, subject)]
         row = await get_client().query_one(
             """
             SELECT role FROM loom.namespace_grants FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
-              AND subject IN {subs:Array(String)} AND {live}
+              AND lower(subject) IN {subs:Array(String)} AND {live}
             ORDER BY {rank} DESC
             LIMIT 1
             """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
@@ -545,6 +576,73 @@ async def _lookup_grant(org: str, namespace: str, subject: str) -> Role | None:
     return role
 
 
+class CachedGate:
+    """`check_authorized` for one token in one org, for the listings and the
+    default that must agree with the gate: the gate itself, handed the grant
+    it falls back to from the cached grant maps (`server.core.grant_cache`)
+    instead of a fresh read per namespace. Each map is read at most once per
+    gate. (A claim capped at a revoked grant still has the gate read a
+    service account's creator for itself.)
+
+    `provisioned`: a personal namespace `gates.authorize` gives this person,
+    with an admin grant, before the gate runs (`caller_home`); counted as
+    that grant."""
+
+    def __init__(self, auth: AuthInfo, org: str, provisioned: str = "") -> None:
+        self.auth = auth
+        self.org = org
+        self.provisioned = provisioned
+        self._maps: dict[str, GrantMap] = {}
+        self._inherited: str | None | _Unknown = _UNKNOWN_GRANT
+
+    async def grants(self, subject: str | None = None) -> GrantMap:
+        """The grant map of `subject` (the token's own by default)."""
+        from server.core.grant_cache import grant_map
+
+        subject = subject or self.auth.subject
+        if subject not in self._maps:
+            self._maps[subject] = await grant_map(self.org, subject)
+        return self._maps[subject]
+
+    async def admits(self, namespace: str, required_role: Role) -> bool:
+        known: Role | None
+        if namespace and namespace == self.provisioned:
+            known = Role.ADMIN
+        elif self.auth.creator:
+            known = _rank_role((await self.grants(self.auth.creator)).rank(namespace) or 0)
+        elif self.auth.has_ns_roles() and not _code_namespace_read(
+            required_role, self.org, namespace
+        ):
+            known = None  # the gate never asks: a scoped token's role is its own
+        else:
+            known = await self._grant_role(namespace)
+        try:
+            await check_authorized(
+                self.auth,
+                required_role,
+                self.org,
+                namespace,
+                known_grant=known,
+                grants=await self.grants(),
+            )
+        except PermissionError:
+            return False
+        return True
+
+    async def _grant_role(self, namespace: str) -> Role | None:
+        """`_lookup_grant`: the subject's live grant, else the inheriting creator's."""
+        from server.auth.service_accounts import inheriting_creator
+
+        role = _rank_role((await self.grants()).rank(namespace) or 0)
+        if role is not None:
+            return role
+        if self._inherited is _UNKNOWN_GRANT:
+            self._inherited = await inheriting_creator(self.org, self.auth.subject)
+        if not self._inherited:
+            return None
+        return _rank_role((await self.grants(self._inherited)).rank(namespace) or 0)
+
+
 def scope_flags(op: Operation) -> dict[str, bool]:
     """The op's two scoped-token gate flags, as `check_authorized` keywords —
     both transports pass them the same way."""
@@ -573,6 +671,7 @@ async def row_in_scope(org: str, namespace: str, required_role: Role = Role.VIEW
 
 __all__ = [
     "GRANT_ROLES",
+    "CachedGate",
     "Role",
     "check_authorized",
     "claim_cap",

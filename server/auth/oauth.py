@@ -914,7 +914,7 @@ async def link_account(request: Request) -> Response:
     upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
     try:
         if proven is None:
-            response = await _without_the_password_account(email, sign_in, upstream)
+            response = await _declined_password_account(email, sign_in, upstream)
         else:
             response = await _link_proven(email, proven, f.get("password", ""), sign_in, upstream)
     except Exception as e:  # noqa: BLE001 — the ticket is spent: the person starts again
@@ -960,34 +960,44 @@ async def _link_proven(
     return await _signed_in_as(sign_in, resolved, upstream, email)
 
 
-async def _without_the_password_account(
+async def _declined_password_account(
     email: str, sign_in: dict[str, Any], upstream: str
 ) -> Response:
-    """Someone else registered the address with a password: the person goes on
-    to an account of their own (JIT), as if that one did not exist."""
+    """Someone else registered the address with a password. In the org JIT
+    provisions into, no second account is made beside it: both would name the
+    email, and every grant made to it there would reach both
+    (`server.auth.aliases`), so the person is sent to the operator, who frees
+    the address by releasing that account. One in another org shares nothing
+    with the JIT org, and the person goes on to an account of their own."""
     from server.auth import device, oidc
     from server.auth.jit import jit_provision_for_email
     from server.auth.login import SignInUnavailable
 
+    declined = await sso_links.unlinked_accounts(email)
     # The signal an operator looks for when an address was squatted.
     await audit.emit(
         "auth.sso_link_declined",
         org="-",
         namespace="-",
         actor=email,
-        subject={"namespaces": [a["namespace"] for a in await sso_links.unlinked_accounts(email)]},
+        subject={"namespaces": [a["namespace"] for a in declined]},
     )
-    try:
-        identity = await jit_provision_for_email(email)
-    except SignInUnavailable:
-        await oidc.revoke(upstream)
-        return _sign_in_unavailable(_restart_url(sign_in))
+    if any(a["org"] == settings.oidc_jit_org for a in declined):
+        reason, advice = "another account uses this email", "ask your Loom operator to release it"
+        identity = None
+    else:
+        reason, advice = "no loom account for this email", "ask your Loom operator for access"
+        try:
+            identity = await jit_provision_for_email(email)
+        except SignInUnavailable:
+            await oidc.revoke(upstream)
+            return _sign_in_unavailable(_restart_url(sign_in))
     if identity is None:
-        await _signin_denied(email, "no loom account for this email")
+        await _signin_denied(email, reason)
         await oidc.revoke(upstream)
         if sign_in["kind"] == "device":
             await device.deny(sign_in["user_code"])
-        return _denied_page("no loom account for this email; ask your Loom operator for access")
+        return _denied_page(f"{reason}; {advice}")
     return await _signed_in_as(sign_in, identity, upstream, email)
 
 
@@ -1109,6 +1119,7 @@ async def _dashboard_signed_in(identity: Identity) -> Response:
         # A sign-in session like the CLI's: revocable as one, and what it mints
         # is bounded like the person, not by its hour.
         session_id=family,
+        first_party=True,
     )
     await audit.emit(
         "auth.sso_signin",
@@ -1137,6 +1148,7 @@ async def issue_tokens(
     issued) gets nothing; that is read from ClickHouse, not this process's
     snapshot, and a failed read raises so the caller puts the credential back.
     `generation` is the refresh token's place in its session's rotations."""
+    from server.auth.device import DEVICE_CLIENT_ID
     from server.auth.revocation import subjects_revoked
 
     issued_at = int(time.time())  # before the read: a revocation after it postdates the tokens
@@ -1150,6 +1162,8 @@ async def issue_tokens(
         ttl_seconds=_ACCESS_TTL,
         is_service_account=False,
         session_id=grant["family"] or None,
+        # A third-party MCP client's session mints nothing that outlives it.
+        first_party=client_id == DEVICE_CLIENT_ID,
         issued_at=issued_at,
     )
     body = {
@@ -1184,9 +1198,11 @@ async def issue_tokens(
 
 async def end_session(grant: Grant | Device, reason: str) -> None:
     """Revoke the grant's session family: its refresh tokens stop refreshing and
-    its access tokens stop verifying. Tokens minted from the session (service
-    accounts, MCP tokens) are their owner's to revoke: an automatic verdict that
-    could be wrong (a lost answer looks like a replay) never reaches them.
+    its access tokens stop verifying. Tokens minted from a `loom login` or
+    dashboard SSO session are their owner's to revoke: an automatic verdict
+    that could be wrong (a lost answer looks like a replay) never reaches them.
+    Those a third-party MCP client's session minted name the session in their
+    `parents` (`delegation.delegate`) and end with it.
 
     When the revocation cannot be written, a `revocation_owed` row stands in
     for it: the revocation snapshot every process loads counts the family as

@@ -169,7 +169,8 @@ class AuthInfo:
     # then interactive) decides.
     traffic_class: str = ""
     # Delegation chain (server/auth/delegation.py). `parents`: the token ids
-    # of every ancestor token, root first; revoking any of them kills this
+    # of every ancestor token, root first, and the sign-in session of a
+    # third-party MCP client that minted it; revoking any of them kills this
     # token. `creator`: the root principal whose live grants and account this
     # token is rechecked against on every request. '' = not a delegated token.
     # `parent_subjects`: the ancestors' `sub`s, in the same order, so revoking
@@ -184,6 +185,10 @@ class AuthInfo:
     # access token belongs to. Revoking it ends every token of the session;
     # '' = a token minted outside a sign-in session.
     session_id: str = ""
+    # `fps` claim: the session is Loom's own sign-in (`loom login`, the
+    # dashboard), whose children may outlive it (`delegation._child_ttl`);
+    # False for a session a third-party client holds.
+    first_party: bool = False
     # `iat` as unix seconds; None for an identity no token backs (dev mode).
     issued_at: int | None = None
     # `exp` as unix seconds; None for a token without one.
@@ -268,6 +273,7 @@ def mint_token(
     consumer: str | None = None,
     jti: str | None = None,
     session_id: str | None = None,
+    first_party: bool = False,
     parents: list[str] | None = None,
     parent_subjects: list[str] | None = None,
     parent_iats: list[int] | None = None,
@@ -314,6 +320,8 @@ def mint_token(
     }
     if session_id:
         payload["sid"] = session_id
+        if first_party:
+            payload["fps"] = True
     if write_namespaces is not None:
         payload["ns_write"] = write_namespaces
     if ns_roles is not None:
@@ -453,6 +461,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         parent_iats=tuple(_parent_iats(decoded)),
         creator=_creator_claim(decoded),
         session_id=_optional_str_claim(decoded, "sid"),
+        first_party=_bool_claim(decoded, "fps"),
         issued_at=_iat_of(decoded),
         expires_at=int(exp) if exp is not None else None,
     )

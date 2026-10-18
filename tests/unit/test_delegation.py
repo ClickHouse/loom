@@ -17,7 +17,8 @@ from fastapi import HTTPException
 from server.auth import authz, context, delegation, revocation
 from server.auth.delegation import DEFAULT_TTL_DAYS, delegate
 from server.auth.jwt import AuthInfo, TokenError, mint_token, verify_token
-from server.operations.base import Role
+from server.core import grant_cache
+from server.operations.base import Role, grant_rank
 
 ORG, OTHER = "o", "other"
 RESTRICTED = "r-secret"
@@ -84,6 +85,17 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(delegation, "creator_best_grant", best_grant)
     monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH(grants))
+
+    async def grant_map_read(org: str, subject: str) -> grant_cache.GrantMap:
+        # The maps the listings ask the gate through (`authz.CachedGate`).
+        ranks = {
+            ns: grant_rank(r.name.lower())
+            for (o, ns, s), r in grants.items()
+            if o == org and s == subject
+        }
+        return grant_cache.GrantMap(ranks=ranks)
+
+    monkeypatch.setattr(grant_cache, "_read", grant_map_read)
     return state
 
 
@@ -210,6 +222,7 @@ async def test_the_creators_grants_are_rechecked_on_every_request(world) -> None
     child = await _child(_login(), {"*": None}, subject="alice", is_service_account=False)
     assert await _reaches(child, "b")
     del world["grants"][(ORG, "b", "alice")]
+    grant_cache.invalidate(ORG, ["alice"])
     assert not await _reaches(child, "b")
     assert await context_namespaces(child) == ["a"]
 
@@ -253,6 +266,42 @@ async def test_revoking_the_parent_kills_the_child_and_the_grandchild(
     monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"login-1"}))
     with pytest.raises(TokenError, match="parent"):
         verify_token(raw_grandchild)
+
+
+@pytest.mark.asyncio
+async def test_ending_a_third_party_clients_session_kills_what_it_minted(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exp = int(time.time()) + 3600
+
+    async def minted(parent: AuthInfo) -> str:
+        d = await delegate(
+            parent,
+            org=ORG,
+            requested={"a": None},
+            scoped=False,
+            ttl_seconds=None,
+            is_service_account=True,
+        )
+        return d.mint("sa:bot")
+
+    third_party = await minted(_login(session_id="fam-mcp", expires_at=exp))
+    own = await minted(_login(session_id="fam-cli", first_party=True, expires_at=exp))
+    assert verify_token(third_party).parents == ("login-1", "fam-mcp")
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"fam-mcp", "fam-cli"}))
+    with pytest.raises(TokenError, match="parent"):
+        verify_token(third_party)
+    assert verify_token(own).parents == ("login-1",)  # outlives the session it came from
+
+
+@pytest.mark.asyncio
+async def test_a_third_party_session_counts_toward_the_chain_limit(world) -> None:
+    exp = int(time.time()) + 3600
+    seven = tuple(f"t{i}" for i in range(7))  # with the parent's own id: 8 ancestors
+    own = _login(parents=seven, session_id="fam-cli", first_party=True, expires_at=exp)
+    assert len((await _child(own, {"a": None})).parents) == 8
+    third_party = _login(parents=seven, session_id="fam-mcp", expires_at=exp)
+    assert "limited to 8 ancestors" in await _refused(third_party, {"a": None})
 
 
 @pytest.mark.asyncio
@@ -348,17 +397,17 @@ class _TablesCH:
     async def query_one(self, sql: str, params: Any = None, **k: Any) -> dict[str, Any] | None:
         if "SELECT *" in sql:
             return self.namespaces.get((params["org"], params["ns"]))
-        owners = params["subs"] if "owner_email IN {subs:" in sql else [params.get("sub")]
+        owners = params["subs"] if "lower(owner_email) IN {subs:" in sql else [params.get("sub")]
         owned = [
             n
             for (org, _), n in self.namespaces.items()
-            if org == params["org"] and n["owner_email"] in owners
+            if org == params["org"] and n["owner_email"].lower() in owners
         ]
         held = [
             g
             for (org, _, sub), g in self.grants.items()
             if org == params["org"]
-            and sub in params["subs"]
+            and sub.lower() in params["subs"]
             and g.get("status", "active") == "active"
         ]
         rank = {"admin": 3, "writer": 2, "viewer": 1}

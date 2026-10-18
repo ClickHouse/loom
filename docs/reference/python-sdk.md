@@ -22,12 +22,15 @@ The package ships `py.typed` and passes `mypy --strict`.
 
 ## Credentials
 
-The constructor's `base_url` and `api_key` win. Otherwise the SDK reads
-`LOOM_BASE_URL` (default `http://localhost:7777`), then `LOOM_API_KEY`, then the
-session `loom.login()` / `loom login` stored in `~/.loom/credentials` for that
-server (profile `LOOM_PROFILE`, default `default`; it refreshes itself), and
-finally the first line of `~/.loom/token`, the file `loom mint-token --save`
-writes. A stored session is used only for the server it signed in to.
+The constructor's `profile` names a `loom login` session and its server.
+Otherwise its `base_url` and `api_key` win, and the SDK reads `LOOM_BASE_URL`
+(default `http://localhost:7777`), then `LOOM_API_KEY`, then a bot's
+`LOOM_CLIENT_ID` with its key or workload token (`loom.machine`, hour-long
+tokens it renews itself), then the session `loom.login()` / `loom login`
+stored in `~/.loom/credentials` for that server (profile `LOOM_PROFILE`,
+default `default`; it refreshes itself), and finally the first line of
+`~/.loom/token`, the file `loom mint-token --save` writes. A stored session is
+used only for the server it signed in to.
 Routes outside the operation registry are on `agent.account` (service
 accounts, MCP client setup, the default namespace, the sharing summary) and
 `agent.deployment` (health, workers, model settings, claim release); see
@@ -68,13 +71,14 @@ only with a real LLM provider configured.
 ```python
 Agent(org, namespace, agent, *, base_url=None, api_key=None, timeout_s=60.0,
       pacing=True, coalesce_sets=True, ratelimit_max_wait_s=None, auto_run=None,
-      retry=None, consumer="", mentor_brief=None)
+      retry=None, consumer="", mentor_brief=None, profile=None)
 ```
 
 | Argument                    | Meaning                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `org`, `namespace`, `agent` | The identity stamped on every call. `user_id`, `session_id` and `run_id` are per call (the wire's `"-"` when omitted).                                                                                                                                                                                                                    |
 | `timeout_s`                 | Per-request timeout.                                                                                                                                                                                                                                                                                                                      |
+| `profile`                   | The `loom login` session to use, on the server it signed in to; not combined with `api_key` or another `base_url` ([Credentials](#credentials)).                                                                                                                                                                                          |
 | `consumer`                  | The product this process speaks for; stamped on every body that does not name its own and stored on the ledgers. `""` stamps nothing.                                                                                                                                                                                                     |
 | `pacing`                    | Read `X-RateLimit-*`, sleep a refill tick when the budget is at the floor, and wait out a 429 after `Retry-After` (each sleep capped at 5 s) for up to `ratelimit_max_wait_s` (15 s by default) per call. `False` raises `RateLimited` at once.                                                                                           |
 | `retry`                     | A `RetryPolicy` (or a dict of its fields); see [Retries](#retries-and-logging).                                                                                                                                                                                                                                                           |

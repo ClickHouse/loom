@@ -24,12 +24,21 @@ AGENT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
 
 def subject(trust: str, agent: str) -> str:
-    # ':' is never in a bot's or a person's service-account name.
+    # ':' is never in a bot's name or a person's token name (`token_name`).
     return f"{machines.subject(trust)}:{agent}"
 
 
 def namespace(trust: str, agent: str) -> str:
     return f"{trust}-{agent}"
+
+
+def home_of(subject_: str) -> str:
+    """The namespace of the agent whose subject is `subject_`; "" for any
+    other subject."""
+    trust, _, agent = subject_.removeprefix("sa:").partition(":")
+    if not subject_.startswith("sa:") or not agent:
+        return ""
+    return namespace(trust, agent)
 
 
 TAG_PREFIX = "machine:"

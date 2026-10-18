@@ -13,7 +13,7 @@ from server.identity.app import me_service_accounts as tokens
 from server.settings import settings
 
 
-@pytest.mark.parametrize("name", ["", "   ", "x" * 65, "ci\x00bot", "agent · x"])
+@pytest.mark.parametrize("name", ["", "   ", "x" * 65, "ci\x00bot", "agent · x", "ci:review"])
 def test_a_name_off_its_shape_is_a_422(name: str) -> None:
     with pytest.raises(HTTPException) as err:
         tokens.token_name(name)

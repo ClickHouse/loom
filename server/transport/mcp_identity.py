@@ -13,7 +13,11 @@ from contextvars import ContextVar
 from typing import Any
 
 from server.core.naming import slugify
-from server.identity.app.caller_home import caller_org, default_namespace, home_subject
+from server.identity.app.caller_home import (
+    caller_org,
+    default_and_readable,
+    home_subject,
+)
 from server.transport.mcp_config import _DEFAULT_MCP_AGENT, _MCP_SESSION_AGENT_CAP
 
 # Bounded session→agent cache (sessions are short-lived; cap so a churning
@@ -101,9 +105,13 @@ _DEFAULT_NOTE: ContextVar[str] = ContextVar("loom_default_namespace_note", defau
 
 
 def note_default_namespace(filled: bool, namespace: str, auth: Any) -> None:
-    """`auth`'s home is its creator's for a delegated token (`home_subject`)."""
-    login = home_subject(auth).strip().lower().split("@", 1)[0]
-    away = bool(filled and namespace and namespace.lower() != login)
+    """`auth`'s home is its creator's for a delegated token (`home_subject`);
+    an agent's, direct or delegated, is its own namespace (`agents.home_of`)."""
+    from server.auth.agents import home_of
+
+    subject = home_subject(auth).strip()
+    home = home_of(subject) or subject.lower().split("@", 1)[0]
+    away = bool(filled and namespace and namespace.lower() != home)
     _DEFAULT_NOTE.set(namespace if away else "")
 
 
@@ -115,8 +123,9 @@ def default_namespace_note() -> dict[str, str]:
 async def _caller_defaults(
     auth: Any,
     client_name: str | None = None,
-) -> dict[str, str] | None:
-    """Resolve the caller's default (org, namespace, agent).
+) -> dict[str, Any] | None:
+    """Resolve the caller's default (org, namespace, agent), plus `readable`
+    (the namespaces the token can name) when it has no default namespace.
 
     Used both to embed defaults in tool descriptions and to fill missing
     args on incoming tool calls. The namespace is `caller_home.default_namespace`,
@@ -127,22 +136,48 @@ async def _caller_defaults(
     org = caller_org(auth)
     if org is None:
         return None
-    return {
+    namespace, readable = await default_and_readable(auth, org)
+    defaults: dict[str, Any] = {
         "org": org,
-        "namespace": await default_namespace(auth, org),
+        "namespace": namespace,
         "agent": _client_name_to_agent(client_name),
     }
+    if not namespace:
+        # What a token with no default names on its calls, and searches.
+        defaults["readable"] = readable
+    return defaults
 
 
-async def _caller_default_context(auth: Any) -> str:
+def no_default_namespace_line(defaults: dict[str, Any]) -> str:
+    """What a token with no default namespace names on its calls."""
+    readable = defaults.get("readable") or []
+    if not readable:
+        return "This token has no default namespace and can read no namespace."
+    names = ", ".join(f"`{ns}`" for ns in readable)
+    # An unaddressed search is addressed to the first one (`mcp_call._address_first_claim`);
+    # its fan-out never sweeps another tracker or code namespace.
+    others = " (name another on the call to search it)" if len(readable) > 1 else ""
+    return (
+        f"This token has no default namespace: name one of {names} on each memory "
+        f"or tracker call; `loom_search` searches `{readable[0]}`{others}."
+    )
+
+
+async def _caller_default_context(auth: Any, defaults: dict[str, Any] | None = None) -> str:
     """The "Default Loom workspace: ..." block, delivered once via the
     `initialize` result's `instructions` field. Surfaces only `namespace`
     and `agent` — `org` is single-tenant per caller and filled from the JWT
-    automatically, so it'd be noise in the LLM's context.
+    automatically, so it'd be noise in the LLM's context. ``defaults`` are
+    resolved here when not passed.
     """
-    defaults = await _caller_defaults(auth)
+    defaults = defaults or await _caller_defaults(auth)
     if not defaults:
         return ""
+    if not defaults["namespace"]:
+        return (
+            f"\n\n**Default Loom workspace:** none. {no_default_namespace_line(defaults)} "
+            f"agent=`{defaults['agent']}` is filled in when omitted."
+        )
     return (
         f"\n\n**Default Loom workspace:** "
         f"namespace=`{defaults['namespace']}`, agent=`{defaults['agent']}`. "

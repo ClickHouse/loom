@@ -146,6 +146,11 @@ def token_name(raw: object) -> str:
             status_code=422,
             detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a NUL character"},
         )
+    if ":" in name:  # reserved: `sa:<trust>:<agent>` is a machine trust's agent (auth.agents)
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a ':'"},
+        )
     if name.startswith(AGENT_NAME_PREFIX):  # self-signup's, written without this check
         raise HTTPException(
             status_code=422,
@@ -430,9 +435,9 @@ async def me_service_accounts_revoke(
     request: Request,
     payload: dict[str, object],
 ) -> dict[str, object]:
-    """Mark an SA as revoked. The JWT itself remains valid until TTL —
-    for hard cutoff, also revoke the grants the SA depends on. Caller
-    must be the creator or admin on at least one of the SA's namespaces."""
+    """Mark an SA as revoked and revoke its subject, so its token stops
+    verifying. Caller must be the creator or admin on at least one of the
+    SA's namespaces."""
     from server.core.ch import get_client
 
     if settings.auth_actually_required():
@@ -500,10 +505,9 @@ async def me_service_accounts_revoke(
                 ],
             )
 
-    # Also revoke the JWT itself. SA tokens carry no `jti`, so revoke by
-    # `sub` (the sa_subject); verify_token checks both. Without this the
-    # token keeps authenticating until its TTL. Through `revoke`, so this
-    # replica holds it at once, whatever a refresh in flight reads.
+    # The row keeps no jti, so revoke by `sub` (the sa_subject); its children
+    # die with it through `parent_subjects`. Through `revoke`, so this replica
+    # holds it at once, whatever a refresh in flight reads.
     from server.auth.revocation import revoke
 
     await revoke(

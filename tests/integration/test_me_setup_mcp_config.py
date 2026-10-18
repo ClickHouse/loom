@@ -88,30 +88,35 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str, ch_client
     from server.auth.jwt import mint_token
     from server.auth.personal_namespace import derive_personal_slug
 
-    # A person of their own: the test grants them the namespace the page shows.
+    # A person of their own, holding their personal namespace as sign-in leaves them.
     person = f"setup-{uuid.uuid4().hex[:8]}"
+    personal = derive_personal_slug(person)
     token = mint_token(
         subject=person,
         org="clickhouse",
-        namespaces=[derive_personal_slug(person)],
+        namespaces=[personal],
         roles=["WRITER"],
         is_service_account=False,
     )
+    _grant_writer(ch_client, "clickhouse", personal, person, revoke=False)
     r = await _post(control_plane_url, token, {"client": "claude-desktop"})
     assert r.status_code == 200, r.text
-
     body = r.json()
     assert body["client"] == "claude-desktop"
     assert body["subject"] == person
     assert body["org"] == "clickhouse"
-    # The namespace the page shows is where the token's unaddressed writes land.
-    _grant_writer(ch_client, "clickhouse", body["namespace"], person, revoke=False)
+    # The namespace the page shows is where the token's unaddressed writes land:
+    # the person's own with login; single-user mode shows the one it serves,
+    # which the test grants them too.
+    shown = body["namespace"]
+    if await _auth_on(control_plane_url):
+        assert shown == personal
+    _grant_writer(ch_client, "clickhouse", shown, person, revoke=False)
     try:
-        await _assert_unaddressed_write_lands_in(
-            control_plane_url, body["token"], body["namespace"]
-        )
+        await _assert_unaddressed_write_lands_in(control_plane_url, body["token"], shown)
     finally:
-        _grant_writer(ch_client, "clickhouse", body["namespace"], person, revoke=True)
+        for ns in {personal, shown}:
+            _grant_writer(ch_client, "clickhouse", ns, person, revoke=True)
     assert body["mcp_url"].endswith("/mcp")
     assert body["config_key"] == "mcpServers"
     # `namespace` in the response is the write target; reads
@@ -119,6 +124,7 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str, ch_client
     # bearer is wildcard ("all"); the UI always names one ("single").
     assert body["namespace_scope"] == "all"
     assert body["read_scope"] == "inherited_grants"
+    assert "*" in body["namespaces"]
 
     # Config shape — top-level mcpServers wrapper with the loom entry.
     # Claude Desktop is stdio-only, so the entry is the `npx mcp-remote`

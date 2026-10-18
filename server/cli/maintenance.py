@@ -11,7 +11,7 @@ from typing import Any
 
 from server.cli._apply import add_apply_flags
 from server.cli._ch import run_connected
-from server.cli._client import resolve_token
+from server.cli._client import refused_for_agent, resolve_token
 
 
 def _cmd_period_digest(args: argparse.Namespace) -> int:
@@ -207,6 +207,11 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    token, source = resolve_token(args.token)
+    # A dry run sends nothing, so it needs no token; anything else refuses an
+    # agent before the evidence is read.
+    if not args.dry_run and refused_for_agent(source):
+        return 2
 
     async def _go() -> int:
         ch = get_client()
@@ -226,7 +231,7 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
         rep = await replay(
             sessions,
             base_url=args.base_url,
-            token=resolve_token(args.token)[0],
+            token=token,
             org=args.org,
             into=args.into,
             dates=args.dates,

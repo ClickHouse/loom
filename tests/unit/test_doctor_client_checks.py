@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 import server.cli.doctor_client as dc
 from server.cli import _client
 
@@ -237,16 +239,32 @@ def test_no_grant_on_the_write_namespace_names_the_ones_you_have(tmp_path: Path)
 def test_token_lines_expired_soon_and_missing() -> None:
     assert (
         dc.token_check(
-            _jwt(exp=NOW - 7200, sub="a", org="o"), "LOOM_API_KEY", {"exp": NOW - 7200}, NOW
+            _jwt(exp=NOW - 7200, sub="a", org="o"),
+            "LOOM_API_KEY",
+            {"exp": NOW - 7200},
+            NOW,
+            _client.DEFAULT_BASE_URL,
         )[1]
         == "FAIL"
     )
-    soon = dc.token_check("t", "LOOM_API_KEY", {"exp": NOW + 3600, "sub": "a", "org": "o"}, NOW)
+    soon = dc.token_check(
+        "t",
+        "LOOM_API_KEY",
+        {"exp": NOW + 3600, "sub": "a", "org": "o"},
+        NOW,
+        _client.DEFAULT_BASE_URL,
+    )
     assert soon[1] == "WARN" and "expires in 1 h" in soon[2]
-    assert dc.token_check("", "none", {}, NOW)[1] == "WARN"
-    assert dc.token_check("not-a-jwt", "LOOM_API_KEY", {}, NOW)[1] == "FAIL"
+    assert dc.token_check("", "none", {}, NOW, _client.DEFAULT_BASE_URL)[1] == "WARN"
+    assert (
+        dc.token_check("not-a-jwt", "LOOM_API_KEY", {}, NOW, _client.DEFAULT_BASE_URL)[1] == "FAIL"
+    )
     sa = dc.token_check(
-        "t", "LOOM_API_KEY", {"sub": "sa:x", "org": "o", "sa": True, "namespaces": ["n"]}, NOW
+        "t",
+        "LOOM_API_KEY",
+        {"sub": "sa:x", "org": "o", "sa": True, "namespaces": ["n"]},
+        NOW,
+        _client.DEFAULT_BASE_URL,
     )
     assert sa[1] == "PASS" and sa[2].startswith("service account sa:x @ o")
 
@@ -604,3 +622,40 @@ def test_reads_line_asks_code_repos_only_when_a_repository_row_exists() -> None:
     assert grade == "PASS" and detail == "reads 1 namespace(s): coding"
     skipped = dc.reads_check("https://loom.test", TOKEN, {}, [], post_json, False)
     assert skipped[1] == "WARN" and "check auth first" in skipped[2]
+
+
+@pytest.mark.parametrize("namespace", ["", "team-x"])
+def test_an_agent_is_checked_for_no_one_against_the_doctors_server(
+    tmp_path: Path, namespace: str
+) -> None:
+    # A person's saved token and namespace sit beside the agent: none is used,
+    # and the hint names the URL the doctor resolved (the config file's here).
+    (tmp_path / ".loom").mkdir()
+    (tmp_path / ".loom" / "config.json").write_text(
+        json.dumps({"token": TOKEN, "namespace": "theirs", "url": "https://from-config"})
+    )
+    get_json, post_json, seen = _http()
+    env = {"LOOM_CLIENT_ID": "ci", "LOOM_WORKLOAD_TOKEN": "proof"}
+    if namespace:
+        env["LOOM_NAMESPACE"] = namespace
+    checks = dc.client_checks(
+        _args(),
+        get_json=get_json,
+        post_json=post_json,
+        home=tmp_path,
+        env=env,
+        tmp=tmp_path,
+        now=NOW,
+    )
+    g = _grades(checks)
+    assert g["client:token"] == "WARN"
+    assert "loom call --server https://from-config namespace.list_mine" in _detail(
+        checks, "client:token"
+    )
+    assert g["client:namespace"] == "WARN"
+    where = "'team-x' (LOOM_NAMESPACE)" if namespace else "the exchanged token's namespace"
+    assert "agent mode" in _detail(checks, "client:namespace")
+    assert where in _detail(checks, "client:namespace")
+    assert g["client:recording"] == g["client:reads"] == "WARN"
+    assert all("check auth first" not in c[2] for c in checks if c[0].startswith("client:"))
+    assert all(TOKEN not in str(call) for call in seen.values())

@@ -360,6 +360,23 @@ async def test_a_revoked_password_account_naming_the_email_blocks_jit(monkeypatc
     assert provisioned == {}
 
 
+async def test_an_active_password_account_naming_the_email_blocks_jit(monkeypatch) -> None:
+    # A second active account naming the address would be tied to every grant
+    # made to it; the address is freed by releasing the password account.
+    provisioned = _jit_on(monkeypatch)
+
+    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return [{"namespace": "mallory", "owner": "mallory", "active": True, "sso": False}]
+
+    async def not_revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return False
+
+    monkeypatch.setattr(jit, "_accounts_naming", accounts)
+    monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
+    assert await jit.jit_provision_for_email("bob@acme.com") is None
+    assert provisioned == {}
+
+
 async def test_a_deleted_account_alone_is_no_offboarding(monkeypatch) -> None:
     # Its owner may have deleted it: the person gets a fresh name.
     provisioned = _jit_on(monkeypatch)
@@ -657,20 +674,3 @@ async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
     monkeypatch.setattr(self_signup, "insert_owner_grant", grant)
     assert (await oauth.oidc_callback(_Req())).status_code == 302  # type: ignore[arg-type]
     assert granted == ([] if granted_before else [("u-bob", "u-bob")])
-
-
-async def test_a_password_account_with_the_email_does_not_stop_an_sso_one(monkeypatch) -> None:
-    # Self-signup never verified the address, so a password account naming it
-    # is no proof it is this person's: they get their own SSO account.
-    provisioned = _jit_on(monkeypatch)
-
-    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
-        return [{"namespace": "bob", "owner": "bob", "active": True, "sso": False, "tags": []}]
-
-    async def none_registered(org: str, namespace: str) -> None:
-        return None
-
-    monkeypatch.setattr(jit, "_accounts_naming", accounts)
-    monkeypatch.setattr(jit, "_registry_row", none_registered)
-    assert await jit.jit_provision_for_email("bob@acme.com") is not None
-    assert provisioned["namespace"].startswith("u-bob-")

@@ -11,6 +11,12 @@
 --   issuer, for that audience, with every listed claim matching (RFC 8693).
 -- ns_roles: (namespace, role) in read order, as `loom mint-token
 --   --namespace-role` takes them. active = 0 is a disabled bot.
+-- agent_claim: on a workload trust that tells agents apart
+--   (server/auth/agents.py), the claim naming the agent, which gets its own
+--   subject and namespace ('' on a trust for one bot). jwks_uri: where the
+--   issuer's keys are published when its discovery document is not reachable
+--   ('' = discovery). max_token_s: the longest a workload token may live (exp
+--   less iat) to be taken. max_agents: how many agents the trust may make.
 CREATE TABLE IF NOT EXISTS loom.machine_identities
 (
     `name` String,
@@ -23,7 +29,11 @@ CREATE TABLE IF NOT EXISTS loom.machine_identities
     `active` UInt8,
     `updated_by` String,
     `updated_at` DateTime64(3, 'UTC'),
-    `version` UInt64
+    `version` UInt64,
+    `agent_claim` String DEFAULT '',
+    `jwks_uri` String DEFAULT '',
+    `max_token_s` UInt32 DEFAULT 3600,
+    `max_agents` UInt32 DEFAULT 1000
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY name

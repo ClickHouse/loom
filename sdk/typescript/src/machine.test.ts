@@ -215,6 +215,86 @@ describe("MachineLogin with a key", () => {
   });
 });
 
+describe("answers other than the token's", () => {
+  const busyOrRefused = [
+    [404, AuthError],
+    [503, BackendUnavailable],
+  ] as const;
+  /** A 200 whose body is a proxy's page, JSON null, or cut off mid-read. */
+  const bodies = [
+    ["an HTML page", () => new Response("<html>sign in</html>", { status: 200 }), AuthError],
+    ["JSON null", () => new Response("null", { status: 200 }), AuthError],
+    [
+      "a body cut off in transit",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.error(new TypeError("terminated"));
+            },
+          }),
+          { status: 200 },
+        ),
+      BackendUnavailable,
+    ],
+  ] as const;
+
+  it.each(bodies)("reads server metadata answering %s as a Loom error", async (_, body, error) => {
+    const answer = async (url: string) =>
+      url.endsWith("/.well-known/oauth-authorization-server")
+        ? body()
+        : new Response(JSON.stringify({ access_token: accessToken(1) }), { status: 200 });
+    const key = { source: "LOOM_CLIENT_KEY" as const, value: pem("ec").privatePem };
+    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", key, fetch: answer });
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+  });
+
+  it.each(bodies)("reads the token endpoint answering %s as a Loom error", async (_, body, error) => {
+    const answer = async (url: string) =>
+      url.endsWith("/.well-known/oauth-authorization-server")
+        ? new Response(JSON.stringify({ token_endpoint: PUBLIC_ENDPOINT }), { status: 200 })
+        : body();
+    const key = { source: "LOOM_CLIENT_KEY" as const, value: pem("ec").privatePem };
+    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", key, fetch: answer });
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+  });
+
+  it.each(bodies)("reads GitHub Actions answering %s as a Loom error", async (_, body, error) => {
+    vi.stubEnv("LOOM_CLIENT_ID", "gha");
+    vi.stubEnv("LOOM_WORKLOAD_AUDIENCE", "https://loom.example");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://actions.example/token");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-bearer");
+    const bot = machineLogin(BASE, { fetch: async () => body() }) as MachineLogin;
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+  });
+
+  it.each(busyOrRefused)("reads server metadata answering %s as the Python SDK does", async (status, error) => {
+    const answer = async (url: string) =>
+      url.endsWith("/.well-known/oauth-authorization-server")
+        ? new Response("{}", { status })
+        : new Response(JSON.stringify({ access_token: accessToken(1) }), { status: 200 });
+    const key = { source: "LOOM_CLIENT_KEY" as const, value: pem("ec").privatePem };
+    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", key, fetch: answer });
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+  });
+
+  it.each(busyOrRefused)("reads GitHub Actions answering %s as the Python SDK does", async (status, error) => {
+    vi.stubEnv("LOOM_CLIENT_ID", "gha");
+    vi.stubEnv("LOOM_WORKLOAD_AUDIENCE", "https://loom.example");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://actions.example/token");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-bearer");
+    const asked: string[] = [];
+    const answer = async (url: string) => {
+      asked.push(url);
+      return new Response("{}", { status });
+    };
+    const bot = machineLogin(BASE, { fetch: answer }) as MachineLogin;
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatch(/^https:\/\/actions\.example\/token\?audience=/);
+  });
+});
+
 describe("key sources", () => {
   it("names the source of a key that is not a PEM", async () => {
     // As `docker --env-file` leaves it: the newlines written as `\n`.
@@ -441,6 +521,29 @@ describe("Transport with a token provider", () => {
     await t.post("memory.set", { org: "o" });
     const count = (c: { init: RequestInit }) => (c.init.headers as Record<string, string>)["X-Loom-Retry-Count"];
     expect(v1(srv).map(count)).toEqual(["0", "0"]);
+  });
+
+  it("retries a call whose token endpoint was away, as a connection failure", async () => {
+    let asked = 0;
+    const provider: TokenProvider = {
+      token: () => {
+        asked++;
+        if (asked === 1) throw new BackendUnavailable("token endpoint answered 503");
+        return "t";
+      },
+      origin: BASE,
+    };
+    const srv = server();
+    const t = new Transport({
+      baseUrl: BASE,
+      tokenProvider: provider,
+      fetch: srv.fetch,
+      retry: { maxAttempts: 2, backoffMs: 1, backoffMaxMs: 1 },
+    });
+    expect(await t.post("memory.get", { org: "o" })).toEqual({ ok: true });
+    expect([asked, v1(srv).map(auth)]).toEqual([2, ["Bearer t"]]);
+    const count = (c: { init: RequestInit }) => (c.init.headers as Record<string, string>)["X-Loom-Retry-Count"];
+    expect(v1(srv).map(count)).toEqual(["0"]); // the server saw it once
   });
 
   it("takes a provider that answers a plain string, with or without a signal", async () => {

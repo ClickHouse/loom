@@ -426,7 +426,18 @@ function TokensSection({
   // their branch namespaces.
   const [mcpRestrictedRepos, setMcpRestrictedRepos] = useState<Set<string>>(() => new Set());
   const [mcpTtlDays, setMcpTtlDays] = useState<string>("90");
-  const [mcpResult, setMcpResult] = useState<{ token: string; mcpUrl: string; restricted?: string[] } | null>(null);
+  // `namespace`: where the server fills in unaddressed calls; "" when the token has no default.
+  const [mcpResult, setMcpResult] = useState<{
+    token: string;
+    mcpUrl: string;
+    namespace?: string | null;
+    restricted?: string[];
+    /** The namespace the mint named ("" for the `*` default). */
+    named?: string;
+    readScope?: "inherited_grants" | "named_namespaces";
+    /** The minted claim. */
+    claim?: string[];
+  } | null>(null);
   const [dialogClient, setDialogClient] = useState<ClientId>(() => {
     // Blocked storage throws on read; the default client stands in.
     try {
@@ -628,7 +639,11 @@ function TokensSection({
       setMcpResult({
         token: r.token,
         mcpUrl: r.mcp_url,
+        namespace: r.namespace,
         restricted: r.restricted_namespaces,
+        named: mcpNamespace,
+        readScope: r.read_scope,
+        claim: r.namespaces,
       });
       onMinted({ token: r.token, mcpUrl: r.mcp_url });
       setMintedAtMs(Date.now());
@@ -1077,36 +1092,50 @@ function TokensSection({
             text="This is the only time the token is shown. The same token works in every client — switch clients below to copy each one's config block, then paste into each client's MCP config file and restart."
           />
           <div className="text-xs text-text-muted" data-testid="minted-token-scope">
-            Writes to <span className="font-mono text-text">{mcpScope.home}</span>; reads every namespace and repository
-            you belong to, including ones you join later
-            {(() => {
-              const added = mcpScope.excludedRestricted
-                .filter((r) => mcpRestrictedRepos.has(r.repo))
-                .map((r) => r.repo);
-              const left = mcpScope.excludedRestricted
-                .filter((r) => !mcpRestrictedRepos.has(r.repo))
-                .map((r) => r.repo);
-              // The server adds a restricted repository's bound QA record; anything
-              // granted beyond the ticked branches is that.
-              const ticked = new Set(
-                mcpScope.excludedRestricted
-                  .filter((r) => mcpRestrictedRepos.has(r.repo))
-                  .flatMap((r) => r.branches.map((b) => b.namespace)),
-              );
-              const extra = (mcpResult?.restricted ?? []).filter((ns) => !ticked.has(ns));
-              return (
-                <>
-                  {added.length > 0 ? <>, plus the restricted {added.join(", ")} with a grant of its own</> : null}
-                  {extra.length > 0 ? (
+            {mcpResult?.namespace === null ? (
+              <>Its default namespace could not be read now; each call resolves it</>
+            ) : mcpResult?.namespace === "" ? (
+              <>Has no default namespace{mustName(mcpResult)}</>
+            ) : (
+              <>
+                Writes to <span className="font-mono text-text">{mcpResult?.namespace || mcpScope.home}</span>
+              </>
+            )}
+            {mcpResult?.readScope === "named_namespaces" ? (
+              <>{namedTail(mcpResult)}.</>
+            ) : (
+              <>
+                ; reads every namespace and repository you belong to, including ones you join later
+                {(() => {
+                  const added = mcpScope.excludedRestricted
+                    .filter((r) => mcpRestrictedRepos.has(r.repo))
+                    .map((r) => r.repo);
+                  const left = mcpScope.excludedRestricted
+                    .filter((r) => !mcpRestrictedRepos.has(r.repo))
+                    .map((r) => r.repo);
+                  // The server adds a restricted repository's bound QA record; anything
+                  // granted beyond the ticked branches is that.
+                  const ticked = new Set(
+                    mcpScope.excludedRestricted
+                      .filter((r) => mcpRestrictedRepos.has(r.repo))
+                      .flatMap((r) => r.branches.map((b) => b.namespace)),
+                  );
+                  const extra = (mcpResult?.restricted ?? []).filter((ns) => !ticked.has(ns));
+                  return (
                     <>
-                      {" "}
-                      and {extra.length === 1 ? "its tracker" : "their trackers"} {extra.join(", ")}
+                      {added.length > 0 ? <>, plus the restricted {added.join(", ")} with a grant of its own</> : null}
+                      {extra.length > 0 ? (
+                        <>
+                          {" "}
+                          and {extra.length === 1 ? "its tracker" : "their trackers"} {extra.join(", ")}
+                        </>
+                      ) : null}
+                      {left.length > 0 ? <> — except restricted repositories ({left.join(", ")})</> : null}
                     </>
-                  ) : null}
-                  {left.length > 0 ? <> — except restricted repositories ({left.join(", ")})</> : null}
-                </>
-              );
-            })()}.
+                  );
+                })()}.
+              </>
+            )}
           </div>
           <Field hint="The token works in every client — pick yours to copy the matching config block. Your last choice is remembered next time.">
             {(hintId) => (
@@ -1400,6 +1429,41 @@ function Field({ hint, children }: { hint: string; children: (hintId: string) =>
       </div>
     </div>
   );
+}
+
+type MintedScope = {
+  named?: string;
+  namespace?: string | null;
+  restricted?: string[];
+  claim?: string[];
+  readScope?: "inherited_grants" | "named_namespaces";
+};
+
+/** What a `named_namespaces` agent token reads: its minted claim. A server that does
+ *  not send the claim: the namespace it was minted for, then the restricted ones it names. */
+function namedReadList(r: MintedScope): string[] {
+  const home = r.named || r.namespace;
+  return r.claim ?? [...(home ? [home] : []), ...(r.restricted ?? [])];
+}
+
+function namedReads(r: MintedScope): string {
+  const reads = namedReadList(r);
+  return reads.length ? `reads only ${reads.join(", ")}` : "reads no namespace";
+}
+
+/** The reads half of a named-claim token's line: nothing more when `mustName`
+ *  already listed the claim. */
+function namedTail(r: MintedScope): string {
+  if (r.namespace === "" && namedReadList(r).length) return "";
+  return `; ${namedReads(r)}`;
+}
+
+/** What a token with no default namespace names on its calls: one of its claim
+ *  (any, for a `*` token); nothing to say when its claim is empty. */
+function mustName(r: MintedScope): string {
+  if (r.readScope !== "named_namespaces") return ": memory and tracker calls must name one";
+  const reads = namedReadList(r);
+  return reads.length ? `: memory and tracker calls must name one of ${reads.join(", ")}` : "";
 }
 
 const ROLE_LABELS: Record<GrantRole, string> = { viewer: "Viewer", writer: "Writer", admin: "Admin" };

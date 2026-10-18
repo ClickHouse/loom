@@ -152,6 +152,15 @@ async def _address_home(arguments: dict[str, Any], auth: Any) -> None:
         )
 
 
+def _address_first_claim(arguments: dict[str, Any], readable: list[str]) -> bool:
+    """A `loom_search` naming no namespace from a token with no default one
+    searches the token's first readable claim (`readable`, from its
+    defaults); the gate still checks it. True when it filled one in."""
+    if readable:
+        arguments["namespace"] = readable[0]
+    return bool(readable)
+
+
 # History and related name a KEY — a key another client
 # wrote answered `{}` / source_not_found under the caller's own slug.
 _MCP_CROSS_AGENT_READS: frozenset[str] = frozenset(
@@ -454,20 +463,27 @@ async def _bind_caller_identity(
     # index at all.
     defaults = await _caller_defaults(auth, client_name)
     explicit_agent = bool(arguments.get("agent"))
+    # A blank or "-" namespace names none, as the gates read it.
+    unnamed = not gates.present(arguments.get("namespace"))
+    # An empty default namespace (a delegated token whose claim holds no home)
+    # is not filled in: the call then fails validation naming `namespace`.
     filled_ns = (
-        bool(defaults)
+        bool(defaults and defaults["namespace"])
         and "namespace" in op.input_model.model_fields
-        and not arguments.get("namespace")
+        and unnamed
         and not op.name.startswith("code.")
     )
     if defaults and not op.name.startswith("code."):
         field_names = set(op.input_model.model_fields.keys())
         for k, v in defaults.items():
-            if k in field_names and not arguments.get(k):
+            missing = unnamed if k == "namespace" else not arguments.get(k)
+            if v and k in field_names and missing:
                 arguments[k] = v
-    if defaults and "lesson_namespaces" in op.input_model.model_fields:
+    if defaults and defaults["namespace"] and "lesson_namespaces" in op.input_model.model_fields:
         # a code read's lessons include the caller's own memories, from its memory home
         arguments.setdefault("lesson_namespaces", [defaults["namespace"]])
+    if op.name == SEARCH_OP and defaults and not defaults["namespace"] and unnamed:
+        filled_ns = _address_first_claim(arguments, defaults.get("readable") or [])
     note_default_namespace(filled_ns, str(arguments.get("namespace") or ""), auth)
     _scope_arguments(op.name, arguments, defaults, explicit_agent)
     if op.name == SEARCH_OP and filled_ns:

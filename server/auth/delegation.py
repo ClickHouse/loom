@@ -80,6 +80,25 @@ class Delegated:
             creator=self.creator,
         )
 
+    def as_auth(self, subject: str) -> AuthInfo:
+        """The identity a token minted for `subject` verifies as, without
+        verifying it (no revocation list needed)."""
+        return AuthInfo(
+            subject=subject,
+            org=self.org,
+            namespaces=tuple(self.namespaces),
+            write_namespaces=tuple(self.write_namespaces or ()),
+            ns_roles=tuple((self.ns_roles or {}).items()),
+            roles=tuple(Role[name.upper()] for name in self.roles),
+            is_service_account=self.is_service_account,
+            read_scope=self.read_scope,
+            read_user_id=self.read_user_id,
+            parents=tuple(self.parents),
+            parent_subjects=tuple(self.parent_subjects),
+            parent_iats=tuple(self.parent_iats),
+            creator=self.creator,
+        )
+
 
 def _refuse(message: str) -> HTTPException:
     return HTTPException(status_code=403, detail={"code": "AUTH_INSUFFICIENT", "message": message})
@@ -110,8 +129,13 @@ async def delegate(
     if parent.is_service_account and not is_service_account:
         raise _refuse("a service-account token can only mint service-account tokens")
     parents = [*parent.parents, parent.token_id] if parent.token_id else list(parent.parents)
+    if parent.session_id and not parent.first_party:
+        # A third-party client's session: what it mints ends when the session
+        # is revoked, not when the parent's access token runs out.
+        parents.append(parent.session_id)
     if len(parents) > MAX_CHAIN_DEPTH:
-        raise _refuse(f"delegation chain is limited to {MAX_CHAIN_DEPTH} tokens")
+        # Counts the ancestor tokens and, for a third-party client, its session.
+        raise _refuse(f"a delegation chain is limited to {MAX_CHAIN_DEPTH} ancestors")
     if scoped and "*" in requested:
         raise _refuse("a per-namespace token cannot name '*'")
     if parent.issued_at is None:
@@ -151,22 +175,25 @@ def _child_org(parent: AuthInfo, org: str) -> str:
 
 def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int | None:
     """The child's TTL in seconds (None: never expires): the one asked for,
-    else the default. A child never outlives its parent. A sign-in session's
-    access token lives an hour and the next refresh replaces it, so its
+    else the default. A child never outlives its parent. A session of Loom's
+    own sign-in (`first_party`: `loom login`, the dashboard) has an access
+    token that lives an hour and the next refresh replaces it, so its
     children take what was asked: they are what the person made for agents
     and CI, outlive the session (a logout, a lost refresh answer), and are
-    revoked one by one or with the person."""
+    revoked one by one or with the person. A third-party MCP client's session
+    gets no such reach: its children end with its access token, or sooner
+    with the session (`delegate` names it in their `parents`)."""
     ttl = DEFAULT_TTL_DAYS * 86400 if ttl_seconds is None else ttl_seconds
     never = ttl == NEVER
-    if parent.session_id or parent.expires_at is None:
+    if (parent.session_id and parent.first_party) or parent.expires_at is None:
         return None if never else ttl
     left = parent.expires_at - int(time.time())
     if left <= 0:
         raise _refuse("the parent token has expired")
     if never:
         raise _refuse(
-            "a token that expires cannot make one that never does; only a sign-in "
-            "session (SSO or `loom login`) can"
+            "a token that expires cannot make one that never does; only a `loom login` "
+            "or dashboard SSO session can"
         )
     return min(ttl, left)
 
@@ -307,16 +334,16 @@ async def _creator_account(org: str, creator: str) -> _Account:
             FROM (
                 SELECT count() AS owned, countIf(active = 1) AS owned_live
                 FROM loom.namespaces FINAL
-                WHERE org = {{org:String}} AND owner_email IN {{subs:Array(String)}}
+                WHERE org = {{org:String}} AND lower(owner_email) IN {{subs:Array(String)}}
             ) AS o
             CROSS JOIN (
                 SELECT countIf(status = 'active') AS granted,
                        maxIf({GRANT_RANK_SQL}, {LIVE_GRANT}) AS best_rank
                 FROM loom.namespace_grants FINAL
-                WHERE org = {{org:String}} AND subject IN {{subs:Array(String)}}
+                WHERE org = {{org:String}} AND lower(subject) IN {{subs:Array(String)}}
             ) AS g
             """,
-            params={"org": org, "subs": subjects},
+            params={"org": org, "subs": [s.lower() for s in subjects]},
         )
     except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
         log.warning("account lookup failed for %s/%s: %s", org, creator, e)

@@ -20,7 +20,7 @@ _TOOL_TO_OP = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 
 @pytest.fixture(autouse=True)
 def _no_ch_default_context(monkeypatch):
-    async def _empty(auth):
+    async def _empty(auth, defaults=None):
         return ""
 
     monkeypatch.setattr(mcp_primer, "_caller_default_context", _empty)

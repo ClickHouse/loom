@@ -158,7 +158,9 @@ export interface McpConfigResponse {
   token: string;
   subject: string;
   org: string;
-  namespace: string;
+  /** Where unaddressed calls land; "" when none does, null when it could not be read
+   * at mint time (each call resolves it). */
+  namespace: string | null;
   namespace_scope: "all" | "single";
   /** How reads are scoped. `inherited_grants`: the token reads every
    * namespace its creator holds a grant on, now and later. `named_namespaces`: only the
@@ -166,6 +168,9 @@ export interface McpConfigResponse {
   read_scope?: "inherited_grants" | "named_namespaces";
   /** Restricted namespaces this token reads by name. */
   restricted_namespaces?: string[];
+  /** The namespace claim the token was minted with. Under `named_namespaces` these are
+   * all it reads; `*` reads wherever the person holds a grant. */
+  namespaces?: string[];
   mcp_url: string;
   /** The token's subject in the Tokens list (service_accounts, kind="mcp"). */
   sa_subject?: string;

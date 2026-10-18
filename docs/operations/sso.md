@@ -98,16 +98,21 @@ link --email <their provider address> --org <org> --namespace <ns>` shows
   `namespace.restore`), and grants made to it must be made again.
 - `loom sso unlink --email <email> --apply` takes a link back. Sessions already
   open are not ended; revoke them with `loom revoke-token --subject`.
-- Someone who says a password account naming their address is not theirs goes
-  on to an account of their own, and `auth.sso_link_declined` is audited. To
-  free an address someone else registered, release that account
-  (`loom claim-release`), which clears its email and links; a revoked account
-  naming the address blocks new accounts, since it may be the same person.
+- Someone who says a password account naming their address is not theirs is
+  denied when that account is in `LOOM_OIDC_JIT_ORG`, and
+  `auth.sso_link_declined` is audited: a second account there naming the same
+  address would receive every grant made to it. To free an address someone
+  else registered, release that account (`loom claim-release`), which clears
+  its email and links; with `LOOM_OIDC_JIT_PROVISION=true` the person's next
+  sign-in then makes their own account. An account in another org does not
+  stop them. A revoked account naming the address blocks new accounts, since
+  it may be the same person.
 
 For a person with no account:
 
 - `LOOM_OIDC_JIT_PROVISION=true` creates one on their first sign-in: a
-  personal namespace in `LOOM_OIDC_JIT_ORG`, role `writer`.
+  personal namespace in `LOOM_OIDC_JIT_ORG`, which the person is admin of;
+  their sessions carry role `writer`.
 - `LOOM_OIDC_JIT_EMAIL_DOMAINS=example.com,example.org` limits that to
   those domains. Anyone else is shown "sign-in denied", and `loom login`
   stops with an error.
@@ -232,10 +237,11 @@ loom mint-token --subject sa:legacy --org acme --service-account \
   --namespace-role legacy=writer --json
 ```
 
-SSO does not affect bots or minted tokens. A token a person creates from their
-session (`/v1/me/service_accounts`) lasts as long as they chose and belongs to
-them: revoking the person ends it. Long-running bots use one of the above, so
-they do not stop with someone's offboarding.
+SSO does not affect bots or minted tokens. A token a person creates from a `loom
+login` or dashboard SSO session (`/v1/me/service_accounts`) lasts as long as
+they chose and belongs to them: revoking the person ends it. One a third-party
+MCP client's session creates ends with that session. Long-running bots use one
+of the above, so they do not stop with someone's offboarding.
 
 ## Sessions and logout
 
@@ -245,19 +251,22 @@ they do not stop with someone's offboarding.
   token at Okta.
 - If a spent refresh token comes back, someone else may hold a copy (or a
   client lost the answer to a refresh): Loom ends that session and the
-  person signs in again. Service accounts and MCP tokens they minted are not
-  touched; after a suspected theft, review them (`loom call
-/v1/me/service_accounts`) and revoke what you don't recognise.
+  person signs in again. Service accounts and MCP tokens minted from a
+  `loom login` or dashboard SSO session are not touched; after a suspected
+  theft, review them (`loom call /v1/me/service_accounts`) and revoke what you
+  don't recognise. Those a third-party MCP client's session minted end with it.
 - Okta refusing the user at a refresh ends that session.
-- Service accounts and MCP tokens a person creates from a sign-in session
-  outlive it, including `loom logout`, for as long as they chose (blank is 90
-  days, 0 never expires). Every one is saved to their token list, so nothing a
-  person cannot see outlives the session. Disabling someone at the provider ends their
-  sessions at the next refresh (within the hour) but not these tokens: only a
-  refresh asks the provider about a person. With
-  [SCIM](#deprovisioning-with-scim) set up, the provider tells Loom at once,
-  and Loom revokes the person and every token they made. Without it, revoke
-  the person when offboarding: `loom revoke-token --subject <their subject>`.
+- Service accounts and MCP tokens a person creates from a `loom login` or
+  dashboard SSO session outlive it, including `loom logout`, for as long as
+  they chose (blank is 90 days, 0 never expires). Every one is saved to their
+  token list, so nothing a person cannot see outlives the session. A
+  third-party MCP client's session mints none that outlive it. Disabling
+  someone at the provider ends their sessions at the next refresh (within the
+  hour) but not these tokens: only a refresh asks the provider about a person.
+  With [SCIM](#deprovisioning-with-scim) set up, the provider tells Loom at
+  once, and Loom revokes the person and every token they made. Without it,
+  revoke the person when offboarding, which ends every token they made too:
+  `loom revoke-token --subject <their subject>`.
 - Every sign-in, device approval and denial, MCP consent, JIT account and
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,

@@ -490,9 +490,10 @@ async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
 async def list_active() -> list[dict[str, Any]]:
     """The unexpired revocations, newest first — the same rows the refresh
     worker reads every `jwt_revocation_cache_ttl_seconds`, so this read is
-    already paid for at that cadence (the table holds well under 1000 rows).
-    An operator cutoff's row says `kind: cutoff`, SCIM's `kind: scim`, and
-    each names its subject."""
+    already paid for at that cadence. It grows with the revoked tokens not yet
+    expired and with every subject an operator or SCIM cut off, whose row never
+    expires. An operator cutoff's row says `kind: cutoff`, SCIM's `kind: scim`,
+    and each names its subject."""
     from server.core.ch import get_client
 
     rows = await get_client().query_all(

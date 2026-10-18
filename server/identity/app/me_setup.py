@@ -8,8 +8,9 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 
 from server.auth.delegation import Delegated, delegate
-from server.auth.jwt import AuthInfo, verify_token
+from server.auth.jwt import AuthInfo
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import BackendUnavailableError
 from server.identity.app import me_callers, token_grants
 from server.identity.app.caller_home import caller_org, default_namespace
 from server.identity.app.me_service_accounts import (
@@ -225,11 +226,11 @@ async def _save_mcp_token(
     client: str,
     delegated: Delegated,
     restricted_names: list[str],
-) -> tuple[str, str]:
+) -> tuple[str, str, datetime | None]:
     """Track a Setup-page token in `service_accounts` (kind='mcp') so it is revocable from
     the Tokens list, minted under its own `sa:` subject so revocation-by-sub kills this
     token and not the person's JWT. Restricted namespaces get the token's own direct grant.
-    Returns (minted token, sa_subject)."""
+    Returns (minted token, sa_subject, the saved row's expires_at)."""
     org = delegated.org
     sa_subject = new_token_subject(org, client, subject)
     sa_hash = sa_subject.removeprefix(f"sa:{client}-")
@@ -247,7 +248,7 @@ async def _save_mcp_token(
         }
         await token_grants.grant_restricted_to_token(org, sa_subject, subject, caller_roles)
 
-    return minted, sa_subject
+    return minted, sa_subject, delegated.expires_at(now)
 
 
 def _setup_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
@@ -291,6 +292,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         token: str,              # the minted JWT
         sa_subject: str,         # its subject in the token list
         expires_at: str | null,  # ISO-8601; null: never expires
+        namespace: str,          # where unaddressed calls land; "": none, calls must name one
         …                        # and the namespace, scope and URL it reads
       }
     """
@@ -332,7 +334,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
         is_service_account=True,
     )
-    minted, sa_subject = await _save_mcp_token(
+    minted, sa_subject, expires_at = await _save_mcp_token(
         subject=subject,
         client=client,
         delegated=delegated,
@@ -341,8 +343,14 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     reads_everywhere = "*" in delegated.namespaces
     # The page names where this token's unaddressed MCP calls land: the MCP
     # transport's own resolver, asked about the token just minted.
-    token = verify_token(minted)
-    displayed_namespace = await default_namespace(token, caller_org(token) or org)
+    token = delegated.as_auth(sa_subject)
+    try:
+        displayed_namespace: str | None = await default_namespace(token, caller_org(token) or org)
+    except BackendUnavailableError:
+        # The token is already minted and listed: hand it over without a name
+        # rather than fail, or a retry would mint a second one. None (not "",
+        # which means it has no default): each call resolves it.
+        displayed_namespace = None
 
     # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.
     from server.auth.public_url import public_base_url
@@ -351,7 +359,6 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     mcp_url = f"{base_url}/mcp"
 
     shape = _mcp_client_config(client, mcp_url, minted)
-    expires_at = delegated.expires_at(naive_utc_now_seconds())
 
     return {
         "client": client,
@@ -370,9 +377,12 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         # Restricted namespaces this token reads by name, each with a direct grant of its own
         # that dies with the token.
         "restricted_namespaces": restricted_names,
+        # The namespace claim as minted: `*`, or the namespaces the token reads (a `*`
+        # request under a narrower sign-in becomes that sign-in's list).
+        "namespaces": list(delegated.namespaces),
         "mcp_url": mcp_url,
         "sa_subject": sa_subject,
         "expires_at": expires_at.isoformat() if expires_at else None,
-        # Retired: every token is saved now.
+        # `persist` is ignored: every Setup token is saved and listed.
         **({"ignored_args": ["persist"]} if "persist" in payload else {}),
     }

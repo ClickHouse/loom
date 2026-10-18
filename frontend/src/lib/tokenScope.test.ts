@@ -72,22 +72,31 @@ describe("agentTokenScope", () => {
 });
 
 describe("describeTokenScope", () => {
-  it("an agent token says what it writes and that reads follow membership", () => {
-    expect(describeTokenScope({ kind: "mcp", namespaces: ["me"], roles: ["writer"] })).toBe(
+  it("an agent token claiming `*` says reads follow membership", () => {
+    expect(describeTokenScope({ kind: "mcp", namespaces: ["me", "*"], roles: ["writer"] })).toBe(
       "writes me · reads every namespace and repository you belong to",
     );
+  });
+  it("an agent token for a named namespace reads only that one", () => {
+    expect(describeTokenScope({ kind: "mcp", namespaces: ["me"], roles: ["writer"] })).toBe("reads only me");
   });
   it("a wildcard agent token writes anywhere the person can", () => {
     expect(describeTokenScope({ kind: "mcp", namespaces: ["*"], roles: ["writer"] })).toMatch(
       /^writes any namespace you can write · reads every/,
     );
   });
-  it("an agent token's further claims are restricted namespaces it reads by name", () => {
+  it("an agent token without `*` reads only its claim", () => {
     expect(
       describeTokenScope({ kind: "mcp", namespaces: ["me", "code-private", "code-private-26-8"], roles: ["writer"] }),
-    ).toBe(
-      "writes me · reads every namespace and repository you belong to · plus restricted: code-private, code-private-26-8",
+    ).toBe("reads only me, code-private, code-private-26-8");
+  });
+  it("a `*` agent token's further claims are restricted namespaces it reads by name", () => {
+    expect(describeTokenScope({ kind: "mcp", namespaces: ["me", "*", "code-private"], roles: ["writer"] })).toBe(
+      "writes me · reads every namespace and repository you belong to · plus restricted: code-private",
     );
+  });
+  it("an agent token with no claim reads no namespace", () => {
+    expect(describeTokenScope({ kind: "mcp", namespaces: [], roles: ["writer"] })).toBe("reads no namespace");
   });
   it("a scoped token reads only what it names", () => {
     expect(describeTokenScope({ kind: "agent", namespaces: ["a", "b"], roles: ["viewer"] })).toBe(

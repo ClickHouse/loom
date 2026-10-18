@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -18,6 +19,24 @@ DEFAULT_BASE_URL = "http://localhost:7777"
 TOKEN_FILE = "~/.loom/token"
 # The source label for values read from the client config file.
 CONFIG_SOURCE = "~/.loom/config.json"
+# The source label of an agent's (no) token: see `resolve_token`.
+AGENT_SOURCE = "agent mode"
+# What a command that needs a token tells an agent instead of "save one".
+AGENT_NO_TOKEN = (
+    "agent mode (LOOM_CLIENT_ID with a workload token): this command uses no saved token. "
+    "Pass --token or set LOOM_API_KEY, or use `loom call`, which exchanges the workload "
+    "token itself; to act as a person, unset LOOM_CLIENT_ID first."
+)
+
+
+def refused_for_agent(source: str) -> bool:
+    """Print `AGENT_NO_TOKEN` and answer True when `resolve_token` found no
+    token because this is an agent; a command that needs a token then exits 2."""
+    if source != AGENT_SOURCE:
+        return False
+    print(f"ERROR: {AGENT_NO_TOKEN}", file=sys.stderr)
+    return True
+
 
 # Every command resolves the server URL and the token in the plugin hooks'
 # order (`resolveServerUrl` / `resolveToken` in the plugin's loom-client.mjs),
@@ -69,18 +88,35 @@ def token_path() -> Path:
     return Path.home() / ".loom" / "token"
 
 
+def agent_mode(env: Mapping[str, str] | None = None) -> bool:
+    """An agent with a workload trust (`LOOM_CLIENT_ID`) and its workload
+    token: it signs in as itself or not at all (the plugin's `agentMode`)."""
+    environ = _env(env)
+    return bool(
+        environ.get("LOOM_CLIENT_ID")
+        and (environ.get("LOOM_WORKLOAD_TOKEN") or environ.get("LOOM_WORKLOAD_TOKEN_FILE"))
+    )
+
+
 def resolve_token(
     explicit: str | None, home: Path | None = None, env: Mapping[str, str] | None = None
 ) -> tuple[str, str]:
-    """(token, source): the flag, `LOOM_API_KEY`, the config file's `token`,
-    `LOOM_API_KEY_FILE` or `~/.loom/token`, else ('', 'none') for the
-    tokenless single-user stack."""
+    """(token, source): the flag, `LOOM_API_KEY`; for an agent nothing
+    (`AGENT_SOURCE`); otherwise the config file's `token`, `LOOM_API_KEY_FILE`
+    or `~/.loom/token`, else ('', 'none') for the tokenless single-user stack.
+
+    An agent's Loom token lives minutes and is bound to the server it was
+    exchanged at, so these commands neither borrow the plugin's copy nor take
+    a person's saved one; `loom call` (the SDK's `Agent`) exchanges the
+    workload token itself."""
     if explicit and explicit.strip():
         return explicit.strip(), "--token"
     environ = _env(env)
     from_env = environ.get("LOOM_API_KEY", "").strip()
     if from_env:
         return from_env, "LOOM_API_KEY"
+    if agent_mode(env):
+        return "", AGENT_SOURCE
     cfg = str(loom_config(home, env).get("token") or "").strip()
     if cfg:
         return cfg, CONFIG_SOURCE

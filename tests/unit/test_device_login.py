@@ -637,22 +637,85 @@ def test_sso_reaches_a_password_account_once_its_password_is_proven(
     assert "auth.sso_linked" in [n for n, _ in _world["events"]]
 
 
-def test_someone_elses_password_account_does_not_lock_the_owner_out(
+def test_declining_someone_elses_password_account_makes_no_second_one(
+    bobs_password_account, _world, monkeypatch
+) -> None:
+    # Whoever registered bob's address with a password is not bob, but an
+    # account of bob's own beside it in the same org would name the same
+    # email, and every grant made to that email would reach both: he is sent
+    # to the operator instead (the fixture's JIT raises if it runs).
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "oidc_jit_org", "acme")
+    c = _client()
+    page = _sso_round_trip(c, _start(c)["user_code"])
+    r = c.post("/oauth/link", data={"ticket": _ticket(page.text), "decision": "not_mine"})
+    assert r.status_code == 403 and "release it" in r.text
+    assert not bobs_password_account  # nothing linked
+    assert "auth.sso_link_declined" in [n for n, _ in _world["events"]]
+
+
+def test_declining_a_password_account_in_another_org_goes_on_to_ones_own(
     bobs_password_account, monkeypatch
 ) -> None:
-    # Whoever registered bob's address with a password is not bob: he can go
-    # on without it, to an account of his own.
-    own = ("u-bob-1a2b3c4d", "acme", ["u-bob-1a2b3c4d"], ["writer"])
+    # The squatter's account is in another org than JIT's: grants there tie
+    # nothing to an account in the JIT org, so bob gets his own.
+    from server.settings import settings
+
+    own = ("u-bob-1a2b3c4d", "corp", ["u-bob-1a2b3c4d"], ["writer"])
 
     async def jit_account(email: str) -> Any:
         return own
 
+    monkeypatch.setattr(settings, "oidc_jit_org", "corp")
     monkeypatch.setattr(jit, "jit_provision_for_email", jit_account)
     c = _client()
     page = _sso_round_trip(c, _start(c)["user_code"])
     r = c.post("/oauth/link", data={"ticket": _ticket(page.text), "decision": "not_mine"})
     assert r.status_code == 200 and "u-bob-1a2b3c4d" in r.text
     assert not bobs_password_account  # nothing linked
+
+
+def test_declining_another_orgs_account_with_jit_off_is_denied_and_ends_the_grant(
+    bobs_password_account, _world, monkeypatch
+) -> None:
+    from server.settings import settings
+
+    async def no_jit(email: str) -> None:
+        return None  # JIT off: no account is made
+
+    monkeypatch.setattr(settings, "oidc_jit_org", "corp")
+    monkeypatch.setattr(jit, "jit_provision_for_email", no_jit)
+    c = _client()
+    grant = _start(c)
+    page = _sso_round_trip(c, grant["user_code"])
+    r = c.post("/oauth/link", data={"ticket": _ticket(page.text), "decision": "not_mine"})
+    assert r.status_code == 403 and "no loom account for this email" in r.text
+    assert _error(_poll(c, grant["device_code"])) == "access_denied"
+    denied = [s for n, s in _world["events"] if n == "auth.signin_denied"]
+    assert denied and "ask your" not in str(denied[-1])  # the bare reason, not the page's advice
+
+
+def test_declining_while_jit_cannot_read_starts_again(bobs_password_account, monkeypatch) -> None:
+    from server.auth.login import SignInUnavailable
+    from server.settings import settings
+
+    revoked: list[str] = []
+
+    async def unavailable(email: str) -> None:
+        raise SignInUnavailable
+
+    async def revoke(token: str) -> None:
+        revoked.append(token)
+
+    monkeypatch.setattr(settings, "oidc_jit_org", "corp")
+    monkeypatch.setattr(jit, "jit_provision_for_email", unavailable)
+    monkeypatch.setattr(oidc, "revoke", revoke)
+    c = _client()
+    page = _sso_round_trip(c, _start(c)["user_code"])
+    r = c.post("/oauth/link", data={"ticket": _ticket(page.text), "decision": "not_mine"})
+    assert r.status_code == 503 and "/oauth/device?user_code=" in r.text
+    assert revoked == ["idp-r1"]
 
 
 def test_linked_accounts_that_disagree_make_no_new_one(sso, monkeypatch) -> None:
@@ -1095,16 +1158,54 @@ def test_a_child_of_a_session_lives_as_long_as_asked() -> None:
     from fastapi import HTTPException
 
     ninety_days, never = 90 * 86400, delegation.NEVER
-    session = parent(session_id="s1")
+    session = parent(session_id="s1", first_party=True)
     # Not the parent's hour: what the person asked for, one that never expires
     # included, for a token they can see and revoke in their list.
     assert delegation._child_ttl(session, ninety_days) == ninety_days
     assert delegation._child_ttl(session, None) == ninety_days  # the default
     assert delegation._child_ttl(session, never) is None
-    # Any other parent bounds it, and cannot make one that never expires.
-    assert delegation._child_ttl(parent(), ninety_days) <= 3600
-    with pytest.raises(HTTPException, match="cannot make one that never does"):
-        delegation._child_ttl(parent(), never)
+    # Any other parent bounds it, and cannot make one that never expires: a
+    # third-party MCP client's session among them.
+    for other in (parent(), parent(session_id="s2")):
+        assert delegation._child_ttl(other, ninety_days) <= 3600
+        with pytest.raises(HTTPException, match="cannot make one that never does"):
+            delegation._child_ttl(other, never)
+
+
+def test_only_loom_logins_own_sessions_are_first_party(_world) -> None:
+    from server.auth import oauth
+    from server.auth.device import DEVICE_CLIENT_ID
+    from server.auth.jwt import verify_token
+
+    grant: Any = {
+        "subject": "ann",
+        "org": "acme",
+        "namespaces": ["ann"],
+        "roles": ["writer"],
+        "upstream_refresh": "",
+        "held": {},
+    }
+
+    def first_party(client_id: str) -> bool:
+        session = {**grant, "family": f"fam-{client_id}"}
+        body = asyncio.run(oauth.issue_tokens(session, client_id, since=0))
+        return verify_token(body["access_token"]).first_party
+
+    assert first_party(DEVICE_CLIENT_ID) is True
+    assert first_party("some-mcp-client") is False
+
+
+def test_a_refreshed_loom_login_and_the_dashboards_sso_stay_first_party(_world) -> None:
+    from server.auth.jwt import verify_token
+
+    c = _client()
+    tokens = _signed_in_tokens(c)
+    assert verify_token(tokens["access_token"]).first_party
+    rotated = _refresh(c, tokens["refresh_token"]).json()
+    assert verify_token(rotated["access_token"]).first_party
+    signed_in = asyncio.run(oauth._dashboard_signed_in(("ann", "acme", ["ann"], ["writer"])))
+    token = signed_in.headers["location"].split("#token=", 1)[1]
+    assert verify_token(token).first_party and verify_token(token).session_id
 
 
 def test_two_people_on_one_code_end_the_grant_for_both(_world, monkeypatch) -> None:
