@@ -121,13 +121,13 @@ class AgentEvent:
             "args": dict(self.args),
             "model": self.model,
             "llm_calls": self.llm_calls,
-            "response_tokens": self.response_tokens,
-            "consumer": self.consumer,
-            "traffic_class": self.traffic_class,
             "transport": self.transport,
             "op_class": self.op_class,
             "status_class": self.status_class,
             "budget_ms": self.budget_ms,
+            "response_tokens": self.response_tokens,
+            "consumer": self.consumer,
+            "traffic_class": self.traffic_class,
             # Which build wrote the row (the /v1/health field);
             # Which process (hostname:pid) and which launcher
             # label. `stamp_row` adds build_commit, instance, instance_label.
