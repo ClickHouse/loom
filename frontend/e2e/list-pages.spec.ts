@@ -102,15 +102,21 @@ for (const { width, height, top, touch } of BUDGET) {
 // A row's placeholder size (content-visibility) is the list's drawn row height, so the
 // scrollbar does not jump as rows come into view; and the first read's skeleton rows are
 // the drawn rows' height and spacing, so the rows land where the skeleton was. On a desktop
-// and on a phone, where a row's meta takes its own line.
+// and on a phone, where a row's meta takes its own line and the pointer is a finger.
 const LISTS = [
   { path: "/memories", op: "memory.list" },
   { path: "/library", op: "knowledge.list" },
   { path: "/conversations", op: "conversation.threads" },
 ];
-for (const width of [1400, 375]) {
+for (const { width, touch } of [
+  { width: 1400, touch: false },
+  { width: 375, touch: true },
+]) {
   test.describe(`rows at ${width} px`, () => {
-    test.use({ viewport: { width, height: 900 } });
+    test.use({ viewport: { width, height: 900 }, hasTouch: touch, isMobile: touch });
+    test.beforeEach(async ({ page }) => {
+      expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(touch);
+    });
     for (const { path, op } of LISTS) {
       test(`${path}: a row's placeholder size is its drawn height`, async ({ page }) => {
         await open(page, path);
@@ -227,6 +233,20 @@ test.describe("a touch pointer at 375 px", () => {
     if (!box) throw new Error("the +N chip has no box");
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
     await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
+  // A tag chip keeps its 24 px box, so the row keeps its height, and takes a 44 px tap: a
+  // tap 8 px above the box filters by the tag instead of opening the row.
+  test("a row's tag chip is a 44 px target that does not grow the row", async ({ page }) => {
+    await installApi(page, { memoryRows: 12, firstMemoryTags: ["alerts", "storage"] });
+    await page.goto("/memories");
+    const tag = page.locator("main .list-row").first().getByRole("button", { name: "Filter by tag alerts" });
+    const box = await tag.boundingBox();
+    if (!box) throw new Error("the tag chip has no box");
+    expect(Math.round(box.height)).toBeLessThan(44);
+    await page.touchscreen.tap(box.x + box.width / 2, box.y - 8);
+    await expect(tag).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 });
 

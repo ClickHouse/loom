@@ -15,8 +15,6 @@ export interface TagListProps {
  * A row's tags: outlined chips (an agent is a filled badge, so outline against fill tells
  * the two apart without a `#`), at most three, then "+N" with the rest in its tooltip. A
  * tag the list is filtered by reads as pressed, the fill Click UI gives a checked control.
- * "+N" lifts above the row's open button only under a hovering pointer: on touch, where the
- * tip does not open, a tap on it opens the row, whose drawer lists every tag.
  */
 export function TagList({ tags, onTagClick, activeTags, max = 3, className = "" }: TagListProps) {
   if (tags.length === 0) return null;
@@ -32,6 +30,7 @@ export function TagList({ tags, onTagClick, activeTags, max = 3, className = "" 
           onClick={onTagClick ? () => onTagClick(t) : undefined}
           selected={onTagClick ? (activeTags?.has(t.toLowerCase()) ?? false) : undefined}
           ariaLabel={onTagClick ? `Filter by tag ${t}` : undefined}
+          target="overlay"
           className="list-row-control"
         />
       ))}
@@ -41,7 +40,8 @@ export function TagList({ tags, onTagClick, activeTags, max = 3, className = "" 
           outline
           ariaLabel={`${rest.length} more tags: ${rest.join(", ")}`}
           tip={rest.join(", ")}
-          className="list-row-control-hover"
+          target="none"
+          className="list-row-tip"
         />
       )}
     </div>

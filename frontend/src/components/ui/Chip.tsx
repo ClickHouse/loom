@@ -6,7 +6,7 @@ import { Tip } from "./Tooltip";
 /**
  * Chip — a filter or value chip. Click UI has no filter chip, so this is drawn as its
  * opaque badge (pill, 1 px stroke, 500 12 px, 2 × 12 px padding) with a 24 px hit target
- * on a fine pointer (44 × 44 px under `pointer: coarse`, a static chip excepted), an
+ * on a fine pointer (44 × 44 px under `pointer: coarse`, a static chip excepted; `target`), an
  * optional tabular count and an optional swatch. One shape for the toggles in Facets, the
  * status filters in Runs, the keys in a run's detail.
  *
@@ -39,12 +39,17 @@ export interface ChipProps {
   /** A small glyph before the label (a lock on a restricted namespace); decorative — the
    *  accessible name carries the meaning. */
   icon?: ReactNode;
+  /** Its 44 px target under a coarse pointer: `box` grows the chip; `overlay` keeps its size
+   *  and reaches 44 px through a hit area drawn around it (a row's tag, which must not grow
+   *  the row); `none` has no target, for a chip a tap passes through. */
+  target?: "box" | "overlay" | "none";
   className?: string;
 }
 
 const SHAPE = "chip inline-flex items-center justify-center max-w-full min-h-6 border";
 /** A chip that takes a press or a focus: a 44 px target under a coarse pointer. */
 const BASE = `${SHAPE} pointer-coarse:min-h-11 pointer-coarse:min-w-11`;
+const TARGET = { box: BASE, overlay: `${SHAPE} chip-hit`, none: SHAPE };
 /** An outlined chip's look, for a chip-shaped control this component cannot draw (a link
  *  that anchors a popover). */
 export const CHIP_OUTLINE_CLASS = `${BASE} chip-outline`;
@@ -63,8 +68,10 @@ export function Chip({
   ariaLabel,
   tip,
   icon,
+  target = "box",
   className = "",
 }: ChipProps) {
+  const shape = TARGET[target];
   const name = ariaLabel ?? (count !== undefined ? `${label}, ${count}${countLabel ? ` ${countLabel}` : ""}` : label);
   const inner = (
     <>
@@ -109,7 +116,7 @@ export function Chip({
 
   if (!onClick && !onRemove) {
     return tip ? (
-      <TipTarget tip={tip} className={`${BASE} ${tone} ${className}`}>
+      <TipTarget tip={tip} className={`${shape} ${tone} ${className}`}>
         {spoken}
       </TipTarget>
     ) : (
@@ -125,12 +132,12 @@ export function Chip({
       disabled={disabled && !softDisabled}
       aria-disabled={disabled || undefined}
       onClick={softDisabled ? undefined : onClick}
-      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} aria-disabled:cursor-not-allowed ${className}`}
+      className={`${shape} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} aria-disabled:cursor-not-allowed ${className}`}
     >
       {inner}
     </button>
   ) : (
-    <span className={`${BASE} ${tone} rounded-r-none border-r-0 ${className}`}>{spoken}</span>
+    <span className={`${shape} ${tone} rounded-r-none border-r-0 ${className}`}>{spoken}</span>
   );
   if (!onRemove) return wrap(main);
   return (
