@@ -594,7 +594,10 @@ def test_prune_dry_run_skips_and_counts_rows_another_token_wrote(
 
 
 def test_prune_keeps_a_row_replaced_between_its_read_and_the_delete(
-    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
     post = loom.post
@@ -605,7 +608,7 @@ def test_prune_keeps_a_row_replaced_between_its_read_and_the_delete(
             loom.put("okf-sync", "gone", source_trace="okf:b/x.md", tags=[], actor="human:bob")
         return res
 
-    loom.post = replace_after_read  # type: ignore[method-assign]
+    monkeypatch.setattr(loom, "post", replace_after_read)
     capsys.readouterr()
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
     assert loom.rows[("okf-sync", "-", "gone")]["actor"] == "human:bob"
@@ -624,6 +627,29 @@ def test_prune_stops_at_the_first_delete_a_server_ran_without_the_version_check(
     assert "ignored if_version and deleted" in out.err
     assert "1 pruned (1 failed)" in out.out
     assert ("okf-sync", "-", "gone-2") in loom.rows
+
+
+def test_prune_says_when_an_older_server_found_nothing_to_delete(
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    loom.older_server = True
+    post = loom.post
+
+    async def gone_before_the_delete(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.delete":
+            loom.rows.pop(("okf-sync", "-", "gone"))
+        return await post(op, body)
+
+    monkeypatch.setattr(loom, "post", gone_before_the_delete)
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
+    out = capsys.readouterr()
+    assert "ignored if_version and found nothing to delete" in out.err
+    assert "0 pruned (1 failed)" in out.out
 
 
 def test_prune_never_deletes_without_a_version_to_check(tmp_path: Path, loom: _FakeLoom) -> None:

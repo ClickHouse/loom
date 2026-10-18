@@ -916,8 +916,10 @@ async def _prune(
                 print(f"  would delete {key}{where}")
                 n["pruned"] += 1
                 continue
-            if got.get("version") is None:
-                raise RuntimeError("memory.get answered without a version")
+            if got.get("version") is None:  # without it the delete would run unchecked
+                n["prune_failed"] += 1
+                print(f"  ✗ prune {key}: memory.get answered without a version", file=sys.stderr)
+                continue
             # The server deletes only the version read above, under this exact identity.
             res = await client.post("memory.delete", {**ident, "if_version": got["version"]})
         except RuntimeError as e:
@@ -927,7 +929,8 @@ async def _prune(
         if res.get("reason") == "version_changed":
             n["prune_kept"] += 1
             continue
-        n["pruned"] += int(bool(res.get("tombstoned")))
+        if res.get("tombstoned"):
+            n["pruned"] += 1
         if "if_version" in res.get("ignored_args", []):
             # An older server deleted without the check; stop before it does that again.
             done = "deleted" if res.get("tombstoned") else "found nothing to delete"
