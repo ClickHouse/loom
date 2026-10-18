@@ -57,7 +57,10 @@ async def test_anchor_first_places_the_oldest_run_memory_first(
 
     calls: list[dict[str, Any]] = []
 
-    async def fake_list(ident: Any, *, order_by: str, limit: int, scope: Any) -> list[Any]:
+    async def fake_list(
+        ident: Any, *, order_by: str, limit: int, scope: Any, exclude_high_sensitivity: bool
+    ) -> list[Any]:
+        assert exclude_high_sensitivity  # a 'high' row is never in a search leg
         calls.append({"order_by": order_by, "limit": limit})
         return [
             SimpleNamespace(

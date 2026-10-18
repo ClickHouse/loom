@@ -457,9 +457,12 @@ _BULK_FETCH_SQL = """
             memory_id,
             org, namespace, agent, user_id, session_id,
             memory_key, memory_type, value, confidence, version, pinned,
-            created_at, updated_at, expires_at, valid_at, status, run_id, source_trace,
-            char_limit, tags, entities, content_sha256,
-            verified_by, verified_at, verified_sha256, actor, source_class
+            created_at, updated_at, expires_at, on_expire, expire_reason,
+            valid_at, valid_to, temporal_anchor, temporal_confidence,
+            status, run_id, source_trace, char_limit, tags, entities, content_sha256,
+            duplicate_of, superseded_by, recall_count, last_recalled_at,
+            verified_by, verified_at, verified_sha256, sensitivity, actor, source_class,
+            lock_mode, lock_reason, lock_until, locked_by, locked_at
         FROM loom.memory
         WHERE org = {org:String}
           AND namespace = {ns:String}
@@ -733,6 +736,7 @@ async def list_by_namespace(
             char_limit,
             created_at, updated_at, expires_at, valid_at, tombstoned_at,
             status, run_id, source_trace, tags, entities,
+            evidence_count, recall_count, last_recalled_at,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}
@@ -767,6 +771,7 @@ async def _locate_then_preview(
             confidence, version, pinned, char_limit,
             created_at, updated_at, expires_at, valid_at, tombstoned_at,
             status, run_id, source_trace, tags, entities,
+            evidence_count, recall_count, last_recalled_at,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}
@@ -922,9 +927,46 @@ async def _overlay_usage_totals(row: MemoryRow, ch: _CHClient) -> MemoryRow:
         )
     except Exception:  # noqa: BLE001 — usage totals are optional; keep the row
         return row
+    return _with_usage(row, totals)
+
+
+async def overlay_usage_totals_many(
+    rows: list[MemoryRow], *, ch: _CHClient | None = None
+) -> list[MemoryRow]:
+    """`_overlay_usage_totals` for rows of one namespace, in one statement."""
+    if not rows:
+        return rows
+    ch = ch or _default_client()
+    try:
+        totals = await ch.query_all(
+            """
+            SELECT
+                memory_id,
+                sum(evidence_count) AS evidence_count,
+                sum(recall_count) AS recall_count,
+                max(last_recalled_at) AS last_recalled_at
+            FROM loom.memory_usage_totals
+            WHERE org = {org:String}
+              AND namespace = {ns:String}
+              AND memory_id IN {mids:Array(UUID)}
+            GROUP BY memory_id
+            """,
+            params={
+                "org": rows[0].org,
+                "ns": rows[0].namespace,
+                "mids": [str(r.memory_id) for r in rows],
+            },
+        )
+    except Exception:  # noqa: BLE001 — usage totals are optional; keep the rows
+        return rows
+    by_id = {str(t["memory_id"]): t for t in totals}
+    return [_with_usage(r, by_id.get(str(r.memory_id))) for r in rows]
+
+
+def _with_usage(row: MemoryRow, totals: dict[str, Any] | None) -> MemoryRow:
+    """The row with the usage totals' counters where they are non-zero."""
     if not totals:
         return row
-
     updates: dict[str, Any] = {}
     usage_evidence = int(totals.get("evidence_count") or 0)
     usage_recall = int(totals.get("recall_count") or 0)

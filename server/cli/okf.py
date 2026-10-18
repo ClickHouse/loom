@@ -180,6 +180,8 @@ async def _fetch_namespace(
         for r in rows:
             g = full.get(r["memory_key"]) or {}
             merged = {**r, **{k: v for k, v in g.items() if v not in (None, "", [], {})}}
+            # Present even when empty, so a row bulk_get did not answer has none and stays home.
+            merged["sensitivity"] = g.get("sensitivity")
             merged.setdefault("namespace", namespace)
             merged["agent"] = agent if agent != "*" else (r.get("agent") or "")
             out.append(merged)
@@ -391,8 +393,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             )
         if skipped_high:
             print(
-                f"  {skipped_high} row(s) with sensitivity=high stayed in the database "
-                f"(--include-high exports them)"
+                f"  {skipped_high} row(s) stayed in the database: sensitivity=high, or not "
+                f"answered (--include-high exports them)"
             )
         if orphans:
             print(

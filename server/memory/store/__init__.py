@@ -122,6 +122,7 @@ from server.memory.store.reads import (
     list_by_namespace,
     memory_rows_by_identity_keys,
     namespace_version,
+    overlay_usage_totals_many,
 )
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
@@ -233,6 +234,7 @@ __all__ = [
     "key_holds_established_fact",
     "list_by_namespace",
     "list_history",
+    "overlay_usage_totals_many",
     "live_embedding_rows_for_key",
     "head_sensitivities",
     "live_rows_for_keys",

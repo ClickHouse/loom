@@ -80,6 +80,8 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
             limit=n * 4 if run_id else n,
             **_tier_tag_kwargs(input),
             scope=request_scope(),
+            # A 'high' row is never in a search leg; it is readable by key only.
+            exclude_high_sensitivity=True,
         )
     except Exception as e:  # noqa: BLE001 — a tier never fails a search
         log.debug("%s tier read failed: %s", tier, e)

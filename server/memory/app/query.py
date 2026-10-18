@@ -35,6 +35,11 @@ from server.memory.domain.entity_sentinels import public_entities
 log = logging.getLogger(__name__)
 
 
+def _wants_usage(keep: frozenset[str] | None) -> bool:
+    """Whether a projection serves a usage counter, which costs one more statement."""
+    return keep is None or bool(keep & {"evidence_count", "recall_count", "last_recalled_at"})
+
+
 def _row_content_sha256(row: Any) -> str:
     """Canonical hash of a MemoryRow's value; '' when there is no value.
 
@@ -306,6 +311,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         )
     truncated = len(rows) > input.limit
     rows = rows[: input.limit]
+    if _wants_usage(keep):
+        rows = await memory_repo.overlay_usage_totals_many(rows)
     # The two counts under FINAL are remembered per (scope, namespace version, UTC day) — a
     # changed page recomputes them once, not on every poll that saw a change.
     from datetime import UTC, datetime
@@ -394,6 +401,9 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                         r.verified_sha256,
                         _row_content_sha256(r),
                     ),
+                    evidence_count=r.evidence_count,
+                    recall_count=r.recall_count,
+                    last_recalled_at=r.last_recalled_at,
                     tags=list(r.tags or []),
                     entities=public_entities(r.entities),
                     agent=r.agent or "",
@@ -773,7 +783,9 @@ async def _handle_memory_bulk_get(
     # the id; a bulk reader that got chunk ids back from a search reads the parent rows here
     # instead of a miss. The parent's row is answered under every id that asked for it, with
     # `canonical_key` naming the parent, so the caller can fold.
+    from server.memory.app.get_output import duplicate_of_shown, row_output
     from server.memory.app.handlers import chunk_parent_key
+    from server.observability import audit as _audit
 
     parent_of: dict[str, str] = {}
     for k in input.memory_keys:
@@ -782,41 +794,32 @@ async def _handle_memory_bulk_get(
             parent_of[k] = parent
     wanted = list(dict.fromkeys([parent_of.get(k, k) for k in input.memory_keys]))
     rows = await memory_repo.get_many_by_keys(identity, wanted, scope=request_scope())
+    if _wants_usage(keep):
+        rows = await memory_repo.overlay_usage_totals_many(rows)
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, rows)
     successors = await shown_successors(input.org, input.namespace, rows)
-    # Same read shape as memory.get so a bulk reader (the OKF exporter, the
-    # dashboard preload) sees identity, lifecycle and attestation without N gets.
+    # Same answer as memory.get, so a bulk reader (the OKF exporter, the dashboard preload)
+    # sees identity, lifecycle, sensitivity and attestation without N gets. The conflict
+    # verdict and code links cost a read per row and are left to memory.get.
     results: dict[str, MemoryGetOutput] = {}
     for r in rows:
-        sha = _row_content_sha256(r)
-        results[r.memory_key] = MemoryGetOutput(
-            found=True,
-            canonical_key=canonical.get(r.memory_key),
-            memory_id=str(r.memory_id),
-            value=r.value,
-            memory_type=r.memory_type,
-            confidence=r.confidence,
-            version=r.version,
-            created_at=r.created_at,
-            updated_at=r.updated_at or r.created_at,
-            expires_at=r.expires_at,
-            valid_at=r.valid_at,
-            pinned=r.pinned,
-            agent=r.agent or "",
-            status=r.status,
+        canonical_key = canonical.get(r.memory_key)
+        results[r.memory_key] = row_output(
+            r,
+            sha=_row_content_sha256(r),
+            canonical_key=canonical_key,
+            duplicate_of=duplicate_of_shown(r, canonical_key),
             superseded_by=successors.get(str(r.memory_id), ""),
-            sensitivity=str(getattr(r, "sensitivity", "") or ""),
-            source_class=getattr(r, "source_class", "") or "",
-            actor=getattr(r, "actor", "") or "",
-            valid_to=getattr(r, "valid_to", None),
-            tags=list(r.tags or []),
-            entities=public_entities(r.entities),
-            content_sha256=sha,
-            char_limit=r.char_limit,
-            verified_by=r.verified_by,
-            verified_at=r.verified_at,
-            verification=_trust.verification_state(r.verified_by, r.verified_sha256, sha),
         )
+        if getattr(r, "sensitivity", "") == "high":
+            # A key read of a 'high' row is audited, as memory.get audits it.
+            await _audit.emit(
+                "memory.sensitive_read",
+                org=input.org,
+                namespace=input.namespace,
+                actor=input.agent,
+                subject={"memory_key": r.memory_key, "memory_id": str(r.memory_id)},
+            )
         results[r.memory_key]._projection = keep
     for chunk_id, parent in parent_of.items():
         if parent in results and chunk_id not in results:

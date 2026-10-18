@@ -201,3 +201,36 @@ async def test_bulk_set_per_entry_ttl_on_embedding_mirror(
     )
     assert by_key["ttl_key"] is not None, "TTL entry's embedding row lost its expires_at"
     assert by_key["perm_key"] is None, "non-TTL entry's embedding row got a stray expires_at"
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_answers_each_row_as_memory_get_does(control_plane_url: str) -> None:
+    """bulk_get's default read once left sensitivity, valid_to, superseded_by and
+    duplicate_of empty, so export-okf published 'high' rows. Each answer now matches
+    memory.get's for the same row."""
+    from loom import Agent
+
+    ns = f"mb-shape-{uuid.uuid4().hex[:6]}"
+    async with Agent(org=ORG, namespace=ns, agent="w", base_url=control_plane_url) as a:
+        await a.call(
+            "memory.set",
+            memory_key="vault",
+            value={"note": "rotated weekly"},
+            memory_type="semantic",
+            sensitivity="high",
+        )
+        await a.call(
+            "memory.set",
+            memory_key="window",
+            value={"note": "Tue and Thu"},
+            memory_type="semantic",
+            valid_to="2099-01-01T00:00:00",
+        )
+        bulk = await a.memory.bulk_get(["vault", "window"])
+        gets = {k: await a.call("memory.get", memory_key=k) for k in ("vault", "window")}
+    assert bulk["results"]["vault"]["sensitivity"] == "high"
+    assert bulk["results"]["window"]["valid_to"] is not None
+    skip = {"conflict_verdict", "code", "recall_by_agent", "unchanged"}
+    for k, got in gets.items():
+        served = {f: v for f, v in bulk["results"][k].items() if f not in skip}
+        assert served == {f: v for f, v in got.items() if f not in skip}, k

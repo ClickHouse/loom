@@ -492,7 +492,16 @@ def test_provenance_tier_travels_and_only_downgrades_are_declared() -> None:
 def test_high_sensitivity_rows_are_not_exportable_by_default() -> None:
     assert okf.is_exportable(_entry(sensitivity="high")) is False
     assert okf.is_exportable(_entry(sensitivity="high"), include_high=True) is True
-    assert okf.is_exportable(_entry(sensitivity="medium")) and okf.is_exportable(_entry())
+    assert okf.is_exportable(_entry(sensitivity="medium"))
+    assert okf.is_exportable(_entry(sensitivity=""))
+    # The tag memory.set adds marks the row high when the column read came back empty.
+    assert okf.is_exportable(_entry(sensitivity="", tags=["sensitivity:high"])) is False
+
+
+def test_a_row_whose_sensitivity_was_not_read_stays_home() -> None:
+    assert okf.is_exportable(_entry()) is False  # no `sensitivity` key: the read did not answer
+    assert okf.is_exportable(_entry(sensitivity=None)) is False
+    assert okf.is_exportable(_entry(sensitivity="secret")) is False  # a level this build lacks
 
 
 def test_corpus_digest_covers_concepts_only_and_moves_with_them() -> None:

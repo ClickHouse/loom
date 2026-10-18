@@ -215,6 +215,15 @@ _CONTACT_INTENT = re.compile(
 )
 
 
+def is_high(level: object, tags: object) -> bool:
+    """High by the sensitivity column or by the `sensitivity:high` tag memory.set adds."""
+    if str(level or "").strip().lower() == HIGH:
+        return True
+    if not isinstance(tags, list):
+        return False
+    return SENSITIVITY_TAG_PREFIX + HIGH in {str(t).strip().lower() for t in tags}
+
+
 def sensitivity_tags(level: str | None, existing: Iterable[str] = ()) -> list[str]:
     """`sensitivity:<level>` tag for a labelled row, so the label rides
     `loom.memory_embeddings.tags` (which has no sensitivity column) and the

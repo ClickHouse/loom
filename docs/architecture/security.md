@@ -516,7 +516,8 @@ are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
 A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search leg
-returns it; a key-only read of one writes a `memory.sensitive_read` audit row. Search
+returns it, and the recent and pinned tiers a search can prepend leave it out too. A key read
+of one, through `memory.get` or `memory.bulk_get`, writes a `memory.sensitive_read` audit row. Search
 demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 

@@ -40,10 +40,16 @@ class _FakeClient:
         if op == "memory.bulk_get":
             return {
                 "results": {
-                    "new": {"value": "v2", "memory_id": "m-new", "source_class": "asserted"},
+                    "new": {
+                        "value": "v2",
+                        "memory_id": "m-new",
+                        "source_class": "asserted",
+                        "sensitivity": "",
+                    },
                     "old": {
                         "value": "v1",
                         "memory_id": "m-old",
+                        "sensitivity": "",
                         "status": "superseded",
                         "superseded_by": "m-new",
                         "source_class": "extracted",

@@ -11,13 +11,13 @@ primitive, not a compliance certification.
 
 ## What leaves an audit row
 
-| Source                                      | `event_type`                                                                         | `subject` holds                                                                      |
-| ------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| Any operation declared `audit=True`         | the op name (`memory.delete`, `grants.create`)                                       | the op's validated input body, as JSON                                               |
-| `memory.set` (point writes)                 | `memory.set`                                                                         | key, memory id, `content_sha256`, `source_class`, verdict, `pinned`. Never the value |
-| `memory.bulk_set`                           | `memory.bulk_set`                                                                    | one hash-only row per write                                                          |
-| A key-only read of a `high`-sensitivity row | `memory.sensitive_read`                                                              | key and memory id                                                                    |
-| The server itself                           | `budget.violated`, `ratelimit.exceeded`, `worker.failed`, `audit.tamper_detected`, … | what the event is about                                                              |
+| Source                                 | `event_type`                                                                         | `subject` holds                                                                      |
+| -------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Any operation declared `audit=True`    | the op name (`memory.delete`, `grants.create`)                                       | the op's validated input body, as JSON                                               |
+| `memory.set` (point writes)            | `memory.set`                                                                         | key, memory id, `content_sha256`, `source_class`, verdict, `pinned`. Never the value |
+| `memory.bulk_set`                      | `memory.bulk_set`                                                                    | one hash-only row per write                                                          |
+| A key read of a `high`-sensitivity row | `memory.sensitive_read` (from `memory.get` and `memory.bulk_get`, one per row)       | key and memory id                                                                    |
+| The server itself                      | `budget.violated`, `ratelimit.exceeded`, `worker.failed`, `audit.tamper_detected`, … | what the event is about                                                              |
 
 The **Audit** column of the generated [operations reference](../../reference/operations.md)
 lists every audited op (the `audit` flag on each `Operation`). Read ops are never audited;
