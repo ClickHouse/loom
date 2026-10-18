@@ -375,6 +375,16 @@ async def test_a_mirror_batch_stops_once_the_pass_deadline_passes(
     assert sum(len(m["failure_ids"]) for m in marks) == 5, "the other 295 stay active"
 
 
+def test_the_status_mirror_budget_defaults_from_its_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.workers import projection_repair
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "projection_repair_status_mirror_seconds", 7.5)
+    assert projection_repair.ProjectionRepairConfig().status_mirror_seconds == 7.5
+
+
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(
     monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
 ) -> None:
