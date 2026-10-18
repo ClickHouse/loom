@@ -1655,7 +1655,6 @@ function RepoDetail({
                 b={b}
                 busy={actions.busy === b.namespace}
                 onOpen={() => onSwitch(b.namespace)}
-                onJoin={() => setJoinTarget({ repo: b, role: "viewer" })}
                 onRequest={() => setJoinTarget({ repo: b, role: "viewer" })}
                 onCancel={() => void actions.cancel(b)}
               />

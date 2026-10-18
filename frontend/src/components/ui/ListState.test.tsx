@@ -65,8 +65,8 @@ describe("ListState", () => {
     expect(screen.getByRole("heading", { name: "Library" })).toHaveFocus();
   });
 
-  // Review: Clear filters leaves with the filtered state, and focus fell to <body>. It goes
-  // to the list's search field, else to the page's heading.
+  // Clear filters leaves with the filtered state, so focus goes to the list's search field,
+  // else to the page's heading, never to <body>.
   it("puts focus on the list's search field when Clear filters is pressed", () => {
     const onClear = vi.fn();
     render(

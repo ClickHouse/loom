@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, SearchHit } from "../api";
 import { useStore } from "../lib/state";
@@ -93,6 +93,17 @@ describe("Recall Lab: the scores table", () => {
     expect(first.getByText("semantic")).toBeInTheDocument();
     // No entity term: a dash.
     expect(within(rows[1]).getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("drops the old namespace's rows on a switch, so none opens under the new one", async () => {
+    searchMemory.mockImplementation(async (id: { namespace: string }) =>
+      id.namespace === "other" ? new Promise(() => {}) : { results: [hit("deploy_note", 0.9)], embedding_model: "m" },
+    );
+    render(<RecallLab />);
+    const table = await score();
+    expect(within(table).getByRole("button", { name: "deploy_note" })).toBeInTheDocument();
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } }));
+    expect(screen.queryByRole("button", { name: "deploy_note" })).toBeNull();
   });
 
   it("draws the score as Click UI's table bar, relative to the top score", async () => {

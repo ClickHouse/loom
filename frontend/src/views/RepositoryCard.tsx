@@ -230,24 +230,20 @@ function StandingChip({
 }
 
 /** A branch chip (the repository detail's branch switcher): member → Open, open/approval
- *  → the request dialog, pending → withdraw. `onJoin` is accepted for callers that still
- *  pass it and never called — a chip never joins directly. */
+ *  → the request dialog, pending → withdraw. A chip never joins directly. */
 export function BranchChip({
   b,
   busy,
   onOpen,
-  onJoin,
   onRequest,
   onCancel,
 }: {
   b: CodeRepoSummary;
   busy: boolean;
   onOpen: () => void;
-  onJoin?: () => void;
   onRequest: () => void;
   onCancel: () => void;
 }) {
-  void onJoin;
   const st = branchState(b);
   const onClick =
     st === "member" ? onOpen : st === "open" || st === "approval" ? onRequest : st === "pending" ? onCancel : undefined;
@@ -377,7 +373,8 @@ const BRANCH_HEADERS = [
 ];
 const ACCESS_WORD: Partial<Record<TrackerNamespaceState, string>> = { member: "Reading", pending: "Requested" };
 
-function branchMenu(b: CodeRepoSummary, actions: CodeActions): RowMenuItem[] {
+// While a write is out, a second one waits for it: every item is disabled.
+function branchMenu(b: CodeRepoSummary, actions: CodeActions, busy: boolean): RowMenuItem[] {
   const st = branchState(b);
   const items: RowMenuItem[] = [];
   if (st === "member") {
@@ -393,13 +390,13 @@ function branchMenu(b: CodeRepoSummary, actions: CodeActions): RowMenuItem[] {
   const remove = actions.onRemove;
   if (remove && b.my_role === "admin" && b.source === "registry")
     items.push({ label: "Remove branch", icon: "trash", danger: true, onSelect: () => remove(b) });
-  return items;
+  return items.map((item) => ({ ...item, disabled: busy }));
 }
 
-function branchRow(b: CodeRepoSummary, actions: CodeActions): TableRowType {
+function branchRow(b: CodeRepoSummary, actions: CodeActions, busy: boolean): TableRowType {
   const behind = b.fast_tier_lag > 0 ? b.fast_tier_lag : b.scip_lag;
   const counts = b.counts?.code_files ? b.counts : null;
-  const items = branchMenu(b, actions);
+  const items = branchMenu(b, actions, busy);
   return {
     id: b.namespace,
     items: [
@@ -426,7 +423,7 @@ function BranchTable({ facet, busy, actions }: { facet: CodeFacet; busy: boolean
         aria-label={`${facet.repo} branches`}
         size="sm"
         headers={BRANCH_HEADERS}
-        rows={facet.branches.map((b) => branchRow(b, actions))}
+        rows={facet.branches.map((b) => branchRow(b, actions, busy))}
       />
       {add && (
         <Button
@@ -672,7 +669,7 @@ function actionMenu(card: CardModel, code: CodeActions, record: RecordActionProp
 }
 
 /** The withdraw menu behind a `Requested` badge. */
-function withdrawMenu(card: CardModel, code: CodeActions, record: RecordActionProps): RowMenuItem[] {
+function withdrawMenu(card: CardModel, code: CodeActions, record: RecordActionProps, busy: boolean): RowMenuItem[] {
   const branches = card.code?.pending ?? [];
   const scopes = card.record?.pending ?? [];
   const one = branches.length + scopes.length === 1;
@@ -681,11 +678,13 @@ function withdrawMenu(card: CardModel, code: CodeActions, record: RecordActionPr
       label: one ? "Withdraw request" : `Withdraw request for ${b.branch}`,
       icon: "clock" as const,
       onSelect: () => code.onCancel(b),
+      disabled: busy,
     })),
     ...scopes.map((n) => ({
       label: one ? "Withdraw request" : `Withdraw request for ${recordName(n)}`,
       icon: "clock" as const,
       onSelect: () => record.onCancel(n),
+      disabled: busy,
     })),
   ];
 }
@@ -707,7 +706,7 @@ function RowAction({
     return (
       <span className="inline-flex items-center gap-1">
         <Badge text="Requested" state="info" size="sm" />
-        <RowMenu name={card.repo} items={withdrawMenu(card, code, record)} />
+        <RowMenu name={card.repo} items={withdrawMenu(card, code, record, busy)} />
       </span>
     );
   }

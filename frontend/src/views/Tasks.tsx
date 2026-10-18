@@ -614,7 +614,9 @@ export function Tasks() {
   // The empty inbox's own New task is the page's one primary while it shows.
   const emptyInbox = loaded && rows?.length === 0;
   const openCount = visible.length - groups.closed.length;
-  const onlyClosed = mode === "list" && !filtering && openCount === 0 && visible.length > 0 && collapsed.closed;
+  // A phone always draws the list, whatever mode is saved.
+  const onlyClosed =
+    (mode === "list" || phone) && !filtering && openCount === 0 && visible.length > 0 && collapsed.closed;
   const count =
     loaded && !emptyInbox
       ? filtering

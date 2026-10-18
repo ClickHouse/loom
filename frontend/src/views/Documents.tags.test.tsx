@@ -92,8 +92,7 @@ describe("Library: filtering by tags", () => {
     expect(shown()).toEqual(["Both", "Specs only"]);
   });
 
-  // Review: the Library had its own `tag:` parser beside the Memories one; on the shared
-  // parser the prefix still reads in any case, as the Library's did.
+  // The Library reads `tag:` with the parser Memories uses, the prefix in any case.
   it("reads the tag: prefix in any case", async () => {
     render(<Documents />);
     await settle();

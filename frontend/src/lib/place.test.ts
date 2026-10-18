@@ -66,7 +66,7 @@ describe("restorePlace and arriveAt", () => {
     expect(document.getElementById("loom-nav-status")!.textContent).toBe("Memories");
   });
 
-  // Review: Back to Memories focused the row's checkbox (its first focusable), not the row.
+  // Back to Memories focuses the row, not its first focusable control (the checkbox).
   it("a keyed list row gives the focus to its open button, not its checkbox", () => {
     const main = page(
       '<h1>Memories</h1><div class="list-row" data-focus-key="memory:a">' +

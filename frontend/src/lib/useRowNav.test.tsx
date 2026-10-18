@@ -135,9 +135,8 @@ describe("useRowNav", () => {
     });
   });
 
-  // Review: only the open buttons and checkboxes left the tab order; every tag chip and
-  // row-menu trigger stayed a tab stop (151 on a Memories page). Now only the current row's
-  // controls are reachable with Tab, after its open button.
+  // Only the current row's controls are reachable with Tab, after its open button: every
+  // other row's tag chips and menu triggers are out of the tab order too.
   it("keeps the controls of every row but the current one out of the tab order", async () => {
     render(<List controls />);
     const user = userEvent.setup();

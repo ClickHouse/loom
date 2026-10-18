@@ -764,3 +764,21 @@ describe("RepositoryCard — docs", () => {
     cleanup();
   });
 });
+
+describe("RepositoryCard while a write is out", () => {
+  it("disables every branch row's menu item, so a second write waits for the first", async () => {
+    const user = userEvent.setup();
+    mount(
+      [
+        branch({ namespace: "a", branch: "master", my_role: "viewer" }),
+        branch({ namespace: "b", branch: "25.8", my_role: "", join_policy: "open" }),
+      ],
+      [],
+      "a",
+    );
+    const menu = await openBranchMenu(user, "master");
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) expect(item).toHaveAttribute("aria-disabled", "true");
+  });
+});

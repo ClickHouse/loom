@@ -452,6 +452,27 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(await screen.findByRole("button", { name: "goal 777" })).toBeInTheDocument();
   });
 
+  // Local mode entered from a later page (the release before answered there): a search with
+  // no match says so, rather than a blank page with no pager.
+  it("says no runs match a search in local mode entered from a later page", async () => {
+    let old = false;
+    listRunsPage.mockImplementation(async (_id, opts = {}) => {
+      const from = opts.offset ?? 0;
+      const runs = Array.from({ length: Math.min(opts.limit ?? 50, 120 - from) }, (_, i) => run(from + i + 1));
+      return { runs, total: old ? null : 120 };
+    });
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    old = true;
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Runs pages" })).getByRole("button", { name: "Next page" }),
+    );
+    await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
+    await screen.findByRole("button", { name: "goal 51" });
+    fireEvent.change(screen.getByLabelText("Search runs"), { target: { value: "nothing like this" } });
+    expect(await screen.findByText(/No runs match/)).toBeInTheDocument();
+  });
+
   // Runs that started together keep run.list's order: run_id in the direction of the sort.
   it("against a server that does not page, breaks a tie in start by run_id, newest first", async () => {
     const at = { started_at: "2026-09-20T07:00:00Z" };

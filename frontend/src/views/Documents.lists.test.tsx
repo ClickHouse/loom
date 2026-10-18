@@ -162,9 +162,8 @@ describe("Library list", () => {
     expect(toolbar()).not.toHaveTextContent("selected");
   });
 
-  // Review: the free-text filter and the sort run over the documents loaded so far, but
-  // "No documents match" and "N matches" read as a claim about the whole library while
-  // the cursor still held unread documents.
+  // The free-text filter and the sort run over the documents loaded so far: while the cursor
+  // holds more, "No documents match" and the count say they cover the loaded ones.
   it("says a search covers only the loaded documents while more are unread", async () => {
     api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: "c-2" });
     render(<Documents />);
@@ -178,8 +177,8 @@ describe("Library list", () => {
     expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
   });
 
-  // Review: the reload after a delete had no abort or live check, so a namespace switch
-  // while it was in flight drew the old namespace's documents under the new one.
+  // The reload after a delete is dropped when the namespace changes while it is in flight,
+  // so the old namespace's documents never draw under the new one.
   it("drops a reload after a delete that lands once the namespace has changed", async () => {
     let finishOld: (v: unknown) => void = () => {};
     let teamReads = 0;

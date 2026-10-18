@@ -46,8 +46,7 @@ describe("MemoryCard", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
-  // Review: the open button's name ran to the key, the agent, the time with its UTC copy and
-  // up to 280 characters of value. The key names it; the rest describes it.
+  // The open button is named by the key alone; the agent, the time and the value describe it.
   it("is named by its key and described by its state, writer, time and value", () => {
     render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value="oat milk" />);
     const open = screen.getByRole("button", { name: "prefs/coffee" });

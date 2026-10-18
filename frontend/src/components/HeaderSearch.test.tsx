@@ -69,8 +69,8 @@ describe("HeaderSearch", () => {
     expect(first.textContent?.indexOf("coffee/order")).toBeLessThan(first.textContent?.indexOf("semantic") ?? 0);
   });
 
-  // Review: a Library result drew its tags as filled "#tag" badges, where a row draws them
-  // as outlined chips; and "Best matches" had the clock icon "Recent memories" has.
+  // A Library result draws its tags as the outlined chips a row draws, and "Best matches"
+  // has an icon of its own, not the clock of "Recent memories".
   it("draws a document's tags as the rows do, and tells Best matches from Recent by icon", async () => {
     catalog.recent = [{ memory_key: "coffee/old", agent: "a" }];
     catalog.docs = [{ source_uri: "s3://coffee.md", title: "Coffee guide", tags: ["beans", "brew"], chunk_count: 2 }];

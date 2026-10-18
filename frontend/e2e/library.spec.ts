@@ -47,8 +47,8 @@ test.describe("375 px", () => {
   });
 });
 
-// Review: a sort other than newest first runs over the loaded documents only; while the
-// cursor holds more, the count says so instead of reading as the whole library.
+// A sort other than newest first runs over the loaded documents only; while the cursor
+// holds more, the count says so instead of reading as the whole library.
 test("a sort over a partly loaded library says it covers the loaded documents", async ({ page }) => {
   await installApi(page, {});
   const rows = ["Charlie", "Alpha", "Bravo"].map((title, i) => ({

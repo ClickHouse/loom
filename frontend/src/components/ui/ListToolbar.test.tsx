@@ -95,9 +95,8 @@ describe("ListToolbar", () => {
     expect(screen.getByRole("checkbox", { name: "Select all 5 on this page" })).toHaveAttribute("aria-checked", "true");
   });
 
-  // Review: the count's live region was mounted only once there was a count, so its first
-  // text was never said, and "N selected" had none. One status region stays mounted and
-  // its text changes: the count, or the selection while rows are selected.
+  // One status region stays mounted from the start, so its first text is said; its text is
+  // the count, or the selection ("N selected") while rows are selected.
   it("says the count and the selection from one status region that stays mounted", () => {
     const bar = (count?: string, selected = 0) => (
       <ListToolbar

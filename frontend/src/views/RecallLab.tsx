@@ -387,6 +387,17 @@ export function RecallLab() {
   const [rankedError, setRankedError] = useState<string | null>(null);
   // A result set the search abstained on stays collapsed until the user opts in.
   const [showWeak, setShowWeak] = useState(false);
+  // Another namespace's rows are not this one's to open: they go during render, before a
+  // click could open the old namespace's key under the new one.
+  const namespaceKey = `${identity.org}/${identity.namespace}`;
+  const [rowsFor, setRowsFor] = useState(namespaceKey);
+  if (rowsFor !== namespaceKey) {
+    setRowsFor(namespaceKey);
+    setRows(null);
+    setAbstain(false);
+    setRankedError(null);
+    setShowWeak(false);
+  }
 
   useEffect(() => {
     // The text the Memories list would send; its tag: / agent: filters are not applied here.

@@ -43,7 +43,7 @@ describe("AgentBadge", () => {
     expect(screen.getByText(LONG).closest("[tabindex]")).toBeNull();
   });
 
-  // Review: measuring after mount drew the row twice; a row passes `quiet` instead.
+  // A row passes `quiet`: nothing is measured after mount and drawn again.
   it("takes no tab stop when the row says it is quiet", () => {
     overflow(true);
     render(<AgentBadge agent={LONG} quiet />);

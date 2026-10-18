@@ -54,7 +54,7 @@ for (const { width, height, top, touch } of BUDGET) {
       });
     }
 
-    // Review: on a phone the Memories and Repositories placeholders were cut mid-word.
+    // On a phone the Memories and Repositories placeholders fit, not cut mid-word.
     for (const path of ["/memories", "/library", "/conversations", "/profile", "/spaces", "/repositories"]) {
       test(`${path}: the search's placeholder fits its field`, async ({ page }) => {
         await open(page, path);
@@ -97,8 +97,8 @@ for (const { width, height, top, touch } of BUDGET) {
   });
 }
 
-// Review: a row's placeholder size (content-visibility) was 76 px while a memory is drawn
-// taller, so the scrollbar jumped as rows came into view. Each list's is its drawn height.
+// A row's placeholder size (content-visibility) is the list's drawn row height, so the
+// scrollbar does not jump as rows come into view.
 for (const path of ["/memories", "/library", "/conversations"]) {
   test(`${path}: a row's placeholder size is its drawn height`, async ({ page }) => {
     await open(page, path);
@@ -111,9 +111,8 @@ for (const path of ["/memories", "/library", "/conversations"]) {
   });
 }
 
-// Review: only the open buttons and checkboxes left the tab order; every tag chip and menu
-// trigger stayed a tab stop (151 on Memories, 241 on the Library). Only the current row's
-// controls are tab stops now.
+// Only the current row's controls are tab stops: every other row's tag chips and menu
+// triggers are out of the tab order too.
 for (const path of ["/memories", "/library", "/conversations", "/profile", "/spaces", "/repositories"]) {
   test(`${path}: no row but the current one has a tab stop`, async ({ page }) => {
     await open(page, path);
@@ -174,8 +173,8 @@ test("the Profile's sections are a list with a selection toolbar", async ({ page
   expect(await violations(page)).toEqual([]);
 });
 
-// Review: the Kbd and Recall Lab bar rules had raw 4 px and 2 px radii beside Click UI's
-// (the computed values match, so the stylesheet itself is read).
+// The Kbd and Recall Lab bar rules use Click UI's radius tokens, not raw 4 px and 2 px (the
+// computed values match, so the stylesheet itself is read).
 test("styles.css draws the Kbd and the score bar on radius tokens", () => {
   const css = fs.readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
   const rule = (selector: string) => css.slice(css.indexOf(`${selector} {`)).split("}")[0];

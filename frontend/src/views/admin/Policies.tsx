@@ -188,7 +188,7 @@ export function Policies() {
 
   // A reload after an add or a delete keeps the rules on screen, marked busy.
   const [refreshing, setRefreshing] = useState(false);
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
+  const load = (signal: AbortSignal, live: () => boolean) => {
     setError(null);
     setRefreshing(true);
     listPolicies({ org: identity.org, namespace: identity.namespace }, { signal })
