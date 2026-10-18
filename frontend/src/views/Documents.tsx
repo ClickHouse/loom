@@ -88,10 +88,9 @@ export function Documents() {
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
 
-  // knowledge.list pages at 50 (LIBRARY_PAGE): `nextCursor` is the server's continuation, null once the
-  // namespace is fully loaded. `scopeRef` stamps each first-page load so a "Load more"
-  // that resolves after the scope moved on is dropped instead of appended under the wrong
-  // header.
+  // `nextCursor` is the server's continuation, null once the namespace is fully loaded.
+  // `scopeRef` stamps each first-page load so a "Load more" that resolves after the scope
+  // moved on is dropped instead of appended under the wrong header.
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const scopeRef = useRef(0);
@@ -203,13 +202,28 @@ export function Documents() {
 
   useEffect(() => {
     if (!pendingDocSourceUri || !rows) return;
-    const target = rows.find((r) => r.source_uri === pendingDocSourceUri);
-    if (target) void onOpenRef.current(target);
-    // A `?doc=` link to a document this page does not hold opens nothing; the URL stops
-    // naming it.
-    else setViewParam("doc", null);
+    const uri = pendingDocSourceUri;
     clearPendingDoc();
-  }, [pendingDocSourceUri, rows, clearPendingDoc]);
+    const target = rows.find((r) => r.source_uri === uri);
+    if (target) {
+      void onOpenRef.current(target);
+      return;
+    }
+    // Not among the rows loaded (a link past the first page): read that one document. A
+    // link to one the namespace does not hold opens nothing, and the URL stops naming it.
+    const scope = scopeRef.current;
+    listKnowledge(
+      { org: identity.org, namespace: identity.namespace },
+      { uriPrefix: [uri], fields: LIBRARY_LIST_FIELDS, limit: LIBRARY_PAGE },
+    )
+      .then((r) => (r.rows || []).find((d) => d.source_uri === uri) ?? null)
+      .catch(() => null)
+      .then((found) => {
+        if (scopeRef.current !== scope) return;
+        if (found) void onOpenRef.current(found);
+        else setViewParam("doc", null);
+      });
+  }, [pendingDocSourceUri, rows, clearPendingDoc, identity.org, identity.namespace]);
 
   const onDelete = async (source_uri: string) => {
     if (

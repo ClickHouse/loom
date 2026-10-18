@@ -7,8 +7,12 @@ import { toast } from "../../components/Toast";
 
 /** Copies a task's id, else shows it in a toast to copy by hand. */
 export function copyTaskId(id: string): void {
+  if (!navigator.clipboard) {
+    toast(id, "ok");
+    return;
+  }
   navigator.clipboard
-    ?.writeText(id)
+    .writeText(id)
     .then(() => toast("Task id copied", "ok"))
     .catch(() => toast(id, "ok"));
 }
@@ -99,7 +103,8 @@ export function PriorityBadge({ priority }: { priority: number }) {
 }
 
 // A lane's state is a Click UI badge, the one status carrier: Triage asks for a decision
-// (info), Waiting is held up (warning); the rest are neutral.
+// (info), Waiting is held up (warning), To do is neutral, and In progress and Closed take
+// the default badge.
 const LANE_STATE: Record<Group, BadgeState> = {
   triage: "info",
   todo: "neutral",

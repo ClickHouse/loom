@@ -68,7 +68,24 @@ describe("Library keeps the open document in its URL", () => {
     expect(screen.getByRole("dialog", { name: "Handbook" })).toBeInTheDocument();
   });
 
-  it("a ?doc= link to a document the page does not hold opens nothing and leaves the URL", async () => {
+  it("a ?doc= link to a document past the first page reads it and opens the preview", async () => {
+    const late = { ...ROWS[0], source_uri: "docs/late.md", title: "Late doc" };
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[] }) =>
+      opts.uriPrefix ? { rows: [late], next_cursor: null } : { rows: ROWS, next_cursor: "c-2" },
+    );
+    history.replaceState(null, "", "/library?doc=docs%2Flate.md");
+    useStore.getState().bootView("knowledge");
+    render(<Documents />);
+    await settle();
+    expect(api.listKnowledge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ uriPrefix: ["docs/late.md"] }),
+    );
+    expect(screen.getByRole("dialog", { name: "Late doc" })).toBeInTheDocument();
+    expect(new URLSearchParams(location.search).get("doc")).toBe("docs/late.md");
+  });
+
+  it("a ?doc= link to a document the namespace does not hold opens nothing and leaves the URL", async () => {
     history.replaceState(null, "", "/library?doc=docs%2Fgone.md");
     useStore.getState().bootView("knowledge");
     render(<Documents />);

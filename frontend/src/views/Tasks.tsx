@@ -529,8 +529,9 @@ export function Tasks() {
         const r = list[Math.max(0, Math.min(list.length - 1, to))];
         if (r) stateRef.current.selectRow(r);
       };
-      // The selected task, drawn or not (a deep link past a lane's first rows): its keys act on it.
-      const row = sel ? (stateRef.current.rowsById.get(sel) ?? null) : null;
+      // The selected row as drawn, else the task open in the panel (a deep link past a lane's
+      // first rows); a selection a filter hid, with no panel open, takes no keys.
+      const row = i >= 0 ? list[i] : open && open.task_id === sel ? (stateRef.current.rowsById.get(sel) ?? open) : null;
       const origin: Origin = e.target instanceof Element && e.target.closest(".tq-panel") ? "panel" : "list";
       const keyed: Record<string, TaskAction> = { a: "accept", s: "start", c: "complete", x: "wont_do", d: "defer" };
       switch (e.key) {

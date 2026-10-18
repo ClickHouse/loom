@@ -40,6 +40,8 @@ export async function listKnowledge(
     limit?: number;
     cursor?: string;
     fields?: string[];
+    /** Only documents whose source_uri starts with one of these. */
+    uriPrefix?: string[];
   } & RequestOpts = {},
 ): Promise<KnowledgeListResponse> {
   const body: Record<string, unknown> = {
@@ -52,6 +54,7 @@ export async function listKnowledge(
     ...((opts.tags?.length ?? 0) > 1 ? { tags_all: true } : {}),
     include_superseded: opts.include_superseded || false,
     limit: opts.limit || 100,
+    ...(opts.uriPrefix?.length ? { uri_prefix: opts.uriPrefix } : {}),
     // The fields the caller reads; unset, every field.
     ...(opts.fields ? { fields: opts.fields } : {}),
   };

@@ -7,8 +7,9 @@ import { codeReposFixture, installApi, trackerSourcesFixture } from "./fixtures"
 // the list rules, in the browser: the chrome over the first row stays inside its budget and
 // the search's placeholder fits, the selection takes a range and clears on Escape, a row
 // list is one tab stop whose ring is drawn on the row, a Library row's More menu shows
-// without a hover, the Profile's sections take a selection, and Insights holds the usage
-// audit and the mentor.
+// without a hover, a row's placeholder size is its drawn height, the Profile's sections
+// take a selection, Insights holds the usage audit and the mentor, and styles.css draws the
+// Kbd and the score bar on radius tokens.
 
 const now = new Date().toISOString();
 const THREADS = Array.from({ length: 6 }, (_, i) => ({

@@ -848,6 +848,36 @@ describe("Tasks page", () => {
     await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "t24"));
   });
 
+  it("a selected row a filter hid, with no panel open, takes no keys", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.keyboard("jj");
+    expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "true");
+    await user.type(screen.getByLabelText("Search tasks"), "urgent");
+    await waitFor(() => expect(screen.queryByRole("row", { name: "Task low-late" })).toBeNull());
+    (document.activeElement as HTMLElement | null)?.blur();
+    await user.keyboard("s");
+    expect(claimTask).not.toHaveBeenCalled();
+  });
+
+  it("an empty board column under a filter says none match", async () => {
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("region", { name: "Tasks board" });
+      expect(screen.queryByText("None match the filters.")).toBeNull();
+      await user.type(screen.getByLabelText("Search tasks"), "urgent");
+      await waitFor(() => expect(screen.getAllByText("None match the filters.").length).toBeGreaterThan(0));
+      expect(screen.queryByText("Nothing closed yet.")).toBeNull();
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+    }
+  });
+
   it("an empty Closed lane under a filter says none match, not that nothing closed", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();

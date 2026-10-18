@@ -439,7 +439,9 @@ export function Inspector({
         </div>
         <div className="mt-3">
           <SectionHeading label="Rows behind this edge" count={facts ? facts.length : undefined} />
+          {/* Keyed by the edge: another edge starts capped again. */}
           <FactList
+            key={`e:${edge.parent}>${c.entity}`}
             facts={facts}
             about={null}
             onWalk={onWalk}
@@ -671,6 +673,7 @@ export function Inspector({
           hint={`Typed triples with ${n.entity} as subject or object (facts.list), with provenance tier, last seen and the source rows behind each.`}
         />
         <FactList
+          key={`n:${n.entity}`}
           facts={facts}
           about={n.entity}
           onWalk={onWalk}

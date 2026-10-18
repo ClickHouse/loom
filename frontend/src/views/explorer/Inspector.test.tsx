@@ -51,8 +51,8 @@ const model = fromTraverse({
   ],
 });
 
-function mount(props: Partial<Parameters<typeof Inspector>[0]> = {}) {
-  return render(
+function inspector(props: Partial<Parameters<typeof Inspector>[0]> = {}) {
+  return (
     <Inspector
       identity={identity}
       model={model}
@@ -78,8 +78,12 @@ function mount(props: Partial<Parameters<typeof Inspector>[0]> = {}) {
       onCollapse={() => undefined}
       onOpenMemory={() => undefined}
       {...props}
-    />,
+    />
   );
+}
+
+function mount(props: Partial<Parameters<typeof Inspector>[0]> = {}) {
+  return render(inspector(props));
 }
 
 /** The notice region: the pane's loaders are status regions too, but not polite live ones. */
@@ -157,7 +161,7 @@ describe("Inspector lists", () => {
       })),
       truncated: false,
     }));
-    mount({ selection: { kind: "edge", parent: "logical", child: "mergetree" } });
+    const view = mount({ selection: { kind: "edge", parent: "logical", child: "mergetree" } });
     // Both directions: 24 rows.
     await waitFor(() => expect(screen.getByRole("button", { name: "Show all 24" })).toBeInTheDocument(), {
       timeout: 2000,
@@ -166,6 +170,11 @@ describe("Inspector lists", () => {
     expect(list()).toHaveLength(20);
     await userEvent.click(screen.getByRole("button", { name: "Show all 24" }));
     expect(list()).toHaveLength(24);
+    // Another edge starts capped again.
+    view.rerender(inspector({ selection: { kind: "edge", parent: "logical", child: "keeper" } }));
+    await waitFor(() => expect(screen.getByText(/keeper-0/)).toBeInTheDocument(), { timeout: 2000 });
+    expect(list()).toHaveLength(20);
+    expect(screen.getByRole("button", { name: "Show all 24" })).toBeInTheDocument();
     expect(error.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
     error.mockRestore();
     vi.mocked(listFacts).mockImplementation(async () => facts as never);

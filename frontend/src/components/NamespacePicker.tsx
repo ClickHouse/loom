@@ -200,7 +200,8 @@ function NamespacePickerMenu() {
   }).filter((x) => (q ? x.rows.length > 0 : x.all.length > 0));
   const nothing = sections.every((s) => s.rows.length === 0) && groups.length === 0;
 
-  // One roving tab stop over the options and the group buttons, in the order drawn.
+  // One roving tab stop over the options and the group buttons, in the order drawn. A
+  // pending request's withdraw button is a tab stop of its own: an action, not an option.
   const navKeys = [
     ...sections.flatMap((s) => s.rows.map((r) => `ns:${r.namespace}`)),
     ...groups.flatMap((x) => [
