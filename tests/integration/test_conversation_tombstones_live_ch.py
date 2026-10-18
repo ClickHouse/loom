@@ -212,7 +212,7 @@ async def test_an_embedding_stored_after_the_delete_is_tombstoned_by_its_writer(
     now = datetime.now(UTC).replace(tzinfo=None)
     await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=now, ch=ch)
     msg, embedded = _stored(scope, "1", "late")
-    await _store_embedding(msg, embedded, ts=T0)
+    await _store_embedding(msg, embedded)
     assert await _rows(ch, scope) == [("1", "late", False)]
 
 
@@ -222,7 +222,7 @@ async def test_a_live_turn_keeps_its_embedding_after_the_recheck(ch, scope) -> N
 
     await _message(ch, scope, "a", "1", "kept", T0)
     msg, embedded = _stored(scope, "1", "kept")
-    await _store_embedding(msg, embedded, ts=T0)
+    await _store_embedding(msg, embedded)
     assert await _rows(ch, scope) == [("1", "kept", True)]
 
 

@@ -177,7 +177,7 @@ async def handle_conversation_append(
             msg_id=msg_id,
         ),
     )
-    await _store_embedding(msg_row, embedded, ts=now)
+    await _store_embedding(msg_row, embedded)
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
 
@@ -217,11 +217,13 @@ async def _embed_turn(
         return EmbeddedTurn(excerpt, [], 0, embedder.model_name, f"{type(e).__name__}: {e}")
 
 
-async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn, *, ts: datetime) -> None:
+async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
     """Store the embedding row of message `msg` from `_embed_turn`'s result, so the two
-    rows carry one identity, user and time, and tombstone it at once when `msg` was
-    tombstoned meanwhile. A failed embed is stored too, with the dead-letter columns
-    recording the error."""
+    rows carry one identity, user and `ts` (a tombstone keeps that `ts`, so the row's
+    partition and version follow the message's), and tombstone it at once when `msg`
+    was tombstoned meanwhile. A failed embed is stored too, with the dead-letter
+    columns recording the error."""
+    assert msg.ts is not None, "an embedded message carries its own ts"
     from server.knowledge.store import conversations as conversation_repo
 
     embedding_row: ConversationEmbeddingRow = {
@@ -242,7 +244,7 @@ async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn, *, ts: da
         "embed_attempts": 1 if embedded.dim > 0 else 0,
         "embed_last_error": embedded.error,
         "embed_failed_at": naive_utc_now() if embedded.error else None,
-        "ts": ts,  # the message row's time
+        "ts": msg.ts,
     }
     with traced("ch.insert.conversation_embedding", embedded=embedded.dim > 0):
         await conversation_repo.insert_embedding(embedding_row)
@@ -848,7 +850,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         ts=earliest_ts,
     )
     await conversation_repo.append(summary)
-    await _store_embedding(summary, embedded, ts=earliest_ts)
+    await _store_embedding(summary, embedded)
     await conversation_repo.tombstone_messages(
         input.org,
         input.namespace,
