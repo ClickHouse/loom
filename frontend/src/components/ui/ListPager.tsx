@@ -74,20 +74,13 @@ export function ListPager({
   onPageSize,
   topId,
 }: ListPagerProps) {
-  const [said, setSaid] = useState("");
-  // The page asked for and not yet on screen: if its read finds it past the end, the view
-  // stays on (or steps back to) the last page, and the status says so.
-  const asked = useRef<number | null>(null);
-  // The page the status names: when the view moves the list elsewhere (a filter takes it to
-  // its first page), the status is cleared rather than left naming a page not on screen.
-  const spoken = useRef<number | null>(null);
+  // What the status says: of `page`, asked for from page `from`, in the list `key` names.
+  // `from` becomes `page` once the page is on screen.
+  const [said, setSaid] = useState<{ text: string; page: number; from: number; key?: string } | null>(null);
   // The page being typed into the field: Click UI reports every keystroke as a page, so the
   // pager goes there only on Enter or when the field loses focus.
   const [draft, setDraft] = useState<number | null>(null);
   const phone = useMedia(PHONE_QUERY);
-  // Click UI calls `onChange` for a typed number and, just before its own click handler,
-  // for an arrow; the arrows go at once and take the reader to the list's top.
-  const pending = useRef(page + 1);
   // Click UI names its arrows after their icons ("chevron-left") and its page field after
   // the number in it; these are the names they read as.
   const nav = useRef<HTMLElement>(null);
@@ -106,40 +99,25 @@ export function ListPager({
   const counted = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : undefined;
   const cut = counted !== undefined && reachable !== undefined && counted > reachable;
   const pages = cut ? reachable : counted;
-  // A page past the end (its last rows deleted, or Next onto an empty page) steps back to
-  // the last one, and says so.
-  const pastEnd = pages !== undefined && page > pages - 1;
-  // Another filter is another list: what was asked of, or said about, this one is dropped.
-  const keyRef = useRef(resetKey);
+  // The status follows the page on screen. A page past the end (its last rows deleted, or
+  // Next onto an empty page) steps back to the last one and says so, as does a page asked
+  // for that turns out to be past the end; a move elsewhere (a filter takes the list to its
+  // first page) or another list says nothing.
   useEffect(() => {
-    if (keyRef.current === resetKey) return;
-    keyRef.current = resetKey;
-    asked.current = null;
-    spoken.current = null;
-    setSaid("");
-  }, [resetKey]);
-  const sayLast = (last: number) => {
-    asked.current = null;
-    spoken.current = last - 1;
-    setSaid(`Page ${last} of ${last}`);
-  };
-  useEffect(() => {
-    if (!pastEnd || pages === undefined) return;
-    sayLast(pages);
-    onPage(pages - 1);
-  }, [pastEnd, pages, onPage]);
-  // The view stays on the page shown when the page asked for turns out to be past the end.
-  useEffect(() => {
-    if (asked.current === null || pages === undefined) return;
-    if (asked.current > pages - 1 && page === pages - 1) sayLast(pages);
-  }, [page, pages]);
-  useEffect(() => {
-    if (page === asked.current) asked.current = null;
-    // A page past the end is stepping back, and says so itself.
-    if (pastEnd || spoken.current === null || spoken.current === page) return;
-    spoken.current = null;
-    setSaid("");
-  }, [page, pastEnd]);
+    if (pages !== undefined && page > pages - 1) {
+      setSaid({ text: `Page ${pages} of ${pages}`, page: pages - 1, from: pages - 1, key: resetKey });
+      onPage(pages - 1);
+      return;
+    }
+    setSaid((s) => {
+      if (s === null || s.key !== resetKey) return null;
+      const waiting = s.from !== s.page;
+      if (waiting && pages !== undefined && s.page > pages - 1 && page === pages - 1)
+        return { text: `Page ${pages} of ${pages}`, page, from: page, key: resetKey };
+      if (page === s.page) return waiting ? { ...s, from: page } : s;
+      return waiting && page === s.from ? s : null;
+    });
+  }, [page, pages, resetKey, onPage]);
   const lastKnown =
     pages !== undefined ? page >= pages - 1 : shown < pageSize || (reachable !== undefined && page >= reachable - 1);
   // With a page size picked, the choice stays reachable while the list is longer than the
@@ -174,9 +152,12 @@ export function ListPager({
     const n = Math.min(typed, last);
     if (n === page + 1) return;
     onPage(n - 1);
-    asked.current = n - 1;
-    spoken.current = n - 1;
-    setSaid(pages !== undefined ? `Page ${n} of ${pages}` : `Page ${n}`);
+    setSaid({
+      text: pages !== undefined ? `Page ${n} of ${pages}` : `Page ${n}`,
+      page: n - 1,
+      from: page,
+      key: resetKey,
+    });
     const top = focusList && topId ? document.getElementById(topId) : null;
     if (top) {
       top.scrollIntoView?.({ block: "start" });
@@ -199,12 +180,11 @@ export function ListPager({
         rowCount={range}
         totalPages={pages}
         currentPage={draft ?? page + 1}
-        onChange={(n) => {
-          pending.current = n;
-          setDraft(n);
-        }}
-        onPrevPageClick={() => go(pending.current, { focusList: true })}
-        onNextPageClick={() => go(pending.current, { focusList: true })}
+        // Click UI reports every keystroke in the page field as a page; the arrows go at once
+        // and take the reader to the list's top.
+        onChange={setDraft}
+        onPrevPageClick={() => go(page, { focusList: true })}
+        onNextPageClick={() => go(page + 2, { focusList: true })}
         onPageNumberBlur={() => draft !== null && go(draft, { focusList: false })}
         disableNextButton={lastKnown || busy}
         {...(sizeChoice
@@ -212,10 +192,8 @@ export function ListPager({
               pageSize,
               maxRowsPerPageList: SIZES,
               onPageSizeChange: (n: number) => {
-                asked.current = null;
-                spoken.current = null;
                 onPageSize?.(n);
-                setSaid(`${n} rows per page, page 1`);
+                setSaid({ text: `${n} rows per page, page 1`, page: 0, from: page, key: resetKey });
               },
               allowAllRows: false,
             }
@@ -223,7 +201,7 @@ export function ListPager({
       />
       {note !== null && <p className="mt-1 text-xs text-text-muted">{note}</p>}
       <p role="status" className="sr-only">
-        {said}
+        {said?.text}
       </p>
     </nav>
   );
