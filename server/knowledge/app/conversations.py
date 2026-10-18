@@ -224,6 +224,8 @@ async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
     dead-letter columns recording the error."""
     from server.knowledge.store import conversations as conversation_repo
 
+    if msg.ts is None:
+        raise ValueError("a turn's embedding row takes its message row's ts")
     embedding_row: ConversationEmbeddingRow = {
         "org": msg.org,
         "namespace": msg.namespace,
@@ -242,7 +244,7 @@ async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
         "embed_attempts": 1 if embedded.dim > 0 else 0,
         "embed_last_error": embedded.error,
         "embed_failed_at": naive_utc_now() if embedded.error else None,
-        "ts": msg.ts or naive_utc_now(),
+        "ts": msg.ts,
     }
     with traced("ch.insert.conversation_embedding", embedded=embedded.dim > 0):
         await conversation_repo.insert_embedding(embedding_row)
