@@ -1075,3 +1075,72 @@ def test_an_mcp_call_that_hid_a_row_unverified_is_the_server_s_and_the_next_star
 
     asyncio.run(_batch())
     assert [(e.success, e.status_class) for e in emitted] == [(True, "server"), (True, "ok")]
+
+
+def test_a_listing_that_leaves_a_namespace_out_unverified_does_not_mark_the_request(
+    monkeypatch,
+) -> None:
+    """MCP computes default namespaces on every call, often for namespaces the
+    call never uses: a candidate refused unverified there must not make a
+    correct answer a server error."""
+    from server.auth import authz, fail_closed
+    from server.auth.jwt import AuthInfo
+    from server.core import request_work
+
+    async def _unverified(*a: Any, **k: Any) -> None:
+        e = PermissionError("refused")
+        e.unverified = True  # type: ignore[attr-defined]
+        raise e
+
+    async def _no_grants(*a: Any, **k: Any) -> Any:
+        return SimpleNamespace(rank=lambda ns: 0)
+
+    async def _no_grant(*a: Any, **k: Any) -> None:
+        return None
+
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(authz, "check_authorized", _unverified)
+    monkeypatch.setattr(authz.CachedGate, "grants", _no_grants)
+    monkeypatch.setattr(authz.CachedGate, "_grant_role", _no_grant)
+    eve = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
+    )
+
+    async def _listing() -> bool:
+        request_work.begin()
+        assert await authz.CachedGate(eve, "o").admits("elsewhere", Role.VIEWER) is False
+        return fail_closed.answered_unverified()
+
+    assert asyncio.run(_listing()) is False
+
+
+def test_a_5xx_while_mcp_computes_the_caller_s_defaults_is_ledgered(monkeypatch) -> None:
+    """MCP fills the caller's default namespace before the gate; a grants read
+    past its stale window raises there, and must still leave a server row."""
+    from server.auth.jwt import AuthInfo
+    from server.core.errors import BackendUnavailableError
+    from server.observability import events
+    from server.transport import mcp_call
+
+    emitted: list = []
+
+    class _Emitter:
+        def emit(self, event) -> None:
+            emitted.append(event)
+
+    async def _unreadable(*a: Any, **k: Any) -> Any:
+        raise BackendUnavailableError("grants unreadable")
+
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.core.grant_cache.grant_map", _unreadable)
+    eve = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
+    )
+    params = {"name": "loom_memory_get", "arguments": {"key": "k"}}  # no namespace: defaults run
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(mcp_call._call_tool(1, params, auth=eve))
+    assert [(e.operation, e.error_code, e.status_class) for e in emitted] == [
+        ("memory.get", "BACKEND_UNAVAILABLE", "server")
+    ]

@@ -39,12 +39,12 @@ def one_refusal_row_each() -> Iterator[None]:
         _batch_refusals.reset(token)
 
 
-def first_in_batch(op_name: str, code: str, org: str, status_class: str) -> bool:
+def first_in_batch(op_name: str, code: str, org: str, status: str) -> bool:
     """False when this batch has already written this refusal."""
     seen = _batch_refusals.get()
     if seen is None:
         return True
-    key = (op_name, code, org, status_class)
+    key = (op_name, code, org, status)
     if key in seen:
         return False
     seen.add(key)

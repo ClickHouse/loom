@@ -451,7 +451,15 @@ async def _bind_caller_identity(
     # org/namespace absent also keeps authz on the flat-role path, which is
     # what lets a human token with no code-namespace grant read the shared
     # index at all.
-    defaults = await _caller_defaults(auth, client_name)
+    from server.core.errors import LoomServerError
+
+    try:
+        defaults = await _caller_defaults(auth, client_name)
+    except LoomServerError as e:
+        # A grants read past its cache's stale window (a 503), before the gate:
+        # counted against the server, then answered as raised.
+        _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id, error=e)
+        raise
     explicit_agent = bool(arguments.get("agent"))
     # A blank or "-" namespace names none, as the gates read it.
     unnamed = not gates.present(arguments.get("namespace"))
