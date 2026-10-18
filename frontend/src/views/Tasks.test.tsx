@@ -411,6 +411,31 @@ describe("Tasks page", () => {
     expect(within(still).getByRole("heading", { name: "Task t03" })).toBeInTheDocument();
   });
 
+  it("on the board, Show all N focuses the first new card and leaves the open task where it is", async () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      task(`t${String(i).padStart(2, "0")}`, { created_at: iso(100 - i) }),
+    );
+    vi.mocked(listTasks).mockResolvedValue({ tasks: many, truncated: false });
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("region", { name: "Tasks board" });
+      await user.click(document.querySelector<HTMLElement>('[data-task-id="t03"]') as HTMLElement);
+      const panel = await screen.findByRole("complementary", { name: "Task detail" });
+      expect(within(panel).getByRole("heading", { name: "Task t03" })).toBeInTheDocument();
+      const before = window.location.search;
+      await user.click(screen.getByRole("button", { name: "Show all 25" }));
+      await waitFor(() => expect(document.querySelector('[data-task-id="t20"]')).toHaveFocus());
+      expect(window.location.search).toBe(before);
+      const still = screen.getByRole("complementary", { name: "Task detail" });
+      expect(within(still).getByRole("heading", { name: "Task t03" })).toBeInTheDocument();
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+    }
+  });
+
   it("says its count covers the first 200 tasks when an inbox holds more", async () => {
     vi.mocked(listTasks).mockResolvedValue({ tasks: ROWS, truncated: true });
     seed(admin, [row("admin")]);

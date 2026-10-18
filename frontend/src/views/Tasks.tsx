@@ -77,7 +77,7 @@ const InboxSettingsDialog = lazy(() =>
  * Attention first: four tiles count what needs a person (triage, blocked on
  * a person, failed, a lease ending within ten minutes) and filter on a
  * click. Inboxes are folders in a left rail with to-do and running counts (a
- * Select on a phone); the picked one is the page's scope (`?inbox=`). The
+ * Select on a narrow page); the picked one is the page's scope (`?inbox=`). The
  * toolbar searches the loaded rows and filters them by kind and poster. Rows
  * group by what happens next — Triage, To do, In progress, Waiting, Closed
  * (folded) — as a list or a board; each row carries the one line that matters
@@ -116,8 +116,8 @@ function readQuery(key: string): string | null {
 // Below Click UI's xl breakpoint the panel is a modal sheet over the list, not a column
 // beside it. The one place the breakpoint lives: styles.css keys on what this decides.
 const SHEET_QUERY = "(max-width: 1279px)";
-// Below md the inbox rail is a Select and the toolbar's filters sit on a row under it.
-// Below this the inbox rail folds into the page: wider than lib/useMedia's phone.
+// Below md the inbox rail is a Select, the toolbar's filters sit on a row under it and the
+// page draws the list only. Wider than lib/useMedia's PHONE_QUERY.
 const RAIL_QUERY = "(max-width: 767px)";
 
 // A row's menu, in this order: the move forward, the other ways out, then the hand-offs.
@@ -233,7 +233,7 @@ export function Tasks() {
   const [editing, setEditing] = useState<TaskRow | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const sheetLayout = useMedia(SHEET_QUERY);
-  const phone = useMedia(RAIL_QUERY);
+  const narrow = useMedia(RAIL_QUERY);
 
   // Only the latest task.counts may write the counts: a namespace switch while A's read is
   // in flight drops A's answer, so B's tiles never show A's numbers.
@@ -615,8 +615,8 @@ export function Tasks() {
   // The empty inbox's own New task is the page's one primary while it shows.
   const emptyInbox = loaded && rows?.length === 0;
   const openCount = visible.length - groups.closed.length;
-  // A phone always draws the list, whatever mode is saved.
-  const listed = mode === "list" || phone;
+  // A narrow page always draws the list, whatever mode is saved.
+  const listed = mode === "list" || narrow;
   const onlyClosed = listed && !filtering && openCount === 0 && visible.length > 0 && collapsed.closed;
   // An inbox reads its first 200 tasks: when one held more, the count and a search say they
   // cover those, not every task the inbox holds.
@@ -629,7 +629,7 @@ export function Tasks() {
       : undefined;
   const clearFilters = () => setFilters(NO_FILTERS);
 
-  // The open task beside the list, or (narrow) as the content of a modal sheet.
+  // The open task beside the list, or (below xl) as the content of a modal sheet.
   const panelFor = (task: TaskListRow, sheet: boolean) => (
     <TaskPanel
       identity={caller}
@@ -651,8 +651,8 @@ export function Tasks() {
     />
   );
 
-  // A phone, or the list beside the open panel: the toolbar holds the search, the filters a row under it.
-  const compact = phone || (!!openRow && !sheetLayout);
+  // A narrow page, or the list beside the open panel: the toolbar holds the search, the filters a row under it.
+  const compact = narrow || (!!openRow && !sheetLayout);
   const filterSelects = (
     <>
       {(kinds.length > 1 || filters.kind) && (
@@ -693,8 +693,8 @@ export function Tasks() {
         title="Tasks"
         actions={
           <>
-            {/* A phone shows the list: a board's columns do not fit it. */}
-            {!phone && (
+            {/* A narrow page shows the list: a board's columns do not fit it. */}
+            {!narrow && (
               <ButtonGroup
                 aria-label="View"
                 selected={mode}
@@ -726,7 +726,7 @@ export function Tasks() {
           </>
         }
       >
-        {/* The phone's top bar names the namespace; the title row keeps its actions beside it. */}
+        {/* A narrow page's top bar names the namespace; the title row keeps its actions beside it. */}
         <span className="hidden sm:contents">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </span>
@@ -761,7 +761,7 @@ export function Tasks() {
 
       {inboxes && inboxes.length > 0 && picked && (
         <>
-          {phone && (
+          {narrow && (
             // The tiles and the filters are one menu on the inbox's row, so the tasks start
             // within the chrome budget.
             <div className="mb-3 flex items-center gap-2">
@@ -781,9 +781,9 @@ export function Tasks() {
               />
             </div>
           )}
-          {!phone && <AttentionTiles counts={attention} active={filters.attention} onToggle={toggleTile} />}
+          {!narrow && <AttentionTiles counts={attention} active={filters.attention} onToggle={toggleTile} />}
           <div className="tq-body" data-panel={!!openRow && !sheetLayout}>
-            {!phone && (
+            {!narrow && (
               <InboxRail inboxes={inboxes} counts={counts ? railCounts(counts) : null} picked={picked} onPick={pick} />
             )}
             <div className="tq-main min-w-0">
@@ -798,7 +798,7 @@ export function Tasks() {
                 </div>
                 {!compact && filterSelects}
               </ListToolbar>
-              {compact && !phone && <div className="-mt-1 mb-3 flex items-center gap-2">{filterSelects}</div>}
+              {compact && !narrow && <div className="-mt-1 mb-3 flex items-center gap-2">{filterSelects}</div>}
 
               {rows === null && (
                 <LoadingSkeleton label="Loading tasks">
@@ -853,9 +853,6 @@ export function Tasks() {
                 ) : (
                   <TaskBoard groups={groups} ctx={ctx} />
                 ))}
-              {truncated && (
-                <div className="text-xs text-text-muted px-1 pt-1">Showing the first 200 tasks per inbox.</div>
-              )}
             </div>
             {openRow && !sheetLayout && panelFor(openRow, false)}
           </div>

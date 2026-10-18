@@ -135,11 +135,12 @@ function InputValue({ v }: { v: unknown }) {
 }
 
 // Each status allows at most one of these: the bar's primary, last on the right.
-// A button with a key names it in its tooltip ("Accept · A"); the help dialog lists them all.
+// A button with a key names it in its tooltip ("Accept · A", after a `tip` that explains
+// more than the label); the help dialog lists them all.
 const PRIMARY_ACTIONS: ActionButton[] = [
-  { action: "accept", label: "Accept", tip: "Accept · A", key: "a" },
-  { action: "start", label: "Start", tip: "Claim it: to do → in progress · S", key: "s" },
-  { action: "complete", label: "Mark done…", tip: "Mark done · C", key: "c" },
+  { action: "accept", label: "Accept", key: "a" },
+  { action: "start", label: "Start", tip: "Claim it: to do → in progress", key: "s" },
+  { action: "complete", label: "Mark done…", key: "c" },
   { action: "unblock", label: "Unblock" },
   { action: "resume", label: "Resume now" },
 ];
@@ -147,10 +148,16 @@ const PRIMARY_ACTIONS: ActionButton[] = [
 // task usually goes (fail a run, park a queued task, decline the rest, reopen a closed one).
 const SECONDARY_ACTIONS: ActionButton[] = [
   { action: "fail", label: "Fail…" },
-  { action: "defer", label: "Defer…", tip: "Defer · D", key: "d" },
-  { action: "wont_do", label: "Won't do…", tip: "Won't do · X", key: "x" },
+  { action: "defer", label: "Defer…", key: "d" },
+  { action: "wont_do", label: "Won't do…", key: "x" },
   { action: "reopen", label: "Reopen…" },
 ];
+// The page's keys do nothing while the panel is a sheet (a dialog holds them off), so a
+// sheet's tooltip names no key.
+function actionTip(b: ActionButton, sheet: boolean): string {
+  const key = b.key && !sheet ? b.key.toUpperCase() : "";
+  return [b.tip ?? (key ? b.label.replace(/…$/, "") : ""), key].filter(Boolean).join(" · ");
+}
 // Everything else the status allows, under More, in this order.
 const MENU_ACTIONS: TaskAction[] = ["block", "defer", "wont_do", "edit", "reassign", "cancel"];
 
@@ -482,10 +489,8 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
           // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of action buttons, not form fields
           <div className="mt-3 flex gap-2 items-center justify-end flex-wrap" role="group" aria-label="Actions">
             <Menu items={menu} />
-            {/* The page's keys do nothing while the panel is a sheet (a dialog holds them
-                off), so a sheet names none. */}
             {secondary && (
-              <Tip content={secondary.tip} disabled={!secondary.tip || sheet}>
+              <Tip content={actionTip(secondary, sheet)} disabled={!actionTip(secondary, sheet)}>
                 <Button
                   type="secondary"
                   htmlType="button"
@@ -497,7 +502,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
               </Tip>
             )}
             {primary && (
-              <Tip content={primary.tip} disabled={!primary.tip || sheet}>
+              <Tip content={actionTip(primary, sheet)} disabled={!actionTip(primary, sheet)}>
                 <Button
                   type="primary"
                   htmlType="button"

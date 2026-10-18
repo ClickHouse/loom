@@ -276,6 +276,8 @@ describe("ReviewQueue", () => {
     expect(vi.mocked(listConflicts).mock.calls.at(-1)?.[1]?.before_version).toBe(7);
     expect(screen.getByText("3 of 3")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    // The last page took the button that held the focus: it goes to the first conflict added.
+    expect(within(table).getByRole("button", { name: "k/three" })).toHaveFocus();
 
     // A row of the queue opens that conflict for a decision.
     await userEvent.click(within(table).getByRole("button", { name: "k/three" }));

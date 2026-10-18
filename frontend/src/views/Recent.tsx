@@ -371,19 +371,15 @@ function MemoryList() {
         setKeywordKeys(kwKeys);
         setKeywordTotal(kw?.total ?? 0);
         // The ranked keys shown for this same query, kept until the new ranking answers, so
-        // the list does not shrink to the keyword rows and grow back after a write.
+        // the list does not shrink to the keyword rows and grow back after a write. Only
+        // those the page or the keyword read holds: a copy read before a write is not today's.
         const shownKey = `${identity.org}/${identity.namespace}\n${rawQuery}`;
-        const kept = rankedShownRef.current?.key === shownKey ? rankedShownRef.current.keys : [];
+        const kept = (rankedShownRef.current?.key === shownKey ? rankedShownRef.current.keys : []).filter(
+          (k) => have.has(k) || kwKeys.has(k),
+        );
         if (kwKeys.size > 0) {
           setSearchHits(keywordThenRanked([...kwKeys], kept));
-          setSearchExtra((old) => {
-            const next = new Map(kwExtra);
-            for (const k of kept) {
-              const row = old.get(k);
-              if (row && !next.has(k)) next.set(k, row);
-            }
-            return next;
-          });
+          setSearchExtra(new Map(kwExtra));
           if (kept.length === 0) setSearchWhy(new Map());
           // Rows hold the words: no low-confidence note from an earlier query.
           setSearchAbstain(null);
@@ -449,6 +445,7 @@ function MemoryList() {
         );
       } catch {
         if (!cancelled) {
+          rankedShownRef.current = null;
           setSearchHits([]);
           setSearchAbstain(null);
           setSearchExtra(new Map());
@@ -883,6 +880,14 @@ function MemoryList() {
     ...(queryAgent ? [`agent:${queryAgent}`] : agentFilter != null ? [displayAgent(agentFilter)] : []),
     ...(status !== "live" ? [STATUSES.find((o) => o.value === status)?.label ?? status] : []),
   ].join(", ");
+  // What the reader typed, for the no-match row; a select's value is not quoted back.
+  const typedWords = [
+    searchActive ? `"${rawQuery.trim()}"` : "",
+    ...queryTags.map((t) => `tag:${t}`),
+    queryAgent ? `agent:${queryAgent}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
   const clearFilters = () => {
     // Every Clear leaves with the filters it clears: focus goes to the search.
     searchInputRef.current?.focus();
@@ -1132,9 +1137,7 @@ function MemoryList() {
           <ListState
             kind="filtered"
             things="memories"
-            filter={
-              [searchActive ? `"${rawQuery.trim()}"` : "", filterNames].filter(Boolean).join(", ") || "your filters"
-            }
+            filter={typedWords || undefined}
             onClear={() => {
               setQuery("");
               clearFilters();

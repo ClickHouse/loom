@@ -387,6 +387,15 @@ body {
   }
 }
 
+/* A button whose read is in flight stays focusable (components/ui/BusyButton) and shows
+   it is working the way Click UI's loading button does: dimmed, with a progress cursor. */
+@layer components {
+  button[aria-busy="true"] {
+    cursor: progress;
+    opacity: 0.7;
+  }
+}
+
 /* A thumb needs 44 × 44 px. Click UI's buttons are 32 px tall and its icon buttons
    26 px wide, so under a coarse pointer every button reaches the hit size; a
    checkbox, radio or switch keeps its box, its label is the larger target. */

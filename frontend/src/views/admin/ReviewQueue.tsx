@@ -1,5 +1,4 @@
-import { BusyButton } from "../../components/ui/BusyButton";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -29,6 +28,7 @@ import { Skeleton, TableSkeleton } from "../../components/Skeleton";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
+import { BusyButton } from "../../components/ui/BusyButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
@@ -75,7 +75,7 @@ export function ReviewQueue() {
       setProbedLearnings(null);
       setProbedExceptions(null);
       setTab("conflicts");
-      listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", 50, { signal })
+      listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", LEARNINGS_READ, { signal })
         .then((r) => {
           if (live()) setProbedLearnings(r.rows || []);
         })
@@ -142,8 +142,6 @@ export function ReviewQueue() {
 
 // ─── Conflicts panel ───────────────────────────────────────────────────
 
-// One read of learnings: a list as long as this may hold more.
-const LEARNINGS_READ = 50;
 const CONFLICT_PAGE = 50;
 
 function ConflictsPanel() {
@@ -197,10 +195,24 @@ function ConflictsPanel() {
     [identity.org, identity.namespace, reload],
   );
 
+  // The last page removes Load more, which held the focus: it goes to the first conflict
+  // that page added, else the last one in the queue.
+  const queueBox = useRef<HTMLDivElement>(null);
+  const focusAdded = useRef<number | null>(null);
+  useEffect(() => {
+    const at = focusAdded.current;
+    if (at === null || loadingMore) return;
+    focusAdded.current = null;
+    if (next !== null || document.activeElement !== document.body) return;
+    const keys = queueBox.current?.querySelectorAll<HTMLElement>("tbody button") ?? [];
+    (keys[at] ?? keys[keys.length - 1])?.focus();
+  });
+
   // The next older page joins the queue; the decision in progress stays where it is.
   const loadMore = async () => {
     if (next === null || !rows) return;
     const key = rowsFor.current;
+    focusAdded.current = rows.length;
     setLoadingMore(true);
     try {
       const r = await listConflicts(
@@ -338,7 +350,9 @@ function ConflictsPanel() {
           <h2 className="text-sm font-semibold">Queue</h2>
         </ListToolbar>
       </div>
-      <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} />
+      <div ref={queueBox}>
+        <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} />
+      </div>
       {next !== null && (
         <BusyButton
           type="secondary"
@@ -409,6 +423,8 @@ function QueueTable({
 
 // ─── Learnings panel ───────────────────────────────────────────────────
 
+// One read of learnings: a list as long as this may hold more.
+const LEARNINGS_READ = 50;
 const LEARNING_STATUSES: readonly LearningStatus[] = ["pending", "promoted", "rejected"];
 const STATUS_LABEL: Record<LearningStatus, string> = { pending: "Pending", promoted: "Promoted", rejected: "Rejected" };
 

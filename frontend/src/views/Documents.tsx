@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -23,6 +23,7 @@ import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { ListRow, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
+import { BusyButton } from "../components/ui/BusyButton";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar } from "../components/ui/ListToolbar";
@@ -162,6 +163,7 @@ export function Documents() {
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     const scope = scopeRef.current;
+    focusAdded.current = shownRows?.length ?? 0;
     setLoadingMore(true);
     try {
       const r = await listKnowledge(
@@ -184,6 +186,19 @@ export function Documents() {
       setLoadingMore(false);
     }
   };
+
+  // The last page removes Load more, which held the focus: it goes to the first document
+  // that page added, else the last one shown.
+  const listBox = useRef<HTMLDivElement | null>(null);
+  const focusAdded = useRef<number | null>(null);
+  useEffect(() => {
+    const at = focusAdded.current;
+    if (at === null || loadingMore) return;
+    focusAdded.current = null;
+    if (nextCursor || document.activeElement !== document.body) return;
+    const opens = listBox.current?.querySelectorAll<HTMLElement>("[data-row-open]") ?? [];
+    (opens[at] ?? opens[opens.length - 1])?.focus();
+  });
 
   useEffect(() => {
     if (!pendingDocSourceUri || !rows) return;
@@ -341,6 +356,13 @@ export function Documents() {
   const clearSelection = selection.clear;
   // One tab stop over the rows: arrows and j/k move, Enter previews, Space selects.
   const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 });
+  const listRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      listNav(el);
+      listBox.current = el;
+    },
+    [listNav],
+  );
 
   const onBulkDelete = async () => {
     if (selected.size === 0 || bulkBusy) return;
@@ -611,7 +633,7 @@ export function Documents() {
         )}
 
       {rows !== null && rows.length > 0 && shownRows && shownRows.length > 0 && (
-        <div ref={listNav} className="space-y-2" aria-busy={reading || undefined}>
+        <div ref={listRef} className="space-y-2" aria-busy={reading || undefined}>
           {shownRows.map((r) => {
             const name = r.title || r.original_filename || r.source_uri;
             const file = r.title ? r.original_filename || r.source_uri : "";
@@ -690,9 +712,9 @@ export function Documents() {
 
       {nextCursor && !failed && (
         <div className="mt-4">
-          <Button type="secondary" htmlType="button" loading={loadingMore} onClick={loadMore}>
+          <BusyButton type="secondary" htmlType="button" busy={loadingMore} onClick={loadMore}>
             Load more
-          </Button>
+          </BusyButton>
         </div>
       )}
 

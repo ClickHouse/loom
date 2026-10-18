@@ -12,6 +12,7 @@ import { hasOrgAdminClaim } from "../../lib/role";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
+import { BusyButton } from "../../components/ui/BusyButton";
 import { toastError } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -208,7 +209,6 @@ export function Audit() {
   const olderCtl = useRef<AbortController | null>(null);
   // Where focus goes once an older page lands (the first new row's index).
   const focusAfterLoad = useRef<number | null>(null);
-  const olderButton = useRef<HTMLButtonElement>(null);
   const eventsTable = useRef<HTMLTableElement>(null);
   useEffect(() => () => olderCtl.current?.abort(), []);
   useAbortableEffect(
@@ -260,11 +260,10 @@ export function Audit() {
     }
   };
 
-  // The loading button is disabled, which drops focus: once the page lands it goes back to
-  // the button while more remain, else to the first row the page added — or, when the page
-  // added none that are shown (all system events), the last row shown, else the table.
-  // Only the render where a load ends moves focus: another render in between (the deferred
-  // rows' transition) must not spend it on the button before it is disabled.
+  // The button keeps focus while the page reads; the last page removes it, so focus goes to
+  // the first row that page added — or, when it added none that are shown (all system
+  // events), the last row shown, else the table. Only the render where a load ends moves
+  // focus: another render in between (the deferred rows' transition) must not spend it.
   const wasLoadingOlder = useRef(false);
   useEffect(() => {
     const ended = wasLoadingOlder.current && !loadingOlder;
@@ -272,10 +271,7 @@ export function Audit() {
     const at = focusAfterLoad.current;
     if (!ended || at === null) return;
     focusAfterLoad.current = null;
-    if (older) {
-      olderButton.current?.focus();
-      return;
-    }
+    if (older) return;
     const shown = eventsTable.current?.querySelectorAll<HTMLElement>("tbody tr") ?? [];
     const target = shown[at] ?? shown[shown.length - 1] ?? eventsTable.current;
     if (target) {
@@ -405,9 +401,9 @@ export function Audit() {
           )}
           {rows !== null && older && (
             <div className="mt-4 flex justify-center">
-              <Button ref={olderButton} type="secondary" htmlType="button" loading={loadingOlder} onClick={loadOlder}>
+              <BusyButton type="secondary" htmlType="button" busy={loadingOlder} onClick={loadOlder}>
                 Load older
-              </Button>
+              </BusyButton>
             </div>
           )}
         </Tabs.Content>

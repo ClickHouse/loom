@@ -1,8 +1,7 @@
 import { cleanup, render, screen, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConversationThreadDetail } from "../api";
+import { listMemories, type ConversationThreadDetail } from "../api";
 import { listTime } from "../lib/format";
-import { listMemories } from "../api";
 import { ThreadReplayDialog, threadTitle } from "./ThreadReplayDialog";
 
 // The replay's turns are told apart by a neutral role badge, not by coloured rails; the

@@ -724,9 +724,6 @@ export function Runs() {
     setAgent("");
     setPage(0);
   };
-  const what = [q && `“${q}”`, filter && STATUS_META[filter].label, agent && `agent ${displayAgent(agent)}`]
-    .filter(Boolean)
-    .join(" · ");
 
   const list = (props: Omit<RunListProps, "order" | "onOrder" | "onOpen">) =>
     narrow ? (
@@ -892,7 +889,9 @@ export function Runs() {
           <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} loading />
         ))}
       {/* Said only of a read of what is asked now: a new filter's read in flight is not it. */}
-      {nothingShown && searching && <ListState kind="filtered" things="runs" filter={what} onClear={clearFilters} />}
+      {nothingShown && searching && (
+        <ListState kind="filtered" things="runs" filter={q || undefined} onClear={clearFilters} />
+      )}
       {nothingShown && !searching && (
         <ListState
           kind="empty"

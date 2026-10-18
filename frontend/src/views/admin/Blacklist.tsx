@@ -110,7 +110,8 @@ export function PrivacyFilters({
         .catch((e) => {
           if (!live()) return;
           setLoadError(e);
-          setRows([]);
+          // Not an empty list: Retry shows the skeleton until the read answers.
+          setRows(null);
         })
         .finally(() => {
           if (live()) setRefreshing(false);
@@ -221,18 +222,18 @@ export function PrivacyFilters({
         </div>
       )}
 
-      {rows === null && (
+      {rows === null && loadError === null && (
         <LoadingSkeleton label="Loading privacy filters">
           <Skeleton className={compact ? "h-10 w-full" : "h-40 w-full"} />
         </LoadingSkeleton>
       )}
       {loadError !== null && <ListState kind="error" things="privacy filters" error={loadError} onRetry={reload} />}
-      {loadError === null && rows !== null && rows.length === 0 && compact && (
+      {rows !== null && rows.length === 0 && compact && (
         <p className="text-xs text-text-muted" role="status">
           {canAdd ? "No patterns yet." : "Nothing is refused here yet."}
         </p>
       )}
-      {loadError === null && rows !== null && rows.length === 0 && !compact && (
+      {rows !== null && rows.length === 0 && !compact && (
         <EmptyState
           icon="line-in-circle"
           title="No patterns"

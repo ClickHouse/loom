@@ -8,7 +8,6 @@
  * (search/symbol/callers — the same ops agents call), PR packs (precomputed
  * per-PR context), Access (who can read it, how tokens get the claim).
  */
-import { BusyButton } from "../components/ui/BusyButton";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -36,6 +35,7 @@ import { toast } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
+import { BusyButton } from "../components/ui/BusyButton";
 import { stageFlips } from "../lib/codeStage";
 import { confirmAction } from "../components/ConfirmDialog";
 import {

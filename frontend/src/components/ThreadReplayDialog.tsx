@@ -1,4 +1,3 @@
-import { BusyButton } from "./ui/BusyButton";
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -14,6 +13,7 @@ import {
 } from "../api";
 import { Chip, ExternalLink, ListTime, Loading, SectionHeading } from "./ui";
 import { Modal } from "./ui/Modal";
+import { BusyButton } from "./ui/BusyButton";
 import { toast } from "./Toast";
 import { displayAgent, humanizeError } from "../lib/format";
 import { AgentBadge } from "./AgentBadge";

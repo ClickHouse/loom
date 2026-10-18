@@ -56,12 +56,19 @@ describe("privacy filters, a failed read", () => {
       identity: { org: "dev", namespace: "ns", agent: "loom-ui" },
       whoami: { authenticated: true, subject: "a@x", org: "dev", roles: ["ADMIN"], namespaces: ["ns"] },
     });
-    listBlacklist.mockRejectedValueOnce(new Error("down")).mockResolvedValue({ rows: [row({})] });
+    let answer: (r: { rows: BlacklistRow[] }) => void = () => {};
+    listBlacklist
+      .mockRejectedValueOnce(new Error("down"))
+      .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
     render(<PrivacyFilters />);
     expect(await screen.findByText("Couldn't load privacy filters")).toBeInTheDocument();
     expect(screen.queryByText("No patterns")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    // While Retry reads, the list is loading, not empty.
     await waitFor(() => expect(screen.queryByText("Couldn't load privacy filters")).toBeNull());
+    expect(screen.queryByText("No patterns")).toBeNull();
+    expect(screen.getByLabelText("Loading privacy filters")).toBeInTheDocument();
+    answer({ rows: [row({})] });
     expect(await screen.findByText("sk-")).toBeInTheDocument();
   });
 });

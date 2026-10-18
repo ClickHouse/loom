@@ -1,14 +1,20 @@
 import { Button, type ButtonProps } from "@clickhouse/click-ui/Button";
+import { forwardRef } from "react";
 
 /**
- * BusyButton — a Click UI Button whose own action is in flight. Click UI's `loading`
- * disables the button, which drops keyboard focus to the page; this one stays focusable,
- * says it is busy (`aria-busy`, `aria-disabled`) and ignores a press until the work ends.
+ * BusyButton — a Click UI Button that stays on the page while its own read runs (Refresh,
+ * Load more, Search). Click UI's `loading` disables the button, which drops keyboard focus
+ * to the page mid-read; this one stays focusable, says it is busy (`aria-busy`, dimmed with
+ * a progress cursor in styles.css) and ignores a press until the work ends.
  */
-export function BusyButton({ busy, onClick, ...props }: ButtonProps & { busy: boolean }) {
+export const BusyButton = forwardRef<HTMLButtonElement, ButtonProps & { busy: boolean }>(function BusyButton(
+  { busy, onClick, ...props },
+  ref,
+) {
   return (
     <Button
       {...props}
+      ref={ref}
       aria-busy={busy || undefined}
       aria-disabled={busy || props.disabled || undefined}
       onClick={(e) => {
@@ -20,4 +26,4 @@ export function BusyButton({ busy, onClick, ...props }: ButtonProps & { busy: bo
       }}
     />
   );
-}
+});

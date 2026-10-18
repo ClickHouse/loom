@@ -1,4 +1,4 @@
-import { useState, type HTMLAttributes, type KeyboardEvent } from "react";
+import { useRef, useState, type HTMLAttributes, type KeyboardEvent } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Title } from "@clickhouse/click-ui/Title";
 import type { TaskListRow } from "../../api/tasks";
@@ -65,8 +65,9 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
 export function TaskBoard({ groups, ctx }: { groups: Record<Group, TaskListRow[]>; ctx: RowContext }) {
   const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
   const [all, setAll] = useState<ReadonlySet<Group>>(new Set());
+  const board = useRef<HTMLElement>(null);
   return (
-    <section className="tq-board" aria-label="Tasks board">
+    <section ref={board} className="tq-board" aria-label="Tasks board">
       {GROUPS.map((g) => {
         const rows = groups[g];
         const listed = all.has(g) ? rows : rows.slice(0, LANE_ROWS);
@@ -98,7 +99,9 @@ export function TaskBoard({ groups, ctx }: { groups: Record<Group, TaskListRow[]
                     if (first)
                       window.setTimeout(
                         () =>
-                          document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(first.task_id)}"]`)?.focus(),
+                          board.current
+                            ?.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(first.task_id)}"]`)
+                            ?.focus(),
                         0,
                       );
                   }}

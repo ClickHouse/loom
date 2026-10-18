@@ -226,6 +226,49 @@ describe("Recent search after a local write", () => {
     expect(screen.getByText("oat_pref")).toBeInTheDocument();
   });
 
+  it("a search that failed outright brings none of its earlier ranked hits back on the next run", async () => {
+    let phase = 0;
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? phase === 1
+          ? { entries: [], total: 0, today: 0, truncated: false }
+          : { entries: [entry("milk_note")], total: 1, today: 0, truncated: false }
+        : { entries: [entry("milk_note"), entry("oat_pref")], total: 2, today: 0, truncated: false },
+    );
+    const hit = (memory_key: string) => ({
+      memory_key,
+      memory_type: "semantic",
+      content_excerpt: memory_key,
+      distance: 0.3,
+      similarity: 0.7,
+      rank_score: 0.8,
+      confidence: 0.9,
+    });
+    vi.mocked(searchMemory).mockImplementation(async () => {
+      if (phase === 1) throw new Error("search down");
+      if (phase === 2) return new Promise(() => {}) as never;
+      return { results: [hit("oat_pref")], embedding_model: "m" } as never;
+    });
+    render(<Recent />);
+    await screen.findByText("oat_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    await waitFor(() => expect(screen.getByLabelText("Search and filters")).toHaveTextContent("2 matches"), {
+      timeout: 3000,
+    });
+    const runs = () => vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk").length;
+    // A write; no keyword rows and the ranking fails: the search fails as a whole.
+    phase = 1;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(runs()).toBe(2), { timeout: 3000 });
+    await waitFor(() => expect(screen.queryByText("milk_note")).toBeNull());
+    // Another write: keyword rows again, the ranking still reading.
+    phase = 2;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(runs()).toBe(3), { timeout: 3000 });
+    expect(await screen.findByText("milk_note")).toBeInTheDocument();
+    expect(screen.queryByText("oat_pref")).toBeNull();
+  });
+
   it("goes back to the keyword rows when the ranking after a write fails", async () => {
     let written = false;
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
