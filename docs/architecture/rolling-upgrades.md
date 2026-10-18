@@ -105,8 +105,8 @@ more (N+1). It checks:
 - every asset each dashboard page names loads from a replica of the other build
   (rule 9);
 - with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one process runs the
-  workers, and it is N+1: N, which took the lease first, hands it
-  over to the higher schema version (rule 6).
+  workers, and it is N+1: N, which took the lease first, hands it over to the
+  higher schema version (rule 6).
 
 It does not check new enum values (rule 3), wire formats (rule 4), signing keys other
 than `default` (rule 5), or a process killed mid-migration. It skips with exit 0

@@ -140,13 +140,7 @@ def loom_dirs(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setenv("LOOM_ENV_FILE", str(tmp_path / "srv" / ".env"))
     for field in ("code_repos_root", "code_scip_checkout_dir"):
         monkeypatch.setattr(settings, field, type(settings).model_fields[field].default)
-    for d in (
-        "var/bin",
-        "var/code_repos/self",
-        "home/bin",
-        "srv/bin",
-        "opt/x/bin",
-    ):
+    for d in ("var/bin", "var/code_repos/self", "home/bin", "srv/bin", "opt/x/bin"):
         (tmp_path / d).mkdir(parents=True)
     (tmp_path / "var/bin/scip-clang").write_text("")
     (tmp_path / "srv/.env").write_text("")

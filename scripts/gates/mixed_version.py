@@ -17,8 +17,8 @@ Then it writes from each build and reads from the other, and checks:
   build (needs npm);
 - after the cross-boot each build answers ready;
 - with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one process
-  runs the workers, and it is N+1: its tree
-  carries one no-op migration more, so N hands the lease over to it.
+  runs the workers, and it is N+1: its tree carries one no-op migration more,
+  so N hands the lease over to it.
 
 The rules these check are docs/architecture/rolling-upgrades.md. ClickHouse
 runs in a throwaway container (the CI image and config), so the gate needs

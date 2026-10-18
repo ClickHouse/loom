@@ -16,7 +16,7 @@ STALE_AFTER_S = 60
 
 # `expired` is decided on the server's clock, like the leases.
 PARTICIPANTS_SQL = (
-    "SELECT participant_id, transition_id, state, version, stale_after_s, heartbeat_at, "
+    "SELECT participant_id, transition_id, state, version, heartbeat_at, "
     "host_proof, "
     "heartbeat_at + toIntervalSecond(stale_after_s) < now64(3) AS expired "
     f"FROM {TABLE} FINAL WHERE state != 'retired'"
@@ -91,9 +91,9 @@ async def record_participant(
                 "transition_id": transition,
                 "state": state,
                 "version": version if version is not None else max(time_ns(), after + 1),
-                "stale_after_s": 0
-                if state == "retired"
-                else STALE_AFTER_S,  # a retired row is stopped at once
+                # A retired row is stopped at once, so every build's `provider-lock clear`
+                # frees its holder without waiting out the heartbeat window.
+                "stale_after_s": 0 if state == "retired" else STALE_AFTER_S,
                 "host_proof": host_proof() if own else "",
             }
         ],

@@ -16,13 +16,12 @@ from server.insights.store import provider_participants as pp
 from server.settings import settings
 
 
-def _row(pid, transition=None, state="running", *, version=1, stale=60, expired=False):
+def _row(pid, transition=None, state="running", *, version=1, expired=False):
     return {
         "participant_id": pid,
         "transition_id": transition or UUID(int=0),
         "state": state,
         "version": version,
-        "stale_after_s": stale,
         "heartbeat_at": "2026-01-01 00:00:00",
         "expired": expired,
     }
@@ -117,12 +116,10 @@ async def test_an_expired_heartbeat_alone_never_lets_the_rebuild_through(setup, 
 
 
 @pytest.mark.asyncio
-async def test_unknown_query_census_or_a_row_without_heartbeats_never_expires(setup, monkeypatch):
+async def test_an_unknown_query_census_never_counts_as_stopped(setup, monkeypatch):
     identity, transition, _, record = setup
-    rows = [_row(identity, transition, "drained"), _row(uuid4(), stale=0)]
+    rows = [_row(identity, transition, "drained"), _row(uuid4(), expired=True)]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
-    assert not await barrier.distributed_drain(transition)
-    rows[1] = _row(uuid4(), expired=True)
     monkeypatch.setattr(barrier, "running_queries", AsyncMock(return_value=None))
     assert not await barrier.distributed_drain(transition)
     record.assert_not_awaited()
