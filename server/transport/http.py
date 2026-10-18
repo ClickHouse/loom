@@ -123,11 +123,7 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     """
     from server.observability.metrics import record_auth_refusal
 
-    try:
-        auth = verify_bearer_header(request.headers.get("Authorization"))
-    except HTTPException as e:
-        record_auth_refusal(e.__cause__, transport="http")
-        raise
+    auth = verify_bearer_header(request.headers.get("Authorization"))  # counts its own refusals
     if auth is None:
         if settings.auth_actually_required():
             record_auth_refusal(None, transport="http")

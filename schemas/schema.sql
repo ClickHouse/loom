@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS loom.agent_events
     `traffic_class` LowCardinality(String) DEFAULT '',
     `subject` LowCardinality(String) DEFAULT '',
     `transport` LowCardinality(String) DEFAULT '',
-    `op_class` LowCardinality(String) DEFAULT '',
+    `slo_class` LowCardinality(String) DEFAULT '',
     `status_class` LowCardinality(String) DEFAULT '',
     `budget_ms` UInt32 DEFAULT 0,
     INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1
@@ -3538,7 +3538,7 @@ SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
 (
     `minute` DateTime,
-    `op_class` LowCardinality(String),
+    `slo_class` LowCardinality(String),
     `operation` LowCardinality(String),
     `transport` LowCardinality(String),
     `traffic_class` LowCardinality(String),
@@ -3548,13 +3548,14 @@ CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
     `client_errors` SimpleAggregateFunction(sum, UInt64),
     `rate_limited` SimpleAggregateFunction(sum, UInt64),
     `slow` SimpleAggregateFunction(sum, UInt64),
-    `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32)
+    `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32),
+    `ts_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3)
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(minute)
-ORDER BY (op_class, minute, operation, transport, traffic_class, org)
+ORDER BY (slo_class, minute, operation, transport, traffic_class, org)
 TTL minute + toIntervalDay(400)
-SETTINGS allow_dimensions_outside_sorting_key = 1, non_replicated_deduplication_window = 1000, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- ======================================================================
 -- Materialized views (18)
@@ -4216,11 +4217,12 @@ WHERE (ts > (
 )) AND (ts <= (now64(3) - toIntervalSecond(10)))
 HAVING count() > 0;
 
--- loom_telemetry.sli_minute_mv
-CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_mv TO loom_telemetry.sli_minute
+-- loom_telemetry.sli_minute_refresh
+CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_refresh
+REFRESH EVERY 1 MINUTE APPEND TO loom_telemetry.sli_minute
 (
     `minute` DateTime,
-    `op_class` LowCardinality(String),
+    `slo_class` LowCardinality(String),
     `operation` LowCardinality(String),
     `transport` LowCardinality(String),
     `traffic_class` LowCardinality(String),
@@ -4230,11 +4232,13 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_mv TO loom_tele
     `client_errors` UInt64,
     `rate_limited` UInt64,
     `slow` UInt64,
-    `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32)
+    `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32),
+    `ts_hwm` DateTime64(3)
 )
+DEFINER = loom SQL SECURITY DEFINER
 AS SELECT
     toStartOfMinute(ts) AS minute,
-    op_class,
+    slo_class,
     operation,
     transport,
     traffic_class,
@@ -4244,12 +4248,16 @@ AS SELECT
     countIf(status_class = 'client') AS client_errors,
     countIf(error_code = 'RATE_LIMITED') AS rate_limited,
     countIf(success AND (budget_ms > 0) AND (latency_ms > budget_ms)) AS slow,
-    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency
+    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
+    max(ts) AS ts_hwm
 FROM loom.agent_events
-WHERE (kind = 'request') AND (transport != '')
+WHERE (kind = 'request') AND (transport != '') AND (ts > greatest((
+    SELECT max(ts_hwm)
+    FROM loom_telemetry.sli_minute
+), now64(3) - toIntervalDay(31))) AND (ts <= (now64(3) - toIntervalSecond(10)))
 GROUP BY
     minute,
-    op_class,
+    slo_class,
     operation,
     transport,
     traffic_class,

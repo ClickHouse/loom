@@ -132,7 +132,7 @@ async def test_ledger_insert_drops_the_unknown_columns_not_the_batch(
         "traffic_class",
         "subject",
         "transport",
-        "op_class",
+        "slo_class",
         "status_class",
         "budget_ms",
     )

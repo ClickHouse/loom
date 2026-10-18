@@ -774,8 +774,8 @@ def _register_health_gauges(meter: Any) -> None:
 
     # Rows lost here are missing from loom.agent_events and from every SLI
     # rolled up from it, so the SLO tiles read better than the service was.
-    meter.create_observable_gauge(
-        name="loom.ledger.dropped_total",
+    meter.create_observable_counter(
+        name="loom.ledger.dropped",
         callbacks=[_dropped],
         description="Ledger rows this process lost since it started, by reason",
         unit="1",

@@ -90,7 +90,7 @@ class AgentEvent:
     # rows no transport wrote, the op's class, `ok` | `client` | `server`, and
     # the latency budget the request was held to (0 = none).
     transport: str = ""
-    op_class: str = ""
+    slo_class: str = ""
     status_class: str = ""
     budget_ms: int = 0
 
@@ -122,7 +122,7 @@ class AgentEvent:
             "model": self.model,
             "llm_calls": self.llm_calls,
             "transport": self.transport,
-            "op_class": self.op_class,
+            "slo_class": self.slo_class,
             "status_class": self.status_class,
             "budget_ms": self.budget_ms,
             "response_tokens": self.response_tokens,

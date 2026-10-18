@@ -22,7 +22,15 @@ from server.settings import settings
 
 
 class TokenError(Exception):
-    """Raised when a token is malformed, expired, or signed with the wrong key."""
+    """Raised when a token is malformed, expired, or signed with the wrong key.
+    `reason` is the bounded label `loom.auth.refusals` counts it under."""
+
+    reason = "invalid"
+
+    def __init__(self, message: str = "", *, reason: str = "") -> None:
+        super().__init__(message)
+        if reason:
+            self.reason = reason
 
 
 class DevSigningSecretRefused(RuntimeError):
@@ -104,6 +112,8 @@ def require_no_key_map_env(env_file: str | None) -> None:
 class AuthUnavailable(TokenError):
     """The token may be valid, but this process cannot judge it yet: a
     retryable 503 AUTH_UNAVAILABLE, never a 401."""
+
+    reason = "unavailable"
 
 
 class RevocationUnavailable(AuthUnavailable):
@@ -388,7 +398,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     try:
         decoded = _decode(token, candidates, algorithm)
     except jwt.ExpiredSignatureError as e:
-        raise TokenError(f"token expired: {e}") from e
+        raise TokenError(f"token expired: {e}", reason="expired") from e
     except jwt.PyJWTError as e:  # InvalidKeyError is not an InvalidTokenError
         raise TokenError(f"invalid token: {e}") from e
     # PyJWT accepts a numeric string for these; delegation and revocation read them
@@ -482,21 +492,21 @@ def _check_not_revoked(decoded: dict[str, Any]) -> None:
         raise RevocationUnavailable("token revocation list is stale; retry shortly")
     jti = decoded.get("jti")
     if jti and is_revoked(str(jti)):
-        raise TokenError(f"token jti {jti!r} is revoked")
+        raise TokenError(f"token jti {jti!r} is revoked", reason="revoked")
     issued_at = _iat_of(decoded)
     sub_for_revoke = decoded.get("sub")
     if sub_for_revoke and is_revoked(str(sub_for_revoke), issued_at=issued_at):
-        raise TokenError(f"token sub {sub_for_revoke!r} is revoked")
+        raise TokenError(f"token sub {sub_for_revoke!r} is revoked", reason="revoked")
     if any(is_revoked(parent) for parent in _str_list(decoded, "parents")):
-        raise TokenError("a parent of this token is revoked")
+        raise TokenError("a parent of this token is revoked", reason="revoked")
     parent_iats = _parent_iats(decoded)
     creator = _creator_claim(decoded)
     oldest = min([*parent_iats, issued_at]) if issued_at is not None else None
     if creator and is_revoked(creator, issued_at=oldest):
-        raise TokenError(f"token creator {creator!r} is revoked")
+        raise TokenError(f"token creator {creator!r} is revoked", reason="revoked")
     chain = zip(_str_list(decoded, "parent_subjects"), parent_iats, strict=True)
     if any(is_revoked(sub, issued_at=iat) for sub, iat in chain):
-        raise TokenError("a parent of this token is revoked")
+        raise TokenError("a parent of this token is revoked", reason="revoked")
 
 
 def _bool_claim(decoded: dict[str, Any], claim: str) -> bool:

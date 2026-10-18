@@ -1,24 +1,25 @@
 -- The SLI columns of a request's ledger row (server/observability/sli.py): the
--- transport that served it, its op class, whether a failure was the caller's
+-- transport that served it, its SLO class, whether a failure was the caller's
 -- (`client`) or the server's (`server`), and the latency budget it was held to
 -- (budgets.effective_budget_ms, 0 = none). '' and 0 on rows written before them.
 ALTER TABLE loom.agent_events
     ADD COLUMN IF NOT EXISTS `transport` LowCardinality(String) DEFAULT '',
-    ADD COLUMN IF NOT EXISTS `op_class` LowCardinality(String) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS `slo_class` LowCardinality(String) DEFAULT '',
     ADD COLUMN IF NOT EXISTS `status_class` LowCardinality(String) DEFAULT '',
     ADD COLUMN IF NOT EXISTS `budget_ms` UInt32 DEFAULT 0;
 
 -- Telemetry Loom derives from its own tables lives outside `loom`.
 CREATE DATABASE IF NOT EXISTS loom_telemetry;
 
--- Requests per minute, op and tenant: the table the SLO alert rules and tiles
--- read, so an evaluation scans minutes rather than the ledger. `slow` counts
--- successful requests over their budget; `latency` holds the quantile state
--- of successful requests.
+-- Requests per minute, SLO class, operation and tenant: the table the SLO
+-- alerts and tiles read, so an evaluation scans minutes rather than the
+-- ledger. `slow` counts successful requests over their budget; `latency` holds
+-- the quantile state of successful requests; `ts_hwm` is the newest ledger row
+-- folded in, where the next refresh resumes.
 CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
 (
     `minute` DateTime,
-    `op_class` LowCardinality(String),
+    `slo_class` LowCardinality(String),
     `operation` LowCardinality(String),
     `transport` LowCardinality(String),
     `traffic_class` LowCardinality(String),
@@ -28,21 +29,26 @@ CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
     `client_errors` SimpleAggregateFunction(sum, UInt64),
     `rate_limited` SimpleAggregateFunction(sum, UInt64),
     `slow` SimpleAggregateFunction(sum, UInt64),
-    `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32)
+    `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32),
+    `ts_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3)
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(minute)
-ORDER BY (op_class, minute, operation, transport, traffic_class, org)
+ORDER BY (slo_class, minute, operation, transport, traffic_class, org)
 TTL minute + toIntervalDay(400)
-SETTINGS non_replicated_deduplication_window = 1000;
+SETTINGS ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000;
 
--- Rows from a build that does not write the SLI columns have no transport and
--- are left out, so a rolling upgrade thins the sample instead of skewing it.
-CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_mv
-TO loom_telemetry.sli_minute
+-- Folds the ledger in once a minute, rows at least 10 s old, so a ledger
+-- insert never waits on it. The first refresh starts 31 days back, enough for
+-- every SLO window without reading the whole ledger. Rows from a build that
+-- does not write the SLI columns have no transport and are left out, so a
+-- rolling upgrade thins the sample instead of skewing it.
+CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_refresh
+REFRESH EVERY 1 MINUTE APPEND TO loom_telemetry.sli_minute
+DEFINER = CURRENT_USER SQL SECURITY DEFINER
 AS SELECT
     toStartOfMinute(ts) AS minute,
-    op_class,
+    slo_class,
     operation,
     transport,
     traffic_class,
@@ -52,7 +58,10 @@ AS SELECT
     countIf(status_class = 'client') AS client_errors,
     countIf(error_code = 'RATE_LIMITED') AS rate_limited,
     countIf(success AND budget_ms > 0 AND latency_ms > budget_ms) AS slow,
-    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency
+    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
+    max(ts) AS ts_hwm
 FROM loom.agent_events
 WHERE kind = 'request' AND transport != ''
-GROUP BY minute, op_class, operation, transport, traffic_class, org;
+  AND ts > greatest((SELECT max(ts_hwm) FROM loom_telemetry.sli_minute), now64(3) - toIntervalDay(31))
+  AND ts <= now64(3) - toIntervalSecond(10)
+GROUP BY minute, slo_class, operation, transport, traffic_class, org;

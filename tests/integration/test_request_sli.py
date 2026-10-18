@@ -1,4 +1,4 @@
-"""The request SLI path: a ledger row carries its transport, op class, status
+"""The request SLI path: a ledger row carries its transport, SLO class, status
 class and budget, and `loom_telemetry.sli_minute` rolls the rows up per minute."""
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ ORG = unique_org("sli")
 
 def _ledger(ch_client, ns: str) -> list[tuple]:
     return ch_client.query(
-        "SELECT operation, transport, op_class, status_class, budget_ms, success "
+        "SELECT operation, transport, slo_class, status_class, budget_ms, success "
         "FROM loom.agent_events WHERE org = {org:String} AND namespace = {ns:String} "
         "ORDER BY operation, success",
         parameters={"org": ORG, "ns": ns},
@@ -30,9 +30,7 @@ def _ledger(ch_client, ns: str) -> list[tuple]:
 
 
 @pytest.mark.asyncio
-async def test_ledger_rows_carry_the_sli_columns_and_roll_up(
-    control_plane_url: str, ch_client
-) -> None:
+async def test_ledger_rows_carry_the_sli_columns(control_plane_url: str, ch_client) -> None:
     from loom import Agent
 
     ns = f"sli-{uuid.uuid4().hex[:6]}"
@@ -56,18 +54,6 @@ async def test_ledger_rows_carry_the_sli_columns_and_roll_up(
     assert by_op["memory.search"][1:4] == ("http", "search", "ok")
     assert by_op["memory.get"][1:4] == ("http", "read", "client")
     assert all(r[4] > 0 for r in rows), rows
-
-    rolled = ch_client.query(
-        "SELECT operation, sum(requests), sum(server_errors), sum(client_errors) "
-        "FROM loom_telemetry.sli_minute WHERE org = {org:String} "
-        "AND minute > now() - INTERVAL 10 MINUTE AND operation IN "
-        "('memory.set', 'memory.search', 'memory.get') GROUP BY operation ORDER BY operation",
-        parameters={"org": ORG},
-    ).result_rows
-    counts = {op: (int(n), int(s), int(c)) for op, n, s, c in rolled}
-    assert counts["memory.get"][2] >= 1
-    assert counts["memory.set"][0] >= 1 and counts["memory.set"][1] == 0
-    assert counts["memory.search"][0] >= 1 and counts["memory.search"][1] == 0
 
 
 @pytest.mark.asyncio
@@ -105,3 +91,77 @@ async def test_an_mcp_call_is_ledgered_with_its_transport(
     rows = await eventually(_row, max_wait=10.0, description="the MCP ledger row")
     assert rows[0][:4] == ("memory.set", "mcp", "write", "ok")
     assert rows[0][4] > 0
+
+
+@pytest.mark.asyncio
+async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_rows_without_a_transport(
+    ch_client,
+) -> None:
+    """Rows written as the ledger writes them; one has no transport, as a
+    build without the SLI columns writes it, and is left out."""
+    from datetime import UTC, datetime, timedelta
+
+    org = unique_org("sli-rollup")
+    ts = datetime.now(UTC) - timedelta(seconds=30)
+    base = {"org": org, "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
+    rows = [
+        # (transport, success, error_code, status_class, latency_ms, budget_ms)
+        ("http", True, "", "ok", 50, 100),
+        ("http", True, "", "ok", 500, 100),  # slow
+        ("mcp", False, "RATE_LIMITED", "client", 0, 100),
+        ("http", False, "INTERNAL_ERROR", "server", 20, 100),
+        ("", False, "INTERNAL_ERROR", "", 20, 0),  # an older build's row
+    ]
+    ch_client.insert(
+        "loom.agent_events",
+        [
+            [
+                ts,
+                *base.values(),
+                "memory.get",
+                uuid.uuid4().hex,
+                t,
+                "read",
+                s,
+                b,
+                ok,
+                e,
+                lat,
+                "request",
+            ]
+            for t, ok, e, s, lat, b in rows
+        ],
+        column_names=[
+            "ts",
+            *base.keys(),
+            "operation",
+            "request_id",
+            "transport",
+            "slo_class",
+            "status_class",
+            "budget_ms",
+            "success",
+            "error_code",
+            "latency_ms",
+            "kind",
+        ],  # fmt: skip
+    )
+    ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
+
+    def _rolled() -> tuple | None:
+        got = ch_client.query(
+            "SELECT sum(requests), sum(server_errors), sum(client_errors), sum(rate_limited), "
+            "sum(slow), quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)[3] "
+            "FROM loom_telemetry.sli_minute WHERE org = {org:String}",
+            parameters={"org": org},
+        ).result_rows[0]
+        return got if got[0] else None
+
+    async def _seen() -> tuple | None:
+        return _rolled()
+
+    requests, server, client, limited, slow, p99 = await eventually(
+        _seen, max_wait=30.0, description="the rollup of the inserted rows"
+    )
+    assert (requests, server, client, limited, slow) == (4, 1, 1, 1, 1)
+    assert 50 <= p99 <= 500  # successful requests only

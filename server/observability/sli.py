@@ -1,6 +1,6 @@
 """The service-level columns a request's ledger row carries.
 
-`op_class` groups operations the way their SLOs are set, `status_class` says
+`slo_class` groups operations the way their SLOs are set, `status_class` says
 whose fault a failure was, and `budget_ms` is the latency budget the request
 was held to (`budgets.effective_budget_ms`). `loom_telemetry.sli_minute` rolls
 the rows up per minute; the alert rules and the SLO tiles read that table.
@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from functools import cache
 
-# Each class gets its own SLO row in docs/operations/monitoring.md.
-OP_CLASSES = ("write", "search", "read", "code", "admin")
+SLO_CLASSES = ("write", "search", "read", "code", "admin")
 STATUS_CLASSES = ("ok", "client", "server")
 
 # Retrieval ops that are reads by role but carry the search SLO.
@@ -27,21 +26,32 @@ _SEARCH_OPS = frozenset(
         "conversation.search",
         "context.pack",
         "context.fetch",
+        "memory.recall",
+        "procedure.match",
+        "tracker.similar",
+        "tracker.duplicate_check",
     }
 )
 
-# Refusals recorded without the exception that raised them.
-_CLIENT_CODES = frozenset(
+# Refusals the transports record without the exception that raised them;
+# every one answers a 4xx.
+CLIENT_CODES = frozenset(
     {
+        "AUTH_INVALID",
+        "BAD_REQUEST",
+        "HANDLER_HTTP_ERROR",
+        "IDEMPOTENT_CONFLICT",
+        "IDEMPOTENT_IN_PROGRESS",
+        "NAMESPACE_NOT_ACCESSIBLE",
+        "OP_NOT_ON_MCP",
+        "ORG_MISMATCH",
         "POLICY_FORBIDDEN",
         "UNKNOWN_ARGUMENT",
-        "IDEMPOTENT_IN_PROGRESS",
-        "HANDLER_HTTP_ERROR",
     }
 )
 
 
-def op_class(name: str, *, writes: bool, admin: bool) -> str:
+def slo_class(name: str, *, writes: bool, admin: bool) -> str:
     """`code`, `search`, `admin`, `write` or `read`, first match wins.
     `writes` and `admin` come from the op's required role."""
     if name.startswith("code."):
@@ -75,6 +85,6 @@ def status_class(success: bool, error_code: str, error: BaseException | str | No
     status = getattr(error, "status_code", None) if isinstance(error, BaseException) else None
     if not isinstance(status, int):
         status = _coded_statuses().get(error_code)
-    if status is None and (error_code in _CLIENT_CODES or error_code.startswith("HTTP_4")):
+    if status is None and (error_code in CLIENT_CODES or error_code.startswith("HTTP_4")):
         status = 400
     return "client" if status is not None and 400 <= status < 500 else "server"

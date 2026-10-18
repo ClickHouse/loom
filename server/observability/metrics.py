@@ -371,22 +371,11 @@ AUTH_REFUSAL_REASONS = ("missing", "malformed", "expired", "revoked", "invalid",
 
 def auth_refusal_reason(error: BaseException | None) -> str:
     """The bounded reason for a refused bearer: `missing` when there was
-    none, `unavailable` when the revocation list is not loaded, else what the
-    token's verification said."""
-    from server.auth.jwt import AuthUnavailable
-
+    none, else the `reason` its TokenError was raised with."""
     if error is None:
         return "missing"
-    if isinstance(error, AuthUnavailable):
-        return "unavailable"
-    text = str(error)
-    if text.startswith("authorization header must be"):
-        return "malformed"
-    if text.startswith("token expired"):
-        return "expired"
-    if "revoked" in text:
-        return "revoked"
-    return "invalid"
+    reason = getattr(error, "reason", "invalid")
+    return reason if reason in AUTH_REFUSAL_REASONS else "invalid"
 
 
 def record_auth_refusal(error: BaseException | None, *, transport: str) -> None:

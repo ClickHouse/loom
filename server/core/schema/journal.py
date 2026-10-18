@@ -124,15 +124,14 @@ _OBJECT_DDL = re.compile(
 
 
 def object_ddl(sql: str) -> Iterator[tuple[str, str]]:
-    """`("create" | "drop", name)` for each loom object `sql` creates or drops,
-    in order, comment lines skipped. An object another database qualifies
-    (`loom_telemetry.x`) is not a loom object."""
+    """`("create" | "drop", name)` for each object `sql` creates or drops, in
+    order, comment lines skipped. A `loom` object is named bare; one in
+    another database keeps its qualifier (`loom_telemetry.sli_minute`)."""
     for m in _OBJECT_DDL.finditer(without_comments(sql)):
         op, db, name = (
             ("create", m.group(2), m.group(3)) if m.group(1) else ("drop", m.group(5), m.group(6))
         )
-        if db is None or db == "loom":
-            yield op, name
+        yield op, name if db is None or db == "loom" else f"{db}.{name}"
 
 
 def created_objects(sql: str) -> tuple[str, ...]:
@@ -141,9 +140,9 @@ def created_objects(sql: str) -> tuple[str, ...]:
 
 
 def live_objects(files: Iterable[Path]) -> set[str]:
-    """The `loom.*` objects a replay of `files` leaves: each statement's CREATE
-    or DROP applied in migration order (a migration may drop an insert-time
-    view)."""
+    """The objects a replay of `files` leaves (named as `object_ddl` names
+    them): each statement's CREATE or DROP applied in migration order (a
+    migration may drop an insert-time view)."""
     names: set[str] = set()
     for path in sorted_migrations(files):
         for op, name in object_ddl(path.read_text("utf-8")):

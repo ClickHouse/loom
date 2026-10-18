@@ -72,7 +72,7 @@ def bind_request(op_name: str, request_id: str) -> None:
 
 def sli_columns(op_name: str, transport: str) -> dict[str, Any]:
     """The ledger row's SLI columns for a call of `op_name` (`emit_agent_event`
-    keywords): its transport, its op class and the budget it is held to."""
+    keywords): its transport, its SLO class and the budget it is held to."""
     from server.observability import sli
     from server.observability.budgets import effective_budget_ms
     from server.operations.base import Role
@@ -81,14 +81,18 @@ def sli_columns(op_name: str, transport: str) -> dict[str, Any]:
     op = OPERATIONS_BY_NAME.get(op_name)
     if op is None:
         return {"transport": transport}
+    try:
+        budget_ms = effective_budget_ms(op.name, op.budget_p99_ms)
+    except Exception:  # noqa: BLE001 — a budget lookup never replaces the request's outcome
+        budget_ms = 0
     return {
         "transport": transport,
-        "op_class": sli.op_class(
+        "slo_class": sli.slo_class(
             op.name,
             writes=op.required_role == Role.WRITER,
             admin=op.required_role >= Role.ADMIN,
         ),
-        "budget_ms": effective_budget_ms(op.name, op.budget_p99_ms),
+        "budget_ms": budget_ms,
     }
 
 

@@ -9,7 +9,8 @@ The op endpoint (`server.transport.http`) and the routes outside the
 registry (`/v1/me/*`, `/v1/admin/*`, the task-watch stream) answer a bad
 token the same way: 401 AUTH_INVALID, and 503 AUTH_UNAVAILABLE with
 Retry-After while the revocation list has not loaded yet — a 401 then would
-tell the client to discard a good token.
+tell the client to discard a good token. Every refusal here is counted in
+`loom.auth.refusals`, since none of them reaches the request ledger.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from fastapi import HTTPException
 from server.auth.context import quota_key_for
 from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, verify_token
 from server.core.ch import set_quota_key
+from server.observability.metrics import record_auth_refusal
 
 
 def bearer_token(authorization: str | None) -> str | None:
@@ -31,7 +33,7 @@ def bearer_token(authorization: str | None) -> str | None:
     scheme, _, token = text.partition(" ")
     token = token.strip()
     if scheme.lower() != "bearer" or not token:
-        raise TokenError("authorization header must be `Bearer <token>`")
+        raise TokenError("authorization header must be `Bearer <token>`", reason="malformed")
     return token
 
 
@@ -41,6 +43,7 @@ def verify_bearer_header(authorization: str | None) -> AuthInfo | None:
     try:
         token = bearer_token(authorization)
     except TokenError as e:
+        record_auth_refusal(e, transport="http")
         raise HTTPException(
             status_code=401,
             detail={"code": "AUTH_INVALID", "message": str(e)},
@@ -54,16 +57,17 @@ def verify_bearer(token: str) -> AuthInfo:
     outside the op registry draw the caller's bucket too."""
     try:
         info = verify_token(token)
-    except AuthUnavailable as e:
+    except TokenError as e:
+        record_auth_refusal(e, transport="http")
+        if not isinstance(e, AuthUnavailable):
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "AUTH_INVALID", "message": str(e)},
+            ) from e
         raise HTTPException(
             status_code=503,
             detail={"code": "AUTH_UNAVAILABLE", "message": str(e)},
             headers={"Retry-After": "5"},
-        ) from e
-    except TokenError as e:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "AUTH_INVALID", "message": str(e)},
         ) from e
     set_quota_key(quota_key_for(info))
     return info

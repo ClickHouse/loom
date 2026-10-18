@@ -22,10 +22,10 @@ passes write rows with `kind='worker'`. [Cost and usage](./cost-and-usage.md) is
 this table.
 
 Each request row also carries its service-level columns: `transport` (`http` or `mcp`),
-`op_class` (`write`, `search`, `read`, `code`, `admin`), `status_class` (`ok`, `client`
+`slo_class` (`write`, `search`, `read`, `code`, `admin`), `status_class` (`ok`, `client`
 for a refused request, `server` for a failure) and `budget_ms`, the latency budget the
-request was held to. A materialized view rolls them up per minute into
-`loom_telemetry.sli_minute` (requests, server and client errors, rate-limited and
+request was held to. A refreshable materialized view folds rows older than 10 seconds
+into `loom_telemetry.sli_minute` once a minute (requests, server and client errors, rate-limited and
 over-budget counts, latency quantiles, kept 400 days), the table the SLO tiles and alert
 rules read ([monitoring](../../operations/monitoring.md)).
 
@@ -159,7 +159,7 @@ A level is expected to be non-zero and to drain.
 | `loom.audit.checkpoint_lag_windows`                                                                                          | gauge     | hourly audit windows not yet sealed into the checkpoint chain ([audit log](./audit.md#checkpoint-lag))                                      |
 | `loom.langfuse.breaker`                                                                                                      | gauge     | Langfuse circuit breaker: 0 closed, 1 half-open, 2 open (traces dropped)                                                                    |
 | `loom.health.problems`                                                                                                       | gauge     | 1 per open `/v1/health` problem on this process, by `code` and `severity` (`provider` for `provider_failing`)                               |
-| `loom.ledger.dropped_total`                                                                                                  | gauge     | ledger rows this process lost since it started, by `reason` (`queue_full`, `flush_failed`); the SLIs undercount by as much                  |
+| `loom.ledger.dropped`                                                                                                        | counter   | ledger rows this process lost since it started, by `reason` (`queue_full`, `flush_failed`); the SLIs undercount by as much                  |
 | `loom.worker.passes`                                                                                                         | counter   | passes by `worker` and `outcome`                                                                                                            |
 | `loom.worker.pass_duration_ms`                                                                                               | histogram | pass wall time                                                                                                                              |
 | `loom.worker.consecutive_failures`                                                                                           | gauge     | current failure streak per worker; alert at 3                                                                                               |
