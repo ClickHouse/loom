@@ -309,7 +309,8 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
         if isinstance(resolved, dict):  # refused on the name it resolved to, or unknown
             refusal = resolved
         else:  # the name exists: refused on it
-            refusal, unverified = _not_accessible_result(tool_name, auth, req_ns), readable is None
+            refusal = _not_accessible_result(tool_name, auth, req_ns)
+            unverified = readable is None
         # The org the token may act in, as HTTP records the same refusal.
         code = str(refusal["structuredContent"]["code"])
         _ledger_refusal(tool_name, auth, error_code=code, org=target_org, server_fault=unverified)

@@ -621,10 +621,13 @@ def test_a_refusal_made_without_readable_grants_is_the_server_s(monkeypatch) -> 
 
     class _Client:
         fails = ""  # a fragment of the one statement that fails
+        grant = ""  # the role a grants read finds, if any
 
-        async def query_one(self, sql: str, **k: Any) -> None:
+        async def query_one(self, sql: str, **k: Any) -> dict | None:
             if self.fails and self.fails in sql:
                 raise ConnectionError("ClickHouse is down")
+            if self.grant and "namespace_grants" in sql:
+                return {"role": self.grant}
             return None
 
         async def query_all(self, sql: str, **k: Any) -> list:
@@ -664,9 +667,22 @@ def test_a_refusal_made_without_readable_grants_is_the_server_s(monkeypatch) -> 
     assert status(person) == "client"  # no grant: the caller's
     assert status(person, fails="namespace_grants") == "server"
     assert status(person, fails="contact_email") == "server"  # the aliases read
-    assert status(person) == "client"  # the mark does not outlive its call
     assert status(bot, fails="service_accounts") == "server"
     assert status(delegated, fails="owned_live") == "server"  # the creator's account
+
+    # A failed read stays noted after a check that passed despite it; the next
+    # check starts clean, so its own plain refusal stays the caller's.
+    async def _passed_then_refused() -> str:
+        client.fails, client.grant = "contact_email", "viewer"  # admitted by a grant
+        aliases._CACHE.clear()
+        await authz.check_authorized(person, Role.VIEWER, org="o", namespace="theirs")
+        client.fails, client.grant = "", ""
+        with pytest.raises(PermissionError) as e:
+            await authz.check_authorized(person, Role.VIEWER, org="o", namespace="theirs")
+        return sli.status_class(False, "AUTH_INSUFFICIENT", e.value)
+
+    assert asyncio.run(_passed_then_refused()) == "client"
+
     directory.down = True
     assert status(person) == "server"
     monkeypatch.setattr(settings, "restricted_serve", False)
