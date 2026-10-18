@@ -1996,3 +1996,41 @@ async def test_a_peer_embedded_by_another_model_of_the_same_dimension_is_not_com
     out = await run_pass()
     assert llm.calls == [] and out["errored"] == 0, out
     assert (await _rows(ch, org))["office_city"]["status"] == "active"
+
+
+async def test_a_namespace_whose_rows_are_all_newer_still_gets_a_place(ch, wired) -> None:
+    """Three namespaces owe a row each, c's the newest, and a pass reads two: ordered by
+    age within the turn, a and b would take both places every pass. The order within a
+    turn comes from the pass's seed, so some pass reads c."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write
+    from server.memory.app.write import handle_memory_set
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
+
+    org, _ = wired
+    for ns in ("turn-a", "turn-b", "turn-c"):
+        await handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=ns,
+                agent="bot",
+                user_id=USER,
+                session_id="s1",
+                memory_key="k",
+                value=f"note in {ns}",
+            )
+        )
+        await _later()
+    await after_write.drain()
+    for ns in ("turn-a", "turn-b", "turn-c"):
+        rows = await live_embedding_rows_for_key(
+            ch, org=org, namespace=ns, agent="bot", user_id=USER, session_id="s1", memory_key="k"
+        )
+        await reemit_rows(rows, {"conflict_checked_at": queue.OWED_MARK}, ch=ch)
+    served = []
+    for seed in range(16):
+        picked = {r["namespace"] for r in await queue.owed_rows(limit=2, seed=seed)}
+        assert len(picked) == 2, picked
+        served.append(picked)
+    assert any("turn-c" in p for p in served), "the newest namespace is never read"

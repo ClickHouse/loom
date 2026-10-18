@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -69,10 +70,12 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
     capped = sorted(pair for pair, is_over in over.items() if is_over)
     p.counts.capped_namespaces = len(capped)
     batch = int(settings.memory_conflict_resolver_batch)
-    rows = await queue.owed_rows(limit=batch, capped=capped)
+    # A new order of the namespaces within a turn each pass, so none waits behind the rest.
+    seed = random.getrandbits(32)
+    rows = await queue.owed_rows(limit=batch, capped=capped, seed=seed)
     full = len(rows) >= batch
     if due:
-        found = await queue.unjudged_conflicted_rows(limit=recheck, capped=capped)
+        found = await queue.unjudged_conflicted_rows(limit=recheck, capped=capped, seed=seed)
         if len(found) < recheck:
             _recheck_after = time.monotonic() + RECHECK_IDLE_S
         rows += found

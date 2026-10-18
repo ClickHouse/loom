@@ -1020,12 +1020,16 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.queue_reads += 1
         return sorted({_ns(r) for r in e.owed + e.recheck})
 
+    e.seeds = []
+
     async def owed(*, limit: int, capped: Any = (), **kw: Any) -> list[dict[str, Any]]:
         e.capped = list(capped)
+        e.seeds.append(("owed", kw.get("seed")))
         return [r for r in e.owed if _ns(r) not in capped][:limit]
 
     async def recheck(*, limit: int, capped: Any = (), **kw: Any) -> list[dict[str, Any]]:
         e.recheck_reads += 1
+        e.seeds.append(("recheck", kw.get("seed")))
         return [r for r in e.recheck if _ns(r) not in capped][:limit]
 
     async def over_all(pairs, **kw):
@@ -1077,6 +1081,20 @@ async def test_a_pass_handles_each_tenant_on_its_own_and_each_row_once(pass_env:
         ("o2", "a", "k2", "newest_wins"),
     ]
     assert out["judged"] == 3
+
+
+async def test_each_pass_draws_a_new_namespace_order_for_both_reads(
+    pass_env: NS, monkeypatch
+) -> None:
+    from server.memory.workers import conflict_resolver as worker
+
+    draws = iter([11, 22])
+    monkeypatch.setattr(worker.random, "getrandbits", lambda n: next(draws))
+    pass_env.owed = [_q(memory_key="k1")]
+    await pass_env.run()
+    monkeypatch.setattr(worker, "_recheck_after", 0.0)
+    await pass_env.run()
+    assert pass_env.seeds == [("owed", 11), ("recheck", 11), ("owed", 22), ("recheck", 22)]
 
 
 async def test_a_namespace_over_its_cap_is_left_out_of_the_read(pass_env: NS) -> None:

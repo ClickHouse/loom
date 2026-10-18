@@ -81,7 +81,10 @@ def _queued_pairs(where: str) -> str:
 def _in_turns(where: str) -> str:
     """The vector rows matching `where`, in turns across (org, namespace): every
     namespace's oldest row, then every namespace's second oldest, and so on, so one
-    namespace's backlog cannot hold the others back. Only the identity is ranked; the
+    namespace's backlog cannot hold the others back. Within a turn the namespaces come
+    in an order drawn from `seed`, which the worker draws each pass: ordered by age, the
+    namespaces with the oldest rows would take every place of a turn longer than the
+    batch, pass after pass. Only the identity is ranked; the
     vectors are read for the picked rows alone. The FINAL read covers only the
     namespaces `_queued_pairs` names, not the whole table. Read strongly: a burst reads
     again right after its stamps, and a stamp a replica lacks is a row paid for twice."""
@@ -99,7 +102,7 @@ def _in_turns(where: str) -> str:
                 WHERE (org, namespace) IN ({_queued_pairs(where)})
                   AND {where}
             )
-            ORDER BY turn, created_at
+            ORDER BY turn, cityHash64(org, namespace, {{seed:UInt64}}), created_at
             LIMIT {{lim:UInt32}}
         )
           AND {where}
@@ -127,21 +130,32 @@ async def queued_namespaces(
 
 
 async def owed_rows(
-    *, limit: int, capped: Sequence[tuple[str, str]] = (), ch: _CHClient | None = None
+    *,
+    limit: int,
+    capped: Sequence[tuple[str, str]] = (),
+    seed: int = 0,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Rows whose write the resolver owes a judgement, in turns across namespaces;
-    none of a namespace in `capped`."""
+    """Rows whose write the resolver owes a judgement, in turns across namespaces (in an
+    order drawn from `seed` within a turn); none of a namespace in `capped`."""
     ch = ch or _default_client()
-    return await ch.query_all(_in_turns(_OWED), {"lim": int(limit), "capped": _capped(capped)})
+    params = {"lim": int(limit), "capped": _capped(capped), "seed": int(seed)}
+    return await ch.query_all(_in_turns(_OWED), params)
 
 
 async def unjudged_conflicted_rows(
-    *, limit: int, capped: Sequence[tuple[str, str]] = (), ch: _CHClient | None = None
+    *,
+    limit: int,
+    capped: Sequence[tuple[str, str]] = (),
+    seed: int = 0,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """`conflicted` rows no resolver has judged (flags raised by cosine alone, or by an
-    older build's judge), in turns across namespaces; none of a namespace in `capped`."""
+    older build's judge), in turns across namespaces as `owed_rows`; none of a namespace
+    in `capped`."""
     ch = ch or _default_client()
-    return await ch.query_all(_in_turns(_UNJUDGED), {"lim": int(limit), "capped": _capped(capped)})
+    params = {"lim": int(limit), "capped": _capped(capped), "seed": int(seed)}
+    return await ch.query_all(_in_turns(_UNJUDGED), params)
 
 
 async def under_erasure(org: str, *, ch: _CHClient | None = None) -> bool:
