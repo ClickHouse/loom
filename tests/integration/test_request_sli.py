@@ -105,13 +105,15 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
     ts = datetime.now(UTC)
     base = {"org": org, "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
     rows = [
-        # (transport, slo_class, success, error_code, status_class, latency_ms, budget_ms)
-        ("http", "read", True, "", "ok", 50, 100),
-        ("http", "read", True, "", "ok", 500, 100),  # slow
-        ("mcp", "read", False, "RATE_LIMITED", "client", 0, 100),
-        ("http", "read", False, "INTERNAL_ERROR", "server", 5000, 100),  # not in the quantiles
-        ("", "", False, "HTTP_500", "server", 20, 0),  # no transport or SLO class, as /v1/me/*
-        ("mcp", "", True, "", "ok", 5, 0),  # no registered op
+        # (operation, transport, slo_class, success, error_code, status_class, latency_ms,
+        #  budget_ms)
+        ("memory.get", "http", "read", True, "", "ok", 50, 100),
+        ("memory.get", "http", "read", True, "", "ok", 500, 100),  # slow
+        ("memory.get", "mcp", "read", False, "RATE_LIMITED", "client", 0, 100),
+        # a server error, not in the quantiles
+        ("memory.get", "http", "read", False, "INTERNAL_ERROR", "server", 5000, 100),
+        ("me.whoami", "", "", False, "HTTP_500", "server", 20, 0),  # no transport or SLO class
+        ("mcp.initialize", "mcp", "", True, "", "ok", 5, 0),  # no registered op
     ]
     ch_client.insert(
         "loom.agent_events",
@@ -119,7 +121,7 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
             [
                 ts,
                 *base.values(),
-                "memory.get",
+                op,
                 uuid.uuid4().hex,
                 t,
                 c,
@@ -130,7 +132,7 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
                 lat,
                 "request",
             ]
-            for t, c, ok, e, s, lat, b in rows
+            for op, t, c, ok, e, s, lat, b in rows
         ],
         column_names=[
             "ts",
