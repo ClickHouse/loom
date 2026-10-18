@@ -475,7 +475,7 @@ async def test_an_account_moved_after_its_new_address_was_provisioned_waits_for_
     world.person("lee@example.com")
     world.person("lee.new@example.com", "lee")  # then `loom sso link` moves the account
     assert world.ours["lee"] is None  # nothing has looked again
-    await scim.update(new, active=True)  # the next request for it, Provision on demand's
+    await scim.update(new, active=True)  # the next request for it
     assert world.ours["lee"] is not None
 
 

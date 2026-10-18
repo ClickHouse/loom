@@ -401,8 +401,9 @@ What Loom does with each request:
   stays revoked, and Loom logs a warning for each one it leaves. Once none
   reaches it (the last is reactivated, or an operator moves the account to
   another address with `loom sso link`), the next `PUT` or `PATCH` for an
-  active user whose email reaches it lets it go, as any change at the
-  provider sends. By hand,
+  active user whose email reaches it lets it go. Okta sends one on a profile
+  change only with **Update User Attributes** on; Entra sends one when a mapped
+  attribute changes. Otherwise, or at once,
   `loom revoke-token --subject <it> --issued-before <now> --scim` gives it
   back as an operator. A reactivation answers after about 6 s, once every
   replica's clock is past its cutoff, so a sign-in after it gets a token that
