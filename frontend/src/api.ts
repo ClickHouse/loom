@@ -154,6 +154,8 @@ export interface MemoryListResponse {
   // string: the value is above 2^53, which a JS number would round.
   namespace_version?: string;
   unchanged?: boolean;
+  // Inputs this server does not know (a release behind), named rather than refused.
+  ignored_args?: string[];
 }
 
 export interface Identity {

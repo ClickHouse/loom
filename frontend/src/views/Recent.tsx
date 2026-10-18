@@ -171,11 +171,12 @@ function MemoryList() {
   }, [firstScreenOnly, entries]);
   // First-page read failure, shown inline with a Retry.
   const [loadError, setLoadError] = useState<{ text: string; requestId: string } | null>(null);
-  // A filtered read that hit its 1,000-row cap: the list says it shows the newest matches.
+  // A filtered read the server cut short: the list says it shows the newest matches.
   const [truncated, setTruncated] = useState(false);
-  // A filtered read: how many rows it returned, and how many match on the server. A viewer
-  // token's read is cut to fewer rows than asked, so neither is a fixed 1,000.
-  const [filteredRead, setFilteredRead] = useState({ rows: 0, total: 0 });
+  // How many rows match a tag or agent filter on the server, when that count says more than
+  // the rows read: the read was cut short (a viewer token reads fewer rows than asked) and
+  // the server matched the tags as the page does. Otherwise the rows on screen are the count.
+  const [serverMatches, setServerMatches] = useState<number | null>(null);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Status>("live");
@@ -221,6 +222,11 @@ function MemoryList() {
   // to it bumps `searchFilterGen`, which runs the search again.
   const searchFilterRef = useRef<{ tags: string[]; agent: string }>({ tags: [], agent: "" });
   const [searchFilterGen, setSearchFilterGen] = useState(0);
+  // The ranked search for the query being shown. A filter change runs the keyword read
+  // again but awaits this same search: the filter is not one of its inputs, and each new
+  // one costs an embedding.
+  const rankedRef = useRef<{ key: string; promise: ReturnType<typeof searchMemory>; ac: AbortController } | null>(null);
+  useEffect(() => () => rankedRef.current?.ac.abort(), []);
   // Another namespace's search results, conflict keys and agent are not this one's: they
   // go during render, before the new namespace's first read or paint can use them.
   const namespaceKey = `${identity.org}/${identity.namespace}`;
@@ -308,6 +314,8 @@ function MemoryList() {
       setRanking(false);
       // A search cut short (the box cleared while it read) is not still searching.
       setSearching(false);
+      rankedRef.current?.ac.abort();
+      rankedRef.current = null;
       return;
     }
     let cancelled = false;
@@ -323,13 +331,24 @@ function MemoryList() {
         // soon as they arrive (a few hundred ms) and the ranked hits join them when the
         // search answers (it embeds the query first); a failed keyword read leaves the
         // ranked hits standing.
-        const ranked = searchMemory(identity, rawQuery, {
-          top_k: 50,
-          explain: true,
-          legs: ["memory"],
-          signal: ac.signal,
-        });
-        ranked.catch(() => {}); // awaited below; a rejection before then is not unhandled
+        const rankedKey = `${identity.org}/${identity.namespace}\n${rawQuery}`;
+        if (rankedRef.current?.key !== rankedKey) {
+          rankedRef.current?.ac.abort();
+          const rac = new AbortController();
+          const promise = searchMemory(identity, rawQuery, {
+            top_k: 50,
+            explain: true,
+            legs: ["memory"],
+            signal: rac.signal,
+          });
+          // Awaited below; a rejection before then is not unhandled, and is not kept for the
+          // next run to reuse.
+          promise.catch(() => {
+            if (rankedRef.current?.promise === promise) rankedRef.current = null;
+          });
+          rankedRef.current = { key: rankedKey, promise, ac: rac };
+        }
+        const ranked = rankedRef.current.promise;
         const kw = await listMemories(identity, KEYWORD_PAGE, {
           contains: rawQuery.trim(),
           tags: searchFilterRef.current.tags,
@@ -748,7 +767,11 @@ function MemoryList() {
           if (r.unchanged) return;
           knownVersion = r.namespace_version ?? "";
           setTruncated(listFiltered && r.truncated);
-          if (listFiltered) setFilteredRead({ rows: r.entries.length, total: r.total });
+          if (listFiltered) {
+            const ignored = r.ignored_args ?? [];
+            const sameMatch = !ignored.includes("tags_all") && !ignored.includes("tags_any_case");
+            setServerMatches(r.truncated && sameMatch ? r.total : null);
+          }
           // The namespace's total follows every browsed answer, the 8 s refresh included.
           if (!listFiltered && !showDeleted) setBrowsedTotal(r.total);
           // Fill before painting so a list without values never sends 100 cards to
@@ -866,9 +889,7 @@ function MemoryList() {
           ? // A tag or agent filter is matched on the server, whose total is exact; a status
             // is kept here among the rows read.
             matches(
-              !showDeleted && listFilter.status === "live" && filteredRead.total > flatList.length
-                ? filteredRead.total
-                : flatList.length,
+              !showDeleted && listFilter.status === "live" && serverMatches !== null ? serverMatches : flatList.length,
             )
           : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()}`;
   const lastCount = useRef("");
@@ -1102,8 +1123,8 @@ function MemoryList() {
       {truncated && (
         <p className="mb-3 text-xs text-text-muted">
           {listFilter.tags.length > 0 || listFilter.agent
-            ? `Showing the newest ${filteredRead.rows.toLocaleString()} matches. Add a tag or a search word to narrow them.`
-            : `Showing the ${filterNames.toLowerCase()} memories among the newest ${filteredRead.rows.toLocaleString()}.`}
+            ? "Showing the newest matches. Add a tag or a search word to narrow them."
+            : `Showing the ${filterNames.toLowerCase()} memories among the newest ones read.`}
         </p>
       )}
       {/* Where a page change takes the reader: a heading a screen reader announces. */}

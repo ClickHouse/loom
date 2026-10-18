@@ -159,6 +159,12 @@ describe("Recent search under a tag filter", () => {
         ).toBe(true),
       { timeout: 3000 },
     );
+    // One ranked search for the query: the filter landing a moment later re-sends only the
+    // keyword read, whose last call carries the tag.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "coffee")).toHaveLength(1);
+    const keyword = vi.mocked(listMemories).mock.calls.filter(([, , o]) => o?.contains === "coffee");
+    expect(keyword.at(-1)?.[2]?.tags).toEqual(["work"]);
   });
 });
 

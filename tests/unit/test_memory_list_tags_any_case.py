@@ -200,24 +200,22 @@ async def test_the_score_sorted_list_matches_tags_as_the_recency_list_does(
 
 
 @pytest.mark.asyncio
-async def test_knowledge_list_hands_both_flags_to_the_store(
+async def test_knowledge_list_matches_every_tag_in_any_case(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """knowledge.list's handler down to its statement: every tag, both sides folded, the
+    asked tags bound as typed."""
     from server.knowledge.api.models_knowledge import KnowledgeListInput
     from server.knowledge.app.document_reads import handle_knowledge_list
     from server.knowledge.store import documents as documents_repo
 
-    seen: dict[str, Any] = {}
-
-    async def list_with_chunk_counts(org: str, namespace: str, **kw: Any) -> list[Any]:
-        seen.update(kw)
-        return []
-
-    monkeypatch.setattr(documents_repo, "list_with_chunk_counts", list_with_chunk_counts)
+    ch = StubCH()
+    monkeypatch.setattr(documents_repo, "_default_client", lambda: ch)
     await handle_knowledge_list(
         KnowledgeListInput(
-            org="acme", namespace="team", tags=["Specs"], tags_any_case=True, tags_all=True
+            org="acme", namespace="team", tags=["Specs", "api"], tags_any_case=True, tags_all=True
         )
     )
-    assert seen["tags"] == ["Specs"]
-    assert seen["tags_any_case"] is True and seen["tags_all"] is True
+    sql, params = ch.calls[0]
+    assert f"hasAll({_FOLDED})" in sql
+    assert params["tags"] == ["Specs", "api"]

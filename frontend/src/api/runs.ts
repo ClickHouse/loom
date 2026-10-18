@@ -87,7 +87,8 @@ export async function listRunsPage(
   id: { org: string; namespace: string },
   opts: RunListOptions = {},
 ): Promise<RunListPage> {
-  const q = opts.q?.trim().slice(0, RUN_LIST_MAX_Q);
+  // Cut by characters (code points, as the server counts), never inside one.
+  const q = opts.q ? Array.from(opts.q.trim()).slice(0, RUN_LIST_MAX_Q).join("") : undefined;
   const out = await post<{ runs: RunRow[]; total?: number }>("/v1/run.list", {
     org: id.org,
     namespace: id.namespace,

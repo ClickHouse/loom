@@ -188,7 +188,32 @@ describe("Memories list chrome", () => {
     await screen.findByText("d/plain");
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
     await waitFor(() => expect(toolbar()).toHaveTextContent("340 matches"));
-    expect(screen.getByText(/Showing the newest 100 matches/)).toBeInTheDocument();
+    expect(screen.getByText(/Showing the newest matches/)).toBeInTheDocument();
+  });
+
+  it("counts the rows on screen when the server matched the tags another way (a release behind)", async () => {
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, limit = 50): Promise<MemoryListResponse> =>
+        limit === 1000
+          ? {
+              // Any one tag, exactly: 300 rows, of which 2 carry both.
+              entries: [
+                entry("both1", { tags: ["api", "web"] }),
+                entry("both2", { tags: ["api", "web"] }),
+                entry("one", { tags: ["api"] }),
+              ],
+              total: 300,
+              today: 0,
+              truncated: true,
+              ignored_args: ["tags_any_case", "tags_all"],
+            }
+          : { entries: ROWS, total: 1234, today: 0, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:api tag:web");
+    await waitFor(() => expect(toolbar()).toHaveTextContent("2 matches"));
+    expect(toolbar()).not.toHaveTextContent("300");
   });
 
   // Next waits for the page's read, and the pager pages from the rows on screen.
