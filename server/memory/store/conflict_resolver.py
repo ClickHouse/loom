@@ -192,32 +192,37 @@ async def stamp_judged(
     return await reemit_rows(own, {"conflict_checked_at": JUDGED_MARK}, ch=ch)
 
 
-def _nearest_sql() -> str:
-    """The row's nearest vectors in its subject: the same user (the anonymous user is
-    one subject per agent), any session, its own vector left out. A same-key row of
-    another session is a peer like any other."""
-    from server.core.vectors.search_settings import vector_search_settings
-
-    return """
+# The row's subject's live vectors of its type, its own left out. What would drop a
+# candidate later is applied here, before a LIMIT, so closer rows of another type,
+# expired or superseded ones cannot take every place.
+_LIVE_VECTORS = """
         SELECT agent, user_id, session_id, memory_key,
                cosineDistance(embedding, {emb:Array(Float32)}) AS dist
         FROM loom.memory_embeddings FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND user_id = {u:String} AND (user_id != '-' OR agent = {a:String})
           AND NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})
-          AND scope = 'private'
-          AND tombstoned_at IS NULL
-          AND status IN ('active', 'conflicted')
-          -- What would drop a candidate later is applied here, before the LIMIT, so
-          -- closer rows of another type (or expired ones) cannot take every place.
-          AND memory_type = {mt:String}
+          AND scope = 'private' AND tombstoned_at IS NULL
+          AND status IN ('active', 'conflicted') AND memory_type = {mt:String}
           AND (expires_at IS NULL OR expires_at > now())
           AND (valid_to IS NULL OR valid_to > now())
-          AND embedding_dim = {dim:UInt16}
-          AND embedding.size0 = {dim:UInt16}
+          AND embedding_dim = {dim:UInt16} AND embedding.size0 = {dim:UInt16}"""
+
+
+def _nearest_sql() -> str:
+    """The row's nearest vectors in its subject: the same user (the anonymous user is
+    one subject per agent), any session, its own vector left out. A same-key row of
+    another session is a peer like any other."""
+    from server.core.vectors.search_settings import vector_search_settings
+
+    return (
+        _LIVE_VECTORS
+        + """
         ORDER BY dist ASC
         LIMIT {lim:UInt32}
-        """ + vector_search_settings(table="loom.memory_embeddings")
+        """
+        + vector_search_settings(table="loom.memory_embeddings")
+    )
 
 
 # The candidates' rows, joined by the full identity (a key alone repeats across sessions),
@@ -250,26 +255,16 @@ _FLAGGED_IDENTITIES_SQL = """
                   SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL
                   WHERE org = {org:String} AND namespace = {ns:String}
                     AND memory_id IN {flagged:Array(UUID)}"""
-_ANCHORED_FROM = """
-        SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
-               e.memory_key AS memory_key,
-               cosineDistance(e.embedding, {emb:Array(Float32)}) AS dist
-        FROM loom.memory_embeddings AS e FINAL
-        WHERE e.org = {org:String} AND e.namespace = {ns:String}
-          AND e.user_id = {u:String} AND (e.user_id != '-' OR e.agent = {a:String})
-          AND NOT (e.agent = {a:String} AND e.session_id = {s:String} AND e.memory_key = {k:String})
-          AND e.scope = 'private' AND e.tombstoned_at IS NULL
-          AND e.embedding_dim = {dim:UInt16} AND e.embedding.size0 = {dim:UInt16}"""
 _ANCHORED_SQL = (
-    _ANCHORED_FROM
+    _LIVE_VECTORS
     + """
-          AND (e.agent, e.user_id, e.session_id, e.memory_key) IN ("""
+          AND (agent, user_id, session_id, memory_key) IN ("""
     + _FLAGGED_IDENTITIES_SQL
     + """)
         UNION ALL"""
-    + _ANCHORED_FROM
+    + _LIVE_VECTORS
     + """
-          AND e.memory_key = {k:String}
+          AND memory_key = {k:String}
         ORDER BY dist ASC
         LIMIT {same_lim:UInt32}
         SETTINGS select_sequential_consistency = 1

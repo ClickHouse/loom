@@ -1431,6 +1431,54 @@ async def test_a_key_held_in_thousands_of_sessions_is_read_within_bounds(ch, wir
         await _drop_vectors(ch, org, NS, "office_location")
 
 
+async def test_dead_rows_of_the_key_do_not_take_the_live_rows_place(ch, wired, monkeypatch) -> None:
+    """Six vector rows of the key that a peer read drops (superseded, expired, past
+    valid_to, another type) sit nearer than its live row of s1, which is below the
+    floor: the live row is still judged."""
+    from datetime import UTC, datetime, timedelta
+
+    from server.memory.store.embeddings import (
+        _copy_row,
+        insert_embedding_rows,
+        live_embedding_rows_for_key,
+    )
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office", "office", 140)
+    await _place(ch, org, "s1", "office", _vec((150, 1.0)), owed=False)
+    (row,) = await live_embedding_rows_for_key(
+        ch, org=org, namespace=NS, agent="bot", user_id=USER, session_id="s2", memory_key="office"
+    )
+    past = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
+    dead = [
+        {"status": "superseded"},
+        {"status": "superseded"},
+        {"expires_at": past},
+        {"valid_to": past},
+        {"memory_type": "preference"},
+        {"memory_type": "preference"},
+    ]
+    copies = [
+        _copy_row(row, {**d, "session_id": f"dead{i}", "conflict_checked_at": None})
+        for i, d in enumerate(dead)
+    ]
+    await insert_embedding_rows(copies, ch=ch)
+    prompts: list[str] = []
+    real = llm.complete
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        prompts.append(user)
+        return await real(system, user, **kw)
+
+    monkeypatch.setattr(llm, "complete", complete)
+    try:
+        await run_pass()
+        assert llm.calls == ["office"] and "Paris" in prompts[0]
+    finally:
+        await _drop_vectors(ch, org, NS, "office")
+
+
 def _policy(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     from server.memory.app import conflicts
 
