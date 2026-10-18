@@ -18,7 +18,7 @@ property of the data, not a defect.
 
 Checks, by finding id:
 
-    frontmatter                parses; `type` non-empty                    critical
+    frontmatter                parses; `type` non-empty; `tags` a list     critical
     required_keys              title, description, loom.memory_key,
                                loom.memory_type on a concept               critical
     type_directory_mismatch    loom.memory_type disagrees with the folder  warning
@@ -235,6 +235,9 @@ def _check_concept(
         return
     if not has_fm or not str(fm.get("type") or "").strip():
         rep.add("frontmatter", rel, "missing frontmatter or empty `type`")
+        return
+    if not isinstance(fm.get("tags", []), list):
+        rep.add("frontmatter", rel, "`tags` is not a list")
         return
     raw_loom = fm.get("loom")
     loom: dict[str, Any] = raw_loom if isinstance(raw_loom, dict) else {}

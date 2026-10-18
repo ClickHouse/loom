@@ -730,3 +730,11 @@ def test_a_row_with_an_expiry_still_ahead_is_left_alone(
     loom.calls.clear()
     assert _run(root) == 0
     assert loom.writes() == []
+
+
+def test_a_bundle_whose_tags_are_not_a_list_is_refused(tmp_path: Path, loom: _FakeLoom):
+    root = _bundle(tmp_path / "b", [_entry("a")])
+    concept = root / "semantic" / "a.md"
+    concept.write_text(concept.read_text().replace("tags:\n- lesson", "tags: 5"))
+    assert _run(root) == 2
+    assert loom.calls == []

@@ -15,7 +15,7 @@ severity.
 
 | id                              | severity | what it means                                                                                                   |
 | ------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------- |
-| `frontmatter`                   | critical | a concept has no frontmatter, unparseable YAML, or an empty `type`                                              |
+| `frontmatter`                   | critical | a concept has no frontmatter, unparseable YAML, an empty `type` or a `tags` value that is not a list            |
 | `required_keys`                 | critical | `title`, `description`, `loom.memory_key` or `loom.memory_type` is missing                                      |
 | `relates_to`                    | critical | an edge is malformed or its `.md` target does not exist in the bundle                                           |
 | `index_missing` / `okf_version` | critical | a directory with concepts has no `index.md`; the root index declares no `okf_version`                           |

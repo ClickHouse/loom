@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from server.memory.domain import okf_bundle as okf
@@ -255,12 +256,13 @@ def test_a_high_row_known_only_by_its_tag_is_reported() -> None:
     assert "high_sensitivity_present" in {f.id for f in lint.lint_files(files).warnings}
 
 
-def test_tags_that_are_not_a_list_do_not_stop_the_lint() -> None:
+@pytest.mark.parametrize("tags", [5, "sensitivity:high"])
+def test_tags_that_are_not_a_list_are_critical(tags: Any) -> None:
     files = _fresh_files()
     files["semantic/deploy_window.md"] = _with_frontmatter(
-        files["semantic/deploy_window.md"], tags=5
+        files["semantic/deploy_window.md"], tags=tags
     )
-    lint.lint_files(files)  # a finding or none, never a traceback
+    assert "frontmatter" in {f.id for f in lint.lint_files(files).criticals}
 
 
 def test_index_missing_okf_version_and_listing() -> None:
