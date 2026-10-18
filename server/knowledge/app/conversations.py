@@ -682,23 +682,21 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
 
 def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str] | None:
     """`(fit, transcript)`: how many leading candidate lines the summary replaces, and
-    the prompt transcript. None for a window of summaries alone, or when no new turn
-    fits the prompt (widening it would cut a turn the summarizer never read)."""
+    the prompt transcript. None for a window of summaries alone."""
     lines = list(lines)
-    if folded and folded[0]:
-        # The summary the last run wrote always folds in, clipped: a dense one must not
-        # keep the turn behind it from compacting.
-        lines[0] = lines[0][:_FOLDED_SUMMARY_CHARS]
-    # Leading summaries within the allowance cost no budget; the rest fits on its own.
+    # Leading summaries fold in free, together clipped to the allowance: past it one
+    # shrinks to nothing (and is left out of the prompt), so however many there are,
+    # the window always reaches the first new turn.
     k, allowance = 0, _FOLDED_SUMMARY_CHARS
-    while k < len(lines) and folded[k] and len(lines[k]) <= allowance:
+    while k < len(lines) and folded[k]:
+        lines[k] = lines[k][:allowance]
         allowance -= len(lines[k])
         k += 1
-    fit = k + _fitting_prefix(lines[k:], _COMPACT_TRANSCRIPT_CHARS)
-    if all(folded[:fit]):
+    if k == len(lines):
         return None
+    fit = k + _fitting_prefix(lines[k:], _COMPACT_TRANSCRIPT_CHARS)
     turns = "\n".join(lines[k:fit])[:_COMPACT_TRANSCRIPT_CHARS]
-    return fit, "\n".join([*lines[:k], turns])
+    return fit, "\n".join([*(line for line in lines[:k] if line), turns])
 
 
 def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
@@ -761,13 +759,9 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
+    # Never None here: a window of summaries alone returned already-compacted above.
     window = _compaction_window(lines, folded)
-    if window is None:
-        return ConversationCompactOutput(
-            compacted=False,
-            messages_summarized=0,
-            reason="prompt-full",
-        )
+    assert window is not None
     fit, transcript = window
     candidates = candidates[:fit]
     candidate_ids = {str(r["msg_id"]) for r in candidates}

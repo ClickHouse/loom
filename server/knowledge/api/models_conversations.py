@@ -360,6 +360,5 @@ class ConversationCompactOutput(BaseModel):
     # Completion tokens of the summary; 0 when no call was made.
     tokens_out: int = 0
     # Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted,
-    # prompt-full (earlier summaries fill the prompt before any new turn),
     # summarizer-empty, or embed-failed (retry once the embedder answers).
     reason: str = ""

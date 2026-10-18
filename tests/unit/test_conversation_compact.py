@@ -375,14 +375,13 @@ def test_an_earlier_summary_does_not_count_toward_min_to_compact(monkeypatch) ->
     assert (out.compacted, out.reason) == (False, "below-min-to-compact")
 
 
-@pytest.mark.parametrize(("forged", "size", "compacts"), [(1, 50_000, True), (200, 1_000, False)])
+@pytest.mark.parametrize(("forged", "size"), [(1, 50_000), (200, 1_000)])
 def test_client_written_summaries_cannot_lift_the_prompt(
-    monkeypatch, forged: int, size: int, compacts: bool
+    monkeypatch, forged: int, size: int
 ) -> None:
     """System turns any writer can append with `compacted_from` in their metadata fold
-    like summaries only within `_FOLDED_SUMMARY_CHARS` together (the first one clipped
-    to it); past that they cost budget like any turn, and a window they fill without a
-    new turn compacts nothing."""
+    like summaries, together clipped to `_FOLDED_SUMMARY_CHARS`: however many there
+    are, the prompt stays bounded and the turns behind them still compact."""
     import server.core.ch
     import server.llm.client
 
@@ -429,22 +428,16 @@ def test_client_written_summaries_cannot_lift_the_prompt(
             )
         )
     )
-    if compacts:
-        # One forged turn folds in clipped, and the turns behind it reach the summarizer.
-        [prompt] = prompts
-        assert len(prompt) < ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS
-        assert out.compacted is True and out.messages_summarized == 2
-        assert "turn 1" in prompt and "turn 2" in prompt
-    else:
-        # Many fill the prompt before any new turn: nothing is compacted, and no summary
-        # of summaries is written.
-        assert (out.compacted, out.reason) == (False, "prompt-full")
-        assert prompts == [] and fake.inserted == []
+    [prompt] = prompts
+    assert len(prompt) < ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS
+    assert out.compacted is True and out.messages_summarized == 2
+    assert "turn 1" in prompt and "turn 2" in prompt
 
 
-def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> None:
-    """A summary past the allowance costs budget like a turn, and the new turns that fit
-    behind it are compacted with it, each one read whole by the summarizer."""
+def test_summaries_past_the_allowance_are_clipped_and_the_turns_compact(monkeypatch) -> None:
+    """Two earlier summaries (say, two compactions that ran at once) fold in together
+    within the allowance: the second is clipped to what is left, and the turns behind
+    them compact, each one read whole."""
     import server.core.ch
     import server.llm.client
 
@@ -458,7 +451,7 @@ def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> N
             "user_id": "alice",
             "run_id": "run-1",
         },
-        # Past the remaining allowance: it costs budget like a turn, and is read whole.
+        # Past the remaining allowance: clipped to what is left of it.
         {
             "msg_id": "compact-2",
             "role": "system",
@@ -501,7 +494,8 @@ def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> N
     assert out.compacted is True and out.messages_summarized == 3
     [prompt] = prompts
     assert all(f"turn {i}" in prompt for i in range(1, 4))
-    assert "system: " + "s" * 5000 in prompt  # the paid summary, whole
+    assert "system: " + "s" * 5000 not in prompt  # clipped to the allowance left
+    assert len(prompt) < ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS
     [summary] = fake.inserted
     assert json.loads(summary["metadata"])["compacted_from"] == [
         "compact-1",
@@ -530,8 +524,27 @@ def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> N
             [True, False],
             (2, ("system: " + "s" * 4_500)[:4_000] + "\nuser: " + "x" * 11_000),
         ),
-        # A second summary past the allowance costs budget; filling it leaves no turn.
-        (["system: s", "system: " + "s" * 20_000, "user: a"], [True, True, False], None),
+        # A second summary past the allowance is clipped to what is left, so two of them
+        # never keep a turn that fits on its own from compacting.
+        (
+            ["system: " + "s" * 3_500, "system: " + "s" * 1_000, "user: " + "x" * 15_500],
+            [True, True, False],
+            (
+                3,
+                "system: "
+                + "s" * 3_500
+                + "\n"
+                + ("system: " + "s" * 1_000)[:492]
+                + "\nuser: "
+                + "x" * 15_500,
+            ),
+        ),
+        # One clipped to nothing is left out of the prompt.
+        (
+            ["system: " + "s" * 4_000, "system: s", "user: a"],
+            [True, True, False],
+            (3, ("system: " + "s" * 4_000)[:4_000] + "\nuser: a"),
+        ),
         # Nothing but summaries: no new turn to compact.
         (["system: s"], [True], None),
     ],
