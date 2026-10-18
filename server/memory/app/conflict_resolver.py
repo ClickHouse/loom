@@ -598,10 +598,11 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> b
         except PreconditionFailedError:
             counts.skipped_changed += 1  # the key is busy: the row stays owed
             return False
+    limit = int(settings.memory_conflict_resolver_max_peers)
     peers = await queue.cluster_peers(
         q,
         floor=float(settings.memory_conflict_resolver_min_similarity),
-        limit=int(settings.memory_conflict_resolver_max_peers),
+        limit=limit,
         prefer=frozenset(str(x) for x in row.conflict_with),
     )
     if peers:
@@ -616,8 +617,12 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> b
             # metadata or fail, leaving no new mark: the row stays owed.
             counts.skipped_changed += 1
             return False
-        if unanswered & {str(x) for x in row.conflict_with}:
+        flags = {str(x) for x in row.conflict_with}
+        if unanswered & flags:
             # A flagged peer the answer left out: stamped, its flag would never be judged.
+            return True
+        if len(peers) >= limit and flags - {str(p["memory_id"]) for p in peers}:
+            # More flagged peers than the cluster's places: the rest wait for a later pass.
             return True
     await queue.stamp_judged(q)  # under erasure it writes nothing: the row stays owed
     return False

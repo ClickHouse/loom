@@ -864,6 +864,24 @@ async def test_a_flagged_peer_the_answer_leaves_out_keeps_the_row_owed(row_env: 
     assert row_env.stamped == []
 
 
+async def test_a_row_flagged_against_more_peers_than_places_stays_owed(
+    row_env: NS, monkeypatch
+) -> None:
+    """Flagged against 3 rows with 2 places: the judged two act, the third waits."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_max_peers", 2)
+    row_env.peers = [
+        _peer_row(f"m{i}", f"s{i}", "office_city", f'"v{i}"') | {"similarity": 0.8} for i in (2, 3)
+    ]
+    for i in (2, 3):
+        row_env.heads[f"m{i}"] = _mem(f"m{i}", session_id=f"s{i}", content_sha256=f"sha-m{i}")
+    row_env.mem.status, row_env.mem.conflict_with = "conflicted", ["m2", "m3", "m4"]
+    row_env.answer = _answer(_entry("p1", "related", 0.95), _entry("p2", "related", 0.95))
+    left_owed = await resolver.resolve_row(_q(), policy="newest_wins", counts=resolver.Counts())
+    assert left_owed and row_env.stamped == []
+
+
 async def test_an_unflagged_peer_left_out_still_lets_the_row_be_stamped(row_env: NS) -> None:
     row_env.answer = _answer()
     await _resolve()
