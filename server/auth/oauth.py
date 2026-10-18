@@ -1178,9 +1178,11 @@ async def issue_tokens(
 
 async def end_session(grant: Grant | Device, reason: str) -> None:
     """Revoke the grant's session family: its refresh tokens stop refreshing and
-    its access tokens stop verifying. Tokens minted from the session (service
-    accounts, MCP tokens) are their owner's to revoke: an automatic verdict that
-    could be wrong (a lost answer looks like a replay) never reaches them.
+    its access tokens stop verifying. Tokens minted from a `loom login` or
+    dashboard SSO session are their owner's to revoke: an automatic verdict
+    that could be wrong (a lost answer looks like a replay) never reaches them.
+    Those a third-party MCP client's session minted name the session in their
+    `parents` (`delegation.delegate`) and end with it.
 
     When the revocation cannot be written, a `revocation_owed` row stands in
     for it: the revocation snapshot every process loads counts the family as

@@ -172,8 +172,7 @@ export class MachineLogin implements TokenProvider {
     } catch {
       /* a proxy's page, not Loom's answer */
     }
-    if (res.status === 429 || res.status >= 500)
-      throw new BackendUnavailable(`bot ${this.clientId}: ${res.status}; retry shortly`, { status: res.status });
+    if (res.status === 429 || res.status >= 500) throw answerError(`bot ${this.clientId}`, res.status);
     if (res.status !== 200 || typeof body.access_token !== "string") {
       const error = typeof body.error === "string" ? body.error : "";
       const description = typeof body.error_description === "string" ? body.error_description : "";

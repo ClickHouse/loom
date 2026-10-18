@@ -129,12 +129,12 @@ async def delegate(
     if parent.is_service_account and not is_service_account:
         raise _refuse("a service-account token can only mint service-account tokens")
     parents = [*parent.parents, parent.token_id] if parent.token_id else list(parent.parents)
+    if len(parents) > MAX_CHAIN_DEPTH:
+        raise _refuse(f"delegation chain is limited to {MAX_CHAIN_DEPTH} tokens")
     if parent.session_id and not parent.first_party:
         # A third-party client's session: what it mints ends when the session
         # is revoked, not when the parent's access token runs out.
         parents.append(parent.session_id)
-    if len(parents) > MAX_CHAIN_DEPTH:
-        raise _refuse(f"delegation chain is limited to {MAX_CHAIN_DEPTH} tokens")
     if scoped and "*" in requested:
         raise _refuse("a per-namespace token cannot name '*'")
     if parent.issued_at is None:
@@ -180,7 +180,8 @@ def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int | None:
     children take what was asked: they are what the person made for agents
     and CI, outlive the session (a logout, a lost refresh answer), and are
     revoked one by one or with the person. A third-party MCP client's session
-    gets no such reach: its children end with its access token."""
+    gets no such reach: its children end with its access token, or sooner
+    with the session (`delegate` names it in their `parents`)."""
     ttl = DEFAULT_TTL_DAYS * 86400 if ttl_seconds is None else ttl_seconds
     never = ttl == NEVER
     if (parent.session_id and parent.first_party) or parent.expires_at is None:

@@ -215,15 +215,35 @@ describe("MachineLogin with a key", () => {
   });
 });
 
-describe("server metadata", () => {
-  it.each([
+describe("answers other than the token's", () => {
+  const busyOrRefused = [
     [404, AuthError],
     [503, BackendUnavailable],
-  ] as const)("reads a %s as the Python SDK does", async (status, error) => {
-    vi.stubEnv("LOOM_WORKLOAD_TOKEN", "wl");
-    const fetch = async () => new Response("{}", { status });
-    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", fetch });
+  ] as const;
+
+  it.each(busyOrRefused)("reads server metadata answering %s as the Python SDK does", async (status, error) => {
+    const answer = async (url: string) =>
+      url.endsWith("/.well-known/oauth-authorization-server")
+        ? new Response("{}", { status })
+        : new Response(JSON.stringify({ access_token: accessToken(1) }), { status: 200 });
+    const key = { source: "LOOM_CLIENT_KEY" as const, value: pem("ec").privatePem };
+    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", key, fetch: answer });
     await expect(bot.token()).rejects.toBeInstanceOf(error);
+  });
+
+  it.each(busyOrRefused)("reads GitHub Actions answering %s as the Python SDK does", async (status, error) => {
+    vi.stubEnv("LOOM_CLIENT_ID", "gha");
+    vi.stubEnv("LOOM_WORKLOAD_AUDIENCE", "https://loom.example");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://actions.example/token");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-bearer");
+    const asked: string[] = [];
+    const answer = async (url: string) => {
+      asked.push(url);
+      return new Response("{}", { status });
+    };
+    const bot = machineLogin(BASE, { fetch: answer }) as MachineLogin;
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+    expect(asked.every((u) => u.startsWith("https://actions.example/"))).toBe(true);
   });
 });
 

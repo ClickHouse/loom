@@ -169,7 +169,8 @@ class AuthInfo:
     # then interactive) decides.
     traffic_class: str = ""
     # Delegation chain (server/auth/delegation.py). `parents`: the token ids
-    # of every ancestor token, root first; revoking any of them kills this
+    # of every ancestor token, root first, and the sign-in session of a
+    # third-party MCP client that minted it; revoking any of them kills this
     # token. `creator`: the root principal whose live grants and account this
     # token is rechecked against on every request. '' = not a delegated token.
     # `parent_subjects`: the ancestors' `sub`s, in the same order, so revoking

@@ -237,10 +237,11 @@ loom mint-token --subject sa:legacy --org acme --service-account \
   --namespace-role legacy=writer --json
 ```
 
-SSO does not affect bots or minted tokens. A token a person creates from their
-session (`/v1/me/service_accounts`) lasts as long as they chose and belongs to
-them: revoking the person ends it. Long-running bots use one of the above, so
-they do not stop with someone's offboarding.
+SSO does not affect bots or minted tokens. A token a person creates from a `loom
+login` or dashboard SSO session (`/v1/me/service_accounts`) lasts as long as
+they chose and belongs to them: revoking the person ends it. One a third-party
+MCP client's session creates ends with that session. Long-running bots use one
+of the above, so they do not stop with someone's offboarding.
 
 ## Sessions and logout
 
@@ -250,13 +251,15 @@ they do not stop with someone's offboarding.
   token at Okta.
 - If a spent refresh token comes back, someone else may hold a copy (or a
   client lost the answer to a refresh): Loom ends that session and the
-  person signs in again. Service accounts and MCP tokens they minted are not
-  touched; after a suspected theft, review them (`loom call
-/v1/me/service_accounts`) and revoke what you don't recognise.
+  person signs in again. Service accounts and MCP tokens minted from a
+  `loom login` or dashboard SSO session are not touched; after a suspected
+  theft, review them (`loom call /v1/me/service_accounts`) and revoke what you
+  don't recognise. Those a third-party MCP client's session minted end with it.
 - Okta refusing the user at a refresh ends that session.
-- Service accounts and MCP tokens a person creates from a sign-in session
-  outlive it, including `loom logout`, for as long as they chose (blank is 90
-  days, 0 never expires). Every one is saved to their token list, so nothing a
+- Service accounts and MCP tokens a person creates from a `loom login` or
+  dashboard SSO session outlive it, including `loom logout`, for as long as
+  they chose (blank is 90 days, 0 never expires). A third-party MCP client's
+  session mints none that outlive it. Every one is saved to their token list, so nothing a
   person cannot see outlives the session. Disabling someone at the provider ends their
   sessions at the next refresh (within the hour) but not these tokens: only a
   refresh asks the provider about a person. When offboarding, revoke the

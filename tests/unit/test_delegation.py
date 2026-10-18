@@ -273,23 +273,25 @@ async def test_ending_a_third_party_clients_session_kills_what_it_minted(
     world, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     exp = int(time.time()) + 3600
-    third_party = await _child(_login(session_id="fam-mcp", expires_at=exp), {"a": None})
-    assert third_party.parents == ("login-1", "fam-mcp")
-    own = await _child(_login(session_id="fam-cli", first_party=True, expires_at=exp), {"a": None})
-    assert own.parents == ("login-1",)  # outlives the session it came from
-    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"fam-mcp", "fam-cli"}))
-    raw = (
-        await delegate(
-            _login(session_id="fam-mcp", expires_at=exp),
+
+    async def minted(parent: AuthInfo) -> str:
+        d = await delegate(
+            parent,
             org=ORG,
             requested={"a": None},
             scoped=False,
             ttl_seconds=None,
             is_service_account=True,
         )
-    ).mint("sa:mcp")
+        return d.mint("sa:bot")
+
+    third_party = await minted(_login(session_id="fam-mcp", expires_at=exp))
+    own = await minted(_login(session_id="fam-cli", first_party=True, expires_at=exp))
+    assert verify_token(third_party).parents == ("login-1", "fam-mcp")
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"fam-mcp", "fam-cli"}))
     with pytest.raises(TokenError, match="parent"):
-        verify_token(raw)
+        verify_token(third_party)
+    assert verify_token(own).parents == ("login-1",)  # outlives the session it came from
 
 
 @pytest.mark.asyncio

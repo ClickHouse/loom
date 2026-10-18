@@ -295,17 +295,18 @@ outlive logout. Every one is saved to the person's token list, where they see an
 and lasts what they asked for (blank 90 days, 0 never). A session a third-party MCP client
 holds is not one: what it mints ends with its access token at the latest, and at once when
 the session is revoked (the session is one of its `parents`), so disconnecting the client
-ends its reach. Any other parent bounds its children by its own expiry. Under OIDC each refresh first spends the provider's refresh token, so a user
-deactivated there loses their sessions within the hour. Their machine tokens are not
-re-checked at the provider: offboarding, or a session found stolen, revokes them (by
-subject, or each from the owner's service-account list). A revocation of a token that never
-expires lasts as long as the table can hold a row (2105). A provider that issues no refresh
-token gets no Loom refresh token. A session's refresh tokens roll: each refresh lasts 30
-days from itself, so a session used at least monthly does not end on its own, and a password
-change does not end it; under OIDC the provider's own session limits apply at every refresh.
-A stolen access token can mint machine tokens, listed ones that never expire included,
-without touching the refresh token, so replay detection only covers a stolen refresh token;
-the owner sees and revokes them in their list.
+ends its reach. Any other parent bounds its children by its own expiry. Under OIDC each
+refresh first spends the provider's refresh token, so a user deactivated there loses their
+sessions within the hour. Their machine tokens are not re-checked at the provider:
+offboarding, or a session found stolen, revokes them (by subject, or each from the owner's
+service-account list). A revocation of a token that never expires lasts as long as the table
+can hold a row (2105). A provider that issues no refresh token gets no Loom refresh token. A
+session's refresh tokens roll: each refresh lasts 30 days from itself, so a session used at
+least monthly does not end on its own, and a password change does not end it; under OIDC the
+provider's own session limits apply at every refresh. A stolen access token can mint machine
+tokens, listed ones that never expire included, without touching the refresh token, so
+replay detection only covers a stolen refresh token; the owner sees and revokes them in
+their list.
 
 **Each credential is spent exactly once.** What a sign-in spends or moves lives in
 `loom.oauth_signin_state`, a KeeperMap table (`server/auth/claims.py`), one key each: a

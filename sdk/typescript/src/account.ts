@@ -1,6 +1,7 @@
 /**
  * The signed-in person's own tokens, outside the op registry: what the
- * dashboard's Tokens list does, mirroring the Python SDK's `agent.account`.
+ * dashboard's Tokens list does, the token-list calls of the Python SDK's
+ * `agent.account`.
  *
  *     const sa = await loom.account.createServiceAccount("ci", ["support", { namespace: "docs", role: "viewer" }]);
  *     // sa.token is shown once; loom.account.revokeServiceAccount("ci") ends it
