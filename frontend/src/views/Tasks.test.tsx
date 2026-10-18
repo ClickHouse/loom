@@ -617,6 +617,23 @@ describe("Tasks page", () => {
     ]);
   });
 
+  it("a namespace switch closes the task the old namespace had open", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.keyboard("j{Enter}");
+    await screen.findByRole("complementary", { name: "Task detail" });
+    act(() => useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" }));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Task detail" })).toBeNull());
+    // Once the new namespace's inboxes load, nothing reads the old task under it.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(screen.queryByRole("complementary", { name: "Task detail" })).toBeNull();
+    expect(vi.mocked(getTask).mock.calls.filter(([id]) => (id as { namespace: string }).namespace === "other")).toEqual(
+      [],
+    );
+  });
+
   it("keys: j/k move the selection, Enter opens, Esc closes, a accepts the selected triage row", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();

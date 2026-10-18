@@ -251,6 +251,15 @@ export function Tasks() {
   // Only the latest task.list may write the rows: picking B while A's read (or A's poll)
   // is in flight drops A's answer. A refresh after an action is the latest, so it lands.
   const rowsSeq = useRef(0);
+  // Another namespace's task is not this one's: a switch closes it and clears the filters,
+  // during render, so the open panel never reads the old task under the new namespace.
+  const [openFor, setOpenFor] = useState(caller);
+  if (openFor !== caller) {
+    setOpenFor(caller);
+    setOpenRow(null);
+    setSelectedId(null);
+    setFilters(NO_FILTERS);
+  }
 
   useEffect(() => {
     // A namespace switch restores only its own inboxes, and drops any row read in flight.

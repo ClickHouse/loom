@@ -32,9 +32,6 @@ const MEMORY_TOP_K = 8;
 const MEMORY_DEBOUNCE_MS = 200;
 const MEMORY_MIN_CHARS = 2;
 
-/** The URL keys a view opens one object on (state.ts VIEW_QUERY_KEYS): the open task,
- *  document, thread and memory. */
-
 interface NsRow {
   namespace: string;
   visibility: string;
