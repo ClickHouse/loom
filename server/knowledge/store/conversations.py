@@ -741,7 +741,7 @@ EMBEDDED_EXCERPT_CHARS = 2048
 # Embedding rows (one per turn per model) per tombstone mutation. A whole-thread delete
 # has no cap on its rows, so its list goes in chunks, one synchronous mutation each: a
 # thread of 10,000 turns under one model runs ten. A compaction's window is bounded by
-# its prompt.
+# its prompt budget.
 _TOMBSTONE_CHUNK = 1000
 
 

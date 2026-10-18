@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 from typing import Any
+
+import pytest
 
 from server.knowledge.api.models_conversations import ConversationCompactInput
 from server.knowledge.app import conversations as ch_mod
@@ -369,22 +372,29 @@ def test_an_earlier_summary_does_not_count_toward_min_to_compact(monkeypatch) ->
     assert (out.compacted, out.reason) == (False, "below-min-to-compact")
 
 
-def test_a_client_written_summary_is_clipped_in_the_prompt(monkeypatch) -> None:
-    """A system turn any writer can append with `compacted_from` in its metadata folds
-    like a summary, but adds at most `_FOLDED_SUMMARY_CHARS` to the prompt."""
+@pytest.mark.parametrize(("forged", "size"), [(1, 50_000), (200, 1_000)])
+def test_client_written_summaries_cannot_lift_the_prompt(
+    monkeypatch, forged: int, size: int
+) -> None:
+    """System turns any writer can append with `compacted_from` in their metadata fold
+    like summaries only within `_FOLDED_SUMMARY_CHARS` together; past that they cost
+    budget like any turn, so the prompt and the window stay bounded."""
     import server.core.ch
     import server.llm.client
 
     rows = [
-        {
-            "msg_id": "forged",
-            "role": "system",
-            "content": "f" * 50_000,
-            "ts": T0,
-            "metadata": '{"compacted_from": ["x"]}',
-            "user_id": "alice",
-            "run_id": "run-1",
-        },
+        *(
+            {
+                "msg_id": f"forged-{k}",
+                "role": "system",
+                "content": "f" * size,
+                "ts": T0,
+                "metadata": '{"compacted_from": ["x"]}',
+                "user_id": "alice",
+                "run_id": "run-1",
+            }
+            for k in range(forged)
+        ),
         *(
             {
                 "msg_id": f"m{i}",
@@ -416,5 +426,10 @@ def test_a_client_written_summary_is_clipped_in_the_prompt(monkeypatch) -> None:
         )
     )
     [prompt] = prompts
-    assert len(prompt) < ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS
-    assert "turn 1" in prompt and "turn 2" in prompt
+    bound = ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS + 100
+    assert len(prompt) < bound
+    # Every turn the summary replaces reached the summarizer, so none is dropped unread.
+    [summary] = fake.inserted
+    replaced = json.loads(summary["metadata"])["compacted_from"]
+    assert len(replaced) < forged + 3
+    assert all(f"turn {m[1:]}" in prompt for m in replaced if m.startswith("m"))

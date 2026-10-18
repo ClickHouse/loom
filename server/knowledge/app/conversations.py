@@ -665,8 +665,8 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
 
 # The summarizer's prompt budget, in characters of `role: content` lines.
 _COMPACT_TRANSCRIPT_CHARS = 16000
-# What a folded earlier summary may add to it: a summary is at most 600 tokens, and a
-# client-written system turn that names `compacted_from` is clipped to the same size.
+# What folded earlier summaries may add to it, all of them together: a summary is at
+# most 600 tokens, and normally only the one the last run wrote is in the window.
 _FOLDED_SUMMARY_CHARS = 4000
 
 
@@ -738,24 +738,27 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="below-min-to-compact",
         )
 
-    # The window is the oldest turns whose lines fit the prompt; a turn past the cap stays live.
-    # An earlier summary costs no budget, and the window always reaches the first new turn.
-    lines = [
-        line[:_FOLDED_SUMMARY_CHARS] if f else line
-        for line, f in zip(
-            (f"{r['role']}: {r['content']}" for r in candidates), folded, strict=True
-        )
-    ]
+    # The window is the oldest turns whose lines fit the prompt; a turn past the cap stays
+    # live. Leading summaries, up to `_FOLDED_SUMMARY_CHARS` together, cost no budget, and
+    # the window always reaches the first line past them; a summary beyond that allowance
+    # (a client can write a system turn naming `compacted_from`) costs like any turn.
+    lines = [f"{r['role']}: {r['content']}" for r in candidates]
+    free = [False] * len(lines)
+    allowance = _FOLDED_SUMMARY_CHARS
+    for i, (line, f) in enumerate(zip(lines, folded, strict=True)):
+        if not f or len(line) > allowance:
+            break
+        free[i], allowance = True, allowance - len(line)
     fit = _fitting_prefix(
-        ["" if f else line for line, f in zip(lines, folded, strict=True)],
+        ["" if f else line for line, f in zip(lines, free, strict=True)],
         _COMPACT_TRANSCRIPT_CHARS,
     )
-    fit = max(fit, folded.index(False) + 1)
+    fit = max(fit, free.index(False) + 1)
     candidates = candidates[:fit]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
-    # The fit counted each folded line's newline; the cap adds back only its text.
+    # The fit counted each free line's newline; the cap adds back only its text.
     cap = _COMPACT_TRANSCRIPT_CHARS + sum(
-        len(line) for line, f in zip(lines[:fit], folded[:fit], strict=True) if f
+        len(line) for line, f in zip(lines[:fit], free[:fit], strict=True) if f
     )
     transcript = "\n".join(lines[:fit])[:cap]
 
