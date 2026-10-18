@@ -563,6 +563,105 @@ async def _lookup_grant(org: str, namespace: str, subject: str) -> Role | None:
     return role
 
 
+class CachedGate:
+    """`check_authorized` for one token in one org, answered from the cached
+    grant maps (`server.core.grant_cache`) instead of a fresh grant read per
+    namespace, for the listings and the default that must agree with the
+    gate. It applies the gate's own rules, in the gate's order, through the
+    helpers the gate uses; tests/unit/test_default_namespace_gate_property.py
+    holds the two together. Each grant map, and a service account's
+    inheriting creator, is read at most once, and only when a rule needs it."""
+
+    def __init__(self, auth: AuthInfo, org: str) -> None:
+        self.auth, self.org = auth, org
+        self._maps: dict[str, GrantMap] = {}
+        self._inherited: str | None | Any = _UNKNOWN_GRANT
+
+    async def grants(self, subject: str | None = None) -> GrantMap:
+        """The grant map of `subject` (the token's own by default)."""
+        from server.core.grant_cache import grant_map
+
+        subject = subject or self.auth.subject
+        if subject not in self._maps:
+            self._maps[subject] = await grant_map(self.org, subject)
+        return self._maps[subject]
+
+    async def admits(self, namespace: str, required_role: Role) -> bool:
+        if self.auth.creator:
+            return await self._delegated(namespace, required_role)
+        return await self._primary(namespace, required_role)
+
+    async def _delegated(self, namespace: str, required_role: Role) -> bool:
+        """`_check_creator` then `_check_delegated`."""
+        from server.auth.delegation import ceiling_role, creator_account_active
+
+        auth, org = self.auth, self.org
+        if not may_act_in_org(auth, org) or not await creator_account_active(org, auth.creator):
+            return False
+        is_read = required_role.value <= Role.VIEWER.value
+        if await _is_restricted(org, namespace):
+            if not await self._restricted(namespace, required_role):
+                return False
+        elif is_read and auth.org == org and await _is_org_readable_code_namespace(org, namespace):
+            return True
+        elif not (is_read and _is_code_namespace(org, namespace)):
+            ceiling = ceiling_role(auth, org, namespace, write=not is_read)
+            if ceiling is None or ceiling.value < required_role.value:
+                return False
+        grant = _rank_role((await self.grants(auth.creator)).rank(namespace) or 0)
+        return grant is not None and grant.value >= required_role.value
+
+    async def _primary(self, namespace: str, required_role: Role) -> bool:
+        """The rest of `check_authorized`, for a token without a creator."""
+        auth, org = self.auth, self.org
+        if await _is_restricted(org, namespace):
+            return await self._restricted(namespace, required_role)
+        if (
+            required_role.value <= Role.VIEWER.value
+            and (auth.org == org or auth.has_role(Role.PLATFORM_ADMIN))
+            and await _is_org_readable_code_namespace(org, namespace)
+        ):
+            return True
+        own = await self.grants()
+        cap = own.rank(namespace) if names_namespace(auth, org, namespace) else None
+        if auth.has_ns_roles():
+            role = _scoped_role(auth, required_role, org, namespace, cap=cap)
+            if role is not None and role.value >= required_role.value:
+                return True
+            if not _code_namespace_read(required_role, org, namespace):
+                return False
+        if required_role.value >= Role.WRITER.value:
+            covered = auth.can_write(org, namespace)
+        else:
+            covered = auth.can_access(org, namespace)
+        if cap is not None:
+            live = _rank_role(cap)
+            covered = covered and live is not None and live >= required_role
+        if not may_act_in_org(auth, org):
+            return False
+        if covered and auth.has_role(required_role):
+            return True
+        grant = await self._grant_role(namespace)
+        return grant is not None and grant.value >= required_role.value
+
+    async def _grant_role(self, namespace: str) -> Role | None:
+        """`_grant_role`: the subject's live grant, else the inheriting creator's."""
+        from server.auth.service_accounts import inheriting_creator
+
+        role = _rank_role((await self.grants()).rank(namespace) or 0)
+        if role is not None:
+            return role
+        if self._inherited is _UNKNOWN_GRANT:
+            self._inherited = await inheriting_creator(self.org, self.auth.subject)
+        if not self._inherited:
+            return None
+        return _rank_role((await self.grants(self._inherited)).rank(namespace) or 0)
+
+    async def _restricted(self, namespace: str, required_role: Role) -> bool:
+        grants = await self.grants()
+        return await restricted_allows(self.auth, required_role, self.org, namespace, grants=grants)
+
+
 def scope_flags(op: Operation) -> dict[str, bool]:
     """The op's two scoped-token gate flags, as `check_authorized` keywords —
     both transports pass them the same way."""
@@ -591,6 +690,7 @@ async def row_in_scope(org: str, namespace: str, required_role: Role = Role.VIEW
 
 __all__ = [
     "GRANT_ROLES",
+    "CachedGate",
     "Role",
     "check_authorized",
     "claim_cap",

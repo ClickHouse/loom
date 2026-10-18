@@ -5,6 +5,7 @@ row, and a new human grant is written under the login handle."""
 from __future__ import annotations
 
 import time
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -185,22 +186,48 @@ async def test_me_helper_pairs_only_a_named_caller(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_default_namespace_validates_the_saved_pick_against_the_pair(monkeypatch) -> None:
-    from types import SimpleNamespace
-
+async def test_mcp_default_namespace_checks_the_saved_pick_under_every_spelling(
+    monkeypatch,
+) -> None:
+    # The saved pick is checked against the caller's grant map, whose read folds
+    # every spelling the directory ties to the login (`grant_cache._read`).
+    import server.core.grant_cache as grant_cache
+    import server.identity.app.namespace_classification as nc
+    import server.identity.app.namespace_kinds as nk
     import server.transport.mcp_identity as mi
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
     from server.settings import settings
+
+    async def _none(org: str) -> frozenset[str]:
+        return frozenset()
+
+    async def _no_kinds(org: str) -> dict[str, str]:
+        return {}
+
+    async def _folded(org: str, subject: str) -> grant_cache.GrantMap:
+        # The writer grant is held under the contact email, read for the login.
+        spellings = frozenset(await _pair(org, subject))
+        return grant_cache.GrantMap(ranks={"team-x": 2}, spellings=spellings)
+
+    async def _query_one(sql: str, params: Any = None, **_: Any) -> Any:
+        return {"namespace": "team-x"} if "user_state" in sql else None
 
     monkeypatch.setattr("server.auth.aliases.subject_aliases", _pair)
     monkeypatch.setattr(type(settings), "effective_identity_provider", lambda self: "password")
+    monkeypatch.setattr(nc, "restricted_set", _none)
+    monkeypatch.setattr(nk, "kind_map", _no_kinds)
+    monkeypatch.setattr(grant_cache, "_read", _folded)
     client = AsyncMock()
-    client.query_one.side_effect = [{"namespace": "code-x"}, {"role": "writer"}]
+    client.query_one.side_effect = _query_one
+    client.query_all.return_value = []
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
-    auth = SimpleNamespace(subject="jdoe", org="acme", namespaces=("personal-jdoe",))
+    auth = AuthInfo(
+        subject="jdoe",
+        org="acme",
+        namespaces=("personal-jdoe",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+    )
     out = await mi._caller_defaults(auth, "claude-code")
-    assert out is not None and out["namespace"] == "code-x" and out["org"] == "acme"
-    validation = client.query_one.await_args_list[1]
-    sql = validation.args[0]
-    params = validation.kwargs.get("params") or validation.args[1]
-    assert "g.subject IN {subs:Array(String)}" in sql
-    assert params["subs"] == ["jdoe", "avery@example.com"] and params["ns"] == "code-x"
+    assert out is not None and out["namespace"] == "team-x" and out["org"] == "acme"

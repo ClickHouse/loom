@@ -187,3 +187,71 @@ def test_the_cases_cover_both_outcomes() -> None:
 
 def test_no_token_names_nothing() -> None:
     assert asyncio.run(readable_named_claims(None, ORG)) == []
+
+
+def _saved_and_ranked(
+    monkeypatch: pytest.MonkeyPatch, saved: str, rows: dict[str, list[str]] | None = None
+) -> None:
+    """alice's saved switcher pick, and each subject's live grants as the ranking lists them."""
+    import server.identity.app.caller_defaults as caller_defaults
+
+    async def _saved(org: str, subject: str, *, ch: Any = None) -> str:
+        return saved if subject == "alice" else ""
+
+    async def _ranked(org: str, subs: list[str], *, ch: Any = None) -> list[dict[str, str]]:
+        return [{"namespace": ns, "role": "writer"} for s in subs for ns in (rows or {}).get(s, [])]
+
+    monkeypatch.setattr(caller_defaults, "saved_default", _saved)
+    monkeypatch.setattr(caller_defaults, "ranked_grants", _ranked)
+
+
+def _default(token: AuthInfo) -> str:
+    from server.identity.app.caller_home import default_namespace
+
+    return asyncio.run(default_namespace(token, ORG))
+
+
+def test_a_saved_pick_the_subject_writes_but_the_creator_only_reads_is_no_default(
+    _default_inputs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The gate decides a delegated token on its creator: alice only reads `docs`.
+    monkeypatch.setitem(GRANTS, ("sa:cli", "docs"), 2)
+    _saved_and_ranked(monkeypatch, "docs")
+    assert _default(TOKENS["delegated, creator only reads the first claim"]) == "team"
+
+
+def test_a_saved_restricted_pick_the_token_cannot_write_leaves_the_writable_claim(
+    _default_inputs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # alice writes `secret`, but the token's own subject holds no grant there.
+    monkeypatch.setitem(GRANTS, ("alice", "secret"), 2)
+    _saved_and_ranked(monkeypatch, "secret")
+    assert _default(TOKENS["delegated restricted claim"]) == "team"
+
+
+def test_a_wildcard_delegated_default_ignores_the_subjects_own_grants(
+    _default_inputs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(GRANTS, ("bot", "botspace"), 3)
+    _saved_and_ranked(monkeypatch, "", {"bot": ["botspace"], "alice": ["team"]})
+    token = _token("bot", ("*",), creator="alice")
+    assert _default(token) == "team"
+    asyncio.run(authz.check_authorized(token, Role.WRITER, ORG, "team"))
+
+
+def test_a_flat_service_account_resolves_its_creator_once_per_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.auth.service_accounts as service_accounts
+
+    calls: list[str] = []
+
+    async def _counted(org: str, subject: str, **_: Any) -> str | None:
+        calls.append(subject)
+        return "alice"
+
+    monkeypatch.setattr(service_accounts, "inheriting_creator", _counted)
+    monkeypatch.setitem(GRANTS, ("sa:inherits", "left"), 0)
+    token = _token("sa:inherits", ("team", "solo", "left"), is_service_account=True)
+    assert asyncio.run(readable_named_claims(token, ORG)) == ["team"]
+    assert len(calls) == 1

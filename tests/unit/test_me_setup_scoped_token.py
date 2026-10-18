@@ -30,7 +30,10 @@ class _CH:
         saved.extend(rows)
 
     async def query_all(self, sql: str, **kw: Any) -> list[dict[str, Any]]:
-        return []  # no restricted namespace, no saved pick, no kinds
+        return []  # no restricted namespace, no ranked grants, no kinds
+
+    async def query_one(self, sql: str, **kw: Any) -> dict[str, Any] | None:
+        return None  # no saved pick
 
 
 @pytest.fixture

@@ -150,10 +150,12 @@ def no_default_namespace_line(defaults: dict[str, Any]) -> str:
     if not readable:
         return "This token has no default namespace and can read no namespace."
     names = ", ".join(f"`{ns}`" for ns in readable)
-    searched = f"them, starting with `{readable[0]}`" if len(readable) > 1 else f"`{readable[0]}`"
+    # An unaddressed search is addressed to the first one (`mcp_call._address_first_claim`);
+    # its fan-out never sweeps another tracker or code namespace.
+    others = " (name another on the call to search it)" if len(readable) > 1 else ""
     return (
         f"This token has no default namespace: name one of {names} on each memory "
-        f"or tracker call; `loom_search` searches {searched}."
+        f"or tracker call; `loom_search` searches `{readable[0]}`{others}."
     )
 
 

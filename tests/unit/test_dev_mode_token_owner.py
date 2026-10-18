@@ -74,6 +74,34 @@ def client(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> T
     async def _no_grants(*a: Any, **k: Any) -> list[str]:
         return []
 
+    import server.core.grant_cache as grant_cache
+    from server.auth import delegation
+    from server.identity.app import caller_defaults, namespace_classification
+
+    # alice's live grants, the same to the grant cache and to the default's ranking.
+    alice = ["personal-alice", "team-x"]
+
+    async def _grant_map(org: str, subject: str) -> grant_cache.GrantMap:
+        return grant_cache.GrantMap(ranks=dict.fromkeys(alice, 2) if subject == "alice" else {})
+
+    async def _ranked(org: str, subs: list[str], **_: Any) -> list[dict[str, str]]:
+        return [{"namespace": ns, "role": "writer"} for ns in alice] if "alice" in subs else []
+
+    async def _active(*_a: Any, **_k: Any) -> bool:
+        return True
+
+    async def _none_restricted(org: str) -> frozenset[str]:
+        return frozenset()
+
+    monkeypatch.setattr(delegation, "creator_account_active", _active)
+    monkeypatch.setattr(namespace_classification, "restricted_set", _none_restricted)
+    monkeypatch.setattr(grant_cache, "_read", _grant_map)
+
+    async def _no_pick(*_a: Any, **_k: Any) -> str:
+        return ""
+
+    monkeypatch.setattr(caller_defaults, "ranked_grants", _ranked)
+    monkeypatch.setattr(caller_defaults, "saved_default", _no_pick)
     monkeypatch.setattr(authz, "grant_role_for", _writer)
     monkeypatch.setattr(me_callers, "subject_aliases_of", _aliases)
     monkeypatch.setattr(me_callers, "caller_admin_of", _none)
@@ -189,16 +217,12 @@ def test_a_wildcard_setup_token_names_where_its_unaddressed_calls_land(
     async def _saved(org: str, subject: str, **_: Any) -> str:
         return "team-x" if subject == "alice" else ""
 
-    async def _writer_role(*_a: Any, **_k: Any) -> str:
-        return "writer"
-
     async def _own(org: str, subject: str, **_: Any) -> list[str]:
         return [subject]
 
     monkeypatch.setattr(settings, "auth_required", False)
     monkeypatch.setattr(settings, "identity_provider", "trust-network")
     monkeypatch.setattr(caller_defaults, "saved_default", _saved)
-    monkeypatch.setattr(caller_defaults, "live_role_on", _writer_role)
     monkeypatch.setattr(aliases, "subject_aliases", _own)
     r = client.post("/v1/me/setup/mcp_config", json={"client": "cursor"}, headers=_alice())
     assert r.status_code == 200, r.text

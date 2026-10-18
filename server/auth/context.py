@@ -169,106 +169,49 @@ async def _delegated_namespaces(auth: AuthInfo, org: str) -> list[str]:
 
 async def readable_named_claims(auth: AuthInfo | None, org: str) -> list[str]:
     """The namespaces `auth` names (no `*`), in claim order, that the gate
-    (`authz.check_authorized`) lets it read, by the gate's own rules. Empty
-    with no token. The MCP transport names these and picks a default from
-    them. Grants come from the cached grant map, so a steady-state call reads
-    nothing new."""
-    from server.auth.authz import may_act_in_org
+    (`authz.check_authorized`) lets it read, by the gate's own rules
+    (`authz.CachedGate`). Empty with no token. The MCP transport names these
+    and picks a default from them. Grants come from the cached grant maps, so
+    a steady-state call reads nothing new."""
+    from server.auth.authz import CachedGate, may_act_in_org
+    from server.operations.base import Role
 
     if auth is None or not may_act_in_org(auth, org):
         return []
-    named = [ns for ns in auth.namespaces if ns and ns != "*"]
-    if auth.creator:
-        named = await _creator_holds(auth, org, named)
-    else:
-        named = await _claim_reaches(auth, org, named)
-    return await _without_unreadable_restricted(org, named, auth, cached_grants=True)
+    gate = CachedGate(auth, org)
+    named = dict.fromkeys(ns for ns in auth.namespaces if ns and ns != "*")
+    return [ns for ns in named if await gate.admits(ns, Role.VIEWER)]
 
 
-async def delegated_writable_claims(auth: AuthInfo, org: str, claimed: list[str]) -> list[str]:
-    """The `claimed` namespaces, in order, a delegated token may write by the
-    gate's rules (`authz._check_delegated` at WRITER): its own claim reaches
-    writer there and its creator holds a live writer grant, plus the
-    restricted two-factor check. Read from the same cached grant maps."""
+async def delegated_reach(auth: AuthInfo, org: str) -> tuple[list[str], list[str]]:
+    """(writable, readable): the namespaces a delegated token may write and
+    read by the gate's rules (`authz.CachedGate`). The candidates are its
+    named claims, in order, and under a `*` claim every namespace its creator
+    holds a live grant on, sorted. The subject's own grants never widen it."""
+    from server.auth.authz import CachedGate
     from server.operations.base import Role
 
-    writable = await _creator_holds(auth, org, claimed, Role.WRITER)
-    return await _without_unreadable_restricted(
-        org, writable, auth, cached_grants=True, role=Role.WRITER
-    )
+    gate = CachedGate(auth, org)
+    candidates = list(dict.fromkeys(ns for ns in auth.namespaces if ns and ns != "*"))
+    if "*" in auth.namespaces:
+        ranks = (await gate.grants(auth.creator)).ranks
+        candidates += sorted(ns for ns, rank in ranks.items() if rank and ns not in candidates)
+    readable = [ns for ns in candidates if await gate.admits(ns, Role.VIEWER)]
+    writable = [ns for ns in readable if await gate.admits(ns, Role.WRITER)]
+    return writable, readable
 
 
-async def _creator_holds(
-    auth: AuthInfo, org: str, named: list[str], role: Role | None = None
-) -> list[str]:
-    """A delegated token's claims as `authz._check_delegated` decides them at
-    `role` (viewer by default): the token's own role there reaches it and its
-    creator holds a live grant that does. None while the creator's account
-    is disabled."""
-    from server.auth.delegation import ceiling_role, creator_account_active
-    from server.core.grant_cache import grant_map
-    from server.operations.base import Role, grant_rank
-
-    role = role or Role.VIEWER
-    if not named or not await creator_account_active(org, auth.creator):
-        return []
-    creator = await grant_map(org, auth.creator)
-    needed = grant_rank(role.name.lower())
-    write = role.value >= Role.WRITER.value
-
-    def _admits(ns: str) -> bool:
-        own = ceiling_role(auth, org, ns, write=write)
-        return own is not None and own.value >= role.value and (creator.rank(ns) or 0) >= needed
-
-    return [ns for ns in named if _admits(ns)]
-
-
-async def _claim_reaches(auth: AuthInfo, org: str, named: list[str]) -> list[str]:
-    """Any other token's claims as the gate decides them: a claim stands
-    unless it is capped at a grant that is no longer live (`authz.claim_cap`
-    0). A flat service account still reads a capped claim through the
-    creator it inherits from, where that creator holds a live grant
-    (`authz._grant_role`)."""
-    from server.auth.authz import claim_cap
-    from server.auth.delegation import ceiling_role
-    from server.auth.service_accounts import inheriting_creator
-    from server.core.grant_cache import grant_map
-
-    out: list[str] = []
-    for ns in named:
-        if not ceiling_role(auth, org, ns):
-            continue
-        if await claim_cap(auth, org, ns) != 0:
-            out.append(ns)
-        elif not auth.has_ns_roles():
-            creator = await inheriting_creator(org, auth.subject)
-            if creator and ((await grant_map(org, creator)).rank(ns) or 0) > 0:
-                out.append(ns)
-    return out
-
-
-async def _without_unreadable_restricted(
-    org: str,
-    namespaces: list[str],
-    auth: AuthInfo | None = None,
-    *,
-    cached_grants: bool = False,
-    role: Role | None = None,
-) -> list[str]:
+async def _without_unreadable_restricted(org: str, namespaces: list[str]) -> list[str]:
     """A restricted namespace stays in a caller's list only
     when the caller passes the two-factor read check for it. Membership,
     grants, inheritance and wildcards put it in the list; this takes it out
-    again. Order is preserved. `auth` defaults to the request's caller; with
-    auth disabled nothing is removed. `cached_grants`: read the caller's own
-    grants from the grant cache rather than once per namespace. `role`: the
-    check's role, viewer by default (writer for a list of write targets)."""
+    again. Order is preserved. With auth disabled nothing is removed."""
     if not namespaces:
         return namespaces
     from server.auth.authz import restricted_allows
-    from server.core.grant_cache import grant_map
     from server.operations.base import Role
 
-    auth = auth or current_auth()
+    auth = current_auth()
     if auth is None:
         return namespaces
     try:
@@ -279,13 +222,10 @@ async def _without_unreadable_restricted(
         # and only the ones the caller passes for (which then also fail, as
         # the gate re-reads the directory) survive.
         restricted = frozenset(namespaces)
-    grants = None
     out: list[str] = []
     for ns in namespaces:
         if ns in restricted or directory().config_classification(org, ns) == "restricted":
-            if cached_grants and grants is None:
-                grants = await grant_map(org, auth.subject)
-            if await restricted_allows(auth, role or Role.VIEWER, org, ns, grants=grants):
+            if await restricted_allows(auth, Role.VIEWER, org, ns):
                 out.append(ns)
             continue
         out.append(ns)
@@ -372,7 +312,7 @@ __all__ = [
     "OrgScopeFilter",
     "current_auth",
     "current_auth_var",
-    "delegated_writable_claims",
+    "delegated_reach",
     "readable_named_claims",
     "resolve_my_namespaces",
     "resolve_org_scope",

@@ -28,27 +28,23 @@ KINDS = {
 RESTRICTED = frozenset({"secret-team"})
 
 
-class _Auth:
-    def __init__(
-        self,
-        subject: str,
-        namespaces: tuple[str, ...] = (),
-        sa: bool = False,
-        creator: str = "",
-    ) -> None:
-        self.subject = subject
-        self.org = "clickhouse"
-        self.namespaces = namespaces
-        self.ns_roles: tuple[tuple[str, str], ...] = ()
-        self.is_service_account = sa
-        self.creator = creator
-        self.issued_at = None
+def _Auth(
+    subject: str,
+    namespaces: tuple[str, ...] = (),
+    sa: bool = False,
+    creator: str = "",
+) -> Any:
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
 
-    def can_access(self, org: str, ns: str) -> bool:
-        return ns in self.namespaces or "*" in self.namespaces
-
-    def can_write(self, org: str, ns: str) -> bool:
-        return self.can_access(org, ns)
+    return AuthInfo(
+        subject=subject,
+        org="clickhouse",
+        namespaces=namespaces,
+        roles=(Role.WRITER,),
+        is_service_account=sa,
+        creator=creator,
+    )
 
 
 class _CH:
@@ -69,8 +65,8 @@ class _CH:
         return [{"namespace": n, "role": "admin"} for n in self.grants]
 
     def grant_ranks(self, subject: str) -> dict[str, int]:
-        """What the grant cache reads for `subject`: no rows, so claims stand."""
-        return {}
+        """What the grant cache reads for `subject`: the admin grants listed."""
+        return {n: 3 for n in self.grants}
 
 
 @pytest.fixture()
@@ -148,16 +144,23 @@ def test_the_self_signup_service_account_keeps_its_own_namespace(_wired) -> None
     assert _defaults(sa)["namespace"] == "agent-box-claude-code"
 
 
-def test_only_planes_reachable_falls_to_the_personal_slug_never_a_plane(_wired) -> None:
+def test_only_planes_reachable_is_no_default_never_a_plane(_wired) -> None:
+    # Grants on planes only: no personal namespace is provisioned, so none is the default.
     _wired(_CH(saved="qa-clickhouse", grants=["qa-clickhouse", "code-loom"]))
+    assert _defaults(_Auth("viewer@example.com", ("code-loom",)))["namespace"] == ""
+
+
+def test_a_person_without_grants_defaults_to_the_personal_namespace_the_gate_provisions(
+    _wired,
+) -> None:
+    _wired(_CH(saved=None, grants=[]))
     ns = _defaults(_Auth("viewer@example.com", ("code-loom",)))["namespace"]
     assert ns == "personal-viewer" and home.is_memory_home(KINDS, ns)
 
 
 def test_memory_home_helpers() -> None:
-    rows = [{"namespace": n} for n in _OWNER_GRANTS]
-    assert home.memory_home_from_grants(rows, KINDS, "alice") == "alice"
-    assert home.memory_home_from_grants(rows[:4], KINDS, "alice") == ""
+    assert home.home_namespace(_OWNER_GRANTS, "alice") == "alice"
+    assert home.home_namespace(_OWNER_GRANTS[:4], "alice", "code-loom") == "code-loom"
     assert home.is_memory_home(KINDS, "unknown-ns") is True  # directory default is memory
     assert home.is_memory_home(KINDS, "code-loom") is False
 
@@ -202,8 +205,8 @@ class _SetupTokenCH(_CH):
         return {n: 2 for n in self.grants} if subject == self.owner else {}
 
 
-def _setup_token(creator: str = "alice") -> _Auth:
-    return _Auth("sa:cursor-ab12cd", ("*",), sa=True, creator=creator)
+def _setup_token(creator: str = "alice") -> Any:
+    return _token(("*",), creator=creator)
 
 
 def test_a_wildcard_setup_token_defaults_to_its_creators_home(_wired) -> None:
@@ -406,11 +409,10 @@ def test_a_restricted_namespace_is_off_limits_to_a_token_of_another_org(_wired) 
     assert asyncio.run(home.default_namespace(token, "clickhouse")) == "alice"
 
 
-def test_a_wildcard_setup_token_without_grants_falls_to_its_creators_personal_slug(
-    _wired,
-) -> None:
+def test_a_wildcard_setup_token_whose_creator_holds_no_grant_has_no_default(_wired) -> None:
+    # `personal-alice` was never provisioned: the gate refuses it, so no default.
     _wired(_SetupTokenCH(saved=None, grants=[]))
-    assert _defaults(_setup_token())["namespace"] == "personal-alice"
+    assert _defaults(_setup_token())["namespace"] == ""
 
 
 def test_a_service_account_without_a_creator_keeps_todays_default(_wired) -> None:
@@ -429,47 +431,29 @@ def test_the_away_note_compares_with_the_creators_login() -> None:
     assert mi.default_namespace_note() == {"namespace_defaulted": "agent-box-claude-code"}
 
 
-def test_a_creator_without_grants_is_refused_in_the_unprovisioned_default(
+def test_an_unaddressed_write_from_a_creator_without_grants_asks_for_a_namespace(
     _wired, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No grants anywhere: the default stays `personal-<creator>`, which nobody
-    provisioned, and the unaddressed write is refused there by name."""
-    from server.auth import authz, delegation
-    from server.auth.jwt import AuthInfo
-    from server.operations.base import Role
+    """No grants anywhere: no namespace is filled in, so the write fails
+    validation naming `namespace`, not AUTH_INSUFFICIENT on an unprovisioned
+    `personal-<creator>`."""
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import mcp_call
 
     _wired(_SetupTokenCH(saved=None, grants=[]))
-
-    async def _yes(*_a: Any, **_k: Any) -> bool:
-        return True
-
-    async def _no(*_a: Any, **_k: Any) -> bool:
-        return False
-
-    async def _no_grant(*_a: Any, **_k: Any) -> None:
-        return None
-
-    monkeypatch.setattr(delegation, "creator_account_active", _yes)
-    monkeypatch.setattr(authz, "_is_restricted", _no)
-    monkeypatch.setattr(authz, "grant_role_for", _no_grant)
-    token = AuthInfo(
-        subject="sa:cursor-ab12cd",
-        org="clickhouse",
-        namespaces=("*",),
-        roles=(Role.WRITER,),
-        is_service_account=True,
-        creator="alice",
-    )
-    ns = _defaults(token)["namespace"]
-    assert ns == "personal-alice"
-    with pytest.raises(PermissionError) as refused:
-        asyncio.run(authz.check_authorized(token, Role.WRITER, "clickhouse", ns))
+    monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
     op = OPERATIONS_BY_NAME["memory.set"]
-    body = mcp_call._forbidden_result(op, refused.value, token, "clickhouse", ns)
-    assert body["structuredContent"]["code"] == "AUTH_INSUFFICIENT"
-    assert ns in body["structuredContent"]["error"]
+    args: dict[str, Any] = {"memory_key": "k", "value": "v"}
+    token = _setup_token()
+
+    async def _call() -> Any:
+        request_id, _ = await mcp_call._bind_caller_identity(op, args, token, "claude-code")
+        return mcp_call._validated_input(1, op, args, request_id)
+
+    out = asyncio.run(_call())["result"]["structuredContent"]
+    assert "namespace" not in args
+    assert out["code"] == "VALIDATION_FAILED"
+    assert ["namespace"] in [list(e["loc"]) for e in out["errors"]]
 
 
 def _revoke_subject_grant(
@@ -506,8 +490,10 @@ def test_a_delegated_claim_its_creator_holds_stays_named_after_its_own_grant_goe
     assert readable == ["agent-box-claude-code", "alice"]
     # Both stay writable through the creator; the creator's own namespace
     # ranks first, as for any token (`home_namespace`).
-    assert _defaults(token)["namespace"] == "alice"
-    asyncio.run(authz.check_authorized(token, Role.WRITER, "clickhouse", "agent-box-claude-code"))
+    default = _defaults(token)["namespace"]
+    assert default == "alice"
+    for ns in (default, "agent-box-claude-code"):
+        asyncio.run(authz.check_authorized(token, Role.WRITER, "clickhouse", ns))
 
 
 def test_a_delegated_default_follows_the_creators_write_grant_not_the_subjects(
@@ -551,9 +537,30 @@ def test_the_agent_box_claim_is_no_default_once_its_creator_lost_it(_wired) -> N
     assert "`agent-box-claude-code`" not in text
 
 
-def test_loom_search_over_several_claims_says_where_it_starts() -> None:
-    line = mi.no_default_namespace_line({"readable": ["qa-clickhouse", "qa-example-private"]})
-    assert "`loom_search` searches them, starting with `qa-clickhouse`" in line
+def test_the_no_default_line_names_what_loom_search_reads(
+    _wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two tracker claims: the unaddressed search reads only the first, as the line says.
+    from server.auth.context import set_current_auth
+    from server.auth.fanout import namespaces_to_search
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    _wired(_SetupTokenCH(saved=None, grants=["qa-clickhouse", "qa-example-private"]))
+    monkeypatch.setattr(mcp_call, "_emit_mcp_event", lambda *a, **k: None)
+    token = _token(("qa-clickhouse", "qa-example-private"))
+    line = mi.no_default_namespace_line(_defaults(token))
+    assert "`loom_search` searches `qa-clickhouse` (name another on the call" in line
+    args: dict[str, Any] = {"query": "what did we decide"}
+
+    async def _searched() -> list[str]:
+        op = OPERATIONS_BY_NAME[mcp_call.SEARCH_OP]
+        set_current_auth(token)
+        await mcp_call._bind_caller_identity(op, args, token, "claude-code")
+        scope = args.get("namespace_scope") or "all_mine"
+        return (await namespaces_to_search("clickhouse", args["namespace"], scope)).read
+
+    assert asyncio.run(_searched()) == ["qa-clickhouse"]
     one = mi.no_default_namespace_line({"readable": ["qa-clickhouse"]})
     assert "`loom_search` searches `qa-clickhouse`." in one
 
@@ -598,3 +605,42 @@ def test_a_steady_state_unaddressed_write_reads_no_grants(_wired) -> None:
     _bind()
     steady = _bind()
     assert len(steady) == 1 and "user_state" in steady[0], steady
+
+
+class _CappedSACH(_SetupTokenCH):
+    """A flat service account whose own grants on its claims are all revoked:
+    every claim is capped at nothing, so its row is read for inheritance."""
+
+    def grant_ranks(self, subject: str) -> dict[str, int]:
+        if subject.startswith("sa:"):
+            return {n: 0 for n in ("agent-box-claude-code", "team-notes", "qa-clickhouse")}
+        return super().grant_ranks(subject)
+
+
+def _steady_bind(ch: _CH, token: Any) -> list[str]:
+    """The statements a second, warm-cache bind of an unaddressed `memory.set` issues."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    op = OPERATIONS_BY_NAME["memory.set"]
+    for _ in range(2):
+        ch.sql.clear()
+        args: dict[str, Any] = {"memory_key": "a/b/c", "value": "v"}
+        asyncio.run(mcp_call._bind_caller_identity(op, args, token, "claude-code"))
+    return list(ch.sql)
+
+
+def test_a_wildcard_delegated_bind_reads_the_saved_pick_and_the_ranking_only(_wired) -> None:
+    ch = _SetupTokenCH(saved=None, grants=["code-loom", "alice"])
+    _wired(ch)
+    steady = _steady_bind(ch, _setup_token())
+    assert len(steady) == 2, steady
+    assert "user_state" in steady[0] and "namespace_grants" in steady[1]
+
+
+def test_a_flat_service_account_with_capped_claims_reads_its_row_once(_wired) -> None:
+    ch = _CappedSACH(saved=None, grants=["alice"])
+    _wired(ch)
+    token = _token(("agent-box-claude-code", "team-notes", "qa-clickhouse"), creator="")
+    first = [q for q in _steady_bind(ch, token) if "service_accounts" in q]
+    assert first == [], "a warm bind reads no service_accounts row"
