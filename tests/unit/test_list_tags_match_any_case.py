@@ -241,4 +241,6 @@ def test_a_tag_filter_needs_a_tag() -> None:
 
 def test_exact_any_renders_the_tags_as_typed() -> None:
     """memory.search's tiers match exactly: the exact filter never folds case."""
-    assert tag_where(TagFilter(("API",), "exact_any"), {}) == _EXACT
+    params: dict[str, Any] = {}
+    assert tag_where(TagFilter(("API",), "exact_any"), params) == _EXACT
+    assert params["tags"] == ["API"]

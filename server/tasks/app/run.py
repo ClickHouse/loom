@@ -996,9 +996,8 @@ def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime]:
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:
-    """One page of a namespace's agent runs, filtered by agent, session, status, memory
-    activity, grade or text, in the asked order, with `total` except on a full page after
-    the first."""
+    """One page of a namespace's agent runs, filtered, searched and sorted as asked, with the
+    match count."""
 
     where: list[str] = []
     params: dict[str, Any] = {}
@@ -1028,11 +1027,7 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
     # The Runs page's search box: goal, run id or agent, any case.
     q = (input.q or "").strip()
     if q:
-        where.append(
-            "(positionCaseInsensitiveUTF8(goal, {q:String}) > 0"
-            " OR positionCaseInsensitiveUTF8(run_id, {q:String}) > 0"
-            " OR positionCaseInsensitiveUTF8(agent, {q:String}) > 0)"
-        )
+        where.append(runs_store.RUN_TEXT_MATCH)
         params["q"] = q
     ch = get_client()
     limit, offset = input.limit, input.offset
