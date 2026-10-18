@@ -39,7 +39,7 @@ from server.code.app.index.bootstrap import (
     mirror_ready,
     network_refusal,
 )
-from server.code.app.index.mirror_locks import fetch_lock_path, try_lock
+from server.code.app.index.mirror_locks import fetch_lock_path, partial_mirror, try_lock
 from server.code.domain.index import repos
 from server.code.store import index as code_store
 from server.core import readiness
@@ -462,8 +462,8 @@ def _sweep_root(root: str, named_mirrors: set[str], named_checkouts: set[str]) -
             if not name.endswith(_LOCK_SUFFIXES):
                 continue
             gone = _remove_lock(path, mirrors)
-        elif ".git.partial-" in name:
-            gone = _remove_partial(path)
+        elif (mirror := partial_mirror(path)) is not None:
+            gone = _remove_under_lock(path, f"{mirror}.clone-lock")
         elif name.endswith(".git") and path not in mirrors:
             gone = _remove_under_lock(path, f"{path}.clone-lock")
         elif name.startswith("checkout-") and path not in checkouts:
@@ -475,12 +475,6 @@ def _sweep_root(root: str, named_mirrors: set[str], named_checkouts: set[str]) -
             removed.append(path)
             logger.info("mirror sweep: removed %s (no active entry names it)", path)
     return removed
-
-
-def _remove_partial(path: str) -> bool:
-    """A clone's temp tree, removed only when no clone of its mirror is running."""
-    mirror = path[: path.index(".git.partial") + len(".git")]
-    return _remove_under_lock(path, f"{mirror}.clone-lock")
 
 
 def _remove_under_lock(path: str, lock: str) -> bool:

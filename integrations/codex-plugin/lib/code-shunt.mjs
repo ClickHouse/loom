@@ -397,7 +397,8 @@ export function otherSearchRepo(search, checkoutRepo) {
 }
 
 /** One line per tracker item: `#123 title (state, 0.71)`; items are the
- *  duplicate-check output's `items[]` (number, title, state, score, url).
+ *  duplicate-check output's `items[]` (number, title, state, score, url) or
+ *  its `nearest[]` (the same, with `confidence` in place of `score`).
  *  Up to `max` lines. */
 function trackerItemLines(items, max = 5) {
   const out = [];
@@ -407,7 +408,7 @@ function trackerItemLines(items, max = 5) {
     const title = String(it.title || "").trim();
     if (!n && !title) continue;
     const state = it.state ? String(it.state) : "";
-    const score = Number(it.score);
+    const score = Number(it.score ?? it.confidence);
     const tail = [state, Number.isFinite(score) ? score.toFixed(2) : ""].filter(Boolean).join(", ");
     // A check spans every tracker record the caller may read, so
     // an item names its record — #35677 of the public repo is not #35677 of

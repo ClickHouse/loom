@@ -8,7 +8,23 @@ import asyncio
 import contextlib
 import fcntl
 import os
+import re
+import time
 from collections.abc import AsyncIterator
+
+# A clone's temp tree beside its mirror: `<mirror>.partial-<pid>-<monotonic ns>`.
+_PARTIAL = re.compile(r"(.+\.git)\.partial-\d+-\d+")
+
+
+def partial_temp_dir(git_dir: str) -> str:
+    """A new temp tree name for a clone of `git_dir`."""
+    return f"{git_dir}.partial-{os.getpid()}-{time.monotonic_ns()}"
+
+
+def partial_mirror(path: str) -> str | None:
+    """The mirror a clone's temp tree belongs to; None for any other path."""
+    m = _PARTIAL.fullmatch(os.path.basename(path))
+    return os.path.join(os.path.dirname(path), m.group(1)) if m else None
 
 
 def try_lock(path: str) -> int | None:
