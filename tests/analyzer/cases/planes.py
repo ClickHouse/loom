@@ -656,8 +656,7 @@ async def _list_score(ch: RecordingCH, c: dict[str, Any]) -> None:
         memory_type="semantic" if not w else None,
         quotas={"semantic": 3} if w else None,
         tags=["ops", "infra"] if w else [],
-        # The dashboard's tag match: every tag, both sides lowercased.
-        tags_any_case=w,
+        # Every tag, both sides lowercased.
         tags_all=w,
     )
     # The served-set flags, as the handler builds them

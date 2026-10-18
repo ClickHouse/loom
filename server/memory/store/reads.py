@@ -12,6 +12,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.core.tag_sql import tag_filter
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
+from server.memory.domain.search_sql import tag_predicate
 from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
@@ -609,6 +610,20 @@ CONTAINS_PREDICATE = (
 )
 
 
+def _identity_where(identity: Identity, where: list[str], params: dict[str, Any]) -> None:
+    """The identity axes `list_by_namespace` and `count_by_namespace` share: `*` on an axis
+    drops it from WHERE."""
+    if identity.agent != "*":
+        where.append("agent = {agent:String}")
+        params["agent"] = identity.agent
+    if identity.user_id != "*":
+        where.append("user_id = {uid:String}")
+        params["uid"] = identity.user_id
+    if identity.session_id != "*":
+        where.append("session_id = {sid:String}")
+        params["sid"] = identity.session_id
+
+
 async def list_by_namespace(
     identity: Identity,
     *,
@@ -618,8 +633,8 @@ async def list_by_namespace(
     key_prefix: str | None = None,
     source_trace: str | None = None,
     tags: Sequence[str] | None = None,
-    tags_any_case: bool = False,
     tags_all: bool = False,
+    search_tags: Sequence[str] | None = None,
     contains: str | None = None,
     order_by: str = "created_at_desc",
     limit: int = 200,
@@ -639,8 +654,10 @@ async def list_by_namespace(
       - memory_type: exact match (e.g. "preference", "procedural")
       - pinned_only: only rows where pinned=1
       - key_prefix:  startsWith(memory_key, prefix) — for hierarchical key spaces
-      - tags:        any one (hasAny, the filter memory.search applies), or every one with
-                     tags_all; exact, or lowercased on both sides with tags_any_case
+      - tags:        any one, or every one with tags_all, in any case (both sides
+                     lowercased) — memory.list's filter
+      - search_tags: any one, exactly — memory.search's hard filter (`tag_predicate`),
+                     for its run-scoped tiers
       - contains:    case-insensitive substring of the value or the key — the
                      keyword filter a browse page's search box applies
 
@@ -681,15 +698,7 @@ async def list_by_namespace(
     if not include_proposed:
         # A fact on trial is served only when asked.
         where.append("status != 'proposed'")
-    if identity.agent != "*":
-        where.append("agent = {agent:String}")
-        params["agent"] = identity.agent
-    if identity.user_id != "*":
-        where.append("user_id = {uid:String}")
-        params["uid"] = identity.user_id
-    if identity.session_id != "*":
-        where.append("session_id = {sid:String}")
-        params["sid"] = identity.session_id
+    _identity_where(identity, where, params)
     where.extend(scope_where(scope, params))
     if memory_type is not None:
         where.append("memory_type = {mt:String}")
@@ -703,8 +712,11 @@ async def list_by_namespace(
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
     if tags:
-        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case, every=tags_all)
+        clause, params["tags"] = tag_filter(tags, every=tags_all)
         where.append(clause)
+    elif search_tags:
+        where.append(tag_predicate(alias=""))
+        params["tags"] = [str(t) for t in search_tags]
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains
@@ -829,7 +841,6 @@ async def count_by_namespace(
     key_prefix: str | None = None,
     source_trace: str | None = None,
     tags: Sequence[str] | None = None,
-    tags_any_case: bool = False,
     tags_all: bool = False,
     contains: str | None = None,
     include_tombstoned: bool = False,
@@ -862,15 +873,7 @@ async def count_by_namespace(
         where.append("status != 'superseded'")  # as list_by_namespace
     if not include_proposed:
         where.append("status != 'proposed'")  # as list_by_namespace
-    if identity.agent != "*":
-        where.append("agent = {agent:String}")
-        params["agent"] = identity.agent
-    if identity.user_id != "*":
-        where.append("user_id = {uid:String}")
-        params["uid"] = identity.user_id
-    if identity.session_id != "*":
-        where.append("session_id = {sid:String}")
-        params["sid"] = identity.session_id
+    _identity_where(identity, where, params)
     where.extend(scope_where(scope, params))
     if memory_type is not None:
         where.append("memory_type = {mt:String}")
@@ -884,7 +887,7 @@ async def count_by_namespace(
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
     if tags:
-        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case, every=tags_all)
+        clause, params["tags"] = tag_filter(tags, every=tags_all)
         where.append(clause)
     if contains:
         where.append(CONTAINS_PREDICATE)

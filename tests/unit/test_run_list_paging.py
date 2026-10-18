@@ -2,7 +2,8 @@
 
 The Runs page reads `total` to say "1–50 of 1,234" and pages with `offset`; the
 order is deterministic (run_id breaks ties) so a page boundary never repeats or
-skips a run. The count query carries the list query's WHERE, filter for filter.
+skips a run. The count query carries the list query's WHERE, filter for filter, and
+runs only when the page cannot tell the total: the first page and a page past the end.
 """
 
 from __future__ import annotations
@@ -115,6 +116,42 @@ def test_q_matches_goal_run_id_and_agent_in_any_case_and_the_count_agrees() -> N
     # Filter for filter, the count reads the rows the list pages through.
     assert _where(count_sql) == where
     assert count_params == {k: v for k, v in list_params.items() if k not in ("lim", "off")}
+
+
+def _counts(ch: StubCH) -> int:
+    return sum(1 for kind, sql, _ in ch.calls if kind == "one" and "count()" in sql)
+
+
+def test_the_first_page_counts() -> None:
+    ch = StubCH(rows=[_row("r1")], count=1234)
+    out = _list(ch, offset=0, limit=1)
+    assert out.total == 1234
+    assert _counts(ch) == 1
+
+
+def test_a_full_page_after_the_first_sends_no_total_and_runs_no_count() -> None:
+    ch = StubCH(rows=[_row("r2"), _row("r1")], count=1234)
+    out = _list(ch, offset=50, limit=2)
+    assert out.total is None
+    assert _counts(ch) == 0
+    assert [kind for kind, _, _ in ch.calls] == ["all"], "the page statement only"
+
+
+def test_a_short_page_ends_the_list_and_its_total_is_offset_plus_its_rows() -> None:
+    ch = StubCH(rows=[_row("r2"), _row("r1")], count=1234)
+    out = _list(ch, offset=50, limit=10)
+    assert out.total == 52
+    assert _counts(ch) == 0
+
+
+def test_a_page_past_the_end_counts_so_the_caller_can_step_back() -> None:
+    ch = StubCH(rows=[], count=37)
+    out = _list(ch, offset=100, limit=50)
+    assert out.total == 37
+    assert _counts(ch) == 1
+    # The count runs after the page came back empty, with the page's WHERE.
+    (_, list_sql, _), (_, count_sql, _) = ch.calls
+    assert "OFFSET {off:UInt32}" in list_sql and _where(count_sql) == _where(list_sql)
 
 
 def test_a_blank_q_is_no_filter() -> None:

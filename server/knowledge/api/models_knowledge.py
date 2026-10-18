@@ -358,13 +358,9 @@ class KnowledgeListInput(BaseModel):
 
     org: str
     namespace: str
-    # Documents carrying any one of these tags (every one with `tags_all`; exact unless
-    # `tags_any_case`).
+    # Documents carrying any one of these tags (every one with `tags_all`), in any case:
+    # `specs` matches a document tagged `Specs`.
     tags: list[str] = Field(default_factory=list)
-    # Match `tags` in any case (the Library's `tag:specs` finds `Specs`); off, exactly. A
-    # dashboard flag: hidden from the MCP listing and not a parameter of the SDK's list(). A
-    # build that predates it ignores it and matches exactly.
-    tags_any_case: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Require every one of `tags` (the Library's stacked `tag:a tag:b`); off, any one. A
     # dashboard flag: hidden from the MCP listing and not a parameter of the SDK's list(). A
     # build that predates it ignores it and matches any one.

@@ -159,6 +159,6 @@ One page of a namespace's agent runs, filtered by agent, session, status, memory
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `runs` | `list[RunRow]` | Matching runs in `order_by` order (newest `started_at` first by default), projected to `fields` when given. |
-| `total` | `int` | How many runs match every filter (status, agent, session_id, memory_activity, grade, q), whatever `limit` and `offset` cut: the size of the list being paged. |
+| `total` | `int \| None` | How many runs match every filter (status, agent, session_id, memory_activity, grade, q), whatever `limit` and `offset` cut, sent on the first page, the last page and a page past the end; null on a full page after the first, where the… |
 
 <!-- prettier-ignore-end -->

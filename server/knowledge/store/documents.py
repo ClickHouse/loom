@@ -174,7 +174,6 @@ async def list_with_chunk_counts(
     *,
     include_superseded: bool = False,
     tags: list[str] | None = None,
-    tags_any_case: bool = False,
     tags_all: bool = False,
     uri_prefixes: list[str] | None = None,
     cursor: tuple[datetime, str] | None = None,
@@ -198,7 +197,7 @@ async def list_with_chunk_counts(
     if not include_superseded:
         extra_where += " AND superseded_at IS NULL"
     if tags:
-        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case, every=tags_all)
+        clause, params["tags"] = tag_filter(tags, every=tags_all)
         extra_where += f" AND {clause}"
     live_prefixes = [p for p in (uri_prefixes or []) if p]
     if live_prefixes:

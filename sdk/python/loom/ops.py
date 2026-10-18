@@ -8966,7 +8966,6 @@ class KnowledgeListInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     tags: NotRequired[list[str]]
-    tags_any_case: NotRequired[bool]
     tags_all: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
     include_superseded: NotRequired[bool]
@@ -8981,7 +8980,6 @@ class KnowledgeListBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     tags: NotRequired[list[str]]
-    tags_any_case: NotRequired[bool]
     tags_all: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
     include_superseded: NotRequired[bool]
@@ -11133,7 +11131,6 @@ class MemoryListInput(TypedDict, total=False):
     include_proposed: NotRequired[bool]
     as_of: NotRequired[Optional[str]]
     tags: NotRequired[list[str]]
-    tags_any_case: NotRequired[bool]
     tags_all: NotRequired[bool]
     contains: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
@@ -11164,7 +11161,6 @@ class MemoryListBody(TypedDict, total=False):
     include_proposed: NotRequired[bool]
     as_of: NotRequired[Optional[str]]
     tags: NotRequired[list[str]]
-    tags_any_case: NotRequired[bool]
     tags_all: NotRequired[bool]
     contains: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
@@ -15246,7 +15242,7 @@ class RunListBody(TypedDict, total=False):
 
 class RunListOutput(TypedDict, total=False):
     runs: Required[list["RunRow"]]
-    total: NotRequired[int]
+    total: NotRequired[Optional[int]]
 
 
 class SearchQueryInput(TypedDict, total=False):

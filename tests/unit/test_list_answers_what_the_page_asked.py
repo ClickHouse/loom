@@ -55,6 +55,15 @@ def test_preview_chars_is_bounded_and_hidden_from_the_mcp_listing() -> None:
     assert "preview_chars" in mcp_schemas._HIDDEN_OP_PROPS["memory.list"]
 
 
+def test_the_offset_stops_at_the_cap_run_list_and_conversation_threads_use() -> None:
+    """A deeper page reads every row of the namespace under FINAL and sorts offset + limit
+    of them, so the offset is capped at 100,000 like the other paged lists."""
+    ident = {"org": "acme", "namespace": "team", "agent": "*"}
+    assert memory_crud.MemoryListInput(**ident, offset=100_000).offset == 100_000
+    with pytest.raises(pydantic.ValidationError):
+        memory_crud.MemoryListInput(**ident, offset=100_001)
+
+
 def test_a_row_longer_than_the_preview_sent_is_marked_truncated() -> None:
     value, cut = _memory_query._preview_for_list(_row("x" * 500), 400)
     assert cut is True and len(value) == 401 and value.endswith("…")

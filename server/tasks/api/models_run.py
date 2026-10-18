@@ -397,8 +397,8 @@ class RunListOutput(BaseModel):
     # Matching runs in `order_by` order (newest `started_at` first by default),
     # projected to `fields` when given.
     runs: list[RunRow]
-    # How many runs match every filter (status, agent, session_id,
-    # memory_activity, grade, q), whatever `limit` and `offset` cut: the size of
-    # the list being paged. A replica a release behind does not send it; a
-    # client reads a missing total as unknown.
-    total: int = 0
+    # How many runs match every filter (status, agent, session_id, memory_activity, grade,
+    # q), whatever `limit` and `offset` cut, sent on the first page, the last page and a page
+    # past the end; null on a full page after the first, where the caller keeps the first
+    # page's total.
+    total: int | None = None
