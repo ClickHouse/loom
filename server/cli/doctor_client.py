@@ -122,8 +122,16 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
     return (name, PASS, f"{base_url} (from {source}) — build {build}, status {health}"), body
 
 
+def _agent_token_fix(base_url: str) -> str:
+    # An agent's token came from --token or LOOM_API_KEY, and `loom init` refuses in agent mode.
+    return (
+        "drop --token and LOOM_API_KEY; the hooks and "
+        f"`loom call --server {base_url} namespace.list_mine` exchange the workload token"
+    )
+
+
 def token_check(
-    token: str, source: str, claims: dict[str, Any], now: float, base_url: str
+    token: str, source: str, claims: dict[str, Any], now: float, base_url: str, *, agent: bool
 ) -> Check:
     name = "client:token"
     if not token and source == AGENT_SOURCE:
@@ -156,14 +164,14 @@ def token_check(
                 name,
                 FAIL,
                 f"the token from {source} expired {int((now - exp) // 3600)} h ago. "
-                "Fix: mint a new one.",
+                f"Fix: {_agent_token_fix(base_url) if agent else 'mint a new one'}.",
             )
         if exp - now < EXPIRING_SOON_S:
             return (
                 name,
                 WARN,
                 f"the token from {source} expires in {int((exp - now) // 3600)} h. "
-                "Fix: mint a new one soon.",
+                f"Fix: {_agent_token_fix(base_url) if agent else 'mint a new one soon'}.",
             )
     who = f"{claims.get('sub', '?')} @ {claims.get('org', '?')}"
     kind = "service account" if claims.get("sa") else "user"
@@ -227,20 +235,21 @@ def auth_check(
         return (name, WARN, "skipped: the server was not reachable"), []
     if status == 401:
         msg = _detail(body)
-        # An agent's token came from --token or LOOM_API_KEY, and `loom init` refuses in agent mode.
-        fix = (
-            "drop --token and LOOM_API_KEY; the hooks and "
-            f"`loom call --server {base_url} namespace.list_mine` exchange the workload token"
-            if agent
-            else "mint a new token (`loom mint-token --save`, Settings → Tokens in the "
-            "dashboard, or `loom init --agent`)"
-        )
+        if agent:
+            fix = _agent_token_fix(base_url)
+            why = "the hooks send LOOM_API_KEY before the workload token"
+        else:
+            fix = (
+                "mint a new token (`loom mint-token --save`, Settings → Tokens in the "
+                "dashboard, or `loom init --agent`)"
+            )
+            why = "the hooks fail open"
         return (
             (
                 name,
                 FAIL,
                 f"the server rejected the token: {msg}. Fix: {fix} — "
-                "the hooks fail open, so this is why captures vanish.",
+                f"{why}, so this is why captures vanish.",
             ),
             [],
         )
@@ -902,11 +911,12 @@ def client_checks(
     checks: list[Check] = []
     server, _ = server_check(base_url, url_src, get_json)
     checks.append(server)
-    checks.append(token_check(token, tok_src, claims, now, base_url))
+    agent = agent_mode(env)
+    checks.append(token_check(token, tok_src, claims, now, base_url, agent=agent))
     checks.extend(token_shadow_check(token, tok_src, home, env))
     checks.extend(hook_override_check(home, env))
     auth, rows = (
-        auth_check(base_url, token, claims, post_json, agent_mode(env))
+        auth_check(base_url, token, claims, post_json, agent)
         if server[1] != FAIL
         else (
             ("client:auth", WARN, "skipped: the server was not reachable"),
