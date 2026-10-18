@@ -719,9 +719,10 @@ class MemoryClient:
         `memory.bulk_set`, and such a result carries `coalesced: true` and no
         `memory_id` / `content_sha256`: read the hash with `get()` (a set
         with `if_match_sha256` is never coalesced). A blacklisted value raises
-        the `ValidationError` (`BLACKLISTED`, 422), and a close write against a
-        pinned row the `PreconditionFailed` (`PINNED_CONFLICT`, 409), coalesced
-        or not.
+        the `ValidationError` (`BLACKLISTED`, 422); a new value for a pinned
+        key, or a close write against a pinned row, the `PreconditionFailed`
+        (`PINNED_CONFLICT`, 409); a write to a `read_only` key a `LoomError`
+        with code `LOCKED` (423); coalesced or not.
 
         The response also carries the write-time conflict verdict
         (`conflict_verdict`: clear | merge | duplicate | conflict | refines),
@@ -1229,9 +1230,9 @@ class MemoryClient:
             `"superseded"` (a retirement reversed); empty on a no-op.
 
         Preserves the original char_limit, pinned, tags, and entities
-        across the restore. Expires_at is intentionally cleared so the
-        restored row gets a fresh lease — restoring a row whose original
-        expiry was in the past would otherwise immediately re-tombstone.
+        across the restore. An undone delete clears `expires_at`, so the row
+        gets a fresh lease (its old expiry may have passed, which would
+        tombstone it again at once); an undone retirement keeps it.
         """
         payload = self._identity(user_id, session_id)
         payload["memory_key"] = memory_key
@@ -1833,8 +1834,11 @@ class MemoryClient:
         Returns the server response: `written` in input order (each row's
         `memory_key`, `version`, `conflict_verdict`), and the keys that were
         not written and why — `skipped_pinned` / `skipped_locked` (the live
-        row is pinned or locked), `merged`, `rejected_pinned`. A row not
-        written has version 0.
+        row is pinned or locked), `skipped_blacklisted`, `merged`,
+        `rejected_pinned`. A row not written has version 0, and its
+        `conflict_verdict` says why: `blacklisted`, `pinned`, `locked` or
+        `rejected` (close to a pinned row), with `pinned_blocker_id` naming
+        the pinned row for the last two.
 
         `idempotency_key`: unlike `set` (idempotent on identity+memory_key),
         a bulk insert is replayed verbatim — an app-level retry of a failed
@@ -1921,7 +1925,9 @@ class MemoryClient:
         you need the written keys back now.
 
         Returns a dict with `written: list[{memory_key, version}]`,
-        `tokens_in`, `tokens_out`, `llm_provider`, `llm_model` (or
+        `refused: list[{memory_key, verdict}]` (the extracted facts the write
+        refused: a blacklisted, pinned or locked key, or a pinned row close
+        by), `tokens_in`, `tokens_out`, `llm_provider`, `llm_model` (or
         `deferred: True, queue_id` when deferred).
         """
         payload: dict[str, object] = self._identity(
