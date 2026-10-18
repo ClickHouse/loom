@@ -33,6 +33,13 @@ def test_slo_classes() -> None:
     assert sli.slo_class("grants.approve", writes=False, admin=True) == "admin"
 
 
+def test_every_search_op_is_registered() -> None:
+    """A renamed op would drop silently from the search SLO to read or write."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    assert sli._SEARCH_OPS <= set(OPERATIONS_BY_NAME)
+
+
 def test_status_class_comes_from_the_raised_status_then_the_code() -> None:
     assert sli.status_class(True, "", None) == "ok"
     assert sli.status_class(False, "RATE_LIMITED", RateLimitedError("slow down")) == "client"

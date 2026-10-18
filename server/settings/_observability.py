@@ -90,8 +90,9 @@ class ObservabilitySettings(BaseModel):
     # flip together with them.
     otel_metrics_delta_temporality: bool = False
     # Write a gauge point only when its value changed or this many seconds
-    # after the last write; 0 = every export. Off because gauge tiles fill
-    # gaps with 0 and would draw a sawtooth.
+    # after the last write; 0 = every export. The ClickHouse exporter only
+    # (LOOM_OTEL_EXPORTER=ch); OTLP exports every point. Off because gauge
+    # tiles fill gaps with 0 and would draw a sawtooth.
     otel_gauge_heartbeat_s: int = 0
     # OTLP/HTTP collector base URL (`/v1/traces` is appended); set with
     # `otel_exporter` = "", it selects the otlp exporter.

@@ -20,7 +20,7 @@ one-directional modules (none import back into this one):
   • mcp_config    — constants + JSON-RPC envelope helpers
   • mcp_schemas   — JSON-Schema transformation for descriptors
   • mcp_identity  — client-name slugify / session→agent cache / caller defaults
-  • mcp_tools     — tool descriptors + the loom_search rendering
+  • mcp_tools     — tool descriptors, the loom_search rendering, the per-call ledger rows
   • mcp_primer    — the primer and the prompts / resources / initialize surfaces
   • mcp_auth      — bearer verification, 401 answers, the pre-dispatch screen
   • mcp_call      — one `tools/call`, from tool resolution to the handler

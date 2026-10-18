@@ -292,12 +292,15 @@ def _init_metrics(resource: Any, exporter_mode: str, endpoint: str) -> None:
         except Exception as e:  # noqa: BLE001 — domain metrics must not stop OTel
             log.warning("domain metric wiring failed: %s", e)
 
+        # The gauge heartbeat is the ClickHouse exporter's filter; OTLP has none.
+        heartbeat = (
+            f", gauge heartbeat {settings.otel_gauge_heartbeat_s}s" if exporter_mode == "ch" else ""
+        )
         log.info(
-            "OTel metrics initialized — emitting every %ds (%s temporality, "
-            "gauge heartbeat %ss) to %s",
+            "OTel metrics initialized — emitting every %ds (%s temporality%s) to %s",
             settings.otel_metrics_export_interval_s,
             "delta" if settings.otel_metrics_delta_temporality else "cumulative",
-            settings.otel_gauge_heartbeat_s,
+            heartbeat,
             "default.otel_metrics_{sum,histogram,gauge}" if exporter_mode == "ch" else endpoint,
         )
     except Exception as e:  # noqa: BLE001 — metrics must not stop startup

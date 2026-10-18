@@ -78,7 +78,7 @@ observability tables. `LOOM_OTEL_ENABLED=false` turns emission off.
 | `LOOM_OTEL_SERVICE_NAME`, `LOOM_OTEL_ENVIRONMENT` | `loom`, `dev` | `service.name` and `deployment.environment` on every span, log and metric                                                                                              |
 | `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S`             | `60`          | metric export cadence; spans keep their own 3-second batch delay                                                                                                       |
 | `LOOM_OTEL_METRICS_DELTA_TEMPORALITY`             | `false`       | delta instead of cumulative counters and histograms; the stock dashboards read cumulative rows, so flip them together                                                  |
-| `LOOM_OTEL_GAUGE_HEARTBEAT_S`                     | `0`           | write a gauge point only on change or after this many seconds; 0 = every export (gauge tiles fill gaps with 0)                                                         |
+| `LOOM_OTEL_GAUGE_HEARTBEAT_S`                     | `0`           | `ch` exporter only: write a gauge point only on change or after this many seconds; 0 = every export (gauge tiles fill gaps with 0). OTLP exports every point           |
 | `LOOM_OTEL_CENSUS_SCOPE`                          | `leader`      | who takes the whole-table censuses: only the supervisor-lease holder, or every process (costly)                                                                        |
 
 The `ch` exporter writes the tables ClickStack/HyperDX reads, so the stock stack has

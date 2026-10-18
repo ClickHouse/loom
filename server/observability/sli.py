@@ -9,7 +9,6 @@ the rows up per minute for SLO dashboards and alert rules to read.
 from __future__ import annotations
 
 SLO_CLASSES = ("write", "search", "read", "code", "admin")
-STATUS_CLASSES = ("ok", "client", "server")
 
 # Retrieval ops that are reads by role but carry the search SLO.
 _SEARCH_OPS = frozenset(
