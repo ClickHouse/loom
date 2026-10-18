@@ -328,6 +328,10 @@ describe("Recent search after a local write", () => {
     expect(
       await screen.findByText((_, el) => el?.textContent === "No memories match zebra", {}, { timeout: 3000 }),
     ).toBeInTheDocument();
+    // Its Clear takes the words too.
+    await userEvent.click(screen.getAllByRole("button", { name: "Clear filters" }).at(-1) as HTMLElement);
+    expect(screen.getByLabelText("Search memories")).toHaveValue("");
+    expect(await screen.findByText("milk_note")).toBeInTheDocument();
   });
 
   it("a search that failed outright brings none of its earlier ranked hits back on the next run", async () => {

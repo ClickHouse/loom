@@ -156,8 +156,9 @@ function ConflictsPanel() {
   const [index, setIndex] = useState(0);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  // Bumped after a decision empties the queue: the refetch runs through the
-  // namespace-keyed effect, so a reply that lands after a namespace switch is dropped.
+  // Bumped by Retry, and when a decision empties the loaded rows while more wait past
+  // them: the refetch runs through the namespace-keyed effect, so a reply that lands after
+  // a namespace switch is dropped.
   const [reload, setReload] = useState(0);
   // The reload keeps what is on screen until it answers; another namespace starts over.
   const rowsFor = useRef("");

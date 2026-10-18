@@ -281,11 +281,20 @@ describe("Runs paging, sorting and search on the server", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Search runs" }), { target: { value: "nothing" } });
     // The typed words, bare, among the runs the default fold keeps.
     expect(
-      await screen.findByText((_, el) => el?.textContent === "No runs match nothing in runs with memory activity"),
+      await screen.findByText((_, el) => el?.textContent === "No runs with memory activity match nothing"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(await screen.findByRole("button", { name: "goal 1" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Search runs" })).toHaveValue("");
+  });
+
+  it("with every run shown, says no run matches the words", async () => {
+    server(3);
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    fireEvent.click(screen.getByText("Show runs with no memory activity"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Search runs" }), { target: { value: "nothing" } });
+    expect(await screen.findByText((_, el) => el?.textContent === "No runs match nothing")).toBeInTheDocument();
   });
 
   it("with a status picked too, says the filters in force match nothing, not the words", async () => {
@@ -297,9 +306,7 @@ describe("Runs paging, sorting and search on the server", () => {
     );
     fireEvent.change(screen.getByRole("textbox", { name: "Search runs" }), { target: { value: "nothing" } });
     expect(
-      await screen.findByText(
-        (_, el) => el?.textContent === "No runs match the filters in force in runs with memory activity",
-      ),
+      await screen.findByText((_, el) => el?.textContent === "No runs with memory activity match the filters in force"),
     ).toBeInTheDocument();
   });
 
@@ -335,10 +342,10 @@ describe("Runs paging, sorting and search on the server", () => {
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
     fireEvent.change(screen.getByLabelText("Search runs"), { target: { value: "zzz" } });
-    await screen.findByText(/No runs match/);
+    await screen.findByText(/^No runs (with memory activity )?match/);
     fireEvent.change(screen.getByLabelText("Search runs"), { target: { value: "goal" } });
     await waitFor(() => expect(lastOpts()).toMatchObject({ q: "goal" }));
-    expect(screen.queryByText(/No runs match/)).toBeNull();
+    expect(screen.queryByText(/^No runs (with memory activity )?match/)).toBeNull();
     answer({ runs: [run(1)], total: 1 });
     await screen.findByRole("button", { name: "goal 1" });
   });
@@ -488,7 +495,7 @@ describe("Runs paging, sorting and search on the server", () => {
     await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
     await screen.findByRole("button", { name: "goal 51" });
     fireEvent.change(screen.getByLabelText("Search runs"), { target: { value: "nothing like this" } });
-    expect(await screen.findByText(/No runs match/)).toBeInTheDocument();
+    expect(await screen.findByText(/^No runs (with memory activity )?match/)).toBeInTheDocument();
   });
 
   // Runs that started together keep run.list's order: run_id in the direction of the sort.

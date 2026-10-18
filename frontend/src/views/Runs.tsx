@@ -892,10 +892,9 @@ export function Runs() {
       {nothingShown && searching && (
         <ListState
           kind="filtered"
-          things="runs"
+          things={hideConn ? "runs with memory activity" : "runs"}
           // The typed words alone; with a status or agent picked too, "the filters in force".
           filter={(!filter && !agent && q) || undefined}
-          among={hideConn ? "runs with memory activity" : undefined}
           onClear={clearFilters}
         />
       )}

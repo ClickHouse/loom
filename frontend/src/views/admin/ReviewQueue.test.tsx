@@ -361,6 +361,17 @@ describe("ReviewQueue", () => {
     expect(screen.getByLabelText("Loading conflicts")).toBeInTheDocument();
   });
 
+  it("deciding the only conflict, with none past it, says 'No conflicts' without reading again", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(1);
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("k/one")], next_before_version: null });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    expect(await screen.findByText("No conflicts", {}, WAIT)).toBeInTheDocument();
+    expect(listConflicts).toHaveBeenCalledTimes(1);
+  });
+
   it("holds the queue's picks and the reason while a decision is out", async () => {
     vi.mocked(countConflicts).mockResolvedValue(2);
     vi.mocked(listConflicts).mockResolvedValue({

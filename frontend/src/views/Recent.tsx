@@ -1143,8 +1143,9 @@ function MemoryList() {
             things="memories"
             filter={typedWords || undefined}
             onClear={() => {
-              setQuery("");
+              // After clearFilters, which keeps the typed words: this row clears them too.
               clearFilters();
+              setQuery("");
             }}
           />
         ))}
