@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -28,6 +29,7 @@ from server.memory.api.models_evidence_transfer import (
     MemoryImportEvidenceInput,
     MemoryImportEvidenceOutput,
 )
+from server.memory.domain.sensitivity import HIGH, detect_sensitivity
 
 log = logging.getLogger(__name__)
 
@@ -160,7 +162,12 @@ async def handle_memory_export_evidence(
             )
             for r in rows[: input.limit]
         ]
-        return MemoryExportEvidenceOutput(digests=digests, has_more=len(rows) > input.limit)
+        kept = await _without_high(
+            input, digests, lambda d: (d.derived_from, d.summary_text, d.key_facts)
+        )
+        return MemoryExportEvidenceOutput(
+            digests=kept, has_more=len(rows) > input.limit, held_high=len(digests) - len(kept)
+        )
 
     after = _decode_cursor(input.cursor)
     if after is not None:
@@ -205,7 +212,35 @@ async def handle_memory_export_evidence(
         for r in rows
     ]
     next_cursor = _encode_cursor(chunks[-1].session_id, chunks[-1].chunk_index) if has_more else ""
-    return MemoryExportEvidenceOutput(chunks=chunks, has_more=has_more, next_cursor=next_cursor)
+    kept = await _without_high(
+        input, chunks, lambda c: ([c.parent_memory_key, *c.memory_keys], c.content, [])
+    )
+    return MemoryExportEvidenceOutput(
+        chunks=kept, has_more=has_more, next_cursor=next_cursor, held_high=len(chunks) - len(kept)
+    )
+
+
+async def _without_high(
+    input: MemoryExportEvidenceInput,
+    items: list[Any],
+    parts: Callable[[Any], tuple[list[str], str, list[str]]],
+) -> list[Any]:
+    """`items` without those linked to a key that was ever 'high' or whose text reads as a
+    credential: raw text has no sensitivity column of its own. `parts` gives an item's
+    linked keys and its text."""
+    if input.include_high or not items:
+        return items
+    import server.memory.store as memory_repo
+
+    linked = [k for item in items for k in parts(item)[0] if k]
+    high = await memory_repo.keys_ever_high(input.org, input.namespace, linked)
+    kept = []
+    for item in items:
+        keys, text, more = parts(item)
+        if set(keys) & high or detect_sensitivity("\n".join([text, *more])) == HIGH:
+            continue
+        kept.append(item)
+    return kept
 
 
 def _importer_user(input: MemoryImportEvidenceInput) -> str | None:

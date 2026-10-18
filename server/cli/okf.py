@@ -183,7 +183,8 @@ async def _fetch_namespace(
         for r in rows:
             g = full.get(r["memory_key"])
             if g is None and r.get("value_truncated"):
-                # bulk_get answers live rows only, and the list holds a cut preview.
+                # Not answered by bulk_get (a tombstoned row, or one deleted since the
+                # list), and the list holds only a cut preview.
                 unreadable.append(r["memory_key"])
                 continue
             merged = {**r, **{k: v for k, v in (g or {}).items() if v not in (None, "", [], {})}}
@@ -199,11 +200,13 @@ async def _fetch_namespace(
 
 
 async def _fetch_evidence(
-    client: _Client, org: str, namespace: str, *, page: int = 500
-) -> tuple[list[okf_ev.ChunkRecord], list[okf_ev.DigestRecord]]:
+    client: _Client, org: str, namespace: str, *, include_high: bool, page: int = 500
+) -> tuple[list[okf_ev.ChunkRecord], list[okf_ev.DigestRecord], int]:
     """Every live raw chunk (with its memory_chunk_sources links) and session
-    digest of the namespace, through memory.export_evidence."""
+    digest of the namespace, through memory.export_evidence, and how many the
+    server held back as 'high'."""
     chunks: list[okf_ev.ChunkRecord] = []
+    held = 0
     cursor = ""
     while True:
         resp = await client.post(
@@ -214,8 +217,10 @@ async def _fetch_evidence(
                 "kind": "chunks",
                 "limit": page,
                 "cursor": cursor,
+                "include_high": include_high,
             },
         )
+        held += int(resp.get("held_high") or 0)
         for c in resp.get("chunks") or []:
             chunks.append(
                 okf_ev.ChunkRecord(
@@ -242,8 +247,10 @@ async def _fetch_evidence(
             "namespace": namespace,
             "kind": "digests",
             "limit": 2000,
+            "include_high": include_high,
         },
     )
+    held += int(resp.get("held_high") or 0)
     digests = [
         okf_ev.DigestRecord(
             session_id=str(d.get("session_id") or ""),
@@ -257,7 +264,7 @@ async def _fetch_evidence(
         )
         for d in (resp.get("digests") or [])
     ]
-    return chunks, digests
+    return chunks, digests, held
 
 
 async def _fetch_edges(
@@ -356,6 +363,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         chunks: list[okf_ev.ChunkRecord] = []
         digests: list[okf_ev.DigestRecord] = []
         edges: list[dict[str, Any]] = []
+        held_evidence = 0
         try:
             entries, unreadable = await _fetch_namespace(
                 client,
@@ -365,15 +373,18 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
                 limit=args.limit,
             )
             if not args.no_evidence:
-                chunks, digests = await _fetch_evidence(client, org, args.namespace)
+                chunks, digests, held_evidence = await _fetch_evidence(
+                    client, org, args.namespace, include_high=bool(args.include_high)
+                )
             if not args.no_links:
                 edges = await _fetch_edges(client, org, args.namespace)
         finally:
             await client.close()
-        held_evidence = 0
         if not args.include_high:
+            # Also here, for a server that does not hold this evidence back itself.
             held = {e["memory_key"] for e in entries if not okf.is_exportable(e)}
-            chunks, digests, held_evidence = okf_ev.without_high(chunks, digests, held)
+            chunks, digests, held_here = okf_ev.without_high(chunks, digests, held)
+            held_evidence += held_here
         files, orphans, skipped_high = _plan_export(
             entries,
             edges,
@@ -418,8 +429,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             )
         if unreadable:
             print(
-                f"  {len(unreadable)} tombstoned row(s) left out: their value is longer than "
-                "the list preview and bulk_get does not serve tombstoned rows: "
+                f"  {len(unreadable)} row(s) left out: bulk_get did not answer them and their "
+                "value is longer than the list preview: "
                 + ", ".join(unreadable[:5])
                 + (" …" if len(unreadable) > 5 else "")
             )

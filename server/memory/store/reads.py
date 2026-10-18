@@ -471,6 +471,28 @@ _BULK_FETCH_SQL = """
     """
 
 
+async def keys_ever_high(
+    org: str, namespace: str, keys: Sequence[str], *, ch: _CHClient | None = None
+) -> set[str]:
+    """The keys among `keys` with any version, live or deleted, labelled 'high': the text
+    of such a row may sit in the raw chunks and digests behind it."""
+    if not keys:
+        return set()
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT memory_key
+        FROM loom.memory_versions
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND memory_key IN {keys:Array(String)}
+          AND sensitivity = 'high'
+        """,
+        params={"org": org, "ns": namespace, "keys": sorted(set(keys))},
+    )
+    return {str(r["memory_key"]) for r in rows}
+
+
 async def find_related_by_entities(
     identity: Identity,
     memory_key: str,

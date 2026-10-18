@@ -659,6 +659,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `session_id` | `str` | `''` | optional: one session only |
 | `limit` | `int` | `500` | Rows per page (1–2000); `has_more` says whether another page follows. |
 | `cursor` | `str` | `''` | opaque keyset cursor from a previous page |
+| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row, or whose text reads as a credential. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -667,6 +668,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `edges` | `list[EvidenceEdge]` | `kind: edges`: live typed links, ordered by `(from_key, to_key, relation)`. |
 | `has_more` | `bool` | True when more rows exist past this page. |
 | `next_cursor` | `str` | Pass as `cursor` for the next page; empty on the last page and always for digests. |
+| `held_high` | `int` | Chunks or digests of this page left out as 'high' (see `include_high`). |
 
 ## `memory.exposure_summary`
 

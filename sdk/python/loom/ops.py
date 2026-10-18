@@ -10520,6 +10520,7 @@ class MemoryExportEvidenceInput(TypedDict, total=False):
     session_id: NotRequired[str]
     limit: NotRequired[int]
     cursor: NotRequired[str]
+    include_high: NotRequired[bool]
 
 
 class MemoryExportEvidenceBody(TypedDict, total=False):
@@ -10529,6 +10530,7 @@ class MemoryExportEvidenceBody(TypedDict, total=False):
     session_id: NotRequired[str]
     limit: NotRequired[int]
     cursor: NotRequired[str]
+    include_high: NotRequired[bool]
 
 
 class MemoryExportEvidenceOutput(TypedDict, total=False):
@@ -10537,6 +10539,7 @@ class MemoryExportEvidenceOutput(TypedDict, total=False):
     edges: NotRequired[list["EvidenceEdge"]]
     has_more: NotRequired[bool]
     next_cursor: NotRequired[str]
+    held_high: NotRequired[int]
 
 
 class EvidenceChunk(TypedDict, total=False):

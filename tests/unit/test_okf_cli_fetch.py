@@ -164,3 +164,51 @@ async def test_export_keeps_high_and_unreadable_rows_home() -> None:
     assert skipped == 3  # secret, split and gone-high
     assert "plain text" in text and "gone-short text" in text
     assert "secret text" not in text and "gone-high text" not in text and "split text" not in text
+
+
+class _OlderEvidenceClient(_MixedClient):
+    """A server that sends every chunk, without holding back those behind a 'high' row."""
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.export_evidence" and body["kind"] == "chunks":
+            chunk = {"session_id": "s", "content": "", "memory_keys": []}
+            return {
+                "chunks": [
+                    {
+                        **chunk,
+                        "chunk_index": 0,
+                        "content": "said in passing",
+                        "memory_keys": ["plain"],
+                    },
+                    {
+                        **chunk,
+                        "chunk_index": 1,
+                        "content": "the vault rotates",
+                        "memory_keys": ["secret"],
+                    },
+                ],
+                "has_more": False,
+            }
+        if op == "memory.export_evidence":
+            return {"digests": [], "edges": [], "has_more": False}
+        return await super().post(op, body)
+
+    async def close(self) -> None:
+        pass
+
+
+def test_export_keeps_the_evidence_of_a_held_row_home(tmp_path, monkeypatch, capsys) -> None:
+    import argparse
+
+    monkeypatch.setattr(cli_okf, "_Client", lambda *_a: _OlderEvidenceClient())
+    monkeypatch.setattr(cli_okf, "_server_build", lambda _url: "")
+    parser = argparse.ArgumentParser()
+    cli_okf.register_okf_cli(parser.add_subparsers())
+    out = tmp_path / "b"
+    args = parser.parse_args(
+        ["export-okf", "--token", "t", "--org", "o", "--namespace", "ns", "--out", str(out)]
+    )
+    assert int(args.func(args)) == 0
+    evidence = "\n".join(p.read_text() for p in (out / "evidence").rglob("*.md"))
+    assert "said in passing" in evidence and "the vault rotates" not in evidence
+    assert "1 raw chunk(s) or session digest(s) stayed in the database" in capsys.readouterr().out

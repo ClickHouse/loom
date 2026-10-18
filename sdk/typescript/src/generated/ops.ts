@@ -4157,6 +4157,7 @@ export interface MemoryExportEvidenceInput {
   session_id?: string;
   limit?: number;
   cursor?: string;
+  include_high?: boolean;
 }
 
 export interface EvidenceChunk {
@@ -4200,6 +4201,7 @@ export interface MemoryExportEvidenceOutput {
   edges?: EvidenceEdge[];
   has_more?: boolean;
   next_cursor?: string;
+  held_high?: number;
 }
 
 export interface MemoryExposureSummaryInput {
