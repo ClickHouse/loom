@@ -15,13 +15,19 @@ export interface TagListProps {
  * A row's tags: outlined chips (an agent is a filled badge, so outline against fill tells
  * the two apart without a `#`), at most three, then "+N" with the rest in its tooltip. A
  * tag the list is filtered by reads as pressed, the fill Click UI gives a checked control.
+ *
+ * Pressable tags stay on one line under a coarse pointer: each one's 44 px hit area reaches
+ * past its 24 px box, so a second line would overlap the first. A tag truncates instead,
+ * and "+N" keeps its width.
  */
 export function TagList({ tags, onTagClick, activeTags, max = 3, className = "" }: TagListProps) {
   if (tags.length === 0) return null;
   const shown = tags.slice(0, max);
   const rest = tags.slice(max);
   return (
-    <div className={`flex flex-wrap items-center gap-1.5 ${className}`}>
+    <div
+      className={`flex flex-wrap items-center gap-1.5 ${onTagClick ? "pointer-coarse:flex-nowrap" : ""} ${className}`}
+    >
       {shown.map((t) => (
         <Chip
           key={t}
@@ -31,7 +37,7 @@ export function TagList({ tags, onTagClick, activeTags, max = 3, className = "" 
           selected={onTagClick ? (activeTags?.has(t.toLowerCase()) ?? false) : undefined}
           ariaLabel={onTagClick ? `Filter by tag ${t}` : undefined}
           target="overlay"
-          className="list-row-control"
+          className="list-row-control min-w-0"
         />
       ))}
       {rest.length > 0 && (
@@ -41,7 +47,7 @@ export function TagList({ tags, onTagClick, activeTags, max = 3, className = "" 
           ariaLabel={`${rest.length} more tags: ${rest.join(", ")}`}
           tip={rest.join(", ")}
           target="none"
-          className="list-row-tip"
+          className="list-row-tip shrink-0"
         />
       )}
     </div>

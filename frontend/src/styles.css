@@ -1326,22 +1326,6 @@ button.pane-card:hover {
     }
   }
 }
-/* ui/Chip target="overlay": a 44 px target under a coarse pointer that does not change the
-   chip's size, so a row of tags keeps its measured height. */
-@media (pointer: coarse) {
-  .chip-hit {
-    position: relative;
-  }
-  .chip-hit::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: max(100%, var(--spacing-hit));
-    height: max(100%, var(--spacing-hit));
-    transform: translate(-50%, -50%);
-  }
-}
 .list-row[data-doc-row] {
   contain-intrinsic-size: auto 101px;
 }
@@ -1523,6 +1507,22 @@ button.pane-card:hover {
     border-color: var(--click-field-color-stroke-disabled);
     color: var(--click-field-color-text-disabled);
   }
+  /* target="overlay": a 44 px target under a coarse pointer that does not change the chip's
+     size, so a row of tags keeps its measured height. */
+  @media (pointer: coarse) {
+    .chip-hit {
+      position: relative;
+    }
+    .chip-hit::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, var(--spacing-hit));
+      height: max(100%, var(--spacing-hit));
+      transform: translate(-50%, -50%);
+    }
+  }
 }
 
 /* components/Toast: Click UI's toast tokens. Loom draws its own toast because it keys and
@@ -1636,7 +1636,11 @@ tbody tr:has([aria-current="true"]) > td:first-child {
   .list-row-leading [role="checkbox"]::after {
     content: "";
     position: absolute;
-    inset: -14px;
+    top: 50%;
+    left: 50%;
+    width: var(--spacing-hit);
+    height: var(--spacing-hit);
+    transform: translate(-50%, -50%);
   }
 }
 

@@ -248,6 +248,53 @@ test.describe("a touch pointer at 375 px", () => {
     await expect(tag).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
+
+  // Tags that would wrap at 375 px stay on one line under a finger, so no tag's 44 px hit
+  // area lies over another tag: a tap just inside a chip's bottom edge presses that chip.
+  const WRAPPING = ["incident-response", "storage", "alerts", "x", "y"];
+  test("a row's tags stay on one line, and a tap inside a chip presses that chip", async ({ page }) => {
+    await installApi(page, { memoryRows: 12, firstMemoryTags: WRAPPING });
+    await page.goto("/memories");
+    const row = page.locator("main .list-row").first();
+    const chips = row.getByRole("button", { name: /^Filter by tag / });
+    await expect(chips).toHaveCount(3);
+    const tops = await chips.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
+    expect(new Set(tops).size, `chip tops ${tops}`).toBe(1);
+    // Near each end and in the middle, so a hit area from a tag on another line shows wherever
+    // it lies over the chip.
+    for (const tag of WRAPPING.slice(0, 3)) {
+      for (const at of [0.1, 0.5, 0.9]) {
+        await page.goto("/memories");
+        const chip = page
+          .locator("main .list-row")
+          .first()
+          .getByRole("button", { name: `Filter by tag ${tag}` });
+        const box = await chip.boundingBox();
+        if (!box) throw new Error(`the ${tag} chip has no box`);
+        await page.touchscreen.tap(box.x + box.width * at, box.y + box.height - 2);
+        await expect(chip, `${tag} at ${at}`).toHaveAttribute("aria-pressed", "true");
+      }
+    }
+    await page.goto("/memories");
+    const more = page.locator("main .list-row").first().getByRole("note").filter({ hasText: "2 more tags: x, y" });
+    const box = await more.boundingBox();
+    if (!box) throw new Error("the +N chip has no box");
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
+  // The row paints only its own box (content-visibility), and a tag's hit area below the
+  // chip still lies inside it: a tap 8 px below the tag filters by it.
+  test("a tap below a row's tag chip presses the tag", async ({ page }) => {
+    await installApi(page, { memoryRows: 12, firstMemoryTags: ["alerts", "storage"] });
+    await page.goto("/memories");
+    const tag = page.locator("main .list-row").first().getByRole("button", { name: "Filter by tag alerts" });
+    const box = await tag.boundingBox();
+    if (!box) throw new Error("the tag chip has no box");
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height + 8);
+    await expect(tag).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
 });
 
 // Click UI's Checkbox draws its unchecked box from its default variation's stroke token;
