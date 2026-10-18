@@ -111,6 +111,11 @@ time, except a concept with `sources:`, which is written on every run because th
 the import makes do not return its source. The last line counts the target rows written,
 unchanged and failed.
 
+`source_trace` names the bundle directory (`okf:<dir>/<path>`), so each run should import
+its export under the same directory name. Pass a symlink's path (`current`) rather than
+running `import-okf .` from inside the link: the working directory is the link's target,
+so `.` names that.
+
 The bundle's `evidence/` and `digests/` are written back through `memory.import_evidence`
 (`--no-evidence` skips them) and re-embedded by the importing server on every import,
 changed or not: a scheduled import passes `--no-evidence`.

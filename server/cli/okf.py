@@ -676,8 +676,7 @@ def _one_per_row(
 
 
 def _updated_at(c: okf.Concept) -> str:
-    loom = c.extra.get("loom")
-    return str(loom.get("updated_at") or "") if isinstance(loom, dict) else ""
+    return str(c.loom.get("updated_at") or "")
 
 
 def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -932,19 +931,19 @@ def _print_import_summary(
         head += f" ({n['conflicted']} flagged conflicted, {n['verified']} re-attested as caller)"
     parts = [head]
     if not args.no_links:
-        links = f"{n['links']} typed edges{would} linked ({n['links_unchanged']} unchanged)"
+        notes = [f"{n['links_unchanged']} unchanged"]
         if n["links_unresolved"]:
-            links += f" ({n['links_unresolved']} unresolved)"
+            notes.append(f"{n['links_unresolved']} unresolved")
         if n["links_failed"]:
-            links += f" ({n['links_failed']} link failures)"
-        parts.append(links)
+            notes.append(f"{n['links_failed']} failed")
+        parts.append(f"{n['links']} typed edges{would} linked ({', '.join(notes)})")
     if args.prune:
-        pruned = f"{n['pruned']}{would} pruned"
+        notes = []
         if n["prune_kept"]:
-            pruned += f" ({n['prune_kept']} kept: written by another token under this --agent)"
+            notes.append(f"{n['prune_kept']} kept: written by another token under this --agent")
         if n["prune_failed"]:
-            pruned += f" ({n['prune_failed']} delete failures)"
-        parts.append(pruned)
+            notes.append(f"{n['prune_failed']} failed")
+        parts.append(f"{n['pruned']}{would} pruned" + (f" ({', '.join(notes)})" if notes else ""))
     print(", ".join(parts))
 
 
@@ -956,7 +955,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         return 2
     args.agent = args.agent or "okf-import"
     # Absolute, so `import-okf .` names the bundle directory in every source_trace; not
-    # resolved, so a symlink to each run's export keeps the name the import was given.
+    # resolved, so a symlink passed as the path keeps its name (`.` inside it does not).
     root = Path(os.path.abspath(args.path))
     if not root.is_dir():
         print(f"{root} is not a directory", file=sys.stderr)
