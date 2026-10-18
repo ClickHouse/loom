@@ -470,5 +470,9 @@ async def link_value_updates(
             retired.append(
                 retired_entry(r, superseded_by=ln.newer_id, superseded_by_key=ln.newer_key)
             )
-    await record_or_owe(org=org, namespace=namespace, retired=retired, reason=VALUE_UPDATE)
+    # The rows are one write's: its agent is the winners' writer.
+    agent = str(rows[0].get("agent") or "") if rows else ""
+    await record_or_owe(
+        org=org, namespace=namespace, retired=retired, reason=VALUE_UPDATE, agent=agent
+    )
     return report

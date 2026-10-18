@@ -258,7 +258,7 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any, counts: Counts)
         source_operation=f"worker.{CONFLICT_RESOLVER}",
         source_resource_id=f"{CONFLICT_RESOLVER}:{pair[1]}",
         error="conflict_resolver: retirement to follow",
-        payload={"pairs": [list(pair)], "retired": [entry]},
+        payload={"pairs": [list(pair)], "retired": [entry], "reason": CONFLICT_RESOLVER},
     )
     into: dict[str, list[dict[str, Any]]] = {}
     await apply_refines(

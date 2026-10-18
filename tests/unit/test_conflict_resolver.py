@@ -1143,6 +1143,7 @@ async def test_a_record_that_failed_leaves_the_intent_with_its_entry(retire_env:
         "o", "ns", await resolver._retire("o", "ns", current, late, counts), counts
     )
     assert ("resolved", ["f1"]) not in retire_env.log, "the repair writes the record"
+    assert retire_env.intent_payload["reason"] == "conflict_resolver"
     (entry,) = retire_env.intent_payload["retired"]
     assert (entry["memory_id"], entry["superseded_by"], entry["superseded_by_key"]) == (
         "m1",

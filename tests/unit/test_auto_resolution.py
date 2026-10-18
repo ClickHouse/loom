@@ -725,7 +725,13 @@ async def _value_updates(
     monkeypatch.setattr(vu, "decide_links", links)
     monkeypatch.setattr(store, "write_versions_by_ids", write)
     rows = [
-        {"memory_id": f"n{i}", "memory_key": f"k{i}", "value": "x", "valid_at": datetime.now(UTC)}
+        {
+            "memory_id": f"n{i}",
+            "memory_key": f"k{i}",
+            "agent": "a",
+            "value": "x",
+            "valid_at": datetime.now(UTC),
+        }
         for i in range(len(olds))
     ]
     report = await vu.link_value_updates(
@@ -1068,12 +1074,12 @@ async def test_a_value_update_whose_record_fails_owes_it(monkeypatch) -> None:
     owed: list[dict] = []
 
     async def record(input, **kw):
-        owed.append(kw)
+        owed.append({**kw, "agent": input.agent})
 
     monkeypatch.setattr("server.observability.audit.emit", boom)
     monkeypatch.setattr(projection_errors, "record_input_projection_failure", record)
     await _value_updates(monkeypatch, {"o1": {}})
-    assert [kw["payload"]["reason"] for kw in owed] == ["value_update"]
+    assert [(kw["payload"]["reason"], kw["agent"]) for kw in owed] == [("value_update", "a")]
 
 
 async def test_only_the_entries_whose_record_failed_are_owed(monkeypatch) -> None:

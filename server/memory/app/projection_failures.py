@@ -536,7 +536,6 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
     loser cleared. A failed emit raises, so the intent stays for the next replay."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.app.auto_resolution import (
-        CONFLICT_RESOLVER,
         EVENT_TYPE,
         record_auto_supersessions,
     )
@@ -570,8 +569,7 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
             org=failure.org,
             namespace=failure.namespace,
             retired=[entry],
-            # A point write's intent names its reason; the resolver's predate the field.
-            reason=str(failure.payload.get("reason") or CONFLICT_RESOLVER),
+            reason=str(failure.payload["reason"]),
             request_id=failure.failure_id,
         ):
             raise RuntimeError("the retirement's record was not written")
