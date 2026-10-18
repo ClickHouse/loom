@@ -98,7 +98,7 @@ describe("Users table", () => {
   });
 });
 
-const toolbar = () => document.querySelector<HTMLElement>('search[aria-label="Filter users"]');
+const toolbar = () => document.querySelector<HTMLElement>('[role="group"][aria-label="Filters and count"]');
 
 describe("Users count, times and failure", () => {
   it("says the list holds the first 1,000 accounts when the org has more", async () => {
@@ -187,7 +187,7 @@ describe("Users, the service-accounts toggle", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Include service accounts" }));
     await waitFor(() => expect(adminListUsers).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("checkbox", { name: "Include service accounts" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Filter users", { selector: "search" })).not.toHaveTextContent(/of 2/);
+    expect(screen.getByRole("group", { name: "Filters and count" })).not.toHaveTextContent(/of 2/);
     expect(screen.getByRole("table", { name: "Users" })).toHaveAttribute("aria-busy", "true");
   });
 });

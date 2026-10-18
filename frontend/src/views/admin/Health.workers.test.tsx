@@ -523,7 +523,7 @@ describe("WorkersPanel count, times and failure", () => {
     respond({ workers: { embedding_worker: worker, dedup_worker: worker } });
     render(<WorkersPanel />);
     await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
-    const bar = document.querySelector<HTMLElement>('search[aria-label="Workers status"]');
+    const bar = document.querySelector<HTMLElement>('[role="group"][aria-label="Workers status"]');
     expect(bar).toHaveTextContent("2 workers");
     expect(within(bar!).getByRole("button", { name: /Refresh/ })).toBeInTheDocument();
     expect(screen.getAllByText("just now")[0].tagName).toBe("TIME");
@@ -537,7 +537,7 @@ describe("WorkersPanel count, times and failure", () => {
     render(<WorkersPanel />);
     expect(await screen.findByText("Couldn't load workers")).toBeInTheDocument();
     expect(screen.queryByText("No workers reporting")).toBeNull();
-    expect(document.querySelector('search[aria-label="Workers status"]')).not.toHaveTextContent(/worker/);
+    expect(document.querySelector('[role="group"][aria-label="Workers status"]')).not.toHaveTextContent(/worker/);
     respond({ workers: { embedding_worker: worker } });
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());

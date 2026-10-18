@@ -107,6 +107,7 @@ export function Agents() {
 
       <ListToolbar
         label="Time window and count"
+        search={false}
         count={!error && rows !== null ? `${rows.length} client${rows.length === 1 ? "" : "s"}` : undefined}
       >
         <ButtonGroup

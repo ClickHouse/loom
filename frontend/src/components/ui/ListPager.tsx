@@ -152,18 +152,19 @@ export function ListPager({
   // No rows of this list on screen yet (a new page size, say): the page is being read.
   const loading = shown === 0 && busy;
   const totalText = total !== undefined ? `${capped ? "the newest " : ""}${total.toLocaleString()}` : null;
-  const counts = loading
-    ? totalText !== null
-      ? `Loading… · ${totalText} in all`
-      : "Loading…"
-    : totalText !== null
-      ? `${span} of ${totalText}`
-      : span;
+  // Click UI's Pagination writes " rows" after its range text, so only a range of rows goes
+  // there; a read in flight and the server's page limit are said on a line of their own.
+  const range = loading ? undefined : totalText !== null ? `${span} of ${totalText}` : span;
   // Where the server's offset limit stops the pages: with a total, once it cuts them; without
   // one, on the last page it can serve.
   const stopped = cut || (total === undefined && reachable !== undefined && page >= reachable - 1);
-  const range =
-    stopped && reachable !== undefined ? `${counts} · pages 1–${reachable.toLocaleString()} can be opened` : counts;
+  const note = loading
+    ? totalText !== null
+      ? `Loading… · ${totalText} rows in all`
+      : "Loading…"
+    : stopped && reachable !== undefined
+      ? `Pages 1–${reachable.toLocaleString()} can be opened.`
+      : null;
 
   const go = (typed: number, { focusList }: { focusList: boolean }) => {
     setDraft(null);
@@ -220,6 +221,7 @@ export function ListPager({
             }
           : {})}
       />
+      {note !== null && <p className="mt-1 text-xs text-text-muted">{note}</p>}
       <p role="status" className="sr-only">
         {said}
       </p>

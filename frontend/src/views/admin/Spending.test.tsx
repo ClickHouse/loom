@@ -196,7 +196,7 @@ describe("Spending table count and failure", () => {
     });
     render(<Spending />);
     await screen.findByText("memory.set");
-    const bar = document.querySelector<HTMLElement>('search[aria-label="Usage breakdown"]');
+    const bar = document.querySelector<HTMLElement>('[role="group"][aria-label="Usage breakdown"]');
     expect(bar).toHaveTextContent("2 rows");
   });
 
@@ -211,7 +211,7 @@ describe("Spending table count and failure", () => {
     fireEvent.click(document.querySelector('[cui-select-item][data-value="agent"]') as HTMLElement);
     await waitFor(() => expect(screen.queryByText("memory.set")).toBeNull());
     expect(screen.getByRole("button", { name: "Break down by" })).toBeInTheDocument();
-    expect(document.querySelector('search[aria-label="Usage breakdown"]')).not.toHaveTextContent(/\d+ rows?/);
+    expect(document.querySelector('[role="group"][aria-label="Usage breakdown"]')).not.toHaveTextContent(/\d+ rows?/);
   });
 
   it("says a failed read failed, with Retry, never 'No operations recorded'", async () => {

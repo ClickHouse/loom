@@ -347,6 +347,7 @@ export function WorkersPanel() {
     <div>
       <ListToolbar
         label="Workers status"
+        search={false}
         count={
           !error && rows !== null && visible.length > 0
             ? `${visible.length} ${visible.length === 1 ? "worker" : "workers"}`

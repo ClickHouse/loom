@@ -166,7 +166,7 @@ export function Users() {
       {/* The toolbar stays through a failed read: its checkbox is how the reader got there. */}
       {data && (
         <>
-          <ListToolbar label="Filter users" count={count}>
+          <ListToolbar label="Filters and count" search={false} count={count}>
             {/* Three filters with their counts are wider than a phone: there they are a select. */}
             {phone ? (
               <Select

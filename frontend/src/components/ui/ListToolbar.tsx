@@ -15,8 +15,11 @@ export interface ListToolbarAction {
 }
 
 export interface ListToolbarProps {
-  /** The bar's name, as a `search` landmark. */
+  /** The bar's name. */
   label: string;
+  /** The bar holds a search field, so it is a `search` landmark; false for a bar of filters,
+   *  a time window or a count alone, which is a named group instead. */
+  search?: boolean;
   /** The search field and the filters in force, on one line. */
   children: ReactNode;
   /** Where the list stands, at the end of the bar ("1–50 of 1,234"). */
@@ -40,7 +43,7 @@ export interface ListToolbarProps {
  * separator. `main` keeps a matching scroll padding (styles.css), so a row reached with
  * Tab is never hidden under it.
  */
-export function ListToolbar({ label, children, count, selection }: ListToolbarProps) {
+export function ListToolbar({ label, search = true, children, count, selection }: ListToolbarProps) {
   const sentinel = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(false);
   useEffect(() => {
@@ -53,7 +56,8 @@ export function ListToolbar({ label, children, count, selection }: ListToolbarPr
 
   // The selection's Clear button leaves with it (Clear itself, or a bulk action that empties
   // the selection): focus that fell to the page goes to the search the bar brings back.
-  const bar = useRef<HTMLElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const Bar = search ? "search" : "div";
   const selecting = !!selection && selection.count > 0;
   const wasSelecting = useRef(selecting);
   useLayoutEffect(() => {
@@ -67,8 +71,9 @@ export function ListToolbar({ label, children, count, selection }: ListToolbarPr
   return (
     <>
       <div ref={sentinel} aria-hidden="true" className="h-px -mb-px" />
-      <search
+      <Bar
         ref={bar}
+        role={search ? undefined : "group"}
         aria-label={label}
         data-stuck={stuck || undefined}
         className="list-toolbar sticky top-0 z-[2] -mx-2 mb-3 flex h-12 items-center gap-3 bg-bg px-2"
@@ -141,7 +146,7 @@ export function ListToolbar({ label, children, count, selection }: ListToolbarPr
         >
           {selecting && selection ? `${selection.count} selected` : count}
         </span>
-      </search>
+      </Bar>
     </>
   );
 }

@@ -900,7 +900,7 @@ describe("ReviewQueue", () => {
     seed("ns-a");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
-    const bar = document.querySelector<HTMLElement>('search[aria-label="Queue"]');
+    const bar = document.querySelector<HTMLElement>('[role="group"][aria-label="Queue"]');
     await waitFor(() => expect(bar).toHaveTextContent("2 of 4"), WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
     expect(within(table).getAllByText("Sep 20")[0].tagName).toBe("TIME");

@@ -15,8 +15,9 @@ export interface RowSelection {
 }
 
 /**
- * The checkbox selection of a list page, the way Click UI's selectable
- * Table works: one row at a time, a Shift-click selects the range from the row last
+ * The checkbox selection of a list page: one row at a time as Click UI's selectable Table,
+ * plus Loom's own range and clear (Click UI's Table has neither): a Shift-click selects the
+ * range from the row last
  * toggled, the select-all checkbox takes every row on the page, and Escape clears the
  * selection (only while there is one, so Escape is otherwise left to the page). `keys`
  * are the page's rows in their order on screen; a selected row that leaves the page (a new

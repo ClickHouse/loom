@@ -33,9 +33,9 @@ export function RowMenu({ name, items, tabIndex }: RowMenuProps) {
   return (
     <Dropdown modal={false}>
       <MenuTrigger>
+        {/* The default 32 px size, as Click UI's Table row actions. */}
         <IconButton
           icon="dots-vertical"
-          size="sm"
           label={label}
           tooltip="More actions"
           tabIndex={tabIndex}

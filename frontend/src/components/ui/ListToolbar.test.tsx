@@ -119,3 +119,23 @@ describe("ListToolbar", () => {
     expect(region).toHaveTextContent("3 selected");
   });
 });
+
+describe("ListToolbar landmark", () => {
+  it("is a search landmark only when it holds a search; a bar of filters is a named group", () => {
+    const { unmount } = render(
+      <ListToolbar label="Search and filters">
+        <input aria-label="Search" />
+      </ListToolbar>,
+    );
+    // jsdom gives <search> no implicit role; browsers expose it as the search landmark.
+    expect(document.querySelector('search[aria-label="Search and filters"]')).not.toBeNull();
+    unmount();
+    render(
+      <ListToolbar label="Time window and count" search={false}>
+        <button type="button">7 days</button>
+      </ListToolbar>,
+    );
+    expect(document.querySelector("search")).toBeNull();
+    expect(screen.getByRole("group", { name: "Time window and count" })).toBeInTheDocument();
+  });
+});

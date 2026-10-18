@@ -360,6 +360,7 @@ export function Spending() {
 
           <ListToolbar
             label="Usage breakdown"
+            search={false}
             count={
               rowsBy === breakdown
                 ? `${visibleRows.length.toLocaleString()} ${visibleRows.length === 1 ? "row" : "rows"}`

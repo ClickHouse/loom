@@ -29,7 +29,7 @@ function useAfter(ms: number): boolean {
 }
 
 /** Click UI's loader icon. Decorative: the label beside it says what is loading. */
-export function Spinner({ size = "sm" }: { size?: "xs" | "sm" | "md" }) {
+function Spinner({ size = "sm" }: { size?: "xs" | "sm" | "md" }) {
   return <Icon name="loading-animated" size={size} aria-hidden="true" />;
 }
 
@@ -46,7 +46,8 @@ export function Loading({ label = "Loading", layout = "block", className = "" }:
   const place = layout === "block" ? "justify-center py-8" : "";
   // The status region exists from the start, so the label is announced when it appears.
   return (
-    <div role="status" className={`flex items-center gap-2 text-sm text-text-muted ${place} ${className}`}>
+    // Click UI's Table loader: a small spinner and 12 px text in the default colour.
+    <div role="status" className={`flex items-center gap-2 text-xs ${place} ${className}`}>
       {shown && (
         <>
           <Spinner />

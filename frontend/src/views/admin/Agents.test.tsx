@@ -81,7 +81,7 @@ describe("Agents: last seen", () => {
   });
 });
 
-const toolbar = () => document.querySelector<HTMLElement>('search[aria-label="Time window and count"]');
+const toolbar = () => document.querySelector<HTMLElement>('[role="group"][aria-label="Time window and count"]');
 
 describe("Agents: count and failure", () => {
   it("counts the clients at the end of the toolbar", async () => {

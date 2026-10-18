@@ -395,6 +395,10 @@ body {
     cursor: progress;
     opacity: 0.7;
   }
+  /* Click UI dims a loading empty button less (Button.css). */
+  button[aria-busy="true"][data-busy-empty]:not(:disabled) {
+    opacity: 0.9;
+  }
 }
 
 /* A thumb needs 44 × 44 px. Click UI's buttons are 32 px tall and its icon buttons
@@ -1393,12 +1397,13 @@ tr:hover .recall-bar > span {
   justify-content: flex-end;
 }
 
-/* Repositories: a row's one action is Click UI's SplitButton. Its root clips
-   its two halves, so each half's focus ring is drawn inside it; on a phone it takes the
-   row's width under the summary line; under a coarse pointer its menu half (a div that
+/* Repositories: a row's one action is Click UI's SplitButton. On a phone it takes the row's
+   width under the summary line; under a coarse pointer its menu half (a div that
    ui/SplitButton makes a button) is a 44 px target like every other button. */
-.repo-action button:focus-visible,
-.repo-action [data-testid="split-button-dropdown"]:focus-visible {
+/* Click UI's split button clips its halves (overflow: hidden), so its focus ring is drawn
+   inside each half; on any split button, wherever it sits (ui/SplitButton). */
+.split-button button:focus-visible,
+.split-button [data-testid="split-button-dropdown"]:focus-visible {
   outline-offset: -2px;
 }
 @media (max-width: 639px) {

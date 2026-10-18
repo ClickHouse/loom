@@ -407,9 +407,9 @@ describe("Runs paging, sorting and search on the server", () => {
     }));
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
-    expect(screen.getByRole("navigation", { name: "Runs pages" })).toHaveTextContent(
-      "1–50 of 1,000,000 · pages 1–2,001 can be opened",
-    );
+    const nav = screen.getByRole("navigation", { name: "Runs pages" });
+    expect(within(nav).getByText("1–50 of 1,000,000 rows")).toBeInTheDocument();
+    expect(within(nav).getByText("Pages 1–2,001 can be opened.")).toBeInTheDocument();
   });
 
   // Runs that left the filter while the next page was read: its read comes back empty with a

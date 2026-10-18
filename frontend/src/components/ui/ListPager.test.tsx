@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "../../test/rtl";
+import { fireEvent, render, screen, within } from "../../test/rtl";
 import { describe, expect, it, vi } from "vitest";
 import { ListPager, usePageSize } from "./ListPager";
 import { renderHook, act } from "@testing-library/react";
@@ -116,7 +116,9 @@ describe("ListPager, typed and edge pages", () => {
       />,
     );
     const nav = screen.getByRole("navigation", { name: "Runs pages" });
-    expect(nav).toHaveTextContent("1–50 of 1,000,000 · pages 1–2,001 can be opened");
+    // Click UI writes " rows" after the range, and only after the range.
+    expect(within(nav).getByText("1–50 of 1,000,000 rows")).toBeInTheDocument();
+    expect(within(nav).getByText("Pages 1–2,001 can be opened.")).toBeInTheDocument();
     const field = screen.getByRole("spinbutton", { name: "Page" });
     // Click UI's field takes no number above its last page.
     fireEvent.change(field, { target: { value: "5000" } });
@@ -225,14 +227,18 @@ describe("ListPager, typed and edge pages", () => {
         onPageSize={() => {}}
       />,
     );
-    expect(screen.getByRole("navigation", { name: "Runs pages" })).toHaveTextContent("Loading… · 120 in all");
+    const nav = screen.getByRole("navigation", { name: "Runs pages" });
+    expect(within(nav).getByText("Loading… · 120 rows in all")).toBeInTheDocument();
+    expect(nav).not.toHaveTextContent(/Loading…[^·]* rows$/);
   });
 
   it("without a total, says which pages can be opened on the last one the server serves", () => {
     render(
       <ListPager label="Thread pages" page={3333} pageSize={30} shown={30} maxOffset={100_000} onPage={() => {}} />,
     );
-    expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent("pages 1–3,334 can be opened");
+    const nav = screen.getByRole("navigation", { name: "Thread pages" });
+    expect(within(nav).getByText("Pages 1–3,334 can be opened.")).toBeInTheDocument();
+    expect(nav).not.toHaveTextContent("opened rows");
   });
 
   it("steps back to the last page when its page is past the end", () => {

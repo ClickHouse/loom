@@ -5,7 +5,8 @@ export interface ListRowProps extends HTMLAttributes<HTMLDivElement> {
   leading?: ReactNode;
   /** The row whose detail is open (the inspected memory): Click UI's active stroke. */
   active?: boolean;
-  /** Checked for a bulk action: the tint Click UI's Table gives a selected row. */
+  /** Checked for a bulk action: a tint (Click UI's Table row tint, which Click UI gives the
+   *  active row only) beside the row's checked checkbox, which carries the state. */
   checked?: boolean;
   /** A deleted row in a recovery view: a dashed edge. */
   deleted?: boolean;

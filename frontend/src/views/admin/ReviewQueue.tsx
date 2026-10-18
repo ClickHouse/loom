@@ -442,6 +442,7 @@ function ConflictsPanel() {
       <div className="mt-6">
         <ListToolbar
           label="Queue"
+          search={false}
           count={
             <>
               {held === null ? `${rows.length} loaded` : `${rows.length} of ${held}`}
@@ -599,6 +600,7 @@ function LearningsPanel({
     <div>
       <ListToolbar
         label="Learning status"
+        search={false}
         // A full read may not be every learning: it says it holds the newest.
         count={
           !error && rows !== null

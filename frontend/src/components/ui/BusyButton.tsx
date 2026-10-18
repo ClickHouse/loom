@@ -11,6 +11,7 @@ export function BusyButton({ busy, onClick, ...props }: ButtonProps & { busy: bo
     <Button
       {...props}
       aria-busy={busy || undefined}
+      data-busy-empty={props.type === "empty" || undefined}
       aria-disabled={busy || props.disabled || undefined}
       onClick={(e) => {
         if (busy) {

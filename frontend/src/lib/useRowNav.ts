@@ -14,8 +14,9 @@ export interface RowNavOptions {
 }
 
 /**
- * Keyboard for a list of `ui/ListRow`s whose open buttons carry `data-row-open`, the way
- * Click UI's Table and the Tasks list move: the list is one tab stop (the row last focused,
+ * Keyboard for a list of `ui/ListRow`s whose open buttons carry `data-row-open`: Loom's
+ * roving tab stop (the WAI-ARIA listbox pattern; Click UI's Table has no row keys), as the
+ * Tasks list moves. The list is one tab stop (the row last focused,
  * else the first), `↑/↓` and `j/k` move the focus from row to row, `Home/End` jump to the
  * ends, `Enter` opens the focused row (its button's own click), and `Space` toggles the
  * row's checkbox instead of opening it. Escape is the caller's (it closes its drawer, or

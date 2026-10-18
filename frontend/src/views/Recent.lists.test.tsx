@@ -121,7 +121,7 @@ describe("Memories list chrome", () => {
     holdReads();
     await userEvent.click(within(pager()).getByRole("button", { name: "Rows per page" }));
     await userEvent.click(await screen.findByText(/^100/));
-    await waitFor(() => expect(pager()).toHaveTextContent("Loading… · 1,234 in all"));
+    await waitFor(() => expect(pager()).toHaveTextContent("Loading… · 1,234 rows in all"));
   });
 
   it("does not count a cleared filter's matches as the namespace's total", async () => {
@@ -133,8 +133,8 @@ describe("Memories list chrome", () => {
     holdReads();
     await userEvent.click(within(toolbar()).getByRole("button", { name: "Clear filters" }));
     const pager = await screen.findByRole("navigation", { name: "Memories pages" });
-    expect(pager).toHaveTextContent("1,234 in all");
-    expect(pager).not.toHaveTextContent(/\b2 in all/);
+    expect(pager).toHaveTextContent("1,234 rows in all");
+    expect(pager).not.toHaveTextContent(/\b2 rows in all/);
   });
 
   // A select narrows the list too: the row does not blame the typed tag alone.

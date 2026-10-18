@@ -20,7 +20,7 @@ export { PageHeader, type PageHeaderProps } from "./PageHeader";
 export { fieldError } from "./fieldError";
 export { Alert, type AlertProps } from "./Alert";
 export { Stat, type StatProps } from "./Stat";
-export { Loading, LoadingSkeleton, Spinner } from "./Loading";
+export { Loading, LoadingSkeleton } from "./Loading";
 export { ListRow, type ListRowProps } from "./ListRow";
 export { TagList, type TagListProps } from "./TagList";
 export { ListTime, type ListTimeProps } from "./ListTime";
