@@ -179,3 +179,13 @@ def fake_key_locks(monkeypatch: Any) -> None:
 
     locks = kl.KeyWriteLocks(FakeLockTable(), wait_s=0.3)  # type: ignore[arg-type]
     monkeypatch.setattr(kl, "key_write_locks", locks)
+
+
+def no_erasure(monkeypatch: Any) -> None:
+    """No org under erasure: the projection repair reads it first."""
+    from server.memory.store import conflict_resolver as queue
+
+    async def no(org: str, **kw: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(queue, "under_erasure", no)

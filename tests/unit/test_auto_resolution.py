@@ -15,13 +15,9 @@ from server.memory.app import auto_resolution as ar
 
 @pytest.fixture(autouse=True)
 def _no_erasure(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The repair checks the org's erasure first: none here.
-    from server.memory.store import conflict_resolver as queue
+    from tests.unit.claims_fake import no_erasure
 
-    async def no(org: str, **kw: object) -> bool:
-        return False
-
-    monkeypatch.setattr(queue, "under_erasure", no)
+    no_erasure(monkeypatch)
 
 
 @pytest.fixture
