@@ -67,7 +67,7 @@ describe("Chip", () => {
     );
     const chip = screen.getByRole("button", { name: "semantic, 9518 in namespace" });
     expect(chip).toHaveAttribute("aria-pressed", "true");
-    expect(chip.className).toContain("min-h-6");
+    expect(chip).toHaveClass("chip", "chip-selected");
     await userEvent.click(chip);
     expect(onClick).toHaveBeenCalledOnce();
     expect(await axeViolations(container)).toEqual([]);
@@ -86,6 +86,29 @@ describe("Chip", () => {
     expect(screen.getAllByRole("button")).toHaveLength(2);
     expect(screen.getByText("run-1").closest("button")).toBeNull();
     expect(await axeViolations(container)).toEqual([]);
+  });
+});
+
+describe("Chip tones", () => {
+  // Each tone is a named class in styles.css on Click UI's tokens, so a chip's colours
+  // follow Click UI's theme rather than colour utilities.
+  it("draws a filter value filled, a tag outlined and a pressed toggle selected", () => {
+    render(
+      <>
+        <Chip label="semantic" onClick={() => undefined} selected={false} />
+        <Chip label="api" outline onClick={() => undefined} selected={false} />
+        <Chip label="beans" outline onClick={() => undefined} selected />
+        <Chip label="brew" onClick={() => undefined} onRemove={() => undefined} />
+      </>,
+    );
+    const semantic = screen.getByRole("button", { name: "semantic" });
+    expect(semantic).toHaveClass("chip-filled");
+    expect(semantic).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "api" })).toHaveClass("chip-outline");
+    const beans = screen.getByRole("button", { name: "beans" });
+    expect(beans).toHaveClass("chip-selected");
+    expect(beans).not.toHaveClass("chip-outline");
+    expect(screen.getByRole("button", { name: "Remove brew" })).toHaveClass("chip-filled");
   });
 });
 

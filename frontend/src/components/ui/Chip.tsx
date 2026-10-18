@@ -45,13 +45,9 @@ export interface ChipProps {
 const SHAPE = "chip inline-flex items-center justify-center max-w-full min-h-6 border";
 /** A chip that takes a press or a focus: a 44 px target under a coarse pointer. */
 const BASE = `${SHAPE} pointer-coarse:min-h-11 pointer-coarse:min-w-11`;
-const OFF = "bg-surface-2 border-border text-text-muted";
-const INTERACTIVE_OFF = "hover:text-text hover:border-border-strong";
-const OUTLINE = "chip-outline";
-const ON = "bg-text border-text text-bg";
 /** An outlined chip's look, for a chip-shaped control this component cannot draw (a link
  *  that anchors a popover). */
-export const CHIP_OUTLINE_CLASS = `${BASE} ${OUTLINE}`;
+export const CHIP_OUTLINE_CLASS = `${BASE} chip-outline`;
 
 export function Chip({
   label,
@@ -93,11 +89,7 @@ export function Chip({
     </>
   );
   // A disabled chip takes `.chip-disabled`'s colours (styles.css), which a tone would override.
-  const tone = disabled
-    ? "chip-disabled"
-    : selected
-      ? ON
-      : `${outline ? OUTLINE : OFF} ${onClick ? INTERACTIVE_OFF : ""}`;
+  const tone = disabled ? "chip-disabled" : selected ? "chip-selected" : outline ? "chip-outline" : "chip-filled";
   const wrap = (el: ReactNode) => (tip ? <Tip content={tip}>{el}</Tip> : el);
   // A span has no role that takes a name, so a static chip's spoken name is sr-only text
   // and the visible text is hidden from assistive technology.
@@ -150,7 +142,7 @@ export function Chip({
         disabled={disabled}
         aria-disabled={disabled || undefined}
         onClick={onRemove}
-        className={`inline-flex items-center justify-center min-h-6 min-w-6 rounded-r-full border ${disabled ? "chip-disabled" : selected ? ON : `${OFF} ${INTERACTIVE_OFF}`} pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
+        className={`inline-flex items-center justify-center min-h-6 min-w-6 rounded-r-full border ${disabled ? "chip-disabled" : selected ? "chip-selected" : "chip-filled"} pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
       >
         <Icon name="cross" size="xs" aria-hidden="true" />
       </button>

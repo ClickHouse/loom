@@ -1455,8 +1455,7 @@ button.pane-card:hover {
 }
 
 /* ui/Chip: Click UI's opaque badge shape (md), which Chip draws as a button or a static
-   chip, since Click UI has no filter chip; the filled and selected colours are Loom's
-   colour utilities in Chip. */
+   chip, since Click UI has no filter chip and its Badge is neither a button nor a toggle. */
 @layer components {
   .chip {
     gap: var(--click-badge-space-md-gap);
@@ -1464,9 +1463,30 @@ button.pane-card:hover {
     border-radius: var(--click-badge-radii-all);
     font: var(--click-badge-typography-label-md-default);
   }
-  /* A tag: the opaque default badge's stroke and text on the page. */
+  /* A filter value: Click UI's opaque default Badge. */
+  .chip-filled {
+    background: var(--click-badge-opaque-color-background-default);
+    border-color: var(--click-badge-opaque-color-stroke-default);
+    color: var(--click-badge-opaque-color-text-default);
+  }
+  /* A pressed toggle: the fill Click UI's Checkbox takes when checked. */
+  .chip-selected {
+    background: var(--click-checkbox-color-variations-default-background-active);
+    border-color: var(--click-checkbox-color-variations-default-stroke-active);
+    color: var(--click-checkbox-color-check-active);
+  }
+  /* A chip that takes a press, hovered: Click UI's Checkbox hover stroke and the default
+     text colour. */
+  @media (hover: hover) {
+    button.chip-filled:hover,
+    button.chip-outline:hover {
+      border-color: var(--click-checkbox-color-variations-default-stroke-hover);
+      color: var(--click-global-color-text-default);
+    }
+  }
+  /* A tag: the opaque default Badge's stroke and text on the page's background. */
   .chip-outline {
-    background: var(--color-surface);
+    background: var(--click-global-color-background-default);
     border-color: var(--click-badge-opaque-color-stroke-default);
     color: var(--click-badge-opaque-color-text-default);
   }
