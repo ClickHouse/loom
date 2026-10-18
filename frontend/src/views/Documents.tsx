@@ -36,6 +36,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
 import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
+import { useMedia, PHONE_QUERY } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useRowSelection } from "../lib/useRowSelection";
 
@@ -69,11 +70,13 @@ const LIBRARY_PAGE = 50;
 
 export function Documents() {
   const identity = useIdentity();
+  const phone = useMedia(PHONE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>("recency");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
@@ -107,9 +110,12 @@ export function Documents() {
   // The tags the rows on screen were read for, and why the last read failed.
   const [rowsFor, setRowsFor] = useState("");
   const [loadError, setLoadError] = useState<unknown>(null);
-  const [retry, setRetry] = useState(0);
+  // Every reload (Retry, a delete, an add, an edit) goes through the effect below, so an
+  // answer for a namespace the page has left is aborted and dropped.
+  const [reloads, setReloads] = useState(0);
+  const reload = () => setReloads((n) => n + 1);
 
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
+  const load = (signal: AbortSignal, live: () => boolean) => {
     scopeRef.current += 1;
     // Blank only for a new namespace; a new filter keeps the rows until the next land.
     const scope = `${identity.org}/${identity.namespace}`;
@@ -147,7 +153,7 @@ export function Documents() {
   };
 
   // A memory write cannot change the document list.
-  useAbortableEffect(load, [identity.org, identity.namespace, serverTags, retry]);
+  useAbortableEffect(load, [identity.org, identity.namespace, serverTags, reloads]);
 
   // The library is empty only when nothing narrowed the read and the read worked.
   const emptyLibrary = rows !== null && rows.length === 0 && !loadError && serverTags === "[]" && tagKey === serverTags;
@@ -202,7 +208,7 @@ export function Documents() {
     try {
       await deleteKnowledge({ org: identity.org, namespace: identity.namespace }, source_uri);
       toast("Deleted", "ok");
-      load();
+      reload();
     } catch (e) {
       toastError("Delete failed", e);
     }
@@ -280,17 +286,16 @@ export function Documents() {
     });
     return () => cancelAnimationFrame(raf);
   }, [firstScreenOnly, rows]);
+  // The words the browser matches over the loaded rows: the Memories parser's text, and an
+  // `agent:` token as words (a document has no agent).
+  const parsedQuery = useMemo(() => parseSearchQuery(query), [query]);
+  const words = `${parsedQuery.text} ${parsedQuery.agent === null ? "" : `agent:${parsedQuery.agent}`}`.trim();
+  const freeText = useMemo(() => words.toLowerCase().split(/\s+/).filter(Boolean), [words]);
   const visibleRows = useMemo(() => {
     if (!rows) return rows;
     let r = rows;
-    const tokens = query.trim().split(/\s+/).filter(Boolean);
-    const requiredTags: string[] = [];
-    const freeText: string[] = [];
-    for (const tok of tokens) {
-      const m = /^tag:(.+)$/i.exec(tok);
-      if (m) requiredTags.push(m[1].toLowerCase());
-      else freeText.push(tok.toLowerCase());
-    }
+    // The server already asked for every tag; a build a release behind matches any one.
+    const requiredTags = parsedQuery.tags.map((t) => t.toLowerCase());
     if (requiredTags.length > 0) {
       r = r.filter((row) => {
         const lower = (row.tags || []).map((t) => t.toLowerCase());
@@ -323,7 +328,7 @@ export function Documents() {
       sorted.sort((a, b) => (b.blob_size || 0) - (a.blob_size || 0));
     }
     return sorted;
-  }, [rows, query, sortBy]);
+  }, [rows, parsedQuery.tags, freeText, sortBy]);
 
   // Checkboxes: one row, a Shift-click range, every row shown; Escape clears them while no
   // dialog is up (each owns its Escape).
@@ -353,7 +358,7 @@ export function Documents() {
       const r = await bulkDeleteKnowledge({ org: identity.org, namespace: identity.namespace }, Array.from(selected));
       toast(`Deleted ${r.total_tombstoned} document${r.total_tombstoned === 1 ? "" : "s"}`, "ok");
       clearSelection();
-      load();
+      reload();
     } catch (e) {
       toastError("Bulk delete failed", e);
     } finally {
@@ -379,16 +384,28 @@ export function Documents() {
   const filtering = query.trim() !== "";
   const failed = !!loadError;
   const docCount = aggregateStats && rows ? `${rows.length.toLocaleString()}${nextCursor ? "+" : ""}` : "";
+  // The tags are the server's (they cover the library); the words and a sort but newest
+  // first run here, over the rows loaded so far. While the cursor holds more, what they
+  // found is said of those rows, never of the library.
+  const partial = !!nextCursor && !!rows;
+  const loaded = `the first ${(rows?.length ?? 0).toLocaleString()}`;
+  const browserOnly = partial && (freeText.length > 0 || sortBy !== "recency");
   // One count, at the end of the toolbar (SPEC-LISTS C4): how many rows are shown (the
   // cursor has no total), the matches for a search or a tag, nothing on an error or before
   // the first read. While a new filter is read the last one stays up.
-  const matches = (n: number) => `${n.toLocaleString()} match${n === 1 ? "" : "es"}`;
+  const matches = (n: number, more = false) =>
+    `${n.toLocaleString()}${more ? "+" : ""} match${n === 1 && !more ? "" : "es"}`;
+  const shownCount = visibleRows?.length ?? 0;
   const countText =
     rows === null || failed || emptyLibrary
       ? ""
       : filtering
-        ? matches(visibleRows?.length ?? 0)
-        : `${(visibleRows ?? []).length.toLocaleString()} shown`;
+        ? browserOnly
+          ? `${matches(shownCount)} in ${loaded}`
+          : matches(shownCount, partial)
+        : browserOnly
+          ? `The first ${(rows?.length ?? 0).toLocaleString()}, sorted`
+          : `${shownCount.toLocaleString()} shown`;
   const reading = rows !== null && rowsFor !== serverTags;
   const lastCount = useRef("");
   if (countText && !reading) lastCount.current = countText;
@@ -438,10 +455,6 @@ export function Documents() {
         title="Library"
         actions={
           <>
-            {/* The toolbar shows the count; this says it when a search or filter moves it. */}
-            <span role="status" className="sr-only">
-              {filtering && rows && !reading ? countText : ""}
-            </span>
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyLibrary && (
               <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
@@ -495,9 +508,11 @@ export function Documents() {
       >
         <div className="min-w-[10rem] flex-1">
           <SearchField
+            ref={searchRef}
             value={query}
             onChange={(value) => setQuery(value)}
-            placeholder="Search title, filename, description, or tag — try tag:specs"
+            // A phone's field holds the short form only.
+            placeholder={phone ? "Search, or tag:specs" : "Search title, filename, description, or tag — try tag:specs"}
             aria-label="Search library"
           />
         </div>
@@ -506,7 +521,11 @@ export function Documents() {
             type="empty"
             htmlType="button"
             className="hidden shrink-0 sm:inline-flex"
-            onClick={() => setQuery(parseSearchQuery(query).text)}
+            onClick={() => {
+              // The button leaves with the tags: focus goes to the search.
+              searchRef.current?.focus();
+              setQuery(words);
+            }}
           >
             Clear filters
           </Button>
@@ -522,7 +541,7 @@ export function Documents() {
           open={addOpen}
           onOpenChange={setAddOpen}
           identity={{ org: identity.org, namespace: identity.namespace }}
-          onAdded={load}
+          onAdded={reload}
         />
       )}
       {!!replaceEntry && (
@@ -532,7 +551,7 @@ export function Documents() {
             if (!v) setReplaceEntry(null);
           }}
           identity={{ org: identity.org, namespace: identity.namespace }}
-          onAdded={load}
+          onAdded={reload}
           replaceMode={
             replaceEntry
               ? {
@@ -552,7 +571,7 @@ export function Documents() {
         }}
         identity={{ org: identity.org, namespace: identity.namespace }}
         entry={editEntry}
-        onSaved={load}
+        onSaved={reload}
       />
 
       {rows === null && (
@@ -563,7 +582,7 @@ export function Documents() {
         </LoadingSkeleton>
       )}
 
-      {failed && <ListState kind="error" things="documents" error={loadError} onRetry={() => setRetry((n) => n + 1)} />}
+      {failed && <ListState kind="error" things="documents" error={loadError} onRetry={reload} />}
 
       {emptyLibrary && (
         <ListState
@@ -581,7 +600,13 @@ export function Documents() {
         rowsFor === serverTags &&
         tagKey === serverTags &&
         visibleRows?.length === 0 && (
-          <ListState kind="filtered" things="documents" filter={query.trim()} onClear={() => setQuery("")} />
+          <ListState
+            kind="filtered"
+            things="documents"
+            filter={query.trim()}
+            among={partial ? `${loaded} loaded` : undefined}
+            onClear={() => setQuery("")}
+          />
         )}
 
       {rows !== null && rows.length > 0 && shownRows && shownRows.length > 0 && (
@@ -635,7 +660,7 @@ export function Documents() {
                         {/* The meta slot: flush right; under 640 px its own line. */}
                         <span className="basis-full text-xs text-text-muted tabular sm:ml-auto sm:basis-auto sm:shrink-0">
                           {(r.chunk_count ?? 0).toLocaleString()} chunk{r.chunk_count === 1 ? "" : "s"} ·{" "}
-                          <ListTime iso={r.ingested_at} />
+                          <ListTime iso={r.ingested_at} quiet />
                         </span>
                       </span>
                       {/* Line 2: the file it came from and what it is about. */}

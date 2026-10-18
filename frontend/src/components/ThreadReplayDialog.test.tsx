@@ -1,7 +1,7 @@
 import { cleanup, render, screen, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationThreadDetail } from "../api";
-import { shortDate } from "../lib/format";
+import { listTime } from "../lib/format";
 import { ThreadReplayDialog, threadTitle } from "./ThreadReplayDialog";
 
 // The replay's turns are told apart by a neutral role badge, not by coloured rails; the
@@ -88,11 +88,15 @@ describe("ThreadReplayDialog", () => {
     const agent = within(meta).getByText("planner");
     expect(agent.closest('.agent-badge [data-testid$="-badge-content"]')).not.toBeNull();
     expect(agent.closest(".font-mono")).toBeNull();
-    expect(meta).toHaveTextContent(`updated ${shortDate(old)}`);
+    expect(meta).toHaveTextContent(`updated ${listTime(old)}`);
+    // Review finding: the dialog had its own copy of the list's time rule; its times are
+    // ListTime, the thread's update time included.
+    expect(meta.querySelector("time")).toHaveAttribute("dateTime", old);
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).not.toMatch(/\d+\/\d+\/\d{4}/);
-    const times = [...dialog.querySelectorAll("time")].map((t) => t.firstChild?.textContent);
-    expect(times).toEqual([shortDate(old), shortDate(old), shortDate(old)]);
+    const turns = [...dialog.querySelectorAll("[data-msg-id] time")];
+    expect(turns.map((t) => t.firstChild?.textContent)).toEqual([listTime(old), listTime(old), listTime(old)]);
+    expect(turns.every((t) => !t.hasAttribute("tabindex"))).toBe(true);
   });
 });
 

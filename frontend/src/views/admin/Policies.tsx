@@ -30,7 +30,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { displayAgent, humanizeError, relativeTime } from "../../lib/format";
+import { displayAgent, humanizeError } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
@@ -295,7 +295,7 @@ export function Policies() {
                           <div>{r.policy_id}</div>
                           {r.updated_at && (
                             <div className="text-xs font-sans text-text-muted">
-                              updated {relativeTime(r.updated_at)}
+                              updated <ListTime iso={r.updated_at} quiet />
                             </div>
                           )}
                         </div>
@@ -806,7 +806,7 @@ function DecisionsPanel({ version }: { version: number }) {
                   label: (
                     <TipTarget tip={r.ts} underline>
                       <time dateTime={r.ts} className="text-text-muted">
-                        <ListTime iso={r.ts} />
+                        <ListTime iso={r.ts} quiet />
                       </time>
                     </TipTarget>
                   ),

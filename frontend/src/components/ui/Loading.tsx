@@ -8,7 +8,8 @@ import { useEffect, useState, type ReactNode } from "react";
  * - a list or grid whose rows have a known shape: `LoadingSkeleton` around `Skeleton`s
  *   shaped like those rows, so nothing moves when the data lands;
  * - any other first load (a panel, a dialog body, a page section): `Loading`;
- * - a Click UI `Table`: its own `loading` prop;
+ * - a Click UI `Table`: `TableSkeleton` (components/Skeleton.tsx) as its `noDataMessage`,
+ *   which keeps the header and waits the same 300 ms;
  * - a button that started the work: Click UI's `Button loading`;
  * - a refresh of data already on screen: keep the data, mark its container `aria-busy`.
  *

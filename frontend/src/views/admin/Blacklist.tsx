@@ -7,7 +7,7 @@ import { useStore, useIdentity } from "../../lib/state";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { toast } from "../../components/Toast";
-import { relativeTime, humanizeError } from "../../lib/format";
+import { humanizeError, parseChTime, relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { canCall } from "../../lib/canCall";
 import { useNamespaceRole } from "../../lib/namespaceRole";
@@ -255,7 +255,7 @@ export function PrivacyFilters({
                     <span>{r.scope}</span>
                     <span>·</span>
                     <span>
-                      added <ListTime iso={r.created_at} />
+                      added <ListTime iso={r.created_at} quiet />
                     </span>
                     <span>·</span>
                     <PrivacyFilterHits row={r} />
@@ -307,8 +307,8 @@ function PrivacyFiltersHitSummary({ rows }: { rows: BlacklistRow[] }) {
   let activePatterns = 0;
   for (const r of rows) {
     if (!r.last_hit_at) continue;
-    const t = Date.parse(r.last_hit_at);
-    if (!Number.isFinite(t)) continue;
+    const t = parseChTime(r.last_hit_at)?.getTime();
+    if (t === undefined) continue;
     if (t > mostRecent) mostRecent = t;
     if (now - t <= SEVEN_DAYS) activePatterns += 1;
   }
@@ -332,11 +332,18 @@ function PrivacyFiltersHitSummary({ rows }: { rows: BlacklistRow[] }) {
   );
 }
 
-function PrivacyFilterHits({ row }: { row: BlacklistRow }) {
+/** A pattern's hits: how many writes it refused, and the last one. */
+export function PrivacyFilterHits({ row }: { row: BlacklistRow }) {
   if (row.hit_count === 0) {
     return <span className="text-text-muted">never matched</span>;
   }
-  const lastHitText = row.last_hit_at ? <>last {relativeTime(row.last_hit_at)}</> : <>last hit unknown</>;
+  const lastHitText = row.last_hit_at ? (
+    <>
+      last <ListTime iso={row.last_hit_at} quiet />
+    </>
+  ) : (
+    <>last hit unknown</>
+  );
   return (
     <>
       <span className="text-text font-medium">{row.hit_count}</span>

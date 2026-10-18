@@ -1,6 +1,6 @@
 /** Refresh reads the clients again with the table still on screen: the table is marked
  *  busy and the button shows it is working, and nothing is swapped for a loader. */
-import { act, cleanup, fireEvent, render, screen, within } from "../../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../lib/state";
 import { Agents } from "./Agents";
@@ -31,12 +31,18 @@ afterEach(() => {
 });
 
 describe("Agents: loading", () => {
-  it("draws the first load as Click UI's loading table, marked busy", async () => {
+  it("draws the first load as the table's header over a skeleton, marked busy", async () => {
     listConnectedAgents.mockReturnValue(new Promise(() => {}));
     render(<Agents />);
     const table = await screen.findByRole("table", { name: "Connected clients" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    expect(within(table).getByText("Loading data")).toBeInTheDocument();
+    // Review finding: Click UI's `loading` showed its loader at once; the first read waits
+    // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+    expect(within(table).queryByText("Loading data")).toBeNull();
+    expect(within(table).getByRole("status", { name: "Loading connected clients" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
     expect(within(table).getByRole("columnheader", { name: "Client" })).toBeInTheDocument();
   });
 
@@ -48,9 +54,10 @@ describe("Agents: loading", () => {
     let answer: (v: unknown) => void = () => {};
     listConnectedAgents.mockReturnValueOnce(new Promise((r) => (answer = r)));
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    // The read starts from the effect, a microtask after the click.
+    await waitFor(() => expect(screen.getByTestId("agents-table")).toHaveAttribute("aria-busy", "true"));
     expect(screen.getByText("claude-code")).toBeInTheDocument();
-    expect(screen.getByTestId("agents-table")).toHaveAttribute("aria-busy", "true");
-    expect(screen.queryByText("Loading data")).toBeNull();
+    expect(screen.queryByRole("status", { name: "Loading connected clients" })).toBeNull();
 
     await act(async () => answer({ rows: [ROW] }));
     expect(screen.getByTestId("agents-table")).not.toHaveAttribute("aria-busy");
@@ -96,5 +103,24 @@ describe("Agents: count and failure", () => {
     listConnectedAgents.mockResolvedValueOnce({ rows: [ROW] });
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("claude-code")).toBeInTheDocument();
+  });
+});
+
+// Review finding: Refresh and Retry read again with no abort, so an answer for the window the
+// page has left could land after the new window's and draw stale rows.
+describe("Agents: late answers", () => {
+  it("drops a Refresh's answer that lands after a new window's", async () => {
+    listConnectedAgents.mockResolvedValueOnce({ rows: [ROW] });
+    render(<Agents />);
+    await screen.findByText("claude-code");
+    let late: (v: unknown) => void = () => {};
+    listConnectedAgents.mockReturnValueOnce(new Promise((r) => (late = r)));
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    listConnectedAgents.mockResolvedValueOnce({ rows: [{ ...ROW, agent: "cursor" }] });
+    fireEvent.click(within(screen.getByRole("group", { name: "Time window" })).getByRole("button", { name: "7 days" }));
+    expect(await screen.findByText("cursor")).toBeInTheDocument();
+    await act(async () => late({ rows: [{ ...ROW, agent: "stale-bot" }] }));
+    expect(screen.queryByText("stale-bot")).toBeNull();
+    expect(screen.getByText("cursor")).toBeInTheDocument();
   });
 });

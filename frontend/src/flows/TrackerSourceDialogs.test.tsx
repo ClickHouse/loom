@@ -619,6 +619,20 @@ describe("the Trackers list", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add a tracker" }));
     expect(onAdd).toHaveBeenCalled();
   });
+
+  // Review finding: the heading was a raw h2 with an icon, and the empty state's button a
+  // second primary on the Repositories page. It is a SectionHeading, and the button secondary.
+  it("heads the section with a SectionHeading, and its empty state adds no second primary", () => {
+    render(
+      <main>
+        <TrackersPanel org="dev" sources={[]} selfService loading={false} onAdd={() => {}} onChanged={() => {}} />
+      </main>,
+    );
+    const heading = screen.getByRole("heading", { level: 2, name: "Trackers" });
+    expect(heading.querySelector("svg")).toBeNull();
+    expect(screen.getByRole("region", { name: "Trackers" })).toContainElement(heading);
+    expect(screen.getByRole("button", { name: "Add a tracker" }).className).toMatch(/secondary/);
+  });
 });
 
 describe("Retire a tracker", () => {

@@ -17,12 +17,12 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { deleteKnowledge, knowledgeReads, listKnowledge, type KnowledgeEntry } from "../api";
 import { ApiError } from "../lib/errors";
-import { humanizeError, relativeTime } from "../lib/format";
+import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { confirmAction } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
 import { toast } from "../components/Toast";
-import { LoadingSkeleton } from "../components/ui";
+import { ListTime, LoadingSkeleton } from "../components/ui";
 
 const RepoDocAddDialog = lazy(() => import("../flows/RepoDocDialogs").then((m) => ({ default: m.RepoDocAddDialog })));
 const RepoDocViewer = lazy(() => import("../flows/RepoDocDialogs").then((m) => ({ default: m.RepoDocViewer })));
@@ -163,7 +163,11 @@ export function RepoDocsList({
                   </Link>
                   <div className="text-xs text-text-muted truncate">
                     {d.description ? <>{d.description} · </> : null}
-                    {d.ingested_at ? `added ${relativeTime(d.ingested_at)}` : ""}
+                    {d.ingested_at ? (
+                      <>
+                        added <ListTime iso={d.ingested_at} quiet />
+                      </>
+                    ) : null}
                     {phrase ? (
                       <>
                         {" "}

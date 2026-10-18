@@ -8,21 +8,22 @@ import { Tip } from "./ui/Tooltip";
 /**
  * Which agent wrote a memory: Click UI's neutral Badge, as "Recalled by" draws the agents
  * that read it. At most 180 px with an ellipsis (styles.css `.agent-badge`); a cut name is
- * whole in a tooltip. In a list row or inside a control the badge takes no tab stop
- * (`inRowOrControl`) and the tooltip opens on hover; elsewhere it is focusable.
+ * whole in a tooltip. In a list row or inside a control the badge takes no tab stop and
+ * the tooltip opens on hover: the row passes `quiet`, else it is measured after mount
+ * (`inRowOrControl`). Elsewhere a cut name is focusable.
  */
-export function AgentBadge({ agent }: { agent: string }) {
+export function AgentBadge({ agent, quiet }: { agent: string; quiet?: boolean }) {
   const name = displayAgent(agent);
   const [text, setText] = useState<HTMLElement | null>(null);
   const [box, setBox] = useState<HTMLElement | null>(null);
   // Badge's own ellipsis measures once, at mount; a row laid out later (content-visibility)
   // would never get its tooltip. This one is re-measured as the box resizes.
   const cut = useClamped(text, name);
-  const focusable = cut && !!box && !inRowOrControl(box);
+  const focusable = cut && !(quiet ?? (!box || inRowOrControl(box)));
   return (
     <Tip content={name} disabled={!cut}>
       <span
-        ref={setBox}
+        ref={quiet === undefined ? setBox : undefined}
         tabIndex={focusable ? 0 : undefined}
         role={focusable ? "note" : undefined}
         className={`agent-badge inline-flex min-w-0 rounded ${cut && !focusable ? "relative z-[1]" : ""}`}

@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
+import { listFacts } from "../../api";
 import { Inspector } from "./Inspector";
 import { fromTraverse } from "./model";
 import { expandNotice } from "./notices";
@@ -139,15 +140,22 @@ describe("Inspector links", () => {
 // its rows in both directions, up to 24.
 describe("Inspector lists", () => {
   it("an edge's rows over 20 show the first 20 and Show all N", async () => {
-    facts.rows = Array.from({ length: 12 }, (_, i) => ({
-      subject: "logical",
-      relation: "mentions",
-      object: `mergetree-${i}`,
-      co_occur: 1,
-      provenance: "",
-      last_seen: "",
-      stale: false,
-      sources: [],
+    // Review finding: one answer for both directions drew 12 rows twice, under the same keys.
+    // Each direction answers its own rows, as the server does.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(listFacts).mockImplementation(async (_id, opts = {}) => ({
+      rows: Array.from({ length: 12 }, (_, i) => ({
+        subject: opts.subject ?? "logical",
+        relation: "mentions",
+        object: `${opts.object ?? "mergetree"}-${i}`,
+        co_occur: 1,
+        provenance: "",
+        last_seen: "",
+        stale: false,
+        source_keys: [],
+        sources: [],
+      })),
+      truncated: false,
     }));
     mount({ selection: { kind: "edge", parent: "logical", child: "mergetree" } });
     // Both directions: 24 rows.
@@ -158,6 +166,8 @@ describe("Inspector lists", () => {
     expect(list()).toHaveLength(20);
     await userEvent.click(screen.getByRole("button", { name: "Show all 24" }));
     expect(list()).toHaveLength(24);
-    facts.rows = [];
+    expect(error.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
+    error.mockRestore();
+    vi.mocked(listFacts).mockImplementation(async () => facts as never);
   });
 });

@@ -65,4 +65,33 @@ describe("ListState", () => {
     expect(onRetry).toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Library" })).toHaveFocus();
   });
+
+  // Review: Clear filters leaves with the filtered state, and focus fell to <body>. It goes
+  // to the list's search field, else to the page's heading.
+  it("puts focus on the list's search field when Clear filters is pressed", () => {
+    const onClear = vi.fn();
+    render(
+      <main>
+        <h1>Library</h1>
+        <search aria-label="Search and filters">
+          <input type="search" aria-label="Search library" />
+        </search>
+        <ListState kind="filtered" things="documents" filter="tag:billing" onClear={onClear} />
+      </main>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(onClear).toHaveBeenCalled();
+    expect(screen.getByRole("searchbox", { name: "Search library" })).toHaveFocus();
+  });
+
+  it("puts focus on the page heading when a list without a search clears its filters", () => {
+    render(
+      <main>
+        <h1>Runs</h1>
+        <ListState kind="filtered" things="runs" filter="failed" onClear={() => {}} />
+      </main>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByRole("heading", { name: "Runs" })).toHaveFocus();
+  });
 });

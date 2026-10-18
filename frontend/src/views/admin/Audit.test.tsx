@@ -57,18 +57,24 @@ describe("Audit rows", () => {
 });
 
 describe("Audit filter", () => {
-  it("announces how many events it shows in an always-mounted status region", async () => {
+  // The toolbar's live count is the one region that says it (ListToolbar); a second sr-only
+  // status of the page's own said every count twice. While loading, the only status is
+  // the table's skeleton.
+  it("announces how many events it shows from the toolbar's live count alone", async () => {
     vi.mocked(api.listAuditLog).mockResolvedValueOnce({
       rows: [row("alice", "{}"), row("bob", "{}"), row("bob", "{}")],
     });
     render(<Audit />);
-    // The count's status region is the one on the page, mounted before rows land.
-    const status = screen.getByRole("status");
-    await waitFor(() => expect(status).toHaveTextContent("3 events"));
-    expect(status).toHaveTextContent("3 events");
+    const live = () =>
+      document.querySelector<HTMLElement>('search[aria-label="Filter audit events"] [aria-live="polite"]');
+    const region = live();
+    expect(region).not.toBeNull();
+    expect(screen.getAllByRole("status").map((s) => s.getAttribute("aria-label"))).toEqual(["Loading audit events"]);
+    await waitFor(() => expect(region).toHaveTextContent("3 events"));
+    expect(screen.queryAllByRole("status")).toEqual([]);
     await userEvent.setup().type(screen.getByRole("textbox", { name: "Filter audit events" }), "alice");
-    expect(screen.getByRole("status")).toBe(status);
-    expect(status).toHaveTextContent("1 event");
+    expect(live()).toBe(region);
+    expect(region).toHaveTextContent("1 event");
   });
 
   it("counts the events at the end of the toolbar, and nowhere else", async () => {
@@ -106,12 +112,24 @@ describe("Audit failure", () => {
 });
 
 describe("Audit table", () => {
-  it("draws the first read as Click UI's loading table, marked busy", async () => {
+  it("draws the first read as the table's header over a skeleton, marked busy", async () => {
     vi.mocked(api.listAuditLog).mockReturnValueOnce(new Promise(() => {}));
     render(<Audit />);
     const table = await screen.findByRole("table", { name: "Audit events" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    expect(within(table).getByText("Loading data")).toBeInTheDocument();
+    // Review finding: Click UI's `loading` showed its loader at once; the first read waits
+    // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+    expect(within(table).queryByText("Loading data")).toBeNull();
+    expect(within(table).getByRole("status", { name: "Loading audit events" })).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("draws the erasures' first read as the table's header over a skeleton", async () => {
+    vi.mocked(api.listErasures).mockReturnValueOnce(new Promise(() => {}));
+    render(<Audit />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Erasures/ }));
+    const table = await screen.findByRole("table", { name: "Erasures" });
+    expect(within(table).queryByText("Loading data")).toBeNull();
+    expect(within(table).getByRole("status", { name: "Loading erasures" })).toHaveAttribute("aria-busy", "true");
   });
 
   it("puts each event in a row under Event, By and When headers", async () => {

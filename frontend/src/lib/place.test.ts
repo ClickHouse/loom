@@ -66,6 +66,18 @@ describe("restorePlace and arriveAt", () => {
     expect(document.getElementById("loom-nav-status")!.textContent).toBe("Memories");
   });
 
+  // Review: Back to Memories focused the row's checkbox (its first focusable), not the row.
+  it("a keyed list row gives the focus to its open button, not its checkbox", () => {
+    const main = page(
+      '<h1>Memories</h1><div class="list-row" data-focus-key="memory:a">' +
+        '<button role="checkbox" aria-label="Select a"></button><button data-row-open="">a</button></div>',
+    );
+    tall(main, 2000);
+    restorePlace({ scrollTop: 0, focusKey: "memory:a", inspected: null, inspectedAgent: "" }, true);
+    vi.advanceTimersByTime(20);
+    expect(document.activeElement).toBe(main.querySelector("[data-row-open]"));
+  });
+
   it("without a focus key, a changed view focuses its h1", () => {
     const main = page("<h1>Library</h1>");
     tall(main, 2000);

@@ -15,6 +15,7 @@ import { ListToolbar } from "../../components/ui/ListToolbar";
 import { toastError } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
+import { TableSkeleton } from "../../components/Skeleton";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { PageContainer } from "../../layout/PageContainer";
@@ -348,10 +349,6 @@ export function Audit() {
               />
             </div>
           </ListToolbar>
-          {/* The toolbar's count, said aloud as the filter changes it. */}
-          <p role="status" className="sr-only">
-            {!error && rows !== null ? `${visibleRows.length} ${visibleRows.length === 1 ? "event" : "events"}` : ""}
-          </p>
           {!error && rows !== null && rows.length > 0 && (
             <div className="mb-3 flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
               {me && (
@@ -456,12 +453,12 @@ function ErasuresPanel({ org }: { org: string }) {
     );
   }
 
-  // The first read is Click UI's own loading table.
+  // The first read is the table's header over a skeleton.
   return (
     <Table
       aria-label="Erasures"
       aria-busy={rows === null || undefined}
-      loading={rows === null}
+      noDataMessage={rows === null ? <TableSkeleton label="Loading erasures" /> : undefined}
       size="sm"
       headers={[
         { label: "Scope" },
@@ -499,8 +496,8 @@ function ErasuresPanel({ org }: { org: string }) {
             ),
           },
           { label: <span className="tabular">{r.steps_completed_count}</span> },
-          { label: <ListTime iso={r.requested_at} /> },
-          { label: r.completed_at ? <ListTime iso={r.completed_at} /> : "—" },
+          { label: <ListTime iso={r.requested_at} quiet /> },
+          { label: r.completed_at ? <ListTime iso={r.completed_at} quiet /> : "—" },
         ],
       }))}
     />
@@ -511,8 +508,8 @@ const ERASURE_STATE: Record<string, BadgeState> = { completed: "success", failed
 
 const EVENT_HEADERS = [{ label: "Event" }, { label: "By", width: "220px" }, { label: "When", width: "120px" }];
 
-/** The events, one row each: what happened, who did it and when. The first read is Click
- *  UI's own loading table. */
+/** The events, one row each: what happened, who did it and when. The first read is the
+ *  table's header over a skeleton. */
 function EventsTable({
   rows,
   loading = false,
@@ -527,7 +524,7 @@ function EventsTable({
       ref={tableRef}
       aria-label="Audit events"
       aria-busy={loading || undefined}
-      loading={loading}
+      noDataMessage={loading ? <TableSkeleton label="Loading audit events" /> : undefined}
       size="sm"
       headers={EVENT_HEADERS}
       rows={rows.map(eventRow)}
@@ -553,7 +550,7 @@ function eventRow(row: AuditEntry, i: number): TableRowType {
         ),
       },
       {
-        label: <ListTime iso={row.ts} className="text-xs text-text-muted" />,
+        label: <ListTime iso={row.ts} quiet className="text-xs text-text-muted" />,
       },
     ],
   };

@@ -13,13 +13,14 @@ const inspectProfile = vi.fn();
 const catalog = vi.hoisted(() => ({
   recent: [] as Array<{ memory_key: string; agent: string }>,
   profile: [] as Array<{ label: string; value: string }>,
+  docs: [] as Array<{ source_uri: string; title: string; tags: string[]; chunk_count: number }>,
 }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
     listMemories: vi.fn(async () => ({ entries: catalog.recent, truncated: false, total: catalog.recent.length })),
-    listKnowledge: vi.fn(async () => ({ rows: [] })),
+    listKnowledge: vi.fn(async () => ({ rows: catalog.docs })),
     listProfile: vi.fn(async () => ({ entries: catalog.profile })),
     browseNamespaces: vi.fn(async () => []),
     searchMemory: vi.fn(async () => ({
@@ -40,6 +41,7 @@ beforeEach(() => {
   inspectProfile.mockReset();
   catalog.recent = [];
   catalog.profile = [];
+  catalog.docs = [];
   useStore.setState({
     identity: { org: "dev", namespace: "team", agent: "dashboard" },
     view: "memories",
@@ -65,6 +67,26 @@ describe("HeaderSearch", () => {
     expect(first).toHaveTextContent("semantic");
     expect(first).toHaveTextContent("flat white");
     expect(first.textContent?.indexOf("coffee/order")).toBeLessThan(first.textContent?.indexOf("semantic") ?? 0);
+  });
+
+  // Review: a Library result drew its tags as filled "#tag" badges, where a row draws them
+  // as outlined chips; and "Best matches" had the clock icon "Recent memories" has.
+  it("draws a document's tags as the rows do, and tells Best matches from Recent by icon", async () => {
+    catalog.recent = [{ memory_key: "coffee/old", agent: "a" }];
+    catalog.docs = [{ source_uri: "s3://coffee.md", title: "Coffee guide", tags: ["beans", "brew"], chunk_count: 2 }];
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    const input = screen.getByRole("combobox", { name: "Search Loom" });
+    await user.click(input);
+    const recent = await screen.findByRole("group", { name: "Recent memories" });
+    const recentIcon = recent.querySelector("svg")?.outerHTML;
+    await user.type(input, "coffee");
+    const best = await screen.findByRole("group", { name: "Best matches" });
+    expect(best.querySelector("svg")?.outerHTML).not.toBe(recentIcon);
+    const library = await screen.findByRole("group", { name: "Library" });
+    expect(library).not.toHaveTextContent("#beans");
+    // The outlined chip a row's TagList draws.
+    expect(screen.getByText("beans").closest(".rounded-full")?.className).toMatch(/click-badge-opaque-color-stroke/);
   });
 
   it("highlights options with the arrow keys and opens the highlighted one on Enter", async () => {

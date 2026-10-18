@@ -3,7 +3,6 @@ import { ApiError } from "./errors";
 import {
   _formatterCacheSize,
   dayLabel,
-  shortDate,
   displaySubject,
   errorRequestId,
   formatBytesShort,
@@ -210,19 +209,5 @@ describe("dayLabel", () => {
     expect(dayLabel(new Date(2026, 9, 16, 9).toISOString())).toBe("Yesterday · Oct 16");
     expect(dayLabel(new Date(2026, 9, 15, 9).toISOString())).toBe("Oct 15");
     expect(dayLabel(new Date(2025, 11, 31, 9).toISOString())).toBe("Dec 31, 2025");
-  });
-});
-
-// A row's date: how long ago within the week, then the day ("Sep 19"), never a numeric date.
-describe("shortDate", () => {
-  afterEach(() => vi.useRealTimers());
-  it("is relative within a week, then the month and day", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date(2026, 9, 17, 12));
-    expect(shortDate(new Date(2026, 9, 17, 11).toISOString())).toBe(
-      relativeTime(new Date(2026, 9, 17, 11).toISOString()),
-    );
-    expect(shortDate(new Date(2026, 8, 19, 9).toISOString())).toBe("Sep 19");
-    expect(shortDate(new Date(2025, 8, 19, 9).toISOString())).toBe("Sep 19, 2025");
   });
 });

@@ -46,3 +46,26 @@ test.describe("375 px", () => {
     expect(outside).toEqual([]);
   });
 });
+
+// Review: a sort other than newest first runs over the loaded documents only; while the
+// cursor holds more, the count says so instead of reading as the whole library.
+test("a sort over a partly loaded library says it covers the loaded documents", async ({ page }) => {
+  await installApi(page, {});
+  const rows = ["Charlie", "Alpha", "Bravo"].map((title, i) => ({
+    source_uri: `docs/${title.toLowerCase()}.md`,
+    title,
+    description: "",
+    tags: [],
+    ingested_at: `2026-09-2${i}T12:00:00Z`,
+    chunk_count: 2,
+    superseded: false,
+    has_blob: false,
+  }));
+  await page.route("**/v1/knowledge.list", (route) => route.fulfill({ json: { rows, next_cursor: "more" } }));
+  await page.goto("/library");
+  const bar = page.getByRole("search", { name: "Search and filters" });
+  await expect(bar).toContainText("3 shown");
+  await page.getByLabel("Sort documents").first().click();
+  await page.getByRole("dialog", { name: "Options" }).getByText("Title (A–Z)").click();
+  await expect(bar).toContainText("The first 3, sorted");
+});

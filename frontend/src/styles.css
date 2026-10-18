@@ -852,10 +852,6 @@ textarea[aria-invalid="true"]:focus-visible {
     color: var(--color-text-muted);
     font-weight: 500;
   }
-  .tq-tile .short {
-    display: none;
-  }
-
   /* ---- the inbox rail */
   .tq-inbox {
     display: flex;
@@ -1187,31 +1183,6 @@ textarea[aria-invalid="true"]:focus-visible {
     .tq-body[data-panel="true"] {
       grid-template-columns: minmax(0, 1fr);
     }
-    .tq-attn {
-      gap: 6px;
-      margin-bottom: 12px;
-    }
-    /* Four tiles in one row: the figure, then a one-word label. */
-    .tq-tile {
-      flex-direction: row-reverse;
-      justify-content: flex-end;
-      align-items: baseline;
-      gap: 6px;
-      padding: 6px 8px;
-    }
-    .tq-tile .lbl {
-      font-size: var(--text-xs);
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .tq-tile .long {
-      display: none;
-    }
-    .tq-tile .short {
-      display: inline;
-    }
     .tq-panel {
       width: 100vw;
     }
@@ -1248,9 +1219,16 @@ textarea[aria-invalid="true"]:focus-visible {
   border-radius: var(--click-card-horizontal-radii-all);
   background: var(--click-card-horizontal-default-color-background-default);
   scroll-margin-top: 8px;
-  /* The browser lays out and paints only the rows in view. */
+  /* The browser lays out and paints only the rows in view; a row not drawn yet holds its
+     list's measured height (1400 px wide): a thread 76 px, a document 101, a memory 129. */
   content-visibility: auto;
   contain-intrinsic-size: auto 76px;
+}
+.list-row[data-doc-row] {
+  contain-intrinsic-size: auto 101px;
+}
+.list-row[data-card] {
+  contain-intrinsic-size: auto 129px;
 }
 .list-row:hover {
   background: var(--click-card-horizontal-default-color-background-hover);
@@ -1322,7 +1300,7 @@ textarea[aria-invalid="true"]:focus-visible {
 }
 
 /* Kbd (ui/Kbd.tsx): a key or a short chord on Click UI's tokens: Inter 12 px/500, muted
-   text on the muted surface, the default stroke, 4 px radius, 20 px high. In the
+   text on the muted surface, the default stroke, inline code's radius, 20 px high. In the
    components layer, so a utility the caller passes (`hidden`, a position) still wins. */
 @layer components {
   .kbd {
@@ -1333,7 +1311,7 @@ textarea[aria-invalid="true"]:focus-visible {
     height: 20px;
     padding: 0 6px;
     border: 1px solid var(--global-color-stroke-default);
-    border-radius: 4px;
+    border-radius: var(--click-codeInline-radii-all);
     background: var(--global-color-background-muted);
     font-family: var(--font-sans);
     font-size: var(--text-xs);
@@ -1386,13 +1364,13 @@ textarea[aria-invalid="true"]:focus-visible {
   display: block;
   height: 4px;
   margin-top: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 .recall-bar > span {
   display: block;
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: var(--click-table-row-color-barChart-default);
 }
 tr:hover .recall-bar > span {

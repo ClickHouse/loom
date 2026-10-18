@@ -6,7 +6,7 @@ import { Tip } from "./Tooltip";
 /**
  * Chip — a filter or value chip. Click UI has no filter chip, so this is drawn as its
  * opaque badge (pill, 1 px stroke, 500 12 px, 2 × 12 px padding) with a 24 px hit target
- * on a fine pointer (44 × 44 px under `pointer: coarse`), an optional tabular count and
+ * on a fine pointer (44 × 44 px under `pointer: coarse`, a static chip excepted), an optional tabular count and
  * an optional swatch. One shape for the toggles in Facets, the status filters in Runs,
  * the keys in a run's detail.
  *
@@ -42,8 +42,10 @@ export interface ChipProps {
   className?: string;
 }
 
-const BASE =
-  "inline-flex items-center justify-center gap-1 max-w-full min-h-6 px-3 py-0.5 rounded-full border text-xs font-medium pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+const SHAPE =
+  "inline-flex items-center justify-center gap-1 max-w-full min-h-6 px-3 py-0.5 rounded-full border text-xs font-medium";
+/** A chip that takes a press or a focus: a 44 px target under a coarse pointer. */
+const BASE = `${SHAPE} pointer-coarse:min-h-11 pointer-coarse:min-w-11`;
 const OFF = "bg-surface-2 border-border text-text-muted";
 const INTERACTIVE_OFF = "hover:text-text hover:border-border-strong";
 const OUTLINE =
@@ -122,7 +124,8 @@ export function Chip({
         {spoken}
       </TipTarget>
     ) : (
-      <span className={`${BASE} ${tone} ${className}`}>{spoken}</span>
+      // Nothing to press: no 44 px target on a phone.
+      <span className={`${SHAPE} ${tone} ${className}`}>{spoken}</span>
     );
   }
   const main = onClick ? (

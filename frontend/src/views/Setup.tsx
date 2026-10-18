@@ -32,7 +32,7 @@ import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall, canCallCodeRepos } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Alert, LoadingSkeleton, PageHeader, TabTrigger, Tip, Unavailable } from "../components/ui";
+import { Alert, ListTime, LoadingSkeleton, PageHeader, TabTrigger, Tip, Unavailable } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
 import { READ_ONLY_TIP, canWrite, roleOnNamespace, useNamespaceRole } from "../lib/namespaceRole";
@@ -1034,10 +1034,12 @@ function TokensSection({
                         <SaExpiryBadge expiresAt={s.expires_at} revoked={!!s.revoked_at} />
                       </div>
                       <div className="text-xs text-text-muted tabular">
-                        {describeTokenScope(s)} · created {relativeTime(s.created_at)}
+                        {describeTokenScope(s)} · created <ListTime iso={s.created_at} quiet />
                         {" · "}
                         {s.last_used_at ? (
-                          <>used {relativeTime(s.last_used_at)}</>
+                          <>
+                            used <ListTime iso={s.last_used_at} quiet />
+                          </>
                         ) : (
                           <span className="text-text-muted">no calls in 30 days</span>
                         )}

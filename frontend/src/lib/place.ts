@@ -84,12 +84,14 @@ export function readBackLabel(state: unknown = stateRecord()): string | null {
 
 const FOCUSABLE = "a[href], button, input, select, textarea, [tabindex]";
 
-/** The element a focus key names, or the first focusable inside it (a list row is keyed;
- *  its stretched button takes the focus). */
+/** The element a focus key names, or inside it the row's open button (a list row is
+ *  keyed; its stretched `data-row-open` button takes the focus, not its checkbox), else
+ *  the first focusable. */
 function keyedTarget(key: string): HTMLElement | null {
   const el = document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`);
   if (!el) return null;
-  return el.matches(FOCUSABLE) ? el : el.querySelector<HTMLElement>(FOCUSABLE);
+  if (el.matches(FOCUSABLE)) return el;
+  return el.querySelector<HTMLElement>("[data-row-open]") ?? el.querySelector<HTMLElement>(FOCUSABLE);
 }
 
 function viewHeading(): HTMLElement | null {

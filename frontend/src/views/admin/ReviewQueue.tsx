@@ -24,7 +24,7 @@ import { useIdentity } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
 import { LoadingSkeleton, PageHeader, TabTrigger } from "../../components/ui";
-import { Skeleton } from "../../components/Skeleton";
+import { Skeleton, TableSkeleton } from "../../components/Skeleton";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
@@ -348,7 +348,7 @@ function ConflictsPanel() {
 }
 
 /** The conflicts on hand, one row each; the one being decided is the active row, and a
- *  key opens that conflict. The first read is Click UI's own loading table. */
+ *  key opens that conflict. The first read is the table's header over a skeleton. */
 function QueueTable({
   rows,
   current,
@@ -366,7 +366,7 @@ function QueueTable({
     <Table
       aria-label="Conflicts"
       aria-busy={loading || busy || undefined}
-      loading={loading}
+      noDataMessage={loading ? <TableSkeleton label="Loading conflicts" /> : undefined}
       size="sm"
       headers={[
         { label: "Key" },
@@ -392,7 +392,7 @@ function QueueTable({
           },
           { label: <span className="tabular">v{c.version}</span> },
           { label: c.pinned ? "Pinned" : <span className="text-text-muted">—</span> },
-          { label: <ListTime iso={c.created_at} className="text-text-muted" /> },
+          { label: <ListTime iso={c.created_at} quiet className="text-text-muted" /> },
         ],
       }))}
     />
@@ -622,13 +622,13 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
       />
     );
   }
-  // The first read is Click UI's own loading table; a reload keeps the rows, marked busy.
+  // The first read is the table's header over a skeleton; a reload keeps the rows, marked busy.
   return (
     <div data-testid="allowlist" aria-busy={refreshing || undefined}>
       <Table
         aria-label="Allowed exceptions"
         aria-busy={rows === null || undefined}
-        loading={rows === null}
+        noDataMessage={rows === null ? <TableSkeleton label="Loading allowed exceptions" /> : undefined}
         size="sm"
         headers={[
           { label: "Pair" },
@@ -651,7 +651,7 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
               ),
             },
             { label: <span className="text-xs">{r.allowed_by}</span> },
-            { label: <ListTime iso={r.allowed_at} className="text-xs text-text-muted" /> },
+            { label: <ListTime iso={r.allowed_at} quiet className="text-xs text-text-muted" /> },
             {
               label: r.reason ? (
                 <span className="text-xs">{r.reason}</span>

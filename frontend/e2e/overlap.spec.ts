@@ -46,7 +46,8 @@ for (const width of [1400, 375]) {
         // A row's own checkbox (once one is checked, the toolbar leads with its select-all).
         const box8 = page.getByRole("checkbox", { name: /^Select (?!all )/ }).nth(8);
         await box8.click();
-        await expect(bar.getByText(/selected/)).toBeVisible();
+        // The visible count; the bar's live region says it too, unseen.
+        await expect(bar.getByText(/selected/).first()).toBeVisible();
         expect((await bar.boundingBox())?.height).toBe(before);
         const hit = await box8.evaluate((el) => {
           const r = el.getBoundingClientRect();
@@ -56,20 +57,22 @@ for (const width of [1400, 375]) {
         expect(hit).toBe(true);
       });
 
-      test(`${path}: a row reached with Shift+Tab is never under the bar`, async ({ page }) => {
+      // A row list is one tab stop (useRowNav): its rows are walked with the arrows, and
+      // Shift+Tab goes from the current row's controls to its open button.
+      test(`${path}: a row reached with the arrows or Shift+Tab is never under the bar`, async ({ page }) => {
         await memories(page);
         if (path !== "/memories") await page.goto(path);
         const bar = page.getByLabel("Search and filters");
         await expect(bar).toBeVisible();
         await page.locator("main").evaluate((m) => m.scrollTo(0, m.scrollHeight));
-        const rows = page.getByRole("checkbox");
-        await rows.last().focus();
+        await page.locator("main .list-row [data-row-open]").last().focus();
         for (let i = 0; i < 12; i++) {
-          await page.keyboard.press("Shift+Tab");
+          await page.keyboard.press(i % 3 === 2 ? "Shift+Tab" : "ArrowUp");
+          if (i % 3 === 2) await page.keyboard.press("Tab");
           const covered = await page.evaluate(() => {
             const el = document.activeElement as HTMLElement | null;
             const bar = document.querySelector("search");
-            if (!el || !bar || !el.closest("main") || bar.contains(el)) return false;
+            if (!el || !bar || !el.closest("main .list-row")) return false;
             const r = el.getBoundingClientRect();
             return r.top < bar.getBoundingClientRect().bottom - 1;
           });

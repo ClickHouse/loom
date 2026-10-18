@@ -97,6 +97,7 @@ import {
   Chip,
   ExternalLink,
   fieldError,
+  ListTime,
   Loading,
   LoadingSkeleton,
   PageHeader,
@@ -108,6 +109,7 @@ import {
 } from "../components/ui";
 import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 
 // The register dialog loads on first open.
 const RegisterTrackerSourceDialog = lazy(() =>
@@ -392,6 +394,7 @@ function RepositoriesHome({
   onChanged: () => void;
 }) {
   const actions = useJoinActions(onChanged);
+  const phone = useMedia(PHONE_QUERY);
   const [requesting, setRequesting] = useState<{ repo: CodeRepoSummary; role: RepoRole } | null>(null);
   const [adding, setAdding] = useState(false);
   const { problem: sandbox, recheck: recheckSandbox } = useSandboxProblem();
@@ -602,7 +605,8 @@ function RepositoriesHome({
       {!empty && (
         <p className="text-sm text-text-muted mb-3 max-w-[72ch]">
           Indexed code branches and their trackers of issues and PRs, read-only.{" "}
-          <span className="inline-flex align-middle">
+          {/* As tall as the text: a 44 px touch target overflows it instead of stretching the line. */}
+          <span className="inline-flex h-5 items-center align-middle">
             <IconButton
               icon="info-in-circle"
               size="xs"
@@ -637,7 +641,8 @@ function RepositoriesHome({
                 setQuery(v);
                 setPage(0);
               }}
-              placeholder="Filter repositories or branches"
+              // A phone's field, beside the count, holds the short form only.
+              placeholder={phone ? "Filter by name" : "Filter repositories or branches"}
               aria-label="Filter repositories"
             />
           </div>
@@ -2878,7 +2883,7 @@ function effectiveRule(ns: NamespaceInfo | null | undefined): JoinRule | null {
   return ns.visibility === "public" ? "open" : "approval";
 }
 
-function AccessTab({
+export function AccessTab({
   id,
   siblings = [],
   repo: repoRow,
@@ -3209,7 +3214,7 @@ function AccessTab({
                   {g.status !== "pending" && g.role === "viewer" && asked === "admin" ? " (reads today)" : ""}
                 </span>
                 <span className="text-text-muted tabular hidden md:inline">
-                  {g.pending_since ? relativeTime(g.pending_since) : ""}
+                  <ListTime iso={g.pending_since} quiet />
                 </span>
                 {canManage ? (
                   <div className="flex flex-wrap items-center gap-2">
@@ -3247,8 +3252,9 @@ function AccessTab({
                         </Button>
                       </Tip>
                     )}
+                    {/* One primary per surface: a page of requests has none per row. */}
                     <Button
-                      type="primary"
+                      type="secondary"
                       htmlType="button"
                       iconLeft="check"
                       onClick={() => void decide(g, "approve")}
@@ -3311,8 +3317,8 @@ function AccessTab({
                     state="neutral"
                     size="sm"
                   />
-                  <span className="text-text-muted tabular hidden md:inline">
-                    <TipTarget tip={`added by ${g.granted_by}`}>{relativeTime(g.granted_at)}</TipTarget>
+                  <span className="text-text-muted tabular hidden md:inline max-w-64 truncate">
+                    added <ListTime iso={g.granted_at} quiet /> by {g.granted_by}
                   </span>
                   {canManage && g.subject !== me && (
                     <IconButton

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "../../test/rtl";
+import { act, cleanup, fireEvent, render, screen, within } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminUserRow, AdminUsersResult } from "../../api";
 import { useStore } from "../../lib/state";
@@ -7,7 +7,7 @@ import { ApiError } from "../../lib/errors";
 
 // admin.users has no offset: the page reads up to 1,000 accounts once and pages them in
 // Click UI's Table, 50 at a time. A filter starts again from the first page; the first
-// read is the Table's own loading row.
+// read is the Table's header over a skeleton.
 
 const adminListUsers = vi.fn();
 vi.mock("../../api", async (importOriginal) => {
@@ -85,12 +85,15 @@ describe("Users table", () => {
     expect(screen.queryByRole("navigation", { name: "Users pages" })).toBeNull();
   });
 
-  it("draws the first read as Click UI's loading table, marked busy", async () => {
+  it("draws the first read as the table's header over a skeleton, marked busy", async () => {
     adminListUsers.mockReturnValue(new Promise(() => {}));
     render(<Users />);
     const table = await screen.findByRole("table", { name: "Users" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    expect(within(table).getByText("Loading data")).toBeInTheDocument();
+    // Review finding: Click UI's `loading` showed its loader at once; the first read waits
+    // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+    expect(within(table).queryByText("Loading data")).toBeNull();
+    expect(within(table).getByRole("status", { name: "Loading users" })).toHaveAttribute("aria-busy", "true");
     expect(within(table).getByRole("columnheader", { name: "Subject" })).toBeInTheDocument();
   });
 });
@@ -125,5 +128,24 @@ describe("Users count, times and failure", () => {
     adminListUsers.mockResolvedValue(result([user(1)]));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("user-1@example.com")).toBeInTheDocument();
+  });
+});
+
+// Review finding: Refresh and Retry read again with no abort, so an answer for the set the
+// page has left (service accounts in or out) could land after the new one's.
+describe("Users late answers", () => {
+  it("drops a Refresh's answer that lands after the service-accounts toggle's", async () => {
+    adminListUsers.mockResolvedValueOnce(result([user(1)]));
+    render(<Users />);
+    await screen.findByText("user-1@example.com");
+    let late: (v: unknown) => void = () => {};
+    adminListUsers.mockReturnValueOnce(new Promise((r) => (late = r)));
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    adminListUsers.mockResolvedValueOnce(result([user(2)]));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include service accounts" }));
+    expect(await screen.findByText("user-2@example.com")).toBeInTheDocument();
+    await act(async () => late(result([user(3)])));
+    expect(screen.queryByText("user-3@example.com")).toBeNull();
+    expect(screen.getByText("user-2@example.com")).toBeInTheDocument();
   });
 });

@@ -193,8 +193,9 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     const box = screen.getByLabelText("Search conversation transcripts");
     fireEvent.change(box, { target: { value: "said" } });
     fireEvent.keyDown(box, { key: "Enter" });
-    // The result count is announced: a status region that stays mounted, its text changing.
-    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent("1 match in 1 thread");
+    // The result count is announced: the toolbar's status region, mounted with the bar.
+    const bar = screen.getByLabelText("Search and filters");
+    await waitFor(() => expect(bar.querySelector("[aria-live]")).toHaveTextContent("1 match in 1 thread"));
     fireEvent.click(await screen.findByText("said in Z"));
     expect(await screen.findByText("body of thread-z")).toBeInTheDocument();
     const [scope, agent, threadId] = getConversationThread.mock.calls[0];

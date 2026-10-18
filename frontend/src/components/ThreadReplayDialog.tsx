@@ -11,10 +11,10 @@ import {
   type Identity,
   type MemoryListEntry,
 } from "../api";
-import { Chip, ExternalLink, Loading, SectionHeading } from "./ui";
+import { Chip, ExternalLink, ListTime, Loading, SectionHeading } from "./ui";
 import { Modal } from "./ui/Modal";
 import { toast } from "./Toast";
-import { absoluteTime, displayAgent, humanizeError, shortDate } from "../lib/format";
+import { displayAgent, humanizeError } from "../lib/format";
 import { AgentBadge } from "./AgentBadge";
 import { CopyButton } from "./CopyButton";
 import { SessionBriefPanel } from "./SessionBriefPanel";
@@ -339,7 +339,9 @@ export function ThreadReplayDialog({
           {threadDetail.updated_at && (
             <>
               <span>·</span>
-              <span>updated {shortDate(threadDetail.updated_at)}</span>
+              <span>
+                updated <ListTime iso={threadDetail.updated_at} />
+              </span>
             </>
           )}
         </div>
@@ -393,10 +395,7 @@ export function ThreadReplayDialog({
                     {typeof m.tokens === "number" && m.tokens > 0 && (
                       <span className="text-xs text-text-muted">· {m.tokens} tok</span>
                     )}
-                    <time dateTime={m.ts} className="text-xs text-text-muted ml-auto tabular">
-                      {shortDate(m.ts)}
-                      <span className="sr-only"> ({absoluteTime(m.ts)})</span>
-                    </time>
+                    <ListTime iso={m.ts} quiet className="text-xs text-text-muted ml-auto" />
                   </div>
                   {m.reasoning ? <ReasoningDisclosure text={m.reasoning} /> : null}
                   <MessageBody content={m.content} muted={meta.muted} />

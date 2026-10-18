@@ -5,12 +5,14 @@ import { Switch } from "@clickhouse/click-ui/Switch";
 import { setSingleKeyShortcuts, singleKeyShortcutsOn } from "../lib/shortcuts";
 import { isApplePlatform, paletteShortcut } from "../lib/platform";
 
-/** One shortcut: its keys ("g m" is a sequence, "Ctrl+K" a chord, "j / ↓" two
- *  alternatives) and what it does. `syntax`: typed into the search, not pressed. */
+/** One shortcut: its keys ("g m" is a sequence, "Ctrl+Enter" a chord, "j / ↓" two
+ *  alternatives) and what it does. `syntax`: typed into the search, not pressed. `cap`: one
+ *  key cap as written, as the search bar prints its shortcut (`paletteShortcut`). */
 interface Shortcut {
   keys: string;
   label: string;
   syntax?: boolean;
+  cap?: boolean;
 }
 
 interface Group {
@@ -25,7 +27,7 @@ function groups(): Group[] {
     {
       title: "Global",
       rows: [
-        { keys: isApplePlatform() ? "⌘K" : "Ctrl+K", label: "Focus the universal search bar" },
+        { keys: paletteShortcut(), label: "Focus the universal search bar", cap: true },
         { keys: "↑ / ↓", label: "Move through search results" },
         { keys: "Enter", label: "Open the search result" },
         { keys: "tag:work", label: "Search memories tagged work (partial OK)", syntax: true },
@@ -127,7 +129,13 @@ function ShortcutGroup({ group }: { group: Group }) {
         {group.rows.map((r) => (
           <Fragment key={`${r.keys}-${r.label}`}>
             <dt className="flex flex-wrap items-center gap-1">
-              {r.syntax ? <code className="font-mono text-xs">{r.keys}</code> : <Keys keys={r.keys} />}
+              {r.syntax ? (
+                <code className="font-mono text-xs">{r.keys}</code>
+              ) : r.cap ? (
+                <Kbd>{r.keys}</Kbd>
+              ) : (
+                <Keys keys={r.keys} />
+              )}
             </dt>
             <dd className="text-sm text-text">{r.label}</dd>
           </Fragment>
@@ -137,7 +145,7 @@ function ShortcutGroup({ group }: { group: Group }) {
   );
 }
 
-/** One cap per key: "g m" is g then m, "Ctrl+K" is Ctrl held with K; " / " separates
+/** One cap per key: "g m" is g then m, "Ctrl+Enter" is Ctrl held with Enter; " / " separates
  *  alternatives. */
 function Keys({ keys }: { keys: string }) {
   return keys.split(" / ").map((alt, i) => (

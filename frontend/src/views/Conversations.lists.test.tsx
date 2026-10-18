@@ -118,7 +118,8 @@ describe("Conversations list", () => {
     render(<Conversations />);
     await screen.findByText("Payments API 5xx spike");
     await search("refund");
-    expect(await screen.findByText("5 matches in 2 threads", { selector: "span" })).toBeInTheDocument();
+    const bar = screen.getByLabelText("Search and filters");
+    await waitFor(() => expect(bar.querySelector("[aria-live]")).toHaveTextContent("5 matches in 2 threads"));
     const rows = document.querySelectorAll<HTMLElement>("[data-thread-row]");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("Payments API 5xx spike");

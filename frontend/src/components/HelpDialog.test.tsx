@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { paletteShortcut } from "../lib/platform";
 import { singleKeyShortcutsOn } from "../lib/shortcuts";
 import { HelpDialog } from "./HelpDialog";
 
@@ -36,13 +37,14 @@ describe("HelpDialog", () => {
     expect(within(lists[3] as HTMLElement).getByText("Walk from here")).toBeInTheDocument();
   });
 
-  it("labels the search shortcut for the platform", () => {
+  // Review finding: the dialog spelled it "Ctrl+K" where the search bar and the header say
+  // "Ctrl K"; every place prints `paletteShortcut()`, as one key cap.
+  it("labels the search shortcut for the platform, as the search bar prints it", () => {
     vi.stubGlobal("navigator", { ...navigator, platform: "Win32" });
     const { unmount } = render(<HelpDialog open onOpenChange={() => {}} />);
     const first = screen.getAllByRole("term")[0];
-    expect([...first.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["Ctrl", "K"]);
-    // Held together, not one after the other like "g m".
-    expect(first).toHaveTextContent("Ctrl+K");
+    expect([...first.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual([paletteShortcut()]);
+    expect(first).toHaveTextContent("Ctrl K");
     unmount();
     vi.stubGlobal("navigator", { ...navigator, platform: "MacIntel" });
     render(<HelpDialog open onOpenChange={() => {}} />);

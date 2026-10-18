@@ -3,6 +3,10 @@ import { useKeyboard } from "./hooks";
 
 const OPEN = "[data-row-open]";
 const CHECK = '[role="checkbox"], input[type="checkbox"]';
+const CONTROL = 'a[href], button, input, select, textarea, [tabindex], [role="button"]';
+/** Marks a row control this hook took out of the tab order; its value is the tabindex
+ *  attribute the control had ("" for none), given back when its row is current again. */
+const OUT = "data-rove-out";
 
 export interface RowNavOptions {
   /** Off while a drawer or dialog over the list owns the keys, or the list is empty. */
@@ -19,8 +23,12 @@ export interface RowNavOptions {
  *
  * `j/k` work from anywhere on the page that is not a field and honour the single-key
  * switch (`lib/shortcuts.ts`, through `useKeyboard`); the arrows and `Home/End` move only
- * from a row or the page itself, so a focused menu trigger or select keeps its own. The
- * rows' checkboxes leave the tab order with the rows: `Space` reaches them.
+ * from a row or the page itself, so a focused menu trigger or select keeps its own.
+ *
+ * Only the current row's controls (its tag chips, its menu) are tab stops, after its open
+ * button; every other row's are out of the tab order, and a control that takes the focus
+ * (a click) makes its row the current one. The checkboxes are never tab stops: `Space`
+ * reaches them.
  */
 export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElement | null) => void {
   const [list, setList] = useState<HTMLElement | null>(null);
@@ -28,8 +36,9 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
 
   const rows = useCallback((): HTMLElement[] => (list ? [...list.querySelectorAll<HTMLElement>(OPEN)] : []), [list]);
 
-  // One tab stop: the current row's open button takes tabindex 0, every other row's -1.
-  // Re-applied as rows come and go (a page change, a search), memoised rows included.
+  // One tab stop: the current row's open button takes tabindex 0, every other row's -1,
+  // and so do the other rows' controls. Re-applied as rows come and go (a page change, a
+  // search), memoised rows included.
   const roveTo = useCallback(
     (target: HTMLElement | null) => {
       const all = rows();
@@ -37,7 +46,19 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
       stop.current = current ?? null;
       for (const el of all) {
         el.tabIndex = el === current ? 0 : -1;
-        for (const box of rowOf(el).querySelectorAll<HTMLElement>(CHECK)) box.tabIndex = -1;
+        for (const c of rowOf(el).querySelectorAll<HTMLElement>(CONTROL)) {
+          if (c === el) continue;
+          if (c.matches(CHECK)) c.tabIndex = -1;
+          else if (el !== current && c.tabIndex >= 0) {
+            c.setAttribute(OUT, c.getAttribute("tabindex") ?? "");
+            c.tabIndex = -1;
+          } else if (el === current && c.hasAttribute(OUT)) {
+            const was = c.getAttribute(OUT);
+            if (was) c.setAttribute("tabindex", was);
+            else c.removeAttribute("tabindex");
+            c.removeAttribute(OUT);
+          }
+        }
       }
     },
     [rows],
@@ -46,8 +67,10 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
   useEffect(() => {
     if (!list) return;
     roveTo(stop.current);
+    // Focus on a row's open button or one of its controls makes that row the current one.
     const onFocusIn = (e: FocusEvent) => {
-      const open = e.target instanceof Element ? e.target.closest<HTMLElement>(OPEN) : null;
+      const at = e.target instanceof Element ? e.target : null;
+      const open = at?.closest<HTMLElement>(OPEN) ?? at?.closest(".list-row")?.querySelector<HTMLElement>(OPEN);
       if (open && open !== stop.current) roveTo(open);
     };
     // A button clicks on Space's keyup, so both halves are taken.

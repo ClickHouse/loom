@@ -42,4 +42,12 @@ describe("AgentBadge", () => {
     expect(screen.queryByRole("note")).toBeNull();
     expect(screen.getByText(LONG).closest("[tabindex]")).toBeNull();
   });
+
+  // Review: measuring after mount drew the row twice; a row passes `quiet` instead.
+  it("takes no tab stop when the row says it is quiet", () => {
+    overflow(true);
+    render(<AgentBadge agent={LONG} quiet />);
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(screen.getByText(LONG).closest("[tabindex]")).toBeNull();
+  });
 });

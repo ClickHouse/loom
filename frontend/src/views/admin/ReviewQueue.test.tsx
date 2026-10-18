@@ -322,4 +322,15 @@ describe("ReviewQueue", () => {
     expect(await screen.findByText("Couldn't load allowed exceptions", {}, WAIT)).toBeInTheDocument();
     expect(screen.queryByText("No allowed exceptions")).toBeNull();
   });
+
+  // Review finding: Click UI's `loading` showed its loader at once; the first read waits
+  // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+  it("draws the queue's first read as the table's header over a skeleton", async () => {
+    vi.mocked(listConflicts).mockReturnValue(new Promise(() => {}));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    const queue = await screen.findByRole("table", { name: "Conflicts" }, WAIT);
+    expect(within(queue).queryByText("Loading data")).toBeNull();
+    expect(within(queue).getByRole("status", { name: "Loading conflicts" })).toHaveAttribute("aria-busy", "true");
+  });
 });

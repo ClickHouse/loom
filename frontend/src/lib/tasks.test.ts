@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./errors";
 import {
   actionDone,
@@ -546,5 +546,22 @@ describe("time helpers", () => {
     expect(localFromIso(iso)).toBe(local);
     expect(isoFromLocal("")).toBeNull();
     expect(localFromIso(null)).toBe("");
+  });
+});
+
+// Review finding: the page read times with its own Date.parse, which Safari refuses for a
+// ClickHouse time ("2026-09-20 01:00:00", or six fraction digits). It reads them with
+// parseChTime, as every list does. Date.parse is held to the ISO form Safari accepts.
+describe("ClickHouse times under a strict date parser", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("reads a lease, a schedule and a date input from a ClickHouse time", () => {
+    const parse = Date.parse;
+    vi.spyOn(Date, "parse").mockImplementation((s: string) =>
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.test(s) ? parse(s) : NaN,
+    );
+    const now = parse("2026-09-20T01:00:00Z");
+    expect(leaseMinutesLeft("2026-09-20 01:08:00.123456", now)).toBe(8);
+    expect(rel("2026-09-20 00:18:00", now)).toBe("42m ago");
+    expect(localFromIso("2026-09-20 01:00:00")).not.toBe("");
   });
 });

@@ -49,6 +49,16 @@ describe("ListPager", () => {
     expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
   });
 
+  // Review: the names were set only when the page, the size or the draft moved, so a pager
+  // that first rendered nothing and then appeared (more rows read) kept Click UI's names.
+  it("names its arrows when it appears after rendering nothing", () => {
+    const props = { label: "Memories pages", page: 0, pageSize: 50, onPage: () => {} };
+    const { rerender } = render(<ListPager {...props} shown={12} />);
+    expect(screen.queryByRole("navigation")).toBeNull();
+    rerender(<ListPager {...props} shown={50} />);
+    expect(screen.getByRole("button", { name: "Next page" })).toBeInTheDocument();
+  });
+
   it("renders nothing when everything fits on one page", () => {
     const { container } = render(
       <ListPager label="x" page={0} pageSize={50} total={12} shown={12} onPage={() => {}} />,
@@ -122,5 +132,13 @@ describe("ListPager, page size", () => {
       <ListPager label="x" page={0} pageSize={50} total={12} shown={12} onPage={() => {}} onPageSize={() => {}} />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+// A server that answers only its newest N (a release behind): the total is a cap, not a count.
+describe("ListPager, a capped total", () => {
+  it("says the range of the newest N", () => {
+    render(<ListPager label="Runs pages" page={0} pageSize={50} total={200} capped shown={50} onPage={() => {}} />);
+    expect(screen.getByRole("navigation", { name: "Runs pages" })).toHaveTextContent("1–50 of the newest 200");
   });
 });

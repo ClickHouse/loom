@@ -46,6 +46,15 @@ describe("MemoryCard", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
+  // Review: the open button's name ran to the key, the agent, the time with its UTC copy and
+  // up to 280 characters of value. The key names it; the rest describes it.
+  it("is named by its key and described by its state, writer, time and value", () => {
+    render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value="oat milk" />);
+    const open = screen.getByRole("button", { name: "prefs/coffee" });
+    expect(open).toHaveAccessibleDescription(/pinned.*bot.*UTC.*oat milk/);
+    expect(open).not.toHaveAccessibleDescription(/prefs\/coffee/);
+  });
+
   // SPEC-LISTS C2/C3: a row that opens in place has no chevron, and its time is the list
   // time ("3d ago", "Sep 20") with the UTC time behind it, not a clock time without a day.
   it("shows the list time and no chevron", () => {

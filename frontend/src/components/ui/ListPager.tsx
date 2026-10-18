@@ -36,6 +36,8 @@ export interface ListPagerProps {
   shown: number;
   /** Every row the list holds, when the server says; without it, a short page is the last. */
   total?: number;
+  /** `total` is what a server that pages no further answered (its newest N), not a count. */
+  capped?: boolean;
   onPage: (page: number) => void;
   /** With it, a page-size choice sits beside the pages. */
   onPageSize?: (size: number) => void;
@@ -50,7 +52,7 @@ export interface ListPagerProps {
  * its heading and announces the page, so a keyboard or screen-reader user lands where the
  * new rows start. Hidden while one page holds everything.
  */
-export function ListPager({ label, page, pageSize, shown, total, onPage, onPageSize, topId }: ListPagerProps) {
+export function ListPager({ label, page, pageSize, shown, total, capped, onPage, onPageSize, topId }: ListPagerProps) {
   const [said, setSaid] = useState("");
   // The page being typed into the field: Click UI reports every keystroke as a page, so the
   // pager goes there only on Enter or when the field loses focus.
@@ -62,7 +64,8 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
   // Click UI names its arrows after their icons ("chevron-left") and its page field after
   // the number in it; these are the names they read as.
   const nav = useRef<HTMLElement>(null);
-  // Click UI resets them as the page or the size changes.
+  // Click UI resets them as the page or the size changes, and the bar may first render
+  // nothing: they are set again after every render, as SplitButton does.
   useLayoutEffect(() => {
     const el = nav.current;
     if (!el) return;
@@ -70,7 +73,7 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
     el.querySelector('[data-testid="next-btn"]')?.setAttribute("aria-label", "Next page");
     el.querySelector('input[type="number"]')?.setAttribute("aria-label", "Page");
     el.querySelector('[data-testid="select-trigger"]')?.setAttribute("aria-label", "Rows per page");
-  }, [page, pageSize, draft, phone]);
+  });
   const pages = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : undefined;
   // A page past the end (its last rows deleted) steps back to the last one.
   const pastEnd = pages !== undefined && page > pages - 1;
@@ -85,7 +88,7 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
   const start = page * pageSize + 1;
   const end = page * pageSize + shown;
   const span = shown === 0 ? `${start.toLocaleString()}` : `${start.toLocaleString()}–${end.toLocaleString()}`;
-  const range = total !== undefined ? `${span} of ${total.toLocaleString()}` : span;
+  const range = total === undefined ? span : `${span} of ${capped ? "the newest " : ""}${total.toLocaleString()}`;
 
   const go = (n: number, { focusList }: { focusList: boolean }) => {
     setDraft(null);

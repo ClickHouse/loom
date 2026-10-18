@@ -91,8 +91,12 @@ describe("Runs rows", () => {
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
-  it("offers the sort as a select on a phone, where there are no column headers", async () => {
-    phoneWidth();
+  it("offers the sort as a select under 769 px, where there are no column headers", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(max-width: 768px)",
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
     listRunsPage.mockResolvedValue({ runs: [run("r-1", "fix the thing", "s-1")], total: 1 });
     render(<Runs />);
     await screen.findByRole("button", { name: "fix the thing" });
@@ -105,6 +109,34 @@ describe("Runs rows", () => {
     });
     await userEvent.click(item);
     await waitFor(() => expect(listRunsPage.mock.calls.at(-1)?.[1]).toMatchObject({ orderBy: "duration_desc" }));
+  });
+
+  // Review finding: on a phone under a touch pointer the two toggles and the sort took two
+  // 44 px rows, and the first run started at 407 px. They fold into one View menu beside
+  // the filters.
+  it("folds the sort, the grouping and the hidden runs into one View menu on a phone", async () => {
+    phoneWidth();
+    listRunsPage.mockResolvedValue({ runs: [run("r-1", "fix the thing", "s-1")], total: 1 });
+    render(<Runs />);
+    await screen.findByRole("button", { name: "fix the thing" });
+    expect(screen.queryByRole("button", { name: "Group by session" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Sort runs" })).toBeNull();
+    const view = screen.getByRole("button", { name: "View" });
+    await userEvent.click(view);
+    const menu = await screen.findByRole("menu", { name: "View" });
+    expect(within(menu).getByRole("menuitemradio", { name: "Newest first" })).toHaveAttribute("aria-checked", "true");
+    expect(within(menu).getByRole("menuitemcheckbox", { name: "Group by session" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await userEvent.click(within(menu).getByRole("menuitemradio", { name: "Longest first" }));
+    await waitFor(() => expect(listRunsPage.mock.calls.at(-1)?.[1]).toMatchObject({ orderBy: "duration_desc" }));
+    await userEvent.click(screen.getByRole("button", { name: "View" }));
+    await userEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Show runs with no memory activity" }));
+    await waitFor(() => expect(listRunsPage.mock.calls.at(-1)?.[1]).toMatchObject({ memoryActivity: "" }));
+    await userEvent.click(screen.getByRole("button", { name: "View" }));
+    await userEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Group by session" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "s-1" })).toBeInTheDocument();
   });
 
   it("put each session under its own heading when grouped", async () => {

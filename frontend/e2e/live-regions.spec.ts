@@ -14,9 +14,9 @@ async function open(page: Page, path: string) {
 
 test("the library's filter count is announced from a status region mounted before the search", async ({ page }) => {
   await open(page, "/library");
-  // The toolbar shows the count; the region says it when a search or filter moves it, so it
-  // is there, empty, before the search.
-  const regions = await page.locator("main [role='status']").elementHandles();
+  // The toolbar's count is a live region mounted with the bar, so it is there before the
+  // search and says the count when a search or filter moves it.
+  const regions = await page.locator("main [role='status'], main [aria-live]").elementHandles();
   await page.getByRole("textbox", { name: "Search library" }).fill("tag:lane-0");
   await expect
     .poll(async () =>

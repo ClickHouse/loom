@@ -8,7 +8,6 @@
 import { lazy, Suspense, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { checkTrackerSource } from "../api";
 import { fmtInt, humanizeError, relativeTime } from "../lib/format";
 import {
@@ -22,7 +21,7 @@ import {
   type TrackerTone,
 } from "../lib/trackerSources";
 import { toast } from "../components/Toast";
-import { Loading, TipTarget } from "../components/ui";
+import { Loading, SectionHeading, TipTarget } from "../components/ui";
 
 const ContractReportView = lazy(() =>
   import("../flows/TrackerSourceDialogs").then((m) => ({ default: m.ContractReportView })),
@@ -63,10 +62,8 @@ export function TrackersPanel({
     <section aria-labelledby="trackers-heading" className="mt-8">
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <h2 id="trackers-heading" className="inline-flex items-center gap-2">
-            <Icon name="database" size="sm" aria-hidden="true" /> Trackers
-          </h2>
-          <p className="text-xs text-text-muted mt-0.5 max-w-2xl">
+          <SectionHeading level={2} id="trackers-heading" label="Trackers" />
+          <p className="text-xs text-text-muted max-w-2xl">
             ClickHouse databases of issues, PRs and incidents that Loom reads live. A repository links to one, and
             agents in its checkout see its issues.
           </p>
@@ -82,7 +79,7 @@ export function TrackersPanel({
               : " Ask the operator to connect one."}
           </span>
           {selfService && org && (
-            <Button type="primary" htmlType="button" iconLeft="plus" onClick={onAdd}>
+            <Button type="secondary" htmlType="button" iconLeft="plus" onClick={onAdd}>
               Add a tracker
             </Button>
           )}

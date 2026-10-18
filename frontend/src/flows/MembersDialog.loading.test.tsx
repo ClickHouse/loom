@@ -46,3 +46,23 @@ describe("MembersDialog loading", () => {
     expect(screen.getByTestId("members-body")).not.toHaveAttribute("aria-busy");
   });
 });
+
+// Review finding: a request's wait and a member's grant were the old relative text; they are
+// the list's one time format, quiet in the row.
+describe("MembersDialog times", () => {
+  it("draws a request's wait and a member's grant time with ListTime", async () => {
+    vi.mocked(api.listGrants).mockResolvedValueOnce({
+      rows: [
+        { ...PENDING, pending_since: "2025-03-05 09:00:00" },
+        { ...PENDING, subject: "bob", status: "active", granted_at: "2025-03-04 10:00:00", granted_by: "alice" },
+      ],
+    } as never);
+    render(<MembersDialog open onOpenChange={() => {}} org="clickhouse" namespace="team" />);
+    const granted = await screen.findByText(/^Granted/);
+    expect(granted.querySelector("time")).toHaveAttribute("dateTime", "2025-03-04T10:00:00.000Z");
+    expect(granted).toHaveTextContent("by alice");
+    const asked = screen.getByText(/^requested/);
+    expect(asked.querySelector("time")).toHaveAttribute("dateTime", "2025-03-05T09:00:00.000Z");
+    expect(asked.querySelector("time")).not.toHaveAttribute("tabindex");
+  });
+});

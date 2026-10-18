@@ -226,7 +226,7 @@ export function Profile() {
                 aria-label="Search profile sections"
                 value={query}
                 onChange={(value) => setQuery(value)}
-                placeholder="Search sections by label or value…"
+                placeholder="Search by label or value…"
               />
             </div>
           </ListToolbar>
@@ -332,7 +332,10 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
           <ScopeBadge kind="namespace" value={namespace} />
         </span>
       </PageHeader>
-      <p className="text-sm text-text-muted">One profile. Every AI you use reads it before responding.</p>
+      {/* Left to the title on a phone, where the sections need the room (SPEC-LISTS C10). */}
+      <p className="hidden text-sm text-text-muted sm:block">
+        One profile. Every AI you use reads it before responding.
+      </p>
 
       <div className="flex items-center gap-4 mt-4 text-xs">
         <ActivityChip empty={empty} />
@@ -432,7 +435,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
               )}
             </span>
             <span className="shrink-0 text-xs text-text-muted tabular-nums">
-              {e.event_count}× · <ListTime iso={e.last_activated_at} />
+              {e.event_count}× · <ListTime iso={e.last_activated_at} quiet={false} />
             </span>
           </div>
         ))}
@@ -666,7 +669,7 @@ const SectionRow = memo(function SectionRow({
             <span className="min-w-0 truncate font-mono">{editor}</span>
             {section.updated_at && (
               <>
-                · <ListTime iso={section.updated_at} />
+                · <ListTime iso={section.updated_at} quiet />
               </>
             )}
           </span>

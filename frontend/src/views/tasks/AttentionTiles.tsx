@@ -34,11 +34,9 @@ export function AttentionTiles({
             onClick={() => onToggle(k)}
             aria-label={`${meta.label}: ${n ?? "not loaded"}`}
           >
-            {/* The button's name is its aria-label; a phone shows the short label (styles.css). */}
-            <span className="lbl">
-              <span className="long">{meta.label}</span>
-              <span className="short">{meta.short}</span>
-            </span>
+            {/* The button's name is its aria-label. A phone has no tiles: the Filters menu
+                holds them (FiltersMenu), so the label is never cut short. */}
+            <span className="lbl">{meta.label}</span>
             <span className="n tabular">{n ?? "–"}</span>
           </button>
         );

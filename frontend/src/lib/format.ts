@@ -68,18 +68,6 @@ export function dayLabel(iso: string): string {
   return date;
 }
 
-/** A row's date: how long ago within the last week, then the day ("Sep 19", with the
- *  year when it is not this one). */
-export function shortDate(iso: string): string {
-  const d = parseIso(iso);
-  if (!d) return "";
-  const now = new Date();
-  if (now.getTime() - d.getTime() < 7 * 86_400_000) return relativeTime(iso);
-  return d.getFullYear() === now.getFullYear()
-    ? fmt("month-day", { month: "short", day: "numeric" }).format(d)
-    : fmt("month-day-year", { month: "short", day: "numeric", year: "numeric" }).format(d);
-}
-
 /** A ClickHouse time ("YYYY-MM-DD hh:mm:ss[.fff…]", no zone, so UTC) or an ISO time, as a
  *  Date; null for nothing or anything that is not a time. */
 export function parseChTime(s: string | null | undefined): Date | null {

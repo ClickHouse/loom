@@ -198,7 +198,7 @@ describe("WorkersPanel", () => {
     expect(within(dedup).getAllByRole("cell")[1]).not.toHaveTextContent("Healthy");
   });
 
-  it("draws the first read as Click UI's loading table, marked busy", async () => {
+  it("draws the first read as the table's header over a skeleton, marked busy", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => new Promise(() => {})),
@@ -206,7 +206,10 @@ describe("WorkersPanel", () => {
     render(<WorkersPanel />);
     const table = await screen.findByRole("table", { name: "Workers" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    expect(within(table).getByText("Loading data")).toBeInTheDocument();
+    // Review finding: Click UI's `loading` showed its loader at once; the first read waits
+    // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+    expect(within(table).queryByText("Loading data")).toBeNull();
+    expect(within(table).getByRole("status", { name: "Loading workers" })).toHaveAttribute("aria-busy", "true");
   });
 
   it("shows the empty state only when there is nothing from either source", async () => {

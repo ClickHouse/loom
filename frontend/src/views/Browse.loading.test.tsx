@@ -58,3 +58,24 @@ describe("Browse: loading", () => {
     expect(screen.getByTestId("browse-list")).not.toHaveAttribute("aria-busy");
   });
 });
+
+// Review finding: a failed read showed "No public namespaces yet"; it is the list's error
+// state, with its request id and a Retry that reads again.
+describe("Browse: a failed read", () => {
+  it("says the read failed, never that there is nothing, and Retry reads again", async () => {
+    const { ApiError } = await import("../api");
+    browseNamespaces.mockRejectedValueOnce(
+      new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "upstream down", requestId: "req-9" }),
+    );
+    browseNamespaces.mockResolvedValueOnce([ROW]);
+    render(<Browse />);
+    expect(await screen.findByText("Couldn't load namespaces")).toBeInTheDocument();
+    expect(screen.getByText(/req-9/)).toBeInTheDocument();
+    expect(screen.queryByText("No public namespaces yet")).toBeNull();
+    expect(screen.queryByText(/0 namespaces/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("alpha")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load namespaces")).toBeNull();
+    expect(browseNamespaces).toHaveBeenCalledTimes(2);
+  });
+});

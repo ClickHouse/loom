@@ -253,7 +253,8 @@ export function Conversations() {
     groupedHits === null
       ? ""
       : `${hits?.length} match${hits?.length === 1 ? "" : "es"} in ${groupedHits.length} thread${groupedHits.length === 1 ? "" : "s"}`;
-  const searchStatus = busy ? "Searching…" : groupedHits?.length === 0 ? "No matches" : matchCount;
+  // The toolbar's status region says the count; this one says a search is under way.
+  const searchStatus = busy ? "Searching…" : "";
 
   // The open thread is the page's URL (`?thread=`): a reload or Back reopens it.
   const openThreadDialog = useCallback(
@@ -372,7 +373,7 @@ export function Conversations() {
                       {title || UNTITLED_THREAD}
                     </span>
                     <span className="shrink-0 text-xs text-text-muted">
-                      <ListTime iso={t.last_seen} />
+                      <ListTime iso={t.last_seen} quiet />
                     </span>
                   </span>
                   {/* Line 2: the last turn; right, who and how long. Under 640 px the right
@@ -385,7 +386,7 @@ export function Conversations() {
                       <span className="min-w-0 flex-1 truncate">{truncate(t.last_content_excerpt, 140)}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2 tabular">
-                      {t.agent && <AgentBadge agent={t.agent} />}
+                      {t.agent && <AgentBadge agent={t.agent} quiet />}
                       <span>
                         {t.msg_count.toLocaleString()} message{t.msg_count === 1 ? "" : "s"}
                       </span>
@@ -416,7 +417,14 @@ export function Conversations() {
       <Switch
         checked={loggingEnabled}
         onCheckedChange={toggleLogging}
-        label="Record conversations"
+        // "Record" on a phone, beside the title, so the switch keeps to the title's row.
+        // Click UI names the switch with the label as a string, so the name is given here.
+        label={
+          <>
+            Record<span className="max-sm:sr-only"> conversations</span>
+          </>
+        }
+        aria-label="Record conversations"
         orientation="horizontal"
         dir="start"
       />
@@ -579,7 +587,7 @@ export function Conversations() {
                     <span className="min-w-0 truncate font-mono text-xs text-text-muted">{g.namespace}</span>
                   )}
                   <span className="shrink-0 text-xs text-text-muted tabular">
-                    {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · <ListTime iso={g.newest} />
+                    {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · <ListTime iso={g.newest} quiet />
                   </span>
                 </span>
               </button>

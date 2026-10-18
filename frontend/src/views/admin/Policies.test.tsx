@@ -86,3 +86,30 @@ describe("Policies add rule", () => {
     );
   });
 });
+
+// Review finding: a rule's "updated" time was the old relative text; it is the list's one
+// time format, a <time> with the absolute UTC time behind it.
+describe("Policies rule time", () => {
+  it("draws a rule's update time with ListTime", async () => {
+    vi.mocked(api.listPolicies).mockResolvedValueOnce({
+      mode: "enforce",
+      rules: [
+        {
+          policy_id: "p1",
+          effect: "forbid",
+          actions: ["memory.delete"],
+          condition: { op: "all", of: [] },
+          description: "",
+          enabled: true,
+          created_by: "alice",
+          created_at: null,
+          updated_at: "2025-03-04 10:00:00",
+        },
+      ],
+    });
+    render(<Policies />);
+    const time = (await screen.findByText(/^updated/)).querySelector("time");
+    expect(time).toHaveAttribute("dateTime", "2025-03-04T10:00:00.000Z");
+    expect(time).toHaveTextContent("Mar 4, 2025");
+  });
+});

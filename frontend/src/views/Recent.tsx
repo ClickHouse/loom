@@ -22,6 +22,7 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
+import { IconButton } from "../components/IconButton";
 import { Alert, ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
@@ -43,6 +44,7 @@ import { canCall } from "../lib/canCall";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
 import { shortcutOff } from "../lib/shortcuts";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useRowSelection } from "../lib/useRowSelection";
 
@@ -152,6 +154,10 @@ function MemoryList() {
   // effect below), instead of reloading a fixed slice that ignores pagination.
   const bumpMemoriesVersion = useStore((s) => s.bumpMemoriesVersion);
   const [entries, setEntries] = useState<MemoryListEntry[] | null>(null);
+  const phone = useMedia(PHONE_QUERY);
+  // A phone's status and agent filters wait behind the toolbar's Filters button, so the
+  // first memory is inside the chrome budget (SPEC-LISTS C10).
+  const [phoneFilters, setPhoneFilters] = useState(false);
   // First paint mounts the first screen; the rest follow in a transition (see
   // FIRST_SCREEN_CARDS).
   const [firstScreenOnly, setFirstScreenOnly] = useState(true);
@@ -773,6 +779,8 @@ function MemoryList() {
     ...(status !== "live" ? [STATUSES.find((o) => o.value === status)?.label ?? status] : []),
   ].join(", ");
   const clearFilters = () => {
+    // Every Clear leaves with the filters it clears: focus goes to the search.
+    searchInputRef.current?.focus();
     setQuery(rawQuery);
     setStatus("live");
     setAgentFilter(null);
@@ -903,10 +911,26 @@ function MemoryList() {
             ref={searchInputRef}
             value={query}
             onChange={(value) => setQuery(value)}
-            placeholder="Search memories. Try a keyword, or filter with tag:work, agent:claude-desktop…"
+            // A phone's field holds the short form only.
+            placeholder={
+              phone
+                ? "Search, or tag:work"
+                : "Search memories. Try a keyword, or filter with tag:work, agent:claude-desktop…"
+            }
             aria-label="Search memories"
           />
         </div>
+        <span className="sm:hidden">
+          <IconButton
+            icon="filter"
+            // Filled (Click UI's secondary) while a status or an agent is picked.
+            type={status !== "live" || agentFilter != null ? "secondary" : "ghost"}
+            label={status !== "live" || agentFilter != null ? "Filters, some in force" : "Filters"}
+            tooltip="Status and agent"
+            aria-expanded={phoneFilters}
+            onClick={() => setPhoneFilters((v) => !v)}
+          />
+        </span>
         {statusSelect("hidden w-44 shrink-0 sm:block")}
         {agentSelect("hidden w-44 shrink-0 sm:block")}
         {filtering && (
@@ -915,16 +939,18 @@ function MemoryList() {
           </Button>
         )}
       </ListToolbar>
-      {/* A phone's toolbar has room for the search only; the filters sit under it. */}
-      <div className="-mt-1 mb-3 flex items-center gap-2 sm:hidden">
-        {statusSelect("min-w-0 flex-1")}
-        {agentSelect("min-w-0 flex-1")}
-        {filtering && (
-          <Button type="empty" htmlType="button" onClick={clearFilters} aria-label="Clear filters">
-            Clear
-          </Button>
-        )}
-      </div>
+      {/* A phone's toolbar has room for the search only; the filters open under it. */}
+      {phoneFilters && (
+        <div className="-mt-1 mb-3 flex items-center gap-2 sm:hidden">
+          {statusSelect("min-w-0 flex-1")}
+          {agentSelect("min-w-0 flex-1")}
+          {filtering && (
+            <Button type="empty" htmlType="button" onClick={clearFilters} aria-label="Clear filters">
+              Clear
+            </Button>
+          )}
+        </div>
+      )}
       {/* Mounted before the first search, so a screen reader hears each summary; the
           toolbar's count is the one on screen. */}
       <p role="status" className="sr-only">
@@ -1088,7 +1114,7 @@ function MemoryList() {
                     {isTombstoned && (
                       <div className="flex items-center justify-between mt-1 py-1 text-xs text-text-muted">
                         <span>
-                          Deleted <ListTime iso={e.tombstoned_at} /> ·{(() => {
+                          Deleted <ListTime iso={e.tombstoned_at} quiet /> ·{(() => {
                             if (!e.tombstoned_at) return " in grace window";
                             const ageMs = Date.now() - new Date(e.tombstoned_at).getTime();
                             const daysLeft = Math.max(0, 14 - Math.floor(ageMs / (24 * 3600 * 1000)));

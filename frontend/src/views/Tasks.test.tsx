@@ -872,4 +872,38 @@ describe("Tasks page", () => {
     // The toolbar stays, so nothing jumps when a task lands.
     expect(screen.getByLabelText("Search and filters")).toBeInTheDocument();
   });
+
+  // Review finding: on a phone under a touch pointer the four tiles took a 44 px row of their
+  // own and the first task started at 405 px; their labels were cut ("Block…"). There the
+  // tiles, the kind and the poster fold into one Filters menu beside the inbox.
+  it("on a phone folds the tiles, the kind and the poster into one Filters menu", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: /max-width: (639|767|1279)px/.test(query),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("row", { name: "Task urgent" });
+      expect(screen.queryByRole("group", { name: "Needs you" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Posted by" })).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Filters" }));
+      const menu = await screen.findByRole("menu", { name: "Filters" });
+      expect(within(menu).getByRole("menuitemradio", { name: "Everything" })).toHaveAttribute("aria-checked", "true");
+      await user.click(within(menu).getByRole("menuitemradio", { name: "Failed · reopen or close (1)" }));
+      expect(taskRows()).toEqual(["Task failed"]);
+      // The trigger says a filter is on.
+      await user.click(screen.getByRole("button", { name: "Filters (1)" }));
+      await user.click(await screen.findByRole("menuitemradio", { name: "This agent" }));
+      expect(screen.getByRole("button", { name: "Filters (2)" })).toBeInTheDocument();
+      expect(taskRows()).toEqual([]);
+      await user.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
+      // The open menu is checked by axe in e2e/tasks-ux.spec.ts.
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

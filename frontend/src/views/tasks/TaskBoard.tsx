@@ -56,7 +56,7 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
       <SublineView r={r} ctx={ctx} plain />
       <span className="flex justify-between items-center gap-2 text-xs text-text-muted">
         {who ? <Assignee name={who.name} label={who.label} /> : <span />}
-        <ListTime iso={r.created_at} />
+        <ListTime iso={r.created_at} quiet />
       </span>
     </div>
   );

@@ -19,7 +19,7 @@ import {
 } from "../../api";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
-import { Skeleton } from "../../components/Skeleton";
+import { Skeleton, TableSkeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
@@ -391,7 +391,14 @@ export function WorkersPanel() {
       )}
       {!!error && <ListState kind="error" things="workers" error={error} onRetry={() => setRefreshKey((k) => k + 1)} />}
       {!error && rows === null && (
-        <Table aria-label="Workers" aria-busy loading size="sm" headers={WORKER_HEADERS} rows={[]} />
+        <Table
+          aria-label="Workers"
+          aria-busy
+          size="sm"
+          headers={WORKER_HEADERS}
+          rows={[]}
+          noDataMessage={<TableSkeleton label="Loading workers" />}
+        />
       )}
       {!error && rows !== null && (rows.length === 0 || visible.length === 0) && (
         <ListState
@@ -490,7 +497,7 @@ export function WorkersPanel() {
                         <div className="text-xs text-text-muted tabular">
                           {w.last_run_at ? (
                             <>
-                              Last ran <ListTime iso={w.last_run_at} />
+                              Last ran <ListTime iso={w.last_run_at} quiet />
                               {w.last_duration_ms != null && <> · took {fmtDuration(w.last_duration_ms)}</>}
                               {written > 0 && <> · {written.toLocaleString()} rows written</>}
                               {w.total_runs != null && <> · {w.total_runs.toLocaleString()} runs total</>}
@@ -841,7 +848,7 @@ function ConsolidationsTable({ rows }: { rows: ConsolidationRunRow[] }) {
           { label: <span className="tabular">{r.cluster_size}</span> },
           { label: <span className="tabular">{(r.tokens_in ?? 0) + (r.tokens_out ?? 0)}</span> },
           { label: <span className="tabular">{r.duration_ms}ms</span> },
-          { label: <ListTime iso={r.ran_at} className="text-text-muted" /> },
+          { label: <ListTime iso={r.ran_at} quiet className="text-text-muted" /> },
         ],
       }))}
     />

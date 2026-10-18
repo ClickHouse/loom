@@ -21,6 +21,7 @@ import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
 import { Alert, ListRow, LoadingSkeleton, PageHeader, Panel, SectionHeading, Tip } from "../components/ui";
+import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { useRowNav } from "../lib/useRowNav";
@@ -36,6 +37,7 @@ import { useAbortableEffect } from "../lib/hooks";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 
 const isCodeKind = (kind: string | undefined) => kind === "code";
 const isTrackerKind = (kind: string | undefined) => kind === "qa" || kind === "tracker";
@@ -79,7 +81,11 @@ const JOIN_ROLES: Array<{
  */
 export function Browse() {
   const identity = useIdentity();
+  const phone = useMedia(PHONE_QUERY);
   const [rows, setRows] = useState<BrowseEntry[] | null>(null);
+  // The browse read failed: its error, in place of the public list; Retry reads again.
+  const [error, setError] = useState<unknown>(null);
+  const [reads, setReads] = useState(0);
   // A reload after a join or a create keeps the list on screen and marks it busy.
   const [refreshing, setRefreshing] = useState(false);
   const [mine, setMine] = useState<Set<string>>(new Set());
@@ -102,15 +108,20 @@ export function Browse() {
 
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
     setRefreshing(true);
+    let failed: unknown = null;
     Promise.all([
-      browseNamespaces(identity.org, { limit: 200, signal }).catch(() => [] as BrowseEntry[]),
+      browseNamespaces(identity.org, { limit: 200, signal }).catch((e: unknown) => {
+        failed = e;
+        return [] as BrowseEntry[];
+      }),
       // The shared membership read, not a second list_mine
       sharedMine(identity.org).catch(() => [] as MyNamespaceEntry[]),
     ]).then(([browseRows, mineRows]) => {
       if (!live()) return;
       setRefreshing(false);
+      setError(failed);
       // Code namespaces are surfaced in the Code section, not as joinable memory.
-      setRows(browseRows.filter((r) => r.kind !== "code"));
+      setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
       setRepoCount(browseRows.filter((r) => r.kind === "code").length);
       setMine(new Set(mineRows.map((r) => r.namespace)));
       setMyRole(Object.fromEntries(mineRows.map((r) => [r.namespace, r.role])));
@@ -127,9 +138,10 @@ export function Browse() {
   useAbortableEffect(
     (signal, live) => {
       setRows(null);
+      setError(null);
       load(signal, live);
     },
-    [identity.org],
+    [identity.org, reads],
   );
 
   const onJoin = async (ns: string, role: JoinRole) => {
@@ -278,7 +290,10 @@ export function Browse() {
           </Button>
         }
       >
-        <ScopeBadge kind="namespace" value={identity.namespace} />
+        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
       </PageHeader>
       <p className="text-sm text-text-muted mb-3">
         Join public namespaces in your org, or invite people into the ones you manage.
@@ -299,7 +314,12 @@ export function Browse() {
             aria-label="Search namespaces"
             value={query}
             onChange={(value) => setQuery(value)}
-            placeholder="Search namespaces, or type an exact private namespace name to request access…"
+            // A phone's field holds the short form only.
+            placeholder={
+              phone
+                ? "Search namespaces"
+                : "Search namespaces, or type an exact private namespace name to request access…"
+            }
           />
         </div>
       </ListToolbar>
@@ -333,7 +353,11 @@ export function Browse() {
             Public namespaces in <span className="font-mono">{identity.org}</span>
           </h2>
 
-          {rows === null && (
+          {error !== null && (
+            <ListState kind="error" things="namespaces" error={error} onRetry={() => setReads((n) => n + 1)} />
+          )}
+
+          {rows === null && error === null && (
             <LoadingSkeleton label="Loading namespaces">
               <div className="space-y-2">
                 <SkeletonCard />

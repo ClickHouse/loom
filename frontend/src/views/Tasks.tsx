@@ -41,7 +41,6 @@ import {
   type Attention,
   type Filters,
   type Group,
-  type PosterFilter,
   type TaskAction,
 } from "../lib/tasks";
 import { SkeletonCard } from "../components/Skeleton";
@@ -56,6 +55,7 @@ import { ScopeBadge } from "../components/ScopeBadge";
 import { toast, toastError } from "../components/Toast";
 import { PageContainer } from "../layout/PageContainer";
 import { AttentionTiles } from "./tasks/AttentionTiles";
+import { ANY, FiltersMenu, POSTED_BY } from "./tasks/FiltersMenu";
 import { ALL_INBOXES, InboxRail, InboxSelect, railCounts } from "./tasks/InboxRail";
 import { TaskList, type RowContext } from "./tasks/TaskList";
 import { TaskBoard } from "./tasks/TaskBoard";
@@ -133,13 +133,6 @@ const ROW_MENU: readonly TaskAction[] = [
   "reopen",
   "reassign",
   "cancel",
-];
-
-const ANY = "*";
-const POSTED_BY: ReadonlyArray<readonly [PosterFilter | typeof ANY, string]> = [
-  [ANY, "Anyone"],
-  ["me", "This agent"],
-  ["others", "Other posters"],
 ];
 
 /** The task rows the list or the board shows, in their order on screen. */
@@ -747,7 +740,8 @@ export function Tasks() {
       {inboxes && inboxes.length > 0 && picked && (
         <>
           {phone && (
-            // The filters share the inbox's row, so the tasks start higher.
+            // The tiles and the filters are one menu on the inbox's row, so the tasks start
+            // within the chrome budget.
             <div className="mb-3 flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <InboxSelect
@@ -757,10 +751,15 @@ export function Tasks() {
                   onPick={pick}
                 />
               </div>
-              {filterSelects}
+              <FiltersMenu
+                filters={filters}
+                counts={attention}
+                kinds={kinds}
+                onChange={(next) => setFilters((f) => ({ ...f, ...next }))}
+              />
             </div>
           )}
-          <AttentionTiles counts={attention} active={filters.attention} onToggle={toggleTile} />
+          {!phone && <AttentionTiles counts={attention} active={filters.attention} onToggle={toggleTile} />}
           <div className="tq-body" data-panel={!!openRow && !sheetLayout}>
             {!phone && (
               <InboxRail inboxes={inboxes} counts={counts ? railCounts(counts) : null} picked={picked} onPick={pick} />

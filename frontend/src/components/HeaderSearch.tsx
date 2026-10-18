@@ -22,7 +22,7 @@ import {
 import { sharedMine } from "../lib/sharedReads";
 import { setViewParam, useStore, viewHref } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
-import { Kbd, Loading } from "./ui";
+import { Kbd, Loading, TagList } from "./ui";
 import { toast } from "./Toast";
 import { paletteShortcut } from "../lib/platform";
 
@@ -611,7 +611,7 @@ export function HeaderSearch({
             )}
 
             {memoryShown.length > 0 && (
-              <OptionGroup id={`${listboxId}-mem`} icon="clock" label="Best matches">
+              <OptionGroup id={`${listboxId}-mem`} icon="search" label="Best matches">
                 {memoryShown.map((e, i) => {
                   const idx = offMem + i;
                   return (
@@ -645,9 +645,8 @@ export function HeaderSearch({
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeIcon kind="document" />
                         <span className={`truncate ${d.title ? "text-sm" : "font-mono text-xs"}`}>{label}</span>
-                        {(d.tags || []).slice(0, 3).map((t) => (
-                          <Badge key={t} text={`#${t}`} size="sm" className="shrink-0" />
-                        ))}
+                        {/* At most three, so no "+N" with a tooltip sits inside the option. */}
+                        <TagList tags={(d.tags || []).slice(0, 3)} className="shrink-0" />
                       </div>
                       <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">
                         {d.chunk_count} chunk{d.chunk_count === 1 ? "" : "s"}

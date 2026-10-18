@@ -6,24 +6,29 @@ import { Tip } from "./Tooltip";
 export interface ListTimeProps {
   /** An ISO or ClickHouse ("YYYY-MM-DD hh:mm:ss") time. */
   iso: string | null | undefined;
+  /** In a list row or a control: no tab stop, the absolute time said. Unset, the time
+   *  finds out from where it is drawn, a render later. */
+  quiet?: boolean;
   className?: string;
 }
 
 /**
  * ListTime — a list row's time: `listTime` ("12m ago", "Sep 20") in a `<time dateTime>`,
  * with the absolute UTC time ("Sep 20, 2026, 14:32 UTC") in a tooltip. In a list or table
- * row, or inside a control, it takes no tab stop (`inRowOrControl`) and says the absolute
- * time to a screen reader; elsewhere it is focusable, so the tooltip opens from the keyboard. Nothing renders for a missing or unreadable time.
+ * row, or inside a control, it takes no tab stop and says the absolute time to a screen
+ * reader: the row passes `quiet`, else it is measured after mount (`inRowOrControl`).
+ * Elsewhere it is focusable, so the tooltip opens from the keyboard. Nothing renders for a
+ * missing or unreadable time.
  */
-export function ListTime({ iso, className = "" }: ListTimeProps) {
+export function ListTime({ iso, quiet: quietProp, className = "" }: ListTimeProps) {
   const [el, setEl] = useState<HTMLElement | null>(null);
   const d = parseChTime(iso);
   if (!d) return null;
-  const quiet = !!el && inRowOrControl(el);
+  const quiet = quietProp ?? (!!el && inRowOrControl(el));
   return (
     <Tip content={listTimeTitle(iso)}>
       <time
-        ref={setEl}
+        ref={quietProp === undefined ? setEl : undefined}
         dateTime={d.toISOString()}
         tabIndex={quiet ? undefined : 0}
         className={`tabular whitespace-nowrap ${quiet ? "relative z-[1]" : "rounded"} ${className}`}

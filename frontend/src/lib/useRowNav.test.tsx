@@ -6,7 +6,7 @@ import { ListRow } from "../components/ui/ListRow";
 import { setSingleKeyShortcuts } from "./shortcuts";
 import { useRowNav } from "./useRowNav";
 
-function List({ names = ["one", "two", "three"], onOpen = (_: string) => {} }) {
+function List({ names = ["one", "two", "three"], onOpen = (_: string) => {}, controls = false }) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const listRef = useRowNav();
   return (
@@ -34,9 +34,16 @@ function List({ names = ["one", "two", "three"], onOpen = (_: string) => {} }) {
             <button type="button" data-row-open="" onClick={() => onOpen(n)}>
               {n}
             </button>
+            {controls && (
+              <>
+                <button type="button">{`tag ${n}`}</button>
+                <button type="button">{`Actions for ${n}`}</button>
+              </>
+            )}
           </ListRow>
         ))}
       </div>
+      <button type="button">After</button>
     </>
   );
 }
@@ -126,5 +133,36 @@ describe("useRowNav", () => {
       expect(stops.map((b) => b.textContent)).toEqual(["one"]);
       expect(open("zero")).toHaveAttribute("tabindex", "-1");
     });
+  });
+
+  // Review: only the open buttons and checkboxes left the tab order; every tag chip and
+  // row-menu trigger stayed a tab stop (151 on a Memories page). Now only the current row's
+  // controls are reachable with Tab, after its open button.
+  it("keeps the controls of every row but the current one out of the tab order", async () => {
+    render(<List controls />);
+    const user = userEvent.setup();
+    screen.getByRole("button", { name: "Before" }).focus();
+    const stops: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      await user.tab();
+      stops.push(document.activeElement?.textContent ?? "");
+    }
+    expect(stops).toEqual(["one", "tag one", "Actions for one", "After"]);
+    expect(screen.getByRole("button", { name: "tag two" })).toHaveAttribute("tabindex", "-1");
+    // The current row moves with the arrows, and its controls with it.
+    open("one").focus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("button", { name: "tag one" })).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("button", { name: "tag two" })).not.toHaveAttribute("tabindex");
+    await user.tab();
+    expect(screen.getByRole("button", { name: "tag two" })).toHaveFocus();
+  });
+
+  it("makes a row current when one of its controls takes the focus", () => {
+    render(<List controls />);
+    screen.getByRole("button", { name: "Actions for three" }).focus();
+    expect(open("three")).toHaveAttribute("tabindex", "0");
+    expect(open("one")).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("button", { name: "Actions for one" })).toHaveAttribute("tabindex", "-1");
   });
 });

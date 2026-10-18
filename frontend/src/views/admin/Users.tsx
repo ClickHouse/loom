@@ -22,6 +22,7 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
+import { TableSkeleton } from "../../components/Skeleton";
 import { Alert, PageHeader } from "../../components/ui";
 
 type Filter = "all" | "pending" | "active7d";
@@ -48,7 +49,9 @@ export function Users() {
   // A refresh keeps the list on screen, marked busy, until it answers.
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
+  // Refresh and Retry read again through the effect, so a newer read drops an older one.
+  const [reads, setReads] = useState(0);
+  const load = (signal: AbortSignal, live: () => boolean) => {
     if (!identity) return;
     setError(null);
     setRefreshing(true);
@@ -71,7 +74,7 @@ export function Users() {
         if (live()) setRefreshing(false);
       });
   };
-  useAbortableEffect(load, [identity?.org, includeServiceAccounts]);
+  useAbortableEffect(load, [identity?.org, includeServiceAccounts, reads]);
 
   const rows = useMemo(() => filtered(data, filter), [data, filter]);
 
@@ -120,7 +123,13 @@ export function Users() {
         <PageHeader
           title="Users"
           actions={
-            <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()} loading={refreshing}>
+            <Button
+              type="secondary"
+              htmlType="button"
+              iconLeft="refresh"
+              onClick={() => setReads((n) => n + 1)}
+              loading={refreshing}
+            >
               Refresh
             </Button>
           }
@@ -169,9 +178,16 @@ export function Users() {
         </>
       )}
 
-      {!!error && <ListState kind="error" things="users" error={error} onRetry={() => load()} />}
+      {!!error && <ListState kind="error" things="users" error={error} onRetry={() => setReads((n) => n + 1)} />}
       {!error && data === null && (
-        <Table aria-label="Users" aria-busy loading size="sm" headers={USER_HEADERS} rows={[]} />
+        <Table
+          aria-label="Users"
+          aria-busy
+          size="sm"
+          headers={USER_HEADERS}
+          rows={[]}
+          noDataMessage={<TableSkeleton label="Loading users" />}
+        />
       )}
       {!error && data !== null && data.users.length === 0 && (
         <ListState
@@ -394,7 +410,7 @@ function UserListTable({ rows, filter }: { rows: AdminUserRow[]; filter: Filter 
           {
             label: (
               <span className="text-xs text-text-muted">
-                {u.last_active ? <ListTime iso={u.last_active} /> : "never"}
+                {u.last_active ? <ListTime iso={u.last_active} quiet /> : "never"}
               </span>
             ),
           },

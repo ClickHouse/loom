@@ -34,7 +34,7 @@ describe("ListToolbar", () => {
       </ListToolbar>,
     );
     expect(screen.queryByLabelText("Search memories")).toBeNull();
-    expect(screen.getByText("3 selected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Search and filters")).toHaveTextContent("3 selected");
     fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
     expect(onClear).toHaveBeenCalled();
     fireEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]);
@@ -93,5 +93,30 @@ describe("ListToolbar", () => {
       </ListToolbar>,
     );
     expect(screen.getByRole("checkbox", { name: "Select all 5 on this page" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  // Review: the count's live region was mounted only once there was a count, so its first
+  // text was never said, and "N selected" had none. One status region stays mounted and
+  // its text changes: the count, or the selection while rows are selected.
+  it("says the count and the selection from one status region that stays mounted", () => {
+    const bar = (count?: string, selected = 0) => (
+      <ListToolbar
+        label="Search and filters"
+        count={count}
+        selection={selected ? { count: selected, onClear: () => {}, actions: [] } : null}
+      >
+        <input aria-label="Search memories" />
+      </ListToolbar>
+    );
+    const { container, rerender } = render(bar());
+    const live = () => container.querySelectorAll("[aria-live]");
+    const [region] = live();
+    expect(region).toHaveTextContent("");
+    rerender(bar("12 shown"));
+    expect(region).toHaveTextContent("12 shown");
+    rerender(bar("12 shown", 3));
+    expect(live()).toHaveLength(1);
+    expect(live()[0]).toBe(region);
+    expect(region).toHaveTextContent("3 selected");
   });
 });

@@ -36,14 +36,28 @@ for (const width of [1400, 375]) {
       } else {
         await expect(page.getByRole("navigation", { name: "Inboxes" })).toBeVisible();
       }
-      // Four tiles on one row, never a zero dot or a second row.
-      const tops = await page
-        .getByRole("group", { name: "Needs you" })
-        .getByRole("button")
-        .evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
-      expect(new Set(tops).size).toBe(1);
+      if (width < 768) {
+        // A phone has no tiles: they, the kind and the poster are one Filters menu.
+        await expect(page.getByRole("group", { name: "Needs you" })).toHaveCount(0);
+        await page.getByRole("button", { name: "Filters" }).click();
+        const menu = page.getByRole("menu", { name: "Filters" });
+        await expect(menu.getByRole("menuitemradio", { name: /^Triage · decide \(\d+\)$/ })).toBeVisible();
+        await expect(menu.getByRole("menuitemradio", { name: "Other posters" })).toBeVisible();
+        expect(await violations(page)).toEqual([]);
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("button", { name: "Filters" })).toBeFocused();
+      } else {
+        // Four tiles on one row, never a zero dot or a second row, their labels whole.
+        const tiles = page.getByRole("group", { name: "Needs you" }).getByRole("button");
+        const tops = await tiles.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+        expect(new Set(tops).size).toBe(1);
+        const cut = await tiles.evaluateAll((els) =>
+          els.some((e) => [...e.querySelectorAll<HTMLElement>(".lbl")].some((l) => l.scrollWidth > l.clientWidth)),
+        );
+        expect(cut).toBe(false);
+        await expect(page.getByRole("button", { name: "Posted by" })).toBeVisible();
+      }
       await expect(page.getByLabel("Search tasks")).toBeVisible();
-      await expect(page.getByRole("button", { name: "Posted by" })).toBeVisible();
       // No sideways scroll on the page.
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       // The keys live in the help dialog and the tooltips, not on the page.
@@ -98,10 +112,19 @@ test("at 1400 px the open panel's actions are in view without scrolling", async 
 });
 
 // Self-review: on a phone the first task starts within the list pages' chrome budget
-// (y ≤ 360 at 375 × 812): the scope badge and the List/Board switch give way, and the
-// filters share the inbox select's row.
-test("at 375 px the first task starts within the chrome budget", async ({ page }) => {
-  await open(page, 375);
-  const top = await page.getByRole("row", { name: TRIAGE }).evaluate((el) => el.getBoundingClientRect().top);
-  expect(top).toBeLessThanOrEqual(360);
+// (y ≤ 360 at 375 × 812): the scope badge and the List/Board switch give way. Review
+// finding: measured with a touch pointer, where every control is 44 px, the tiles' row put
+// it at 405; the tiles and the filters are one Filters menu on the inbox select's row.
+test.describe("a phone with a touch pointer", () => {
+  test.use({ hasTouch: true, isMobile: true });
+
+  test("at 375 px the first task starts within the chrome budget", async ({ page }) => {
+    await open(page, 375);
+    const top = await page.getByRole("row", { name: TRIAGE }).evaluate((el) => el.getBoundingClientRect().top);
+    expect(top).toBeLessThanOrEqual(360);
+    for (const name of ["Inbox", "Filters"]) {
+      const box = await page.getByRole("button", { name, exact: true }).boundingBox();
+      expect(box && box.height >= 44 && box.x >= 0 && box.x + box.width <= 375).toBe(true);
+    }
+  });
 });

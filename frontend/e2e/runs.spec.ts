@@ -151,7 +151,11 @@ test.describe("375 px", () => {
 
   test("grouped by session on a phone, the headings hold their rows", async ({ page }) => {
     await open(page, "/runs");
-    await page.getByRole("button", { name: "Group by session" }).click();
+    // A phone has no toggle row: the grouping is in the View menu, beside the filters.
+    await page.getByRole("button", { name: "View" }).click();
+    await expect(page.getByRole("menu", { name: "View" })).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    await page.getByRole("menuitemcheckbox", { name: "Group by session" }).click();
     await expect(page.getByRole("heading", { level: 2, name: "s-0" })).toBeVisible();
     await expect(page.getByRole("list", { name: "Runs in session s-0" })).toBeVisible();
     expect(await violations(page)).toEqual([]);
@@ -159,12 +163,28 @@ test.describe("375 px", () => {
 });
 
 // Self-review: on a phone the first run starts within the list pages' chrome budget
-// (y ≤ 360 at 375 × 812); the description waits behind its info button.
-test("at 375 px the first run starts within the chrome budget", async ({ page }) => {
-  await page.setViewportSize({ width: 375, height: 812 });
-  await installApi(page, { runRows: 60 });
-  await page.goto("/runs");
-  const first = page.locator("main .list-row").first();
-  await expect(first).toBeVisible();
-  expect(await first.evaluate((el) => el.getBoundingClientRect().top)).toBeLessThanOrEqual(360);
+// (y ≤ 360 at 375 × 812); the description waits behind its info button. Review finding:
+// measured with a touch pointer, where every control is 44 px, the toggles' rows put it at
+// 407; they fold into the View menu on the filters' row.
+test.describe("a phone with a touch pointer", () => {
+  test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
+
+  test("at 375 px the first run starts within the chrome budget", async ({ page }) => {
+    await installApi(page, { runRows: 60 });
+    await page.goto("/runs");
+    const first = page.locator("main .list-row").first();
+    await expect(first).toBeVisible();
+    expect(await first.evaluate((el) => el.getBoundingClientRect().top)).toBeLessThanOrEqual(360);
+    // Every control on the filters' row is a 44 px target, and fits the width.
+    for (const name of ["Filter runs by status", "Agent", "View"]) {
+      const control = page.getByRole("button", { name, exact: true });
+      const box = await control.boundingBox();
+      expect(box && box.height >= 44 && box.x >= 0 && box.x + box.width <= 375).toBe(true);
+      // Its value is whole ("Every status"), never cut to "Every s…".
+      const cut = await control.evaluate((el) =>
+        [el, ...el.querySelectorAll<HTMLElement>("*")].some((n) => n.scrollWidth > n.clientWidth + 1),
+      );
+      expect(cut, name).toBe(false);
+    }
+  });
 });

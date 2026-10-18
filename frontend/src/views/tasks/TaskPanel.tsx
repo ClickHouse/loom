@@ -281,7 +281,7 @@ function Timeline({ events }: { events: TaskEvent[] | null }) {
               )}
             </span>
             <span className="text-xs text-text-muted">
-              <ListTime iso={e.ts} />
+              <ListTime iso={e.ts} quiet />
             </span>
           </li>
         );

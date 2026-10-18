@@ -49,6 +49,15 @@ describe("ListTime", () => {
     expect(time.closest("td")).toHaveTextContent("Sep 20, 2026, 14:32 UTC");
   });
 
+  // Review: measuring the DOM after mount drew every row twice, the first time with the
+  // time as a tab stop. A row says so with `quiet`, and the first render is the last.
+  it("is quiet from the first render when the row says so", () => {
+    render(<ListTime iso="2026-09-20 14:32:00" quiet />);
+    const time = screen.getByText("Sep 20");
+    expect(time).not.toHaveAttribute("tabindex");
+    expect(time).toHaveTextContent("Sep 20, 2026, 14:32 UTC");
+  });
+
   it("renders nothing for a missing or unreadable time", () => {
     const { container } = render(
       <>

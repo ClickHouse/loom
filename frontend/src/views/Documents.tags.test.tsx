@@ -92,6 +92,22 @@ describe("Library: filtering by tags", () => {
     expect(shown()).toEqual(["Both", "Specs only"]);
   });
 
+  // Review: the Library had its own `tag:` parser beside the Memories one; on the shared
+  // parser the prefix still reads in any case, as the Library's did.
+  it("reads the tag: prefix in any case", async () => {
+    render(<Documents />);
+    await settle();
+    await userEvent.type(screen.getByLabelText("Search library"), "TAG:onboarding");
+    await settle();
+    expect(shown()).toEqual(["Both", "Onboarding only"]);
+    await waitFor(() =>
+      expect(api.listKnowledge).toHaveBeenLastCalledWith(
+        { org: "acme", namespace: "team" },
+        expect.objectContaining({ tags: ["onboarding"] }),
+      ),
+    );
+  });
+
   // Review findings: a tag the server matches nothing for showed "Your library is empty" and
   // took the search with it; a failed read said the same and offered to add a document.
   it("a tag that matches nothing keeps the search and offers to clear it", async () => {

@@ -5,15 +5,15 @@
 // tests share one reading and the tests need no DOM.
 import { ApiError } from "./errors";
 import type { PosterPolicy, TaskEvent, TaskListRow, TaskRow, TaskStatus } from "../api/tasks";
-import { displaySubject, listTime } from "./format";
+import { displaySubject, listTime, parseChTime } from "./format";
 import { isRecord } from "./guards";
 
 // ------------------------------------------------------------------ time
 
-/** The server's naive-UTC ("2026-09-20T01:00:00") or zoned instant → ms; NaN when unreadable. */
+/** A ClickHouse (naive UTC) or ISO time → ms, read as every list reads it (`parseChTime`);
+ *  NaN when unreadable. */
 function parseTs(iso: string | null | undefined): number {
-  if (!iso) return NaN;
-  return Date.parse(iso.endsWith("Z") || /[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`);
+  return parseChTime(iso)?.getTime() ?? NaN;
 }
 
 /** "42m ago" / "in 2h" / "3d ago": the date rule every list follows (`listTime` in
@@ -105,12 +105,12 @@ export type Attention = "triage" | "human" | "failed" | "soon";
 
 export const ATTENTIONS: readonly Attention[] = ["triage", "human", "failed", "soon"];
 
-/** `short` is the tile's label on a phone, where four sit in one row. */
-export const ATTENTION_META: Record<Attention, { label: string; short: string }> = {
-  triage: { label: "Triage · decide", short: "Triage" },
-  human: { label: "Blocked on a person", short: "Blocked" },
-  failed: { label: "Failed · reopen or close", short: "Failed" },
-  soon: { label: `Lease ending ≤${LEASE_SOON_MINUTES} min`, short: "Expiring" },
+/** Each tile's label, and its item in a phone's Filters menu. */
+export const ATTENTION_META: Record<Attention, { label: string }> = {
+  triage: { label: "Triage · decide" },
+  human: { label: "Blocked on a person" },
+  failed: { label: "Failed · reopen or close" },
+  soon: { label: `Lease ending ≤${LEASE_SOON_MINUTES} min` },
 };
 
 export function matchesAttention(

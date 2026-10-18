@@ -3,6 +3,7 @@ import { Alert } from "../components/ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import type { IconName } from "@clickhouse/click-ui/Icon";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
@@ -23,7 +24,9 @@ import {
   useClamped,
 } from "../components/ui";
 import { IconButton } from "../components/IconButton";
-import { SkeletonCard } from "../components/Skeleton";
+import { MenuChoice, MenuChoiceGroup } from "../components/MenuChoice";
+import { MenuTrigger } from "../components/ui/Menu";
+import { SkeletonCard, TableSkeleton } from "../components/Skeleton";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { displayAgent, listTime, relativeTime, truncate } from "../lib/format";
 import { useRowNav } from "../lib/useRowNav";
@@ -62,7 +65,9 @@ export const RUNS_FIELDS = [
  * run.list pages, sorts and searches on the server: the page asks for one page (offset,
  * limit, order_by, q and the filters) and shows the server's total. A server a release
  * behind ignores offset, order_by and q and sends no total: the page then reads its newest
- * 200 runs once and pages, searches and sorts those here (`local`).
+ * 200 runs once and pages, searches and sorts those here (`local`), and when it holds more
+ * it says the list is the newest 200 instead of counting 200 as every run. Another
+ * namespace, or a local read that carries a total, reads a page at a time again.
  *
  * The run is the primary object; a SESSION is not a separate tab but a
  * grouping of the runs that shared one connection (1 session → N runs).
@@ -76,7 +81,8 @@ export const RUNS_FIELDS = [
  * Tab, activated by Enter or Space, with an accent focus ring. Clicking anywhere else on
  * the row still opens it, as a mouse convenience; the row itself is not a control. Under
  * 769 px the runs are list rows (one tab stop, arrow keys between them) instead of Click
- * UI's stacked table cards.
+ * UI's stacked table cards. On a phone the sort, the grouping and the hidden runs fold into
+ * one View menu beside the filters, so the first run starts within the chrome budget.
  */
 
 type Filter = "" | RunStatus;
@@ -399,7 +405,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
       { label: <span className={NUMERIC}>{(r.memories_used ?? []).length}</span> },
       { label: <span className={NUMERIC}>{(r.memories_written ?? []).length}</span> },
       { label: <span className={NUMERIC}>{fmtDuration(r.duration_ms)}</span> },
-      { label: <ListTime iso={r.started_at} className="text-text-muted" /> },
+      { label: <ListTime iso={r.started_at} quiet className="text-text-muted" /> },
     ],
   };
 }
@@ -416,7 +422,7 @@ interface RunListProps {
    *  out of sight, since a table without one leaves its cells unlabelled for a screen
    *  reader. */
   hideHeader?: boolean;
-  /** The first read: Click UI's own loading table. */
+  /** The first read: the header over a skeleton. */
   loading?: boolean;
 }
 
@@ -432,7 +438,7 @@ function RunTable({ label, rows, onOpen, order, onOrder, busy, hideHeader = fals
       ref={table}
       aria-label={label}
       aria-busy={loading || busy || undefined}
-      loading={loading}
+      noDataMessage={loading ? <TableSkeleton label="Loading runs" /> : undefined}
       headers={runHeaders(order, !hideHeader)}
       onSort={(dir, _header, index) => {
         const key = SORT_AT[index];
@@ -476,7 +482,7 @@ function RunRows({ label, rows, onOpen, busy, keys }: RunListProps & { keys: boo
               <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
                 <span className="min-w-0 truncate">{displayAgent(r.agent)}</span>
                 <span aria-hidden="true">·</span>
-                <ListTime iso={r.started_at} />
+                <ListTime iso={r.started_at} quiet />
                 <span aria-hidden="true">·</span>
                 <span className="tabular-nums whitespace-nowrap">
                   <span className="sr-only">took </span>
@@ -578,8 +584,10 @@ export function Runs() {
       shownScope.current = scope;
       setShown(null);
       setAgents([]);
-      if (page !== 0) {
+      // Another namespace may be another server's answer: ask it for a page first.
+      if (page !== 0 || local) {
         setPage(0);
+        setLocal(false);
         return;
       }
     }
@@ -607,8 +615,9 @@ export function Runs() {
       .then((p) => {
         if (!live) return;
         // No total: a server that does not page. Read its newest runs once and page here.
-        if (p.total === null && !local) {
-          setLocal(true);
+        // A total in that read: it pages now, so read a page at a time again.
+        if ((p.total === null) !== local) {
+          setLocal(!local);
           return;
         }
         setShown({ runs: p.runs, total: p.total, page });
@@ -663,6 +672,8 @@ export function Runs() {
 
   // Against a server that does not page: its newest runs, searched, sorted and paged here.
   const localRows = local && shown ? sortRuns(searchRuns(shown.runs, q), order) : null;
+  // It answered as many as it sends: the server holds more than these.
+  const capped = local && shown !== null && shown.runs.length >= LOCAL_LIMIT;
   const rows = localRows ? localRows.slice(page * pageSize, (page + 1) * pageSize) : (shown?.runs ?? []);
   const busy = loading && shown !== null;
   const searching = q !== "" || filter !== "" || agent !== "";
@@ -672,7 +683,7 @@ export function Runs() {
           localRows ? page : shown.page,
           pageSize,
           rows.length,
-          localRows ? localRows.length : shown.total,
+          localRows ? (capped && q === "" ? null : localRows.length) : shown.total,
           q !== "",
         ) || undefined
       : undefined;
@@ -737,6 +748,39 @@ export function Runs() {
     </>
   );
 
+  // A phone's chrome budget has no room for a row of toggles under the filters (44 px each
+  // under a touch pointer): the sort, the grouping and the hidden runs are one View menu.
+  const viewMenu = (
+    <Dropdown modal={false}>
+      <MenuTrigger>
+        {/* An icon: with a word beside them the two selects cut their values ("Every s…"). */}
+        <IconButton
+          icon="eye"
+          label="View"
+          tooltip="Sort, group by session, show runs with no memory activity"
+          className="shrink-0"
+        />
+      </MenuTrigger>
+      <Dropdown.Content align="end" aria-label="View" aria-labelledby={undefined}>
+        <MenuChoiceGroup label="Sort">
+          {(Object.keys(ORDER_LABELS) as RunOrder[]).map((o) => (
+            <MenuChoice key={o} radio checked={order === o} onSelect={() => refilter(setOrder)(o)}>
+              {ORDER_LABELS[o]}
+            </MenuChoice>
+          ))}
+        </MenuChoiceGroup>
+        <MenuChoiceGroup label="Show">
+          <MenuChoice checked={groupBy} onSelect={() => setGroupBy((v) => !v)}>
+            Group by session
+          </MenuChoice>
+          <MenuChoice checked={!hideConn} onSelect={() => refilter(setHideConn)(!hideConn)}>
+            Show runs with no memory activity
+          </MenuChoice>
+        </MenuChoiceGroup>
+      </Dropdown.Content>
+    </Dropdown>
+  );
+
   return (
     <PageContainer>
       <PageHeader
@@ -770,33 +814,41 @@ export function Runs() {
         </div>
         {!phone && <div className="flex min-w-0 items-center gap-2 overflow-x-auto">{filters}</div>}
       </ListToolbar>
-      {/* A phone's toolbar has room for the search only; the filters sit under it. */}
-      {phone && <div className="-mt-1 mb-3 flex items-center gap-2">{filters}</div>}
+      {/* A phone's toolbar has room for the search only; the filters and the View menu sit
+          under it. */}
+      {phone && (
+        <div className="-mt-1 mb-3 flex items-center gap-2">
+          {filters}
+          {viewMenu}
+        </div>
+      )}
 
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <Chip label="Group by session" selected={groupBy} onClick={() => setGroupBy((v) => !v)} />
-        {/* No column headers to sort by: the order is a select. */}
-        {narrow && (
-          <Select
-            value={order}
-            onSelect={(v) => refilter(setOrder)(v as RunOrder)}
-            triggerProps={{ "aria-label": "Sort runs" }}
-            className="ml-auto w-40 shrink-0"
-          >
-            {(Object.keys(ORDER_LABELS) as RunOrder[]).map((o) => (
-              <Select.Item key={o} value={o}>
-                {ORDER_LABELS[o]}
-              </Select.Item>
-            ))}
-          </Select>
-        )}
-        {/* One label; pressed means the folded runs are shown. */}
-        <Chip
-          label="Show runs with no memory activity"
-          selected={!hideConn}
-          onClick={() => refilter(setHideConn)(!hideConn)}
-        />
-      </div>
+      {!phone && (
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <Chip label="Group by session" selected={groupBy} onClick={() => setGroupBy((v) => !v)} />
+          {/* No column headers to sort by: the order is a select. */}
+          {narrow && (
+            <Select
+              value={order}
+              onSelect={(v) => refilter(setOrder)(v as RunOrder)}
+              triggerProps={{ "aria-label": "Sort runs" }}
+              className="ml-auto w-40 shrink-0"
+            >
+              {(Object.keys(ORDER_LABELS) as RunOrder[]).map((o) => (
+                <Select.Item key={o} value={o}>
+                  {ORDER_LABELS[o]}
+                </Select.Item>
+              ))}
+            </Select>
+          )}
+          {/* One label; pressed means the folded runs are shown. */}
+          <Chip
+            label="Show runs with no memory activity"
+            selected={!hideConn}
+            onClick={() => refilter(setHideConn)(!hideConn)}
+          />
+        </div>
+      )}
 
       {error !== null && <ListState kind="error" things="runs" error={error} onRetry={() => setRetry((n) => n + 1)} />}
       {error === null &&
@@ -821,8 +873,7 @@ export function Runs() {
           {...(hideConn
             ? {
                 title: "No runs with memory activity",
-                description:
-                  'Runs that neither relied on nor wrote a memory under their run_id are folded. Use "Show runs with no memory activity" to see them. A run fills up when the caller passes run_id on memory.set and names what it relied on in run.complete(memories_used).',
+                description: `Runs that neither relied on nor wrote a memory under their run_id are folded. Use "Show runs with no memory activity"${phone ? " in the View menu" : ""} to see them. A run fills up when the caller passes run_id on memory.set and names what it relied on in run.complete(memories_used).`,
               }
             : {
                 title: "No runs yet",
@@ -830,6 +881,12 @@ export function Runs() {
                   "Agents open a run with run.begin (the Claude Code plugin does it on the first prompt of a session) and close it with run.complete, naming the memories they relied on.",
               })}
         />
+      )}
+
+      {error === null && capped && (
+        <p className="mb-3 text-xs text-text-muted">
+          Showing the newest {LOCAL_LIMIT} runs: this server sends no more, so the search and the sort cover these.
+        </p>
       )}
 
       {/* A new page scrolls here and takes focus. */}
@@ -860,6 +917,7 @@ export function Runs() {
           pageSize={pageSize}
           shown={rows.length}
           total={localRows ? localRows.length : (shown.total ?? undefined)}
+          capped={capped}
           onPage={setPage}
           onPageSize={refilter(setPageSize)}
           topId="runs-list"

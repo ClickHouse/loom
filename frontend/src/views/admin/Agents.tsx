@@ -13,6 +13,7 @@ import { ListToolbar } from "../../components/ui/ListToolbar";
 import { IconButton } from "../../components/IconButton";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
+import { TableSkeleton } from "../../components/Skeleton";
 import { PageHeader } from "../../components/ui";
 
 /**
@@ -48,7 +49,9 @@ export function Agents() {
   // A refresh or a new window keeps the table on screen, marked busy, until it answers.
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
+  // Refresh and Retry read again through the effect, so a newer read drops an older one.
+  const [reads, setReads] = useState(0);
+  const load = (signal: AbortSignal, live: () => boolean) => {
     if (!identity) return;
     setError(null);
     setRefreshing(true);
@@ -63,7 +66,7 @@ export function Agents() {
         if (live()) setRefreshing(false);
       });
   };
-  useAbortableEffect(load, [identity?.org, windowHours]);
+  useAbortableEffect(load, [identity?.org, windowHours, reads]);
 
   if (!identity) return null;
 
@@ -72,7 +75,13 @@ export function Agents() {
       <PageHeader
         title="Agents"
         actions={
-          <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()} loading={refreshing}>
+          <Button
+            type="secondary"
+            htmlType="button"
+            iconLeft="refresh"
+            onClick={() => setReads((n) => n + 1)}
+            loading={refreshing}
+          >
             Refresh
           </Button>
         }
@@ -103,9 +112,18 @@ export function Agents() {
         />
       </ListToolbar>
 
-      {!!error && <ListState kind="error" things="connected clients" error={error} onRetry={() => load()} />}
+      {!!error && (
+        <ListState kind="error" things="connected clients" error={error} onRetry={() => setReads((n) => n + 1)} />
+      )}
       {!error && rows === null && (
-        <Table aria-label="Connected clients" aria-busy loading size="sm" headers={HEADERS} rows={[]} />
+        <Table
+          aria-label="Connected clients"
+          aria-busy
+          size="sm"
+          headers={HEADERS}
+          rows={[]}
+          noDataMessage={<TableSkeleton label="Loading connected clients" />}
+        />
       )}
       {!error && rows !== null && rows.length === 0 && (
         <ListState
@@ -139,7 +157,7 @@ export function Agents() {
                     label: (
                       // Not seen for a day: said by a badge, not by the colour of the time alone.
                       <span className="inline-flex items-center gap-1.5">
-                        <ListTime iso={r.last_seen} className="text-text-muted" />
+                        <ListTime iso={r.last_seen} quiet className="text-text-muted" />
                         {stale && <Badge text="Stale" state="warning" size="sm" />}
                       </span>
                     ),

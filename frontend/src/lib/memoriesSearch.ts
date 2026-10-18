@@ -14,14 +14,15 @@ export function keywordThenRanked(keywordKeys: string[], rankedKeys: string[]): 
 /** A search box's text split into what the server is asked and the filters the list
  *  applies itself: `tag:work coffee` searches "coffee" among memories tagged `work`;
  *  `agent:foo bar` does the same for an agent. Whitespace runs count as one space. The
- *  values keep the case they were typed in; a caller matching them ignores case. */
+ *  prefixes read in any case ("TAG:work"); the values keep the case they were typed in,
+ *  and a caller matching them ignores case. */
 export function parseSearchQuery(query: string): { text: string; tags: string[]; agent: string | null } {
   const tags: string[] = [];
   let agent: string | null = null;
   const rest: string[] = [];
   for (const tok of query.trim().split(/\s+/).filter(Boolean)) {
-    const mTag = /^tag:(.+)$/.exec(tok);
-    const mAgent = /^agent:(.+)$/.exec(tok);
+    const mTag = /^tag:(.+)$/i.exec(tok);
+    const mAgent = /^agent:(.+)$/i.exec(tok);
     if (mTag) tags.push(mTag[1]);
     else if (mAgent) agent = mAgent[1];
     else rest.push(tok);
@@ -34,13 +35,4 @@ export function toggleQueryToken(query: string, token: string): string {
   const tokens = query.trim().split(/\s+/).filter(Boolean);
   const kept = tokens.filter((t) => t.toLowerCase() !== token.toLowerCase());
   return (kept.length < tokens.length ? kept : [...tokens, token]).join(" ");
-}
-
-/** The query without `token` (any case); the rest keeps its order. */
-export function removeQueryToken(query: string, token: string): string {
-  return query
-    .trim()
-    .split(/\s+/)
-    .filter((t) => t && t.toLowerCase() !== token.toLowerCase())
-    .join(" ");
 }

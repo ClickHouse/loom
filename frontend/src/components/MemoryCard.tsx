@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type ReactNode } from "react";
+import { memo, useId, useMemo, useState, type ReactNode } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { Identity, MemoryListEntry } from "../api";
@@ -131,6 +131,7 @@ export const MemoryCard = memo(function MemoryCard({
   const value = shown ? shown.value : null;
   const encoded = shown ? shown.encoded : false;
   const pairs = shown ? shown.pairs : false;
+  const id = useId();
 
   // The row's body is one button stretched over the whole row (its ::after); the tag chips
   // sit beside it, above the stretch, so no control is nested in another.
@@ -152,11 +153,17 @@ export const MemoryCard = memo(function MemoryCard({
             })
           }
           onKeyUp={onToggle && ((e) => e.key === " " && e.preventDefault())}
+          // Named by its key; its state, writer, time and value are its description.
+          aria-label={entry.memory_key}
+          aria-describedby={`${id}-meta ${id}-value`}
           className="block min-w-0 flex-1 text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
         >
           {/* Line 1: what it is, its state, who wrote it and when. */}
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-            <span className="min-w-0 truncate font-mono text-text">{entry.memory_key}</span>
+          <span id={`${id}-meta`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            {/* The name already: left out of the description. */}
+            <span aria-hidden="true" className="min-w-0 truncate font-mono text-text">
+              {entry.memory_key}
+            </span>
             {hasConflict && (
               <span className="inline-flex shrink-0">
                 <Badge text="Conflicted" state="warning" size="sm" aria-hidden="true" />
@@ -203,15 +210,17 @@ export const MemoryCard = memo(function MemoryCard({
             )}
             {/* The meta slot: who wrote it, then when. Flush right; under 640 px its own line. */}
             <span className="flex min-w-0 basis-full items-center gap-2 text-text-muted sm:ml-auto sm:basis-auto sm:shrink-0">
-              {entry.agent && <AgentBadge agent={entry.agent} />}
-              <ListTime iso={entry.created_at} />
+              {entry.agent && <AgentBadge agent={entry.agent} quiet />}
+              <ListTime iso={entry.created_at} quiet />
             </span>
           </span>
           {/* Line 2: the value, two lines at most; a JSON object as one line of its pairs. */}
           {pairs && value !== null ? (
-            <span className="mt-1 block truncate font-mono text-xs text-text-muted">{truncate(value, 280)}</span>
+            <span id={`${id}-value`} className="mt-1 block truncate font-mono text-xs text-text-muted">
+              {truncate(value, 280)}
+            </span>
           ) : (
-            <span className="mt-1 text-sm text-text leading-normal line-clamp-2 break-words">
+            <span id={`${id}-value`} className="mt-1 text-sm text-text leading-normal line-clamp-2 break-words">
               {/* Cut before the clamp, so a 2 KB preview never lands in the DOM: two lines hold ~280. */}
               {value === null ? <span className="text-text-muted">…</span> : truncate(value, 280)}
             </span>

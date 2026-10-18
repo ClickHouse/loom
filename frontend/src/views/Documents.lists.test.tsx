@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
@@ -160,5 +160,46 @@ describe("Library list", () => {
     (document.activeElement as HTMLElement | null)?.blur();
     await user.keyboard("{Escape}");
     expect(toolbar()).not.toHaveTextContent("selected");
+  });
+
+  // Review: the free-text filter and the sort run over the documents loaded so far, but
+  // "No documents match" and "N matches" read as a claim about the whole library while
+  // the cursor still held unread documents.
+  it("says a search covers only the loaded documents while more are unread", async () => {
+    api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: "c-2" });
+    render(<Documents />);
+    await screen.findByText("Refund escalation");
+    await userEvent.type(screen.getByLabelText("Search library"), "refund");
+    await waitFor(() => expect(toolbar()).toHaveTextContent("1 match in the first 3"));
+    await userEvent.type(screen.getByLabelText("Search library"), " zzz");
+    expect(
+      await screen.findByText((_, el) => el?.textContent === "No documents match refund zzz in the first 3 loaded"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
+  });
+
+  // Review: the reload after a delete had no abort or live check, so a namespace switch
+  // while it was in flight drew the old namespace's documents under the new one.
+  it("drops a reload after a delete that lands once the namespace has changed", async () => {
+    let finishOld: (v: unknown) => void = () => {};
+    let teamReads = 0;
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }) => {
+      if (id.namespace === "other") return { rows: [doc({ source_uri: "docs/other.md", title: "Other doc" })] };
+      teamReads += 1;
+      if (teamReads === 1) return { rows: ROWS, next_cursor: null };
+      return new Promise((resolve) => {
+        finishOld = resolve;
+      });
+    });
+    render(<Documents />);
+    await screen.findByText("Refund escalation");
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Refund escalation" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await waitFor(() => expect(teamReads).toBe(2));
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "other", agent: "loom-ui" } }));
+    expect(await screen.findByText("Other doc")).toBeInTheDocument();
+    await act(async () => finishOld({ rows: ROWS, next_cursor: null }));
+    expect(screen.queryByText("Refund escalation")).toBeNull();
+    expect(screen.getByText("Other doc")).toBeInTheDocument();
   });
 });

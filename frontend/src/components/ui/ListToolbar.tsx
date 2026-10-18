@@ -82,7 +82,10 @@ export function ListToolbar({ label, children, count, selection }: ListToolbarPr
                 aria-label={`Select all ${selection.all.total.toLocaleString()} on this page`}
               />
             )}
-            <span className="text-sm font-medium tabular whitespace-nowrap">{selection.count} selected</span>
+            {/* Said by the live region at the end of the bar. */}
+            <span aria-hidden="true" className="text-sm font-medium tabular whitespace-nowrap">
+              {selection.count} selected
+            </span>
             <Button type="empty" htmlType="button" onClick={selection.onClear} aria-label="Clear selection">
               Clear
             </Button>
@@ -126,14 +129,18 @@ export function ListToolbar({ label, children, count, selection }: ListToolbarPr
         ) : (
           <>
             <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
-            {/* Said when it changes (a search, a filter, a page), and shown on a phone too. */}
-            {count && (
-              <span aria-live="polite" className="shrink-0 whitespace-nowrap text-xs text-text-muted tabular">
-                {count}
-              </span>
-            )}
           </>
         )}
+        {/* One live region, mounted with the bar, so each change is said: the count (shown on
+            a phone too) as a search, a filter or a page moves it, or, unseen, the selection
+            while rows are selected. */}
+        <span
+          aria-live="polite"
+          aria-atomic="true"
+          className={selecting ? "sr-only" : "shrink-0 whitespace-nowrap text-xs text-text-muted tabular"}
+        >
+          {selecting && selection ? `${selection.count} selected` : count}
+        </span>
       </search>
     </>
   );

@@ -144,8 +144,9 @@ function RecallHistory() {
   const setRunFilter = useStore((s) => s.setRecallRunFilter);
   const [rows, setRows] = useState<SearchTraceLogRow[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [hours, setHours] = useState(168);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,7 +162,7 @@ function RecallHistory() {
         if (!cancelled) setRows(r.rows || []);
       } catch (e) {
         if (!cancelled) {
-          setError(humanizeError(e));
+          setError(e);
           setRows([]);
         }
       } finally {
@@ -171,7 +172,7 @@ function RecallHistory() {
     return () => {
       cancelled = true;
     };
-  }, [identity, hours, runFilter]);
+  }, [identity, hours, runFilter, retry]);
 
   // Recording is an operator switch (LOOM_SEARCH_TRACE_LOG_ENABLED) and the
   // query wording needs the namespace's own consent on top, so "empty" has two
@@ -212,9 +213,11 @@ function RecallHistory() {
       )}
 
       {loading && <Loading layout="inline" label="Loading recorded searches" className="px-1 mb-2" />}
-      {error && <div className="text-sm text-danger px-1">{error}</div>}
+      {error !== null && (
+        <ListState kind="error" things="recorded searches" error={error} onRetry={() => setRetry((n) => n + 1)} />
+      )}
 
-      {rows != null && !loading && !error && rows.length === 0 && (
+      {rows != null && !loading && error === null && rows.length === 0 && (
         <EmptyState
           icon="history"
           title={runFilter ? "No recorded searches under this run" : "No recorded searches"}

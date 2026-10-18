@@ -9,6 +9,11 @@ import { Runs } from "./Runs";
 // (offset, limit, order_by, q) and shows the server's total in the toolbar and the pager.
 // A server a release behind sends no total: the pager then stops on a short page.
 
+// A 50-row Click UI Table renders in about half a second in jsdom, and the paging, search
+// and sort cases render several: about 2 s alone, past the 5 s default under a full parallel
+// run on a loaded host.
+vi.setConfig({ testTimeout: 15_000 });
+
 const listRunsPage = vi.fn<(id: unknown, opts?: RunListOptions) => Promise<RunListPage>>();
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -128,6 +133,56 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(screen.queryByRole("button", { name: "goal 2" })).toBeNull();
   });
 
+  // Review finding: such a server answers at most its newest 200, and the page said "of 200"
+  // as if that were every run. It says it shows the newest 200 and counts no total.
+  it("against a server that does not page and holds more, says it shows the newest 200", async () => {
+    listRunsPage.mockImplementation(async (_id, opts = {}) => ({
+      runs: Array.from({ length: Math.min(opts.limit ?? 50, 200) }, (_, i) => run(i + 1)),
+      total: null,
+    }));
+    render(<Runs />);
+    await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
+    expect(await screen.findByText(/Showing the newest 200 runs/)).toBeInTheDocument();
+    expect(toolbar()).toHaveTextContent("1–50");
+    expect(toolbar()).not.toHaveTextContent(/of 200/);
+  });
+
+  it("says nothing of a cap when such a server holds fewer than 200", async () => {
+    listRunsPage.mockImplementation(async () => ({ runs: [run(1), run(2)], total: null }));
+    render(<Runs />);
+    await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
+    await screen.findByRole("button", { name: "goal 2" });
+    expect(screen.queryByText(/Showing the newest/)).toBeNull();
+  });
+
+  // Review finding: once on, the local mode never went off, not even for another namespace.
+  it("reads another namespace's runs a page at a time again when its server pages", async () => {
+    listRunsPage.mockImplementation(async (id) =>
+      (id as { namespace: string }).namespace === "ns" ? { runs: [run(1)], total: null } : { runs: [run(7)], total: 1 },
+    );
+    render(<Runs />);
+    await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
+    await screen.findByRole("button", { name: "goal 1" });
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "ns2", agent: "loom-ui" } }));
+    await screen.findByRole("button", { name: "goal 7" });
+    expect(lastOpts()).toMatchObject({ limit: 50, offset: 0, orderBy: "started_desc" });
+  });
+
+  it("reads a page at a time again once a local read carries a total (the server upgraded)", async () => {
+    let upgraded = false;
+    listRunsPage.mockImplementation(async () =>
+      upgraded ? { runs: [run(3)], total: 1 } : { runs: [run(1)], total: null },
+    );
+    render(<Runs />);
+    await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
+    await screen.findByRole("button", { name: "goal 1" });
+    upgraded = true;
+    fireEvent.click(within(screen.getByLabelText("Filter runs by status")).getByRole("button", { name: "Failed" }));
+    await screen.findByRole("button", { name: "goal 3" });
+    expect(lastOpts()).toMatchObject({ status: "failed", limit: 50, offset: 0, orderBy: "started_desc" });
+    expect(toolbar()).toHaveTextContent("1–1 of 1");
+  });
+
   it("sends the search to the server after 250 ms and starts again from page 1", async () => {
     server(120);
     render(<Runs />);
@@ -227,12 +282,15 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(screen.getByRole("textbox", { name: "Search runs" })).toHaveValue("");
   });
 
-  it("draws the first read as Click UI's loading table, marked busy", async () => {
+  it("draws the first read as the table's header over a skeleton, marked busy", async () => {
     listRunsPage.mockReturnValue(new Promise(() => {}));
     render(<Runs />);
     const table = await screen.findByRole("table", { name: "Runs" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    expect(within(table).getByText("Loading data")).toBeInTheDocument();
+    // Review finding: Click UI's `loading` showed its loader at once; the first read waits
+    // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+    expect(within(table).queryByText("Loading data")).toBeNull();
+    expect(within(table).getByRole("status", { name: "Loading runs" })).toHaveAttribute("aria-busy", "true");
     expect(within(table).getByRole("columnheader", { name: "Goal" })).toBeInTheDocument();
   });
 

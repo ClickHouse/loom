@@ -89,6 +89,21 @@ describe("Chip", () => {
   });
 });
 
+describe("Chip under a coarse pointer", () => {
+  // A static chip is not a target: drawn 44 px tall on a phone it doubled a search result's
+  // height. Only a chip a finger presses grows to 44 px.
+  it("grows to a 44 px target only when it is a control", () => {
+    render(
+      <>
+        <Chip label="beans" outline />
+        <Chip label="brew" outline onClick={() => undefined} />
+      </>,
+    );
+    expect(screen.getByText("beans").parentElement?.className).not.toContain("pointer-coarse:min-h-11");
+    expect(screen.getByRole("button", { name: "brew" }).className).toContain("pointer-coarse:min-h-11");
+  });
+});
+
 describe("Chip with a tip", () => {
   it("a static chip is a TipTarget: a focusable note in the chip's own shape", async () => {
     const user = userEvent.setup();
