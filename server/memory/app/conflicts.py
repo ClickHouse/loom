@@ -884,18 +884,13 @@ async def mark_peers_conflicted(
     expected_sha256: str = "",
     peer_sha256: dict[str, str] | None = None,
 ) -> str:
-    """Cross-link the new row with its peers still live (or on trial) and flag
-    them `conflicted`; a proposal keeps its status. With `peer_sha256` ({peer id:
-    the hash judged}), a peer is flagged only while it holds that hash and is not
-    pinned, at its read version + 1, like the new row under `expected_sha256`.
-    With no live peer, or a new row retired or deleted since the verdict, nothing
-    is written, peers included. Writes new RMT version rows, every column carried.
-    With `expected_sha256` (a verdict reached after the write: the conflict
-    resolver's), only the judged write is flagged (`judged_write`). Returns the
-    verdict that landed: `conflict`; `moved`, and no peer touched, when the new row
-    was not flagged (a newer write replaced it, or it was retired since); `clear`
-    when no peer was live to flag it against. With no live peer, such a verdict
-    reads the row and answers `moved` if it would not have been flagged."""
+    """Cross-link the new row with its live peers and flag both `conflicted` (a
+    proposal keeps its status). With `expected_sha256` (the resolver's later verdict)
+    the new row, and with `peer_sha256` ({peer id: hash judged}) each unpinned peer,
+    is flagged only while it holds that hash, at its read version + 1. Returns
+    `conflict` when flagged; `moved` when the new row was not (replaced, retired, or
+    under `expected_sha256` no longer the judged write), and no peer is touched;
+    `clear` when no peer was live."""
     import server.memory.store as memory_repo
 
     def _merged(existing: list[str], additions: list[str]) -> list[str]:
