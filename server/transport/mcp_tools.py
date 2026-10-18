@@ -443,19 +443,43 @@ def _emit_mcp_event(
     )
 
 
-def emit_refusal(op_name: str, raw_args: dict[str, Any], code: str) -> None:
+def emit_refusal(op_name: str, code: str, auth: Any) -> None:
     """The ledger row for a call MCP refuses before dispatch (an org or
-    namespace the token may not use, an op kept off MCP), so the SLIs count it
-    as the caller's, as they do HTTP's refusals. A name no op answers to
-    writes none."""
+    namespace the token may not use, an op kept off MCP, a write on a
+    read-only connection), so the SLIs count it as the caller's, as they do
+    HTTP's refusals. A name no op answers to writes none.
+
+    The caller is not bound yet, so the row is the token's alone: its org and
+    subject, `-` for the rest, no arguments. Nothing the refused call named
+    reaches the ledger, and the previous call of a batch leaves nothing on it."""
     import uuid
 
+    from server.core.naming import SENTINEL
+    from server.observability.ledger import emit_agent_event
     from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport._common import sli_columns
+    from server.transport.mcp_call import _begin_call
 
-    if op_name in OPERATIONS_BY_NAME:
-        _emit_mcp_event(
-            op_name, raw_args, 0, success=False, error_code=code, request_id=str(uuid.uuid4())
-        )
+    if op_name not in OPERATIONS_BY_NAME:
+        return
+    _begin_call()
+    org = str(getattr(auth, "org", "") or SENTINEL)
+    emit_agent_event(
+        op_name=op_name,
+        identity={
+            "org": org,
+            "namespace": SENTINEL,
+            "agent": SENTINEL,
+            "user_id": SENTINEL,
+            "session_id": SENTINEL,
+        },
+        request_id=str(uuid.uuid4()),
+        latency_ms=0,
+        success=False,
+        error_code=code,
+        subject=str(getattr(auth, "subject", "") or "") or None,
+        **sli_columns(op_name, "mcp"),
+    )
 
 
 # The `why` note names a hit's ranking terms in the agent's

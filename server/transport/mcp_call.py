@@ -199,7 +199,7 @@ async def _call_tool(
 
     _begin_call()
 
-    tool = await _resolve_tool(req_id, name, arguments, auth, client_name, toolset)
+    tool = await _resolve_tool(req_id, name, auth, client_name, toolset)
     if isinstance(tool, dict):
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
@@ -375,12 +375,7 @@ async def _bind_session_run(
 
 
 async def _resolve_tool(
-    req_id: Any,
-    name: str,
-    arguments: dict[str, Any],
-    auth: Any,
-    client_name: str | None,
-    toolset: str | None = None,
+    req_id: Any, name: str, auth: Any, client_name: str | None, toolset: str | None = None
 ) -> Operation | dict[str, Any]:
     """Phase 1 of `_call_tool`: the tool name → its registry op, or the
     whole JSON-RPC response when the call ends here (`loom_activate` ran,
@@ -411,7 +406,7 @@ async def _resolve_tool(
             from server.transport.mcp_tools import emit_refusal
 
             body = {**(hidden_refusal(op.name) or {}), "tool": name}
-            emit_refusal(op.name, arguments, "OP_NOT_ON_MCP")
+            emit_refusal(op.name, "OP_NOT_ON_MCP", auth)
             msg = f"{body.get('error', msg)}; instead: {body.get('instead', '')}"
         return _ok(
             req_id,

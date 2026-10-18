@@ -208,57 +208,68 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
     assert counter.calls == [{"reason": "invalid", "loom.transport": "http"}]
 
 
-def test_mcp_refusals_before_dispatch_are_ledgered_as_the_caller_s(monkeypatch) -> None:
+def test_mcp_refusals_before_dispatch_are_ledgered_as_the_token_alone(monkeypatch) -> None:
+    """Refused before the caller is bound: each row is the token's org and
+    subject with `-` for the rest and no arguments, whatever the call named,
+    and starts from a clean request state (a batch's previous entry)."""
     import asyncio
 
     from server.auth.jwt import AuthInfo
+    from server.observability import ledger
     from server.operations.base import Role
-    from server.transport import mcp_call, mcp_op, mcp_tools
-    from server.transport.mcp_auth import _screen_tool_call
+    from server.transport import mcp_auth, mcp_call, mcp_op
 
-    rows: list[tuple[str, str, str]] = []
-
-    def _capture(op_name, raw_args, latency_ms, success, error_code, request_id, **_):
-        assert not success
-        rows.append((op_name, error_code, raw_args.get("org", "")))
-
-    monkeypatch.setattr(mcp_tools, "_emit_mcp_event", _capture)
+    rows: list[dict] = []
+    resets: list[int] = []
+    monkeypatch.setattr(ledger, "emit_agent_event", lambda **kw: rows.append(kw))
+    monkeypatch.setattr(mcp_call, "_begin_call", lambda: resets.append(1))
     eve = AuthInfo(
         subject="eve", org="eve-org", namespaces=(), roles=(Role.WRITER,), is_service_account=False
     )
-    call = {"name": "loom_memory_set", "arguments": {"org": "acme", "namespace": "n"}}
-    assert asyncio.run(_screen_tool_call({"id": 1, "params": call}, eve)) is not None
-    # Kept off MCP, by its tool name and through loom_op; a write on a read-only connection.
+    named = {"org": "acme", "namespace": "n", "user_id": "bob", "value": "secret text"}
+
+    def _call(name: str, arguments: dict) -> dict:
+        return {"id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
+
+    # Another org; a namespace the token may not read.
+    assert asyncio.run(mcp_auth._screen_tool_call(_call("loom_memory_set", dict(named)), eve))
+
+    async def _no(*_a) -> bool:
+        return False
+
+    monkeypatch.setattr(mcp_auth, "_may_read", _no)
+    mine = {**named, "org": "eve-org"}
+    assert asyncio.run(mcp_auth._screen_tool_call(_call("loom_memory_set", mine), eve))
+    # Kept off MCP, by tool name and through loom_op naming another org; a
+    # write on a read-only connection.
     hidden = next(op for op in mcp_call.ALL_OPERATIONS if op.name == "blacklist.remove")
-    assert isinstance(
-        asyncio.run(mcp_call._resolve_tool(2, hidden.mcp_tool_name, {}, eve, None)), dict
-    )
-    via_op = {
-        "id": 3,
-        "method": "tools/call",
-        "params": {"name": "loom_op", "arguments": {"op": "blacklist.remove"}},
-    }
-    assert mcp_op.route(via_op, toolset=None)[1] is not None
-    write = {
-        "id": 4,
-        "method": "tools/call",
-        "params": {"name": "loom_op", "arguments": {"op": "memory.set"}},
-    }
-    assert mcp_op.route(write, toolset="readonly")[1] is not None
+    assert isinstance(asyncio.run(mcp_call._resolve_tool(2, hidden.mcp_tool_name, eve, None)), dict)
+    via_op = _call("loom_op", {"op": "blacklist.remove", "arguments": dict(named)})
+    assert mcp_op.route(via_op, toolset=None, auth=eve)[1] is not None
+    write = _call("loom_op", {"op": "memory.set", "arguments": dict(named)})
+    assert mcp_op.route(write, toolset="readonly", auth=eve)[1] is not None
     # A name no op answers to writes no row.
-    unknown = {
-        "id": 5,
-        "method": "tools/call",
-        "params": {"name": "loom_op", "arguments": {"op": "no.such"}},
-    }
-    assert mcp_op.route(unknown, toolset=None)[1] is not None
-    assert rows == [
-        ("memory.set", "ORG_MISMATCH", "eve-org"),  # the token's org, not the one named
-        ("blacklist.remove", "OP_NOT_ON_MCP", ""),
-        ("blacklist.remove", "OP_NOT_ON_MCP", ""),
-        ("memory.set", "UNKNOWN_OP", ""),
+    assert mcp_op.route(_call("loom_op", {"op": "no.such"}), toolset=None, auth=eve)[1]
+
+    assert [(r["op_name"], r["error_code"]) for r in rows] == [
+        ("memory.set", "ORG_MISMATCH"),
+        ("memory.set", "NAMESPACE_NOT_ACCESSIBLE"),
+        ("blacklist.remove", "OP_NOT_ON_MCP"),
+        ("blacklist.remove", "OP_NOT_ON_MCP"),
+        ("memory.set", "UNKNOWN_OP"),
     ]
-    assert {sli.status_class(False, code, None) for _, code, _ in rows} == {"client"}
+    token_only = {
+        "org": "eve-org",
+        "namespace": "-",
+        "agent": "-",
+        "user_id": "-",
+        "session_id": "-",
+    }
+    for row in rows:
+        assert row["identity"] == token_only and row["subject"] == "eve"
+        assert "raw_args" not in row and row["transport"] == "mcp" and not row["success"]
+        assert sli.status_class(False, row["error_code"], None) == "client"
+    assert len(resets) == len(rows)
 
 
 def test_health_problems_need_no_clickhouse() -> None:

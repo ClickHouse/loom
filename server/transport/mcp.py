@@ -351,7 +351,7 @@ def attach(app: FastAPI) -> None:
                     if isinstance(client_info, dict):
                         _remember_client_for_session(session_id, client_info.get("name"))
             client_name = _resolve_client_name(req, session_id)
-            req, early = route_loom_op(req, toolset=request.query_params.get("toolset"))
+            req, early = route_loom_op(req, toolset=request.query_params.get("toolset"), auth=auth)
             if early is not None:
                 return early
             # AuthZ: identity must match the args; a namespace the JWT lacks → grants.

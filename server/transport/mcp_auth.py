@@ -57,13 +57,13 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
-def _ledger_refusal(tool_name: Any, args: dict[str, Any], code: str) -> None:
+def _ledger_refusal(tool_name: Any, code: str, auth: AuthInfo) -> None:
     from server.transport.mcp_call import _TOOLS_BY_NAME
     from server.transport.mcp_tools import emit_refusal
 
     op = _TOOLS_BY_NAME.get(str(tool_name or ""))
     if op is not None:
-        emit_refusal(op.name, args, code)
+        emit_refusal(op.name, code, auth)
 
 
 async def _plane_namespace(tool_name: Any, auth: Any, ns: str) -> str | dict[str, Any] | None:
@@ -279,7 +279,7 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
         # drop conversation state on those) — so the agent reads
         # the message and can recover. Ledgered in the token's org, never
         # the one the call named.
-        _ledger_refusal(tool_name, {**args, "org": auth.org}, "ORG_MISMATCH")
+        _ledger_refusal(tool_name, "ORG_MISMATCH", auth)
         msg = f"token org {auth.org!r} != request org {req_org!r}"
         return _ok(
             req.get("id"),
@@ -294,12 +294,12 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
         # A code/tracker tool's `namespace` that is not a namespace resolves
         # to one or says so — never the claim text meant for a real refusal.
         fixed = await _plane_namespace(tool_name, auth, req_ns)
-        if isinstance(fixed, dict):
-            _ledger_refusal(tool_name, args, str(fixed["structuredContent"]["code"]))
-            return _ok(req.get("id"), fixed)
+        refusal = fixed if isinstance(fixed, dict) else None
         if not fixed:
-            _ledger_refusal(tool_name, args, "NAMESPACE_NOT_ACCESSIBLE")
-            return _ok(req.get("id"), _not_accessible_result(tool_name, auth, req_ns))
+            refusal = _not_accessible_result(tool_name, auth, req_ns)
+        if refusal is not None:
+            _ledger_refusal(tool_name, str(refusal["structuredContent"]["code"]), auth)
+            return _ok(req.get("id"), refusal)
         args["namespace"] = fixed
     # Readable: the op's own gate enforces the role it requires.
     return None

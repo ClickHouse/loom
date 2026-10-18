@@ -189,9 +189,10 @@ def _result(req_id: Any, body: dict[str, Any], *, error: bool = False) -> dict[s
     )
 
 
-def route(req: Any, *, toolset: str | None) -> tuple[Any, dict[str, Any] | None]:
+def route(req: Any, *, toolset: str | None, auth: Any = None) -> tuple[Any, dict[str, Any] | None]:
     """`(req, None)` unchanged unless it is a `loom_op` call; the rewritten
-    `tools/call` for a real op; or `(req, response)` for help / unknown ops."""
+    `tools/call` for a real op; or `(req, response)` for help / unknown ops.
+    `auth` is the verified token (None in open mode) a refusal is ledgered as."""
     if not isinstance(req, dict) or req.get("method") != "tools/call":
         return req, None
     params = req.get("params")
@@ -207,14 +208,12 @@ def route(req: Any, *, toolset: str | None) -> tuple[Any, dict[str, Any] | None]
     by_name = {op.name: op for op in _ops()}
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
     hidden = hidden_refusal(name)
-    raw = args.get("arguments")
-    inner: dict[str, Any] = dict(raw) if isinstance(raw, dict) else {}
     if op is None and hidden is not None:
-        emit_refusal(name, inner, "OP_NOT_ON_MCP")
+        emit_refusal(name, "OP_NOT_ON_MCP", auth)
         return req, _result(req.get("id"), hidden, error=True)
     if op is None or (readonly and not _is_read(op)):
         if op is not None:  # a write on a read-only connection
-            emit_refusal(op.name, inner, UNKNOWN_OP)
+            emit_refusal(op.name, UNKNOWN_OP, auth)
         near = difflib.get_close_matches(name, list(by_name), n=5, cutoff=0.6)
         body = {
             "error": f"no op {name!r} reachable here"
@@ -227,5 +226,7 @@ def route(req: Any, *, toolset: str | None) -> tuple[Any, dict[str, Any] | None]
             "hint": 'loom_op {"op": "help", "query": "<words>"} lists ops',
         }
         return req, _result(req.get("id"), body, error=True)
+    raw = args.get("arguments")
+    inner: dict[str, Any] = dict(raw) if isinstance(raw, dict) else {}
     rewritten = {**req, "params": {**params, "name": op.mcp_tool_name, "arguments": inner}}
     return rewritten, None
