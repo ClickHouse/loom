@@ -41,6 +41,9 @@ export function Users() {
   const whoami = useStore((s) => s.whoami);
   const phone = useMedia(PHONE_QUERY);
   const [data, setData] = useState<AdminUsersResult | null>(null);
+  // Whether those accounts were read with service accounts: under the other setting they
+  // are not the list's to page.
+  const [dataWithServiceAccounts, setDataWithServiceAccounts] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [includeServiceAccounts, setIncludeServiceAccounts] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
@@ -65,7 +68,9 @@ export function Users() {
       { signal },
     )
       .then((d) => {
-        if (live()) setData(d);
+        if (!live()) return;
+        setData(d);
+        setDataWithServiceAccounts(includeServiceAccounts);
       })
       .catch((e) => {
         if (live()) setError(e);
@@ -109,6 +114,7 @@ export function Users() {
         { value: "active7d", label: "Active last 7d", count: data.total_active_last_7d },
       ]
     : [];
+  const dataCurrent = dataWithServiceAccounts === includeServiceAccounts;
   const serviceAccounts = (
     <Checkbox
       label="Include service accounts"
@@ -219,8 +225,8 @@ export function Users() {
             label="Users pages"
             page={page}
             pageSize={pageSize}
-            shown={pageRows.length}
-            total={rows.length}
+            shown={dataCurrent ? pageRows.length : 0}
+            total={dataCurrent ? rows.length : undefined}
             busy={refreshing}
             onPage={setPage}
             onPageSize={(n) => {

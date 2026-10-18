@@ -2833,7 +2833,8 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           busy={refreshing}
           pageSize={pageSize}
           shown={rowsCurrent ? rows.length : 0}
-          total={rowsCurrent ? total : undefined}
+          // Another filter's total is not this list's; a new page size keeps it.
+          total={rowsKey.startsWith(`${prSettled}\n`) ? total : undefined}
           onPage={(n) => setOffset(n * pageSize)}
           onPageSize={(n) => {
             setPageSize(n);

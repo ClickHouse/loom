@@ -1150,13 +1150,14 @@ function MemoryList() {
         ))}
       </div>
 
-      {/* The page asked for, not the rows' page as Runs and Conversations pass: the list
-          always has a total, so a second Next during a read cannot skip past the end, and a
-          filter here moves `page` itself, which clears the pager's status. */}
+      {/* The page asked for, not the rows' page as Runs and Conversations pass: Next waits
+          for the page's read (`busy`), so a second press does not skip a page, and a filter
+          here moves `page` itself, which clears the pager's status. */}
       {!searchActive && !showDeleted && !failed && entries !== null && (
         <ListPager
           label="Memories pages"
           page={page}
+          busy={refreshing}
           pageSize={pageSize}
           shown={pageList.length}
           total={listTotal}

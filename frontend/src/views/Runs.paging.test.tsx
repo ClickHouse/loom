@@ -425,6 +425,8 @@ describe("Runs paging, sorting and search on the server", () => {
     await userEvent.click(within(pager()).getByRole("button", { name: "Rows per page" }));
     await userEvent.click(await screen.findByText(/^100/));
     await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 100, offset: 0 }));
+    // The size choice just used stays, with focus.
+    expect(within(pager()).getByRole("button", { name: "Rows per page" })).toHaveFocus();
     expect(await screen.findByRole("button", { name: "goal 1" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "goal 101" })).toBeNull();
     expect(within(pager()).getByRole("status")).toHaveTextContent("100 rows per page, page 1");

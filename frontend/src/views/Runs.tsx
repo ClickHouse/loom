@@ -522,6 +522,8 @@ interface Shown {
   /** What the rows were read for (filters, search, order, page size): the page above means
    *  something only while it is still what the list shows. */
   key: string;
+  /** The filters alone: the total holds across a page-size change. */
+  filterKey: string;
 }
 
 export function Runs() {
@@ -634,7 +636,7 @@ export function Runs() {
           setLocal(true);
           return;
         }
-        setShown({ runs: p.runs, total: p.total, page, pageSize, key: readKey });
+        setShown({ runs: p.runs, total: p.total, page, pageSize, key: readKey, filterKey });
         setLoading(false);
         const seen = p.runs.map((r) => r.agent).filter(Boolean);
         setAgents((prev) => (seen.every((a) => prev.includes(a)) ? prev : [...new Set([...prev, ...seen])].sort()));
@@ -938,10 +940,11 @@ export function Runs() {
           resetKey={filterKey}
           busy={loading}
           pageSize={pageSize}
-          // Rows read for another filter or page size are not this list's to count or page:
-          // with neither rows nor a total the pager waits for the new list's first page.
+          // Rows read for another filter or page size are not this list's to count or page.
+          // Another filter's total is not either, so the pager waits for the new list's first
+          // page; a new page size keeps the total, and with it the size choice just used.
           shown={current ? rows.length : 0}
-          total={!current ? undefined : localRows ? localRows.length : (shown.total ?? undefined)}
+          total={localRows ? localRows.length : shown.filterKey === filterKey ? (shown.total ?? undefined) : undefined}
           capped={capped}
           maxOffset={RUN_LIST_MAX_OFFSET}
           onPage={setPage}
