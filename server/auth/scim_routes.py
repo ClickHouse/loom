@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from server.auth import scim
+from server.auth.public_url import public_base_url
 from server.core.ch import set_query_tag
 from server.core.errors import LoomServerError
 from server.settings import settings
@@ -206,13 +207,15 @@ def _keyed_written(kind: str, attr: str, value: Any, row: dict[str, Any]) -> dic
     writes the keyed one or one that takes its place; None when it leaves it
     alone. Removing the keyed entry, or not saying what replaces it, is refused."""
     stored = {"value": row["email"], "type": row["email_type"], "primary": row["email_primary"]}
+    # An email the userName gave is outranked by any entry (`user_name_and_email`).
+    here = -1 if row["email_from_user_name"] else _rank(stored)
     if attr == "emails":
         if kind == "remove":
             raise _no_change("the email cannot be removed")
         best = keyed_entry(value if isinstance(value, list) else [value])
         if kind == "add":  # appends (RFC 7644 §3.5.2.1): an entry that outranks counts,
             # and a primary one always, as only one entry may be primary (RFC 7643 §2.4)
-            if best and (_rank(best) > _rank(stored) or _rank(best) == 2):
+            if best and (_rank(best) > here or _rank(best) == 2):
                 return best
             return None
         if best is None:
@@ -239,13 +242,13 @@ def _keyed_written(kind: str, attr: str, value: Any, row: dict[str, Any]) -> dic
         if kind == "remove":
             raise _no_change("the email cannot be removed")
         entry = {**stored, **written}
-        if _rank(entry) < _rank(stored):
+        if _rank(entry) < here:
             raise _no_change("the email's entry cannot lose its place")
         return entry
     if kind == "remove":
         return None
     entry = {**_criteria(filt), **written}
-    if _rank(entry) <= _rank(stored):
+    if _rank(entry) <= here and _rank(entry) < 2:  # only one entry may be primary
         return None  # another address: not the one sign-in carries
     if not isinstance(entry.get("value"), str):
         raise _no_change("an entry would take the email's place")
@@ -347,8 +350,6 @@ def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, dict[str, Any]]
 
 
 def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
-    from server.auth.public_url import public_base_url
-
     return {
         "schemas": [USER_SCHEMA],
         "id": row["id"],
@@ -357,8 +358,8 @@ def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
         "emails": [_email(row)],
         "meta": {
             "resourceType": "User",
-            "created": _iso(row["created_at"]),
-            "lastModified": _iso(row.get("updated_at") or row["created_at"]),
+            "created": row["created_at"].isoformat(),
+            "lastModified": row["updated_at"].isoformat(),
             "location": f"{public_base_url(request)}/scim/v2/Users/{row['id']}",
         },
     }
@@ -371,10 +372,6 @@ def _email(row: dict[str, Any]) -> dict[str, Any]:
     if row["email_type"]:
         entry["type"] = row["email_type"]
     return entry
-
-
-def _iso(ts: Any) -> str:
-    return ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
 
 
 def _not_found() -> ScimError:

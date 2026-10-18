@@ -1329,7 +1329,12 @@ def test_a_username_that_is_the_email_cannot_change_by_patch(client: TestClient,
 
 _URN = "urn:ietf:params:scim:schemas:core:2.0:User:"
 # A user keyed on the work entry of their emails.
-_WORK_ROW = {"email": "lee@example.com", "email_type": "work", "email_primary": 0}
+_WORK_ROW = {
+    "email": "lee@example.com",
+    "email_type": "work",
+    "email_primary": 0,
+    "email_from_user_name": 0,
+}
 
 
 @pytest.mark.parametrize(
@@ -1364,9 +1369,48 @@ def test_every_shape_of_an_email_change_is_seen(op: dict[str, Any]) -> None:
     assert entry is not None and entry["value"] == "new@example.com"
 
 
+# A user created with only a userName: the email came from it.
+_NAME_ROW = {
+    "email": "lee@example.com",
+    "email_type": "",
+    "email_primary": 0,
+    "email_from_user_name": 1,
+}
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "add", "path": "emails", "value": [{"value": "new@example.com"}]},
+        {"op": "add", "path": 'emails[type eq "home"].value', "value": "new@example.com"},
+    ],
+)
+def test_any_entry_takes_the_place_of_an_email_the_username_gave(op: dict[str, Any]) -> None:
+    _, entry = patched_names({"Operations": [op]}, _NAME_ROW)
+    assert entry is not None and entry["value"] == "new@example.com"
+
+
+def test_a_primary_flag_moved_by_a_filter_takes_the_emails_place() -> None:
+    primary = {
+        "email": "lee@example.com",
+        "email_type": "home",
+        "email_primary": 1,
+        "email_from_user_name": 0,
+    }
+    op = {"op": "replace", "path": 'emails[type eq "work"].primary', "value": True}
+    with pytest.raises(ScimError) as e:  # an entry would take its place, and says no address
+        patched_names({"Operations": [op]}, primary)
+    assert e.value.scim_type == "mutability"
+
+
 def test_a_new_primary_entry_replaces_a_primary_one() -> None:
     # Only one entry may be primary (RFC 7643 §2.4): the added one takes its place.
-    primary = {"email": "lee@example.com", "email_type": "work", "email_primary": 1}
+    primary = {
+        "email": "lee@example.com",
+        "email_type": "work",
+        "email_primary": 1,
+        "email_from_user_name": 0,
+    }
     add = {"op": "add", "path": "emails", "value": [{"value": "new@example.com", "primary": True}]}
     _, entry = patched_names({"Operations": [add]}, primary)
     assert entry is not None and entry["value"] == "new@example.com"
@@ -1565,7 +1609,8 @@ def test_another_address_changing_beside_a_disable_is_fine(
     client: TestClient, world, other: dict[str, Any]
 ) -> None:
     world.person("lee@example.com", "lee")
-    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    work = {"userName": "lee@example.com", "emails": [{"value": "lee@example.com", "type": "work"}]}
+    uid = client.post("/scim/v2/Users", json=work).json()["id"]
     ops = [{"op": "replace", "path": "active", "value": False}, other]
     r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
     assert r.status_code == 200 and r.json()["active"] is False
@@ -1726,7 +1771,12 @@ async def test_a_shared_subject_left_revoked_is_logged_and_nothing_waits(world, 
     assert "another deactivated user" not in caplog.text
 
 
-_PRIMARY_ROW = {"email": "lee@example.com", "email_type": "work", "email_primary": 1}
+_PRIMARY_ROW = {
+    "email": "lee@example.com",
+    "email_type": "work",
+    "email_primary": 1,
+    "email_from_user_name": 0,
+}
 
 
 def test_a_stored_primary_entry_ranks_as_primary() -> None:
