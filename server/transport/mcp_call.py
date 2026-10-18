@@ -533,6 +533,7 @@ async def _idempotency_gate(
     rows. The validated input is hashed as HTTP hashes it; a run the session
     stamped is not part of what the caller asked."""
     req_id, op, arguments, request_id = call.req_id, call.op, call.arguments, call.request_id
+    start = time.perf_counter()
     replay = await gates.idempotency_check(
         op,
         call.auth,
@@ -565,7 +566,11 @@ async def _idempotency_gate(
         )
     if replay.hit is not None:
         cached = lean_result(replay.hit.body, arguments)
-        _emit_mcp_event(op.name, arguments, 0, success=True, error_code="", request_id=request_id)
+        # The lookup that answered it, as a handler's run is timed.
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        _emit_mcp_event(
+            op.name, arguments, elapsed_ms, success=True, error_code="", request_id=request_id
+        )
         result = {
             "content": [{"type": "text", "text": json.dumps(cached, default=str)}],
             "isError": False,

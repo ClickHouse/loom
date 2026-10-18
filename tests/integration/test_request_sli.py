@@ -181,7 +181,7 @@ def _private_rollup(ch_client, db: str) -> None:
 
 def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client) -> None:
     """Rows stamped as ClickHouse would have taken them: a refresh folds at
-    most six hours past the first row not folded yet, a row that arrives
+    most an hour past the first row not folded yet, a row that arrives
     after newer ones were folded still counts in the minute of its `ts`, and
     nothing is folded twice."""
     from datetime import UTC, datetime, timedelta
@@ -212,7 +212,7 @@ def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client
         _private_rollup(ch_client, db)
         insert(now - timedelta(hours=20), now - timedelta(hours=20), "server")
         insert(now - timedelta(hours=10), now - timedelta(hours=10), "ok")
-        assert refresh() == (1, 1, 1)  # six hours past the first: the second waits
+        assert refresh() == (1, 1, 1)  # an hour past the first: the second waits
         assert refresh() == (2, 1, 2)
         assert refresh() == (2, 1, 2)  # an idle refresh moves the mark, folds nothing
 

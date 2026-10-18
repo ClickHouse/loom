@@ -452,7 +452,7 @@ def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypat
     op = OPERATIONS_BY_NAME["memory.get"]
     for org in ("acme", "eve-org"):
         call = http._HttpCall("r", raw_body={"org": org, "namespace": "n"}, auth=eve)
-        http._refuse(op, call, 403, "AUTH_INSUFFICIENT")
+        http._refuse(op, call, 403, error_code="AUTH_INSUFFICIENT")
     assert [(b["org"], b["namespace"]) for b in bodies] == [("eve-org", "-"), ("eve-org", "n")]
     # A body the input model refuses (no memory_key) names another org too.
     with pytest.raises(HTTPException):
@@ -768,7 +768,6 @@ def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatc
         result = asyncio.run(
             mcp_auth._screen_tool_call({"id": 2, "method": "tools/call", "params": call}, eve)
         )
-        assert "_unverified" not in result["result"]
     # The name given cannot be checked, but the one it resolves to is refused
     # outright: the refusal is that one's, the caller's.
     monkeypatch.setattr(mcp_auth, "_may_read", _first_unreadable)

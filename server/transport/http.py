@@ -257,6 +257,7 @@ async def _idempotency_gate(
     whose first request still runs a retryable 503; a stored answer replays
     with its headers."""
     request_id, raw_body = call.request_id, call.raw_body
+    start = time.perf_counter()
     replay = await gates.idempotency_check(
         op, call.auth, target, request.headers.get("Idempotency-Key") or "", payload
     )
@@ -282,7 +283,9 @@ async def _idempotency_gate(
         for hk, hv in replay.hit.headers.items():
             response.headers[hk] = hv
         response.headers["X-Idempotent-Replay"] = "true"
-        _emit_event(op, request_id, raw_body, 0, success=True, error_code="")
+        # The lookup that answered it, as a handler's run is timed.
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        _emit_event(op, request_id, raw_body, elapsed_ms, success=True, error_code="")
     return replay
 
 
@@ -334,14 +337,15 @@ def _refuse(
     op: Operation,
     call: _HttpCall,
     status: int,
-    code: str,
+    *,
+    error_code: str,
     e: BaseException | None = None,
     **extra: Any,
 ) -> HTTPException:
     """Record a gate's refusal on the ledger and build its HTTP error."""
     body = _refused_body(call.raw_body, call.auth)
-    _emit_event(op, call.request_id, body, 0, success=False, error_code=code, error=e)
-    detail: dict[str, Any] = {"code": code, "message": str(e) if e is not None else ""}
+    _emit_event(op, call.request_id, body, 0, success=False, error_code=error_code, error=e)
+    detail: dict[str, Any] = {"code": error_code, "message": str(e) if e is not None else ""}
     detail.update(extra.pop("detail", {}))
     return HTTPException(status_code=status, detail=detail, **extra)
 
@@ -369,12 +373,12 @@ async def _authorize(
     except IdentityIncompleteError as e:
         # NOT a permissions failure — the request did not say which
         # namespace or org it is for.
-        raise _refuse(op, call, 400, "IDENTITY_INCOMPLETE", e) from e
+        raise _refuse(op, call, 400, error_code="IDENTITY_INCOMPLETE", e=e) from e
     except PermissionError as e:
         # A code/tracker index says why, as MCP's refusal does.
         ns = target.namespace
         why: dict[str, object] = ar.reason_fields(ns) if ns and ar.is_plane_op(op.name) else {}
-        raise _refuse(op, call, 403, gates.ROLE_REFUSAL_CODE, e, detail=why) from e
+        raise _refuse(op, call, 403, error_code=gates.ROLE_REFUSAL_CODE, e=e, detail=why) from e
     await gates.traffic_class(op, auth, target, call.raw_body)
     response.headers["X-Loom-Traffic-Class"] = header_value()
     return target
@@ -401,7 +405,7 @@ def _rate_limit(op: Operation, response: Response, call: _HttpCall, target: gate
             op,
             call,
             429,
-            "RATE_LIMITED",
+            error_code="RATE_LIMITED",
             detail={
                 "message": f"namespace {target.named_namespace!r} exceeded {op.name} rate limit",
                 "retry_after_s": wait,
@@ -436,9 +440,9 @@ async def _bind_context_and_policy(
     try:
         payload = gates.read_scope(op, auth, payload)
     except IdentityIncompleteError as e:
-        raise _refuse(op, call, 400, "IDENTITY_INCOMPLETE", e) from e
+        raise _refuse(op, call, 400, error_code="IDENTITY_INCOMPLETE", e=e) from e
     except AuthInsufficientError as e:
-        raise _refuse(op, call, 403, gates.ROLE_REFUSAL_CODE, e) from e
+        raise _refuse(op, call, 403, error_code=gates.ROLE_REFUSAL_CODE, e=e) from e
     # History policy: after the role check, before the
     # handler. No-op when LOOM_POLICY_MODE=off or no rule applies; in
     # shadow it only records; in enforce a denial is a structured 403

@@ -302,15 +302,15 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
     if req_ns and not (readable := await _may_read(auth, target_org, str(req_ns))):
         # A code/tracker tool's `namespace` that is not a namespace resolves
         # to one or says so — never the claim text meant for a real refusal.
-        resolved, unverified = await _plane_namespace(tool_name, auth, req_ns)
+        resolved, resolved_unverified = await _plane_namespace(tool_name, auth, req_ns)
         if isinstance(resolved, str):  # a namespace the caller may read
             args["namespace"] = resolved
             return None
-        if isinstance(resolved, dict):  # refused on the name it resolved to, or unknown
-            refusal = resolved
-        else:  # the name exists: refused on it
-            refusal = _not_accessible_result(tool_name, auth, req_ns)
-            unverified = readable is None
+        # Each refusal with whether the check behind it could read what it needed.
+        if isinstance(resolved, dict):  # on the name it resolved to, or an unknown name
+            refusal, unverified = resolved, resolved_unverified
+        else:  # on the name given
+            refusal, unverified = _not_accessible_result(tool_name, auth, req_ns), readable is None
         # The org the token may act in, as HTTP records the same refusal.
         code = str(refusal["structuredContent"]["code"])
         _ledger_refusal(tool_name, auth, error_code=code, org=target_org, server_fault=unverified)
