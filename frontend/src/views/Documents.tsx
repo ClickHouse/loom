@@ -693,6 +693,7 @@ export function Documents() {
                 data-focus-key={`doc:${r.source_uri}`}
                 active={previewEntry?.source_uri === r.source_uri}
                 checked={selected.has(r.source_uri)}
+                trailing={<RowMenu name={name} items={rowMenu(r)} />}
                 leading={
                   <Checkbox
                     checked={selected.has(r.source_uri)}
@@ -705,56 +706,51 @@ export function Documents() {
                   />
                 }
               >
-                <div className="flex items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <button
-                      type="button"
-                      data-row-open=""
-                      onClick={() => (selected.size > 0 ? selection.toggle(r.source_uri) : onOpen(r))}
-                      className="list-row-open block w-full"
-                      aria-label={`Preview ${name}`}
-                    >
-                      {/* Line 1: the document and its state; right, how much is indexed and when. */}
-                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        {/* The icon, the name and its state stay on one line; a long name is cut. */}
-                        <span className="flex min-w-0 max-w-full items-center gap-2">
-                          <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
-                          <span
-                            className={`min-w-0 truncate text-text ${r.title ? "text-sm font-semibold" : "font-mono text-xs"}`}
-                          >
-                            {name}
-                          </span>
-                          {r.superseded && (
-                            <span className="inline-flex shrink-0">
-                              <Badge text="Superseded" state="neutral" size="sm" aria-hidden="true" />
-                              <span className="sr-only">, superseded: a newer version of this URI was uploaded</span>
-                            </span>
-                          )}
-                        </span>
-                        {/* The meta slot: flush right; under 640 px its own line. */}
-                        <span className="basis-full text-xs text-text-muted tabular sm:ml-auto sm:basis-auto sm:shrink-0">
-                          {(r.chunk_count ?? 0).toLocaleString()} chunk{r.chunk_count === 1 ? "" : "s"} ·{" "}
-                          <ListTime iso={r.ingested_at} quiet />
-                        </span>
+                <button
+                  type="button"
+                  data-row-open=""
+                  onClick={() => (selected.size > 0 ? selection.toggle(r.source_uri) : onOpen(r))}
+                  className="list-row-open block w-full"
+                  aria-label={`Preview ${name}`}
+                >
+                  {/* Line 1: the document and its state; right, how much is indexed and when. */}
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    {/* The icon, the name and its state stay on one line; a long name is cut. */}
+                    <span className="flex min-w-0 max-w-full items-center gap-2">
+                      <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
+                      <span
+                        className={`min-w-0 truncate text-text ${r.title ? "text-sm font-semibold" : "font-mono text-xs"}`}
+                      >
+                        {name}
                       </span>
-                      {/* Line 2: the file it came from and what it is about. */}
-                      {(file || r.description) && (
-                        <span className="mt-1 block truncate text-xs text-text-muted">
-                          {file && <span className="font-mono">{file}</span>}
-                          {file && r.description && " · "}
-                          {r.description}
+                      {r.superseded && (
+                        <span className="inline-flex shrink-0">
+                          <Badge text="Superseded" state="neutral" size="sm" aria-hidden="true" />
+                          <span className="sr-only">, superseded: a newer version of this URI was uploaded</span>
                         </span>
                       )}
-                    </button>
-                    <TagList
-                      tags={r.tags ?? []}
-                      activeTags={activeTags}
-                      onTagClick={(t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`))}
-                      className="mt-2"
-                    />
-                  </div>
-                  <RowMenu name={name} items={rowMenu(r)} />
-                </div>
+                    </span>
+                    {/* The meta slot: flush right; under 640 px its own line. */}
+                    <span className="basis-full text-xs text-text-muted tabular sm:ml-auto sm:basis-auto sm:shrink-0">
+                      {(r.chunk_count ?? 0).toLocaleString()} chunk{r.chunk_count === 1 ? "" : "s"} ·{" "}
+                      <ListTime iso={r.ingested_at} quiet />
+                    </span>
+                  </span>
+                  {/* Line 2: the file it came from and what it is about. */}
+                  {(file || r.description) && (
+                    <span className="mt-1 block truncate text-xs text-text-muted">
+                      {file && <span className="font-mono">{file}</span>}
+                      {file && r.description && " · "}
+                      {r.description}
+                    </span>
+                  )}
+                </button>
+                <TagList
+                  tags={r.tags ?? []}
+                  activeTags={activeTags}
+                  onTagClick={(t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`))}
+                  className="mt-2"
+                />
               </ListRow>
             );
           })}

@@ -3,6 +3,8 @@ import { forwardRef, type HTMLAttributes, type ReactNode } from "react";
 export interface ListRowProps extends HTMLAttributes<HTMLDivElement> {
   /** A checkbox or icon before the body. */
   leading?: ReactNode;
+  /** The row's menu after the body, at its far right, drawn with no wrapper of its own. */
+  trailing?: ReactNode;
   /** The row whose detail is open (the inspected memory): Click UI's active stroke. */
   active?: boolean;
   /** Checked for a bulk action: a tint (Click UI's Table row tint, which Click UI gives the
@@ -21,7 +23,7 @@ export interface ListRowProps extends HTMLAttributes<HTMLDivElement> {
  * the caller's; the row is only the shell and its states (styles.css `.list-row`).
  */
 export const ListRow = forwardRef<HTMLDivElement, ListRowProps>(function ListRow(
-  { leading, active, checked, deleted, children, className = "", ...rest },
+  { leading, trailing, active, checked, deleted, children, className = "", ...rest },
   ref,
 ) {
   return (
@@ -35,6 +37,7 @@ export const ListRow = forwardRef<HTMLDivElement, ListRowProps>(function ListRow
     >
       {leading && <div className="list-row-leading">{leading}</div>}
       <div className="min-w-0 flex-1">{children}</div>
+      {trailing}
     </div>
   );
 });
