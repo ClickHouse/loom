@@ -209,8 +209,8 @@ written right now; retry the Undo"), and while the lease store (Keeper) does not
 
 An Undo opens again the graph facts the restored row still holds (see the
 [entity graph](../entity-graph.md)). The resolver does not retire the row behind the same
-memory again while the row holds the value it had when it was retired; a new value of the
-row is judged afresh.
+memory again, or flag the pair, while the row holds the value it had at the Undo and the
+other memory's value predates it; a new value of either is judged afresh.
 
 #### Restore from the memory inspector
 

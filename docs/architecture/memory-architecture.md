@@ -292,10 +292,12 @@ actions, verdicts and confidences, never the text.
   pair no verdict may change); a lock that refuses retirement holds.
 - An Undo (`memory.restore`) keeps the restored row's content hash, so it stays the older
   statement, and leaves both rows unowed: the next pass does not judge the pair again.
-  Should the winner be judged again anyway (still owed), the retirement is not made again:
-  under the pair's locks, `loom.memory_versions` shows the loser, with the value it holds,
-  already retired behind that winner, and the pair is left alone. A later write of either
-  row carries its own mark and is judged afresh.
+  Should the winner be judged again anyway (still owed), the pair is left alone, neither
+  retired nor flagged from either side, while the Undo's `memory.unsupersede` record names
+  that retirement, the restored row still holds the value it had at the Undo, and the
+  winner's value is older than the Undo. A later write of either row carries its own mark
+  and is judged afresh; a writer restating a retired value makes a new statement, dated
+  when it was restated.
 - A row is stamped judged only after its actions. A pass cut short judges it again, and
   acting twice changes nothing: a retired row is no longer live, an existing flag is left
   as it is, and a cleared flag has nothing left to clear.

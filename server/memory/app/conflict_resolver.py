@@ -535,17 +535,18 @@ async def _settle_locked_pair(
 async def _undone(
     org: str, namespace: str, row: Any, head: Any, order: Mapping[str, tuple[int, int]]
 ) -> bool:
-    """Whether either row was retired behind the other, while that other held its current
-    value, and restored since: a person decided the pair."""
+    """Whether a person undid a retirement of either row behind the other (the Undo's
+    audit record), while it holds the value it had then and the other's current value
+    was asserted before the Undo: their decision stands."""
     for loser, winner in ((head, row), (row, head)):
-        if await queue.retired_behind(
+        at = await queue.undone_at(
             org,
             namespace,
             str(loser.memory_id),
             str(loser.content_sha256 or ""),
             str(winner.memory_id),
-            since=order[str(winner.memory_id)][1],
-        ):
+        )
+        if at is not None and order[str(winner.memory_id)][1] < at:
             return True
     return False
 

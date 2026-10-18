@@ -123,6 +123,8 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
             "memory_key": input.memory_key,
             "memory_id": str(existing.memory_id),
             "superseded_by": str(existing.superseded_by or ""),
+            # The value restored: the resolver honours the Undo while the row holds it.
+            "content_sha256": str(existing.content_sha256 or ""),
         },
     )
     return MemoryRestoreOutput(

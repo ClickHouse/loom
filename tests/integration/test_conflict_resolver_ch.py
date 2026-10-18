@@ -2655,3 +2655,72 @@ async def test_the_lease_store_down_while_acting_stops_the_pass_and_keeps_the_ro
         await run_pass()
     assert (await _rows(ch, org))["office_city"]["status"] == "active"
     assert (await _marks(ch, org))["office_location"] == 1, llm.calls
+
+
+@pytest.mark.parametrize("winner_valid_at", [False, True])
+async def test_an_undo_of_a_value_update_retirement_holds(ch, wired, winner_valid_at: bool) -> None:
+    """A value update (bulk_set's detect_updates) retires the older row with the
+    winner's valid_at as its end, or none. After a person's Undo the resolver does not
+    retire it again."""
+    from datetime import UTC, datetime, timedelta
+
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app.restore import handle_memory_restore
+    from server.memory.app.value_updates import _supersession_update
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 1720)
+    rows = await _rows(ch, org)
+    winner, loser = rows["office_location"]["id"], rows["office_city"]["id"]
+    ended = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2) if winner_valid_at else None
+    await memory_repo.write_versions_by_ids(
+        org, [loser], _supersession_update(winner, ended), ch=ch, strong=True
+    )
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    undone = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="office_city",
+            if_superseded_by=winner,
+        )
+    )
+    assert undone.restored
+    out = await run_pass()
+    assert out["retired"] == 0, out
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"
+
+
+async def test_a_writer_restating_a_retired_value_is_a_new_statement(
+    ch, wired, monkeypatch
+) -> None:
+    """Rome retires Paris; Paris's writer then sets Paris again. That is no Undo but a
+    later statement: judged as one, it retires Rome."""
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 1740)
+    assert (await run_pass())["retired"] == 1
+    await _later()
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "office_city", "The office is in Paris")
+        await after_write.drain()
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"
+    await _place(ch, org, "s1", "office_city", _vec((1740, 1.0)), owed=True)
+    monkeypatch.setitem(_SCRIPT, "office_city", ("update", 0.98))
+    out = await run_pass()
+    rows = await _rows(ch, org)
+    assert out["retired"] == 1, out
+    assert rows["office_location"]["superseded_by"] == rows["office_city"]["id"]
