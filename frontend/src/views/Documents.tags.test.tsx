@@ -63,7 +63,7 @@ describe("Library: filtering by tags", () => {
     );
 
     const bar = screen.getByLabelText("Search and filters");
-    // The field says the tags; no chip beside it repeats them (SPEC-LISTS C9).
+    // The field says the tags; no chip beside it repeats them.
     expect(screen.getByLabelText("Search library")).toHaveValue("tag:Specs tag:onboarding");
     expect(within(bar).queryByText("tag:Specs")).toBeNull();
     await waitFor(() =>
@@ -108,8 +108,8 @@ describe("Library: filtering by tags", () => {
     );
   });
 
-  // Review findings: a tag the server matches nothing for showed "Your library is empty" and
-  // took the search with it; a failed read said the same and offered to add a document.
+  // A tag the server matches nothing for says nothing matches and keeps the search; a failed
+  // read is the error state, not "Your library is empty".
   it("a tag that matches nothing keeps the search and offers to clear it", async () => {
     api.listKnowledge.mockImplementation(async (_id: unknown, opts: { tags?: string[] }) => ({
       rows: opts?.tags?.length ? [] : ROWS,
@@ -134,7 +134,7 @@ describe("Library: filtering by tags", () => {
     expect(await screen.findByText("Both")).toBeInTheDocument();
   });
 
-  // Self-review: a typed tag waits 250 ms before it is read; until that read lands the page
+  // A typed tag waits 250 ms before it is read; until that read lands the page
   // does not say nothing matches it.
   it("does not say a typed tag matches nothing before it is read", async () => {
     render(<Documents />);

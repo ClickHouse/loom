@@ -41,7 +41,7 @@ export interface ListErrorProps {
 export type ListStateProps = ListEmptyProps | ListFilteredProps | ListErrorProps;
 
 /**
- * ListState — what a list shows in place of its rows (SPEC-LISTS C5); the toolbar stays
+ * ListState — what a list shows in place of its rows; the toolbar stays
  * above it in every state, and loading is `ui/LoadingSkeleton` shaped like the rows.
  *
  * - `empty`: `EmptyState`, one action (hide the page header's duplicate primary while it shows).

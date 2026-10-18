@@ -404,8 +404,7 @@ describe("Tasks page", () => {
     await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "low-late"));
   });
 
-  // Review finding: picking another inbox from the bell while on Tasks changed the URL but
-  // not the page.
+  // Picking another inbox from the bell while on Tasks changes the page, not only the URL.
   it("opens the inbox a navigation names while the page is already up", async () => {
     vi.mocked(listInboxes).mockResolvedValueOnce([INBOX, INBOX2]);
     vi.mocked(listTasks).mockImplementation(async () => ({ tasks: ROWS, truncated: false }));
@@ -873,9 +872,9 @@ describe("Tasks page", () => {
     expect(screen.getByLabelText("Search and filters")).toBeInTheDocument();
   });
 
-  // Review finding: on a phone under a touch pointer the four tiles took a 44 px row of their
-  // own and the first task started at 405 px; their labels were cut ("Block…"). There the
-  // tiles, the kind and the poster fold into one Filters menu beside the inbox.
+  // On a phone under a touch pointer the four tiles, the kind and the poster fold into one
+  // Filters menu beside the inbox, so the first task starts inside the chrome budget and no
+  // tile label is cut.
   it("on a phone folds the tiles, the kind and the poster into one Filters menu", async () => {
     vi.stubGlobal("matchMedia", (query: string) => ({
       matches: /max-width: (639|767|1279)px/.test(query),

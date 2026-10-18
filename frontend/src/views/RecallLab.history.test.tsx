@@ -129,8 +129,7 @@ describe("Recall history rows", () => {
   });
 });
 
-// Review finding: a failed read was bare red text with no way to try again; it is the list's
-// error state, with its request id and a Retry that reads again.
+// A failed read is the list's error state, with its request id and a Retry that reads again.
 describe("Recall history errors", () => {
   beforeEach(() => {
     vi.clearAllMocks();

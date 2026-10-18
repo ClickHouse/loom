@@ -1,5 +1,5 @@
 // The Library's row template carries what a row shows. Its actions sit in one More menu
-// per row (SPEC-LISTS C2), always visible: the menu's items are rendered only once it is
+// per row, always visible: the menu's items are rendered only once it is
 // opened, so 50 rows carry one button each, not four.
 import { act, cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";

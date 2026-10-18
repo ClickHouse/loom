@@ -737,7 +737,7 @@ function OptionGroup({
 }
 
 /** A result's type, as a 16 px icon at the start of its row: the group heading names the
- *  type, so a coloured badge on every row would only decorate (SPEC-LISTS A10). */
+ *  type, so a coloured badge on every row would only decorate. */
 const TYPE_ICONS: Record<"namespace" | "profile" | "memory" | "document", IconName> = {
   namespace: "folder-closed",
   profile: "user",

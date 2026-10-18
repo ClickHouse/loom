@@ -206,8 +206,8 @@ describe("WorkersPanel", () => {
     render(<WorkersPanel />);
     const table = await screen.findByRole("table", { name: "Workers" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    // Review finding: Click UI's `loading` showed its loader at once; the first read waits
-    // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+    // The first read waits 300 ms before its loader shows, like every loader
+    // (ui/LoadingSkeleton), under the header row already in place.
     expect(within(table).queryByText("Loading data")).toBeNull();
     expect(within(table).getByRole("status", { name: "Loading workers" })).toHaveAttribute("aria-busy", "true");
   });

@@ -12,7 +12,7 @@ const LCP_BUDGET_MS = 1500;
 // in long tasks after the rows land. The budgets are ~30 % above what the pages cost at
 // 4x CPU; a regression that doubles a row template trips them.
 const ROWS = 100;
-// The Library's rows each carry their always-visible More button (SPEC-LISTS C2), five
+// The Library's rows each carry their always-visible More button, five
 // nodes a row that the hover-only icon actions it replaced did not draw at rest.
 const NODE_BUDGET = { memories: 3400, library: 3800 };
 const LONG_TASK_BUDGET_MS = 2500;

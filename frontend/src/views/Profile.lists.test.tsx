@@ -5,7 +5,7 @@ import { ApiError } from "../lib/errors";
 import { useStore } from "../lib/state";
 import { Profile } from "./Profile";
 
-// The profile's sections as a list (SPEC-LISTS C1–C7): rows on ListRow, the one inline
+// The profile's sections as a list: rows on ListRow, the one inline
 // action (Edit) and a More menu for the rest, the toolbar in every state with its count
 // and the selection's actions, select-all and a Shift-click range, Escape clears, and a
 // failed read said with a Retry.

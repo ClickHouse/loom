@@ -90,8 +90,8 @@ describe("Users table", () => {
     render(<Users />);
     const table = await screen.findByRole("table", { name: "Users" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    // Review finding: Click UI's `loading` showed its loader at once; the first read waits
-    // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+    // The first read waits 300 ms before its loader shows, like every loader
+    // (ui/LoadingSkeleton), under the header row already in place.
     expect(within(table).queryByText("Loading data")).toBeNull();
     expect(within(table).getByRole("status", { name: "Loading users" })).toHaveAttribute("aria-busy", "true");
     expect(within(table).getByRole("columnheader", { name: "Subject" })).toBeInTheDocument();
@@ -131,8 +131,8 @@ describe("Users count, times and failure", () => {
   });
 });
 
-// Review finding: Refresh and Retry read again with no abort, so an answer for the set the
-// page has left (service accounts in or out) could land after the new one's.
+// Refresh and Retry abort the read in flight, so an answer for the set the page has left
+// (service accounts in or out) never lands after the new one's.
 describe("Users late answers", () => {
   it("drops a Refresh's answer that lands after the service-accounts toggle's", async () => {
     adminListUsers.mockResolvedValueOnce(result([user(1)]));

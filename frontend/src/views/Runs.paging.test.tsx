@@ -38,7 +38,8 @@ const run = (i: number, over: Partial<RunRow> = {}): RunRow => ({
   model: "",
   consumer: "",
   status: "completed",
-  started_at: "2026-09-20T07:00:00Z",
+  // Run 1 is the newest, a minute apart, as run.list orders them.
+  started_at: new Date(Date.UTC(2026, 8, 20, 7) - i * 60_000).toISOString(),
   completed_at: "2026-09-20T07:05:00Z",
   duration_ms: 1000,
   final_response: "",
@@ -108,9 +109,9 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(bodyRows()).toHaveLength(25);
   });
 
-  // Review finding: a server a release behind ignores offset, order_by and q and answers its
-  // newest runs (at most 200) with no total. Then the page reads those once and pages,
-  // searches and sorts them here, instead of showing page 1 again on every Next.
+  // A server a release behind ignores offset, order_by and q and answers its newest runs (at
+  // most 200) with no total. The page reads those once and pages, searches and sorts them
+  // here, so Next does not show page 1 again.
   it("against a server that does not page, pages, searches and sorts its newest runs here", async () => {
     listRunsPage.mockImplementation(async (_id, opts = {}) => ({
       runs: Array.from({ length: Math.min(opts.limit ?? 50, 200) }, (_, i) =>
@@ -133,8 +134,8 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(screen.queryByRole("button", { name: "goal 2" })).toBeNull();
   });
 
-  // Review finding: such a server answers at most its newest 200, and the page said "of 200"
-  // as if that were every run. It says it shows the newest 200 and counts no total.
+  // Such a server answers at most its newest 200: the page says it shows the newest 200 and
+  // counts no total, never "of 200" as if that were every run.
   it("against a server that does not page and holds more, says it shows the newest 200", async () => {
     listRunsPage.mockImplementation(async (_id, opts = {}) => ({
       runs: Array.from({ length: Math.min(opts.limit ?? 50, 200) }, (_, i) => run(i + 1)),
@@ -155,7 +156,7 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(screen.queryByText(/Showing the newest/)).toBeNull();
   });
 
-  // Review finding: once on, the local mode never went off, not even for another namespace.
+  // Another namespace leaves the local mode and asks for a page first.
   it("reads another namespace's runs a page at a time again when its server pages", async () => {
     listRunsPage.mockImplementation(async (id) =>
       (id as { namespace: string }).namespace === "ns" ? { runs: [run(1)], total: null } : { runs: [run(7)], total: 1 },
@@ -287,8 +288,8 @@ describe("Runs paging, sorting and search on the server", () => {
     render(<Runs />);
     const table = await screen.findByRole("table", { name: "Runs" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    // Review finding: Click UI's `loading` showed its loader at once; the first read waits
-    // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+    // The first read waits 300 ms before its loader shows, like every loader
+    // (ui/LoadingSkeleton), under the header row already in place.
     expect(within(table).queryByText("Loading data")).toBeNull();
     expect(within(table).getByRole("status", { name: "Loading runs" })).toHaveAttribute("aria-busy", "true");
     expect(within(table).getByRole("columnheader", { name: "Goal" })).toBeInTheDocument();
@@ -302,7 +303,7 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(screen.queryByText(/group by it to see a whole working sitting/)).toBeNull();
   });
 
-  // Self-review: "no runs match" is said only of a read of the current filter, not of the
+  // "No runs match" is said only of a read of the current filter, not of the
   // previous filter's empty answer while the new one is in flight.
   it("does not say a new search matches nothing before its answer lands", async () => {
     let answer: (p: RunListPage) => void = () => {};
@@ -322,9 +323,8 @@ describe("Runs paging, sorting and search on the server", () => {
     await screen.findByRole("button", { name: "goal 1" });
   });
 
-  // Review finding: with a release and the one before it behind one URL, answers
-  // alternate between "no total" and "a total"; flipping modes on each one read forever and
-  // never showed a row. Every answer is shown, and the mode only moves to local.
+  // With a release and the one before it behind one URL, answers alternate between no total
+  // and a total. The list settles in the local mode and shows the rows.
   it("settles on a mixed fleet, whose answers alternate between no total and a total", async () => {
     let n = 0;
     listRunsPage.mockImplementation(async (_id, opts = {}) => {
@@ -334,8 +334,26 @@ describe("Runs paging, sorting and search on the server", () => {
     });
     render(<Runs />);
     expect(await screen.findByRole("button", { name: "goal 1" })).toBeInTheDocument();
-    await new Promise((r) => setTimeout(r, 400));
-    expect(listRunsPage.mock.calls.length).toBeLessThanOrEqual(3);
-    expect(bodyRows().length).toBeGreaterThan(0);
+    expect(listRunsPage).toHaveBeenCalledTimes(2);
+    expect(lastOpts()).toMatchObject({ limit: 200 });
+    // In the local mode the next page is read from the rows already held.
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Runs pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByRole("button", { name: "goal 51" })).toBeInTheDocument();
+    expect(listRunsPage).toHaveBeenCalledTimes(2);
+  });
+
+  // Runs that started together keep run.list's order: run_id in the direction of the sort.
+  it("against a server that does not page, breaks a tie in start by run_id, newest first", async () => {
+    const at = { started_at: "2026-09-20T07:00:00Z" };
+    listRunsPage.mockImplementation(async () => ({ runs: [run(1, at), run(2, at), run(3, at)], total: null }));
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 3" });
+    expect(bodyRows().map((r) => within(r).getByRole("button", { name: /^goal / }).textContent)).toEqual([
+      "goal 3",
+      "goal 2",
+      "goal 1",
+    ]);
   });
 });

@@ -265,15 +265,14 @@ export async function listMemories(
     previewChars?: number;
     // Only rows whose value or key holds this text, any case.
     contains?: string;
-    // Only rows carrying any of these tags, in any case.
+    // Only rows carrying every one of these tags, in any case.
     tags?: string[];
     // Only rows this agent wrote; every agent's rows when unset.
     agent?: string;
   } & RequestOpts = {},
 ): Promise<MemoryListResponse> {
-  // The Memories view shows everything in the namespace regardless of
-  // which agent wrote the row, so pass `agent=*` to drop the per-agent
-  // server filter.
+  // Without an agent the Memories view shows every agent's rows, so it sends `agent=*` to
+  // drop the server's per-agent filter.
   const out = await post<MemoryListResponse>(
     "/v1/memory.list",
     {

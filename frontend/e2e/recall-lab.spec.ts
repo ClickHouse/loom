@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi } from "./fixtures";
 
-// Recall Lab scores a query as a Click UI Table (SPEC-LISTS A7): one row per result, the
+// Recall Lab scores a query as a Click UI Table: one row per result, the
 // score drawn as Click UI's table bar, the row count in the toolbar. At desktop and phone
 // width it is axe clean and never scrolls the page sideways; a row opens the memory.
 

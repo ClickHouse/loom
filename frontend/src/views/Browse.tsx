@@ -494,7 +494,7 @@ export function Browse() {
 }
 
 /**
- * One space (SPEC-LISTS A6): line 1 the namespace in mono and its visibility, line 2 its
+ * One space: line 1 the namespace in mono and its visibility, line 2 its
  * description; at the right its member count, the one inline action and the More menu.
  * The name is the row's open button (`data-row-open`), stretched over the row.
  */

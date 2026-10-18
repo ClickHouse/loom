@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listTime, listTimeTitle, parseChTime } from "./format";
 
-// One date rule for every list row (SPEC-LISTS C3): how long ago within the week, then the
+// One date rule for every list row: how long ago within the week, then the
 // day, with the year only when it is not this one.
 describe("listTime", () => {
   beforeEach(() => {

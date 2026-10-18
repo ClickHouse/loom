@@ -37,8 +37,8 @@ describe("HelpDialog", () => {
     expect(within(lists[3] as HTMLElement).getByText("Walk from here")).toBeInTheDocument();
   });
 
-  // Review finding: the dialog spelled it "Ctrl+K" where the search bar and the header say
-  // "Ctrl K"; every place prints `paletteShortcut()`, as one key cap.
+  // The dialog, the search bar and the header all print `paletteShortcut()` ("Ctrl K"), as
+  // one key cap.
   it("labels the search shortcut for the platform, as the search bar prints it", () => {
     vi.stubGlobal("navigator", { ...navigator, platform: "Win32" });
     const { unmount } = render(<HelpDialog open onOpenChange={() => {}} />);

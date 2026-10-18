@@ -1,7 +1,7 @@
 /**
  * RepositoryCard — a repository is one list row with two facets: its code and its record.
  *
- * The row is folded by default (SPEC-LISTS B1):
+ * The row is folded by default:
  *
  * - line 1: `owner/repo` (the disclosure button), one health badge for the worst branch the
  *   person can see (its detail in a tooltip), and `Restricted` when it is;
@@ -74,7 +74,7 @@ export const FRESH_STATE: Record<FreshTone, BadgeState> = {
 };
 
 // ---------------------------------------------------------------------------
-// Health: one vocabulary for a branch's index (SPEC-LISTS B2)
+// Health: one vocabulary for a branch's index
 // ---------------------------------------------------------------------------
 
 export interface Health {

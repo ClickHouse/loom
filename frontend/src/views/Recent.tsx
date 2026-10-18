@@ -98,7 +98,7 @@ function detailToEntry(key: string, d: MemoryDetail): MemoryListEntry {
   };
 }
 
-/** What the Status select shows (SPEC-LISTS C9). Every status but Live and Recently
+/** What the Status select shows. Every status but Live and Recently
  *  deleted reads the newest 1,000 and keeps the matching rows: none has a server filter. */
 type Status = "live" | "pinned" | "conflicted" | "verified" | "deleted";
 const STATUSES: ReadonlyArray<{ value: Status; label: string }> = [
@@ -156,7 +156,7 @@ function MemoryList() {
   const [entries, setEntries] = useState<MemoryListEntry[] | null>(null);
   const phone = useMedia(PHONE_QUERY);
   // A phone's status and agent filters wait behind the toolbar's Filters button, so the
-  // first memory is inside the chrome budget (SPEC-LISTS C10).
+  // first memory is inside the chrome budget.
   const [phoneFilters, setPhoneFilters] = useState(false);
   // First paint mounts the first screen; the rest follow in a transition (see
   // FIRST_SCREEN_CARDS).
@@ -798,7 +798,7 @@ function MemoryList() {
   const listTotal = showDeleted || listFiltered ? flatList.length : total || (entries?.length ?? 0);
   const rangeStart = pageList.length === 0 ? 0 : (showDeleted ? 0 : page * pageSize) + 1;
   const rangeEnd = (showDeleted ? 0 : page * pageSize) + pageList.length;
-  // One count, at the end of the toolbar (SPEC-LISTS C4): the range while browsing, the
+  // One count, at the end of the toolbar: the range while browsing, the
   // matches for a search or a filter, the last one while a read is in flight, nothing on an
   // error or before the first read.
   const matches = (n: number) => `${n.toLocaleString()} match${n === 1 ? "" : "es"}`;

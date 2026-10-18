@@ -6,10 +6,10 @@ import { ApiError } from "../lib/errors";
 import { useStore } from "../lib/state";
 import { Conversations } from "./Conversations";
 
-// Conversations against SPEC-LISTS A3: a thread is named by its title, else by what the
+// Conversations against the list rules: a thread is named by its title, else by what the
 // user said, else "Untitled thread" — never its id; a search shows one row per thread with
 // up to three of its matching turns, the matched words in 600 weight; the recording switch
-// sits with the page title; a failed read says so with a Retry and no count (C4, C5).
+// sits with the page title; a failed read says so with a Retry and no count.
 
 const api = vi.hoisted(() => ({
   listConversationThreads: vi.fn(),

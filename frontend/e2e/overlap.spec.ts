@@ -83,7 +83,7 @@ for (const width of [1400, 375]) {
   });
 }
 
-// Review findings: on a phone the pager stays one row (Click UI's own Pagination stacks into
+// On a phone the pager stays one row (Click UI's own Pagination stacks into
 // a column), and a row's checkbox takes a 44 px tap.
 test.describe("phone", () => {
   test.use({ viewport: { width: 375, height: 800 }, hasTouch: true, isMobile: true });
@@ -114,8 +114,8 @@ test.describe("phone", () => {
   });
 });
 
-// Review finding: at 375 px a Library row's body shrank to nothing beside its actions, so
-// titles, descriptions and tag labels vanished.
+// At 375 px a Library row's body keeps its width beside its actions, so titles,
+// descriptions and tag labels stay in view.
 test.describe("phone library", () => {
   test.use({ viewport: { width: 375, height: 800 } });
   test("a library row keeps its title readable", async ({ page }) => {
@@ -129,7 +129,7 @@ test.describe("phone library", () => {
   });
 });
 
-// Review finding: the hover-tinted padding of a row opened nothing; the whole row opens it.
+// The whole row opens it, the hover-tinted padding included.
 test("a click on a row's padding opens it, on Memories and in the Library", async ({ page }) => {
   await memories(page);
   const row = page.locator("[data-card]").first();

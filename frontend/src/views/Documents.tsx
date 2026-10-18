@@ -390,7 +390,7 @@ export function Documents() {
   const partial = !!nextCursor && !!rows;
   const loaded = `the first ${(rows?.length ?? 0).toLocaleString()}`;
   const browserOnly = partial && (freeText.length > 0 || sortBy !== "recency");
-  // One count, at the end of the toolbar (SPEC-LISTS C4): how many rows are shown (the
+  // One count, at the end of the toolbar: how many rows are shown (the
   // cursor has no total), the matches for a search or a tag, nothing on an error or before
   // the first read. While a new filter is read the last one stays up.
   const matches = (n: number, more = false) =>

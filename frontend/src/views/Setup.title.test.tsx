@@ -62,8 +62,7 @@ describe("Settings", () => {
   });
 });
 
-// Review finding: a token's created and used times were the old relative text; they are the
-// list's one time format, quiet in the row.
+// A token's created and used times are the list's one time format, quiet in the row.
 describe("Settings tokens", () => {
   it("draws a token's created and last-used times with ListTime", async () => {
     vi.mocked(listServiceAccounts).mockResolvedValueOnce([

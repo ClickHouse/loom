@@ -55,7 +55,7 @@ describe("MemoryCard", () => {
     expect(open).not.toHaveAccessibleDescription(/prefs\/coffee/);
   });
 
-  // SPEC-LISTS C2/C3: a row that opens in place has no chevron, and its time is the list
+  // A row that opens in place has no chevron, and its time is the list
   // time ("3d ago", "Sep 20") with the UTC time behind it, not a clock time without a day.
   it("shows the list time and no chevron", () => {
     vi.useFakeTimers({ now: Date.parse("2026-09-28T15:00:00Z"), toFake: ["Date"] });
@@ -73,7 +73,7 @@ describe("MemoryCard", () => {
     }
   });
 
-  // SPEC-LISTS A1: a JSON value reads as one muted mono line of `k: v` pairs.
+  // A JSON value reads as one muted mono line of `k: v` pairs.
   it("draws a JSON value as its key: value pairs", () => {
     const value = JSON.stringify({ steps: ["drain", "re-point", "replay"], owner: "oncall", sla_minutes: 30 });
     render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={value} />);

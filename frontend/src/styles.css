@@ -920,7 +920,7 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-group[data-collapsed="true"] .tq-ghead .car {
     transform: rotate(-90deg);
   }
-  /* A row (SPEC-LISTS A5): line 1 the priority, the title and the meta (assignee, age,
+  /* A row: line 1 the priority, the title and the meta (assignee, age,
      menu); line 2 the kind and the state's one line. */
   .tq-row {
     display: grid;
@@ -1383,7 +1383,7 @@ tr:hover .recall-bar > span {
   justify-content: flex-end;
 }
 
-/* Repositories (SPEC-LISTS B): a row's one action is Click UI's SplitButton. Its root clips
+/* Repositories: a row's one action is Click UI's SplitButton. Its root clips
    its two halves, so each half's focus ring is drawn inside it; on a phone it takes the
    row's width under the summary line; under a coarse pointer its menu half (a div that
    RepositoryCard makes a button) is a 44 px target like every other button. */

@@ -87,8 +87,7 @@ describe("Policies add rule", () => {
   });
 });
 
-// Review finding: a rule's "updated" time was the old relative text; it is the list's one
-// time format, a <time> with the absolute UTC time behind it.
+// A rule's "updated" time is the list's one time format, a <time> with the absolute UTC time behind it.
 describe("Policies rule time", () => {
   it("draws a rule's update time with ListTime", async () => {
     vi.mocked(api.listPolicies).mockResolvedValueOnce({

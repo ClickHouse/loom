@@ -9,7 +9,7 @@ import { must } from "../test/must";
 
 // While a search is active the Memories view asks memory.search with `explain: true` (so
 // the per-hit evidence rides above the excerpt k) and puts a "Why this result" button in
-// each ranked row's meta slot (SPEC-LISTS A1), whose popover holds the scoring. The count
+// each ranked row's meta slot, whose popover holds the scoring. The count
 // is the toolbar's alone: no summary line, no "Results" heading.
 
 const entry = (memory_key: string): MemoryListEntry => ({

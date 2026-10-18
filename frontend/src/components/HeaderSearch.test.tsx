@@ -51,7 +51,7 @@ beforeEach(() => {
 });
 
 describe("HeaderSearch", () => {
-  // SPEC-LISTS A10: the group heading names the type, so a row leads with the type's icon
+  // The group heading names the type, so a row leads with the type's icon
   // instead of a coloured "memory" badge; line 1 is the key with the memory type at its
   // end, line 2 the excerpt.
   it("leads each memory row with its type icon, not a badge, and puts the type at the end", async () => {

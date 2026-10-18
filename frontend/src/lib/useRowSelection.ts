@@ -15,7 +15,7 @@ export interface RowSelection {
 }
 
 /**
- * The checkbox selection of a list page (SPEC-LISTS C6), the way Click UI's selectable
+ * The checkbox selection of a list page, the way Click UI's selectable
  * Table works: one row at a time, a Shift-click selects the range from the row last
  * toggled, the select-all checkbox takes every row on the page, and Escape clears the
  * selection (only while there is one, so Escape is otherwise left to the page). `keys`

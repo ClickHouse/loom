@@ -47,8 +47,7 @@ describe("MembersDialog loading", () => {
   });
 });
 
-// Review finding: a request's wait and a member's grant were the old relative text; they are
-// the list's one time format, quiet in the row.
+// A request's wait and a member's grant are the list's one time format, quiet in the row.
 describe("MembersDialog times", () => {
   it("draws a request's wait and a member's grant time with ListTime", async () => {
     vi.mocked(api.listGrants).mockResolvedValueOnce({

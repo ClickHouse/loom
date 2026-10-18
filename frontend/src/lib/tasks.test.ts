@@ -549,9 +549,8 @@ describe("time helpers", () => {
   });
 });
 
-// Review finding: the page read times with its own Date.parse, which Safari refuses for a
-// ClickHouse time ("2026-09-20 01:00:00", or six fraction digits). It reads them with
-// parseChTime, as every list does. Date.parse is held to the ISO form Safari accepts.
+// The page reads times with parseChTime, as every list does: Safari's Date.parse refuses a
+// ClickHouse time ("2026-09-20 01:00:00", or six fraction digits). Date.parse is held to the ISO form Safari accepts.
 describe("ClickHouse times under a strict date parser", () => {
   afterEach(() => vi.restoreAllMocks());
   it("reads a lease, a schedule and a date input from a ClickHouse time", () => {

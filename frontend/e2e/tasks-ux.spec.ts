@@ -111,10 +111,10 @@ test("at 1400 px the open panel's actions are in view without scrolling", async 
   await expect(panel.getByRole("button", { name: "Won't do…" })).toBeInViewport();
 });
 
-// Self-review: on a phone the first task starts within the list pages' chrome budget
-// (y ≤ 360 at 375 × 812): the scope badge and the List/Board switch give way. Review
-// finding: measured with a touch pointer, where every control is 44 px, the tiles' row put
-// it at 405; the tiles and the filters are one Filters menu on the inbox select's row.
+// On a phone the first task starts within the list pages' chrome budget (y ≤ 360 at
+// 375 × 812): the scope badge and the List/Board switch give way. Under a touch pointer,
+// where every control is 44 px, the tiles and the filters are one Filters menu on the
+// inbox select's row.
 test.describe("a phone with a touch pointer", () => {
   test.use({ hasTouch: true, isMobile: true });
 

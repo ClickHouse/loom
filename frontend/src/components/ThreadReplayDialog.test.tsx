@@ -89,8 +89,8 @@ describe("ThreadReplayDialog", () => {
     expect(agent.closest('.agent-badge [data-testid$="-badge-content"]')).not.toBeNull();
     expect(agent.closest(".font-mono")).toBeNull();
     expect(meta).toHaveTextContent(`updated ${listTime(old)}`);
-    // Review finding: the dialog had its own copy of the list's time rule; its times are
-    // ListTime, the thread's update time included.
+    // The dialog's times are ListTime, the list's one time rule, the thread's update time
+    // included.
     expect(meta.querySelector("time")).toHaveAttribute("dateTime", old);
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).not.toMatch(/\d+\/\d+\/\d{4}/);
@@ -100,7 +100,7 @@ describe("ThreadReplayDialog", () => {
   });
 });
 
-// SPEC-LISTS A3: a thread is named by its title, else by the user's first message on one
+// A thread is named by its title, else by the user's first message on one
 // line; never by its id.
 describe("threadTitle", () => {
   it("takes the title, else the user's message flattened, else nothing", () => {

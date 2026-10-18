@@ -140,8 +140,8 @@ describe("Inspector links", () => {
 // its rows in both directions, up to 24.
 describe("Inspector lists", () => {
   it("an edge's rows over 20 show the first 20 and Show all N", async () => {
-    // Review finding: one answer for both directions drew 12 rows twice, under the same keys.
-    // Each direction answers its own rows, as the server does.
+    // Each direction answers its own rows, as the server does, so no row is drawn twice under
+    // one key.
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(listFacts).mockImplementation(async (_id, opts = {}) => ({
       rows: Array.from({ length: 12 }, (_, i) => ({

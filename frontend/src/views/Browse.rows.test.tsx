@@ -6,7 +6,7 @@ import { useStore } from "../lib/state";
 import { axeViolations } from "../test/axe";
 import { Browse } from "./Browse";
 
-// A space is one list row (SPEC-LISTS A6): the namespace in mono and its visibility badge
+// A space is one list row: the namespace in mono and its visibility badge
 // on line 1, its description on line 2; at the right its member count, the one inline
 // action (Invite where you manage it, else Join, Pending or Request upgrade) and a More
 // menu (Settings for a manager, Copy name, Leave for a member). The rows are one tab stop

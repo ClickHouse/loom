@@ -5,10 +5,10 @@ import { useStore } from "../lib/state";
 import { ApiError } from "../lib/errors";
 import { Documents } from "./Documents";
 
-// The Library against SPEC-LISTS: a row's actions in one always-visible More menu (C2,
-// A2), Superseded as a neutral version state, the namespace's figures in the description
-// line instead of a footer (C4), the toolbar in every state with the one state pattern
-// under it (C5), the `tag:` filter said once, in the field (C9), and the selection (C6).
+// The Library against the list rules: a row's actions in one always-visible More menu,
+// Superseded as a neutral version state, the namespace's figures in the description
+// line instead of a footer, the toolbar in every state with the one state pattern
+// under it, the `tag:` filter said once, in the field, and the selection.
 
 const api = vi.hoisted(() => ({
   listKnowledge: vi.fn(),

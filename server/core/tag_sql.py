@@ -1,0 +1,19 @@
+"""The hard tag predicate a list statement filters by, shared by the memory and the
+document stores so both fold case the same way."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+
+def tag_filter(
+    tags: Sequence[str], *, any_case: bool = False, every: bool = False
+) -> tuple[str, list[str]]:
+    """The predicate over a row's `tags` and its values: any one of `tags` (OR), or with
+    `every` all of them; exact, or with `any_case` the row's tags and the asked ones compared
+    lowercased (`lowerUTF8`: ClickHouse's `lower` folds only A–Z, Python's every letter)."""
+    fn = "hasAll" if every else "hasAny"
+    if any_case:
+        values = [str(t).lower() for t in tags]
+        return f"{fn}(arrayMap(t -> lowerUTF8(t), tags), {{tags:Array(String)}})", values
+    return f"{fn}(tags, {{tags:Array(String)}})", [str(t) for t in tags]

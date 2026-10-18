@@ -303,7 +303,7 @@ export function Conversations() {
     }
   };
 
-  // One count, at the end of the toolbar (SPEC-LISTS C4): the matches of a search, the
+  // One count, at the end of the toolbar: the matches of a search, the
   // threads shown (the total is known only once the last page is read), the last one while
   // a read is in flight, nothing on an error.
   const pageStart = threadPage * THREADS_PAGE;
@@ -446,7 +446,7 @@ export function Conversations() {
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </span>
       </PageHeader>
-      {/* Left to the title on a phone, where the threads need the room (SPEC-LISTS C10). */}
+      {/* Left to the title on a phone, where the threads need the room. */}
       <div className="mb-4 hidden items-center gap-1 text-sm text-text-muted sm:flex">
         The raw chats your agents recorded.
         <IconButton

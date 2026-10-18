@@ -111,9 +111,8 @@ describe("Runs rows", () => {
     await waitFor(() => expect(listRunsPage.mock.calls.at(-1)?.[1]).toMatchObject({ orderBy: "duration_desc" }));
   });
 
-  // Review finding: on a phone under a touch pointer the two toggles and the sort took two
-  // 44 px rows, and the first run started at 407 px. They fold into one View menu beside
-  // the filters.
+  // On a phone under a touch pointer the two toggles and the sort fold into one View menu
+  // beside the filters, so the first run starts inside the chrome budget.
   it("folds the sort, the grouping and the hidden runs into one View menu on a phone", async () => {
     phoneWidth();
     listRunsPage.mockResolvedValue({ runs: [run("r-1", "fix the thing", "s-1")], total: 1 });

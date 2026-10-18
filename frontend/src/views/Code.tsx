@@ -792,7 +792,7 @@ function RepositoriesHome({
   );
 }
 
-/** The empty page's three steps (SPEC-LISTS B5), in Click UI's VerticalStepper. The steps
+/** The empty page's three steps, in Click UI's VerticalStepper. The steps
  *  say what happens; none is a control, so their buttons stay disabled (no tab stop). */
 function OnboardingSteps() {
   const steps = [

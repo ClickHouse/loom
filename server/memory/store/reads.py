@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.core.tag_sql import tag_filter
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
@@ -606,19 +607,6 @@ CONTAINS_PREDICATE = (
     "(positionCaseInsensitiveUTF8(value, {contains:String}) > 0"
     " OR positionCaseInsensitiveUTF8(memory_key, {contains:String}) > 0)"
 )
-
-
-def tag_filter(
-    tags: Sequence[str], *, any_case: bool = False, every: bool = False
-) -> tuple[str, list[str]]:
-    """The hard tag predicate and its values: any one of `tags` (OR), or with `every` all
-    of them; exact, or with `any_case` the row's tags and the asked ones compared
-    lowercased (`lowerUTF8`: ClickHouse's `lower` folds only A–Z, Python's every letter)."""
-    fn = "hasAll" if every else "hasAny"
-    if any_case:
-        values = [str(t).lower() for t in tags]
-        return f"{fn}(arrayMap(t -> lowerUTF8(t), tags), {{tags:Array(String)}})", values
-    return f"{fn}(tags, {{tags:Array(String)}})", [str(t) for t in tags]
 
 
 async def list_by_namespace(

@@ -78,7 +78,7 @@ describe("usePageSize", () => {
   });
 });
 
-// Review findings: typing a page number goes there on Enter or blur and leaves focus in the
+// Typing a page number goes there on Enter or blur and leaves focus in the
 // field; one short page without a total shows no pager; the range never reads "0–30"; a page
 // past the end (the last rows deleted) steps back to the last page.
 describe("ListPager, typed and edge pages", () => {
@@ -107,7 +107,7 @@ describe("ListPager, typed and edge pages", () => {
   });
 });
 
-// Review findings (round 2): with a page size picked, the choice stays reachable even when
+// With a page size picked, the choice stays reachable even when
 // one page holds everything; the size select is named for what it sets, and a size change
 // says where the reader now is.
 describe("ListPager, page size", () => {

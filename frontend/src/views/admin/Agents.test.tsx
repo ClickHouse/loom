@@ -36,8 +36,8 @@ describe("Agents: loading", () => {
     render(<Agents />);
     const table = await screen.findByRole("table", { name: "Connected clients" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    // Review finding: Click UI's `loading` showed its loader at once; the first read waits
-    // 300 ms like every loader (ui/LoadingSkeleton), under the header row already in place.
+    // The first read waits 300 ms before its loader shows, like every loader
+    // (ui/LoadingSkeleton), under the header row already in place.
     expect(within(table).queryByText("Loading data")).toBeNull();
     expect(within(table).getByRole("status", { name: "Loading connected clients" })).toHaveAttribute(
       "aria-busy",
@@ -106,8 +106,8 @@ describe("Agents: count and failure", () => {
   });
 });
 
-// Review finding: Refresh and Retry read again with no abort, so an answer for the window the
-// page has left could land after the new window's and draw stale rows.
+// Refresh and Retry abort the read in flight, so an answer for the window the page has left
+// never lands after the new window's and draws stale rows.
 describe("Agents: late answers", () => {
   it("drops a Refresh's answer that lands after a new window's", async () => {
     listConnectedAgents.mockResolvedValueOnce({ rows: [ROW] });

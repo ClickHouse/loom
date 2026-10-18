@@ -30,8 +30,8 @@ describe("ListTime", () => {
     expect(screen.getByText("12m ago")).not.toHaveAttribute("tabindex");
   });
 
-  // Review findings: a time in a table or grid row took its own tab stop (fifty per page of
-  // runs); there it is quiet, and a screen reader still hears the absolute time.
+  // In a table or grid row a time takes no tab stop of its own (fifty per page of runs);
+  // a screen reader still hears the absolute time.
   it("takes no tab stop in a table or grid row, and says the absolute time to a screen reader", () => {
     render(
       <table>

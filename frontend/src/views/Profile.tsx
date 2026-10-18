@@ -189,7 +189,7 @@ export function Profile() {
 
   const isEmpty = entries !== null && entries.length === 0 && !newOpen && !error;
   const searching = query.trim() !== "";
-  // One count, at the end of the toolbar (SPEC-LISTS C4); nothing before the read or on an
+  // One count, at the end of the toolbar; nothing before the read or on an
   // error.
   const shown = filteredEntries?.length ?? 0;
   const countText =
@@ -332,7 +332,7 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
           <ScopeBadge kind="namespace" value={namespace} />
         </span>
       </PageHeader>
-      {/* Left to the title on a phone, where the sections need the room (SPEC-LISTS C10). */}
+      {/* Left to the title on a phone, where the sections need the room. */}
       <p className="hidden text-sm text-text-muted sm:block">
         One profile. Every AI you use reads it before responding.
       </p>

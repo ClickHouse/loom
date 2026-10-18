@@ -14,6 +14,7 @@ from server.core.ch import caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value_json as _sha256_value_json
+from server.core.tag_sql import tag_filter
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_bulk import MemoryBulkGetInput, MemoryBulkGetOutput
@@ -465,7 +466,7 @@ async def _list_by_score(
         where.append("startsWith(memory_key, {p:String})")
         params["p"] = input.prefix
     if tags:
-        clause, params["tags"] = memory_repo.tag_filter(
+        clause, params["tags"] = tag_filter(
             tags, any_case=input.tags_any_case, every=input.tags_all
         )
         where.append(clause)

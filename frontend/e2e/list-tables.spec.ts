@@ -134,7 +134,7 @@ const TABLES: [string, string][] = [
 for (const width of [1400, 375]) {
   test.describe(`${width} px`, () => {
     test.use({ viewport: { width, height: 900 } });
-    // Under 769 px the runs are list rows, not a table (SPEC-LISTS A4): see runs.spec.ts.
+    // Under 769 px the runs are list rows, not a table: see runs.spec.ts.
     for (const [path, name] of TABLES.filter(([p]) => width > 768 || p !== "/runs")) {
       test(`${path} is a table with rows, axe clean and no sideways scroll`, async ({ page }) => {
         await withRows(page);
@@ -213,7 +213,7 @@ test("repositories page above 50 and not below", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "Repository pages" })).toHaveCount(0);
 });
 
-// Admin lists (SPEC-LISTS A9): the count sits at the end of the 48 px toolbar, a time is
+// Admin lists: the count sits at the end of the 48 px toolbar, a time is
 // a list time, and a failed read is the error state with Retry, never an empty one.
 
 const CLIENTS = [

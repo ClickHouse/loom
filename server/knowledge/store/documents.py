@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from server.core.hashing import hash_text, sha256_document_text
 from server.core.repo_base import _CHClient, _default_client
+from server.core.tag_sql import tag_filter
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 
 
@@ -258,12 +259,8 @@ async def list_with_chunk_counts(
     if not include_superseded:
         extra_where += " AND superseded_at IS NULL"
     if tags:
-        # Any one of the tags, or with `tags_all` every one; with `tags_any_case` the row's
-        # tags and the asked ones compared lowercased, Unicode-aware (a browse page's filter).
-        fn = "hasAll" if tags_all else "hasAny"
-        col = "arrayMap(t -> lowerUTF8(t), tags)" if tags_any_case else "tags"
-        extra_where += f" AND {fn}({col}, {{tags:Array(String)}})"
-        params["tags"] = [t.lower() for t in tags] if tags_any_case else tags
+        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case, every=tags_all)
+        extra_where += f" AND {clause}"
     live_prefixes = [p for p in (uri_prefixes or []) if p]
     if live_prefixes:
         # Directory scope: OR of startsWith over the (org, namespace,

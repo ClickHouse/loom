@@ -162,10 +162,9 @@ test.describe("375 px", () => {
   });
 });
 
-// Self-review: on a phone the first run starts within the list pages' chrome budget
-// (y ≤ 360 at 375 × 812); the description waits behind its info button. Review finding:
-// measured with a touch pointer, where every control is 44 px, the toggles' rows put it at
-// 407; they fold into the View menu on the filters' row.
+// On a phone the first run starts within the list pages' chrome budget (y ≤ 360 at
+// 375 × 812); the description waits behind its info button. Under a touch pointer, where
+// every control is 44 px, the toggles fold into the View menu on the filters' row.
 test.describe("a phone with a touch pointer", () => {
   test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
 

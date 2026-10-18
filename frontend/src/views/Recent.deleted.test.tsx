@@ -55,7 +55,7 @@ describe("Recently deleted status", () => {
     useStore.setState({ whoami: null, identity: null });
   });
 
-  // SPEC-LISTS C9: the Status select is Live, Pinned, Conflicted, Verified and Recently
+  // The Status select is Live, Pinned, Conflicted, Verified and Recently
   // deleted, in the toolbar; it replaces the header's Live | Recently deleted toggle. The
   // toolbar stays mounted through the reload, so the select keeps the focus.
   it("is the Recently deleted status, and the select keeps focus through the reload", async () => {

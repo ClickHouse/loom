@@ -8,7 +8,7 @@ import { Recent } from "./Recent";
 
 // A tag on a memory card adds that tag to the filter, and another tag narrows it further
 // (every tag must match, as `tag:a tag:b` typed in the search does). The tags in force
-// are the `tag:` tokens in the search field (SPEC-LISTS C9: no chip beside it), so they
+// are the `tag:` tokens in the search field (no chip beside it), so they
 // stay in view as the list scrolls.
 
 const entry = (memory_key: string, tags: string[]): MemoryListEntry => ({
@@ -188,8 +188,8 @@ describe("Memories: filtering by tags", () => {
     expect(screen.queryByRole("navigation", { name: "Memories pages" })).toBeNull();
   });
 
-  // Review finding: a filter the server matches nothing for showed the empty-namespace page
-  // and took the toolbar with it, so the filter could not be cleared.
+  // A filter the server matches nothing for keeps the toolbar, so the filter can be cleared;
+  // it is not the empty-namespace page.
   it("a filter that matches nothing keeps the toolbar and offers to clear it", async () => {
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
       opts?.tags?.length
@@ -206,8 +206,8 @@ describe("Memories: filtering by tags", () => {
     expect(await screen.findByText("both")).toBeInTheDocument();
   });
 
-  // Review finding: the current page was filtered on the client first, so "Nothing matches"
-  // flashed before the server's answer; a tag chip waited out the typing delay.
+  // The page waits for the server's answer before it says "Nothing matches", and a tag chip
+  // reads at once, without the typing delay.
   it("keeps the rows up while a filtered read is in flight, and a tag chip asks at once", async () => {
     let answer: (v: never) => void = () => {};
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
@@ -230,8 +230,8 @@ describe("Memories: filtering by tags", () => {
     expect(await screen.findByText("storage_only")).toBeInTheDocument();
   });
 
-  // Review finding: the server matches an agent exactly, so a typed agent in another case
-  // found nothing; it is sent as the list has seen it written.
+  // The server matches an agent exactly, so a typed agent is sent as the list has seen it
+  // written, whatever case it was typed in.
   it("sends a typed agent the way the list has seen it written", async () => {
     await openMemories();
     await userEvent.type(screen.getByLabelText("Search memories"), "agent:Claude-Desktop");

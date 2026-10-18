@@ -21,7 +21,7 @@ export interface RowMenuProps {
 }
 
 /**
- * RowMenu — a list row's "More" menu (SPEC-LISTS C2): every per-row action but the one
+ * RowMenu — a list row's "More" menu: every per-row action but the one
  * dominant inline one, in Click UI's Dropdown behind a `dots-vertical` IconButton named
  * "Actions for <name>". Always visible, never on hover only, at the row's far right after
  * the meta slot; it sits over the row's stretched open button. Keyboard and focus are

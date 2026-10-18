@@ -58,7 +58,7 @@ describe("AccessTab rows", () => {
     expect(added).toHaveTextContent("by alice");
   });
 
-  // Review finding: every waiting row had its own primary Approve.
+  // No waiting row has a primary Approve: a list of them would be a column of primaries.
   it("gives no waiting row a primary button", async () => {
     render(<AccessTab id={{ org: "dev", namespace: "code-app" }} />);
     const waiting = await screen.findByRole("region", { name: "Waiting for approval" });

@@ -7,10 +7,10 @@ import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Recent } from "./Recent";
 
-// The Memories list against SPEC-LISTS: one count, in the toolbar (C4); the toolbar in
-// every state, with the one state pattern under it (C5); an Agent and a Status select in
-// place of the chip row and the header toggle (C9); the select-all and Shift-click range
-// selection, cleared by Escape (C6).
+// The Memories list against the list rules: one count, in the toolbar; the toolbar in
+// every state, with the one state pattern under it; an Agent and a Status select in
+// place of the chip row and the header toggle; the select-all and Shift-click range
+// selection, cleared by Escape.
 
 const entry = (memory_key: string, over: Partial<MemoryListEntry> = {}): MemoryListEntry => ({
   memory_key,

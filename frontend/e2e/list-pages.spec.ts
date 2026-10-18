@@ -3,11 +3,11 @@ import * as fs from "node:fs";
 import { violations } from "./axe";
 import { codeReposFixture, installApi, trackerSourcesFixture } from "./fixtures";
 
-// The Memories, Library and Conversations lists against SPEC-LISTS, in the browser: the
-// chrome over the first row stays inside its budget (C10), the selection takes a range and
-// clears on Escape (C6), a row list is one tab stop whose ring is drawn on the row (C7), a
-// Library row's More menu shows without a hover (C2), and Insights holds the usage audit
-// and the mentor (A1).
+// The Memories, Library and Conversations lists against the list rules, in the browser: the
+// chrome over the first row stays inside its budget, the selection takes a range and
+// clears on Escape, a row list is one tab stop whose ring is drawn on the row, a
+// Library row's More menu shows without a hover, and Insights holds the usage audit
+// and the mentor.
 
 const now = new Date().toISOString();
 const THREADS = Array.from({ length: 6 }, (_, i) => ({
@@ -45,7 +45,7 @@ for (const { width, height, top, touch } of BUDGET) {
   test.describe(`${width} px`, () => {
     test.use({ viewport: { width, height }, hasTouch: touch, isMobile: touch });
 
-    // SPEC-LISTS C10: the first row starts at or above y = 300 on a desktop, 360 on a phone.
+    // The first row starts at or above y = 300 on a desktop, 360 on a phone.
     for (const path of ["/memories", "/library", "/conversations", "/profile", "/spaces", "/repositories"]) {
       test(`${path}: the first row starts at or above y = ${top}`, async ({ page }) => {
         await open(page, path);

@@ -28,7 +28,7 @@ import { MenuChoice, MenuChoiceGroup } from "../components/MenuChoice";
 import { MenuTrigger } from "../components/ui/Menu";
 import { SkeletonCard, TableSkeleton } from "../components/Skeleton";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { displayAgent, listTime, relativeTime, truncate } from "../lib/format";
+import { displayAgent, listTime, parseChTime, relativeTime, truncate } from "../lib/format";
 import { useRowNav } from "../lib/useRowNav";
 import { PageContainer } from "../layout/PageContainer";
 import { Modal } from "../components/ui/Modal";
@@ -270,18 +270,14 @@ function searchRuns(runs: RunRow[], q: string): RunRow[] {
 /** A server that does not page: the runs in `order`, ties by start then id, as run.list does. */
 function sortRuns(runs: RunRow[], order: RunOrder): RunRow[] {
   const [key, dir] = splitOrder(order);
+  const started = (r: RunRow) => parseChTime(r.started_at)?.getTime() ?? 0;
   const value = (r: RunRow) =>
-    key === "duration"
-      ? (r.duration_ms ?? 0)
-      : key === "relied_on"
-        ? (r.memories_used ?? []).length
-        : Date.parse(r.started_at);
+    key === "duration" ? (r.duration_ms ?? 0) : key === "relied_on" ? (r.memories_used ?? []).length : started(r);
   const sign = dir === "asc" ? 1 : -1;
+  // run_id compares by code unit, as ClickHouse compares the bytes of an ASCII id.
+  const byId = (a: RunRow, b: RunRow) => (a.run_id < b.run_id ? -1 : a.run_id > b.run_id ? 1 : 0);
   return [...runs].sort(
-    (a, b) =>
-      sign * (value(a) - value(b)) ||
-      sign * (Date.parse(a.started_at) - Date.parse(b.started_at)) ||
-      a.run_id.localeCompare(b.run_id),
+    (a, b) => sign * (value(a) - value(b)) || sign * (started(a) - started(b)) || sign * byId(a, b),
   );
 }
 
@@ -497,7 +493,7 @@ function RunRows({ label, rows, onOpen, busy, keys }: RunListProps & { keys: boo
   );
 }
 
-/** The toolbar's count (SPEC-LISTS C4): "1–50 of 1,234", "1–50" without a total, "12
+/** The toolbar's count: "1–50 of 1,234", "1–50" without a total, "12
  *  matches" for a search the first page holds whole; nothing for an empty page. */
 function countText(page: number, pageSize: number, shown: number, total: number | null, searching: boolean): string {
   if (shown === 0) return "";
@@ -614,10 +610,13 @@ export function Runs() {
     )
       .then((p) => {
         if (!live) return;
-        // No total: a server that does not page. Show its answer, then read its newest runs
-        // once and page here. Only another namespace leaves `local`: behind one URL a release
-        // and the one before it answer in turn, and flipping back on each total never settles.
-        if (p.total === null && !local) setLocal(true);
+        // No total: a server that does not page. Read its newest runs once and page here.
+        // Only another namespace leaves `local`: behind one URL a release and the one before
+        // it answer in turn, and flipping back on each total never settles.
+        if (p.total === null && !local) {
+          setLocal(true);
+          return;
+        }
         setShown({ runs: p.runs, total: p.total, page });
         const seen = p.runs.map((r) => r.agent).filter(Boolean);
         setAgents((prev) => (seen.every((a) => prev.includes(a)) ? prev : [...new Set([...prev, ...seen])].sort()));

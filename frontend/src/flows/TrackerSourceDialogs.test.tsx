@@ -620,8 +620,8 @@ describe("the Trackers list", () => {
     expect(onAdd).toHaveBeenCalled();
   });
 
-  // Review finding: the heading was a raw h2 with an icon, and the empty state's button a
-  // second primary on the Repositories page. It is a SectionHeading, and the button secondary.
+  // The heading is a SectionHeading, and the empty state's button is secondary, so the
+  // Repositories page keeps one primary.
   it("heads the section with a SectionHeading, and its empty state adds no second primary", () => {
     render(
       <main>

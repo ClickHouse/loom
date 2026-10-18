@@ -51,8 +51,7 @@ describe("ListState", () => {
     expect(screen.getByText("request id r-9")).toBeInTheDocument();
   });
 
-  // Self-review: Retry leaves with the error state, so focus would fall to the page; it goes
-  // to the page's heading instead.
+  // Retry leaves with the error state, so focus goes to the page's heading, not the page.
   it("puts focus on the page heading when Retry is pressed", () => {
     const onRetry = vi.fn();
     render(

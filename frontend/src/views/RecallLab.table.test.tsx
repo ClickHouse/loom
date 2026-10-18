@@ -4,7 +4,7 @@ import type { MemoryListEntry, SearchHit } from "../api";
 import { useStore } from "../lib/state";
 import { RecallLab } from "./RecallLab";
 
-// Recall Lab is a scoring tool, so its rows are a Click UI Table (SPEC-LISTS A7): the
+// Recall Lab is a scoring tool, so its rows are a Click UI Table: the
 // rank, the key, the value on one line, similarity, the score with Click UI's table bar,
 // the entity boost and the type. A row opens the memory drawer; the row count and the
 // embedder sit at the end of the toolbar; a failed read says so with a Retry.

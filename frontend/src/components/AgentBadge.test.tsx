@@ -4,7 +4,7 @@ import { AgentBadge } from "./AgentBadge";
 
 const LONG = "claude-code:laptop-of-a-very-long-hostname";
 
-// An agent name is capped at 180 px with an ellipsis (SPEC-LISTS C8); a cut name has its
+// An agent name is capped at 180 px with an ellipsis; a cut name has its
 // whole self in a tooltip, and one that fits has none.
 describe("AgentBadge", () => {
   afterEach(() => vi.restoreAllMocks());

@@ -11,7 +11,7 @@ async function open(page: Page, path: string) {
   await page.waitForLoadState("networkidle");
 }
 
-// A row's actions are one More menu (SPEC-LISTS C2), always visible: a pointer and a
+// A row's actions are one More menu, always visible: a pointer and a
 // touch screen both see it before any hover.
 test("a library row's More menu shows without a hover, with a pointer or a touch screen", async ({ browser }) => {
   for (const touch of [false, true]) {

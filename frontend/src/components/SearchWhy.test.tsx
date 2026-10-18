@@ -5,7 +5,7 @@ import type { SearchHit } from "../api";
 import { axeViolations } from "../test/axe";
 import { SearchWhy } from "./SearchWhy";
 
-// A ranked hit's "Why this result" (SPEC-LISTS A1): an info button in the row's meta slot
+// A ranked hit's "Why this result": an info button in the row's meta slot
 // whose popover says the rank, similarity, blended score and the signed ranking terms, so
 // the Memories list says why a row is there without a debug line under every row.
 

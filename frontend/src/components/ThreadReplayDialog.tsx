@@ -33,7 +33,7 @@ export interface ReplayThread {
 
 export const UNTITLED_THREAD = "Untitled thread";
 
-/** What a thread is called (SPEC-LISTS A3): its title, else the first thing the user said
+/** What a thread is called: its title, else the first thing the user said
  *  in it, flattened to one line; "" when neither is known, which a caller shows as
  *  "Untitled thread". Never the thread id. */
 export function threadTitle(title: string | null | undefined, firstUserMessage?: string | null): string {
