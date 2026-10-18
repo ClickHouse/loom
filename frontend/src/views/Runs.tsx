@@ -895,10 +895,12 @@ export function Runs() {
       {error === null &&
         shown === null &&
         (narrow ? (
-          <LoadingSkeleton label="Loading runs" className="space-y-2">
-            <RowSkeleton />
-            <RowSkeleton />
-            <RowSkeleton />
+          <LoadingSkeleton label="Loading runs">
+            <div className="space-y-2">
+              <RowSkeleton />
+              <RowSkeleton />
+              <RowSkeleton />
+            </div>
           </LoadingSkeleton>
         ) : (
           <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} loading />

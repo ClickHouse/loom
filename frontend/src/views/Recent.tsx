@@ -688,10 +688,12 @@ function MemoryList() {
       )}
 
       {entries === null && (
-        <LoadingSkeleton label="Loading memories" className="space-y-2">
-          <RowSkeleton kind="memory" />
-          <RowSkeleton kind="memory" />
-          <RowSkeleton kind="memory" />
+        <LoadingSkeleton label="Loading memories">
+          <div className="space-y-2">
+            <RowSkeleton kind="memory" />
+            <RowSkeleton kind="memory" />
+            <RowSkeleton kind="memory" />
+          </div>
         </LoadingSkeleton>
       )}
 

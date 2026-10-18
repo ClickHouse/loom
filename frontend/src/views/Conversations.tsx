@@ -527,10 +527,12 @@ export function Conversations() {
         <SessionBriefsSection org={identity.org} namespace={identity.namespace} />
       )}
       {!busy && hits === null && searchError === null && threads === null && (
-        <LoadingSkeleton label="Loading threads" className="space-y-2">
-          <RowSkeleton />
-          <RowSkeleton />
-          <RowSkeleton />
+        <LoadingSkeleton label="Loading threads">
+          <div className="space-y-2">
+            <RowSkeleton />
+            <RowSkeleton />
+            <RowSkeleton />
+          </div>
         </LoadingSkeleton>
       )}
 

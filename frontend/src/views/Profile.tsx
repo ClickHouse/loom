@@ -253,10 +253,12 @@ export function Profile() {
             </div>
           )}
           {entries === null && !error && (
-            <LoadingSkeleton label="Loading the profile" className="space-y-2">
-              <RowSkeleton />
-              <RowSkeleton />
-              <RowSkeleton />
+            <LoadingSkeleton label="Loading the profile">
+              <div className="space-y-2">
+                <RowSkeleton />
+                <RowSkeleton />
+                <RowSkeleton />
+              </div>
             </LoadingSkeleton>
           )}
           {!!error && (

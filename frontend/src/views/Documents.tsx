@@ -647,10 +647,12 @@ export function Documents() {
       />
 
       {rows === null && (
-        <LoadingSkeleton label="Loading documents" className="space-y-2">
-          <RowSkeleton kind="document" />
-          <RowSkeleton kind="document" />
-          <RowSkeleton kind="document" />
+        <LoadingSkeleton label="Loading documents">
+          <div className="space-y-2">
+            <RowSkeleton kind="document" />
+            <RowSkeleton kind="document" />
+            <RowSkeleton kind="document" />
+          </div>
         </LoadingSkeleton>
       )}
 

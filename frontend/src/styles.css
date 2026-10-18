@@ -1262,7 +1262,8 @@ textarea[aria-invalid="true"]:focus-visible {
   background: var(--click-card-horizontal-default-color-background-default);
   scroll-margin-top: 8px;
   /* The browser lays out and paints only the rows in view; a row not drawn yet holds its
-     list's measured height (1400 px wide): a thread 76 px, a document 101, a memory 129. */
+     list's measured height: a thread 76 px, a document 101, a memory 129, and under 640 px,
+     where a row's meta takes its own line, 105, 123 and 151 (below). */
   content-visibility: auto;
   contain-intrinsic-size: auto 76px;
 }
@@ -1332,6 +1333,26 @@ button.pane-card:hover {
 }
 .list-row-skeleton[data-kind="memory"] {
   height: 129px;
+}
+@media (max-width: 639px) {
+  .list-row {
+    contain-intrinsic-size: auto 105px;
+  }
+  .list-row[data-doc-row] {
+    contain-intrinsic-size: auto 123px;
+  }
+  .list-row[data-card] {
+    contain-intrinsic-size: auto 151px;
+  }
+  .list-row-skeleton {
+    height: 105px;
+  }
+  .list-row-skeleton[data-kind="document"] {
+    height: 123px;
+  }
+  .list-row-skeleton[data-kind="memory"] {
+    height: 151px;
+  }
 }
 .list-row:hover {
   background: var(--click-card-horizontal-default-color-background-hover);

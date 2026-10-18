@@ -99,16 +99,58 @@ for (const { width, height, top, touch } of BUDGET) {
 }
 
 // A row's placeholder size (content-visibility) is the list's drawn row height, so the
-// scrollbar does not jump as rows come into view.
-for (const path of ["/memories", "/library", "/conversations"]) {
-  test(`${path}: a row's placeholder size is its drawn height`, async ({ page }) => {
-    await open(page, path);
-    const row = page.locator("main .list-row").first();
-    const { drawn, intrinsic } = await row.evaluate((el) => ({
-      drawn: el.getBoundingClientRect().height,
-      intrinsic: parseFloat(getComputedStyle(el).containIntrinsicHeight.replace("auto", "")),
-    }));
-    expect(Math.abs(drawn - intrinsic), `drawn ${drawn}, placeholder ${intrinsic}`).toBeLessThanOrEqual(8);
+// scrollbar does not jump as rows come into view; and the first read's skeleton rows are
+// the drawn rows' height and spacing, so the rows land where the skeleton was. On a desktop
+// and on a phone, where a row's meta takes its own line.
+const LISTS = [
+  { path: "/memories", op: "memory.list" },
+  { path: "/library", op: "knowledge.list" },
+  { path: "/conversations", op: "conversation.threads" },
+];
+for (const width of [1400, 375]) {
+  test.describe(`rows at ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 } });
+    for (const { path, op } of LISTS) {
+      test(`${path}: a row's placeholder size is its drawn height`, async ({ page }) => {
+        await open(page, path);
+        const row = page.locator("main .list-row").first();
+        const { drawn, intrinsic } = await row.evaluate((el) => ({
+          drawn: el.getBoundingClientRect().height,
+          intrinsic: parseFloat(getComputedStyle(el).containIntrinsicHeight.replace("auto", "")),
+        }));
+        expect(Math.abs(drawn - intrinsic), `drawn ${drawn}, placeholder ${intrinsic}`).toBeLessThanOrEqual(8);
+      });
+
+      test(`${path}: the rows land the height and spacing of the skeleton`, async ({ page }) => {
+        let answer = () => {};
+        const held = new Promise<void>((resolve) => {
+          answer = resolve;
+        });
+        const boxes = (selector: string) =>
+          page.locator(selector).evaluateAll((els) =>
+            els.slice(0, 2).map((el) => {
+              const r = el.getBoundingClientRect();
+              return { top: r.top, height: r.height };
+            }),
+          );
+        await installApi(page, { memoryRows: 12, knowledgeRows: 6 });
+        await page.route("**/v1/conversation.threads", (route) => route.fulfill({ json: { threads: THREADS } }));
+        // The list's read waits, so its skeleton can be measured.
+        await page.route(`**/v1/${op}`, async (route) => {
+          await held;
+          await route.fallback();
+        });
+        await page.goto(path);
+        await expect(page.locator("main .list-row-skeleton").nth(1)).toBeAttached();
+        const [s1, s2] = await boxes("main .list-row-skeleton");
+        answer();
+        await expect(page.locator("main .list-row:not(.list-row-skeleton)").nth(1)).toBeVisible();
+        const [r1, r2] = await boxes("main .list-row:not(.list-row-skeleton)");
+        expect(Math.abs(r1.height - s1.height), `row ${r1.height}, skeleton ${s1.height}`).toBeLessThanOrEqual(8);
+        const pitch = { rows: r2.top - r1.top, skeleton: s2.top - s1.top };
+        expect(Math.abs(pitch.rows - pitch.skeleton), JSON.stringify(pitch)).toBeLessThanOrEqual(2);
+      });
+    }
   });
 }
 
