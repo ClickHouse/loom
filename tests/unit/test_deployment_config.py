@@ -95,7 +95,8 @@ def test_compare_names_a_different_secret_and_a_different_embedding_space() -> N
     assert any("LOOM_JWT_SECRET" in p for p in problems)
     assert any("LOOM_EMBEDDING_MODEL" in p for p in problems)
     assert any("LOOM_EMBEDDING_PROVIDER='fake'" in p for p in problems)  # as the model implies
-    assert dc.compare(other, {}) == []  # nothing published: nothing to differ from
+    # A row without the root fingerprint proves nothing: `loom deployment publish` replaces it.
+    assert ["root-secret fingerprint" in p for p in dc.compare(other, {})] == [True]
 
 
 @pytest.mark.usefixtures("deployment")

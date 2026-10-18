@@ -33,7 +33,9 @@ _REVIEWED: dict[str, dict[str, str]] = {
         "answer": "an answer synthesized from the code index only",
     },
     "loom.code_backport_gaps": {"reason": "a backport verdict over public PRs"},
-    "loom.deployment_config": {"value": "the main Loom's operator settings, secrets stripped"},
+    "loom.deployment_config": {
+        "value": "the root-secret fingerprint and MUST_MATCH values; no secrets"
+    },
     "loom.erasure_requests": {"scope_value": "the erasure ledger naming its own scope"},
     "loom.erasure_reversals": {"scope_value": "the reversal ledger naming its own scope"},
     "loom.policy_decisions": {"detail": "rule ids and error codes, no memory text"},

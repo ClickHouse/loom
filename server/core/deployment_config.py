@@ -238,7 +238,7 @@ async def publish(ch: Any, *, live: list[dict[str, Any]], published_by: str = ""
         stored = await read_published(ch)
         if stored == mine:
             return False
-        if stored is not None and not _may_replace(stored, live):
+        if stored and not _may_replace(stored, live):
             return False
         await write(ch, mine, published_by=published_by)
     except Exception as e:  # noqa: BLE001 — publishing must not fail the leader

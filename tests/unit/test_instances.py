@@ -206,7 +206,7 @@ def test_a_beat_flags_drift_and_the_leader_publishes_only_what_need_not_match() 
     assert ch.config == stored and dc.drift()
     assert ch.executed and "DELETE" in ch.executed[0]  # the leader sweeps old keys
     # No other live instance runs the stored one: the leader adopts its own.
-    ch.config = dc.snapshot(settings.model_copy(update={"conflict_threshold": 0.9}))
+    ch.config = {**dc.snapshot(settings), "note": "another build's snapshot"}
     asyncio.run(instances.tick(ch, leader=True))
     assert ch.config == dc.snapshot(settings) and dc.drift() == []
 
