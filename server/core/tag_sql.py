@@ -12,7 +12,7 @@ def tag_filter(
     """The predicate over a row's `tags` and its values: any one of `tags` (OR), or with
     `every` all of them; exact, or with `any_case` both sides lowercased by ClickHouse's
     `lowerUTF8`. The asked tags are bound as typed: one fold, in one place, so the two sides
-    match whatever case mapping the server's release applies."""
+    match whatever case mapping the ClickHouse release applies."""
     fn = "hasAll" if every else "hasAny"
     values = [str(t) for t in tags]
     if any_case:

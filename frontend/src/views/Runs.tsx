@@ -32,7 +32,7 @@ import { displayAgent, listTime, parseChTime, relativeTime, truncate } from "../
 import { useRowNav } from "../lib/useRowNav";
 import { PageContainer } from "../layout/PageContainer";
 import { Modal } from "../components/ui/Modal";
-import { ListPager, usePageSize } from "../components/ui/ListPager";
+import { ListPager, SERVER_MAX_OFFSET, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
@@ -917,6 +917,7 @@ export function Runs() {
           shown={rows.length}
           total={localRows ? localRows.length : (shown.total ?? undefined)}
           capped={capped}
+          maxOffset={localRows ? undefined : SERVER_MAX_OFFSET}
           onPage={setPage}
           onPageSize={refilter(setPageSize)}
           topId="runs-list"

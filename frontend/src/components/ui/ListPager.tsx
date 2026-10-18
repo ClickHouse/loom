@@ -26,6 +26,9 @@ export function usePageSize(view: string, fallback = 50): [number, (size: number
   return [size, choose];
 }
 
+// The largest `offset` run.list and conversation.threads serve; a larger one is a 422.
+export const SERVER_MAX_OFFSET = 100_000;
+
 export interface ListPagerProps {
   /** The navigation landmark's name ("Memories pages"). */
   label: string;
@@ -38,6 +41,8 @@ export interface ListPagerProps {
   total?: number;
   /** `total` is what a server that pages no further answered (its newest N), not a count. */
   capped?: boolean;
+  /** The largest offset the server serves: no page that starts past it is offered. */
+  maxOffset?: number;
   onPage: (page: number) => void;
   /** With it, a page-size choice sits beside the pages. */
   onPageSize?: (size: number) => void;
@@ -52,7 +57,18 @@ export interface ListPagerProps {
  * its heading and announces the page, so a keyboard or screen-reader user lands where the
  * new rows start. Hidden while one page holds everything.
  */
-export function ListPager({ label, page, pageSize, shown, total, capped, onPage, onPageSize, topId }: ListPagerProps) {
+export function ListPager({
+  label,
+  page,
+  pageSize,
+  shown,
+  total,
+  capped,
+  maxOffset,
+  onPage,
+  onPageSize,
+  topId,
+}: ListPagerProps) {
   const [said, setSaid] = useState("");
   // The page being typed into the field: Click UI reports every keystroke as a page, so the
   // pager goes there only on Enter or when the field loses focus.
@@ -74,13 +90,18 @@ export function ListPager({ label, page, pageSize, shown, total, capped, onPage,
     el.querySelector('input[type="number"]')?.setAttribute("aria-label", "Page");
     el.querySelector('[data-testid="select-trigger"]')?.setAttribute("aria-label", "Rows per page");
   });
-  const pages = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : undefined;
+  // The pages the server can serve: one that starts past `maxOffset` would be refused.
+  const reachable = maxOffset !== undefined ? Math.floor(maxOffset / pageSize) + 1 : undefined;
+  const counted = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : undefined;
+  const cut = counted !== undefined && reachable !== undefined && counted > reachable;
+  const pages = cut ? reachable : counted;
   // A page past the end (its last rows deleted) steps back to the last one.
   const pastEnd = pages !== undefined && page > pages - 1;
   useEffect(() => {
     if (pastEnd && pages !== undefined) onPage(pages - 1);
   }, [pastEnd, pages, onPage]);
-  const lastKnown = pages !== undefined ? page >= pages - 1 : shown < pageSize;
+  const lastKnown =
+    pages !== undefined ? page >= pages - 1 : shown < pageSize || (reachable !== undefined && page >= reachable - 1);
   // With a page size picked, the choice stays reachable while the list is longer than the
   // smallest page; a list that fits even that has no pager.
   const sizeChoice = !!onPageSize && !phone && (total ?? shown) > SIZES[0];
@@ -88,10 +109,12 @@ export function ListPager({ label, page, pageSize, shown, total, capped, onPage,
   const start = page * pageSize + 1;
   const end = page * pageSize + shown;
   const span = shown === 0 ? `${start.toLocaleString()}` : `${start.toLocaleString()}–${end.toLocaleString()}`;
-  const range = total === undefined ? span : `${span} of ${capped ? "the newest " : ""}${total.toLocaleString()}`;
+  const counts = total === undefined ? span : `${span} of ${capped ? "the newest " : ""}${total.toLocaleString()}`;
+  const range = cut && reachable !== undefined ? `${counts} · the first ${reachable.toLocaleString()} pages` : counts;
 
-  const go = (n: number, { focusList }: { focusList: boolean }) => {
+  const go = (typed: number, { focusList }: { focusList: boolean }) => {
     setDraft(null);
+    const n = reachable !== undefined ? Math.min(typed, reachable) : typed;
     if (n === page + 1) return;
     onPage(n - 1);
     setSaid(pages !== undefined ? `Page ${n} of ${pages}` : `Page ${n}`);

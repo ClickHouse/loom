@@ -49,8 +49,8 @@ describe("ListPager", () => {
     expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
   });
 
-  // Review: the names were set only when the page, the size or the draft moved, so a pager
-  // that first rendered nothing and then appeared (more rows read) kept Click UI's names.
+  // A pager that first renders nothing and then appears (more rows read) names its arrows
+  // too, not only one whose page, size or draft moved.
   it("names its arrows when it appears after rendering nothing", () => {
     const props = { label: "Memories pages", page: 0, pageSize: 50, onPage: () => {} };
     const { rerender } = render(<ListPager {...props} shown={12} />);
@@ -98,6 +98,41 @@ describe("ListPager, typed and edge pages", () => {
   it("shows no pager for one short page when there is no total", () => {
     const { container } = render(<ListPager label="x" page={0} pageSize={30} shown={12} onPage={() => {}} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("offers no page that starts past the server's largest offset, and says so", () => {
+    const onPage = vi.fn();
+    render(
+      <ListPager
+        label="Runs pages"
+        page={0}
+        pageSize={50}
+        total={1_000_000}
+        shown={50}
+        maxOffset={100_000}
+        onPage={onPage}
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "Runs pages" });
+    expect(nav).toHaveTextContent("1–50 of 1,000,000 · the first 2,001 pages");
+    const field = screen.getByRole("spinbutton", { name: "Page" });
+    // Click UI's field takes no number above its last page.
+    fireEvent.change(field, { target: { value: "5000" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onPage).not.toHaveBeenCalled();
+    fireEvent.change(field, { target: { value: "2001" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onPage).toHaveBeenCalledWith(2000);
+  });
+
+  it("without a total, stops at the server's largest offset", () => {
+    const onPage = vi.fn();
+    render(<ListPager label="Thread pages" page={3333} pageSize={30} shown={30} maxOffset={100_000} onPage={onPage} />);
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+    const field = screen.getByRole("spinbutton", { name: "Page" });
+    fireEvent.change(field, { target: { value: "9999" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onPage).not.toHaveBeenCalled();
   });
 
   it("steps back to the last page when its page is past the end", () => {

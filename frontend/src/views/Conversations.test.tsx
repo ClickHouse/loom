@@ -479,6 +479,31 @@ describe("Conversations: thread pages", () => {
     expect(screen.getByText("Thread 0")).toBeInTheDocument();
   });
 
+  it("a page typed past the end goes back to the page shown and counts its threads", async () => {
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => {
+      const from = opts.offset ?? 0;
+      return { threads: from === 0 ? page(0, 30) : from === 30 ? page(30, 15) : [] };
+    });
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    const field = within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("spinbutton", {
+      name: "Page",
+    });
+    fireEvent.change(field, { target: { value: "6" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() =>
+      expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent("31–45 of 45"),
+    );
+    expect(screen.getByText("Thread 30")).toBeInTheDocument();
+    // One read past the end, not one per page stepped back.
+    const offsets = listConversationThreads.mock.calls.map((c) => (c[1] as { offset?: number }).offset ?? 0);
+    expect(offsets.filter((o) => o > 30)).toEqual([150]);
+  });
+
   it("with an exact multiple of 30 threads, the empty page after the last goes back to it", async () => {
     listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => ({
       threads: (opts.offset ?? 0) >= 60 ? [] : page(opts.offset ?? 0, 30),
