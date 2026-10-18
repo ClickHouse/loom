@@ -16,6 +16,7 @@ import pytest
 from server.cli import okf as cli_okf
 from server.core.hashing import sha256_value
 from server.memory.domain import okf_bundle as okf
+from server.memory.domain.edge_relations import canonical_edge
 from server.memory.domain.graph_quality import canonical_entities
 
 _NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -125,17 +126,16 @@ class _FakeLoom:
                 actor=_ACTOR,
                 entities=canonical_entities(body.get("entities") or []),
                 content_sha256=sha256_value(body["value"]),
-                source_class=body.get("source_class", "asserted"),
+                # The server derives `imported` from an okf: trace when none is declared.
+                source_class=body.get("source_class")
+                or ("imported" if body["source_trace"].startswith("okf:") else "asserted"),
                 verification="none",
             )
             return {"status": "active"}
         if op == "memory.link":
+            edge = canonical_edge(body["from_key"], body["to_key"], body["relation"])
             self.edges.append(
-                {
-                    "from_key": body["from_key"],
-                    "to_key": body["to_key"],
-                    "relation": body["relation"],
-                }
+                {"from_key": edge.from_key, "to_key": edge.to_key, "relation": edge.relation}
             )
             return {"linked": True}
         if op == "memory.delete":
@@ -322,7 +322,7 @@ def test_prune_refuses_a_bundle_without_a_corpus_digest(tmp_path: Path, loom: _F
     assert loom.calls == []
 
 
-def test_unreadable_timestamps_are_never_equal() -> None:
+def test_timestamps_compare_as_utc_whole_seconds() -> None:
     assert cli_okf._when("2026-08-30T08:00:00.123456Z") == datetime(2026, 8, 30, 8)
     assert cli_okf._when("2026-08-30T10:00:00+02:00") == datetime(2026, 8, 30, 8)
     assert cli_okf._when("next tuesday") != cli_okf._when(None)
@@ -402,11 +402,38 @@ def test_verify_re_attests_a_skipped_row_only_when_it_lost_its_attestation(
     assert _run(root, "--verify") == 0
     assert [op for op, _ in loom.calls if op in ("memory.set", "memory.verify")] == []
 
-    loom.rows[("okf-sync", "-", "a")]["verification"] = "stale"
-    assert _run(root, "--verify") == 0
-    verify = [b for op, b in loom.calls if op == "memory.verify"]
-    assert [(b["session_id"], b["memory_key"]) for b in verify] == [("-", "a")]
-    assert "memory.set" not in loom.writes()
+    for lost in ("stale", "none"):
+        loom.rows[("okf-sync", "-", "a")]["verification"] = lost
+        loom.calls.clear()
+        assert _run(root, "--verify") == 0
+        verify = [b for op, b in loom.calls if op == "memory.verify"]
+        assert [(b["session_id"], b["memory_key"]) for b in verify] == [("-", "a")]
+        assert "memory.set" not in loom.writes()
+
+
+def test_an_edge_stored_under_its_canonical_verb_is_not_linked_again(
+    tmp_path: Path, loom: _FakeLoom
+) -> None:
+    # memory.link stores `a blocked_by c` as `c blocks a`.
+    edge = {"from_key": "a", "to_key": "c", "relation": "blocked_by", "author": "x"}
+    root = _bundle(tmp_path / "b", [_entry("a"), _entry("c")], edges=[edge])
+    assert _run(root) == 0
+    assert loom.edges == [{"from_key": "c", "to_key": "a", "relation": "blocks"}]
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == []
+
+
+def test_a_symlinked_bundle_keeps_the_name_it_was_given(tmp_path: Path, loom: _FakeLoom):
+    current = tmp_path / "current"
+    current.symlink_to(_bundle(tmp_path / "run-1", [_entry("a")]))
+    assert _run(current) == 0
+    assert loom.rows[("okf-sync", "-", "a")]["source_trace"] == "okf:current/semantic/a.md"
+    current.unlink()
+    current.symlink_to(_bundle(tmp_path / "run-2", [_entry("a")]))
+    loom.calls.clear()
+    assert _run(current) == 0
+    assert loom.writes() == []
 
 
 def test_an_edge_on_every_writer_of_a_key_is_linked_once(tmp_path: Path, loom: _FakeLoom):

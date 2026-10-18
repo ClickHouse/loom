@@ -39,18 +39,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import math
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from server.cli._client import default_base_url, error_line, jwt_claims, resolve_token
 from server.core.hashing import sha256_value
 from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
-from server.memory.domain.edge_relations import canonical_link_relation
+from server.memory.domain.edge_relations import canonical_edge
 from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX
 from server.memory.domain.trust import actor_for
@@ -631,10 +630,9 @@ async def _live_rows(
                 },
             )
             for key, g in (got.get("results") or {}).items():
-                if (sid, key) in rows:
-                    rows[(sid, key)].update(
-                        valid_to=g.get("valid_to"), source_class=g.get("source_class")
-                    )
+                rows[(sid, key)].update(
+                    valid_to=g.get("valid_to"), source_class=g.get("source_class")
+                )
     return rows
 
 
@@ -830,10 +828,8 @@ async def _import_links(
 
 def _edge_key(e: dict[str, str]) -> tuple[str, str, str]:
     """(from_key, to_key, relation) as memory.link stores the edge."""
-    relation, flip = canonical_link_relation(e["relation"])
-    relation = relation or "related_to"
-    from_key, to_key = (e["to_key"], e["from_key"]) if flip else (e["from_key"], e["to_key"])
-    return from_key, to_key, relation
+    c = canonical_edge(e["from_key"], e["to_key"], e["relation"])
+    return c.from_key, c.to_key, c.relation
 
 
 def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
@@ -844,12 +840,7 @@ def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
     from server.memory.domain import okf_lint
 
     files = okf_lint.read_bundle(root)
-    try:
-        fm = yaml.safe_load(okf.split_frontmatter(files.get("index.md", ""))[0])
-    except yaml.YAMLError:
-        fm = None
-    loom = fm.get("loom") if isinstance(fm, dict) else None
-    pointer: dict[str, Any] = loom if isinstance(loom, dict) else {}
+    pointer = okf_lint.generation_pointer(files)
     declared = str(pointer.get("corpus_digest") or "")
     if not declared:
         return "index.md carries no loom.corpus_digest, so this is not a complete export"
@@ -921,45 +912,42 @@ def _print_import_summary(
     ev_digests: list[okf_ev.DigestRecord],
 ) -> None:
     would = " would be" if args.dry_run else ""
-    link_note = (
-        ""
-        if args.no_links
-        else f", {n['links']} typed edges{would} linked ({n['links_unchanged']} unchanged)"
-        + (f" ({n['links_unresolved']} unresolved)" if n["links_unresolved"] else "")
-        + (f" ({n['links_failed']} link failures)" if n["links_failed"] else "")
-    )
-    prune_note = (
-        f", {n['pruned']}{would} pruned"
-        + (
-            f" ({n['prune_kept']} kept: written by another token under this --agent)"
-            if n["prune_kept"]
-            else ""
-        )
-        + (f" ({n['prune_failed']} delete failures)" if n["prune_failed"] else "")
-        if args.prune
-        else ""
-    )
     if args.dry_run:
-        print(
-            f"dry run: {n['written']} of {rows} rows "
-            f"({n['unchanged']} unchanged), "
+        head = (
+            f"dry run: {n['written']} of {rows} rows ({n['unchanged']} unchanged), "
             f"{len(ev_chunks)} raw chunks and {len(ev_digests)} session digests would be "
-            f"written to {org}/{args.namespace}{link_note}{prune_note}"
+            f"written to {org}/{args.namespace}"
         )
     else:
-        print(
+        head = (
             f"{rows} rows from the bundle into {org}/{args.namespace}: "
             f"{n['written']} written, {n['unchanged']} unchanged, {n['failed']} failed"
-            + (f", {n['merged']} merged into another key" if n["merged"] else "")
-            + " "
-            f"({n['conflicted']} flagged conflicted, {n['verified']} re-attested as caller)"
-            f"{link_note}{prune_note}"
         )
+        if n["merged"]:
+            head += f", {n['merged']} merged into another key"
+        head += f" ({n['conflicted']} flagged conflicted, {n['verified']} re-attested as caller)"
+    parts = [head]
+    if not args.no_links:
+        links = f"{n['links']} typed edges{would} linked ({n['links_unchanged']} unchanged)"
+        if n["links_unresolved"]:
+            links += f" ({n['links_unresolved']} unresolved)"
+        if n["links_failed"]:
+            links += f" ({n['links_failed']} link failures)"
+        parts.append(links)
+    if args.prune:
+        pruned = f"{n['pruned']}{would} pruned"
+        if n["prune_kept"]:
+            pruned += f" ({n['prune_kept']} kept: written by another token under this --agent)"
+        if n["prune_failed"]:
+            pruned += f" ({n['prune_failed']} delete failures)"
+        parts.append(pruned)
+    print(", ".join(parts))
 
 
 def _cmd_import_okf(args: argparse.Namespace) -> int:
-    # Resolved, so `import-okf .` names the bundle directory in every source_trace.
-    root = Path(args.path).resolve()
+    # Absolute, so `import-okf .` names the bundle directory in every source_trace; not
+    # resolved, so a symlink to each run's export keeps the name the import was given.
+    root = Path(os.path.abspath(args.path))
     if not root.is_dir():
         print(f"{root} is not a directory", file=sys.stderr)
         return 2
@@ -980,9 +968,6 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
             return 2
     token = _resolve_token(args)
     org = _resolve_org(args, token)
-    claims = jwt_claims(token)
-    # The writer the server stamps on the import's rows; the agent name is the client's choice.
-    actor = actor_for(str(claims.get("sub") or ""), is_service_account=claims.get("sa") is True)
     ev_chunks, ev_digests = ([], []) if args.no_evidence else _walk_evidence(root)
     if not concepts and not ev_chunks and not ev_digests:
         print("no concepts found")
@@ -1020,6 +1005,11 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
             if args.prune:
                 # Before the writes, so each delete follows the read that chose it closely.
                 keep = {(p["session_id"], p["memory_key"]) for _, p in planned}
+                claims = jwt_claims(token)
+                # The writer the server stamped on our rows; the agent name is the client's.
+                actor = actor_for(
+                    str(claims.get("sub") or ""), is_service_account=claims.get("sa") is True
+                )
                 n.update(await _prune(client, org, args, live, keep, actor))
             n.update(await _import_concepts(client, org, args, planned, live))
             if not args.no_links:

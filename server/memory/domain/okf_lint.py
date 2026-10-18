@@ -394,14 +394,16 @@ def _check_indexes(rep: LintReport, files: dict[str, str], concept_paths: list[s
                 rep.add("index_listing", rel, "not listed in the root index.md", WARNING)
 
 
+def generation_pointer(files: dict[str, str]) -> dict[str, Any]:
+    """The root index.md's `loom` frontmatter (`corpus_digest`, `concepts`, `limit`, ...),
+    or {} when there is none."""
+    fm, _b, _h = _frontmatter(files.get("index.md", ""))
+    loom = fm.get("loom") if isinstance(fm, dict) else None
+    return loom if isinstance(loom, dict) else {}
+
+
 def _check_generation(rep: LintReport, files: dict[str, str], concept_paths: list[str]) -> None:
-    root_index = files.get("index.md")
-    if root_index is None:
-        return
-    fm, _b, _h = _frontmatter(root_index)
-    loom = (fm or {}).get("loom") if isinstance(fm, dict) else None
-    if not isinstance(loom, dict):
-        return
+    loom = generation_pointer(files)
     declared = str(loom.get("corpus_digest") or "").strip()
     if not declared:
         return
