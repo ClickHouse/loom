@@ -108,7 +108,7 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
         ("http", "read", True, "", "ok", 50, 100),
         ("http", "read", True, "", "ok", 500, 100),  # slow
         ("mcp", "read", False, "RATE_LIMITED", "client", 0, 100),
-        ("http", "read", False, "INTERNAL_ERROR", "server", 20, 100),
+        ("http", "read", False, "INTERNAL_ERROR", "server", 5000, 100),  # not in the quantiles
         ("", "", False, "INTERNAL_ERROR", "", 20, 0),  # an older build's row
         ("mcp", "", True, "", "ok", 5, 0),  # no registered op
     ]
@@ -165,7 +165,7 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
         _seen, max_wait=45.0, interval=2.0, description="the rollup of the inserted rows"
     )
     assert (requests, server, client, limited, slow) == (4, 1, 1, 1, 1)
-    assert 50 <= p99 <= 500  # successful requests only
+    assert 50 <= p99 <= 500  # the failure's 5000 ms is not among the latencies
 
     # The next refresh resumes past the high-water mark: nothing is folded twice.
     ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
