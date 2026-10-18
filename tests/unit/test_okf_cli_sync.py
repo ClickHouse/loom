@@ -5,6 +5,8 @@ deletes only the rows an earlier import wrote, from a bundle that is a complete 
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,15 @@ from server.memory.domain import okf_bundle as okf
 from server.memory.domain.graph_quality import canonical_entities
 
 _NOW = datetime(2026, 9, 1, tzinfo=UTC)
+# An unsigned token: the CLI reads its claims; the fake server stamps `actor` from them.
+_TOKEN = (
+    "e30."
+    + base64.urlsafe_b64encode(json.dumps({"sub": "okf-sync", "sa": True}).encode())
+    .decode()
+    .rstrip("=")
+    + ".x"
+)
+_ACTOR = "process:okf-sync"
 
 
 def _entry(key: str, **over: Any) -> dict[str, Any]:
@@ -52,6 +63,7 @@ class _FakeLoom:
     """The ops the import calls, storing rows the way memory.set does."""
 
     def __init__(self) -> None:
+        self.token = _TOKEN
         self.rows: dict[tuple[str, str, str], dict[str, Any]] = {}  # (agent, session, key)
         self.edges: list[dict[str, Any]] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -85,12 +97,16 @@ class _FakeLoom:
                     ((a, r) for (a, _s, k), r in self.rows.items() if k == body["memory_key"]),
                     ("", None),
                 )
-            return {"found": row is not None, "agent": agent}
+            return {"found": row is not None, "agent": agent, "actor": (row or {}).get("actor")}
         if op == "memory.verify":
             return {"found": True}
         if op == "memory.export_evidence":
             return {"edges": self.edges, "has_more": False}
         if op == "memory.set":
+            # A target that labels the value adds its tag, as memory.set does.
+            labels = [] if "sensitivity:medium" in body["tags"] else ["sensitivity:medium"]
+            if "@" not in str(body["value"]):
+                labels = []
             self.put(
                 body["agent"],
                 body["memory_key"],
@@ -99,7 +115,8 @@ class _FakeLoom:
                 source_trace=body["source_trace"],
                 valid_at=body.get("valid_at"),
                 valid_to=body.get("valid_to"),
-                tags=body["tags"],
+                tags=[*body["tags"], *labels],
+                actor=_ACTOR,
                 entities=canonical_entities(body.get("entities") or []),
                 content_sha256=sha256_value(body["value"]),
                 source_class=body.get("source_class", "asserted"),
@@ -138,7 +155,7 @@ def _run(root: Path, *flags: str) -> int:
     parser = argparse.ArgumentParser()
     cli_okf.register_okf_cli(parser.add_subparsers())
     args = parser.parse_args(
-        ["import-okf", str(root), "--token", "t", "--org", "acme", "--namespace", "dst"]
+        ["import-okf", str(root), "--token", _TOKEN, "--org", "acme", "--namespace", "dst"]
         + ["--agent", "okf-sync", *flags]
     )
     return int(args.func(args))
@@ -322,3 +339,50 @@ def test_verify_re_attests_the_row_in_its_own_session(tmp_path: Path, loom: _Fak
     assert _run(_bundle(tmp_path / "b", [entry]), "--keep-sessions", "--verify") == 0
     verify = [b for op, b in loom.calls if op == "memory.verify"]
     assert [b["session_id"] for b in verify] == ["s1"]
+
+
+def test_a_tag_the_target_adds_is_not_a_change(tmp_path: Path, loom: _FakeLoom) -> None:
+    root = _bundle(tmp_path / "b", [_entry("a", value="mail ops@example.com on a failure")])
+    assert _run(root) == 0
+    assert "sensitivity:medium" in loom.rows[("okf-sync", "-", "a")]["tags"]
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == []
+
+
+def test_prune_keeps_a_row_another_token_wrote_under_the_same_agent(
+    tmp_path: Path, loom: _FakeLoom
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a")])) == 0
+    # Someone else ran an import with `--agent okf-sync`: same agent and trace, other actor.
+    loom.put("okf-sync", "theirs", source_trace="okf:other/x.md", tags=[], actor="human:bob")
+    loom.calls.clear()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
+    assert "memory.delete" not in loom.writes()
+    assert ("okf-sync", "-", "theirs") in loom.rows
+
+
+def test_a_concept_merged_into_another_key_is_counted_apart(
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    serve = loom.post
+
+    async def merges(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.set":
+            loom.calls.append((op, body))
+            return {"status": "", "conflict_verdict": "merge"}
+        return await serve(op, body)
+
+    monkeypatch.setattr(loom, "post", merges)
+    assert _run(_bundle(tmp_path / "b", [_entry("a")])) == 0
+    assert "0 written, 0 unchanged, 0 failed, 1 merged into another key" in capsys.readouterr().out
+
+
+def test_prune_refuses_an_export_into_a_reused_directory(tmp_path: Path, loom: _FakeLoom):
+    root = _bundle(tmp_path / "b", [_entry("a"), _entry("gone")])
+    _bundle(root, [_entry("a")])  # the file of `gone` stays behind
+    assert _run(root, "--prune", "--no-lint") == 2
+    assert loom.calls == []

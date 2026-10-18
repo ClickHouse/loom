@@ -120,6 +120,9 @@ by the importing server.
 
 `--prune` refuses a bundle with no concepts, one exported with `--limit`, and one whose
 concept files do not hash to the root index's `loom.corpus_digest`, so a partial or hand-edited bundle never drives deletes.
+Export into an empty directory for a prune: export overwrites concept files but never
+removes the file of a key that left the namespace, so a reused `--out` directory no longer
+matches its digest.
 [Copying a namespace to another Loom](../../operations/okf-sync.md) runs export and
 import on a schedule.
 

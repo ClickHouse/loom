@@ -19,7 +19,8 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
 - **Nothing, when nothing changed.** The import reads the live rows under its identity
   first and skips a concept whose row already holds the same value, type, tags,
   confidence, `valid_at`, `valid_to`, `source_trace`, and the entities and
-  `source_class` when the bundle carries them. It skips an edge that is already live.
+  `source_class` when the bundle carries them. Tags the server adds on every write
+  (`sensitivity:`, `attribute:`) are not a difference. It skips an edge that is already live.
   When several concepts in the bundle share a key (rows of different writers), the most
   recently updated one is written. Re-sending an identical row would count as a
   reinforcement: a version row, an audit row and a higher ranking boost on every run.
@@ -38,10 +39,12 @@ A non-zero exit means a write, link or delete failed.
 
 - `--prune` refuses a bundle with no concepts, a bundle exported with `--limit`, and one
   whose concept files do not hash to the `loom.corpus_digest` the export wrote into
-  `index.md`. A partial or edited bundle never drives deletes.
+  `index.md`. A partial or edited bundle never drives deletes, and neither does one exported
+  into a directory that held an older bundle.
 - Before each delete it reads the row under its own identity again and deletes only while
-  that row is still there and its own: `memory.delete` falls back to the same key under
-  another agent when the caller's row is gone.
+  that row is still there under its `--agent` and was written by its own token:
+  `memory.delete` falls back to the same key under another agent when the caller's row is
+  gone, and the agent name alone is the caller's choice.
 - The import runs only when the export exited 0 (`sh -e`), and each run writes its bundle
   to a fresh `emptyDir`, so a bundle left by an earlier run is never imported.
 - `--dry-run` lists what would be written and deleted, and writes nothing.

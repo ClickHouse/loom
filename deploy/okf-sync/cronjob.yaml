@@ -6,7 +6,7 @@
 #
 # Before applying, replace:
 #   shared-lessons                      the namespace to copy (both sides)
-#   loom-private.loom.svc:7777          the private Loom's in-cluster Service
+#   loom.loom.svc:7777                  the private Loom's in-cluster Service
 #   https://loom.example.com            the public Loom
 #   203.0.113.10/32                     the public Loom's address(es), for egress
 #   app.kubernetes.io/instance: loom    the private Loom's Helm release name
@@ -73,7 +73,7 @@ spec:
                 - name: NAMESPACE
                   value: shared-lessons
                 - name: PRIVATE_URL
-                  value: http://loom-private.loom.svc:7777
+                  value: http://loom.loom.svc:7777
                 - name: PUBLIC_URL
                   value: https://loom.example.com
                 - name: HOME

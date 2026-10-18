@@ -52,12 +52,18 @@ from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
 from server.memory.domain.edge_relations import canonical_link_relation
 from server.memory.domain.graph_quality import canonical_entities
+from server.memory.domain.procedural_contract import RETYPE_TAG
+from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX
+from server.memory.domain.trust import actor_for
 
 _PAGE = 1000
 _BULK = 500
 # Every concept row the import writes carries this source_trace prefix; --prune deletes
 # nothing else.
 _TRACE_PREFIX = "okf:"
+# Tags memory.set adds itself (sensitivity tier, attribute labels, a procedural retype); a
+# live row carrying one the bundle lacks is not a change, since the next write adds it back.
+_SERVER_TAGS = (SENSITIVITY_TAG_PREFIX, ATTRIBUTE_TAG_PREFIX, RETYPE_TAG)
 
 
 def _resolve_token(args: argparse.Namespace) -> str:
@@ -83,6 +89,7 @@ class _Client:
     def __init__(self, base_url: str, token: str) -> None:
         import httpx
 
+        self.token = token
         self._c = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             timeout=60.0,
@@ -683,7 +690,12 @@ def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
         row.get("content_sha256") == sha256_value(payload["value"])
         and row.get("memory_type") == payload["memory_type"]
         and row.get("source_trace") == payload["source_trace"]
-        and set(row.get("tags") or []) == set(payload["tags"])
+        and {
+            t
+            for t in row.get("tags") or []
+            if t in payload["tags"] or not t.startswith(_SERVER_TAGS)
+        }
+        == set(payload["tags"])
         and math.isclose(float(row.get("confidence") or 0), payload["confidence"], abs_tol=1e-6)
         # A bundle without entities leaves them to the target's extractor.
         and (
@@ -707,7 +719,7 @@ async def _import_concepts(
 ) -> dict[str, int]:
     """memory.set per changed or new concept (conflict detection, blacklist and audit
     apply); `--verify` re-attests human-verified concepts as the caller."""
-    n = {"written": 0, "unchanged": 0, "conflicted": 0, "verified": 0, "failed": 0}
+    n = {"written": 0, "unchanged": 0, "merged": 0, "conflicted": 0, "verified": 0, "failed": 0}
     for c, payload in _one_per_row(concepts, org, args, root):
         bundle_actor = okf.human_verified_actor(c)
         row = live.get((payload["session_id"], payload["memory_key"]))
@@ -736,6 +748,11 @@ async def _import_concepts(
         except RuntimeError as e:
             n["failed"] += 1
             print(f"  ✗ {c.path}: {e}", file=sys.stderr)
+            continue
+        if res.get("conflict_verdict") == "merge":
+            # Folded into another key's row, so nothing lands at this key and the next run
+            # sends it again.
+            n["merged"] += 1
             continue
         n["written"] += 1
         if res.get("conflict") or res.get("status") == "conflicted":
@@ -841,7 +858,10 @@ def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
     if pointer.get("limit") is not None:
         return f"the export stopped at --limit {pointer['limit']}"
     if declared != okf_lint.bundle_digest(files):
-        return "the concept files do not match index.md's loom.corpus_digest (partial or edited)"
+        return (
+            "the concept files do not match index.md's loom.corpus_digest: a partial or "
+            "edited export, or one written into a directory that held an older bundle"
+        )
     return ""
 
 
@@ -860,6 +880,9 @@ async def _prune(
         for k, r in live.items()
         if k not in keep and str(r.get("source_trace") or "").startswith(_TRACE_PREFIX)
     )
+    claims = jwt_claims(client.token)
+    # The writer the server stamped on our rows: the agent name is the client's choice.
+    actor = actor_for(str(claims.get("sub") or ""), is_service_account=claims.get("sa") is True)
     n = {"pruned": 0, "prune_failed": 0}
     for session_id, key in gone:
         if args.dry_run:
@@ -878,8 +901,10 @@ async def _prune(
         try:
             # memory.delete falls back to the same key under any agent when ours is gone;
             # delete only while the row read is still ours.
-            got = await client.post("memory.get", {**ident, "fields": ["agent"]})
-            if not got.get("found") or got.get("agent") != args.agent:
+            got = await client.post("memory.get", {**ident, "fields": ["agent", "actor"]})
+            if not (
+                got.get("found") and got.get("agent") == args.agent and got.get("actor") == actor
+            ):
                 continue
             res = await client.post("memory.delete", ident)
         except RuntimeError as e:
@@ -916,6 +941,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         n = {
             "written": 0,
             "unchanged": 0,
+            "merged": 0,
             "conflicted": 0,
             "verified": 0,
             "failed": 0,
@@ -983,7 +1009,9 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         else:
             print(
                 f"imported {len(concepts)} concepts into {org}/{args.namespace}: "
-                f"{n['written']} written, {n['unchanged']} unchanged, {n['failed']} failed "
+                f"{n['written']} written, {n['unchanged']} unchanged, {n['failed']} failed"
+                + (f", {n['merged']} merged into another key" if n["merged"] else "")
+                + " "
                 f"({n['conflicted']} flagged conflicted, {n['verified']} re-attested as caller)"
                 f"{link_note}{prune_note}"
             )
