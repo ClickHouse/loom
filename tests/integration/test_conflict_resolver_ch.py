@@ -1274,3 +1274,40 @@ async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
     )
     assert len(listed.rows) == 1
     assert [r["status"] for r in await _follow_intents(ch, org, want_active=0)] == ["resolved"]
+
+
+async def test_the_undo_of_a_retirement_rescinds_its_supersedes_edge(ch, wired) -> None:
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app.restore import handle_memory_restore
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 90)
+    assert (await run_pass())["retired"] == 1
+
+    async def live_edges() -> int:
+        rows = await ch.query_all(
+            "SELECT count() AS n FROM loom.operator_edges FINAL WHERE org = {org:String}"
+            " AND from_key = 'office_location' AND to_key = 'office_city'"
+            " AND relation = 'supersedes' AND tombstoned_at IS NULL"
+            " SETTINGS select_sequential_consistency = 1",
+            params={"org": org},
+        )
+        return int(rows[0]["n"])
+
+    assert await live_edges() == 1
+    await asyncio.sleep(1.1)  # the edge's version is its created_at, to the second
+    rows = await _rows(ch, org)
+    undone = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="office_city",
+            if_superseded_by=rows["office_city"]["superseded_by"],
+        )
+    )
+    assert undone.restored
+    assert await live_edges() == 0

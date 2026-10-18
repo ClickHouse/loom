@@ -575,7 +575,9 @@ ended.
 
 ### Undo
 
-Undo makes the restored value current in the graph: every fact the restored row holds,
+The Undo of a retirement that names its winner (`if_superseded_by`) also rescinds the
+`supersedes` operator edge the retirement wrote from the winner's key to the restored
+one. Undo makes the restored value current in the graph: every fact the restored row holds,
 open or closed, gets a new observation (a `row-restore` marker) seen from the restore's
 instant on, to the microsecond (a closed interval before it stays as history, and every
 later repair reads the fact as stated then), as does its edge when the graph has one, so
