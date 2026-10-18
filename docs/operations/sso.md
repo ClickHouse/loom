@@ -320,10 +320,14 @@ In Okta, on the app integration from [Okta setup](#okta-setup):
 
    **Test Connector Configuration**, then save.
 
-3. **Provisioning → To App → Edit:** enable **Create Users** and
-   **Deactivate Users**, and save. **Update User Attributes** may stay off:
-   Loom keeps no attributes but the `userName` (a rename is kept) and the
-   email, which cannot change.
+3. **Provisioning → To App → Edit:** enable **Create Users**, **Update User
+   Attributes** and **Deactivate Users**, and save. Loom keeps no attributes
+   but the `userName` (a rename is kept) and the email, which cannot change.
+   With updates on, a changed email shows as a failed task in Okta; delete
+   the user from the app and assign them again before they sign in with the
+   new address. With updates off, Okta never says the email changed: the
+   person's next sign-in makes a new account under the new address, which a
+   later deactivation of the old one misses.
 4. Under **General → Sign On**, set **Application username format** to
    **Email**: Loom knows people by their email.
 
@@ -345,8 +349,9 @@ In **Microsoft Entra ID**, on the enterprise application you sign in with:
    `email` claim is `mail`, so Loom takes the email from `mail`. Where a user
    has no `mail`, map `mail` from the address their ID token carries, not
    from the UPN, which can be another address. Matching on `userName` (the
-   default) or on `emails[type eq "work"].value` both work. Groups can stay
-   on or off: Loom answers an empty group list.
+   default) or on `emails[type eq "work"].value` both work. Set **Provision
+   Microsoft Entra ID Groups** to **No**: Loom keeps no groups, and refuses
+   creating one, which Entra would count as a failure each cycle.
 4. **Settings → Scope:** **Sync only assigned users and groups**, then
    **Start provisioning**.
 

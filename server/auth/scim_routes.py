@@ -487,8 +487,8 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
         name, entry = patched_names(body, row)
         if entry is not None:
             _refuse_another_email(row, str(entry.get("value") or row["email"]))
-        elif name is not None and scim.normalized(row["user_name"]) == row["email"]:
-            _refuse_another_email(row, name)  # the userName may be where the email came from
+        elif name is not None and _email_from_user_name(row):
+            _refuse_another_email(row, name)
         # Every PATCH converges, one of only dropped attributes too: an active
         # user lets go what no deactivated email reaches any more.
         row = await _update(uid, active, name, entry) or row
@@ -517,6 +517,15 @@ async def _update(
         return await scim.update(uid, active=active, user_name=name, email_entry=entry)
     except scim.Exists:
         raise ScimError(409, "another user has this userName", "uniqueness") from None
+
+
+def _email_from_user_name(row: dict[str, Any]) -> bool:
+    """Whether the email came from the userName: no emails entry was kept for it."""
+    return (
+        not row["email_type"]
+        and not row["email_primary"]
+        and scim.normalized(row["user_name"]) == row["email"]
+    )
 
 
 def _refuse_another_email(row: dict[str, Any], email: str) -> None:

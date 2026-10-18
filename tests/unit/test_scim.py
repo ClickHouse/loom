@@ -1377,6 +1377,19 @@ def test_a_sub_attribute_of_an_email_changes_no_address() -> None:
     assert entry is not None and entry["value"] == "lee@example.com"
 
 
+def test_a_username_rename_beside_an_emails_entry_is_kept(client: TestClient, world) -> None:
+    # Entra with UPN = mail: the email came from the work entry, so a UPN change is a rename.
+    body = {
+        "userName": "lee@example.com",
+        "emails": [{"primary": True, "type": "work", "value": "lee@example.com"}],
+    }
+    uid = client.post("/scim/v2/Users", json=body).json()["id"]
+    rename = {"Operations": [{"op": "Replace", "path": "userName", "value": "lee.new@example.com"}]}
+    r = client.patch(f"/scim/v2/Users/{uid}", json=rename)
+    assert r.status_code == 200 and r.json()["userName"] == "lee.new@example.com"
+    assert r.json()["emails"][0]["value"] == "lee@example.com"
+
+
 def test_a_schema_qualified_patch_deactivates_and_refuses_a_new_email(
     client: TestClient, world
 ) -> None:
