@@ -51,14 +51,14 @@ and the CLI reports them rather than hiding them.
 **Provenance travels.** The `loom:` block carries the row's provenance tier so a round
 trip cannot turn an inference into a first-hand fact.
 
-| Flag                   | Effect                                                                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `--include-high`       | also export `sensitivity: high` rows. Off by default: a mirror repository is a wider audience than the namespace's grants |
-| `--no-evidence`        | concepts only; skip the raw chunks (`evidence/`) and session digests (`digests/`) the bundle carries by default           |
-| `--no-links`           | skip the typed edges (shared-entity links are still written)                                                              |
-| `--include-tombstoned` | also export soft-deleted rows, as `status: deprecated`                                                                    |
-| `--limit N`            | at most N most-recent rows (smoke runs)                                                                                   |
-| `--title`, `--dry-run` | the root index title; plan without writing                                                                                |
+| Flag                   | Effect                                                                                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--include-high`       | also export high rows (`sensitivity: high` or the `sensitivity:high` tag). Off by default: a mirror repository is a wider audience than the namespace's grants |
+| `--no-evidence`        | concepts only; skip the raw chunks (`evidence/`) and session digests (`digests/`) the bundle carries by default                                                |
+| `--no-links`           | skip the typed edges (shared-entity links are still written)                                                                                                   |
+| `--include-tombstoned` | also export soft-deleted rows, as `status: deprecated`                                                                                                         |
+| `--limit N`            | at most N most-recent rows (smoke runs)                                                                                                                        |
+| `--title`, `--dry-run` | the root index title; plan without writing                                                                                                                     |
 
 ## Lint
 
@@ -78,7 +78,7 @@ no network. Each finding carries an id, a path, a message and a severity
 | `unknown_relation`              | warning  | a `relates_to` kind outside Loom's canonical verbs                                               |
 | `edited_since_export`           | warning  | the body no longer hashes to `loom.content_sha256` (a concept or raw chunk edited by hand)       |
 | `derived_needs_confidence`      | warning  | `source_class: derived` at confidence 1.0: an inference written as a fact                        |
-| `high_sensitivity_present`      | warning  | a `sensitivity: high` row travelled                                                              |
+| `high_sensitivity_present`      | warning  | a high row (`loom.sensitivity: high` or the `sensitivity:high` tag) travelled                    |
 | `index_listing`                 | warning  | a concept its directory index or the root index does not list                                    |
 | `drift`                         | warning  | the root index's `loom.corpus_digest` no longer matches the concept files                        |
 | `orphans`                       | info     | concepts that link to nothing and are linked from nothing (a property of the data, not a defect) |
@@ -183,7 +183,8 @@ uv run --project .okf-lint-loom --frozen --python 3.12 loom okf-lint <OKF_ROOT> 
 - **Deletions travel only with `--prune`,** and only for rows the import wrote. Edges
   removed from the bundle are not deleted.
 - **High-sensitivity rows stay home** unless you pass `--include-high`, and the lint warns
-  when one travelled.
+  when one travelled. A row is high by `loom.sensitivity: high` or by its
+  `sensitivity:high` tag, so the lint also finds the rows an earlier export let through.
 
 ## Related
 

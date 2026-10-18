@@ -586,14 +586,15 @@ def is_exportable(entry: dict[str, Any], *, include_high: bool = False) -> bool:
     """A `sensitivity = high` row has no embedding row
     and does not leave the database as clear text unless the
     exporter asks; a mirror repository has a wider audience than the
-    namespace's grants. The `sensitivity:high` tag memory.set adds counts too, so a read
-    that leaves the column empty still keeps the row home."""
-    if include_high:
+    namespace's grants."""
+    return include_high or not is_high(entry.get("sensitivity"), entry.get("tags"))
+
+
+def is_high(sensitivity: Any, tags: Any) -> bool:
+    """A row is high by its `sensitivity` or by the `sensitivity:high` tag memory.set adds."""
+    if str(sensitivity or "").strip().lower() == HIGH:
         return True
-    if str(entry.get("sensitivity") or "").strip().lower() == HIGH:
-        return False
-    tags = {str(t).strip().lower() for t in entry.get("tags") or []}
-    return SENSITIVITY_TAG_PREFIX + HIGH not in tags
+    return SENSITIVITY_TAG_PREFIX + HIGH in {str(t).strip().lower() for t in tags or []}
 
 
 # ------------------------------------------------------------------

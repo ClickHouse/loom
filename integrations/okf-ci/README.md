@@ -13,22 +13,22 @@ is how such a repository runs it in CI.
 no ClickHouse, no network. Findings carry an id, a path, a message and a
 severity.
 
-| id                              | severity | what it means                                                                                    |
-| ------------------------------- | -------- | ------------------------------------------------------------------------------------------------ |
-| `frontmatter`                   | critical | a concept has no frontmatter, unparseable YAML, or an empty `type`                               |
-| `required_keys`                 | critical | `title`, `description`, `loom.memory_key` or `loom.memory_type` is missing                       |
-| `relates_to`                    | critical | an edge is malformed or its `.md` target does not exist in the bundle                            |
-| `index_missing` / `okf_version` | critical | a directory with concepts has no `index.md`; the root index declares no `okf_version`            |
-| `staging`                       | critical | a `staging/` directory exists; staging never answers                                             |
-| `type_directory_mismatch`       | warning  | `loom.memory_type` disagrees with the folder the file sits in                                    |
-| `pointer_unmounted`             | warning  | a `relates_to` path is a `loom://org/namespace/key` pointer to a concept outside this bundle     |
-| `unknown_relation`              | warning  | a `relates_to` kind outside Loom's canonical verbs                                               |
-| `edited_since_export`           | warning  | the body no longer hashes to `loom.content_sha256` (a concept or a raw chunk edited by hand)     |
-| `derived_needs_confidence`      | warning  | `source_class: derived` at confidence 1.0, an inference written as a fact                        |
-| `high_sensitivity_present`      | warning  | a `sensitivity: high` row travelled; the export skips them by default                            |
-| `index_listing`                 | warning  | a concept its directory index or the root index does not list                                    |
-| `drift`                         | warning  | the root index's `loom.corpus_digest` no longer matches the concept files                        |
-| `orphans`                       | info     | concepts that link to nothing and are linked from nothing (a property of the data, not a defect) |
+| id                              | severity | what it means                                                                                                   |
+| ------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------- |
+| `frontmatter`                   | critical | a concept has no frontmatter, unparseable YAML, or an empty `type`                                              |
+| `required_keys`                 | critical | `title`, `description`, `loom.memory_key` or `loom.memory_type` is missing                                      |
+| `relates_to`                    | critical | an edge is malformed or its `.md` target does not exist in the bundle                                           |
+| `index_missing` / `okf_version` | critical | a directory with concepts has no `index.md`; the root index declares no `okf_version`                           |
+| `staging`                       | critical | a `staging/` directory exists; staging never answers                                                            |
+| `type_directory_mismatch`       | warning  | `loom.memory_type` disagrees with the folder the file sits in                                                   |
+| `pointer_unmounted`             | warning  | a `relates_to` path is a `loom://org/namespace/key` pointer to a concept outside this bundle                    |
+| `unknown_relation`              | warning  | a `relates_to` kind outside Loom's canonical verbs                                                              |
+| `edited_since_export`           | warning  | the body no longer hashes to `loom.content_sha256` (a concept or a raw chunk edited by hand)                    |
+| `derived_needs_confidence`      | warning  | `source_class: derived` at confidence 1.0, an inference written as a fact                                       |
+| `high_sensitivity_present`      | warning  | a high row (`loom.sensitivity: high` or the `sensitivity:high` tag) travelled; the export skips them by default |
+| `index_listing`                 | warning  | a concept its directory index or the root index does not list                                                   |
+| `drift`                         | warning  | the root index's `loom.corpus_digest` no longer matches the concept files                                       |
+| `orphans`                       | info     | concepts that link to nothing and are linked from nothing (a property of the data, not a defect)                |
 
 Exit codes follow the shape a compile step needs: **2** on any critical
 finding, **1** on warnings only, **0** clean. `--strict` makes warnings exit

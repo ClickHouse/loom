@@ -28,7 +28,7 @@ Checks, by finding id:
     edited_since_export        loom.content_sha256 no longer hashes the
                                body (concepts and evidence files)          warning
     derived_needs_confidence   source_class derived at confidence 1.0      warning
-    high_sensitivity_present   a `sensitivity: high` row travelled         warning
+    high_sensitivity_present   a high row (field or tag) travelled         warning
     index_missing              a directory or the root has no index.md     critical
     okf_version                the root index declares no okf_version      critical
     index_listing              a concept its indexes do not list           warning
@@ -273,8 +273,7 @@ def _check_concept(
             "source_class derived at confidence 1.0: an inference written as a fact",
             WARNING,
         )
-    # A row is high by its column or by its sensitivity:high tag; a bundle can carry only the tag.
-    if not okf.is_exportable({"sensitivity": loom.get("sensitivity"), "tags": fm.get("tags")}):
+    if okf.is_high(loom.get("sensitivity"), fm.get("tags")):
         rep.add(
             "high_sensitivity_present",
             rel,
