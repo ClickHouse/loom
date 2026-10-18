@@ -52,7 +52,7 @@ from server.observability.otel import traced
 from server.operations.read_projection import project_rows
 
 if TYPE_CHECKING:
-    from server.knowledge.store.conversations import ConversationEmbeddingRow
+    from server.knowledge.store.conversations import ConversationEmbeddingRow, MessageInsert
 
 log = logging.getLogger(__name__)
 
@@ -178,18 +178,7 @@ async def handle_conversation_append(
             msg_id=msg_id,
         ),
     )
-    await _store_embedding(
-        org=input.org,
-        namespace=input.namespace,
-        agent=input.agent,
-        thread_id=input.thread_id,
-        msg_id=msg_id,
-        role=input.role,
-        user_id=input.user_id,
-        run_id=input.run_id,
-        ts=now,
-        embedded=embedded,
-    )
+    await _store_embedding(msg_row, embedded)
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
 
@@ -229,42 +218,31 @@ async def _embed_turn(
         return EmbeddedTurn(excerpt, [], 0, embedder.model_name, f"{type(e).__name__}: {e}")
 
 
-async def _store_embedding(
-    *,
-    org: str,
-    namespace: str,
-    agent: str,
-    thread_id: str,
-    msg_id: str,
-    role: str,
-    user_id: str,
-    run_id: str,
-    ts: datetime,
-    embedded: EmbeddedTurn,
-) -> None:
-    """Store one turn's embedding row from `_embed_turn`'s result. A failed embed is
-    stored too, with the dead-letter columns recording the error."""
+async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
+    """Store the embedding row of message `msg` from `_embed_turn`'s result, so the two
+    rows carry one identity, user and time. A failed embed is stored too, with the
+    dead-letter columns recording the error."""
     from server.knowledge.store import conversations as conversation_repo
 
     embedding_row: ConversationEmbeddingRow = {
-        "org": org,
-        "namespace": namespace,
-        "agent": agent,
-        "thread_id": thread_id,
-        "msg_id": msg_id,
-        "role": role,
+        "org": msg.org,
+        "namespace": msg.namespace,
+        "agent": msg.agent,
+        "thread_id": msg.thread_id,
+        "msg_id": msg.msg_id,
+        "role": msg.role,
         # The text the vector was built from, which a re-embed starts from again;
         # search hits show its first HIT_EXCERPT_CHARS characters.
         "content_excerpt": embedded.excerpt,
         "embedding_model": embedded.model,
         "embedding_dim": embedded.dim,
         "embedding": embedded.vector,
-        "user_id": user_id,
-        "run_id": run_id,
+        "user_id": msg.user_id,
+        "run_id": msg.run_id,
         "embed_attempts": 1 if embedded.dim > 0 else 0,
         "embed_last_error": embedded.error,
         "embed_failed_at": naive_utc_now() if embedded.error else None,
-        "ts": ts,
+        "ts": msg.ts or naive_utc_now(),
     }
     with traced("ch.insert.conversation_embedding", embedded=embedded.dim > 0):
         await conversation_repo.insert_embedding(embedding_row)
@@ -820,41 +798,29 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     # Place the summary where the originals were so reads see it in order.
     earliest_ts = candidates[0]["ts"]
 
-    await conversation_repo.append(
-        conversation_repo.MessageInsert(
-            org=input.org,
-            namespace=input.namespace,
-            agent=input.agent,
-            thread_id=input.thread_id,
-            msg_id=summary_msg_id,
-            role="system",
-            content=summary_text,
-            user_id=summary_user_id,
-            run_id=summary_run_id,
-            metadata=_json.dumps(
-                {
-                    "compacted_from": sorted(candidate_ids),
-                    "compacted_at": now.isoformat(),
-                    "llm_provider": llm.provider,
-                    "llm_model": llm.model,
-                }
-            ),
-            tokens=result.tokens_out,
-            ts=earliest_ts,
-        )
-    )
-    await _store_embedding(
+    summary = conversation_repo.MessageInsert(
         org=input.org,
         namespace=input.namespace,
         agent=input.agent,
         thread_id=input.thread_id,
         msg_id=summary_msg_id,
         role="system",
+        content=summary_text,
         user_id=summary_user_id,
         run_id=summary_run_id,
+        metadata=_json.dumps(
+            {
+                "compacted_from": sorted(candidate_ids),
+                "compacted_at": now.isoformat(),
+                "llm_provider": llm.provider,
+                "llm_model": llm.model,
+            }
+        ),
+        tokens=result.tokens_out,
         ts=earliest_ts,
-        embedded=embedded,
     )
+    await conversation_repo.append(summary)
+    await _store_embedding(summary, embedded)
     await conversation_repo.tombstone_messages(
         input.org,
         input.namespace,
