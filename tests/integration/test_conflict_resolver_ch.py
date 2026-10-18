@@ -1089,7 +1089,15 @@ async def test_the_by_id_reads_use_the_memory_id_skip_index(ch, wired) -> None:
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 78)
     ids = [r["id"] for r in (await _rows(ch, org)).values()]
-    base = {"org": org, "ns": NS, "ids": ids, "flagged": ids}
+    base = {
+        "org": org,
+        "ns": NS,
+        "ids": ids,
+        "a": "bot",
+        "u": USER,
+        "s": "s2",
+        "k": "office_location",
+    }
     statements = {
         # The anchored read's id lookup, on its own: EXPLAIN does not show a set's plan.
         "anchored": (queue._FLAGGED_IDENTITIES_SQL, base),
