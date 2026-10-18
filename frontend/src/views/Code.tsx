@@ -98,6 +98,7 @@ import {
   Chip,
   ExternalLink,
   fieldError,
+  ListRow,
   ListTime,
   Loading,
   LoadingSkeleton,
@@ -640,7 +641,7 @@ function RepositoriesHome({
       )}
 
       {!empty && (
-        <ListToolbar label="Repositories" count={count}>
+        <ListToolbar label="Search and filters" count={count}>
           <div className="min-w-0 flex-1">
             <SearchField
               value={query}
@@ -1340,7 +1341,7 @@ export function AddRepositoryDialog({
                     </span>
                   </div>
                 )}
-                <ul className="flex flex-wrap gap-2 list-none p-1 m-0 max-h-56 overflow-y-auto" aria-label="branches">
+                <ul className="flex flex-wrap gap-2 list-none p-1 m-0 max-h-56 overflow-y-auto" aria-label="Branches">
                   {shownBranches.map((b) => {
                     const taken = indexedSet.has(b.name);
                     const on = taken || picked.has(b.name);
@@ -2545,7 +2546,7 @@ function ExploreTab({ id }: { id: CodeId }) {
           <div className="flex items-center justify-between gap-3">
             <div className="font-mono text-sm break-all inline-flex items-center gap-2 flex-wrap">
               {sym.name}
-              {sym.ambiguous && <Badge text="ambiguous" state="warning" size="sm" />}
+              {sym.ambiguous && <Badge text="Ambiguous" state="warning" size="sm" />}
             </div>
             <Button type="empty" htmlType="button" onClick={() => setSym(null)}>
               Close
@@ -2687,6 +2688,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
   const [open, setOpen] = useState<number | null>(null);
   const [pack, setPack] = useState<{ pr: number; text: string; tokens: number; source: string } | null>(null);
   const [prFilter, setPrFilter] = useState("");
+  const packNav = useRowNav({ enabled: (rows?.length ?? 0) > 0 });
   // Settle the typed PR number for 250 ms before asking, like every other search box on
   // the dashboard.
   const [prSettled, setPrSettled] = useState("");
@@ -2805,37 +2807,41 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
             />
           )}
           {rows.length > 0 && (
-            <div className="rounded-xl border border-border overflow-hidden">
+            <div ref={packNav} className="space-y-2">
               {rows.map((r) => (
-                <div key={r.pr_number} className="border-b border-border last:border-b-0">
-                  <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2">
+                <ListRow key={r.pr_number} active={open === r.pr_number}>
+                  {/* The open button stretches over this head only, not the pack under it. */}
+                  <div className="relative flex min-w-0 flex-1 items-center gap-3">
                     <button
                       type="button"
+                      data-row-open=""
                       onClick={() => void toggle(r.pr_number)}
                       aria-expanded={open === r.pr_number}
-                      className="min-w-0 flex-1 text-left flex items-center gap-3"
+                      className="list-row-open min-w-0 flex-1 flex items-center gap-3"
                     >
                       <Icon
-                        name={open === r.pr_number ? "chevron-down" : "chevron-right"}
+                        name="chevron-right"
                         size="sm"
                         aria-hidden="true"
-                        className="shrink-0"
+                        className={`shrink-0 ${open === r.pr_number ? "rotate-90" : ""}`}
                       />
                       <span className="font-mono text-xs tabular shrink-0">#{r.pr_number}</span>
-                      <span className="text-sm truncate flex-1">
-                        {r.title || <span className="text-text-muted">(title not in history yet)</span>}
+                      <span className="text-sm font-semibold truncate flex-1">
+                        {r.title || <span className="font-normal text-text-muted">(title not in history yet)</span>}
                       </span>
                       <span className="text-xs text-text-muted tabular shrink-0 hidden md:inline">{r.author}</span>
-                      <span className="text-xs text-text-muted tabular shrink-0">{fmtInt(r.pack_tokens)} tok</span>
-                      <span className="text-xs text-text-muted tabular shrink-0">{listTime(r.created_at)}</span>
+                      <span className="text-xs text-text-muted tabular shrink-0">{fmtInt(r.pack_tokens)} tokens</span>
+                      <ListTime iso={r.created_at} quiet className="text-xs text-text-muted shrink-0" />
                     </button>
-                    <ExternalLink
-                      href={`https://github.com/${repo}/pull/${r.pr_number}`}
-                      label={`PR #${r.pr_number} on GitHub`}
-                    />
+                    <span className="relative z-[1] shrink-0">
+                      <ExternalLink
+                        href={`https://github.com/${repo}/pull/${r.pr_number}`}
+                        label={`PR #${r.pr_number} on GitHub`}
+                      />
+                    </span>
                   </div>
                   {open === r.pr_number && (
-                    <div className="px-4 pb-4 bg-bg">
+                    <div className="mt-2">
                       {!pack || pack.pr !== r.pr_number ? (
                         <Loading layout="inline" label="Loading the pack" className="py-2" />
                       ) : (
@@ -2851,7 +2857,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
                       )}
                     </div>
                   )}
-                </div>
+                </ListRow>
               ))}
             </div>
           )}
@@ -3349,42 +3355,67 @@ export function AccessTab({
                   : "Add a reader below."}
             </div>
           ) : (
-            <div className="rounded-xl border border-border overflow-hidden">
-              {active.map((g) => (
-                <div
-                  key={g.subject}
-                  className="flex items-center gap-3 px-3 py-2 border-b border-border last:border-b-0 text-xs"
-                >
-                  <Icon
-                    name={g.role === "admin" ? "secure" : "database"}
-                    size="xs"
-                    aria-hidden="true"
-                    className="shrink-0"
-                  />
-                  <span className="font-mono flex-1 truncate">
-                    {g.subject}
-                    {g.subject === me && <span className="ml-2 text-text-muted">(you)</span>}
-                  </span>
-                  <Badge
-                    text={`${roleWord(g.role)}${g.pending_role ? " · asked to maintain" : ""}`}
-                    state="neutral"
-                    size="sm"
-                  />
-                  <span className="text-text-muted tabular hidden md:inline max-w-64 truncate">
-                    added <ListTime iso={g.granted_at} quiet /> by {g.granted_by}
-                  </span>
-                  {canManage && g.subject !== me && (
-                    <IconButton
-                      icon="trash"
-                      size="sm"
-                      label={`Remove ${g.subject}`}
-                      tooltip="Remove reader"
-                      onClick={() => void onRevoke(g)}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
+            <Table
+              aria-label="Readers"
+              size="sm"
+              headers={[
+                { label: "Reader" },
+                { label: "Role", width: "200px" },
+                { label: "Added", width: "220px" },
+                ...(canManage ? [{ label: <span className="sr-only">Actions</span>, width: "56px" }] : []),
+              ]}
+              rows={active.map((g) => ({
+                id: g.subject,
+                items: [
+                  {
+                    label: (
+                      <span className="inline-flex min-w-0 items-center gap-2 font-mono">
+                        <Icon
+                          name={g.role === "admin" ? "secure" : "database"}
+                          size="xs"
+                          aria-hidden="true"
+                          className="shrink-0"
+                        />
+                        <span className="truncate">{g.subject}</span>
+                        {g.subject === me && <span className="font-sans text-text-muted">(you)</span>}
+                      </span>
+                    ),
+                  },
+                  {
+                    label: (
+                      <Badge
+                        text={`${roleWord(g.role)}${g.pending_role ? " · asked to maintain" : ""}`}
+                        state="neutral"
+                        size="sm"
+                      />
+                    ),
+                  },
+                  {
+                    label: (
+                      <span className="text-text-muted">
+                        <ListTime iso={g.granted_at} quiet /> by {g.granted_by}
+                      </span>
+                    ),
+                  },
+                  ...(canManage
+                    ? [
+                        {
+                          label:
+                            g.subject !== me ? (
+                              <IconButton
+                                icon="trash"
+                                size="sm"
+                                label={`Remove ${g.subject}`}
+                                tooltip="Remove reader"
+                                onClick={() => void onRevoke(g)}
+                              />
+                            ) : null,
+                        },
+                      ]
+                    : []),
+                ],
+              }))}
+            />
           )}
 
           {canManage && hasAdmin && (

@@ -557,7 +557,7 @@ describe("RepositoryCard: the tracker line", () => {
       namespaces: [ns({ registered: false })],
     });
     mount([branch()], [dry]);
-    expect(screen.getByText("no credential")).toBeInTheDocument();
+    expect(screen.getByText("No credential")).toBeInTheDocument();
     expect(screen.getByText("Public · registering…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Public/ })).toBeNull();
   });
@@ -572,9 +572,11 @@ describe("RepositoryCard: Settings, for maintainers", () => {
     const { container } = render(
       <RepositoryCard card={card} busy={null} code={a.code} record={a.record} defaultOpen />,
     );
-    const summary = screen.getByText("Settings");
-    expect(summary.closest("details")).not.toHaveAttribute("open");
-    await user.click(summary);
+    const settings = screen.getByRole("button", { name: "Settings" });
+    expect(settings).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Access" })).toBeNull();
+    await user.click(settings);
+    expect(settings).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "Access" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Join policy" })).toBeInTheDocument();
     const src = screen.getByRole("group", { name: "Tracker qa" });
@@ -697,8 +699,8 @@ describe("RepositoryCard — the tracker links", () => {
     const a = mountAdmin(["tracker-clickhouse", "tracker-helpdesk"]);
     const items = within(screen.getByRole("list", { name: "Linked trackers" })).getAllByRole("listitem");
     expect(items).toHaveLength(2);
-    expect(within(items[0]).getByText("primary", { exact: true })).toBeInTheDocument();
-    expect(within(items[1]).queryByText("primary", { exact: true })).toBeNull();
+    expect(within(items[0]).getByText("Primary", { exact: true })).toBeInTheDocument();
+    expect(within(items[1]).queryByText("Primary", { exact: true })).toBeNull();
     expect(line()).toHaveTextContent("Agents search all 2; a lookup by number (#123, a PR's facts) reads qa · public");
     await userEvent.click(screen.getByRole("button", { name: "Make helpdesk primary" }));
     expect(a.code.onSetSource).toHaveBeenLastCalledWith(expect.anything(), ["tracker-helpdesk", "tracker-clickhouse"]);

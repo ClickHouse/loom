@@ -14,7 +14,7 @@ async function open(page: Page, path: string) {
 
 test("grouped runs label every column and draw the header over the first session only", async ({ page }) => {
   await open(page, "/runs");
-  await page.getByRole("button", { name: "Group by session" }).click();
+  await page.getByRole("checkbox", { name: "Group by session" }).click();
   const tables = page.locator("main table");
   await expect(tables.nth(1)).toBeVisible();
   const heights: number[] = [];
@@ -110,7 +110,7 @@ test.describe("1400 px", () => {
 
   test("grouped by session, each session is a heading", async ({ page }) => {
     await open(page, "/runs");
-    await page.getByRole("button", { name: "Group by session" }).click();
+    await page.getByRole("checkbox", { name: "Group by session" }).click();
     await expect(page.getByRole("heading", { level: 2, name: "s-0" })).toBeVisible();
     expect(await violations(page)).toEqual([]);
   });

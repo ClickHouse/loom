@@ -31,6 +31,21 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+describe("PR packs rows", () => {
+  // A row list is one tab stop (lib/useRowNav); the arrows move between packs.
+  it("is one tab stop, moves by arrow, and draws each pack's time with ListTime", async () => {
+    listCodeContextPacks.mockResolvedValue({ rows: [pack(3), pack(2), pack(1)], total: 3 });
+    render(<PacksTab id={ID} repo="acme/app" />);
+    const first = (await screen.findByText("PR 3")).closest("button") as HTMLElement;
+    const opens = [...document.querySelectorAll<HTMLElement>("#packs-list [data-row-open]")];
+    expect(opens.map((b) => b.tabIndex)).toEqual([0, -1, -1]);
+    expect(first.querySelector("time")).toHaveAttribute("dateTime", "2026-09-20T07:00:00.000Z");
+    first.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(opens[1]).toHaveFocus();
+  });
+});
+
 describe("PR packs pages", () => {
   it("reads by offset behind Click UI's Pagination bar and brings the list into focus", async () => {
     listCodeContextPacks.mockImplementation(async (_id, opts: { offset: number; limit: number }) => ({

@@ -217,14 +217,11 @@ function StandingChip({
       label={label}
       mono={mono}
       icon={<Icon name={meta.icon} size="xs" aria-hidden="true" />}
-      selected={st === "member"}
       onClick={onClick}
       disabled={disabled || !onClick}
       ariaLabel={`${name}: ${disabledReason ? disabledReason : standingWord(st)}`}
       tip={tip}
-      className={
-        st === "pending" ? "border-info/40 text-info" : st === "closed" || st === "registering" ? "text-text-muted" : ""
-      }
+      className={st === "closed" || st === "registering" ? "text-text-muted" : ""}
     />
   );
 }
@@ -474,7 +471,7 @@ function RecordFacetLine({
           </>
         ) : r.unconfigured ? (
           <TipBadge
-            text="no credential"
+            text="No credential"
             state="neutral"
             tip="The tracker is declared but has no credential yet — nothing can be read from it until one is added."
           />
@@ -482,7 +479,7 @@ function RecordFacetLine({
           <span>read live · counts not available right now</span>
         )}
       </div>
-      <ul className="mt-2 flex flex-wrap items-center gap-2 list-none p-0 m-0" aria-label="tracker scopes">
+      <ul className="mt-2 flex flex-wrap items-center gap-2 list-none p-0 m-0" aria-label="Tracker scopes">
         {r.namespaces.map((n) => (
           <li key={n.ns.namespace} className="inline-flex max-w-full">
             <RecordChip
@@ -562,13 +559,21 @@ function Settings({
   adminOpsPresent: boolean;
 }) {
   const access = card.code && code.onSetAccess && card.code.branches.some((b) => b.my_role === "admin");
+  const [open, setOpen] = useState(false);
+  const bodyId = useId();
   return (
-    <details className="group border-t border-border pt-2">
-      <summary className="inline-flex items-center gap-1 min-h-9 px-1 -mx-1 rounded text-xs text-text-muted hover:text-text cursor-pointer list-none pointer-coarse:min-h-11 pointer-coarse:min-w-11">
-        <Icon name="chevron-right" size="xs" aria-hidden="true" className="transition-transform group-open:rotate-90" />{" "}
+    <div className="border-t border-border pt-2">
+      <Button
+        type="empty"
+        htmlType="button"
+        iconLeft={open ? "chevron-down" : "chevron-right"}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => setOpen((v) => !v)}
+      >
         Settings
-      </summary>
-      <div className="mt-2 space-y-3">
+      </Button>
+      <div id={bodyId} hidden={!open} className="mt-2 space-y-3">
         {access && card.code && <RepoAccessPanel card={card} facet={card.code} busy={busy} actions={code} />}
         {card.code && (
           // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls
@@ -580,7 +585,7 @@ function Settings({
                   {b.git_head ? ` · ${short(b.git_head)}` : ""}
                 </MetaRow>
               ))}
-              <MetaRow label="origin">
+              <MetaRow label="Origin">
                 {card.code.head.source === "registry" ? "added from the dashboard" : "configured by the operator"}
               </MetaRow>
             </MetaList>
@@ -590,7 +595,7 @@ function Settings({
           <RecordSourceDetails key={s.name} source={s} manageable={canAdminister(s, adminOpsPresent)} />
         ))}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -786,24 +791,19 @@ export function RepositoryCard({
                   onClick={() => setOpen((v) => !v)}
                   aria-expanded={open}
                   aria-controls={open ? bodyId : undefined}
-                  className="list-row-open break-words"
+                  className="list-row-open inline-flex items-start gap-1 break-words"
                 >
+                  <Icon
+                    name="chevron-right"
+                    size="sm"
+                    aria-hidden="true"
+                    className={`mt-0.5 shrink-0 ${open ? "rotate-90" : ""}`}
+                  />
                   {card.repo}
                 </button>
               </h2>
               {health && <HealthBadge health={health} />}
-              {card.restricted && (
-                <Badge
-                  size="sm"
-                  state="neutral"
-                  text={
-                    <span className="inline-flex items-center gap-1">
-                      <Icon name="lock" size="xs" aria-hidden="true" />
-                      Restricted
-                    </span>
-                  }
-                />
-              )}
+              {card.restricted && <Badge size="sm" state="neutral" text="Restricted" icon="lock" iconDir="start" />}
             </div>
             {summary && <p className="mt-0.5 text-xs text-text-muted tabular-nums break-words">{summary}</p>}
           </div>
@@ -1172,7 +1172,7 @@ function LinkedTracker({
           <Icon name="check" size="sm" color="var(--color-success)" aria-hidden="true" className="shrink-0 mt-0.5" />
         )}
         <span className="min-w-0">{line}</span>
-        {many && primary && <Badge text="primary" state="neutral" size="sm" className="shrink-0" />}
+        {many && primary && <Badge text="Primary" state="neutral" size="sm" className="shrink-0" />}
       </div>
       <span className="flex items-center gap-1.5 pl-5 sm:pl-0 sm:shrink-0">
         {many && !primary && (

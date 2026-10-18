@@ -65,7 +65,7 @@ test.describe("desktop 1360", () => {
     await expect(page.getByRole("heading", { name: "tracker sources" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: /^tracker source/ })).toHaveCount(0);
     // The toolbar: the filter leads, the count at its end.
-    const bar = page.getByRole("search", { name: "Repositories" });
+    const bar = page.getByRole("search", { name: "Search and filters" });
     await expect(bar.getByRole("textbox", { name: "Filter repositories" })).toBeVisible();
     await expect(bar.getByText("3 repositories · 3 branches")).toBeVisible();
 

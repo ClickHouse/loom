@@ -53,9 +53,9 @@ describe("AccessTab rows", () => {
       "2025-03-06T09:00:00.000Z",
     ]);
     const readers = screen.getByRole("region", { name: "Readers" });
-    const added = within(readers).getByText(/^added/);
+    const table = within(readers).getByRole("table", { name: "Readers" });
+    const added = within(table).getByText(/by alice$/);
     expect(added.querySelector("time")).toHaveAttribute("dateTime", "2025-03-04T10:00:00.000Z");
-    expect(added).toHaveTextContent("by alice");
   });
 
   // No waiting row has a primary Approve: a list of them would be a column of primaries.
