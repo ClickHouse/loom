@@ -240,12 +240,12 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
     """Supersede `peer` behind the judged row `row`; the caller has checked that `peer`
     was stated first. Returns what `_after_retire` records and follows, or None.
 
-    The follow is queued for the projection repair before the supersede commits
-    (FOLLOW_OWED; the repair follows a pair only while its loser is retired behind
-    its winner, so an intent whose retirement never landed changes nothing), and
-    resolved once the follow lands: a crash between the two leaves the fact for the
-    repair, not open forever. No intent, no retirement."""
-    from server.memory.app.auto_resolution import CONFLICT_RESOLVER
+    The record and the follow are queued for the projection repair before the
+    supersede commits (FOLLOW_OWED, with the record's entry; the repair acts on a pair
+    only while its loser is retired behind its winner, so an intent whose retirement
+    never landed changes nothing), and resolved once both land: a crash or a failed
+    emit in between leaves them for the repair. No intent, no retirement."""
+    from server.memory.app.auto_resolution import CONFLICT_RESOLVER, retired_entry
     from server.memory.app.conflicts import apply_refines
     from server.memory.app.projection_failures import FOLLOW_OWED, record_projection_failure
 
@@ -260,7 +260,17 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
         source_operation=f"worker.{CONFLICT_RESOLVER}",
         source_resource_id=f"{CONFLICT_RESOLVER}:{pair[1]}",
         error="conflict_resolver: retirement to follow",
-        payload={"pairs": [list(pair)]},
+        payload={
+            "pairs": [list(pair)],
+            "retired": [
+                retired_entry(
+                    loser,
+                    superseded_by=pair[1],
+                    superseded_by_key=str(winner.memory_key),
+                    label=cr.UPDATE,
+                )
+            ],
+        },
     )
     into: dict[str, list[dict[str, Any]]] = {}
     await apply_refines(
@@ -287,11 +297,11 @@ async def _after_retire(org: str, namespace: str, done: Any) -> None:
     memory row."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
 
-    await record_auto_supersessions(
+    recorded = await record_auto_supersessions(
         org=org, namespace=namespace, retired=done.retired, reason=CONFLICT_RESOLVER
     )
     pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in done.retired]
-    if await _follow(org, namespace, done.agent, pairs):
+    if await _follow(org, namespace, done.agent, pairs) and recorded:
         await _done(org, done.intent)
 
 

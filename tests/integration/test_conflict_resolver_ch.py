@@ -1227,3 +1227,50 @@ async def test_an_erasure_requested_while_a_pair_waits_for_its_lock_gets_no_writ
         k: r["version"] for k, r in before.items()
     }
     assert (await _marks(ch, org))["office_location"] == 1, "owed, left to after the saga"
+
+
+async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
+    ch, wired, monkeypatch
+) -> None:
+    """The record's emit fails after the supersede: the follow intent stays active with
+    the record's entry, and its replay writes the record the Auto-resolved list reads,
+    once."""
+    from server.insights.api.models_audit import AuditListInput
+    from server.insights.app.audit import handle_audit_list
+    from server.memory.app import projection_failures
+    from server.memory.workers.conflict_resolver import run_pass
+    from server.observability import audit
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 88)
+    real = audit.emit
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        if event_type == "memory.auto_supersede":
+            return ""  # as audit.emit answers when its insert fails
+        return await real(event_type, **kw)
+
+    monkeypatch.setattr(audit, "emit", emit)
+    assert (await run_pass())["retired"] == 1
+    monkeypatch.setattr(audit, "emit", real)
+    assert await _audit(ch, org, "memory.auto_supersede") == []
+    (intent,) = await _follow_intents(ch, org, want_active=1)
+    assert intent["status"] == "active"
+
+    for _ in range(2):  # a second replay writes no second record
+        await projection_failures.retry_projection_failures(
+            org=org, projection="triples_follow_owed"
+        )
+    rows = await _rows(ch, org)
+    (record,) = await _audit(ch, org, "memory.auto_supersede")
+    (entry,) = record["retired"]
+    assert record["reason"] == "conflict_resolver"
+    assert (entry["memory_id"], entry["superseded_by"]) == (
+        rows["office_city"]["id"],
+        rows["office_location"]["id"],
+    )
+    listed = await handle_audit_list(
+        AuditListInput(org=org, namespace=NS, event_type="memory.auto_supersede")
+    )
+    assert len(listed.rows) == 1
+    assert [r["status"] for r in await _follow_intents(ch, org, want_active=0)] == ["resolved"]

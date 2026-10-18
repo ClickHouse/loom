@@ -737,7 +737,7 @@ async def test_unlinking_a_pair_leaves_other_flags_and_reactivates_a_row_left_wi
 def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     from server.memory.app import auto_resolution, conflicts, projection_failures
 
-    e = NS(seen={}, records=[], followed=[], log=[], follow_ok=True, retires=True)
+    e = NS(seen={}, records=[], followed=[], log=[], follow_ok=True, retires=True, record_ok=True)
 
     async def refines(**kw: Any) -> int:
         e.log.append("supersede")
@@ -750,14 +750,16 @@ def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         )
         return 1
 
-    async def record(**kw: Any) -> None:
+    async def record(**kw: Any) -> bool:
         e.records.append(kw)
+        return e.record_ok
 
     async def follow(org, namespace, agent, pairs):
         e.followed.extend(pairs)
         return e.follow_ok
 
     async def intent(**kw: Any) -> str:
+        e.intent_payload = kw["payload"]
         e.log.append(("intent", kw["projection"], kw["payload"]["pairs"]))
         return "f1"
 
@@ -788,6 +790,20 @@ async def test_the_follow_is_owed_before_the_supersede_and_settled_after_it(
     assert retire_env.log[1] == "supersede"
     # A follow that failed stays owed to the repair; nothing retired, nothing owed.
     assert (("resolved", ["f1"]) in retire_env.log) is (follow_ok or not retires)
+
+
+async def test_a_record_that_failed_leaves_the_intent_with_its_entry(retire_env: NS) -> None:
+    retire_env.record_ok = False
+    late = _mem("m1", content_sha256="sha-late")
+    current = _mem("m2", session_id="s2", content_sha256="sha-cur", memory_key="office_town")
+    await resolver._after_retire("o", "ns", await resolver._retire("o", "ns", current, late))
+    assert ("resolved", ["f1"]) not in retire_env.log, "the repair writes the record"
+    (entry,) = retire_env.intent_payload["retired"]
+    assert (entry["memory_id"], entry["superseded_by"], entry["superseded_by_key"]) == (
+        "m1",
+        "m2",
+        "office_town",
+    )
 
 
 async def test_a_retirement_behind_the_newer_row_of_the_pair(retire_env: NS) -> None:

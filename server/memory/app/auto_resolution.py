@@ -126,32 +126,41 @@ async def record_auto_supersessions(
     retired: Sequence[Mapping[str, Any]],
     reason: str,
     request_id: str | None = None,
-) -> None:
+) -> bool:
     """`memory.auto_supersede` audit rows for the rows one path just retired, one per
     `MAX_ENTRIES` of them. `retired`: dicts with `memory_id`, `memory_key`, `agent`,
     `user_id`, `session_id`, `superseded_by` and optionally `label` /
-    `superseded_by_key`. Nothing to record writes nothing. Never raises."""
+    `superseded_by_key`. Nothing to record writes nothing. Never raises; False when a
+    row was not written."""
     try:
         if not retired:
-            return
+            return True
         from server.memory.app.provenance import writer_actor
         from server.observability import audit as _audit
 
         entries = [retired_entry(r) for r in retired]
         actor = writer_actor(fallback="process:loom") or "process:loom"
         rid = _request_id() if request_id is None else request_id
+        written = True
         for start in range(0, len(entries), MAX_ENTRIES):
             chunk = entries[start : start + MAX_ENTRIES]
-            await _audit.emit(
-                EVENT_TYPE,
-                org=org,
-                namespace=namespace,
-                actor=actor,
-                subject={"reason": reason, "count": len(chunk), "retired": chunk},
-                request_id=rid,
+            written = (
+                bool(
+                    await _audit.emit(
+                        EVENT_TYPE,
+                        org=org,
+                        namespace=namespace,
+                        actor=actor,
+                        subject={"reason": reason, "count": len(chunk), "retired": chunk},
+                        request_id=rid,
+                    )
+                )
+                and written
             )
+        return written
     except Exception as e:  # noqa: BLE001 — the retirement stands; its record is best effort
         log.warning("auto_resolution: audit emit failed (non-fatal): %s", e)
+        return False
 
 
 def schedule_auto_supersessions(

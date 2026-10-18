@@ -229,10 +229,11 @@ newer, a `supersedes` edge records why, one `memory.auto_supersede` record names
 (reason `conflict_resolver`, so `memory.restore` undoes it), and the triple plane follows
 (`follow_row_supersessions`). A flag the newer row held against the retired one is
 removed as a clear removes it, and the audit row's pair says `flag_cleared`, so the
-winner does not stay on the review queue against a retired row. The follow is owed before the supersede commits: one
-committed `triples_follow_owed` projection-failure row holds the pair and is resolved once
-the follow lands, so a failure or a crash in between leaves it for the projection repair,
-which follows a pair only while its loser is retired behind its winner. The acting of a
+winner does not stay on the review queue against a retired row. The follow and the record are owed before the supersede commits: one
+committed `triples_follow_owed` projection-failure row holds the pair and the record's
+entry, and is resolved once both land, so a failure or a crash in between leaves them for
+the projection repair, which follows a pair, and writes its record when none exists, only
+while its loser is retired behind its winner. The acting of a
 judged row (its pairs, records, follows and audit row) is shielded from cancellation, and
 a cancelled pass ends only once it has finished. A flag is
 `mark_peers_conflicted`; a clear removes the pair from each side's `conflict_with`, and a

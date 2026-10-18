@@ -509,6 +509,8 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
     async with _recording_restated_repair(failure, ch=ch):
         await _finish_restated_repair(failure, scope, ch=ch)
         outcome = await follow_row_supersessions(scope, pairs, ch=ch, hops=REPAIR_CHAIN_HOPS)
+    if failure.projection == FOLLOW_OWED:
+        await _record_owed_retirements(failure, ch=ch)
     if not outcome.unfollowed:
         return ""
     log.warning(
@@ -518,6 +520,48 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
         failure.namespace,
     )
     return f"unfollowable_chain: {len(outcome.unfollowed)} pair(s)"
+
+
+async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) -> None:
+    """The conflict resolver's `memory.auto_supersede` record of each retirement in the
+    intent that is still in place (the loser retired behind the winner) and has none
+    yet. A failed emit raises, so the intent stays for the next replay."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.app.auto_resolution import (
+        CONFLICT_RESOLVER,
+        EVENT_TYPE,
+        record_auto_supersessions,
+    )
+    from server.memory.store import get_by_id
+
+    for entry in failure.payload.get("retired") or []:
+        loser, winner = str(entry["memory_id"]), str(entry["superseded_by"])
+        head = await get_by_id(loser, org=failure.org, ch=ch, scope=WHOLE_NAMESPACE, strong=True)
+        if head is None or head.status != "superseded" or str(head.superseded_by) != winner:
+            continue
+        found = await ch.query_all(
+            "SELECT count() AS n FROM loom.audit_log"
+            " WHERE org = {org:String} AND namespace = {ns:String} AND event_type = {e:String}"
+            " AND position(subject, {loser:String}) > 0 AND position(subject, {winner:String}) > 0"
+            " SETTINGS select_sequential_consistency = 1",
+            params={
+                "org": failure.org,
+                "ns": failure.namespace,
+                "e": EVENT_TYPE,
+                "loser": loser,
+                "winner": winner,
+            },
+        )
+        if found and int(found[0]["n"]):
+            continue
+        if not await record_auto_supersessions(
+            org=failure.org,
+            namespace=failure.namespace,
+            retired=[entry],
+            reason=CONFLICT_RESOLVER,
+            request_id="",
+        ):
+            raise RuntimeError("the retirement's record was not written")
 
 
 async def _retry_triples_reopen(failure: ProjectionFailureRow, *, ch: Any) -> str:

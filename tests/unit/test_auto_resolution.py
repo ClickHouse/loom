@@ -101,7 +101,7 @@ async def test_nothing_retired_writes_nothing(emitted) -> None:
     assert emitted == []
 
 
-async def test_a_failing_audit_write_never_raises(monkeypatch) -> None:
+async def test_a_failing_audit_write_never_raises_and_says_so(monkeypatch) -> None:
     async def boom(*a, **k):
         raise RuntimeError("down")
 
@@ -110,7 +110,7 @@ async def test_a_failing_audit_write_never_raises(monkeypatch) -> None:
         await ar.record_auto_supersessions(
             org="o", namespace="ns", retired=[_retired("m1")], reason="refines"
         )
-        is None
+        is False
     )
     ar.schedule_auto_supersessions(org="o", namespace="ns", retired=[_retired("m1")], reason="x")
     await _drain()
