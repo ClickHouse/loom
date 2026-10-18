@@ -21,7 +21,7 @@ FROM (
     FROM loom.memory FINAL
     WHERE org = {org:String} AND namespace = {ns:String}
       AND status = 'active' AND tombstoned_at IS NULL
-      -- an earlier build mined a high row's value into its entities
+      -- a row labelled high after the extractor ran keeps entities mined from its value
       AND sensitivity != 'high'
       AND notEmpty(entities)__SCOPE__
     ORDER BY created_at DESC

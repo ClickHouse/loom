@@ -403,3 +403,21 @@ async def test_the_graph_walk_never_seeds_from_a_high_rows_entities() -> None:
     )
     rows = await ch.query_all(sql, params)
     assert [r["entity"] for r in rows] == ["oolong"]
+
+
+@pytest.mark.asyncio
+async def test_related_never_serves_a_high_sources_entities() -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import Identity, find_related_by_entities
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, entities) VALUES "
+        f"('o', 'n', 'a', '-', '-', '{_A}', 'door', 'semantic', 'v', 'active', 'high', 1, "
+        f"['acme-prod']), ('o', 'n', 'a', '-', '-', '{_B}', 'tea', 'semantic', 'v', 'active', "
+        "'', 1, ['acme-prod'])",
+    )
+    ident = Identity(org="o", namespace="n", agent="a", user_id="-", session_id="-")
+    ents, rows = await find_related_by_entities(ident, "door", scope=WHOLE_NAMESPACE, ch=ch)
+    assert ents == [] and rows == []

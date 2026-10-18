@@ -532,7 +532,7 @@ async def find_related_by_entities(
     source_scope = scope_and(scope, source_params)
     source = await ch.query_one(
         f"""
-        SELECT entities
+        SELECT entities, sensitivity
         FROM loom.memory FINAL
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -546,7 +546,8 @@ async def find_related_by_entities(
         """,
         params=source_params,
     )
-    if source is None:
+    # A row labelled high after the extractor ran keeps entities mined from its value.
+    if source is None or source.get("sensitivity") == "high":
         return ([], [])
     source_entities: list[str] = list(source.get("entities") or [])
     if not source_entities:

@@ -525,10 +525,12 @@ leg returns it. The other reads that could serve its value follow three rules:
   `namespace.validate`'s checks that quote a value, a search's duplicate substitution (a
   `high` canonical is not seated in its duplicate's place), the profile fold, the entity graph
   (a row written as `high` projects only the entities its writer declared, and the entity
-  extractor never reads it), `memory.list`'s and the graph walk's entities of a `high` row,
-  and the existing memories an extraction prompt shows the LLM. A row labelled `high` only
-  later, by the sensitivity sweep or a new `memory.set`, keeps the graph edges its earlier
-  version projected.
+  extractor never reads it), the entities of a `high` row in `memory.list`, `memory.related`
+  and the graph walk's recency seeds, and the existing memories an extraction prompt shows the
+  LLM. A row labelled `high` only after the extractor ran, by the sensitivity sweep or a new
+  `memory.set`, keeps the entities mined from its value on the row (not served by those reads)
+  and the graph edges its earlier version projected, which `facts.traverse` and `facts.path`
+  still walk.
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
   `contains` does not search it), `conflicts.list` and `memory.proposals`.
 - Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get`,

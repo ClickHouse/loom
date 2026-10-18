@@ -181,7 +181,7 @@ async def test_the_score_list_withholds_a_high_rows_value(monkeypatch) -> None:
             "value_truncated": 0,
             "sensitivity": sensitivity,
             "tags": [],
-            "entities": [],
+            "entities": ["vault"] if sensitivity == "high" else [],
         }
 
     class _CH:
@@ -197,6 +197,7 @@ async def test_the_score_list_withholds_a_high_rows_value(monkeypatch) -> None:
     )
     by_key = {e.memory_key: e for e in out.entries}
     assert by_key["secret"].value is None and by_key["secret"].value_truncated is True
+    assert by_key["secret"].entities == []
     assert by_key["plain"].value == "plain words" and by_key["plain"].value_truncated is False
 
 

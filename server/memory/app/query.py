@@ -413,7 +413,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                     last_recalled_at=r.last_recalled_at,
                     sensitivity=r.sensitivity,
                     tags=list(r.tags or []),
-                    # An earlier build could mine a high row's value into its entities.
+                    # A row labelled high after the extractor ran keeps entities mined from
+                    # its value.
                     entities=[] if r.sensitivity == "high" else public_entities(r.entities),
                     agent=r.agent or "",
                     user_id=r.user_id or "",
