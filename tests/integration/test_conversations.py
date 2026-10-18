@@ -199,3 +199,30 @@ async def test_thread_scope_isolation(agent) -> None:
     rows_b = (await agent.conversations.list(b, limit=10))["rows"]
     assert [r["content"] for r in rows_a] == ["in thread A"]
     assert [r["content"] for r in rows_b] == ["in thread B"]
+
+
+@pytest.mark.asyncio
+async def test_a_compacted_turn_leaves_search(agent) -> None:
+    """conversation.compact tombstones the summarised turns' embeddings with the turns,
+    so search returns only what conversation.list still shows."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    old = [uuid.uuid4().hex for _ in range(4)]
+    for i, mid in enumerate(old):
+        role = "user" if i % 2 == 0 else "assistant"
+        await agent.conversations.append(tid, mid, role, f"zebra migration {nonce} turn {i}")
+    await agent.conversations.append(tid, uuid.uuid4().hex, "user", f"zebra migration {nonce} last")
+
+    before = await agent.conversations.search(f"zebra migration {nonce}", thread_id=tid)
+    assert set(old) <= {h["msg_id"] for h in before["hits"]}
+
+    out = await agent.call(
+        "conversation.compact", {"thread_id": tid, "keep_recent": 1, "min_to_compact": 2}
+    )
+    assert out["compacted"] is True, out
+
+    after = await agent.conversations.search(f"zebra migration {nonce}", thread_id=tid)
+    listed = {r["msg_id"] for r in (await agent.conversations.list(tid, limit=50))["rows"]}
+    hit_ids = {h["msg_id"] for h in after["hits"]}
+    assert not hit_ids & set(old), after["hits"]
+    assert hit_ids <= listed

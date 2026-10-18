@@ -19,6 +19,7 @@ class _FakeCH:
         self.rows = rows
         self.inserted: list[dict[str, Any]] = []
         self.sql: list[str] = []
+        self.executed: list[tuple[str, dict[str, Any]]] = []
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None):
         self.sql.append(sql)
@@ -31,6 +32,7 @@ class _FakeCH:
 
     async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any) -> None:
         self.sql.append(sql)
+        self.executed.append((sql, params or {}))
 
 
 class _FakeLLM:
@@ -109,6 +111,18 @@ def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> N
     assert out.compacted is True and out.messages_summarized == 2
     [summary] = fake.inserted
     assert '"compacted_from": ["m0", "m1"]' in summary["metadata"]
+    # The compacted turns leave conversation.search too: their embeddings are
+    # tombstoned with the messages, by the same ids.
+    tombstoned = {
+        table: params["ids"]
+        for sql, params in fake.executed
+        for table in ("loom.conversations", "loom.conversation_embeddings")
+        if f"ALTER TABLE {table}\n" in sql
+    }
+    assert tombstoned == {
+        "loom.conversations": ["m0", "m1"],
+        "loom.conversation_embeddings": ["m0", "m1"],
+    }
 
 
 def test_fitting_prefix_keeps_at_least_one_line() -> None:

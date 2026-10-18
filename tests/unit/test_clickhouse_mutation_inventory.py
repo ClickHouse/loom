@@ -27,9 +27,10 @@ _EXPECTED_MUTATIONS = Counter(
         ("server/memory/store/conflicts.py", "conflict_allowlist", "UPDATE"): 1,
         # `loom blobs import` stamps the old blob directory's rows once their files are gone.
         ("server/knowledge/store/documents.py", "documents", "UPDATE"): 1,
-        ("server/knowledge/store/conversations.py", "conversation_embeddings", "UPDATE"): 1,
+        # tombstone_thread and conversation.compact's tombstone_messages, each on the
+        # messages and their embeddings.
+        ("server/knowledge/store/conversations.py", "conversation_embeddings", "UPDATE"): 2,
         ("server/knowledge/store/conversations.py", "conversation_threads", "UPDATE"): 1,
-        # tombstone_thread and conversation.compact's tombstone_messages.
         ("server/knowledge/store/conversations.py", "conversations", "UPDATE"): 2,
         # tombstone_by_id writes a versioned row + embeddings cascade, not an
         # ALTER UPDATE.

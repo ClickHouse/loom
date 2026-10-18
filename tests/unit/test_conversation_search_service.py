@@ -42,7 +42,7 @@ def _row() -> dict[str, Any]:
         "thread_id": "t-1",
         "msg_id": "m-7",
         "role": "user",
-        "content_excerpt": "deploy soon?",
+        "excerpt": "deploy soon?",
         "ts": datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
         "distance": 0.18,
     }
@@ -65,6 +65,9 @@ async def test_vector_search_default_filters_and_order() -> None:
     assert "cosineDistance(embedding, {q:Array(Float32)}) <= {maxd:Float64}" in sql
     assert params["model"] == "text-embedding-3-small"
     assert len(out) == 1 and isinstance(out[0], ConversationHit)
+    # The row stores the embedded text; a hit shows its first 240 characters.
+    assert "substringUTF8(content_excerpt, 1, 240) AS excerpt" in sql
+    assert out[0].content_excerpt == "deploy soon?"
 
 
 @pytest.mark.asyncio

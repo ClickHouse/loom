@@ -99,7 +99,8 @@ async def vector_search(
     # rows, already distance-ordered by CH, and Python's sort is stable).
     rows = await ch.query_all(
         f"""
-        SELECT thread_id, msg_id, role, content_excerpt, ts,
+        SELECT thread_id, msg_id, role,
+               substringUTF8(content_excerpt, 1, 240) AS excerpt, ts,
                cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
         FROM loom.conversation_embeddings FINAL
         WHERE {" AND ".join(where)}
@@ -114,7 +115,7 @@ async def vector_search(
             thread_id=r["thread_id"],
             msg_id=r["msg_id"],
             role=r["role"],
-            content_excerpt=r["content_excerpt"],
+            content_excerpt=r["excerpt"],
             ts=r["ts"],
             distance=float(r["distance"]),
         )

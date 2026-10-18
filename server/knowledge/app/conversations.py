@@ -201,7 +201,9 @@ async def handle_conversation_append(
         "thread_id": input.thread_id,
         "msg_id": msg_id,
         "role": input.role,
-        "content_excerpt": input.content[:_EXCERPT_LIMIT],
+        # The text the vector was built from, so a re-embed rebuilds the same vector;
+        # search hits show its first _EXCERPT_LIMIT characters.
+        "content_excerpt": excerpt,
         "embedding_model": embedder.model_name,
         "embedding_dim": embedding_dim,
         "embedding": embedding,

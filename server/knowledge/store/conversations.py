@@ -712,9 +712,18 @@ async def tombstone_messages(
     when: datetime,
     ch: _CHClient | None = None,
 ) -> None:
-    """Tombstone the named messages of one thread. A synchronous mutation, so
-    the next read sees a coherent thread."""
+    """Tombstone the named messages of one thread and their embeddings, so
+    conversation.search stops returning them too. Synchronous mutations, so the
+    next read sees a coherent thread."""
     ch = ch or _default_client()
+    params = {
+        "now": when,
+        "org": org,
+        "ns": namespace,
+        "agent": agent,
+        "tid": thread_id,
+        "ids": msg_ids,
+    }
     await ch.execute(
         """
         ALTER TABLE loom.conversations
@@ -726,14 +735,20 @@ async def tombstone_messages(
           AND msg_id IN {ids:Array(String)}
         SETTINGS mutations_sync = 2
         """,
-        params={
-            "now": when,
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-            "ids": msg_ids,
-        },
+        params=params,
+    )
+    await ch.execute(
+        """
+        ALTER TABLE loom.conversation_embeddings
+        UPDATE tombstoned_at = {now:DateTime}
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND agent = {agent:String}
+          AND thread_id = {tid:String}
+          AND msg_id IN {ids:Array(String)}
+        SETTINGS mutations_sync = 2
+        """,
+        params=params,
     )
 
 

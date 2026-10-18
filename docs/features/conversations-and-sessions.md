@@ -37,8 +37,9 @@ up front.
   written again (`reason: "duplicate"`). Without a `msg_id` the server derives one from
   a hash of the thread, role and content, so a client that re-logs a turn does not
   double the transcript.
-- **Only user and assistant turns are embedded**, up to their first 2,048 characters. `system` and `tool` turns stay
-  in the transcript unindexed.
+- **Only user and assistant turns are embedded**, up to their first 2,048 characters,
+  which the embedding row keeps so a re-embed builds the same vector. `system` and `tool`
+  turns stay in the transcript unindexed.
 - **The embed is fail-open.** A failed embed still stores the turn, with the error
   recorded on its embedding row.
 
@@ -68,7 +69,7 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
 - **`conversation.compact`** (writer, needs an LLM provider) summarises the turns older
   than the last `keep_recent` (default 10), writes the summary as one `system` turn
   whose `metadata.compacted_from` lists the summarised `msg_id`s, and tombstones the
-  originals. A window smaller than `min_to_compact` (default 4) is left alone.
+  originals and their embeddings, so `conversation.search` stops returning them. A window smaller than `min_to_compact` (default 4) is left alone.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. For a person's or a
   namespace's data everywhere, use [`erasure.request`](./memory/retention-and-erasure.md).
