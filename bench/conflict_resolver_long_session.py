@@ -42,9 +42,10 @@ Reported per server and variant:
   the pinned pair, whose flag is right;
 - `resolver_calls`, `resolver_cost_usd`, `namespace_cost_usd`, `drain_s`.
 
-The treatment check: on an `on` server the namespace must carry judged marks
-and resolver spend, on an `off` server neither; a run that fails it is marked
-`treatment: FAILED` and its numbers do not count.
+The treatment check: on an `on` server the drain must complete with nothing owed or
+left to re-check, and the namespace must carry judged marks and resolver spend; on an
+`off` server neither. A run that fails it is marked `treatment: FAILED`, with a
+`failure` that says why, and its numbers do not count.
 
 Cost: about 60 resolver calls per variant on the `on` server, each about 1.3k
 input and at most 0.8k output tokens (`gpt-6.1-sol`, $2 / $10 per M: under
@@ -213,6 +214,13 @@ SELECT sumIf(llm_calls, operation = 'worker.conflict_resolver') AS resolver_call
        toFloat64(sum(upstream_cost_usd)) AS namespace_cost_usd
 FROM loom.agent_events
 WHERE org = {org:String} AND namespace = {ns:String}
+"""
+
+
+# The resolver's last pass on the arm's store, for a drain that did not complete.
+_LAST_PASS_SQL = """
+SELECT status, detail FROM loom.worker_status
+WHERE worker = 'conflict_resolver' ORDER BY pass_started DESC LIMIT 1
 """
 
 
@@ -396,6 +404,15 @@ def run_arm(
         scores = score_by_content(rows, top)
     queue = _query(ch, _QUEUE_SQL, namespace)[0]
     cost = _query(ch, _COST_SQL, namespace)[0]
+    outstanding = int(queue["owed"]) + int(queue["recheck"])
+    failure = ""
+    if label == "on" and (drain_s is None or outstanding):
+        last = (_query(ch, _LAST_PASS_SQL, namespace) or [{}])[0]
+        failure = (
+            f"drain {'timed out' if drain_s is None else 'left rows'}: {queue['owed']} owed,"
+            f" {queue['recheck']} to re-check; last pass {last.get('status')}"
+            f" {last.get('detail')}"
+        )
     retired = [
         e
         for r in _query(ch, _RETIRED_SQL, namespace)
@@ -403,13 +420,14 @@ def run_arm(
         for e in s.get("retired", [])
     ]
     judged_marks, calls = int(queue["judged"]), int(cost["resolver_calls"] or 0)
-    ran = judged_marks > 0 and calls > 0
+    ran = judged_marks > 0 and calls > 0 and not failure
     treatment = "ok" if (ran if label == "on" else judged_marks == 0 and calls == 0) else "FAILED"
     return {
         "server": label,
         "variant": variant,
         "namespace": namespace,
         "treatment": treatment,
+        "failure": failure,
         **scores,
         "resolver_retired": len(retired),
         "resolver_calls": calls,
