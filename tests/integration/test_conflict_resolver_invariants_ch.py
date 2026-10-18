@@ -97,9 +97,12 @@ class _Writer:
         self.tasks: list[asyncio.Task[None]] = []
         self.locks: dict[tuple[str, str], asyncio.Lock] = {}
         self.steps = 0
+        # Closed after the concurrent phase: the later passes' calls start no write.
+        self.open = True
 
     def spawn(self, keys: list[str] | None = None) -> None:
-        self.tasks.append(asyncio.create_task(self.write(keys or [])))
+        if self.open:
+            self.tasks.append(asyncio.create_task(self.write(keys or [])))
 
     async def write(self, keys: list[str]) -> None:
         from server.memory.api.models_crud import (
@@ -232,6 +235,7 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     await writer.run(6)
     await resolving
     await writer.run(0)
+    writer.open = False
     want = writer.want
     if seed % 3 == 0:
         # An erasure requested now: nothing the resolver does may write in the org.
@@ -244,6 +248,7 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     await run_pass()
     assert len(calls) == drained, "a pass after the queue drained makes no call"
 
+    await writer.run(0)
     heads = await _heads(ch, org)
     for (key, session), (kind, value, pinned) in want.items():
         head = heads[(key, session)]
