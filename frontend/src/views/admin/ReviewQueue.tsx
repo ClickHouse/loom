@@ -310,34 +310,36 @@ function ConflictsPanel() {
         decision,
         reason.trim() ? { reason: reason.trim() } : {},
       );
-      // Nothing was resolved (the row is gone, out of scope, or no longer conflicted): the
-      // queue is read again rather than dropping a row on a claim.
+      // Nothing was resolved (the row is gone or out of scope): the queue is read again
+      // rather than dropping a row on a claim.
       if (!res.resolved) {
         toast("That conflict could not be resolved; it may have changed. The queue was read again.", "error");
         if (visit.current === myVisit) setReload((n) => n + 1);
         return;
       }
       toast("Resolved", "ok");
-      // Gone from every list, on any visit (ids are org-wide, so no other queue loses a row).
-      const id = current.memory_id;
-      decidedAt.current.set(id, current.version);
+      // The decided row and the peers the resolve wrote (affected_memory_ids: tombstoned or
+      // made active) leave every list, on any visit; ids are org-wide, so no other queue
+      // loses a row. Each is remembered at the version on screen, so a later re-flag shows.
+      const gone = new Set([current.memory_id, ...(res.affected_memory_ids ?? [])]);
+      decidedAt.current.set(current.memory_id, current.version);
+      const shown = rowsNow.current ?? [];
+      for (const c of shown) if (gone.has(c.memory_id)) decidedAt.current.set(c.memory_id, c.version);
+      const dropped = shown.filter((c) => gone.has(c.memory_id)).length;
+      // Rows dropped before a position move it up by as many: the conflict open now stays
+      // open, and after this visit's own decision the next one takes its place.
+      const before = (i: number) => shown.slice(0, i).filter((c) => gone.has(c.memory_id)).length;
+      decided.current = true;
+      setRows((prev) => prev && prev.filter((c) => !gone.has(c.memory_id)));
+      // Another visit: the place, count and reason are not this decision's. An emptied page
+      // with more past it reads the queue again (the decided flag).
       if (visit.current !== myVisit) {
-        // Another visit: the conflict open now stays open (a row before it moves it up one);
-        // its place, count and reason are not this decision's. An emptied page with more
-        // past it reads the queue again.
-        const pos = rowsNow.current?.findIndex((c) => c.memory_id === id) ?? -1;
-        decided.current = true;
-        setRows((prev) => prev && prev.filter((c) => c.memory_id !== id));
-        if (pos >= 0) setIndex((i) => (pos < i ? i - 1 : i));
+        setIndex((i) => i - before(i));
         return;
       }
-      setRows((prev) => prev && prev.filter((c) => c.memory_id !== id));
       setReason("");
-      // The decided conflict leaves the queue as it is now (a page Load more added meanwhile
-      // stays); the next one takes its place.
-      decided.current = true;
-      setIndex(at);
-      if (held !== null) setTotal(held - 1);
+      setIndex(at - before(at));
+      if (held !== null) setTotal(held - Math.max(dropped, 1));
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {

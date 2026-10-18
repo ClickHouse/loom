@@ -24,6 +24,11 @@ vi.mock("../../api", async (importOriginal) => {
   };
 });
 vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: async () => true }));
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("../../components/Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../components/Toast")>()),
+  toast,
+}));
 import { countConflicts, listAllowlist, listConflicts, listLearnings, resolveConflict } from "../../api";
 
 const ORG = "dev";
@@ -301,6 +306,7 @@ describe("ReviewQueue", () => {
   it("a resolve that resolves nothing keeps the row and reads the queue again", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("a/x")], next_before_version: null });
     vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: false, affected_memory_ids: [] });
+    toast.mockClear();
     seed("ns-a");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
@@ -308,6 +314,54 @@ describe("ReviewQueue", () => {
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
     await waitFor(() => expect(vi.mocked(listConflicts).mock.calls.length).toBeGreaterThan(before), WAIT);
     expect(screen.getByText("value of a/x")).toBeInTheDocument();
+    // Said as not resolved, never as "Resolved".
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/could not be resolved/), "error");
+    expect(toast).not.toHaveBeenCalledWith("Resolved", "ok");
+  });
+
+  it("a resolve takes the peers it wrote out of the queue too, and off the count", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(3);
+    onTestFinished(() => {
+      vi.mocked(countConflicts).mockImplementation(async () => 0);
+    });
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [conflict("a/x"), conflict("a/peer"), conflict("a/z")],
+      next_before_version: null,
+    });
+    vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: true, affected_memory_ids: ["id-a/peer"] });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/x", {}, WAIT);
+    await screen.findByText(/Conflict 1 of 3/, {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Allow both/ }));
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    await waitFor(() => expect(within(table).queryByRole("button", { name: "a/peer" })).toBeNull(), WAIT);
+    expect(within(table).queryByRole("button", { name: "a/x" })).toBeNull();
+    expect(screen.getByText("value of a/z")).toBeInTheDocument();
+    expect(screen.getByText(/Conflict 1 of 1/)).toBeInTheDocument();
+  });
+
+  it("an earlier visit's decision that empties a page with more past it reads the queue again", async () => {
+    let aReads = 0;
+    vi.mocked(listConflicts).mockImplementation(async (id) => {
+      if (id.namespace === "ns-b") return { rows: [conflict("b/key")], next_before_version: null };
+      aReads += 1;
+      return aReads <= 2
+        ? { rows: [conflict("a/x")], next_before_version: 7 }
+        : { rows: [conflict("a/next")], next_before_version: null };
+    });
+    let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/x", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    seed("ns-a");
+    await screen.findByText("value of a/x", {}, WAIT);
+    await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
+    expect(await screen.findByText("value of a/next", {}, WAIT)).toBeInTheDocument();
   });
 
   it("a Load more answered after a namespace switch adds nothing to the new namespace's queue", async () => {
