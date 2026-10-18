@@ -913,14 +913,12 @@ def client_checks(
         # What the agent's own token reaches is the server's to say (the
         # token check names the command); none of these can ask it.
         why = "skipped in agent mode: these checks act for no one"
-        checks.append(
-            (
-                "client:namespace",
-                WARN,
-                f"{why}; the hooks write to LOOM_NAMESPACE when set, "
-                "else to the exchanged token's namespace",
-            )
+        where = (
+            f"{target!r} (LOOM_NAMESPACE)"
+            if env.get("LOOM_NAMESPACE", "").strip()
+            else "the exchanged token's namespace"
         )
+        checks.append(("client:namespace", WARN, f"{why}; the hooks write to {where}"))
         checks.append(("client:recording", WARN, why))
         checks.append(("client:reads", WARN, why))
     else:

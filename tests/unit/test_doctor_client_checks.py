@@ -653,7 +653,9 @@ def test_an_agent_is_checked_for_no_one_against_the_doctors_server(
         checks, "client:token"
     )
     assert g["client:namespace"] == "WARN"
+    where = "'team-x' (LOOM_NAMESPACE)" if namespace else "the exchanged token's namespace"
     assert "agent mode" in _detail(checks, "client:namespace")
+    assert where in _detail(checks, "client:namespace")
     assert g["client:recording"] == g["client:reads"] == "WARN"
     assert all("check auth first" not in c[2] for c in checks if c[0].startswith("client:"))
     assert all(TOKEN not in str(call) for call in seen.values())
