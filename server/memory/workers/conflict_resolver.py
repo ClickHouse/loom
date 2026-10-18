@@ -37,6 +37,11 @@ BURST_S = 300.0
 # warning is logged when this changes, not on every pass.
 _unavailable: str | None = None
 _no_key = False  # no key last pass: unlike an outage, its end is known without a call
+# A row judged and left owed (a flagged peer the answer leaves out, an error after the
+# call) is paid for again every pass: after this many such attempts it is stamped,
+# errored. Counted per (identity, content hash) on this leader.
+MAX_ATTEMPTS = 3
+_attempts: dict[tuple[str, ...], int] = {}
 
 
 def _identity(r: Mapping[str, Any]) -> tuple[str, ...]:
@@ -118,7 +123,11 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             if await namespace_over_cap(org, namespace, **_cap_share()):
                 p.counts.skipped_budget += 1
                 return
-            await resolver.resolve_row(r, policy=policy, counts=p.counts)
+            if await resolver.resolve_row(r, policy=policy, counts=p.counts) and (
+                await _out_of_attempts(r)
+            ):
+                p.counts.errored += 1
+                p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
             p.refusals_in_a_row = 0
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
             # The same answer for every row: stop before paying for more calls.
@@ -135,12 +144,41 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
+            if not _transient(e) and await _out_of_attempts(r):
+                p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}")
         finally:
             emit_worker_cost_event_for(
                 org=org, namespace=namespace, operation=f"worker.{NAME}", started=started
             )
             # The next row's cap read follows at once: the spend must be readable by then.
             await get_emitter().flush_now()
+
+
+def _transient(e: Exception) -> bool:
+    """A provider failure that made no paid call: the row stays owed, uncounted."""
+    import httpx
+
+    if isinstance(e, httpx.HTTPStatusError):
+        status = e.response.status_code
+        return status in (408, 409, 429) or status >= 500
+    return isinstance(e, (httpx.TransportError, TimeoutError))
+
+
+async def _out_of_attempts(r: Mapping[str, Any]) -> bool:
+    """One more attempt that left the row owed; True (and the row stamped) on the last."""
+    key = (*_identity(r), str(r.get("content_sha256") or ""))
+    if len(_attempts) > 10_000:
+        _attempts.clear()  # leader-local and bounded: a row seen again starts over
+    _attempts[key] = _attempts.get(key, 0) + 1
+    if _attempts[key] < MAX_ATTEMPTS:
+        return False
+    try:
+        await queue.stamp_judged(r)
+    except Exception as e:  # noqa: BLE001 — one row's stamp never stops the pass
+        log.warning("%s: stamp after %d attempts failed: %s", NAME, MAX_ATTEMPTS, e)
+        return False  # still at the last attempt: the next pass stamps it
+    del _attempts[key]
+    return True
 
 
 # The same refusal this many rows in a row is the request's fault, not the rows': the

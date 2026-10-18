@@ -1157,6 +1157,8 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     from server.observability import budget
 
     e = NS(owed=[], recheck=[], resolved=[], over=set(), raise_for={}, slow=0.0, stamped=[])
+    e.left_owed = set()
+    monkeypatch.setattr(worker, "_attempts", {})
     e.in_flight = e.most_in_flight = 0
     e.recheck_reads = e.queue_reads = 0
     e.missing = None
@@ -1203,6 +1205,7 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
             raise e.raise_for[q["memory_key"]]
         e.resolved.append((q["org"], q["namespace"], q["memory_key"], policy))
         counts.judged += 1
+        return q["memory_key"] in e.left_owed
 
     async def stamp(q, **kw):
         e.stamped.append(q["memory_key"])
@@ -1254,6 +1257,24 @@ async def test_the_same_refusal_row_after_row_stops_the_pass_and_leaves_the_rest
     out = await pass_env.run()
     assert pass_env.stamped == ["k0", "k1", "k2"]
     assert out["errored"] == 3
+
+
+async def test_a_row_judged_and_left_owed_is_stamped_on_its_third_attempt(
+    pass_env: NS,
+) -> None:
+    """Every pass pays for it again (a flagged peer the answer leaves out): the third
+    attempt stamps it, errored, so it stops costing calls and holding a place."""
+    import httpx
+
+    pass_env.owed = [_q(memory_key="k1"), _q(memory_key="k2")]
+    pass_env.left_owed = {"k1"}
+    req = httpx.Request("POST", "https://llm.example/v1")
+    pass_env.raise_for = {
+        "k2": httpx.HTTPStatusError("503", request=req, response=httpx.Response(503, request=req))
+    }
+    outs = [await pass_env.run() for _ in range(3)]
+    assert pass_env.stamped == ["k1"], "a transient failure pays nothing and is not counted"
+    assert [o["errored"] for o in outs] == [1, 1, 2]
 
 
 async def test_a_judged_row_between_refusals_keeps_the_pass_going(pass_env: NS) -> None:

@@ -2252,3 +2252,59 @@ async def test_an_undo_holds_while_a_left_out_flag_keeps_the_winner_owed(
     for _ in range(2):
         assert (await run_pass())["retired"] == 0
     assert (await _rows(ch, org))["office_city"]["status"] == "active"
+
+
+async def test_a_flagged_peer_the_model_keeps_leaving_out_stops_costing_calls(
+    ch, wired, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers import conflict_resolver as worker
+
+    org, llm = wired
+    monkeypatch.setattr(worker, "_attempts", {})
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        llm.calls.append("x")
+        left_out = "NEW note (key office_location," in user
+        entries = [
+            {
+                "peer_id": pid,
+                "reason": "scripted",
+                "same_entity": True,
+                "same_attribute": True,
+                "verdict": "related",
+                "confidence": 0.5,
+            }
+            for pid, key in re.findall(r"^\[(p\d+)\] \(key ([^,]+),", user, re.M)
+            if not (left_out and key == "lead_name")
+        ]
+        return SimpleNamespace(text=json.dumps({"peers": entries}))
+
+    monkeypatch.setattr(llm, "complete", complete)
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "office_city", "The office is in Paris")
+        await _set(org, "s1", "lead_name", "The team lead is Ana")
+        await _set(org, "s2", "office_location", "The office moved to Rome")
+        await after_write.drain()
+    await _place(ch, org, "s1", "office_city", _vec((500, 1.0)), owed=False)
+    await _place(ch, org, "s1", "lead_name", _vec((500, 0.9), (502, 0.436)), owed=False)
+    await _place(ch, org, "s2", "office_location", _vec((500, 0.8), (501, 0.6)), owed=True)
+    rows = await _rows(ch, org)
+    await conflicts.mark_peers_conflicted(
+        org=org, new_memory_id=rows["office_location"]["id"], peer_ids=[rows["lead_name"]["id"]]
+    )
+    calls = []
+    for _ in range(5):
+        before = len(llm.calls)
+        await worker.run_pass()
+        calls.append(len(llm.calls) - before)
+    assert calls[-1] == 0 and sum(calls) <= 2 * worker.MAX_ATTEMPTS + 2, calls
+    assert (await _marks(ch, org))["office_location"] == 2

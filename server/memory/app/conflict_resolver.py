@@ -551,30 +551,31 @@ async def _current(q: Mapping[str, Any]) -> Any:
     return rows.get(key)
 
 
-async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> None:
+async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> bool:
     """Judge one queue row and act on its pairs, then stamp it judged. A row whose
     head is no longer the queued write is skipped unstamped: its new write carries
-    its own mark. A provider failure raises, and the row stays owed."""
+    its own mark. A provider failure raises, and the row stays owed. True when the
+    row was judged and left owed all the same (a flagged peer the answer left out)."""
     from server.core.errors import PreconditionFailedError
 
     org, namespace, sha = str(q["org"]), str(q["namespace"]), str(q.get("content_sha256") or "")
     row = await _current(q)
     if row is not None and sha and str(row.content_sha256 or "") != sha:
         counts.skipped_changed += 1
-        return
+        return False
     if not _eligible(row) or policy == "append_only":
         await queue.stamp_judged(q)
-        return
+        return False
     if row.pinned:
         counts.skipped_pinned += 1
         await queue.stamp_judged(q)
-        return
+        return False
     if row.conflict_with:
         try:
             await _release_dead_flags(org, namespace, row, counts)
         except PreconditionFailedError:
             counts.skipped_changed += 1  # the key is busy: the row stays owed
-            return
+            return False
     peers = await queue.cluster_peers(
         q,
         floor=float(settings.memory_conflict_resolver_min_similarity),
@@ -592,11 +593,12 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> N
             # A key another write held past the lock's wait. That write may change only
             # metadata or fail, leaving no new mark: the row stays owed.
             counts.skipped_changed += 1
-            return
+            return False
         if unanswered & {str(x) for x in row.conflict_with}:
             # A flagged peer the answer left out: stamped, its flag would never be judged.
-            return
+            return True
     await queue.stamp_judged(q)  # under erasure it writes nothing: the row stays owed
+    return False
 
 
 async def _release_dead_flags(org: str, namespace: str, row: Any, counts: Counts) -> None:
