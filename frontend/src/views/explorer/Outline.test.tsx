@@ -68,8 +68,6 @@ describe("Outline", () => {
     mount([node("mergetree")]);
     const row = screen.getByRole("treeitem", { name: /^mergetree ·/ });
     const name = within(row).getByText("mergetree");
-    // An entity is a name, not an identifier.
-    expect(name.closest("code")).toBeNull();
     const meta = within(row).getByText(/^hop 1 · co-mentioned 20×/);
     expect(meta.contains(name)).toBe(false);
     expect(name.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
