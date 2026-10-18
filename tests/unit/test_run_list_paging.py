@@ -9,13 +9,15 @@ runs on the first page, beside it, and on an empty page past the end.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import types
+from typing import Any, Literal, Union, get_args, get_origin
 from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
 from server.tasks.api.models_run import RunListInput
+from server.tasks.store.runs import LIST_ORDERS
 
 
 class StubCH:
@@ -67,7 +69,7 @@ def _list(ch: StubCH, **kw: Any):
         return asyncio.run(h.handle_run_list(RunListInput(org="o", namespace="n", **kw)))
 
 
-def test_defaults_keep_todays_page_and_add_the_total() -> None:
+def test_defaults_page_newest_first_and_answer_the_total() -> None:
     ch = StubCH(rows=[_row("r2"), _row("r1")], count=1234)
     out = _list(ch)
     assert [r.run_id for r in out.runs] == ["r2", "r1"]
@@ -98,6 +100,15 @@ def test_every_order_ends_on_the_run_id(order_by: str, clause: str) -> None:
     sql, params = _call(ch, "all")
     assert clause in sql
     assert params["off"] == 100 and params["lim"] == 50
+
+
+def test_every_order_the_input_accepts_has_a_clause() -> None:
+    """An `order_by` value with no LIST_ORDERS clause would pass validation and fail the read."""
+    annotation = RunListInput.model_fields["order_by"].annotation
+    if get_origin(annotation) in (Union, types.UnionType):
+        (annotation,) = [a for a in get_args(annotation) if a is not type(None)]
+    assert get_origin(annotation) is Literal
+    assert set(LIST_ORDERS) == set(get_args(annotation))
 
 
 def test_q_matches_goal_run_id_and_agent_in_any_case_and_the_count_agrees() -> None:

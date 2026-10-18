@@ -6,6 +6,7 @@ import logging
 import time
 from typing import Any
 
+from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _sha256
 from server.identity.app.request_scope import request_scope
@@ -266,7 +267,6 @@ async def handle_conflicts_resolve(
               peers restored to active.
     allow:    both are legitimately distinct. Flip ALL back to active.
     """
-    from server.core.ch import own_write_reads
     from server.memory.store import conflicts as conflicts_repo
 
     now = naive_utc_now()

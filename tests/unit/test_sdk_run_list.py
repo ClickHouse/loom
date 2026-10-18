@@ -1,6 +1,6 @@
 """`Agent.run.list` sends run.list's paging inputs (offset, order_by, q) only
-when the caller sets them, so a call that names none sends what it sent before
-and a server a release behind sees no key it does not know."""
+when the caller sets them: a call that names none sends no paging key, so a server
+a release behind sees no key it does not know."""
 
 from __future__ import annotations
 

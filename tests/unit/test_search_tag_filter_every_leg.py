@@ -335,6 +335,7 @@ async def test_exact_tag_match_reads_the_search_predicate() -> None:
     search leg carries, not memory.list's lowercased one."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory import store as repo
+    from server.memory.domain.search_sql import tag_predicate
 
     seen: list[tuple[str, dict[str, Any]]] = []
 
@@ -348,7 +349,7 @@ async def test_exact_tag_match_reads_the_search_predicate() -> None:
         ident, scope=WHOLE_NAMESPACE, tag_filter=TagFilter(("API",), "exact_any"), ch=_CH()
     )
     sql, params = seen[-1]
-    assert "hasAny(tags, {tags:Array(String)})" in sql
+    assert tag_predicate("") in sql
     assert "lowerUTF8" not in sql
     assert params["tags"] == ["API"]
 

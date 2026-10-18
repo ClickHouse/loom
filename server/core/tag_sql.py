@@ -1,4 +1,7 @@
-"""The tag predicate the list reads share, so memory and documents fold case the same way."""
+"""The tag predicate memory.list and knowledge.list share, so both fold case the same way.
+
+memory.proposals, namespace.list and every other tag filter match tags exactly.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +29,7 @@ class TagFilter:
 
 def list_tag_filter(tags: Sequence[str], every: bool) -> TagFilter | None:
     """A list op's filter: every tag when `tags_every` is set, otherwise any one, in any case."""
-    kept = tuple(str(t) for t in tags if t)
+    kept = tuple(t for t in tags if t)
     if not kept:
         return None
     return TagFilter(kept, "folded_all" if every else "folded_any")
