@@ -2142,3 +2142,113 @@ async def test_an_update_across_an_agents_sessions_with_no_user_changes_nothing(
     assert out["retired"] == out["flagged"] == 0 and out["skipped_no_action"] == 1, out
     rows = await _rows(ch, org)
     assert (rows["office_city"]["status"], rows["office_city"]["conflict_with"]) == ("active", [])
+
+
+async def test_an_undo_holds_while_the_winner_is_still_owed(ch, wired, monkeypatch) -> None:
+    """The pass dies after the supersede (no stamp), the repair records it and a person
+    undoes it: the winner is still owed, and the next pass leaves the pair alone."""
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.app.projection_failures import FOLLOW_OWED, retry_projection_failures
+    from server.memory.app.restore import handle_memory_restore
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 300)
+
+    async def gone(*a: Any, **kw: Any) -> Any:
+        return 0
+
+    with monkeypatch.context() as m:
+        m.setattr(resolver, "_after_retire", gone)
+        m.setattr(queue, "stamp_judged", gone)
+        assert (await run_pass())["retired"] == 1
+    _past_the_writers_grace(monkeypatch)
+    await retry_projection_failures(org=org, projection=FOLLOW_OWED)
+    rows = await _rows(ch, org)
+    undone = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="office_city",
+            if_superseded_by=rows["office_location"]["id"],
+        )
+    )
+    assert undone.restored
+    again = await run_pass()
+    assert again["retired"] == 0 and again["skipped_no_action"] >= 1, again
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"
+
+
+async def test_an_undo_holds_while_a_left_out_flag_keeps_the_winner_owed(
+    ch, wired, monkeypatch
+) -> None:
+    """The model always leaves out the peer the winner is flagged against, so the winner
+    stays owed and is judged every pass: after an Undo, no pass retires the row again."""
+    from types import SimpleNamespace
+
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import after_write, conflicts
+    from server.memory.app.restore import handle_memory_restore
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        llm.calls.append("x")
+        update = "NEW note (key office_location," in user
+        entries = [
+            {
+                "peer_id": pid,
+                "reason": "scripted",
+                "same_entity": update,
+                "same_attribute": update,
+                "verdict": "update" if update else "unrelated",
+                "confidence": 0.99 if update else 0.5,
+            }
+            for pid, key in re.findall(r"^\[(p\d+)\] \(key ([^,]+),", user, re.M)
+            if key != "lead_name"  # the flagged peer is always left out
+        ]
+        return SimpleNamespace(text=json.dumps({"peers": entries}))
+
+    monkeypatch.setattr(llm, "complete", complete)
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "office_city", "The office is in Paris")
+        await _set(org, "s1", "lead_name", "The team lead is Ana")
+        await _later()
+        await _set(org, "s2", "office_location", "The office moved to Rome")
+        await after_write.drain()
+    await _place(ch, org, "s1", "office_city", _vec((400, 1.0)), owed=False)
+    await _place(ch, org, "s1", "lead_name", _vec((400, 0.9), (402, 0.436)), owed=False)
+    await _place(ch, org, "s2", "office_location", _vec((400, 0.8), (401, 0.6)), owed=True)
+    rows = await _rows(ch, org)
+    landed = await conflicts.mark_peers_conflicted(
+        org=org, new_memory_id=rows["office_location"]["id"], peer_ids=[rows["lead_name"]["id"]]
+    )
+    assert landed == "conflict"
+    assert (await run_pass())["retired"] == 1
+    undone = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="office_city",
+            if_superseded_by=rows["office_location"]["id"],
+        )
+    )
+    assert undone.restored
+    for _ in range(2):
+        assert (await run_pass())["retired"] == 0
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"

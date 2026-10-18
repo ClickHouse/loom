@@ -436,6 +436,27 @@ _ASSERTED_SQL = """
         """
 
 
+# Whether the loser, holding the value it holds now, was retired behind this winner
+# before: memory_versions keeps every version, so an Undo since leaves that one in place.
+_RETIRED_BEHIND_SQL = """
+        SELECT 1 AS n FROM loom.memory_versions
+        PREWHERE org = {org:String} AND namespace = {ns:String}
+        WHERE memory_id = {loser:UUID} AND status = 'superseded'
+          AND superseded_by = {winner:String} AND toString(content_sha256) = {sha:String}
+        LIMIT 1
+        SETTINGS select_sequential_consistency = 1
+        """
+
+
+async def retired_behind(
+    org: str, namespace: str, loser: str, sha: str, winner: str, *, ch: _CHClient | None = None
+) -> bool:
+    """Whether `loser` holding `sha` was ever retired behind `winner`, read strongly."""
+    ch = ch or _default_client()
+    params = {"org": org, "ns": namespace, "loser": loser, "sha": sha, "winner": winner}
+    return bool(await ch.query_all(_RETIRED_BEHIND_SQL, params))
+
+
 async def asserted_versions(
     org: str, namespace: str, rows: list[tuple[str, str]], *, ch: _CHClient | None = None
 ) -> dict[str, int]:
@@ -467,6 +488,7 @@ __all__ = [
     "dead_flags",
     "owed_rows",
     "protected_ids",
+    "retired_behind",
     "queued_namespaces",
     "stamp_judged",
     "under_erasure",

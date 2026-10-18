@@ -210,8 +210,9 @@ written right now; retry the Undo"), and while the lease store (Keeper) does not
 503 BACKEND_UNAVAILABLE. Retry either.
 
 An Undo opens again the graph facts the restored row still holds (see the
-[entity graph](../entity-graph.md)). It is not remembered: a later write of the same key
-is judged again, and can retire the row again if it is the later statement.
+[entity graph](../entity-graph.md)). The resolver does not retire the row behind the same
+memory again while the row holds the value it had when it was retired; a new value of the
+row is judged afresh.
 
 #### Restore from the memory inspector
 

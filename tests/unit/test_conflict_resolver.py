@@ -482,6 +482,14 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.unlinked.append((row.memory_id, ids))
         return True
 
+    e.undone: set[tuple[str, str]] = set()
+
+    async def retired_behind(
+        org: str, ns: str, loser: str, sha: str, winner: str, **kw: Any
+    ) -> bool:
+        return (loser, winner) in e.undone
+
+    monkeypatch.setattr(queue, "retired_behind", retired_behind)
     monkeypatch.setattr(queue, "dead_flags", dead_flags)
     monkeypatch.setattr(resolver, "_unlink", unlink)
     monkeypatch.setattr(queue, "asserted_versions", asserted)
@@ -606,6 +614,15 @@ async def test_a_pair_that_fails_leaves_the_audit_row_of_the_pairs_done_before_i
     with pytest.raises(RuntimeError):
         await _resolve()
     assert [p["peer_id"] for p in row_env.audits[0]] == ["m2"]
+
+
+async def test_a_retirement_a_person_undid_is_not_made_again(row_env: NS) -> None:
+    # m2 was retired behind m1 and restored: the same update leaves the pair alone,
+    # neither retired again nor flagged.
+    row_env.undone = {("m2", "m1")}
+    counts = await _resolve()
+    assert row_env.acted == [] and counts.retired == counts.flagged == 0
+    assert counts.skipped_no_action == 1 and row_env.stamped == ["office_city"]
 
 
 async def test_a_failed_audit_read_after_a_failed_pair_raises_the_pairs_error(
