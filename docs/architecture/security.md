@@ -272,8 +272,15 @@ those routes take, and Loom refuses to start with one shorter than 32 characters
 deactivation revokes outright every subject an SSO sign-in with the email could reach, in
 any org, which ends their sessions and every token delegated from them, and
 `loom.scim_users` refuses SSO sign-in with the email until a reactivation, which narrows the
-revocations to tokens issued before it. A subject an operator revoked stays revoked through
-both.
+revocations to tokens issued before it. SCIM's revocation of a subject is stored under its
+own key (`revocation.SCIM_PREFIX`), beside the subject's own row, and every reader takes it
+as it takes that row: the subject is revoked while either says so. SCIM writes only its own
+key and an operator's `revoke-token` only the subject's, so neither undoes the other: an
+operator's time-box or lift does not let a deactivated person in, and a reactivation does not
+lift an operator's revocation. Sharing the subject's key made SCIM read, merge and repair the
+operator's row around each write, and an operator's write landing in between could still
+replace SCIM's or be replaced by it; the operator cutoffs (`CUTOFF_PREFIX`) are kept apart
+for the same reason.
 
 Loom stays the authorization server for every client (the dashboard, `loom login`, MCP
 clients); the provider only authenticates the person. The OAuth server:

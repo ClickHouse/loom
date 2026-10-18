@@ -282,8 +282,10 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     prints it) and `--subject` retires every token minted for that
     principal. Other replicas see the row on their next refresh tick.
     `--subject S --issued-before T` retires only the tokens
-    minted for S before T, so a token re-minted after the leak keeps working.
-    `--list` prints the unexpired revocations."""
+    minted for S before T, so a token re-minted after the leak keeps working;
+    with `--scim` it narrows SCIM's revocation of S instead (a subject a
+    deactivation caught that is someone else's). `--list` prints the unexpired
+    revocations."""
     import getpass
 
     from server.auth import revocation
@@ -302,25 +304,40 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     if issued_before is not None and not args.subject:
         print("  ✗ --issued-before narrows a --subject revocation; pass --subject", file=sys.stderr)
         return 2
+    if args.scim and (issued_before is None or expires_at is not None):
+        print(
+            "  ✗ --scim narrows SCIM's revocation, which never lapses; pass --issued-before "
+            "and no --expires-at",
+            file=sys.stderr,
+        )
+        return 2
 
     async def _run(ch: Any) -> int:
         if args.list:
             return _print_revocations(await revocation.list_active(), as_json=args.json)
         token_id = args.jti or args.subject
         by = f"cli:{getpass.getuser()}"
-        if issued_before is not None and await revocation.has_outright_row(token_id):
-            print(
-                f"  ! {token_id!r} is revoked outright; this replaces that, and its tokens "
-                "issued after the cutoff work again",
-                file=sys.stderr,
+        if args.scim:
+            if not await revocation.scim_revocations([token_id]):
+                print(f"  ✗ SCIM has not revoked {token_id!r}", file=sys.stderr)
+                return 1
+            row = await revocation.scim_revoke(
+                token_id, issued_before=issued_before, reason=args.reason or "", revoked_by=by
             )
-        row = await revocation.revoke(
-            token_id,
-            expires_at=expires_at,
-            reason=args.reason or "",
-            revoked_by=by,
-            issued_before=issued_before,
-        )
+        else:
+            if issued_before is not None and await revocation.has_outright_row(token_id):
+                print(
+                    f"  ! {token_id!r} is revoked outright; this replaces that, and its tokens "
+                    "issued after the cutoff work again",
+                    file=sys.stderr,
+                )
+            row = await revocation.revoke(
+                token_id,
+                expires_at=expires_at,
+                reason=args.reason or "",
+                revoked_by=by,
+                issued_before=issued_before,
+            )
         kind = "jti" if args.jti else "subject"
         # A CLI revoke has no request ledger row; this is its only durable
         # record. Identifiers only, never token material. Revocations span
@@ -333,15 +350,17 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             subject={
                 "matched_claim": kind,
                 "token_id": token_id,
+                "scim": args.scim,
                 "issued_before": row["issued_before"],
                 "expires_at": row["expires_at"],
                 "reason": row["reason"],
             },
         )
         if args.json:
-            print(json.dumps({**row, "matched_claim": kind}, default=str))
+            print(json.dumps({**row, "jti": token_id, "matched_claim": kind}, default=str))
         else:
-            print(f"revoked {kind} {token_id!r}", end="")
+            what = "narrowed SCIM's revocation of" if args.scim else "revoked"
+            print(f"{what} {kind} {token_id!r}", end="")
             if kind == "subject" and issued_before is not None:
                 print(
                     f" for tokens issued before {issued_before.isoformat()}Z "
@@ -376,7 +395,8 @@ def _print_revocations(rows: list[dict[str, Any]], *, as_json: bool) -> int:
     )
     for r in rows:
         before = r.get("issued_before")
-        key = ("cutoff→" if r.get("kind") == "cutoff" else "") + str(r.get("jti", ""))
+        marks = {"cutoff": "cutoff→", "scim": "scim→"}
+        key = marks.get(str(r.get("kind")), "") + str(r.get("jti", ""))
         print(
             f"{key:<40} {str(r.get('revoked_at', ''))[:19]:<20} "
             f"{str(r.get('expires_at', ''))[:19]:<20} "
@@ -415,6 +435,13 @@ def _add_revoke_token_parser(sub: Any) -> None:
         metavar="ISO-8601",
         help="With --subject: revoke only the tokens issued (`iat`) before this "
         "instant, so a token re-minted after a leak keeps working.",
+    )
+    p_revoke.add_argument(
+        "--scim",
+        action="store_true",
+        help="With --subject and --issued-before: narrow SCIM's revocation of the "
+        "subject instead of its own, to give back a subject a SCIM deactivation "
+        "caught that is someone else's.",
     )
     p_revoke.add_argument(
         "--reason", default=None, help="Free text stored on the row (audit trail)."

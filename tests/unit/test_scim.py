@@ -30,6 +30,7 @@ from server.core.errors import GrantBusyError
 from server.identity.app import me_service_accounts
 from server.observability import audit
 from server.settings import settings
+from tests.unit.revocation_fakes import revocation_read
 from tests.unit.schema_ddl import column_names
 
 # The real read; the suite's conftest stands a stub in for it.
@@ -138,31 +139,21 @@ def test_active_takes_booleans_and_their_strings() -> None:
 
 
 class _Table:
-    """loom.scim_users, loom.namespaces as `_subjects` reads it, and the
-    narrowed revocations as `_lifted_before` does."""
+    """loom.scim_users, loom.namespaces as `_subjects` reads it, and
+    loom.revoked_tokens as the revocation module reads and writes it."""
 
-    def __init__(
-        self,
-        accounts: dict[str, list[str]],
-        elsewhere: dict[str, list[str]],
-        narrowed: list[tuple[str, datetime]],
-        lifted: dict[str, str],
-    ) -> None:
+    def __init__(self, accounts: dict[str, list[str]], elsewhere: dict[str, list[str]]) -> None:
         self.rows: list[dict[str, Any]] = []
         self.accounts = accounts
         self.elsewhere = elsewhere
-        self.narrowed = narrowed
-        self.lifted = lifted
-        self.fail_insert = False
+        self.fail_insert = False  # any other insert fails
+        self.fail_revoke = False  # an insert into loom.revoked_tokens fails
+        self.revocations: list[dict[str, Any]] = []  # loom.revoked_tokens, every row written
         self.tokens: list[dict[str, Any]] = []  # loom.service_accounts
         self.fail_token_insert: str | None = None  # an insert with this token name fails
         self.token_inserts = 0
         self.claimed: set[tuple[str, str]] = set()  # token names a claim holds
         self.shuffle: random.Random | None = None  # the store's rows come in no set order
-        self.outright: dict[str, str] = {}  # the world's, for `_held_for_good`
-        self.lapsing: set[str] = set()
-        self.revoked_by: dict[str, str] = {}
-        self.revocations: list[dict[str, Any]] = []  # each row `revocation.revoke` writes
 
     def token(self, org: str, name: str) -> dict[str, Any] | None:
         rows = [r for r in self.tokens if (r["org"], r["name"]) == (org, name)]
@@ -191,6 +182,15 @@ class _Table:
     def live_tokens(self) -> list[dict[str, Any]]:
         return [r for r in self.heads() if r["revoked_at"] is None]
 
+    def revoked(self) -> dict[str, dict[str, Any]]:
+        """The newest unexpired row of each key, as under FINAL."""
+        newest: dict[str, dict[str, Any]] = {}
+        for r in self.revocations:
+            if r["jti"] not in newest or r["version"] > newest[r["jti"]]["version"]:
+                newest[r["jti"]] = r
+        now = datetime.now(UTC).replace(tzinfo=None)
+        return {k: r for k, r in newest.items() if r["expires_at"] > now}
+
     def newest(self, uid: str) -> dict[str, Any] | None:
         rows = [r for r in self.rows if r["id"] == uid]
         return dict(max(rows, key=lambda r: r["version"])) if rows else None
@@ -204,19 +204,8 @@ class _Table:
             p = params or {}
             live = [r for r in self.made_by(sql, p) if r["revoked_at"] is None]
             return next((r for r in live if (r["org"], r["name"]) == (p["org"], p["name"])), None)
-        if "AS holds_out" in sql:
-            return self._live_revocation(params["j"])
-        if "version != {ours" in sql:  # a row landing between a read and our write
-            p = params or {}
-            landed = [
-                r
-                for r in self.revocations
-                if r["jti"] == p["j"] and p["v"] < r["version"] != p["ours"]
-            ]
-            return max(landed, key=lambda r: r["version"], default=None)
         if "loom.revoked_tokens" in sql:
-            cutoffs = [c for s, c in self.narrowed if s in self._lifted_with(params)]
-            return {"cutoff": max(cutoffs, default=None)}
+            return revocation_read(self.revocations, sql, params)
         if "count()" in sql:
             return {"n": len(self.live())}
         if "user_name =" in sql:
@@ -233,47 +222,14 @@ class _Table:
             return {"x": 1} if row and not row["active"] else None
         return row
 
-    def _live_revocation(self, s: str) -> dict[str, Any] | None:
-        versions = [r["version"] for r in self.revocations if r["jti"] == s]
-        row = {
-            "revoked_by": self.revoked_by.get(s, ""),
-            "lasting": False,
-            "version": max(versions, default=0),
-            "expires_at": revocation.LATEST_EXPIRY,
-            "issued_before": None,
-        }
-        if s in self.outright:
-            lasting = s not in self.lapsing
-            if not lasting:
-                row["expires_at"] = _now() + timedelta(days=14)
-            return {**row, "reason": self.outright[s], "lasting": lasting, "holds_out": True}
-        if s not in self.lifted:
-            return None
-        cutoff = self.cutoff(s) or _now()
-        row["issued_before"] = cutoff
-        return {**row, "reason": self.lifted[s], "holds_out": cutoff > _now()}
-
-    def cutoff(self, s: str) -> datetime | None:
-        cutoff = next((c for k, c in reversed(self.narrowed) if k == s), None)  # the newest row's
-        return None if cutoff is None else cutoff.replace(tzinfo=None)
-
-    def _lifted_with(self, params: dict[str, Any]) -> list[str]:
-        return [s for s in params["s"] if self.lifted.get(s) == params["r"]]
-
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         if "loom.service_accounts" in sql:
             rows = [{**r, "live": r["revoked_at"] is None} for r in self.made_by(sql, params)]
             if self.shuffle is not None:
                 self.shuffle.shuffle(rows)
             return rows
-        if "issued_before <= now()" in sql:  # held for good, or narrowed as of now
-            held = [s for s in params["s"] if s in self.outright and s not in self.lapsing]
-            cut = [
-                s for s in params["s"] if s in self.lifted and (self.cutoff(s) or _now()) <= _now()
-            ]
-            return [{"jti": s} for s in params["s"] if s in held or s in cut]
         if "loom.revoked_tokens" in sql:
-            return [{"jti": s} for s in self._lifted_with(params)]
+            return [r for k, r in self.revoked().items() if k in params["keys"]]
         if "loom.namespace_grants" in sql:
             return [{"org": o} for o in self.elsewhere.get(params["s"], [])]
         if "loom.namespaces" in sql:
@@ -282,6 +238,11 @@ class _Table:
         return self.live()[params["skip"] : params["skip"] + params["count"]]
 
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
+        if table == "loom.revoked_tokens":
+            if self.fail_revoke:
+                raise RuntimeError("ClickHouse is away")
+            self.revocations.extend(dict(r) for r in rows)
+            return
         if self.fail_insert:
             raise RuntimeError("ClickHouse is away")
         if table == "loom.service_accounts":
@@ -296,19 +257,14 @@ class _Table:
 
 
 class _World:
-    """The tables, and what deactivation does to revocations and the audit log."""
+    """The tables, the real revocation writes and reads over them, and the audit log."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.accounts: dict[str, list[str]] = {}  # email -> subjects it reaches
         self.elsewhere: dict[str, list[str]] = {}  # subject -> other orgs it is in
-        self.outright: dict[str, str] = {}  # subject -> reason
-        self.lapsing: set[str] = set()  # outright revocations with an expiry (time-boxed)
-        self.narrowed: list[tuple[str, datetime]] = []
-        self.lifted: dict[str, str] = {}  # subject -> reason its narrowing was written with
-        self.table = _Table(self.accounts, self.elsewhere, self.narrowed, self.lifted)
-        self.table.outright, self.table.lapsing = self.outright, self.lapsing
+        self.table = _Table(self.accounts, self.elsewhere)
         self.audits: list[tuple[str, dict[str, Any]]] = []
-        self.fail_revoke = False
+        self.revoked_at_audit: list[dict[str, Any]] = []  # SCIM's revocations as each audit lands
         self.claim_limit: int | None = None  # names held at once before a claim runs out
         self.claims: dict[tuple[str, str], asyncio.Lock] = {}  # one holder a name, as a lease
         self.leases: list[str] = []
@@ -318,62 +274,9 @@ class _World:
         async def stale_snapshot(subject: str) -> bool:
             raise AssertionError("SCIM reads the store, not this process's snapshot")
 
-        async def revoke(
-            subject: str,
-            *,
-            reason: str,
-            revoked_by: str,
-            expires_at: datetime | None = None,
-            issued_before: datetime | None = None,
-            reread: bool = True,
-        ) -> dict[str, Any]:
-            if self.fail_revoke:
-                raise RuntimeError("ClickHouse is away")
-            newest = max((r["version"] for r in self.table.revocations), default=0)
-            row = {
-                "jti": subject,
-                "reason": reason,
-                "revoked_by": revoked_by,
-                "expires_at": expires_at,
-                "issued_before": issued_before,
-                "version": max(time.time_ns(), newest + 1),
-            }
-            self.table.revocations.append(row)
-            self.table.revoked_by[subject] = revoked_by
-            self.lapsing.discard(subject)  # replaced under FINAL
-            if issued_before is not None:
-                self.outright.pop(subject, None)
-                self.narrowed.append((subject, issued_before))
-                self.lifted[subject] = reason
-                return row
-            self.outright[subject] = reason
-            if revocation.revocation_expiry(expires_at) < revocation.LATEST_EXPIRY:
-                self.lapsing.add(subject)
-            self.lifted.pop(subject, None)
-            return row
-
-        async def narrow(
-            key: str, *, reason: str, issued_before: datetime, revoked_by: str, reread: bool = True
-        ) -> bool:
-            if self.outright.get(key) != reason:
-                return False
-            del self.outright[key]
-            self.narrowed.append((key, issued_before))
-            self.lifted[key] = revocation.lifted_reason(reason)
-            return True
-
-        async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
-            found: dict[str, int | None] = {}
-            for s in subjects:
-                cutoff = next((c for k, c in reversed(self.narrowed) if k == s), None)
-                if s in self.outright:
-                    found[s] = None
-                elif s in self.lifted and cutoff is not None:
-                    found[s] = int(cutoff.replace(tzinfo=cutoff.tzinfo or UTC).timestamp())
-            return found
-
         async def emit(event: str, **kw: Any) -> str:
             self.audits.append((event, kw))
+            self.revoked_at_audit.append(self.ours)
             return ""
 
         @asynccontextmanager
@@ -416,9 +319,6 @@ class _World:
         monkeypatch.setattr(grant_claims, "service_account_change", name_claim)
         monkeypatch.setattr(revocation, "asyncio", SimpleNamespace(sleep=no_wait))
         monkeypatch.setattr(revocation, "revoked_outright", stale_snapshot)
-        monkeypatch.setattr(revocation, "revoke", revoke)
-        monkeypatch.setattr(revocation, "narrow", narrow)
-        monkeypatch.setattr(revocation, "cutoffs", cutoffs)
         monkeypatch.setattr(revocation, "refresh", no_refresh)
         monkeypatch.setattr(audit, "emit", emit)
 
@@ -428,6 +328,26 @@ class _World:
     @property
     def events(self) -> list[str]:
         return [e for e, _ in self.audits]
+
+    @property
+    def ours(self) -> dict[str, datetime | None]:
+        """SCIM's revocations: each subject's cutoff, None when outright."""
+        rows = self.table.revoked().items()
+        prefix = revocation.SCIM_PREFIX
+        return {k.removeprefix(prefix): r["issued_before"] for k, r in rows if k.startswith(prefix)}
+
+    @property
+    def operators(self) -> dict[str, datetime | None]:
+        """The subjects' own rows, which only an operator writes."""
+        rows = self.table.revoked().items()
+        return {k: r["issued_before"] for k, r in rows if not k.startswith("\x00")}
+
+    async def keeps_out(self, subject: str, *, issued_at: int | None = None) -> bool:
+        """Whether a token of `subject` issued at `issued_at` (now) is dead, by
+        the combined rule the token list and the token check read."""
+        when = int(time.time()) if issued_at is None else issued_at
+        revoked = await revocation.cutoffs([subject])
+        return subject in revoked and (revoked[subject] is None or when < revoked[subject])
 
 
 @pytest.fixture
@@ -442,16 +362,17 @@ async def _create(email: str, *, active: bool = True) -> str:
 async def test_deactivating_revokes_the_person_once_however_often_it_is_sent(world) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("Lee@Example.com")
-    assert uid == scim.user_id("lee@example.com") and world.outright == {}
+    assert uid == scim.user_id("lee@example.com") and world.ours == {}
 
     row = await scim.set_active(uid, False)
     assert row is not None and not row["active"] and row["subjects"] == ["lee"]
-    assert world.outright == {"lee": scim.DEACTIVATED}
+    assert world.ours == {"lee": None} and world.operators == {}
     assert world.events == ["auth.scim_deactivated"]
-    written = len(world.table.rows)
+    written, revoked = len(world.table.rows), len(world.table.revocations)
 
     await scim.set_active(uid, False)  # the provider's retry
     assert world.events == ["auth.scim_deactivated"] and len(world.table.rows) == written
+    assert len(world.table.revocations) == revoked
     assert await _DEACTIVATED("lee@example.com")
 
 
@@ -461,10 +382,9 @@ async def test_an_email_reaching_several_accounts_revokes_them_all(world) -> Non
     world.person("lee@example.com", "lee", "lee-other-org")
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    assert world.outright == {"lee": scim.DEACTIVATED, "lee-other-org": scim.DEACTIVATED}
+    assert world.ours == {"lee": None, "lee-other-org": None}
     await scim.set_active(uid, True)
-    assert sorted(s for s, _ in world.narrowed) == ["lee", "lee-other-org"]
-    assert world.outright == {}
+    assert sorted(world.ours) == ["lee", "lee-other-org"] and None not in world.ours.values()
 
 
 async def test_a_subject_someone_else_has_elsewhere_is_revoked_and_flagged(world) -> None:
@@ -472,23 +392,31 @@ async def test_a_subject_someone_else_has_elsewhere_is_revoked_and_flagged(world
     world.person("alice@example.com", "alice")
     world.elsewhere["alice"] = ["other-org"]
     await scim.set_active(await _create("alice@example.com"), False)
-    assert world.outright == {"alice": scim.DEACTIVATED}  # fail closed
-    [collateral] = [kw for e, kw in world.audits if e == "auth.scim_collateral"]
+    assert world.ours == {"alice": None}  # fail closed
+    [(collateral, revoked)] = [
+        (kw, ours)
+        for (e, kw), ours in zip(world.audits, world.revoked_at_audit, strict=True)
+        if e == "auth.scim_collateral"
+    ]
     assert collateral["subject"]["orgs"] == ["other-org"]
     assert "alice" not in str(collateral["subject"]["subject"])
+    assert revoked == {"alice": None}  # audited once the revocation landed
 
 
 def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None, microsecond=0)
 
 
-def _narrowed_by_an_operator(world: _World, subject: str) -> datetime:
-    """`loom revoke-token --subject <it> --issued-before <now>` on a collateral subject."""
-    cutoff = _now()
-    del world.outright[subject]
-    world.narrowed.append((subject, cutoff))
-    world.lifted[subject] = "operator"
+async def _given_back(subject: str, cutoff: datetime | None = None) -> datetime:
+    """`loom revoke-token --subject <it> --issued-before <now> --scim` on a collateral subject."""
+    cutoff = cutoff or _now()
+    await revocation.scim_revoke(subject, issued_before=cutoff, reason="", revoked_by="cli:ops")
     return cutoff
+
+
+async def _operator(subject: str, **kw: Any) -> None:
+    """`loom revoke-token --subject <it>`, with `--expires-at` or `--issued-before` in `kw`."""
+    await revocation.revoke(subject, reason="by hand", revoked_by="cli:ops", **kw)
 
 
 def _made_since(world: _World, name: str, created_by: str, created_at: datetime) -> str:
@@ -504,7 +432,7 @@ async def _deactivated_then_narrowed(world: _World) -> str:
     world.table.tokens.append(_saved_token("laptop", "lee"))
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    cutoff = _narrowed_by_an_operator(world, "lee")
+    cutoff = await _given_back("lee")
     older = _made_since(world, "older", "lee", cutoff - timedelta(seconds=1))  # dead
     after = _made_since(world, "after", "lee", cutoff)  # issued at the cutoff: live
     _made_since(world, "older-child", older, cutoff)  # its maker is dead
@@ -515,8 +443,9 @@ async def _deactivated_then_narrowed(world: _World) -> str:
 async def test_a_repeated_deactivation_leaves_an_operators_narrowing_alone(world) -> None:
     uid = await _deactivated_then_narrowed(world)
     world.person("lee@example.com", "lee", "lee-new")
+    cutoff = world.ours["lee"]
     await scim.set_active(uid, False)  # the provider sends it again
-    assert world.outright == {"lee-new": scim.DEACTIVATED}  # only the account found since
+    assert world.ours == {"lee": cutoff, "lee-new": None}  # only the account found since
     # The token list says what the token check does: the tokens made since live.
     assert [r["name"] for r in world.table.live_tokens()] == ["after", "after-child"]
 
@@ -530,9 +459,7 @@ async def test_a_token_listed_revoked_before_an_operator_lets_it_live_kills_no_c
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)  # parent-bot is listed revoked
     # The operator restores what lee made since a cutoff before parent-bot.
-    del world.outright["lee"]
-    world.narrowed.append(("lee", made - timedelta(seconds=10)))
-    world.lifted["lee"] = "operator"
+    await _given_back("lee", made - timedelta(seconds=10))
     _made_since(world, "child-bot", parent, made + timedelta(seconds=3))
     await scim.set_active(uid, False)  # the provider sends it again
     assert [r["name"] for r in world.table.live_tokens()] == ["child-bot"]
@@ -540,8 +467,9 @@ async def test_a_token_listed_revoked_before_an_operator_lets_it_live_kills_no_c
 
 async def test_a_delete_after_an_operators_narrowing_leaves_the_tokens_made_since(world) -> None:
     uid = await _deactivated_then_narrowed(world)
+    cutoff = world.ours["lee"]
     await scim.delete(uid)  # a provider deleting the user a while after disabling it
-    assert world.outright == {}
+    assert world.ours == {"lee": cutoff}
     assert [r["name"] for r in world.table.live_tokens()] == ["after", "after-child"]
 
 
@@ -557,19 +485,22 @@ async def test_every_row_written_carries_every_column(world) -> None:
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
     await scim.delete(uid)
-    assert [sorted(r) for r in world.table.rows] == [sorted(column_names("scim_users"))] * 3
+    await scim.create("lee@example.com", "lee@example.com", active=True)  # a reactivation
+    assert [sorted(r) for r in world.table.rows] == [sorted(column_names("scim_users"))] * 4
+    columns = sorted(column_names("revoked_tokens"))
+    assert [sorted(r) for r in world.table.revocations] == [columns] * 2
 
 
 async def test_a_retry_finishes_a_deactivation_whose_revoke_failed(world) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    world.fail_revoke = True
+    world.table.fail_revoke = True
     with pytest.raises(RuntimeError):
         await scim.set_active(uid, False)
     assert not await _DEACTIVATED("lee@example.com")  # nothing recorded short of the revoke
-    world.fail_revoke = False
+    world.table.fail_revoke = False
     await scim.set_active(uid, False)
-    assert world.outright == {"lee": scim.DEACTIVATED} and await _DEACTIVATED("lee@example.com")
+    assert world.ours == {"lee": None} and await _DEACTIVATED("lee@example.com")
 
 
 async def test_reactivating_lifts_the_refusal_and_keeps_old_tokens_revoked(world) -> None:
@@ -581,15 +512,18 @@ async def test_reactivating_lifts_the_refusal_and_keeps_old_tokens_revoked(world
     after = time.time()
     assert row is not None and row["active"]
     assert not await _DEACTIVATED("lee@example.com")
-    [(subject, cutoff)] = world.narrowed
-    assert subject == "lee" and cutoff.timestamp() > before  # tokens issued so far stay dead
+    [(subject, narrowed)] = world.ours.items()
+    assert subject == "lee" and narrowed is not None
+    cutoff = narrowed.replace(tzinfo=UTC)
+    assert cutoff.timestamp() > before  # tokens issued so far stay dead
     assert world.events == ["auth.scim_deactivated", "auth.scim_reactivated"]
     # Answered once a replica's clock behind this one's is past the cutoff too.
     [wait] = world.waits
     assert before <= cutoff.timestamp() + revocation.CLOCK_SKEW_S - wait <= after
 
+    written = len(world.table.revocations)
     await scim.set_active(uid, True)
-    assert len(world.narrowed) == 1 and len(world.events) == 2
+    assert len(world.table.revocations) == written and len(world.events) == 2
 
 
 def _saved_token(
@@ -737,8 +671,8 @@ async def test_a_late_deactivation_pass_leaves_a_token_made_after_reactivating(
     await scim.set_active(uid, True)
     # The old `laptop` reads dead, so its name is free: the person makes a new
     # one, issued at the cutoff, so live, however the clocks stand.
-    [(_, cutoff)] = world.narrowed
-    made = cutoff.astimezone(UTC).replace(tzinfo=None)
+    made = world.ours["lee"]
+    assert made is not None
     new = {**_saved_token("laptop", "lee"), "sa_subject": "sa:laptop-def456"}
     world.table.tokens.append({**new, "created_at": made, "version": 2})
     resume.set()
@@ -786,10 +720,12 @@ async def test_a_retried_reactivation_still_waits_out_the_first_ones_cutoff(
         waited.append(cutoff)
 
     monkeypatch.setattr(revocation, "wait_out", wait)
+    cutoff = world.ours["lee"]
+    assert cutoff is not None
+    written = len(world.table.revocations)
     row = await scim.set_active(uid, True)  # the provider's retry narrows nothing
-    assert row is not None and row["active"]
-    [(_, cutoff)] = world.narrowed
-    assert waited == [cutoff]
+    assert row is not None and row["active"] and len(world.table.revocations) == written
+    assert waited == [cutoff.replace(tzinfo=UTC)]
 
 
 async def test_a_reactivation_retried_after_a_timeout_waits_out_the_rest(
@@ -857,143 +793,93 @@ async def test_a_reactivation_waits_once_its_leases_are_let_go(world, monkeypatc
     assert events[-3:] == ["let go scim-username", "let go scim-user", "waited"]
 
 
+def _issued(seconds_from_now: int = 0) -> int:
+    return int(time.time()) + seconds_from_now
+
+
 async def test_an_operator_revocation_survives_deactivate_and_reactivate(world) -> None:
     world.person("lee@example.com", "lee")
-    world.outright["lee"] = "offboarded"
+    await _operator("lee")
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
     await scim.set_active(uid, True)
-    assert world.outright == {"lee": "offboarded"} and world.narrowed == []
+    assert world.operators == {"lee": None} and world.ours["lee"] is not None
+    assert await world.keeps_out("lee", issued_at=_issued(60))
 
 
-async def test_a_time_boxed_operator_revocation_lasts_through_deactivate_and_reactivate(
-    world,
-) -> None:
-    # `loom revoke-token --subject lee --expires-at <in two weeks>`: lee's old
-    # tokens must not work again once it lapses, nor once the user is reactivated.
-    world.person("lee@example.com", "lee")
-    world.outright["lee"] = "suspended"
-    world.lapsing.add("lee")
-    world.table.revoked_by["lee"] = "cli:ops"
-    uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
-    assert world.outright == {"lee": "suspended"} and world.lapsing == set()
-    await scim.set_active(uid, True)
-    assert world.outright == {"lee": "suspended"} and world.narrowed == []
-    assert world.table.revoked_by["lee"] == "cli:ops"
-
-
-async def test_an_operators_cutoff_still_ahead_lasts_through_deactivate_and_reactivate(
-    world,
-) -> None:
+async def test_a_reactivation_never_lifts_an_operators_cutoff_ahead(world) -> None:
     # `loom revoke-token --subject lee --issued-before <in two weeks>`.
     world.person("lee@example.com", "lee")
-    world.narrowed.append(("lee", _now() + timedelta(days=14)))
-    world.lifted["lee"] = "suspended"
-    world.table.revoked_by["lee"] = "cli:ops"
+    ahead = _now() + timedelta(days=14)
+    await _operator("lee", issued_before=ahead)
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    assert world.outright == {"lee": "suspended"} and "lee" not in world.lifted
     await scim.set_active(uid, True)
-    assert world.outright == {"lee": "suspended"} and world.table.revoked_by["lee"] == "cli:ops"
-
-
-async def test_an_operators_past_cutoff_is_replaced_and_lifted_as_before(world) -> None:
-    world.person("lee@example.com", "lee")
-    world.narrowed.append(("lee", _now() - timedelta(hours=1)))
-    world.lifted["lee"] = "suspended"
-    uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
-    assert world.outright == {"lee": scim.DEACTIVATED}
-    await scim.set_active(uid, True)
-    assert world.outright == {} and world.lifted == {
-        "lee": revocation.lifted_reason(scim.DEACTIVATED)
-    }
+    assert world.operators == {"lee": ahead}
+    assert await world.keeps_out("lee", issued_at=_issued(60))
 
 
 def _operator_writes_meanwhile(monkeypatch: pytest.MonkeyPatch, **kw: Any) -> None:
-    """`loom revoke-token` (no lease) landing between `_revoke`'s read and its write."""
-    orgs_beyond = scim._orgs_beyond
+    """`loom revoke-token --subject lee` (no lease) landing just before SCIM's write."""
+    write = revocation.scim_revoke
 
-    async def racing(subject: str, orgs: set[str]) -> list[str]:
-        await revocation.revoke(subject, revoked_by="cli:ops", **kw)
-        return await orgs_beyond(subject, orgs)
+    async def racing(subject: str, **scim_kw: Any) -> dict[str, Any]:
+        await _operator(subject, **kw)
+        return await write(subject, **scim_kw)
 
-    monkeypatch.setattr(scim, "_orgs_beyond", racing)
+    monkeypatch.setattr(revocation, "scim_revoke", racing)
 
 
-async def test_an_operator_revocation_landing_while_deactivating_survives(
+async def test_an_operator_time_box_during_a_deactivation_lets_no_one_in_early(
     world, monkeypatch
 ) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    _operator_writes_meanwhile(monkeypatch, reason="leaked")
+    lapsed = datetime.now(UTC) - timedelta(seconds=1)  # the time-box, once it has run out
+    _operator_writes_meanwhile(monkeypatch, expires_at=lapsed)
     await scim.set_active(uid, False)
-    assert world.outright == {"lee": "leaked"} and world.table.revoked_by["lee"] == "cli:ops"
-    await scim.set_active(uid, True)
-    assert world.outright == {"lee": "leaked"} and world.narrowed == []
+    assert world.operators == {} and world.ours == {"lee": None}
+    assert await world.keeps_out("lee", issued_at=_issued(60))
 
 
-async def test_an_operator_lift_landing_while_deactivating_survives(world, monkeypatch) -> None:
-    world.person("lee@example.com", "lee")
-    world.outright["lee"] = "suspended"
-    world.lapsing.add("lee")
-    uid = await _create("lee@example.com")
-    cutoff = _now()
-    _operator_writes_meanwhile(monkeypatch, reason="suspension over", issued_before=cutoff)
-    await scim.set_active(uid, False)
-    assert world.outright == {} and world.lifted == {"lee": "suspension over"}
-    assert world.table.cutoff("lee") == cutoff
-
-
-async def test_lifting_an_operators_revocation_is_suggested_at_reactivation_only(
-    world, caplog
-) -> None:
-    world.person("lee@example.com", "lee")
-    world.outright["lee"] = "suspended"
-    world.lapsing.add("lee")
-    uid = await _create("lee@example.com")
-    with caplog.at_level("WARNING", logger=scim.__name__):
-        await scim.set_active(uid, False)
-    assert "--issued-before" not in caplog.text
-    with caplog.at_level("WARNING", logger=scim.__name__):
-        await scim.set_active(uid, True)
-    assert "--subject lee --issued-before" in caplog.text
-
-
-async def test_an_operators_cutoff_ahead_written_while_inactive_is_made_lasting(world) -> None:
+async def test_an_operator_time_box_after_a_deactivation_lets_no_one_in_early(world) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    ahead = _now() + timedelta(days=2)
-    await revocation.revoke("lee", issued_before=ahead, reason="suspended", revoked_by="cli:ops")
+    await _operator("lee", expires_at=datetime.now(UTC) + timedelta(days=14))
+    await _operator("lee", expires_at=datetime.now(UTC) - timedelta(seconds=1))  # run out
     await scim.set_active(uid, False)  # the provider sends it again
-    assert world.outright == {"lee": "suspended"} and world.lapsing == set()
-    assert world.table.revoked_by["lee"] == "cli:ops"
+    assert world.ours == {"lee": None}
+    assert await world.keeps_out("lee", issued_at=_issued(60))
 
 
-async def test_making_an_operators_revocation_lasting_is_audited(world) -> None:
+async def test_an_operator_lift_during_a_deactivation_lets_no_one_in(world, monkeypatch) -> None:
+    # A password account linked to the email signs in by password, past the
+    # operator's cutoff: SCIM's own revocation still holds it.
     world.person("lee@example.com", "lee")
-    world.outright["lee"] = "suspended"
-    world.lapsing.add("lee")
+    await _operator("lee")
     uid = await _create("lee@example.com")
+    _operator_writes_meanwhile(monkeypatch, issued_before=_now())
     await scim.set_active(uid, False)
-    [kept] = [kw for e, kw in world.audits if e == "auth.scim_made_lasting"]
-    assert kept["subject"]["id"] == uid and kept["subject"]["subject"] == scim._keyed("lee")
-    assert kept["subject"]["expires_at"] < revocation.LATEST_EXPIRY
-    assert kept["subject"]["issued_before"] is None
+    assert world.ours == {"lee": None} and world.operators["lee"] is not None
+    assert await world.keeps_out("lee", issued_at=_issued(60))
+    await _operator("lee", issued_before=_now())  # and after it
+    assert await world.keeps_out("lee", issued_at=_issued(60))
 
 
-async def test_a_repeated_deactivation_revokes_a_subject_whose_revocation_lapsed(world) -> None:
+async def test_scim_never_writes_the_subjects_own_row(world) -> None:
     world.person("lee@example.com", "lee", "lee-ops")
+    await _operator("lee-ops", issued_before=_now() + timedelta(days=2))
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    del world.outright["lee"]  # a revocation that lapsed (or one written before this fix)
-    world.lapsing.add("lee-ops")  # an operator time-boxed this one meanwhile
-    world.outright["lee-ops"] = "suspended"
-    await scim.set_active(uid, False)  # the provider sends it again
-    assert world.outright == {"lee": scim.DEACTIVATED, "lee-ops": "suspended"}
-    assert world.lapsing == set()
+    await scim.set_active(uid, False)
+    await scim.set_active(uid, True)
+    await scim.delete(uid)
+    written = [r["jti"] for r in world.table.revocations if r["revoked_by"] == "scim"]
+    assert written and all(k.startswith(revocation.SCIM_PREFIX) for k in written)
+    assert [r["revoked_by"] for r in world.table.revocations if r["jti"] == "lee-ops"] == [
+        "cli:ops"
+    ]
 
 
 async def test_a_deactivation_after_a_failed_reactivation_revokes_outright_again(world) -> None:
@@ -1004,22 +890,29 @@ async def test_a_deactivation_after_a_failed_reactivation_revokes_outright_again
     with pytest.raises(RuntimeError):  # narrowed, then the row's write failed
         await scim.set_active(uid, True)
     world.table.fail_insert = False
-    # An operator narrowed this one their own way.
-    world.narrowed.append(("lee-ops", _now()))
-    world.lifted["lee-ops"] = "offboarded"
+    assert None not in world.ours.values()
+    cutoff = await _given_back("lee-ops")  # an operator gave this one back meanwhile
     await scim.set_active(uid, False)  # the row still says inactive
-    assert world.outright == {"lee": scim.DEACTIVATED}
-    assert world.lifted == {"lee-ops": "offboarded"}
+    assert world.ours == {"lee": None, "lee-ops": cutoff}
+
+
+async def test_a_reactivation_leaves_a_subject_given_back_as_it_is(world) -> None:
+    world.person("lee@example.com", "lee", "alice")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    cutoff = await _given_back("alice", _now() - timedelta(hours=1))
+    await scim.set_active(uid, True)
+    assert world.ours["alice"] == cutoff and world.ours["lee"] is not None
 
 
 async def test_an_email_with_no_account_is_refused_by_email(world) -> None:
     uid = await _create("new@example.com", active=False)
-    assert await _DEACTIVATED("new@example.com") and world.outright == {}
+    assert await _DEACTIVATED("new@example.com") and world.ours == {}
     assert (await scim.get(uid) or {})["subjects"] == []
     # An account made since (by an operator) is revoked when the retry finds it.
     world.person("new@example.com", "u-new")
     await scim.set_active(uid, False)
-    assert world.outright == {"u-new": scim.DEACTIVATED}
+    assert world.ours == {"u-new": None}
 
 
 async def test_nothing_is_refused_once_scim_is_off(world, monkeypatch) -> None:
@@ -1040,7 +933,7 @@ async def test_a_deleted_user_is_gone_but_stays_deactivated(world) -> None:
     assert await _DEACTIVATED("lee@example.com")
     # Created again by the provider: assigned again, so active again.
     again = await scim.create("lee@example.com", "lee@example.com", active=True)
-    assert again["id"] == uid and again["active"] and world.narrowed
+    assert again["id"] == uid and again["active"] and world.ours["lee"] is not None
 
 
 async def test_a_retried_delete_finishes_the_token_list_and_still_answers_404(world) -> None:
@@ -1100,73 +993,6 @@ async def test_an_unreadable_deactivation_fails_the_sign_in_retryably(world, mon
     monkeypatch.setattr(scim, "get_client", lambda: Away())
     with pytest.raises(login.SignInUnavailable):
         await _DEACTIVATED("lee@example.com")
-
-
-# ── revocation.narrow ─────────────────────────────────────────────────────
-
-_OURS = {"reason": scim.DEACTIVATED, "issued_before": None, "version": 7}
-
-
-@pytest.mark.parametrize(
-    ("stored", "narrows"),
-    [
-        (_OURS, True),
-        ({**_OURS, "reason": "offboarded"}, False),
-        ({**_OURS, "issued_before": datetime(2026, 1, 1)}, False),
-        (None, False),
-    ],
-)
-async def test_narrow_touches_only_its_own_outright_revocation(
-    monkeypatch, stored: dict[str, Any] | None, narrows: bool
-) -> None:
-    written = _narrowing(monkeypatch, stored, None)
-    cutoff = datetime.now(UTC)
-    got = await revocation.narrow(
-        "lee", reason=scim.DEACTIVATED, issued_before=cutoff, revoked_by="scim"
-    )
-    assert got is narrows
-    if narrows:
-        [w] = written
-        assert (w["key"], w["issued_before"]) == ("lee", cutoff)
-    else:
-        assert written == []
-
-
-async def test_narrow_puts_back_a_revocation_written_while_it_ran(monkeypatch) -> None:
-    raced = {
-        "reason": "offboarded",
-        "revoked_by": "operator",
-        "issued_before": None,
-        "expires_at": datetime(2105, 12, 31),
-    }
-    written = _narrowing(monkeypatch, _OURS, raced)
-    await revocation.narrow(
-        "lee", reason=scim.DEACTIVATED, issued_before=datetime.now(UTC), revoked_by="scim"
-    )
-    assert [w["reason"] for w in written] == [f"{scim.DEACTIVATED}, lifted", "offboarded"]
-    assert written[-1]["issued_before"] is None  # outright again, on top
-
-
-def _narrowing(
-    monkeypatch: pytest.MonkeyPatch, stored: dict[str, Any] | None, raced: dict[str, Any] | None
-) -> list[dict[str, Any]]:
-    """Fake the reads `narrow` makes: the row it narrows, then any written since."""
-    from server.core import ch
-
-    written: list[dict[str, Any]] = []
-    answers = [stored, raced]
-
-    class Read:
-        async def query_one(self, *_a: Any, **_k: Any) -> dict[str, Any] | None:
-            return answers.pop(0)
-
-    async def revoke(key: str, **kw: Any) -> dict[str, Any]:
-        written.append({"key": key, **kw})
-        return {}
-
-    monkeypatch.setattr(ch, "get_client", lambda: Read())
-    monkeypatch.setattr(revocation, "revoke", revoke)
-    return written
 
 
 # ── the routes ────────────────────────────────────────────────────────────
@@ -1243,10 +1069,10 @@ def test_a_provider_creates_finds_and_deactivates_a_person(client: TestClient, w
     off = {"Operations": [{"op": "replace", "value": {"active": False}}]}
     patched = client.patch(f"/scim/v2/Users/{uid}", json=off)
     assert patched.status_code == 200 and patched.json()["active"] is False
-    assert world.outright == {"lee": scim.DEACTIVATED}
+    assert world.ours == {"lee": None}
 
     put = client.put(f"/scim/v2/Users/{uid}", json={"userName": "lee@example.com", "active": True})
-    assert put.json()["active"] is True and world.narrowed
+    assert put.json()["active"] is True and world.ours["lee"] is not None
     renamed = client.put(f"/scim/v2/Users/{uid}", json={"userName": "x@example.com"})
     assert renamed.status_code == 400 and renamed.json()["scimType"] == "mutability"
 
@@ -1363,7 +1189,7 @@ def test_a_schema_qualified_patch_deactivates_and_refuses_a_new_email(
     assert (
         client.patch(f"/scim/v2/Users/{uid}", json={"Operations": [off]}).json()["active"] is False
     )
-    assert world.outright == {"lee": scim.DEACTIVATED}
+    assert world.ours == {"lee": None}
 
 
 def test_a_username_another_user_holds_is_refused(client: TestClient, world) -> None:
@@ -1389,9 +1215,9 @@ async def test_reactivating_one_user_keeps_a_subject_another_inactive_user_reach
     await scim.set_active(a, False)
     await scim.set_active(b, False)  # alice is already revoked, and B lists her
     await scim.set_active(a, True)
-    assert world.outright == {"alice": scim.DEACTIVATED} and world.narrowed == []
+    assert world.ours == {"alice": None}
     await scim.set_active(b, True)  # the last one holding her lets her go
-    assert world.outright == {} and [s for s, _ in world.narrowed] == ["alice"]
+    assert list(world.ours) == ["alice"] and world.ours["alice"] is not None
 
 
 def test_a_patch_refused_for_an_email_still_deactivates(client: TestClient, world) -> None:
@@ -1403,7 +1229,7 @@ def test_a_patch_refused_for_an_email_still_deactivates(client: TestClient, worl
     ]
     r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
     assert r.status_code == 400 and r.json()["scimType"] == "mutability"
-    assert world.outright == {"lee": scim.DEACTIVATED}  # fail closed
+    assert world.ours == {"lee": None}  # fail closed
     assert client.get(f"/scim/v2/Users/{uid}").json()["active"] is False
 
 
@@ -1413,7 +1239,7 @@ def test_a_put_refused_for_an_email_still_deactivates(client: TestClient, world)
     body = {"userName": "lee@example.com", "emails": [{"value": "b@example.com"}], "active": False}
     r = client.put(f"/scim/v2/Users/{uid}", json=body)
     assert r.status_code == 400 and r.json()["scimType"] == "mutability"
-    assert world.outright == {"lee": scim.DEACTIVATED}
+    assert world.ours == {"lee": None}
 
 
 @pytest.mark.parametrize(
@@ -1434,7 +1260,7 @@ def test_another_address_changing_beside_a_disable_is_fine(
     r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
     assert r.status_code == 200 and r.json()["active"] is False
     assert r.json()["emails"] == [{"value": "lee@example.com", "primary": True}]
-    assert world.outright == {"lee": scim.DEACTIVATED}
+    assert world.ours == {"lee": None}
 
 
 @pytest.mark.parametrize(
@@ -1515,7 +1341,7 @@ def test_a_put_naming_another_user_is_refused_before_anything(client: TestClient
     body = {"id": "someone-else", "userName": "lee@example.com", "active": False}
     r = client.put(f"/scim/v2/Users/{uid}", json=body)
     assert r.status_code == 400 and r.json()["scimType"] == "invalidValue"
-    assert world.outright == {}  # nothing applied: the request is about another user
+    assert world.ours == {}  # nothing applied: the request is about another user
 
 
 def _subject_lease(subject: str) -> str:
@@ -1587,15 +1413,6 @@ async def test_a_shared_subject_left_revoked_is_logged_and_nothing_waits(world, 
     assert world.waits == []  # nothing narrowed, so no cutoff to wait out
 
 
-async def test_an_operator_revocation_makes_no_reactivation_wait(world) -> None:
-    world.person("lee@example.com", "lee")
-    world.outright["lee"] = "offboarded"
-    uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
-    await scim.set_active(uid, True)
-    assert world.waits == []
-
-
 _PRIMARY_ROW = {"email": "lee@example.com", "email_type": "work", "email_primary": 1}
 
 
@@ -1628,7 +1445,7 @@ def test_a_malformed_path_is_refused_and_still_deactivates(client: TestClient, w
     broken = {"op": "replace", "path": 'emails[type eq "work"', "value": "b@example.com"}
     r = _patch(client, uid, {"op": "replace", "path": "active", "value": False}, broken)
     assert r.status_code == 400 and r.json()["scimType"] == "invalidPath"
-    assert world.outright == {"lee": scim.DEACTIVATED}
+    assert world.ours == {"lee": None}
 
 
 def test_a_failed_request_still_deactivates(client: TestClient, world, monkeypatch) -> None:
@@ -1640,7 +1457,7 @@ def test_a_failed_request_still_deactivates(client: TestClient, world, monkeypat
 
     monkeypatch.setattr(scim_routes, "patched_names", broken)
     r = _patch(client, uid, {"op": "replace", "path": "active", "value": False})
-    assert r.status_code == 503 and world.outright == {"lee": scim.DEACTIVATED}
+    assert r.status_code == 503 and world.ours == {"lee": None}
 
 
 def test_a_whole_entry_write_must_be_an_object(client: TestClient, world) -> None:
@@ -1663,7 +1480,7 @@ async def test_an_account_made_while_deactivating_is_revoked_too(world, monkeypa
     monkeypatch.setattr(scim, "_write", sign_in_meanwhile)
     row = await scim.set_active(uid, False)
     assert row is not None and row["subjects"] == ["lee", "u-lee"]
-    assert world.outright == {"lee": scim.DEACTIVATED, "u-lee": scim.DEACTIVATED}
+    assert world.ours == {"lee": None, "u-lee": None}
     assert world.events == ["auth.scim_deactivated"]  # one transition, audited once
 
 

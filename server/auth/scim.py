@@ -15,10 +15,12 @@ changes is `active`:
 - Reactivating lifts the refusal and narrows those revocations to the tokens
   issued before now, so the person signs in again and the old tokens stay dead.
 
-The accounts and their data stay: this is not erasure. A subject an operator
-revoked outright stays revoked through both, and so does one another
-deactivated user still reaches. An operator's revocation that would lapse (an
-expiry, or a cutoff still ahead) is made lasting, so an operator lifts it.
+SCIM's revocations are its own: each is stored under the subject's SCIM key
+(`revocation.SCIM_PREFIX`), and SCIM never reads or writes the row an
+operator's `loom revoke-token` writes. The two are independent, and either
+keeps a person out; a reactivation lifts only SCIM's. A subject another
+deactivated user still reaches stays revoked through a reactivation. The
+accounts and their data stay: this is not erasure.
 Leases, always taken in this order: the user's, then a userName's it takes
 (create, rename), then, around a deactivation's or reactivation's revocations
 and the row they belong with, one per subject the user reaches, in sorted
@@ -61,12 +63,10 @@ COLUMNS = (
     "updated_at",
     "version",
 )
-# The reason on the revocation a deactivation writes: a reactivation narrows
-# only a revocation with this reason, never an operator's.
+# The reasons on the revocations a deactivation and a reactivation write.
 DEACTIVATED = "scim: deactivated"
+REACTIVATED = "scim: reactivated"
 _BY = "scim"
-# The reasons SCIM's own revocations carry; any other is an operator's.
-_OURS = (DEACTIVATED, revocation.lifted_reason(DEACTIVATED))
 # SCIM ids are uuid5 of the email under this namespace: one id per person,
 # whichever replica or retry computes it. The provider holds the email anyway.
 _ID_NAMESPACE = uuid.UUID("6f1c3e0a-5b7d-4c2e-9a41-2d8f0b6e7c13")
@@ -328,17 +328,18 @@ async def _set_active(
         else:
             new["subjects"] = sorted(known | set(found))
             # Going inactive, or retrying a try that stopped short of writing the
-            # row, revokes them all. Once inactive, a repeat revokes only accounts
-            # found since, those a failed reactivation narrowed and those whose
-            # revocation lapses or lapsed: one an operator narrowed stays narrowed.
+            # row, revokes them all. Once inactive, a repeat revokes the accounts
+            # found since and those a failed reactivation narrowed: one an
+            # operator narrowed (someone else's subject, given back) stays narrowed.
             if was_active or unwritten:
                 subjects = new["subjects"]
             else:
-                lifted = await _lifted(sorted(known))
-                lapsed = known - await _held_for_good(sorted(known))
-                subjects = sorted((set(found) - known) | lifted | lapsed)
+                subjects = sorted((set(found) - known) | await _not_held(sorted(known)))
             for subject in subjects:
-                await _revoke(new["id"], subject, set(found.values()))
+                await revocation.scim_revoke(
+                    subject, reason=DEACTIVATED, revoked_by=_BY, reread=False
+                )
+                await _flag_collateral(new["id"], subject, set(found.values()))
         if new != row or unwritten:  # a change, or a user not yet written
             await _write(new)
         # Audited as the row lands: a retry after a later failure finds the row
@@ -378,91 +379,27 @@ async def _subjects(email: str) -> dict[str, str]:
     return {r["owner_email"]: r["org"] for r in rows}
 
 
-async def _revoke(uid: str, subject: str, orgs: set[str]) -> None:
-    """Revoke `subject` outright unless it already is for good (by an operator,
-    or by the try this one retries). An operator's revocation still holding the
-    person out but due to lapse (an expiry, or a cutoff ahead) is made lasting
-    under the operator's reason, so a reactivation leaves it alone. A subject is
-    a name, not an org's: the same one may be someone else's elsewhere, and the
-    revocation reaches them too."""
-    # The store, not this process's snapshot: one behind would skip a revocation needed again.
-    live = await _live_revocation(subject)
-    if live is not None and live["lasting"]:
-        return
-    reason, revoked_by = DEACTIVATED, _BY
-    if live is not None and live["holds_out"] and live["reason"] not in _OURS:
-        reason, revoked_by = live["reason"], live["revoked_by"]
-        log.warning(
-            "scim: deactivating %s makes an operator's revocation of a subject it reaches last",
-            uid,
-        )
-        # The row is the operator's again; this keeps a record of what SCIM changed.
-        await audit.emit(
-            "auth.scim_made_lasting",
-            org="-",
-            namespace="-",
-            actor=_BY,
-            subject={
-                "id": uid,
-                "subject": _keyed(subject),
-                "expires_at": live["expires_at"],
-                "issued_before": live["issued_before"],
-            },
-        )
+async def _flag_collateral(uid: str, subject: str, orgs: set[str]) -> None:
+    """Log and audit `subject`, just revoked, when it also holds accounts or
+    grants beyond `orgs`: a subject is a name, not an org's, and the same one
+    may be someone else's elsewhere."""
     elsewhere = await _orgs_beyond(subject, orgs)
-    if elsewhere:
-        # Failing closed, it is still revoked; an operator sees it and can narrow it.
-        log.warning(
-            "scim: deactivating %s revokes a subject that also holds accounts or grants "
-            "in %s, which this email does not reach (see `loom revoke-token --list`)",
-            uid,
-            ", ".join(elsewhere),
-        )
-        await audit.emit(
-            "auth.scim_collateral",
-            org="-",
-            namespace="-",
-            actor=_BY,
-            subject={"id": uid, "subject": _keyed(subject), "orgs": elsewhere},
-        )
-    written = await revocation.revoke(subject, reason=reason, revoked_by=revoked_by, reread=False)
-    # An operator's `revoke-token` (it takes no lease) landing between the read
-    # above and this write was replaced under FINAL: write it again, on top.
-    with own_write_reads():
-        other = await get_client().query_one(
-            """
-            SELECT reason, revoked_by, issued_before, expires_at FROM loom.revoked_tokens
-            WHERE jti = {j:String} AND version > {v:UInt64} AND version != {ours:UInt64}
-            ORDER BY version DESC LIMIT 1
-            """,
-            params={"j": subject, "v": live["version"] if live else 0, "ours": written["version"]},
-        )
-    if other is not None:
-        await revocation.revoke(
-            subject,
-            expires_at=other["expires_at"],
-            reason=other["reason"],
-            revoked_by=other["revoked_by"],
-            issued_before=other["issued_before"],
-            reread=False,
-        )
-
-
-async def _live_revocation(subject: str) -> dict[str, Any] | None:
-    """The newest row for `subject`, lapsed or not: its reason, author, expiry,
-    cutoff and version, whether it is outright and never lapses, and whether it
-    still holds tokens issued now."""
-    with own_write_reads():
-        return await get_client().query_one(
-            """
-            SELECT reason, revoked_by, expires_at, issued_before, version,
-                issued_before IS NULL AND expires_at >= {latest:DateTime64(3, 'UTC')} AS lasting,
-                expires_at > now() AND (issued_before IS NULL OR issued_before > now()) AS holds_out
-            FROM loom.revoked_tokens FINAL
-            WHERE jti = {j:String}
-            """,
-            params={"j": subject, "latest": revocation.LATEST_EXPIRY},
-        )
+    if not elsewhere:
+        return
+    # Failing closed, it stays revoked; an operator sees it and can give it back.
+    log.warning(
+        "scim: deactivating %s revokes a subject that also holds accounts or grants "
+        "in %s, which this email does not reach (see `loom revoke-token --list`)",
+        uid,
+        ", ".join(elsewhere),
+    )
+    await audit.emit(
+        "auth.scim_collateral",
+        org="-",
+        namespace="-",
+        actor=_BY,
+        subject={"id": uid, "subject": _keyed(subject), "orgs": elsewhere},
+    )
 
 
 async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
@@ -486,14 +423,18 @@ async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
 
 
 async def _lift(uid: str, subjects: list[str]) -> datetime | None:
-    """Narrow the deactivation's revocations to the tokens issued so far; the
-    newest cutoff of the user's narrowed ones, for the caller to wait out, also
+    """Narrow SCIM's outright revocations of `subjects` to the tokens issued so
+    far; the newest cutoff of its narrowed ones, for the caller to wait out, also
     when a try this one retries narrowed them. A subject another deactivated (or
     deleted) user also reaches stays revoked: lifting it would let that one back in."""
     # No skew ahead: sign-in is refused while deactivated, so only a replica behind matters.
     cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+    rows = await revocation.scim_revocations(subjects)
+    outright = {s for s, r in rows.items() if r["issued_before"] is None}
     lifted = False
     for subject in subjects:
+        if subject not in outright:
+            continue  # narrowed already: by the try this one retries, or by an operator
         if await _held_by_another_inactive(uid, subject):
             log.warning(
                 "scim: reactivating %s leaves a subject revoked that another deactivated "
@@ -501,70 +442,29 @@ async def _lift(uid: str, subjects: list[str]) -> datetime | None:
                 uid,
             )
             continue
-        if await revocation.narrow(
-            subject, reason=DEACTIVATED, issued_before=cutoff, revoked_by=_BY, reread=False
-        ):
-            lifted = True
-            continue
-        live = await _live_revocation(subject)
-        if live is not None and live["holds_out"] and live["reason"] not in _OURS:
-            # Now, not at deactivation: lifting it then would let a deactivated person in.
-            log.warning(
-                "scim: reactivating %s leaves an operator's revocation of %s in place; "
-                "lift it with `loom revoke-token --subject %s --issued-before <now>` "
-                "if the person should have it back",
-                uid,
-                subject,
-                subject,
-            )
+        await revocation.scim_revoke(
+            subject, issued_before=cutoff, reason=REACTIVATED, revoked_by=_BY, reread=False
+        )
+        lifted = True
     return cutoff if lifted else await _lifted_before(subjects)
 
 
 async def _lifted_before(subjects: list[str]) -> datetime | None:
-    """The newest cutoff a reactivation narrowed one of `subjects` to."""
-    with own_write_reads():
-        row = await get_client().query_one(
-            """
-            SELECT max(issued_before) AS cutoff FROM loom.revoked_tokens FINAL
-            WHERE jti IN {s:Array(String)} AND reason = {r:String} AND expires_at > now()
-            """,
-            params={"s": subjects, "r": revocation.lifted_reason(DEACTIVATED)},
-        )
-    cutoff = None if row is None else row["cutoff"]
-    if cutoff is not None and cutoff.tzinfo is None:
-        cutoff = cutoff.replace(tzinfo=UTC)
-    return cutoff
+    """The newest cutoff SCIM's revocation of one of `subjects` is narrowed to."""
+    rows = await revocation.scim_revocations(subjects)
+    cutoffs: list[datetime] = [r["issued_before"] for r in rows.values() if r["issued_before"]]
+    if not cutoffs:
+        return None
+    cutoff = max(cutoffs)
+    return cutoff if cutoff.tzinfo is not None else cutoff.replace(tzinfo=UTC)
 
 
-async def _lifted(subjects: list[str]) -> set[str]:
-    """Those of `subjects` a reactivation narrowed (not an operator)."""
-    with own_write_reads():
-        rows = await get_client().query_all(
-            """
-            SELECT jti FROM loom.revoked_tokens FINAL
-            WHERE jti IN {s:Array(String)} AND reason = {r:String}
-              AND issued_before IS NOT NULL AND expires_at > now()
-            """,
-            params={"s": subjects, "r": revocation.lifted_reason(DEACTIVATED)},
-        )
-    return {r["jti"] for r in rows}
-
-
-async def _held_for_good(subjects: list[str]) -> set[str]:
-    """Those of `subjects` revoked outright with no expiry, or narrowed (by an
-    operator or a reactivation) to a cutoff already past: the rest a repeated
-    deactivation revokes again. A cutoff ahead still lapses."""
-    with own_write_reads():
-        rows = await get_client().query_all(
-            """
-            SELECT jti FROM loom.revoked_tokens FINAL
-            WHERE jti IN {s:Array(String)} AND expires_at > now()
-              AND (issued_before IS NULL AND expires_at >= {latest:DateTime64(3, 'UTC')}
-                   OR issued_before IS NOT NULL AND issued_before <= now())
-            """,
-            params={"s": subjects, "latest": revocation.LATEST_EXPIRY},
-        )
-    return {r["jti"] for r in rows}
+async def _not_held(subjects: list[str]) -> set[str]:
+    """Those of `subjects` SCIM's revocation does not hold out: none written, or
+    narrowed by a reactivation (one that failed short of writing the row)."""
+    rows = await revocation.scim_revocations(subjects)
+    held = {s for s, r in rows.items() if r["issued_before"] is None or r["revoked_by"] != _BY}
+    return set(subjects) - held
 
 
 async def _held_by_another_inactive(uid: str, subject: str) -> bool:

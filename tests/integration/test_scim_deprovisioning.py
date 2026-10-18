@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
+from server.auth.revocation import SCIM_PREFIX  # noqa: E402
 from tests.integration._fake_idp import CLIENT_ID, CLIENT_SECRET, FakeIdP  # noqa: E402
 from tests.integration._ports import free_port  # noqa: E402
 from tests.integration._resources import unique_org  # noqa: E402
@@ -97,12 +98,16 @@ def scim_server(ch_client) -> Iterator[tuple[str, str, str, str, Any]]:
         with idp.running(), loom_server("scim", env, port=port):
             yield base, org, email, ns, ch_client
     finally:
-        # Neither row names the org the suite purges by.
-        for table, column in (("scim_users", "email"), ("revoked_tokens", "jti")):
+        # None of these rows names the org the suite purges by.
+        for table, column, value in (
+            ("scim_users", "email", email),
+            ("revoked_tokens", "jti", email),
+            ("revoked_tokens", "jti", SCIM_PREFIX + email),
+        ):
             ch_client.command(
                 f"ALTER TABLE loom.{table} DELETE WHERE {column} = %(e)s "
                 "SETTINGS mutations_sync = 2",
-                parameters={"e": email},
+                parameters={"e": value},
             )
 
 

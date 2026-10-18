@@ -122,9 +122,12 @@ class _FakeCH:
             by_key[r["jti"]] = r  # ReplacingMergeTree: newest row per key
         self.rows = list(by_key.values())
 
-    async def query_all(self, sql: str, *a: Any, **kw: Any) -> list[dict[str, Any]]:
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         now = datetime.now(UTC).replace(tzinfo=None)
-        return [r for r in self.rows if r["expires_at"] > now]
+        keys = (params or {}).get("keys")
+        return [
+            r for r in self.rows if r["expires_at"] > now and (keys is None or r["jti"] in keys)
+        ]
 
 
 @pytest.fixture
@@ -323,3 +326,28 @@ def test_cli_warns_when_a_cutoff_replaces_an_outright_revocation(
     assert rc == 0 and "revoked outright" in capsys.readouterr().err
     cli.main(["revoke-token", "--subject", "bob", "--issued-before", "2026-09-17T16:30:00Z"])
     assert "revoked outright" not in capsys.readouterr().err
+
+
+def test_cli_scim_gives_back_a_subject_a_deactivation_caught(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Someone else's `alice`, revoked by a SCIM deactivation of another person.
+    asyncio.run(revocation.scim_revoke("alice", reason="scim: deactivated", revoked_by="scim"))
+    assert revocation.is_revoked("alice", issued_at=int(time.time()) + 60)
+    cutoff = datetime.now(UTC).replace(microsecond=0)
+    when = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+    rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"])
+    assert rc == 0
+    assert "narrowed SCIM's revocation of subject 'alice'" in capsys.readouterr().out
+    rows = {r["jti"]: r for r in fake_ch.rows}
+    key = revocation.SCIM_PREFIX + "alice"
+    assert set(rows) == {key} and rows[key]["revoked_by"].startswith(
+        "cli:"
+    )  # its own row untouched
+    assert rows[key]["issued_before"] == cutoff.replace(tzinfo=None)
+    assert not revocation.is_revoked("alice", issued_at=int(cutoff.timestamp()))
+    assert revocation.is_revoked("alice", issued_at=int(cutoff.timestamp()) - 1)
+
+    rc = cli.main(["revoke-token", "--subject", "bob", "--issued-before", when, "--scim"])
+    assert rc == 1 and "SCIM has not revoked 'bob'" in capsys.readouterr().err
+    assert cli.main(["revoke-token", "--subject", "alice", "--scim"]) == 2

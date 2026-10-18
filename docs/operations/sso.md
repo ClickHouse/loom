@@ -264,7 +264,7 @@ they do not stop with someone's offboarding.
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
   `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`,
   `auth.session_revoked`, `auth.scim_deactivated`, `auth.scim_reactivated`,
-  `auth.scim_deleted`, `auth.scim_collateral`, `auth.scim_made_lasting`.
+  `auth.scim_deleted`, `auth.scim_collateral`.
 
 ## Deprovisioning with SCIM
 
@@ -347,30 +347,32 @@ What Loom does with each request:
   an org's: when one also owns an account or holds a grant in an org the
   email does not reach (another person's `alice`), it is still revoked, and
   Loom logs a warning and audits `auth.scim_collateral` naming those orgs.
-  Find it in `loom revoke-token --list` (reason `scim: deactivated`) and
-  narrow it with `--subject <it> --issued-before <now>` if it is someone
-  else's. The provider repeating the deactivation, or deleting the user,
-  leaves it narrowed and the tokens made from it since live, but once the
-  person is reactivated, their next deactivation revokes it outright again:
-  narrow it again then.
+  Find it in `loom revoke-token --list` (`scim→<it>`) and, if it is someone
+  else's, give it back with
+  `loom revoke-token --subject <it> --issued-before <now> --scim`. The
+  provider repeating the deactivation, or deleting the user, leaves it given
+  back, but once the person is reactivated, their next deactivation revokes
+  it outright again: give it back again then.
 - **Reactivating** (`active: true`) lets the person sign in again. Tokens from
-  before stay revoked; they make new ones. A subject an operator revoked
-  (`loom revoke-token --subject`) stays revoked through both, and so does a
-  subject another deactivated or deleted user still reaches (two addresses
-  reaching one account): it is lifted with the last of them, and Loom logs a
-  warning for each one it leaves. A time-boxed operator revocation
-  (`--expires-at`, or an `--issued-before` still ahead) of a person SCIM
-  deactivates becomes lasting, with a warning in the log and an
-  `auth.scim_made_lasting` audit row keeping its previous expiry or cutoff. A
-  reactivation leaves it in place and logs its subject; lift it with
-  `--subject <it> --issued-before <now>` once the person is reactivated
-  (lifted while they are still deactivated, it lets them in). A reactivation
-  answers after about 6 s, once every replica's clock is past its cutoff; a
-  retry sent meanwhile waits out the rest.
+  before stay revoked; they make new ones. A subject another deactivated or
+  deleted user still reaches (two addresses reaching one account) stays
+  revoked until the last of them is reactivated, and Loom logs a warning for
+  each one it leaves. A reactivation answers after about 6 s, once every
+  replica's clock is past its cutoff; a retry sent meanwhile waits out the
+  rest.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
   reactivates them, answering after the same wait; a retry of that create
   waits out the rest, then answers 409.
+
+SCIM keeps its revocations apart from an operator's. Each subject a
+deactivation revokes gets a SCIM revocation of its own, beside the one
+`loom revoke-token --subject` writes, and a subject is revoked while either
+says so. SCIM never reads or changes an operator's revocation, and an
+operator's never changes SCIM's: a time-boxed `--expires-at` or a lift with
+`--issued-before` while the person is deactivated does not let them in, and
+a reactivation lifts only SCIM's, so a subject an operator revoked stays
+revoked. Only `--scim` changes SCIM's revocation of a subject.
 
 Loom keeps each SCIM user's row in `loom.scim_users` (the userName, the email,
 the subjects it revoked and whether it is active) for as long as the
@@ -383,9 +385,9 @@ only filter served is `userName eq "<userName>"`; `GET /Users`,
 
 Turning SCIM off (`LOOM_SCIM_TOKEN` empty) stops refusing sign-in by email,
 and nothing reactivates anyone any more. The revocations stand: a deactivated
-person's subjects stay revoked, new tokens included, until an operator narrows
-each with `loom revoke-token --subject <it> --issued-before <now>`. Reactivate
-at the provider first anyone who should keep Loom.
+person's subjects stay revoked, new tokens included, until an operator lifts
+each with `loom revoke-token --subject <it> --issued-before <now> --scim`.
+Reactivate at the provider first anyone who should keep Loom.
 
 ## Behind a proxy
 
@@ -411,13 +413,11 @@ serves (a rolling upgrade, a rollback), it does not know sessions or operator
 cutoffs: an access token whose session ended still works there for its hour,
 and so do the tokens a bot disable or an adopt cut off. Finish the rollout
 before adopting accounts or relying on a logout or a bot disable. The
-previous build serves no SCIM and does not read deactivations, but honours the
-revocations a deactivation writes. One case it misses: an email deactivated
-before it reached any account. There is nothing to revoke, and with JIT on,
-the previous build makes that person a new account, unrevoked, at their next
-sign-in. Point the provider at Loom once the rollout is done, and do not roll
-back past this build with people deactivated that way (revoke any account
-they got with `loom revoke-token --subject`).
+previous build serves no SCIM and reads neither deactivations nor SCIM's
+revocations: a person deactivated over SCIM still signs in there, and their
+tokens still work there. Set `LOOM_SCIM_TOKEN` only once every replica runs
+this build, and do not roll back past it while anyone is deactivated (revoke
+each of their subjects with `loom revoke-token --subject` first).
 
 A browser sign-in whose steps land on both builds (a code exchanged, an
 identity provider's callback) fails and is started again. The SDK and `loom
