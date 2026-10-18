@@ -137,8 +137,9 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 )
 
 
-def _add_code_okf_up_parsers(sub: Any) -> None:
-    """Subcommands registered by their own modules."""
+def _add_module_parsers(sub: Any) -> None:
+    """Subcommands registered by their own modules: code, okf, up, participant,
+    deployment, secrets, signing-key and provider-lock."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)
@@ -286,7 +287,7 @@ def _add_version_install_demo_init_parsers(sub: Any) -> None:
 # Every subcommand `main` registers, in `loom --help` order (the order the
 # parsers are added is the order argparse lists them).
 _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
-    _add_code_okf_up_parsers,
+    _add_module_parsers,
     _add_reembed_parser,
     *_SPLIT_PARSERS,
     _add_serve_and_migrate_parsers,

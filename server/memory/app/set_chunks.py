@@ -287,26 +287,6 @@ def plan_set_chunks(
     return chunk_text_with_truncation(text, max_chunks=_max_chunks())
 
 
-async def set_chunks_current(
-    ch: Any,
-    *,
-    org: str,
-    namespace: str,
-    memory_key: str,
-    chunks: list[tuple[str, int, int]],
-    user_id: str = "-",
-) -> bool:
-    """True when `user_id`'s live memory.set chunks of the key are exactly
-    `chunks` (same index, same content hash): a rewrite would re-embed them for
-    nothing."""
-    live = await _live_chunks(
-        ch, org=org, namespace=namespace, memory_key=memory_key, user_id=user_id
-    )
-    have = {(int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256"))) for r in live}
-    want = {(i, _chunk_sha(c)) for i, (c, _, _) in enumerate(chunks)}
-    return bool(want) and have == want
-
-
 def _chunk_sha(chunk: str) -> str:
     return hashlib.sha256(chunk.encode("utf-8")).hexdigest()
 
