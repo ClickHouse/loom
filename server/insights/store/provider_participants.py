@@ -91,7 +91,9 @@ async def record_participant(
                 "transition_id": transition,
                 "state": state,
                 "version": version if version is not None else max(time_ns(), after + 1),
-                "stale_after_s": STALE_AFTER_S,
+                "stale_after_s": 0
+                if state == "retired"
+                else STALE_AFTER_S,  # a retired row is stopped at once
                 "host_proof": host_proof() if own else "",
             }
         ],

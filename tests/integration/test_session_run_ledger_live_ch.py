@@ -224,7 +224,7 @@ async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(
     from server.tasks.store.runs import fetch_run
 
     org = f"itest-nosub-{uuid.uuid4().hex[:8]}"
-    busy, quiet = (session_run_id(org, "", uuid.uuid4().hex) for _ in range(2))
+    busy, quiet = (session_run_id(org, "-", uuid.uuid4().hex) for _ in range(2))
     long_ago = time.time_ns() - 7200 * 10**9
     _sweep_only(monkeypatch, org)
     try:

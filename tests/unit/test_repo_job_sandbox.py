@@ -142,7 +142,6 @@ def loom_dirs(tmp_path: Path, monkeypatch) -> Path:
         monkeypatch.setattr(settings, field, type(settings).model_fields[field].default)
     for d in (
         "var/bin",
-        "var/other-data",
         "var/code_repos/self",
         "home/bin",
         "srv/bin",
