@@ -13,6 +13,17 @@ import pytest
 from server.memory.app import auto_resolution as ar
 
 
+@pytest.fixture(autouse=True)
+def _no_erasure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The repair checks the org's erasure first: none here.
+    from server.memory.store import conflict_resolver as queue
+
+    async def no(org: str, **kw: object) -> bool:
+        return False
+
+    monkeypatch.setattr(queue, "under_erasure", no)
+
+
 @pytest.fixture
 def emitted(monkeypatch) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []

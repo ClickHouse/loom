@@ -12,6 +12,17 @@ from server.memory.app.projection_failures import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_erasure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The repair checks the org's erasure first: none here.
+    from server.memory.store import conflict_resolver as queue
+
+    async def no(org: str, **kw: object) -> bool:
+        return False
+
+    monkeypatch.setattr(queue, "under_erasure", no)
+
+
 def test_session_from_source_resource_id_parses_message_ingest_id() -> None:
     assert _session_from_source_resource_id("memory.set_from_messages:s-1:r-1") == "s-1"
     assert _session_from_source_resource_id("other") == "-"

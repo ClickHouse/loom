@@ -1234,8 +1234,10 @@ async def test_an_erasure_requested_once_a_retirement_lands_gets_no_record_or_au
     ch, wired, monkeypatch
 ) -> None:
     """The retirement landed, the erasure came next: its record, follow and audit row,
-    written after the locks, are left to the saga (the follow intent stays)."""
+    written after the locks, are left to the saga (the follow intent stays, and the
+    repair leaves it while the erasure runs)."""
     from server.memory.app import conflict_resolver as resolver
+    from server.memory.app import projection_failures
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
@@ -1251,6 +1253,12 @@ async def test_an_erasure_requested_once_a_retirement_lands_gets_no_record_or_au
     assert (await run_pass())["retired"] == 1
     assert await _audit(ch, org, "memory.auto_supersede") == []
     assert await _audit(ch, org, "memory.conflict_resolver") == []
+    assert [r["status"] for r in await _follow_intents(ch, org, want_active=1)] == ["active"]
+    (retry,) = await projection_failures.retry_projection_failures(
+        org=org, projection="triples_follow_owed"
+    )
+    assert retry.reason == "pending" and not retry.resolved, retry
+    assert await _audit(ch, org, "memory.auto_supersede") == []
     assert [r["status"] for r in await _follow_intents(ch, org, want_active=1)] == ["active"]
 
 

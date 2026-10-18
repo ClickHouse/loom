@@ -289,7 +289,7 @@ async def _after_retire(org: str, namespace: str, done: Retired) -> None:
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
 
     if await queue.under_erasure(org):
-        return  # the saga deletes the intent with the rest; nothing is written meanwhile
+        return  # the intent stays; the repair replays it once the erasure is over
     recorded = await record_auto_supersessions(
         org=org, namespace=namespace, retired=done.retired, reason=CONFLICT_RESOLVER
     )

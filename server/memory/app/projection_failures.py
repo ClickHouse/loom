@@ -303,11 +303,29 @@ async def retry_projection_failure(
     *,
     ch: Any | None = None,
 ) -> ProjectionFailureRetryResult:
-    """Retry one supported projection failure and resolve it on success."""
+    """Retry one supported projection failure and resolve it on success. Every kind
+    writes in the failure's org: under an erasure it waits (`pending`), and once the saga
+    ends its replay finds an erased row gone."""
+    from server.memory.store.conflict_resolver import under_erasure
 
     ch = ch or get_client()
     reason = ""
     try:
+        if (
+            await under_erasure(failure.org, ch=ch)
+            or (failure.projection == FOLLOW_OWED and await _retirement_pending(failure, ch=ch))
+            or (
+                failure.projection == STATUS_MIRROR
+                and _younger_than(failure, STATUS_MIRROR_GRACE_S)
+            )
+        ):
+            return ProjectionFailureRetryResult(
+                failure_id=failure.failure_id,
+                projection=failure.projection,
+                retried=False,
+                resolved=False,
+                reason="pending",
+            )
         if failure.projection == "memory_belief_sources":
             await _retry_belief_sources(failure, ch=ch)
         elif failure.projection == "memory_chunks":
@@ -321,16 +339,6 @@ async def retry_projection_failure(
             TRIPLES_REPAIR,
         }:
             reason = await _retry_graph_projection(failure, ch=ch)
-        elif (failure.projection == FOLLOW_OWED and await _retirement_pending(failure, ch=ch)) or (
-            failure.projection == STATUS_MIRROR and _younger_than(failure, STATUS_MIRROR_GRACE_S)
-        ):
-            return ProjectionFailureRetryResult(
-                failure_id=failure.failure_id,
-                projection=failure.projection,
-                retried=False,
-                resolved=False,
-                reason="pending",
-            )
         elif failure.projection in (FOLLOW_ROWS, FOLLOW_OWED):
             reason = await _retry_follow_rows(failure, ch=ch)
         elif failure.projection == STATUS_MIRROR:
