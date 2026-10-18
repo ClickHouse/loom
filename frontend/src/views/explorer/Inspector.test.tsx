@@ -197,6 +197,17 @@ describe("Inspector failed reads", () => {
     await waitFor(() => expect(screen.queryByText("Couldn't load the facts")).toBeNull());
   });
 
+  it("reads the selection again in another namespace, keeping nothing from the last one", async () => {
+    const view = mount();
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "bench" }), {
+      timeout: 2000,
+    });
+    view.rerender(inspector({ identity: { ...identity, namespace: "other" } }));
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "other" }), {
+      timeout: 2000,
+    });
+  });
+
   it("reads again when a new model lands while the selection's read is out", async () => {
     vi.mocked(listFacts).mockImplementationOnce(
       (_id, opts) =>

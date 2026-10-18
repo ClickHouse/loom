@@ -260,8 +260,11 @@ export function Tasks() {
     setOpenRow(null);
     setSelectedId(null);
     setFilters(NO_FILTERS);
-    // The old inbox is read again only once the new namespace says it has one.
+    // The old inbox is read again only once the new namespace says it has one; its rows
+    // never draw under the new namespace's inbox.
     setPicked(null);
+    setRows(null);
+    setRefreshError(null);
   }
   // The caller as of the latest render, for an answer that lands after a switch.
   const callerNow = useRef(caller);

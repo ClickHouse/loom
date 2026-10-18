@@ -320,7 +320,7 @@ export function Inspector({
         keyRef.current = "";
         return;
       }
-      const key = `${model.seed}|${sel}|${asOf}|${provKey}|${typesKey}|${tagsKey}|${retries}`;
+      const key = `${identity.org}/${identity.namespace}|${model.seed}|${sel}|${asOf}|${provKey}|${typesKey}|${tagsKey}|${retries}`;
       // The same selection under a new model (an Expand, a re-walk) keeps what it read,
       // its failures included.
       if (keyRef.current === key) return;

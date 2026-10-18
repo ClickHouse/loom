@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -625,16 +625,19 @@ export function OpMixPanel() {
   // Retry reads again through the effect.
   const [reads, setReads] = useState(0);
   // A scope toggle keeps the mix (and the toggle) on screen, marked busy, until it answers;
-  // another namespace starts over.
+  // another namespace starts over, during render, so its figures never draw under the new
+  // namespace's badge.
   const [refreshing, setRefreshing] = useState(false);
-  const opFor = useRef("");
+  const opKey = `${identity.org}/${identity.namespace}`;
+  const [opFor, setOpFor] = useState(opKey);
+  if (opFor !== opKey) {
+    setOpFor(opKey);
+    setOp(undefined);
+    setError(null);
+  }
 
   useAbortableEffect(
     (signal, live) => {
-      if (opFor.current !== `${identity.org}/${identity.namespace}`) {
-        opFor.current = `${identity.org}/${identity.namespace}`;
-        setOp(undefined);
-      }
       setRefreshing(true);
       setError(null);
       const asked = scope;
