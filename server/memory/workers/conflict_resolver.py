@@ -110,7 +110,10 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             # Asking again gets the same answer: stamp it, so it holds no place.
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {e}")
-            await queue.stamp_judged(r)
+            try:
+                await queue.stamp_judged(r)
+            except Exception as stamp_error:  # noqa: BLE001 — stamped again next pass
+                p.errors.append(f"{namespace}/{r.get('memory_key')}: stamp: {stamp_error}")
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
@@ -129,7 +132,11 @@ async def _resolve_all(p: _Pass, groups: dict[tuple[str, str], list[dict[str, An
     for (org, namespace), rows in groups.items():
         policy = await namespace_conflict_policy(org, namespace, ch=get_client())
         jobs += [_resolve_one(p, r, policy) for r in rows]
-    await asyncio.gather(*jobs)
+    # A task group: whatever escapes a row cancels the others and waits for them, so
+    # the pass never ends while a row still writes.
+    async with asyncio.TaskGroup() as group:
+        for job in jobs:
+            group.create_task(job)
 
 
 def _note_availability(reason: str | None) -> None:

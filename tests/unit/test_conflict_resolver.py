@@ -967,6 +967,46 @@ async def test_a_refused_request_is_stamped_and_a_transient_failure_stays_owed(
     assert out["errored"] == 3
 
 
+async def test_a_failed_stamp_stays_inside_its_row(pass_env: NS, monkeypatch) -> None:
+    async def stamp(q: Any, **kw: Any) -> int:
+        raise RuntimeError("ClickHouse blip")
+
+    monkeypatch.setattr(queue, "stamp_judged", stamp)
+    pass_env.owed = [_q(memory_key="k1"), _q(memory_key="k2")]
+    pass_env.raise_for = {"k1": resolver.Unjudgeable("400 Bad Request")}
+    pass_env.slow = 0.05
+    out = await pass_env.run()
+    assert [k for _, _, k, _ in pass_env.resolved] == ["k2"], "resolved before the pass ended"
+    assert out["errored"] == 1
+
+
+async def test_a_failure_that_escapes_a_row_ends_the_pass_with_no_row_running(
+    pass_env: NS, monkeypatch
+) -> None:
+    import server.workers.cost_event as cost_event
+
+    running: set[str] = set()
+
+    async def resolve(q, *, policy, counts):
+        running.add(q["memory_key"])
+        try:
+            await asyncio.sleep(0 if q["memory_key"] == "k1" else 0.2)
+        finally:
+            running.discard(q["memory_key"])
+
+    def emit(**kw: Any) -> None:
+        if not running:
+            return
+        raise RuntimeError("the cost event failed")
+
+    monkeypatch.setattr(resolver, "resolve_row", resolve)
+    monkeypatch.setattr(cost_event, "emit_worker_cost_event_for", emit)
+    pass_env.owed = [_q(memory_key="k1"), _q(memory_key="k2")]
+    with pytest.raises(ExceptionGroup):
+        await pass_env.run()
+    assert running == set(), "the other row was cancelled and awaited"
+
+
 async def test_a_lease_outage_stops_the_pass_with_the_rows_owed(
     pass_env: NS, monkeypatch: pytest.MonkeyPatch
 ) -> None:
