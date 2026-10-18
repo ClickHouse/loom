@@ -185,6 +185,45 @@ describe("Recent search after a local write", () => {
     useStore.setState({ whoami: null, myNamespaces: null, identity: null });
   });
 
+  it("keeps the ranked hits on screen while a write ranks again, then shows the hits as they now are", async () => {
+    let written = false;
+    let answerRanked: (v: unknown) => void = () => {};
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? { entries: [entry("milk_note")], total: 1, today: 0, truncated: false }
+        : { entries: [entry("milk_note"), entry("oat_pref"), entry("old_pref")], total: 3, today: 0, truncated: false },
+    );
+    const hit = (memory_key: string) => ({
+      memory_key,
+      memory_type: "semantic",
+      content_excerpt: memory_key,
+      distance: 0.3,
+      similarity: 0.7,
+      rank_score: 0.8,
+      confidence: 0.9,
+    });
+    vi.mocked(searchMemory).mockImplementation(async () => {
+      if (!written) return { results: [hit("oat_pref"), hit("old_pref")], embedding_model: "m" } as never;
+      return new Promise((r) => (answerRanked = r)) as never;
+    });
+    render(<Recent />);
+    await screen.findByText("old_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    await waitFor(() => expect(screen.getByLabelText("Search and filters")).toHaveTextContent("3 matches"), {
+      timeout: 3000,
+    });
+    // A write here (old_pref deleted): the search runs again and its ranking is in flight.
+    written = true;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk")).toHaveLength(2), {
+      timeout: 3000,
+    });
+    expect(screen.getByText("oat_pref")).toBeInTheDocument();
+    await act(async () => answerRanked({ results: [hit("oat_pref")], embedding_model: "m" }));
+    await waitFor(() => expect(screen.queryByText("old_pref")).toBeNull());
+    expect(screen.getByText("oat_pref")).toBeInTheDocument();
+  });
+
   it("searches again after a write here, so a deleted or pinned hit shows as it now is", async () => {
     vi.mocked(listMemories).mockImplementation(async () => ({
       entries: [entry("coffee_pref")],

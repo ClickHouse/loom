@@ -182,8 +182,13 @@ export function Conversations() {
           const rows = r.threads || [];
           // A build that predates `offset` answers the first page again: stay on it and
           // offer no further page rather than show the same threads twice.
-          if (threadPage === 0) firstPageRef.current = new Set(rows.map((t) => t.thread_id));
-          else if (rows.length > 0 && rows.every((t) => firstPageRef.current.has(t.thread_id))) {
+          if (threadPage === 0) {
+            // New threads at the top: a total learned from an empty page past the end is
+            // out of date, and the pager pages on without one until it learns it again.
+            const before = firstPageRef.current;
+            if (before.size > 0 && rows.some((t) => !before.has(t.thread_id))) setThreadsTotal(undefined);
+            firstPageRef.current = new Set(rows.map((t) => t.thread_id));
+          } else if (rows.length > 0 && rows.every((t) => firstPageRef.current.has(t.thread_id))) {
             setThreadsPaged(false);
             setThreadPage(0);
             return;

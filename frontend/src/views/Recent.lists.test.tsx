@@ -217,6 +217,29 @@ describe("Memories list chrome", () => {
     expect(toolbar()).not.toHaveTextContent("340");
   });
 
+  it("counts a cut-short status filter's pager plainly, the note saying what it covers", async () => {
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, limit = 50): Promise<MemoryListResponse> =>
+        limit === 1000
+          ? {
+              entries: Array.from({ length: 1000 }, (_, i) => entry(`p${i}`, { pinned: i < 60 })),
+              total: 5000,
+              today: 0,
+              truncated: true,
+            }
+          : { entries: ROWS, total: 1234, today: 0, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await pick("Status", "pinned");
+    await waitFor(() => expect(toolbar()).toHaveTextContent("60 matches"));
+    // 60 pinned among the newest rows read: not "the newest 60".
+    const pager = screen.getByRole("navigation", { name: "Memories pages" });
+    expect(pager).toHaveTextContent("1–50 of 60");
+    expect(pager).not.toHaveTextContent("newest");
+    expect(screen.getByText(/among the newest ones read/)).toBeInTheDocument();
+  });
+
   it("counts the rows on screen when the read was not cut short, whatever the server total", async () => {
     // The page keeps profile rows out; the server counted them.
     vi.mocked(listMemories).mockImplementation(

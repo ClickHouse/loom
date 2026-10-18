@@ -579,6 +579,27 @@ describe("Conversations: thread pages", () => {
     expect(screen.queryByText(/of 30/)).toBeNull();
   });
 
+  it("pages on past a learned total once new threads arrive at the top", async () => {
+    let firstPageReads = 0;
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => {
+      const from = opts.offset ?? 0;
+      if (from > 0) return { threads: [] };
+      firstPageReads += 1;
+      // The step-back reads page 1 again, and new threads have arrived at its top.
+      return { threads: firstPageReads === 1 ? page(0, 30) : page(100, 30) };
+    });
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 100")).toBeInTheDocument();
+    // The total learned from the empty page is out of date: Next pages on.
+    expect(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    ).toBeEnabled();
+  });
+
   it("with an exact multiple of 30 threads, the empty page after the last goes back to it", async () => {
     listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => ({
       threads: (opts.offset ?? 0) >= 60 ? [] : page(opts.offset ?? 0, 30),

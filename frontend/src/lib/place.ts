@@ -154,8 +154,8 @@ export function arriveAt(note?: string | null): void {
 }
 
 /** Back or Forward onto `place`: scroll `<main>` back once the page is tall enough, then
- *  focus the keyed element (waiting for it — the drawer reads its memory first), else the
- *  view's h1 when the view changed. */
+ *  focus the keyed element (waiting for it — the drawer reads its memory first), else, when
+ *  the entry keyed none, the view's h1, on the same view too. */
 export function restorePlace(place: Place | null, viewChanged: boolean): void {
   cancelPending?.();
   const main = mainElement();

@@ -227,6 +227,9 @@ function MemoryList() {
   // one costs an embedding.
   const rankedRef = useRef<{ key: string; promise: ReturnType<typeof searchMemory>; ac: AbortController } | null>(null);
   useEffect(() => () => rankedRef.current?.ac.abort(), []);
+  // The ranked keys on screen, for the namespace and query they ranked: a search run again
+  // for the same query (after a write here) keeps them while it ranks again.
+  const rankedShownRef = useRef<{ key: string; keys: string[] } | null>(null);
   // Another namespace's search results, conflict keys and agent are not this one's: they
   // go during render, before the new namespace's first read or paint can use them.
   const namespaceKey = `${identity.org}/${identity.namespace}`;
@@ -316,6 +319,7 @@ function MemoryList() {
       setSearching(false);
       rankedRef.current?.ac.abort();
       rankedRef.current = null;
+      rankedShownRef.current = null;
       return;
     }
     let cancelled = false;
@@ -366,10 +370,21 @@ function MemoryList() {
         const kwExtra = kwEntries.filter((e) => !have.has(e.memory_key)).map((e) => [e.memory_key, e] as const);
         setKeywordKeys(kwKeys);
         setKeywordTotal(kw?.total ?? 0);
+        // The ranked keys shown for this same query, kept until the new ranking answers, so
+        // the list does not shrink to the keyword rows and grow back after a write.
+        const shownKey = `${identity.org}/${identity.namespace}\n${rawQuery}`;
+        const kept = rankedShownRef.current?.key === shownKey ? rankedShownRef.current.keys : [];
         if (kwKeys.size > 0) {
-          setSearchHits(kwEntries.map((e) => e.memory_key));
-          setSearchExtra(new Map(kwExtra));
-          setSearchWhy(new Map());
+          setSearchHits(keywordThenRanked([...kwKeys], kept));
+          setSearchExtra((old) => {
+            const next = new Map(kwExtra);
+            for (const k of kept) {
+              const row = old.get(k);
+              if (row && !next.has(k)) next.set(k, row);
+            }
+            return next;
+          });
+          if (kept.length === 0) setSearchWhy(new Map());
           // Rows hold the words: no low-confidence note from an earlier query.
           setSearchAbstain(null);
           setSearching(false);
@@ -386,6 +401,7 @@ function MemoryList() {
           kwEntries.map((e) => e.memory_key),
           results.map((h) => h.memory_key),
         );
+        rankedShownRef.current = { key: shownKey, keys: results.map((h) => h.memory_key) };
         setSearchHits(hits);
         setSearchWhy(new Map(results.map((h) => [h.memory_key, h] as const)));
         // The server hedges (abstain) when the top hit is below threshold;
@@ -1242,8 +1258,9 @@ function MemoryList() {
           pageSize={pageSize}
           shown={(listFiltered && filterRead) || (!listFiltered && browsedCurrent) ? pageList.length : 0}
           total={listFiltered ? (filterRead ? listTotal : undefined) : browsedTotal}
-          // A filtered read the server cut short holds its newest matches, not every one.
-          capped={listFiltered && truncated}
+          // A tag or agent read the server cut short holds its newest matches, not every one.
+          // A status is kept among the rows read, which the note under the toolbar says.
+          capped={truncated && listFilter.status === "live" && (listFilter.tags.length > 0 || listFilter.agent !== "")}
           onPage={setPage}
           onPageSize={(n) => {
             setPageSize(n);

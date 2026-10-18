@@ -1097,7 +1097,11 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged, onWal
             onOpenChange={setCopyOpen}
             source={identity}
             memoryKey={memoryKey}
-            onCopied={onChanged}
+            // A copy changes only the namespace it lands in: this one's list reads again only
+            // when that is the namespace on screen.
+            onCopied={(target) => {
+              if (target === identity.namespace) onChanged();
+            }}
           />
           {/* Reading the source conversation keeps the drawer: the replay opens over it, and
               Conversations is one link away. */}
