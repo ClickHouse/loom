@@ -1,6 +1,6 @@
 import { Button } from "@clickhouse/click-ui/Button";
 import type { IconName } from "@clickhouse/click-ui/Icon";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { errorRequestId, humanizeError } from "../../lib/format";
 import { EmptyState } from "../EmptyState";
 
@@ -54,29 +54,7 @@ export type ListStateProps = ListEmptyProps | ListFilteredProps | ListErrorProps
  *   page's heading.
  */
 export function ListState(props: ListStateProps) {
-  if (props.kind === "filtered") {
-    return (
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm text-text-muted" role="status">
-        <span className="min-w-0 break-words">
-          No {props.things} match{" "}
-          {props.filter ? <span className="font-mono text-text">{props.filter}</span> : "the filters in force"}
-          {props.among && ` in ${props.among}`}
-        </span>
-        <Button
-          type="empty"
-          htmlType="button"
-          onClick={() => {
-            // Clear filters leaves with this state: focus goes to the list's search field
-            // (the toolbar's), else to the page's heading.
-            focusInMain(document.querySelector<HTMLElement>("main search input"));
-            props.onClear();
-          }}
-        >
-          Clear filters
-        </Button>
-      </div>
-    );
-  }
+  if (props.kind === "filtered") return <FilteredState {...props} />;
   if (props.kind === "error") {
     const message = typeof props.error === "string" ? props.error : humanizeError(props.error);
     const rid = props.requestId ?? errorRequestId(props.error);
@@ -104,6 +82,38 @@ export function ListState(props: ListStateProps) {
   }
   const { icon, title, description, action, details } = props;
   return <EmptyState icon={icon} title={title} description={description} action={action} details={details} />;
+}
+
+function FilteredState({ things, filter, among, onClear }: ListFilteredProps) {
+  // A live region announces a change to its text, not the text it mounts with: it mounts
+  // empty and takes its text once it is on the page.
+  const [said, setSaid] = useState(false);
+  useEffect(() => setSaid(true), []);
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm text-text-muted">
+      <span role="status" className="min-w-0 break-words">
+        {said && (
+          <>
+            No {things} match{" "}
+            {filter ? <span className="font-mono text-text">{filter}</span> : "the filters in force"}
+            {among && ` in ${among}`}
+          </>
+        )}
+      </span>
+      <Button
+        type="empty"
+        htmlType="button"
+        onClick={() => {
+          // Clear filters leaves with this state: focus goes to the list's search field
+          // (the toolbar's), else to the page's heading.
+          focusInMain(document.querySelector<HTMLElement>("main search input"));
+          onClear();
+        }}
+      >
+        Clear filters
+      </Button>
+    </div>
+  );
 }
 
 /** Focus `el`, else the page's heading (made focusable for it). */

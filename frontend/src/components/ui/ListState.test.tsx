@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "../../test/rtl";
+import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../lib/errors";
 import { ListState } from "./ListState";
 
@@ -29,6 +30,16 @@ describe("ListState", () => {
     expect(screen.queryByRole("heading")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(onClear).toHaveBeenCalled();
+  });
+
+  // A live region says a change to its text: the row mounts its status empty, so the
+  // text that follows is announced.
+  it("filtered: the status mounts empty and then says the line", () => {
+    const first = renderToStaticMarkup(<ListState kind="filtered" things="runs" filter="failed" onClear={() => {}} />);
+    const mounted = new DOMParser().parseFromString(first, "text/html").querySelector('[role="status"]');
+    expect(mounted?.textContent).toBe("");
+    render(<ListState kind="filtered" things="runs" filter="failed" onClear={() => {}} />);
+    expect(screen.getByRole("status")).toHaveTextContent("No runs match failed");
   });
 
   it("error: what failed, the humanized message, the request id and a secondary Retry", () => {
