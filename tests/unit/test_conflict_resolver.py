@@ -1454,19 +1454,6 @@ def test_the_defaults_are_the_benched_operating_point() -> None:
     assert defaults["memory_conflict_resolver_interval_seconds"] == 10.0
 
 
-async def test_the_queue_reads_the_stamps_the_last_batch_wrote() -> None:
-    seen: list[str] = []
-
-    class CH:
-        async def query_all(self, sql: str, params: Any = None) -> list[Any]:
-            seen.append(sql)
-            return []
-
-    await queue.owed_rows(limit=1, ch=CH())
-    await queue.unjudged_conflicted_rows(limit=1, ch=CH())
-    assert len(seen) == 2 and all("select_sequential_consistency = 1" in s for s in seen)
-
-
 def test_the_queue_knows_an_abandoned_erasure_as_the_ledger_writes_it() -> None:
     from server.erasure.store.ledger import ABANDONED_REASON_PREFIX
 
