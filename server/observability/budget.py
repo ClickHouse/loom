@@ -6,7 +6,8 @@ budget. Reads the per-namespace `daily_cost_cap_usd` override, falling back to
 `settings.default_daily_cost_cap_usd`; 0 on both tiers means uncapped.
 
 Fail-open: any error in the budget read returns False (not over cap) so a
-transient ClickHouse blip never silently halts a worker.
+transient ClickHouse blip never silently halts a worker; a caller that spends in the
+background (the conflict resolver) passes `fail_open=False`, and a failed read is over.
 """
 
 from __future__ import annotations

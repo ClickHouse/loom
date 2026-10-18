@@ -87,7 +87,7 @@ class _Pass:
 def _cap_share() -> dict[str, Any]:
     """The resolver's own spend against its share of the namespace's daily cap: the
     rest of the cap stays for the requests (memory.ask, extraction), which read the
-    whole spend against the whole cap."""
+    whole spend against the whole cap. It stops at the whole cap too."""
     share = float(settings.memory_conflict_resolver_cap_share)
     # A read that fails counts as over: a background spender does not pay unread.
     return {"operation": f"worker.{NAME}", "share": share, "fail_open": False}
