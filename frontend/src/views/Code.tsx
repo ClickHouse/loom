@@ -2698,7 +2698,6 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
             setRowsKey(`${prSettled}\n${pageSize}`);
             setRowsPr(prSettled);
             setTotal(r.total);
-            setError(null);
             setRefreshing(false);
           }
         })

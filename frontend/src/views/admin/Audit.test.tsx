@@ -220,9 +220,11 @@ describe("Audit: older events", () => {
     const button = screen.getByRole("button", { name: "Load older" });
     button.focus();
     fireEvent.click(button);
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Load older" })).toBeNull());
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByText("Created namespace team (org)").closest("tr")),
+    // A Click UI Table renders slowly in jsdom under a full parallel run: past the 1 s default.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Load older" })).toBeNull(), { timeout: 5000 });
+    await waitFor(
+      () => expect(document.activeElement).toBe(screen.getByText("Created namespace team (org)").closest("tr")),
+      { timeout: 5000 },
     );
   });
 });

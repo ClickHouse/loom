@@ -115,6 +115,22 @@ describe("Recent change-driven refresh", () => {
     useStore.setState({ whoami: null, myNamespaces: null, identity: null });
   });
 
+  it("moves the pager's total with the toolbar's when a refresh brings a new count", async () => {
+    const rows = Array.from(
+      { length: 50 },
+      (_, i) => ({ memory_key: `k${i}`, value: `v${i}`, tags: [], agent: "a", memory_type: "fact" }) as never,
+    );
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: rows, truncated: false, total: 1234, today: 0, namespace_version: "7" })
+      .mockResolvedValue({ entries: rows, truncated: false, total: 1235, today: 0, namespace_version: "8" });
+    seed({ ...viewer, roles: ["ADMIN"] }, null);
+    render(<Recent />);
+    const pager = await screen.findByRole("navigation", { name: "Memories pages" });
+    expect(pager).toHaveTextContent("of 1,234");
+    await vi.advanceTimersByTimeAsync(8000);
+    await waitFor(() => expect(pager).toHaveTextContent("of 1,235"));
+  });
+
   it("polls with known_version and holds it across an unchanged answer", async () => {
     vi.mocked(listMemories)
       .mockResolvedValueOnce({ entries: [], truncated: false, total: 0, today: 0, namespace_version: "7" })

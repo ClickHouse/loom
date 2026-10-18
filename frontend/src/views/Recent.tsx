@@ -171,8 +171,6 @@ function MemoryList() {
   }, [firstScreenOnly, entries]);
   // First-page read failure, shown inline with a Retry.
   const [loadError, setLoadError] = useState<{ text: string; requestId: string } | null>(null);
-  // True namespace-scope total (ignores the page `limit`), from memory.list.
-  const [total, setTotal] = useState(0);
   // A filtered read that hit its 1,000-row cap: the list says it shows the newest matches.
   const [truncated, setTruncated] = useState(false);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
@@ -640,12 +638,15 @@ function MemoryList() {
   // that page while it is still the size shown, so a second Next while a page reads asks
   // for the same page and the range says the rows under it.
   const [entriesAt, setEntriesAt] = useState({ page: 0, size: 0 });
-  // The namespace's total from the last browsed read: a filter's count is not it.
+  // The namespace's total from browsed reads (the first and every refresh): a filter's count
+  // is not it.
   const [browsedTotal, setBrowsedTotal] = useState<number | undefined>(undefined);
   const browsedCurrent = entriesAt.size === pageSize;
   // The filter the rows on screen were read for: until a read of the current one lands,
   // the old rows stay up and "nothing matches" is not said.
   const [readFor, setReadFor] = useState("");
+  // A filtered list's rows are its own once its read has answered.
+  const filterRead = readFor === JSON.stringify(listFilter);
 
   useAbortableEffect(
     (signal, live) => {
@@ -653,6 +654,7 @@ function MemoryList() {
       if (shownScope.current !== scope) {
         shownScope.current = scope;
         setEntries(null);
+        setBrowsedTotal(undefined);
       } else {
         setRefreshing(true);
       }
@@ -700,14 +702,11 @@ function MemoryList() {
             previewChars: MEMORIES_PREVIEW_CHARS,
           });
           if (!live()) return;
-          if (isFirst) {
-            setReadFor(readKey);
-            setLoadError(null);
-          }
           if (r.unchanged) return;
           knownVersion = r.namespace_version ?? "";
           setTruncated(listFiltered && r.truncated);
-          setTotal(r.total);
+          // The namespace's total follows every browsed answer, the 8 s refresh included.
+          if (!listFiltered && !showDeleted) setBrowsedTotal(r.total);
           // Fill before painting so a list without values never sends 100 cards to
           // their per-card fallback while the one bulk read is in flight.
           await fillMissingValues(r.entries);
@@ -716,7 +715,8 @@ function MemoryList() {
             knownKeysRef.current = new Set(r.entries.map((e) => e.memory_key));
             setEntries(r.entries);
             setEntriesAt({ page: off / lim, size: lim });
-            if (!listFiltered && !showDeleted) setBrowsedTotal(r.total);
+            setReadFor(readKey);
+            setLoadError(null);
             // Next comes back with the rows it read, not before them.
             setRefreshing(false);
           } else {
@@ -805,7 +805,7 @@ function MemoryList() {
   }
   // The deleted view is fetched in one shot: the namespace's live total has nothing to do
   // with the deleted count. A filtered list counts its matches.
-  const listTotal = showDeleted || listFiltered ? flatList.length : total || (entries?.length ?? 0);
+  const listTotal = showDeleted || listFiltered ? flatList.length : (browsedTotal ?? entries?.length ?? 0);
   const rangeStart = pageList.length === 0 ? 0 : (showDeleted ? 0 : page * pageSize) + 1;
   const rangeEnd = (showDeleted ? 0 : page * pageSize) + pageList.length;
   // One count, at the end of the toolbar: the range while browsing, the
@@ -1168,8 +1168,8 @@ function MemoryList() {
           page={!listFiltered && browsedCurrent ? entriesAt.page : page}
           busy={refreshing}
           pageSize={pageSize}
-          shown={listFiltered || browsedCurrent ? pageList.length : 0}
-          total={listFiltered ? listTotal : browsedTotal}
+          shown={(listFiltered && filterRead) || (!listFiltered && browsedCurrent) ? pageList.length : 0}
+          total={listFiltered ? (filterRead ? listTotal : undefined) : browsedTotal}
           onPage={setPage}
           onPageSize={(n) => {
             setPageSize(n);

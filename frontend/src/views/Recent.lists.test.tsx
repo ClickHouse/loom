@@ -137,6 +137,21 @@ describe("Memories list chrome", () => {
     expect(pager).not.toHaveTextContent(/\b2 in all/);
   });
 
+  it("offers no pager over the old rows while a new filter's read is in flight", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, limit = 50): Promise<MemoryListResponse> => {
+      if (limit === 1000) return new Promise<MemoryListResponse>(() => {});
+      const entries = Array.from({ length: 50 }, (_, i) => entry(`p${i}`, { pinned: true }));
+      return { entries, total: 1234, today: 0, truncated: false };
+    });
+    render(<Recent />);
+    await screen.findByText("p0");
+    expect(screen.getByRole("navigation", { name: "Memories pages" })).toHaveTextContent("of 1,234");
+    await pick("Status", "pinned");
+    await waitFor(() => expect(listMemories).toHaveBeenLastCalledWith(expect.anything(), 1000, expect.anything()));
+    // The pinned rows on screen came from the browsed page: no "of 50" from them.
+    expect(screen.queryByRole("navigation", { name: "Memories pages" })).toBeNull();
+  });
+
   // Next waits for the page's read, and the pager pages from the rows on screen.
   it("asks for the next page once when Next is pressed twice while it loads", async () => {
     const offsets: number[] = [];
