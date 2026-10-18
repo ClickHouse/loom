@@ -196,6 +196,21 @@ async def test_a_pass_reads_the_erasure_per_failure_and_marks_its_failures_once(
     assert reads == ["acme"] * 30, "the erasure is read right before each failure's write"
 
 
+async def test_a_young_status_mirror_waits_without_reading_the_erasure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.store import conflict_resolver as queue
+
+    async def no_read(org: str, **kw: Any) -> bool:
+        raise AssertionError("the erasure was read for a mirror still in its grace")
+
+    monkeypatch.setattr(pf, "_younger_than", lambda f, s: True)
+    monkeypatch.setattr(queue, "under_erasure", no_read)
+    (out,) = await pf.retry_failures([_failure(1, pf.STATUS_MIRROR)], ch=object())
+    assert (out.retried, out.reason, out.error) == (False, "pending", "")
+
+
 async def test_an_erasure_requested_mid_batch_stops_the_remaining_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

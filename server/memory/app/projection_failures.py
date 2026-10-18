@@ -364,6 +364,17 @@ async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:
                 await mark_projection_failures_resolved(org=org, failure_ids=chunk, ch=ch)
 
 
+def _pending(failure: ProjectionFailureRow) -> ProjectionFailureRetryResult:
+    """Not retried yet: the failure stays active for a later pass."""
+    return ProjectionFailureRetryResult(
+        failure_id=failure.failure_id,
+        projection=failure.projection,
+        retried=False,
+        resolved=False,
+        reason="pending",
+    )
+
+
 async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailureRetryResult:
     """One failure's retry, unmarked. Every kind writes in the failure's org: under an
     erasure it waits (`pending`), and once the saga ends its replay finds an erased row
@@ -372,23 +383,14 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
 
     reason = ""
     try:
+        if failure.projection == STATUS_MIRROR and _younger_than(failure, STATUS_MIRROR_GRACE_S):
+            return _pending(failure)
         # Read for each failure, right before its write: an erasure can be requested
         # mid-batch. A failed read raises below and leaves the row active.
-        if (
-            await under_erasure(failure.org, ch=ch)
-            or (failure.projection == FOLLOW_OWED and await _retirement_pending(failure, ch=ch))
-            or (
-                failure.projection == STATUS_MIRROR
-                and _younger_than(failure, STATUS_MIRROR_GRACE_S)
-            )
+        if await under_erasure(failure.org, ch=ch) or (
+            failure.projection == FOLLOW_OWED and await _retirement_pending(failure, ch=ch)
         ):
-            return ProjectionFailureRetryResult(
-                failure_id=failure.failure_id,
-                projection=failure.projection,
-                retried=False,
-                resolved=False,
-                reason="pending",
-            )
+            return _pending(failure)
         if failure.projection == "memory_belief_sources":
             await _retry_belief_sources(failure, ch=ch)
         elif failure.projection == "memory_chunks":
