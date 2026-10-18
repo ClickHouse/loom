@@ -718,17 +718,19 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     candidates = rows[: -input.keep_recent]
+    # An earlier summary in the window is folded in, not compacted.
+    folded = [_is_compaction_summary(r) for r in candidates]
     # A re-run: an earlier summary sits where the turns it replaced began, so it is
     # the oldest live row and falls among the candidates. A window of nothing but
     # earlier summaries has no new turn to compact.
-    if all(_is_compaction_summary(r) for r in candidates):
+    if all(folded):
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
             reason="already-compacted",
         )
-    # Only new turns count: an earlier summary in the window is folded in, not compacted.
-    if sum(not _is_compaction_summary(r) for r in candidates) < input.min_to_compact:
+    # Only new turns count toward the minimum.
+    if folded.count(False) < input.min_to_compact:
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
@@ -743,7 +745,6 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     # always reaches the first new turn: a large turn behind a summary would otherwise
     # leave a window of the summary alone, compacted again on every run.
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
-    folded = [_is_compaction_summary(r) for r in candidates]
     fit = _fitting_prefix(
         ["" if f else line for line, f in zip(lines, folded, strict=True)],
         _COMPACT_TRANSCRIPT_CHARS,
@@ -846,7 +847,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
 
     return ConversationCompactOutput(
         compacted=True,
-        messages_summarized=sum(not _is_compaction_summary(r) for r in candidates),
+        messages_summarized=folded[:fit].count(False),
         summary_msg_id=summary_msg_id,
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,

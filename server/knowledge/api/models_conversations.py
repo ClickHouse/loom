@@ -339,7 +339,8 @@ class ConversationCompactInput(BaseModel):
     thread_id: str
     # The newest this many messages stay verbatim; everything older is summarized.
     keep_recent: int = Field(default=10, ge=1, le=200)
-    # Skip when the candidate window is smaller than this — nothing to compact.
+    # Skip when fewer new turns than this precede the last keep_recent; an earlier
+    # summary does not count.
     min_to_compact: int = Field(default=4, ge=1, le=50)
 
 
