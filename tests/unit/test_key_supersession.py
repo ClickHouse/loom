@@ -1,22 +1,18 @@
 """A memory key names one attribute; under `newest_wins` the
-newest row for a key is the live one, whatever session wrote it. Which of two rows
-is the older statement (`older_statement`) is the order the conflict resolver
-retires by."""
+newest row for a key is the live one, whatever session wrote it."""
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import pytest
 
 from server.memory.app.extract import ExtractedFact
 from server.memory.app.extract.keys import strip_variant_suffixes
 from server.memory.app.key_supersession import (
-    older_statement,
     same_key_victims,
-    statement_rank,
     strip_variant_suffix,
 )
 from server.memory.domain.extracted_facts import keep_latest_per_key
@@ -184,67 +180,6 @@ class _CH:
         self.seen["queries"].append(params)
         self.seen["sql"] = sql
         return _as_reread(sql, self.rows)
-
-
-def test_a_tie_in_valid_time_has_one_older_row() -> None:
-    a = _row("a", _d(25), created_at=datetime(2026, 10, 13, 8, 0))
-    b = _row("b", _d(25), created_at=datetime(2026, 10, 13, 8, 1))
-    # `a` (written first) is the older whichever side asks.
-    assert older_statement(a, b) and not older_statement(b, a)
-    # Without valid time, both sides fall back to when the row was written.
-    a, b = {**a, "valid_at": None}, {**b, "valid_at": None}
-    assert older_statement(a, b) and not older_statement(b, a)
-
-
-def test_valid_times_with_an_offset_compare_in_utc() -> None:
-    # 01:00 at -07:00 is 08:00 UTC: later than a peer at 05:00 UTC.
-    new = _row("n1", datetime(2023, 5, 30, 1, 0, tzinfo=timezone(timedelta(hours=-7))))
-    peer = _row("o1", datetime(2023, 5, 30, 5, 0))
-    assert older_statement(peer, new)
-    assert older_statement(peer, {**new, "valid_at": "2023-05-30T01:00:00-07:00"})
-
-
-def test_a_revision_is_ordered_by_when_it_was_written_not_when_the_key_was_created() -> None:
-    # S1 created the key on 05-01 and restates it on 06-01; S2 wrote it on 05-20. No
-    # valid time: the 06-01 statement is the later one, though its created_at is 05-01.
-    s1 = _row(
-        "s1", None, created_at=datetime(2026, 5, 1), updated_at=datetime(2026, 6, 1), version=2
-    )
-    s2 = _row("s2", None, created_at=datetime(2026, 5, 20))
-    assert older_statement(s2, s1)
-
-
-def test_microseconds_do_not_decide_the_order() -> None:
-    # The stored row has whole seconds, the new one microseconds: a tie, so the id decides.
-    a = _row("a", None, created_at=datetime(2026, 10, 13, 8, 0, 0, 999999))
-    b = _row("b", None, created_at=datetime(2026, 10, 13, 8, 0, 0))
-    assert older_statement(a, b)
-
-
-def test_a_late_dated_session_does_not_bury_an_undated_current_value() -> None:
-    # "Lives in Berlin", written 2026-09-01 with no valid time; an old 2024 session
-    # ingested today says "Paris", dated 2024-03-01. Berlin is the later statement.
-    cur = _row("cur", None, created_at=datetime(2026, 9, 1))
-    late = _row("late", datetime(2024, 3, 1), created_at=datetime(2026, 10, 13, 9, 0))
-    assert older_statement(late, cur)
-    # An undated late row ranks by its write time: the later statement.
-    undated = _row("u", None, created_at=datetime(2026, 10, 13, 9, 0))
-    dated = _row("d", datetime(2025, 6, 1), created_at=datetime(2026, 10, 1))
-    assert older_statement(dated, undated)
-
-
-def test_a_future_valid_time_ranks_as_when_it_was_written() -> None:
-    # "Will move to Berlin" valid 2027 was stated on 10-01; the undated correction of
-    # 10-13 is the later statement.
-    future = _row("f", datetime(2027, 1, 1), created_at=datetime(2026, 10, 1))
-    fix = _row("c", None, created_at=datetime(2026, 10, 13))
-    assert older_statement(future, fix)
-
-
-def test_a_valid_time_outside_the_datetime_range_ranks_as_undated() -> None:
-    # A row cannot store one (its insert fails), and a date outside it is no date.
-    built = _row("x", datetime(1955, 4, 18), created_at=datetime(2026, 10, 13))
-    assert statement_rank(built) == statement_rank({**built, "valid_at": None})
 
 
 def test_only_entries_that_wrote_a_live_row_project_graph_facts() -> None:

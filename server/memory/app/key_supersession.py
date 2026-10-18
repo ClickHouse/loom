@@ -13,11 +13,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from datetime import datetime
 from typing import Any
 
 import server.memory.store as memory_repo
-from server.core.datetimes import parse_iso_dt, to_naive_utc
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.app import conflicts
@@ -117,37 +115,6 @@ def _victim(row: Mapping[str, Any], superseded_by: str) -> dict[str, Any]:
         "value": str(row.get("value") or ""),
         "superseded_by": superseded_by,
     }
-
-
-def statement_rank(row: Mapping[str, Any]) -> tuple[datetime, datetime, str]:
-    """When a row's statement holds, as one total order: its valid time, else when
-    it was written (`updated_at`: a revision carries `created_at` forward from the
-    key's first version), capped at when it was written (a fact dated in the future
-    is still stated when it was written); then when it was written; then its id, an
-    arbitrary but fixed tie-break. The SQL that picks the newest peers orders by the
-    same key. Times in UTC, to the second."""
-    written = _utc(row.get("updated_at")) or _utc(row.get("created_at")) or datetime.min
-    valid = _utc(row.get("valid_at")) or written
-    return (min(valid, written), written, str(row.get("memory_id") or ""))
-
-
-def older_statement(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
-    """Whether `a` is the earlier statement of the two (`statement_rank`)."""
-    return statement_rank(a) < statement_rank(b)
-
-
-def _utc(raw: Any) -> datetime | None:
-    """A datetime or ISO string as naive UTC to the second, as ClickHouse stores it;
-    None for anything else or outside the `DateTime` range."""
-    if isinstance(raw, str):
-        try:
-            raw = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    if not isinstance(raw, datetime):
-        return None
-    dt = parse_iso_dt(to_naive_utc(raw))
-    return dt.replace(microsecond=0) if dt is not None else None
 
 
 async def keys_held_elsewhere(

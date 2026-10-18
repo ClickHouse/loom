@@ -383,23 +383,21 @@ session holds (`key_supersession.keys_held_elsewhere`): the same `user_id`, or f
 anonymous user `-` the same agent. The writer's own identity is never a peer: its stored
 row is the one the write revises.
 
-**Which row is older.** Only the older row of a pair ever retires, so two rows judged
-from either side never retire both (`key_supersession.older_statement`). Rows rank by one
-total key. The key's first part is the row's valid time, else when it was written
-(`updated_at`, since a revision carries `created_at` forward from the key's first
-version). It is capped at the write time, because a fact dated in the future was still
-stated when it was written. Then come the write time and the id. Times are compared in
-UTC to the second; a valid time outside ClickHouse's `DateTime` range counts as none.
-Rows that tie on both times are separated by id (as text), which is arbitrary but fixed.
+**Which row is older.** Only the older statement of a pair ever retires, so two rows
+judged from either side never retire both (`conflict_resolver._assertion_order`, read
+under the pair's key locks). A row's place is when its value was first asserted: the
+first version of the current run of history rows holding its `content_sha256`, in
+nanoseconds, so
+a touch, a pin or a tag change, which keep the hash, do not move it. An explicit
+`valid_at` earlier than that moves it back, since the fact held then; a later one (a fact
+dated ahead) does not. A row the history does not hold yet counts from its current
+version. When the order does not show the judged row as the newer statement, an update
+verdict flags the pair for a person instead of retiring.
 
 - **A late old session:** its rows carry their session date, so it doesn't bury a later
   value, whether that value is dated or undated.
-- **An undated late row:** it counts as stated when it was written, so it is the later
+- **An undated late row:** it counts from when it was asserted, so it is the later
   statement.
-
-Without this, "User is Asian American" (05-23) and "The user has mixed Irish and Italian
-ethnicity" (05-30) both stayed live under `user_ethnicity`, and a reader shown both
-merged them into one answer.
 
 ### Following a retirement in the graph
 

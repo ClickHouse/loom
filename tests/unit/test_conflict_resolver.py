@@ -5,6 +5,7 @@ tests/integration/test_conflict_resolver_ch.py runs it against ClickHouse."""
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 from datetime import datetime
 from types import SimpleNamespace as NS
@@ -999,6 +1000,30 @@ async def test_the_order_is_finer_than_the_second_and_ignores_metadata_writes(
     row.valid_at = datetime(2019, 1, 1)
     order = await resolver._assertion_order("o", "ns", [row, peer])
     assert order["m1"] < order["m2"]
+
+
+async def test_the_order_reads_valid_time_in_utc_caps_it_at_the_assertion_and_falls_back(
+    monkeypatch,
+) -> None:
+    from datetime import timedelta, timezone
+
+    ns = 1_000_000_000
+    asserted_at = {"m1": 1_800_000_000 * ns}
+
+    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> dict[str, int]:
+        return dict(asserted_at)
+
+    monkeypatch.setattr(queue, "asserted_versions", asserted)
+    # 01:00 at -07:00 is 08:00 UTC.
+    row = _mem("m1", valid_at=datetime(2023, 5, 30, 1, 0, tzinfo=timezone(timedelta(hours=-7))))
+    order = await resolver._assertion_order("o", "ns", [row])
+    assert order["m1"][0] == calendar.timegm(datetime(2023, 5, 30, 8, 0).utctimetuple()) * ns
+    # A valid time after the assertion (a fact dated ahead) holds from the assertion.
+    row.valid_at = datetime(2030, 1, 1)
+    assert (await resolver._assertion_order("o", "ns", [row]))["m1"] == (asserted_at["m1"],) * 2
+    # A row the history does not hold: its current version.
+    other = _mem("m9", version=42)
+    assert (await resolver._assertion_order("o", "ns", [other]))["m9"] == (42, 42)
 
 
 async def test_a_row_with_a_newer_flagged_peer_is_judged_as_itself(row_env: NS) -> None:
