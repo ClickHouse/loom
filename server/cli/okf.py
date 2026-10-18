@@ -73,6 +73,7 @@ _LIVE_FIELDS = [
     "entities",
     "content_sha256",
     "verification",
+    "expires_at",
 ]
 # What memory.list does not return; read with memory.bulk_get.
 _BULK_FIELDS = ["valid_to", "source_class"]
@@ -598,6 +599,7 @@ async def _live_rows(
     (session_id, memory_key), with every field memory.set writes that a read returns."""
     ident = {"org": org, "namespace": args.namespace, "agent": args.agent, "user_id": args.user_id}
     rows: dict[tuple[str, str], dict[str, Any]] = {}
+    now = datetime.now(UTC).replace(tzinfo=None)
     offset = 0
     while True:
         page = await client.post(
@@ -616,6 +618,9 @@ async def _live_rows(
         )
         entries = page.get("entries") or []
         for r in entries:
+            expires = _when(r.get("expires_at"))
+            if isinstance(expires, datetime) and expires <= now:
+                continue  # every read hides it until the sweep runs: write it again
             rows[(str(r.get("session_id") or "-"), str(r["memory_key"]))] = r
         if not page.get("truncated") or not entries:
             break

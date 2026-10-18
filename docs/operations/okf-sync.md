@@ -95,12 +95,13 @@ kubectl create secret generic okf-sync \
   --from-file=public-writer=./public-writer.jwt
 ```
 
-Re-mint before the TTL runs out, with the same `--subject`, and replace the Secret. Prune
-deletes only rows its token's subject wrote, so a token with another subject leaves the
-earlier copies in place (the last line counts them as kept); `loom revoke-token` retires a
-leaked one. Prune compares the writer the server stamped with the token's subject; on a
-server with authentication off no row carries one, so prune deletes nothing and counts
-every candidate as kept.
+Re-mint before the TTL runs out, with the same `--subject` and kind (a service account,
+the default), and replace the Secret. Prune deletes only rows its token's actor wrote
+(`process:<subject>` for a service account, `human:<subject>` for a user token), so a
+token with another subject or kind leaves the earlier copies in place (the last line
+counts them as kept); `loom revoke-token` retires a leaked one. On a server with
+authentication off no row carries an actor, so prune deletes nothing and counts every
+candidate as kept.
 
 - On the public Loom, the job's token is the only writer on the namespace. Its readers
   (a bot in public CI) hold `viewer` tokens.
@@ -117,9 +118,10 @@ them out unless `--include-high`), and a row that becomes `high` is pruned from 
 public side on the next run. The export knows a `high` row by its `sensitivity`, which it
 reads through `memory.bulk_get`, or by the `sensitivity:high` tag `memory.set` and
 `memory.update` add. Against a private Loom whose `memory.bulk_get` does not return
-`sensitivity`, only the tag keeps a row home, and a `high` row without the tag travels. A prune is a tombstone: the value stays restorable for 14
-days and in the public Loom's version history. Content that must leave the public Loom
-goes through [erasure](../features/memory/retention-and-erasure.md).
+`sensitivity`, only the tag keeps a row home, and a `high` row without the tag travels.
+A prune is a tombstone: the value stays restorable for 14 days and in the public Loom's
+version history. Content that must leave the public Loom goes through
+[erasure](../features/memory/retention-and-erasure.md).
 
 ## Network
 

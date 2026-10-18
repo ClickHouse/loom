@@ -705,3 +705,14 @@ def test_conflicts_found_inline_and_by_the_judge_are_counted(
     out = capsys.readouterr().out
     assert "3 written" in out
     assert "1 flagged conflicted, 1 awaiting a conflict verdict" in out
+
+
+def test_a_row_past_its_expiry_is_written_again_and_never_pruned(
+    tmp_path: Path, loom: _FakeLoom
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    for key in ("a", "gone"):
+        loom.rows[("okf-sync", "-", key)]["expires_at"] = "2000-01-01T00:00:00"
+    loom.calls.clear()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
+    assert loom.writes() == ["memory.set"]
