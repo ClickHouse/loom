@@ -364,6 +364,10 @@ class MemoryDeleteInput(_Identity):
     # The key to delete: tried under this identity, then the same user's row under
     # any agent.
     memory_key: str
+    # Version precondition: the `version` memory.get returned. The delete then
+    # looks only under this identity, and keeps a row replaced since that read
+    # (`tombstoned: false`, `reason: "version_changed"`). None = no check.
+    if_version: int | None = None
 
 
 class MemoryUnpinInput(_Identity):
@@ -399,8 +403,11 @@ class MemoryDeleteOutput(BaseModel):
     version: int
     # False when no live row of this key exists in the
     # namespace under ANY identity — already deleted, or never written. The
-    # delete looked past the caller's own (agent, user, session) first.
+    # delete looked past the caller's own (agent, user, session) first; with
+    # `if_version`, only under the caller's identity.
     found: bool = True
+    # "version_changed" when the live row no longer carries `if_version`.
+    reason: str = ""
     # Consolidated summaries built from this row (tag `src:<key>`): retired
     # when none of their sources survive, else downgraded to `conflicted`.
     dependents_tombstoned: int = 0

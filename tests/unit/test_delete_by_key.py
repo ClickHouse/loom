@@ -151,6 +151,41 @@ def test_delete_says_when_no_live_row_exists_anywhere(world, monkeypatch) -> Non
     assert world["ch"].inserts == []
 
 
+def _delete_at(version: int, agent: str = "claude-code") -> Any:
+    from server.memory.api.models_crud import MemoryDeleteInput
+
+    return asyncio.run(
+        hm.handle_memory_delete(
+            MemoryDeleteInput(
+                org="clickhouse",
+                namespace="jdoe",
+                agent=agent,
+                session_id="sess-65187490",
+                memory_key="user_home_location",
+                if_version=version,
+            )
+        )
+    )
+
+
+def test_a_versioned_delete_never_falls_back_to_another_agents_row(world) -> None:
+    out = _delete_at(1, agent="claude-desktop")
+    assert out.tombstoned is False and out.found is False
+    assert [lk[0] for lk in world["lookups"]] == ["claude-desktop"]
+    assert world["ch"].inserts == []
+
+
+def test_a_versioned_delete_keeps_a_row_replaced_since_the_read(world, monkeypatch) -> None:
+    async def _get_by_key(identity: Any, key: str, **kw: Any) -> Any:
+        return world["row"]
+
+    monkeypatch.setattr(memory_repo, "get_by_key", _get_by_key)
+    out = _delete_at(world["row"].version + 1)
+    assert out.tombstoned is False and out.reason == "version_changed"
+    assert world["ch"].inserts == []
+    assert _delete_at(world["row"].version).tombstoned is True
+
+
 def test_every_unaddressed_search_takes_the_home_namespace() -> None:
     """The rule fires whenever the caller named no namespace, not only
     when the saved default fell outside the fan-out list."""

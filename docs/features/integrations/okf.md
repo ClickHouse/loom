@@ -129,9 +129,12 @@ changed or not: a scheduled import passes `--no-evidence`.
 
 Each bundle imported into a namespace with `--prune` needs an `--agent` of its own: prune
 deletes the rows of that agent with an `okf:` trace, written by its token, that the bundle
-lacks. `--prune` refuses a bundle with no concepts, one whose export stopped at its
-`--limit`, and one whose concept files do not hash to the root index's
-`loom.corpus_digest`, so a partial or hand-edited bundle never drives deletes.
+lacks. `--prune` refuses a bundle with no concepts, one whose root index does not carry
+`loom.complete: true` (export writes it only when it read every row, so not after
+`--limit` or from an older release), and one whose concept files do not hash to the root
+index's `loom.corpus_digest`, so a partial or hand-edited bundle never drives deletes.
+Each delete passes `if_version` with the version prune just read, so the server deletes
+that row only, and keeps it if it was rewritten in between.
 Export into an empty directory for a prune: export overwrites concept files but never
 removes the file of a key that left the namespace, so a reused `--out` directory no longer
 matches its digest.

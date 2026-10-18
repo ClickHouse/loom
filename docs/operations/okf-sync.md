@@ -48,14 +48,20 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
 
 ## Guards
 
-- `--prune` refuses a bundle with no concepts, a bundle whose export stopped at its
-  `--limit`, and one whose concept files do not hash to the `loom.corpus_digest` the
-  export wrote into `index.md`. A partial or edited bundle never drives deletes, and
-  neither does one exported into a directory that held an older bundle.
-- Before each delete it reads the row under its own identity again and deletes only while
-  that row is still there under its `--agent` and was written by its own token:
-  `memory.delete` falls back to the same key under another agent when the caller's row is
-  gone, and the agent name alone is the caller's choice.
+- `--prune` refuses a bundle with no concepts, a bundle whose `index.md` does not carry
+  `loom.complete: true` (export writes it only when it read every row: not after
+  `--limit`, and not from an older release), and one whose concept files do not hash to
+  the `loom.corpus_digest` the export wrote into `index.md`. A partial or edited bundle
+  never drives deletes, and neither does one exported into a directory that held an
+  older bundle.
+- Before each delete it reads the row under its own identity again, and goes on only if
+  that row is under its `--agent` and was written by its own token, since the agent name
+  alone is the caller's choice. The delete passes `memory.delete`'s `if_version`, so the
+  server deletes exactly that version under that identity: a row rewritten in between is
+  kept, and the delete never falls back to another agent's row.
+- The target server must have `memory.delete`'s `if_version`. An older one ignores it
+  (and names it in `ignored_args`); the import then reports the delete as failed and exits
+  1. Upgrade the target before scheduling `--prune`.
 - The import runs only when the export exited 0 (`sh -e`), and each run writes its bundle
   to a fresh `emptyDir`, so a bundle left by an earlier run is never imported.
 - `--dry-run` lists what would be written and deleted, after the same checks, and writes

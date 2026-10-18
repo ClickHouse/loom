@@ -534,12 +534,14 @@ WHAT: Tombstone a memory by key (14-day recovery in the dashboard).
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `memory_key` | `str` | required | The key to delete: tried under this identity, then the same user's row under any agent. |
+| `if_version` | `int \| None` | `None` | Version precondition: the `version` memory.get returned. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `tombstoned` | `bool` | True when a live row was found and a tombstone version written over it. |
 | `version` | `int` | Nanosecond version of the tombstone row; when nothing was found, a fresh number that no row carries. |
 | `found` | `bool` | False when no live row of this key exists in the namespace under ANY identity — already deleted, or never written. |
+| `reason` | `str` | "version_changed" when the live row no longer carries `if_version`. |
 | `dependents_tombstoned` | `int` | Consolidated summaries built from this row (tag `src:<key>`): retired when none of their sources survive, else downgraded to `conflicted`. |
 | `dependents_downgraded` | `int` | Summaries built from this row that keep a live source: set to `conflicted`. |
 

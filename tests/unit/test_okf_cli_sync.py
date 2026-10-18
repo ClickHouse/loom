@@ -55,9 +55,11 @@ def _bundle(
     root: Path,
     entries: list[dict[str, Any]],
     edges: list[dict[str, Any]] | None = None,
-    limit: int | None = None,
+    complete: bool = True,
 ) -> Path:
-    files = okf.plan_bundle(entries, namespace="src", exported_at=_NOW, edges=edges, limit=limit)
+    files = okf.plan_bundle(
+        entries, namespace="src", exported_at=_NOW, edges=edges, complete=complete
+    )
     cli_okf._write_bundle(root, files)
     return root
 
@@ -69,12 +71,16 @@ class _FakeLoom:
         self.rows: dict[tuple[str, str, str], dict[str, Any]] = {}  # (agent, session, key)
         self.edges: list[dict[str, Any]] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.version = 0
+        self.older_server = False  # a build that ignores memory.delete's if_version
 
     def put(self, agent: str, key: str, session_id: str = "-", **row: Any) -> None:
+        self.version += 1
         self.rows[(agent, session_id, key)] = {
             "memory_key": key,
             "session_id": session_id,
             "agent": agent,
+            "version": self.version,
             **row,
         }
 
@@ -113,7 +119,13 @@ class _FakeLoom:
                     ((a, r) for (a, _s, k), r in self.rows.items() if k == body["memory_key"]),
                     ("", None),
                 )
-            return {"found": row is not None, "agent": agent, "actor": (row or {}).get("actor")}
+            row = row or {}
+            return {
+                "found": bool(row),
+                "agent": agent,
+                "actor": row.get("actor"),
+                "version": row.get("version"),
+            }
         if op == "memory.verify":
             return {"found": True}
         if op == "memory.export_evidence":
@@ -152,8 +164,17 @@ class _FakeLoom:
             )
             return {"linked": True}
         if op == "memory.delete":
-            gone = self.rows.pop((body["agent"], body["session_id"], body["memory_key"]), None)
-            return {"tombstoned": gone is not None}
+            ident = (body["agent"], body["session_id"], body["memory_key"])
+            if self.older_server:
+                gone = self.rows.pop(ident, None)
+                return {"tombstoned": gone is not None, "ignored_args": ["if_version"]}
+            row = self.rows.get(ident)
+            if row is None:
+                return {"tombstoned": False, "found": False}
+            if row["version"] != body["if_version"]:
+                return {"tombstoned": False, "reason": "version_changed"}
+            del self.rows[ident]
+            return {"tombstoned": True}
         raise AssertionError(op)
 
     async def __aenter__(self) -> _FakeLoom:
@@ -386,8 +407,10 @@ def test_entities_the_target_extracted_are_not_a_change(tmp_path: Path, loom: _F
     assert loom.writes() == []
 
 
-def test_prune_refuses_a_limited_export(tmp_path: Path, loom: _FakeLoom) -> None:
-    root = _bundle(tmp_path / "b", [_entry("a")], limit=1)
+def test_prune_refuses_a_bundle_not_marked_complete(tmp_path: Path, loom: _FakeLoom) -> None:
+    # A --limit export, or one an older release wrote: its digest matches, yet it may hold
+    # only part of the namespace.
+    root = _bundle(tmp_path / "b", [_entry("a")], complete=False)
     assert _run(root, "--prune", "--no-lint") == 2
     assert loom.calls == []
 
@@ -567,16 +590,46 @@ def test_prune_dry_run_skips_and_counts_rows_another_token_wrote(
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune", "--dry-run") == 0
     out = capsys.readouterr().out
     assert "would delete" not in out
-    assert "0 would be pruned (1 kept: written by another token under this --agent)" in out
+    assert "0 would be pruned (1 kept: written by another token under this --agent" in out
 
 
-def test_a_limit_the_export_did_not_reach_is_not_recorded(
+def test_prune_keeps_a_row_replaced_between_its_read_and_the_delete(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    post = loom.post
+
+    async def replace_after_read(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        res = await post(op, body)
+        if op == "memory.get":  # another writer lands between prune's read and delete
+            loom.put("okf-sync", "gone", source_trace="okf:b/x.md", tags=[], actor="human:bob")
+        return res
+
+    loom.post = replace_after_read  # type: ignore[method-assign]
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
+    assert loom.rows[("okf-sync", "-", "gone")]["actor"] == "human:bob"
+    assert "0 pruned (1 kept:" in capsys.readouterr().out
+
+
+def test_prune_against_a_server_without_the_version_check_fails_the_run(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    loom.older_server = True
+    capsys.readouterr()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
+    assert "deleted without the version check" in capsys.readouterr().err
+
+
+def test_only_an_export_that_read_every_row_is_marked_complete(
     tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(cli_okf, "_server_build", lambda _url: "")
     assert _run(_bundle(tmp_path / "b", [_entry("a"), _entry("c")])) == 0
-    assert "limit" not in _export(tmp_path / "all", "--limit", "10")
-    assert _export(tmp_path / "part", "--limit", "1")["limit"] == 1
+    assert _export(tmp_path / "all")["complete"] is True
+    assert _export(tmp_path / "under", "--limit", "10")["complete"] is True
+    assert "complete" not in _export(tmp_path / "part", "--limit", "1")
 
 
 _LIST = ["content_sha256", "memory_type", "source_trace", "tags", "confidence", "entities"]

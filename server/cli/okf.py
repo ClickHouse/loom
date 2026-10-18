@@ -335,7 +335,7 @@ def _plan_export(
     title: str | None,
     include_high: bool,
     server_url: str = "",
-    limit: int | None = None,
+    complete: bool = False,
 ) -> tuple[dict[str, str], list[str], int]:
     """The bundle's files, its orphan concepts, and how many `high` rows stayed
     home. Digests link to the concepts they compressed."""
@@ -347,7 +347,7 @@ def _plan_export(
         title=title,
         edges=edges,
         build_commit=_server_build(server_url),
-        limit=limit,
+        complete=complete,
     )
     orphans = okf.bundle_orphans(files)  # concepts only: evidence files are not concepts
     if chunks or digests:
@@ -406,8 +406,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             title=args.title,
             include_high=bool(args.include_high),
             server_url=args.server_url,
-            # Fewer rows than --limit is the whole namespace, so the bundle is complete.
-            limit=args.limit if args.limit is not None and len(entries) >= args.limit else None,
+            # Fewer rows than --limit is the whole namespace.
+            complete=args.limit is None or len(entries) < args.limit,
         )
         n_concepts = len(entries) - skipped_high
         evidence_note = (
@@ -862,8 +862,11 @@ def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
     declared = str(pointer.get("corpus_digest") or "")
     if not declared:
         return "index.md carries no loom.corpus_digest, so this is not a complete export"
-    if pointer.get("limit") is not None:
-        return f"the export stopped at --limit {pointer['limit']}"
+    if pointer.get("complete") is not True:
+        return (
+            "index.md does not mark the export complete: it stopped at --limit, or an "
+            "older release wrote it; export again"
+        )
     if declared != okf_lint.bundle_digest(files):
         return (
             "the concept files do not match index.md's loom.corpus_digest: a partial or "
@@ -882,7 +885,8 @@ async def _prune(
 ) -> dict[str, int]:
     """memory.delete each row an earlier import wrote whose key has left the bundle. Only
     rows under the import's identity with its source_trace stamp, whose live version this
-    token wrote, qualify, so rows anyone else wrote in the namespace are never touched."""
+    token wrote, qualify, and the delete names that version, so rows anyone else wrote in
+    the namespace are never touched."""
     gone = sorted(
         k
         for k, r in live.items()
@@ -899,9 +903,9 @@ async def _prune(
             "memory_key": key,
         }
         try:
-            # memory.delete falls back to the same key under any agent when ours is gone;
-            # delete only while the row read is still ours.
-            got = await client.post("memory.get", {**ident, "fields": ["agent", "actor"]})
+            got = await client.post(
+                "memory.get", {**ident, "fields": ["agent", "actor", "version"]}
+            )
             if not got.get("found") or got.get("agent") != args.agent:
                 continue
             if got.get("actor") != actor:
@@ -912,12 +916,23 @@ async def _prune(
                 print(f"  would delete {key}{where}")
                 n["pruned"] += 1
                 continue
-            res = await client.post("memory.delete", ident)
+            # The server deletes only the version read above, under this exact identity.
+            res = await client.post("memory.delete", {**ident, "if_version": got["version"]})
         except RuntimeError as e:
             n["prune_failed"] += 1
             print(f"  ✗ prune {key}: {e}", file=sys.stderr)
             continue
-        n["pruned"] += int(bool(res.get("tombstoned")))
+        if "if_version" in res.get("ignored_args", []):
+            n["prune_failed"] += 1
+            print(
+                f"  ✗ prune {key}: deleted without the version check, the server is older "
+                "than this CLI; upgrade it before pruning",
+                file=sys.stderr,
+            )
+        elif res.get("reason") == "version_changed":
+            n["prune_kept"] += 1
+        else:
+            n["pruned"] += int(bool(res.get("tombstoned")))
     return n
 
 
@@ -958,7 +973,10 @@ def _print_import_summary(
     if args.prune:
         notes = []
         if n["prune_kept"]:
-            notes.append(f"{n['prune_kept']} kept: written by another token under this --agent")
+            notes.append(
+                f"{n['prune_kept']} kept: written by another token under this --agent, "
+                "or changed during the run"
+            )
         if n["prune_failed"]:
             notes.append(f"{n['prune_failed']} failed")
         parts.append(f"{n['pruned']}{would} pruned" + (f" ({', '.join(notes)})" if notes else ""))
@@ -1161,8 +1179,9 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="Delete the rows an earlier import wrote (this --agent and token, an okf: "
         "source_trace) whose key is no longer in the bundle. Refuses an empty bundle, "
-        "one whose export stopped at --limit, or one that does not match its "
-        "loom.corpus_digest. With --dry-run, lists the rows it would delete.",
+        "one its export did not mark complete (--limit, or an older release), or one "
+        "that does not match its loom.corpus_digest. With --dry-run, lists the rows it "
+        "would delete.",
     )
     p_imp.set_defaults(func=_cmd_import_okf)
 

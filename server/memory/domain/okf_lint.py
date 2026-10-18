@@ -400,7 +400,7 @@ def _check_indexes(rep: LintReport, files: dict[str, str], concept_paths: list[s
 
 
 def generation_pointer(files: dict[str, str]) -> dict[str, Any]:
-    """The root index.md's `loom` frontmatter (`corpus_digest`, `concepts`, `limit`, ...),
+    """The root index.md's `loom` frontmatter (`corpus_digest`, `concepts`, `complete`, ...),
     or {} when there is none."""
     fm, _b, _h = _frontmatter(files.get("index.md", ""))
     loom = fm.get("loom") if isinstance(fm, dict) else None

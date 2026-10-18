@@ -4036,12 +4036,14 @@ export interface MemoryDeleteInput {
   session_id?: string;
   run_id?: string;
   memory_key: string;
+  if_version?: number | null;
 }
 
 export interface MemoryDeleteOutput {
   tombstoned: boolean;
   version: number;
   found?: boolean;
+  reason?: string;
   dependents_tombstoned?: number;
   dependents_downgraded?: number;
 }

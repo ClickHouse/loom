@@ -10339,6 +10339,7 @@ class MemoryDeleteInput(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
+    if_version: NotRequired[Optional[int]]
 
 
 class MemoryDeleteBody(TypedDict, total=False):
@@ -10349,6 +10350,7 @@ class MemoryDeleteBody(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
+    if_version: NotRequired[Optional[int]]
 
 
 class MemoryDeleteOutput(TypedDict, total=False):
@@ -10357,6 +10359,7 @@ class MemoryDeleteOutput(TypedDict, total=False):
     tombstoned: Required[bool]
     version: Required[int]
     found: NotRequired[bool]
+    reason: NotRequired[str]
     dependents_tombstoned: NotRequired[int]
     dependents_downgraded: NotRequired[int]
 

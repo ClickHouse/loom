@@ -609,7 +609,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
         existing = await memory_repo.get_by_key(
             identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
-    if existing is None and identity.agent != "*":
+    if existing is None and identity.agent != "*" and input.if_version is None:
         # A delete names a key, not the identity that wrote it (hooks write under their own
         # agent/session; a chat client deleting the key holds another), and an exact-identity
         # miss would read as success. Look namespace-wide.
@@ -628,6 +628,10 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     if existing is None:
         # Idempotent: deleting a non-existent row is a no-op — and says so.
         return MemoryDeleteOutput(tombstoned=False, found=False, version=next_version())
+    if input.if_version is not None and int(existing.version or 0) != input.if_version:
+        return MemoryDeleteOutput(
+            tombstoned=False, version=next_version(), reason="version_changed"
+        )
     _lock.assert_unlocked(existing, "delete", op="memory.delete")
     assert_own_row(existing, op="memory.delete")
 
