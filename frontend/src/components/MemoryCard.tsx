@@ -155,7 +155,7 @@ export const MemoryCard = memo(function MemoryCard({
           // Named by its key; its state, writer, time and value are its description.
           aria-label={entry.memory_key}
           aria-describedby={`${id}-meta ${id}-value`}
-          className="block min-w-0 flex-1 text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+          className="list-row-open block min-w-0 flex-1"
         >
           {/* Line 1: what it is, its state, who wrote it and when. */}
           <span id={`${id}-meta`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">

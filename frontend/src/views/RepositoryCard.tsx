@@ -773,7 +773,7 @@ export function RepositoryCard({
 
   return (
     <section aria-label={card.repo}>
-      <ListRow className="repo-row">
+      <ListRow>
         <div className="relative flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
@@ -786,7 +786,7 @@ export function RepositoryCard({
                   onClick={() => setOpen((v) => !v)}
                   aria-expanded={open}
                   aria-controls={open ? bodyId : undefined}
-                  className="text-left break-words bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+                  className="list-row-open break-words"
                 >
                   {card.repo}
                 </button>

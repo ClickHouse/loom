@@ -93,7 +93,7 @@ const countsOf = (counts: Map<string, RailCounts> | null, inbox: string) =>
 
 export function InboxRail({ inboxes, counts, picked, onPick }: Props) {
   return (
-    <div className="tq-rail">
+    <div>
       <h2 id="tq-rail-inboxes" className="section-label mb-1.5 ml-2">
         Inboxes
       </h2>

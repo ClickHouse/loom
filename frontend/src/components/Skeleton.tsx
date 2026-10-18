@@ -28,6 +28,20 @@ export function SkeletonCard() {
   );
 }
 
+/** A list row's placeholder: ui/ListRow's frame at the height its list's rows measure
+ *  (styles.css), so the list does not move when the rows land. `row` is a two-line row (a
+ *  thread, a space, a run, a repository, a profile section). */
+export function RowSkeleton({ kind = "row" }: { kind?: "row" | "document" | "memory" }) {
+  return (
+    <div className="list-row list-row-skeleton" data-kind={kind}>
+      <div className="w-full space-y-2">
+        <Skeleton className="h-4 w-3/4" />
+        <Skeleton className="h-3 w-1/2" />
+      </div>
+    </div>
+  );
+}
+
 /** A Click UI Table's first read, as its `noDataMessage`: the header row stays in place
  *  over rows of bars, shown after 300 ms like every loader (`ui/LoadingSkeleton`). Click
  *  UI's own `loading` shows its loader at once, so a fast answer would flash it. */

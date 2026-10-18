@@ -30,7 +30,7 @@ import { EmptyState } from "../components/EmptyState";
 import { IconButton } from "../components/IconButton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { Skeleton, SkeletonCard } from "../components/Skeleton";
+import { RowSkeleton, Skeleton, SkeletonCard } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
@@ -659,9 +659,9 @@ function RepositoriesHome({
       {repos === null && !error && (
         <LoadingSkeleton label="Loading repositories">
           <div className="space-y-2">
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
+            <RowSkeleton />
+            <RowSkeleton />
+            <RowSkeleton />
           </div>
         </LoadingSkeleton>
       )}

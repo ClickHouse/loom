@@ -17,7 +17,7 @@ import {
   type Identity,
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
-import { Skeleton } from "../components/Skeleton";
+import { RowSkeleton } from "../components/Skeleton";
 import { fmtInt, humanizeError, relativeTime } from "../lib/format";
 import { useVisiblePoll } from "../lib/hooks";
 import { toast } from "../components/Toast";
@@ -254,9 +254,9 @@ export function Profile() {
           )}
           {entries === null && !error && (
             <LoadingSkeleton label="Loading the profile" className="space-y-2">
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
+              <RowSkeleton />
+              <RowSkeleton />
+              <RowSkeleton />
             </LoadingSkeleton>
           )}
           {!!error && (
@@ -656,7 +656,7 @@ const SectionRow = memo(function SectionRow({
         onClick={() => onOpen(section.label)}
         // Named as the section it opens; the text it shows is read in the dialog.
         aria-label={section.label}
-        className="block min-w-0 flex-1 text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+        className="list-row-open block min-w-0 flex-1"
       >
         {/* Line 1: the section and how full it is; right, who last wrote it and when. */}
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">

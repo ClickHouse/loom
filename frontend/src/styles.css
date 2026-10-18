@@ -1220,14 +1220,15 @@ textarea[aria-invalid="true"]:focus-visible {
   scroll-padding-top: 56px;
 }
 
-/* ui/ListRow: a Memories, Library or Conversations row on Click UI's CardHorizontal
-   tokens. Hover tints the background (the stroke stays, as in Click UI); the open row
-   takes the active stroke; a checked row the tint Click UI's Table gives a selected row. */
+/* ui/ListRow: a list page's row on Click UI's CardHorizontal md tokens (CardHorizontal's one
+   body block cannot hold a checkbox, a stretched button and chips side by side). Hover
+   tints the background (the stroke stays, as in Click UI); the open row takes the active
+   stroke; a checked row Click UI's Table row tint, its checkbox carrying the state. */
 .list-row {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: var(--click-card-horizontal-space-sm-gap);
+  gap: var(--click-card-horizontal-space-md-gap);
   padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
   border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
   border-radius: var(--click-card-horizontal-radii-all);
@@ -1238,11 +1239,38 @@ textarea[aria-invalid="true"]:focus-visible {
   content-visibility: auto;
   contain-intrinsic-size: auto 76px;
 }
+
+/* A row's open button: plain text whose click target stretches over the whole row, under
+   the row's other controls (which sit above it, relative z-[1]). useRowNav finds it by
+   data-row-open; the layout around it is the page's. */
+.list-row-open {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.list-row-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
 .list-row[data-doc-row] {
   contain-intrinsic-size: auto 101px;
 }
 .list-row[data-card] {
   contain-intrinsic-size: auto 129px;
+}
+/* ui/RowSkeleton: the same heights, so a list's rows land without moving it. */
+.list-row-skeleton {
+  height: 76px;
+  pointer-events: none;
+}
+.list-row-skeleton[data-kind="document"] {
+  height: 101px;
+}
+.list-row-skeleton[data-kind="memory"] {
+  height: 129px;
 }
 .list-row:hover {
   background: var(--click-card-horizontal-default-color-background-hover);

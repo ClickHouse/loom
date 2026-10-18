@@ -15,7 +15,7 @@ import {
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
-import { Skeleton } from "../components/Skeleton";
+import { RowSkeleton, Skeleton } from "../components/Skeleton";
 import { ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
 import { ListPager } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
@@ -386,7 +386,7 @@ export function Conversations() {
                   type="button"
                   data-row-open=""
                   onClick={() => openThreadDialog(t.thread_id, { knownTitle: title || UNTITLED_THREAD })}
-                  className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+                  className="list-row-open block w-full"
                 >
                   {/* Line 1: the thread; right, when it was last active. */}
                   <span className="flex items-baseline gap-3">
@@ -529,9 +529,9 @@ export function Conversations() {
       )}
       {!busy && hits === null && searchError === null && threads === null && (
         <LoadingSkeleton label="Loading threads" className="space-y-2">
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
+          <RowSkeleton />
+          <RowSkeleton />
+          <RowSkeleton />
         </LoadingSkeleton>
       )}
 
@@ -600,7 +600,7 @@ export function Conversations() {
                     knownTitle: g.title || UNTITLED_THREAD,
                   })
                 }
-                className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+                className="list-row-open block w-full"
               >
                 <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span

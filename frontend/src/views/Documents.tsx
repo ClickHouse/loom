@@ -18,7 +18,7 @@ import {
   type InlinePreview,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
-import { SkeletonCard } from "../components/Skeleton";
+import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
@@ -639,9 +639,9 @@ export function Documents() {
 
       {rows === null && (
         <LoadingSkeleton label="Loading documents" className="space-y-2">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
+          <RowSkeleton kind="document" />
+          <RowSkeleton kind="document" />
+          <RowSkeleton kind="document" />
         </LoadingSkeleton>
       )}
 
@@ -700,7 +700,7 @@ export function Documents() {
                       type="button"
                       data-row-open=""
                       onClick={() => (selected.size > 0 ? selection.toggle(r.source_uri) : onOpen(r))}
-                      className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+                      className="list-row-open block w-full"
                       aria-label={`Preview ${name}`}
                     >
                       {/* Line 1: the document and its state; right, how much is indexed and when. */}

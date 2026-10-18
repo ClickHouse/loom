@@ -19,7 +19,7 @@ import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
-import { SkeletonCard } from "../components/Skeleton";
+import { RowSkeleton } from "../components/Skeleton";
 import { Alert, ListRow, LoadingSkeleton, PageHeader, Panel, SectionHeading, Tip } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
@@ -356,9 +356,9 @@ export function Browse() {
           {rows === null && error === null && (
             <LoadingSkeleton label="Loading namespaces">
               <div className="space-y-2">
-                <SkeletonCard />
-                <SkeletonCard />
-                <SkeletonCard />
+                <RowSkeleton />
+                <RowSkeleton />
+                <RowSkeleton />
               </div>
             </LoadingSkeleton>
           )}
@@ -526,7 +526,7 @@ function SpaceRow({
               type="button"
               data-row-open=""
               onClick={onOpen}
-              className="min-w-0 break-all text-left font-mono text-sm text-text bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
+              className="list-row-open min-w-0 break-all font-mono text-sm text-text"
             >
               {namespace}
             </button>

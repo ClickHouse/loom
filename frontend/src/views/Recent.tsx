@@ -28,7 +28,7 @@ import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar } from "../components/ui/ListToolbar";
-import { SkeletonCard } from "../components/Skeleton";
+import { RowSkeleton } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { dayLabel, displayAgent, humanizeError, SENTINEL_AGENTS } from "../lib/format";
@@ -1092,9 +1092,9 @@ function MemoryList() {
 
       {entries === null && (
         <LoadingSkeleton label="Loading memories" className="space-y-2">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
+          <RowSkeleton kind="memory" />
+          <RowSkeleton kind="memory" />
+          <RowSkeleton kind="memory" />
         </LoadingSkeleton>
       )}
 

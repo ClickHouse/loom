@@ -34,7 +34,7 @@ import {
 import { IconButton } from "../components/IconButton";
 import { MenuChoice, MenuChoiceGroup } from "../components/MenuChoice";
 import { MenuTrigger } from "../components/ui/Menu";
-import { SkeletonCard, TableSkeleton } from "../components/Skeleton";
+import { RowSkeleton, TableSkeleton } from "../components/Skeleton";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { displayAgent, listTime, parseChTime, relativeTime, truncate } from "../lib/format";
 import { useRowNav } from "../lib/useRowNav";
@@ -467,13 +467,13 @@ function RunRows({ label, rows, onOpen, busy, keys }: RunListProps & { keys: boo
         const inferred = metaBool(r.metadata, "implicit");
         return (
           <li key={r.run_id}>
-            <ListRow className="runs-row">
+            <ListRow>
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   type="button"
                   data-row-open=""
                   onClick={() => onOpen(r)}
-                  className={`min-w-0 flex-1 truncate text-left text-sm font-medium cursor-pointer after:absolute after:inset-0 after:content-[''] ${
+                  className={`list-row-open min-w-0 flex-1 truncate text-sm font-medium ${
                     hasNoMemoryActivity(r) ? "text-text-muted" : "text-text"
                   }`}
                 >
@@ -881,9 +881,9 @@ export function Runs() {
         shown === null &&
         (narrow ? (
           <LoadingSkeleton label="Loading runs" className="space-y-2">
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
+            <RowSkeleton />
+            <RowSkeleton />
+            <RowSkeleton />
           </LoadingSkeleton>
         ) : (
           <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} loading />

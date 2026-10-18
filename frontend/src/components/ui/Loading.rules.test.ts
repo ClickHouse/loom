@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 // The loading rule (docs/development/dashboard-design.md): a skeleton is always inside a
 // `LoadingSkeleton`, which names it for a screen reader and holds it back 300 ms. A file that
-// renders `Skeleton`, `SkeletonCard` or `SkeletonText` has each one inside a `LoadingSkeleton`.
+// renders `Skeleton`, `RowSkeleton`, `SkeletonCard` or `SkeletonText` has each one inside a `LoadingSkeleton`.
 
 const SOURCES = import.meta.glob<string>(["../../**/*.tsx", "!../../**/*.test.tsx"], {
   query: "?raw",
@@ -21,7 +21,7 @@ describe("skeletons", () => {
     const bare = Object.entries(SOURCES)
       .filter(([path]) => !ALLOWED.has(path))
       .flatMap(([path, text]) =>
-        [...text.matchAll(/<Skeleton(Card|Text)?[\s/>]/g)]
+        [...text.matchAll(/<(Row)?Skeleton(Card|Text)?[\s/>]/g)]
           .filter((m) => !inside(text, m.index ?? 0))
           .map((m) => `${path}:${text.slice(0, m.index).split("\n").length}`),
       );
