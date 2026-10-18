@@ -482,3 +482,24 @@ def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> N
     assert all(f"turn {i}" in prompt for i in range(1, 4))
     [summary] = fake.inserted
     assert json.loads(summary["metadata"])["compacted_from"] == ["compact-1", "m1", "m2", "m3"]
+
+
+@pytest.mark.parametrize(
+    ("lines", "folded", "expected"),
+    [
+        # Plain turns: as many as fit the budget.
+        (["user: a", "user: b"], [False, False], (2, ch_mod._COMPACT_TRANSCRIPT_CHARS)),
+        # A summary is free and the window reaches the turn behind it, whole.
+        (
+            ["system: " + "s" * 100, "user: " + "x" * 15_990],
+            [True, False],
+            (2, ch_mod._COMPACT_TRANSCRIPT_CHARS + 108),
+        ),
+        # A summary past the allowance costs budget; one that fills it leaves no turn.
+        (["system: " + "s" * 20_000, "user: a"], [True, False], None),
+    ],
+)
+def test_the_compaction_window(
+    lines: list[str], folded: list[bool], expected: tuple[int, int] | None
+) -> None:
+    assert ch_mod._compaction_window(lines, folded) == expected

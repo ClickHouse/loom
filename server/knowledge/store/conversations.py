@@ -13,7 +13,7 @@ from typing import Any, NotRequired, TypedDict, cast
 from pydantic import BaseModel, ConfigDict
 
 from server.core.repo_base import _CHClient, _default_client
-from server.knowledge.domain.conversations import ConversationRole
+from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
 
 
 class MessageRow(BaseModel):
@@ -734,9 +734,6 @@ async def tombstone_messages(
         },
     )
 
-
-# Characters of a turn its embedding is built from, which the embedding row keeps.
-EMBEDDED_EXCERPT_CHARS = 2048
 
 # Embedding rows (one per turn per model) per tombstone mutation. A whole-thread delete
 # has no cap on its rows, so its list goes in chunks, one synchronous mutation each: a

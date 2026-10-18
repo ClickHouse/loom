@@ -47,7 +47,7 @@ from server.knowledge.app.conversation_search import (
     ConversationVectorQuery,
     vector_search,
 )
-from server.knowledge.store.conversations import EMBEDDED_EXCERPT_CHARS
+from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
@@ -177,7 +177,7 @@ async def handle_conversation_append(
             msg_id=msg_id,
         ),
     )
-    await _store_embedding(msg_row, embedded)
+    await _store_embedding(msg_row, embedded, ts=now)
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
 
@@ -217,13 +217,12 @@ async def _embed_turn(
         return EmbeddedTurn(excerpt, [], 0, embedder.model_name, f"{type(e).__name__}: {e}")
 
 
-async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
+async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn, *, ts: datetime) -> None:
     """Store the embedding row of message `msg` from `_embed_turn`'s result, so the two
     rows carry one identity, user and time. A failed embed is stored too, with the
     dead-letter columns recording the error."""
     from server.knowledge.store import conversations as conversation_repo
 
-    assert msg.ts is not None  # both callers set it: the two rows carry one time
     embedding_row: ConversationEmbeddingRow = {
         "org": msg.org,
         "namespace": msg.namespace,
@@ -242,7 +241,7 @@ async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
         "embed_attempts": 1 if embedded.dim > 0 else 0,
         "embed_last_error": embedded.error,
         "embed_failed_at": naive_utc_now() if embedded.error else None,
-        "ts": msg.ts,
+        "ts": ts,  # the message row's time
     }
     with traced("ch.insert.conversation_embedding", embedded=embedded.dim > 0):
         await conversation_repo.insert_embedding(embedding_row)
@@ -681,6 +680,36 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
     return len(lines)
 
 
+def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, int] | None:
+    """`(fit, cap)` for a compaction: how many leading candidate lines the summary
+    replaces, and the transcript's character cap. None when no new turn fits.
+
+    The window is the oldest turns whose lines fit `_COMPACT_TRANSCRIPT_CHARS`; a turn
+    past it stays live. Leading summaries (`folded`), up to `_FOLDED_SUMMARY_CHARS`
+    together, cost no budget, and the window always reaches the first line past them;
+    a summary beyond that allowance (a client can write a system turn naming
+    `compacted_from`) costs like any turn. A window holding no new turn compacts
+    nothing: widening it would cut a turn the summarizer never read."""
+    free = [False] * len(lines)
+    allowance = _FOLDED_SUMMARY_CHARS
+    for i, (line, f) in enumerate(zip(lines, folded, strict=True)):
+        if not f or len(line) > allowance:
+            break
+        free[i], allowance = True, allowance - len(line)
+    fit = _fitting_prefix(
+        ["" if f else line for line, f in zip(lines, free, strict=True)],
+        _COMPACT_TRANSCRIPT_CHARS,
+    )
+    fit = max(fit, free.index(False) + 1)
+    if not folded[:fit].count(False):
+        return None
+    # The fit counted each free line's newline; the cap adds back only its text.
+    cap = _COMPACT_TRANSCRIPT_CHARS + sum(
+        len(line) for line, f in zip(lines[:fit], free[:fit], strict=True) if f
+    )
+    return fit, cap
+
+
 def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
     """A system turn conversation.compact wrote: its metadata names what it replaced."""
     if row.get("role") != "system":
@@ -738,37 +767,17 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="below-min-to-compact",
         )
 
-    # The window is the oldest turns whose lines fit the prompt; a turn past the cap stays
-    # live. Leading summaries, up to `_FOLDED_SUMMARY_CHARS` together, cost no budget, and
-    # the window always reaches the first line past them; a summary beyond that allowance
-    # (a client can write a system turn naming `compacted_from`) costs like any turn.
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
-    free = [False] * len(lines)
-    allowance = _FOLDED_SUMMARY_CHARS
-    for i, (line, f) in enumerate(zip(lines, folded, strict=True)):
-        if not f or len(line) > allowance:
-            break
-        free[i], allowance = True, allowance - len(line)
-    fit = _fitting_prefix(
-        ["" if f else line for line, f in zip(lines, free, strict=True)],
-        _COMPACT_TRANSCRIPT_CHARS,
-    )
-    fit = max(fit, free.index(False) + 1)
-    # A summary past the allowance can fill the prompt by itself; a window with no new
-    # turn in it has nothing to compact (widening it would cut a turn the summarizer
-    # never read).
-    if not folded[:fit].count(False):
+    window = _compaction_window(lines, folded)
+    if window is None:
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
             reason="below-min-to-compact",
         )
+    fit, cap = window
     candidates = candidates[:fit]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
-    # The fit counted each free line's newline; the cap adds back only its text.
-    cap = _COMPACT_TRANSCRIPT_CHARS + sum(
-        len(line) for line, f in zip(lines[:fit], free[:fit], strict=True) if f
-    )
     transcript = "\n".join(lines[:fit])[:cap]
 
     llm = get_llm_client()
@@ -849,7 +858,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         ts=earliest_ts,
     )
     await conversation_repo.append(summary)
-    await _store_embedding(summary, embedded)
+    await _store_embedding(summary, embedded, ts=earliest_ts)
     await conversation_repo.tombstone_messages(
         input.org,
         input.namespace,

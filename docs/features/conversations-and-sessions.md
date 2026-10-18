@@ -79,9 +79,10 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   be embedded compacts nothing (`reason: "embed-failed"`).
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
-  logged in the thread keeps its embedding while that agent's copy is live, since the
-  two copies share one embedding row. For a person's or a namespace's data everywhere,
-  use [`erasure.request`](./memory/retention-and-erasure.md).
+  logged in the thread keeps its embedding while that agent holds a live copy with the
+  same text, since the two copies share one embedding row. For a person's or a
+  namespace's data everywhere, use
+  [`erasure.request`](./memory/retention-and-erasure.md).
 
 Tombstoned turns are filtered from every read. They are removed from disk only if the
 operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever).
