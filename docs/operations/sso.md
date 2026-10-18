@@ -440,8 +440,9 @@ filters served are `userName eq "<userName>"` and, on the email,
 `GET /Users`, `GET /Users/{id}` and `GET /ServiceProviderConfig` answer as
 RFC 7644 says, and `GET /Groups` answers an empty list.
 
-Turning SCIM off (`LOOM_SCIM_TOKEN` empty) stops refusing sign-in by email,
-and nothing reactivates anyone any more. The revocations stand: a deactivated
+Turning SCIM off (`LOOM_SCIM_TOKEN` empty) unmounts `/scim/v2`, so nothing
+deactivates or reactivates anyone any more, and leaves everyone as they are:
+SSO sign-in with a deactivated email is still refused, and a deactivated
 person's subjects stay revoked, new tokens included, until an operator lifts
 each with `loom revoke-token --subject <it> --issued-before <now> --scim`.
 Reactivate at the provider first anyone who should keep Loom.

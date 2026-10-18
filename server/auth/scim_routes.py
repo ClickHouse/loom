@@ -189,6 +189,8 @@ def patched_names(
     for op in body["Operations"]:
         pairs = _attributes(op)  # refuses an operation that is not an object
         kind = str(op.get("op") or "").lower()
+        if kind not in ("add", "remove", "replace"):
+            raise ScimError(400, "op must be add, remove or replace", "invalidSyntax")
         for attr, value in pairs:
             if attr == "username":
                 if kind == "remove":
@@ -314,10 +316,14 @@ def _rank(entry: dict[str, Any]) -> int:
     return 1 if str(entry.get("type") or "").lower() == "work" else 0
 
 
+def _nonempty(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def keyed_entry(emails: Any) -> dict[str, Any] | None:
     """The entry of a SCIM `emails` list Loom keys on (`_rank`), or None."""
     entries = (
-        [e for e in emails if isinstance(e, dict) and isinstance(e.get("value"), str)]
+        [e for e in emails if isinstance(e, dict) and _nonempty(e.get("value"))]
         if isinstance(emails, list)
         else []
     )
@@ -487,8 +493,8 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
         name, entry = patched_names(body, row)
         if entry is not None:
             _refuse_another_email(row, str(entry.get("value") or row["email"]))
-        elif name is not None and _email_from_user_name(row):
-            _refuse_another_email(row, name)
+        elif name is not None and row["email_from_user_name"]:
+            _refuse_another_email(row, name)  # the email is the userName
         # Every PATCH converges, one of only dropped attributes too: an active
         # user lets go what no deactivated email reaches any more.
         row = await _update(uid, active, name, entry) or row
@@ -517,15 +523,6 @@ async def _update(
         return await scim.update(uid, active=active, user_name=name, email_entry=entry)
     except scim.Exists:
         raise ScimError(409, "another user has this userName", "uniqueness") from None
-
-
-def _email_from_user_name(row: dict[str, Any]) -> bool:
-    """Whether the email came from the userName: no emails entry was kept for it."""
-    return (
-        not row["email_type"]
-        and not row["email_primary"]
-        and scim.normalized(row["user_name"]) == row["email"]
-    )
 
 
 def _refuse_another_email(row: dict[str, Any], email: str) -> None:

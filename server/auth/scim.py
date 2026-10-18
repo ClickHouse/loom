@@ -31,7 +31,7 @@ around a deactivation's revocations or a reactivation's lifts and the row they
 belong with. Only users sharing a subject wait on each other (and an
 operator's `--scim` narrowing of one). Each step is idempotent, so a
 provider's retry of a half-done one finishes it. With `LOOM_SCIM_TOKEN` empty
-nothing here is read.
+the routes are not mounted, and a sign-in still reads its email's row.
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ from typing import Any
 from server.auth import login, revocation, service_accounts
 from server.core import leases
 from server.core.ch import get_client, own_write_reads
+from server.core.grant_sql import LIVE_GRANT
 from server.core.versions import next_version
 from server.observability import audit
 from server.settings import settings
@@ -61,6 +62,7 @@ COLUMNS = (
     "email",
     "email_type",
     "email_primary",
+    "email_from_user_name",
     "active",
     "deleted",
     "subjects",
@@ -134,11 +136,10 @@ async def page(start: int, count: int) -> tuple[int, list[dict[str, Any]]]:
 
 
 async def deactivated(email: str) -> bool:
-    """Whether SCIM has deactivated `email`, deleted users included; never
-    while SCIM is off. Raises `SignInUnavailable` when it cannot read: a
-    sign-in must not pass unchecked."""
-    if not tokens(settings.scim_token):
-        return False
+    """Whether SCIM has deactivated `email`, deleted users included, also once
+    SCIM is turned off: a deactivated email with no account has no revocation,
+    only this row, to keep it out. Raises `SignInUnavailable` when it cannot
+    read: a sign-in must not pass unchecked."""
     try:
         with own_write_reads():  # a deactivation may have landed a moment ago elsewhere
             row = await get_client().query_one(
@@ -167,6 +168,7 @@ async def create(
                 "email": normalized(email),
                 "email_type": "",
                 "email_primary": 0,
+                "email_from_user_name": 0,
                 "active": 1,
                 "deleted": 0,
                 "subjects": [],
@@ -228,11 +230,13 @@ def _note_another_name(uid: str, user_name: str, email: str) -> None:
 
 
 def _entry(email_entry: dict[str, Any] | None) -> dict[str, Any]:
+    """The columns that say where the email came from; `{}` (no entry) is the userName."""
     if email_entry is None:
         return {}
     return {
         "email_type": str(email_entry.get("type") or "").lower(),
         "email_primary": int(is_primary(email_entry.get("primary"))),
+        "email_from_user_name": int(not email_entry),
     }
 
 
@@ -328,38 +332,45 @@ async def _set_active(
     row: dict[str, Any], active: bool | None, **changes: Any
 ) -> tuple[dict[str, Any], datetime | None]:
     """The row as written, and a reactivation's cutoff for the caller to wait
-    out once it lets its leases go. `active` None leaves it as it is."""
-    if active is None and row["active"]:  # it finishes a failed lift, but waits on none
-        new, _ = await _converge_active(row, **changes)
-        return new, None
-    if active:
-        return await _converge_active(row, **changes)
-    new = {**row, **changes, "active": 0}
-    found = await _subjects(row["email"])
-    known = set(row["subjects"])
-    async with subject_leases([*known, *found]):
-        # Going inactive revokes, and records, what the email reaches now: an
-        # account an operator has since moved to another email is that person's.
-        if row["active"]:
-            new["subjects"] = subjects = sorted(found)
-        else:
-            # A repeat also re-revokes what a reactivation let go while out of
-            # reach; an operator's give-back of a subject this user knew stays.
-            new["subjects"] = sorted(known | set(found))
-            rows = await revocation.scim_revocations(sorted(found))
-            given_back = {s for s in known if s in rows and rows[s]["revoked_by"] != _BY}
-            subjects = sorted(set(found) - _outright(rows) - given_back)
-        for subject in subjects:
-            await revocation.scim_revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)
-            await _flag_collateral(new["id"], subject, found.get(subject, set()))
-        await _write_audited(row, new)
-    # The snapshot re-read each revocation would make, once and past the leases.
-    await revocation.refresh()
-    if set(await _subjects(row["email"])) - set(new["subjects"]):
+    out once it lets its leases go. `active` None keeps the user as they are:
+    an active one converges (and waits on none), an inactive one repeats its
+    deactivation."""
+    if active or (active is None and row["active"]):
+        new, cutoff = await _converge_active(row, **changes)
+        return new, cutoff if active else None
+    return await _deactivate(row, **changes), None
+
+
+async def _deactivate(row: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    while True:
+        new = {**row, **changes, "active": 0}
+        found = await _subjects(row["email"])
+        known = set(row["subjects"])
+        async with subject_leases([*known, *found]):
+            # Going inactive revokes, and records, what the email reaches now: an
+            # account an operator has since moved to another email is that person's.
+            if row["active"]:
+                new["subjects"] = subjects = sorted(found)
+            else:
+                # A repeat also re-revokes what a reactivation let go while out of
+                # reach; an operator's give-back of a subject this user knew stays.
+                new["subjects"] = sorted(known | set(found))
+                rows = await revocation.scim_revocations(sorted(found))
+                given_back = {s for s in known if s in rows and rows[s]["revoked_by"] != _BY}
+                subjects = sorted(set(found) - _outright(rows) - given_back)
+            for subject in subjects:
+                await revocation.scim_revoke(
+                    subject, reason=DEACTIVATED, revoked_by=_BY, reread=False
+                )
+                await _flag_collateral(new["id"], subject, found.get(subject, set()))
+            await _write_audited(row, new)
+        # The snapshot re-read each revocation would make, once and past the leases.
+        await revocation.refresh()
+        if not set(await _subjects(row["email"])) - set(new["subjects"]):
+            return new
         # An account made before the row said inactive (a first sign-in's JIT):
         # revoke it too, with the sessions and tokens it made meanwhile.
-        new, _ = await _set_active(new, False)
-    return new, None
+        row, changes = new, {}
 
 
 async def _converge_active(
@@ -461,8 +472,6 @@ async def _flag_collateral(uid: str, subject: str, orgs: set[str]) -> None:
 
 async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
     """The orgs other than `orgs` where `subject` owns an account or holds a grant."""
-    from server.core.grant_sql import LIVE_GRANT
-
     rows = await get_client().query_all(
         f"""
         SELECT DISTINCT org FROM (

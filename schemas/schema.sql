@@ -3114,6 +3114,7 @@ CREATE TABLE IF NOT EXISTS loom.scim_users
     `email` String,
     `email_type` String,
     `email_primary` UInt8,
+    `email_from_user_name` UInt8,
     `active` UInt8,
     `deleted` UInt8,
     `subjects` Array(String),

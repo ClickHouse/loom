@@ -1085,10 +1085,11 @@ async def test_an_email_with_no_account_is_refused_by_email(world) -> None:
     assert world.ours == {"u-new": None}
 
 
-async def test_nothing_is_refused_once_scim_is_off(world, monkeypatch) -> None:
+async def test_a_deactivated_email_stays_refused_once_scim_is_off(world, monkeypatch) -> None:
+    # It reaches no account, so its row is all that keeps it out.
     await _create("lee@example.com", active=False)
     monkeypatch.setattr(settings, "scim_token", "")
-    assert not await _DEACTIVATED("lee@example.com")
+    assert await _DEACTIVATED("lee@example.com")
 
 
 async def test_a_deleted_user_is_gone_but_stays_deactivated(world) -> None:
@@ -1375,6 +1376,36 @@ def test_a_sub_attribute_of_an_email_changes_no_address() -> None:
     op = {"op": "replace", "path": 'emails[type eq "work"].primary', "value": True}
     _, entry = patched_names({"Operations": [op]}, _WORK_ROW)
     assert entry is not None and entry["value"] == "lee@example.com"
+
+
+def test_where_the_email_came_from_decides_whether_a_rename_may_change_it(
+    client: TestClient, world
+) -> None:
+    # An entry with no type or primary flag still gave the email: renaming is fine.
+    plain = {"userName": "a@example.com", "emails": [{"value": "a@example.com"}]}
+    uid = client.post("/scim/v2/Users", json=plain).json()["id"]
+    rename = {"Operations": [{"op": "replace", "path": "userName", "value": "a.new@example.com"}]}
+    assert client.patch(f"/scim/v2/Users/{uid}", json=rename).status_code == 200
+    # An empty entry gives nothing: the email is the userName, which cannot change.
+    empty = {"userName": "b@example.com", "emails": [{"value": "", "type": "work"}]}
+    uid = client.post("/scim/v2/Users", json=empty).json()["id"]
+    rename = {"Operations": [{"op": "replace", "path": "userName", "value": "b.new@example.com"}]}
+    r = client.patch(f"/scim/v2/Users/{uid}", json=rename)
+    assert r.status_code == 400 and r.json()["scimType"] == "mutability"
+
+
+def test_an_unknown_op_is_refused_and_a_disable_beside_it_still_lands(
+    client: TestClient, world
+) -> None:
+    world.person("lee@example.com", "lee")
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    ops = [
+        {"op": "bogus", "path": "userName", "value": "x@example.com"},
+        {"op": "Replace", "path": "active", "value": "False"},
+    ]
+    r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidSyntax"
+    assert world.ours == {"lee": None}  # fails closed
 
 
 def test_a_username_rename_beside_an_emails_entry_is_kept(client: TestClient, world) -> None:
