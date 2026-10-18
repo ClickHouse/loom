@@ -181,6 +181,9 @@ const EMPTY_LANE: Record<Group, string> = {
   closed: "Nothing closed yet.",
 };
 
+/** What an empty group says under a filter: the group may hold tasks the filter hides. */
+export const NO_MATCH = "None match the filters.";
+
 /** The controls inside a row (its buttons, its link, its time) leave the tab order with
  *  it: the grid is one tab stop, and Left / Right reach them. */
 const IN_ROW = '[role="row"][data-task-id] :is(a[href], button, [tabindex="0"])';
@@ -315,7 +318,7 @@ export function TaskList({ groups, ctx, collapsed, onToggle, forceOpen }: ListPr
                 {rows.length === 0 ? (
                   <div role="row">
                     <div role="gridcell" className="px-3.5 py-3.5 text-sm text-text-muted">
-                      {EMPTY_LANE[g]}
+                      {forceOpen && (g === "triage" || g === "closed") ? NO_MATCH : EMPTY_LANE[g]}
                     </div>
                   </div>
                 ) : (

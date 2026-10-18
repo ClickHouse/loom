@@ -3,11 +3,12 @@ import * as fs from "node:fs";
 import { violations } from "./axe";
 import { codeReposFixture, installApi, trackerSourcesFixture } from "./fixtures";
 
-// The Memories, Library and Conversations lists against the list rules, in the browser: the
-// chrome over the first row stays inside its budget, the selection takes a range and
-// clears on Escape, a row list is one tab stop whose ring is drawn on the row, a
-// Library row's More menu shows without a hover, and Insights holds the usage audit
-// and the mentor.
+// The list pages (Memories, Library, Conversations, Profile, Spaces, Repositories) against
+// the list rules, in the browser: the chrome over the first row stays inside its budget and
+// the search's placeholder fits, the selection takes a range and clears on Escape, a row
+// list is one tab stop whose ring is drawn on the row, a Library row's More menu shows
+// without a hover, the Profile's sections take a selection, and Insights holds the usage
+// audit and the mentor.
 
 const now = new Date().toISOString();
 const THREADS = Array.from({ length: 6 }, (_, i) => ({

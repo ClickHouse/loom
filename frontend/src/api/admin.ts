@@ -815,7 +815,7 @@ export async function memoryHistory(
 export interface RelatedMemoryRow {
   memory_key: string;
   shared_entities: string[];
-  overlap: number;
+  overlap_count: number;
 }
 
 /** Memories that share entities with this one. */

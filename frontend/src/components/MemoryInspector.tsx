@@ -1851,9 +1851,13 @@ function EntitySummary({
         ) : (
           <>
             <div className="text-xs text-text-muted mb-1">
-              {total === 1
-                ? "Mentioned only in this memory"
-                : `Mentioned in ${mentions.capped ? "more than " : ""}${total} memories`}
+              {/* A cut-off read (rows ranked by all the entities they share) may miss rows
+                  that share only this one: it says "at least", never "only". */}
+              {mentions.capped
+                ? `Mentioned in at least ${total} ${total === 1 ? "memory" : "memories"}`
+                : total === 1
+                  ? "Mentioned only in this memory"
+                  : `Mentioned in ${total} memories`}
             </div>
             {mentions.keys.length > 0 && (
               <ul className="space-y-1">

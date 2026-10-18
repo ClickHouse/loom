@@ -3,6 +3,15 @@ import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import type { TaskStatus } from "../../api/tasks";
 import { GROUP_META, PRIORITY_LABEL, STATUS_META, leaseMinutesLeft, type Group } from "../../lib/tasks";
 import { Tip } from "../../components/ui";
+import { toast } from "../../components/Toast";
+
+/** Copies a task's id, else shows it in a toast to copy by hand. */
+export function copyTaskId(id: string): void {
+  navigator.clipboard
+    ?.writeText(id)
+    .then(() => toast("Task id copied", "ok"))
+    .catch(() => toast(id, "ok"));
+}
 
 /**
  * The Tasks page's small shapes: the assignee avatar, the lease bar (the `tq-*` classes in

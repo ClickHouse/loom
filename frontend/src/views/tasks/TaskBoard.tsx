@@ -4,7 +4,7 @@ import { Title } from "@clickhouse/click-ui/Title";
 import type { TaskListRow } from "../../api/tasks";
 import { GROUPS, assigneeOf, type Group } from "../../lib/tasks";
 import { Assignee, LaneBadge, PriorityBar } from "./TaskBits";
-import { LANE_ROWS, SublineView, type RowContext } from "./TaskList";
+import { LANE_ROWS, NO_MATCH, SublineView, type RowContext } from "./TaskList";
 import { useTaskDrag } from "./drag";
 import { ListTime } from "../../components/ui/ListTime";
 
@@ -62,7 +62,16 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
   );
 }
 
-export function TaskBoard({ groups, ctx }: { groups: Record<Group, TaskListRow[]>; ctx: RowContext }) {
+export function TaskBoard({
+  groups,
+  ctx,
+  filtering,
+}: {
+  groups: Record<Group, TaskListRow[]>;
+  ctx: RowContext;
+  /** A filter is on: an empty column may hold tasks it hides. */
+  filtering: boolean;
+}) {
   const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
   const [all, setAll] = useState<ReadonlySet<Group>>(new Set());
   const board = useRef<HTMLElement>(null);
@@ -84,7 +93,7 @@ export function TaskBoard({ groups, ctx }: { groups: Record<Group, TaskListRow[]
             </Title>
             <div className="p-2 flex flex-col gap-2">
               {rows.length === 0 ? (
-                <div className="p-4 text-xs text-text-muted">{EMPTY_COLUMN[g]}</div>
+                <div className="p-4 text-xs text-text-muted">{filtering ? NO_MATCH : EMPTY_COLUMN[g]}</div>
               ) : (
                 listed.map((r) => <Card key={r.task_id} r={r} ctx={ctx} drag={drag.source(r)} />)
               )}

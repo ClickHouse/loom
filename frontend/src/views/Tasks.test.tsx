@@ -832,6 +832,33 @@ describe("Tasks page", () => {
     await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "low-late"));
   });
 
+  it("keys act on a deep-linked task past a lane's first rows", async () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      task(`t${String(i).padStart(2, "0")}`, { created_at: iso(100 - i) }),
+    );
+    vi.mocked(listTasks).mockResolvedValue({ tasks: many, truncated: false });
+    window.history.replaceState(null, "", "/tasks?task=t24");
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("complementary", { name: "Task detail" });
+    // t24 is not drawn: the To do lane shows its first 20.
+    expect(screen.queryByRole("row", { name: "Task t24" })).toBeNull();
+    await user.keyboard("s");
+    await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "t24"));
+  });
+
+  it("an empty Closed lane under a filter says none match, not that nothing closed", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.type(screen.getByLabelText("Search tasks"), "urgent");
+    await waitFor(() => expect(screen.queryByRole("row", { name: "Task low-late" })).toBeNull());
+    expect(screen.queryByText("Nothing closed yet.")).toBeNull();
+    expect(screen.getAllByText("None match the filters.").length).toBeGreaterThan(0);
+  });
+
   it("with no inbox registered, explains and offers Register inbox to an admin only", async () => {
     vi.mocked(listInboxes).mockResolvedValueOnce([]);
     seed(viewer, [row("viewer")]);

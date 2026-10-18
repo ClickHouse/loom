@@ -40,11 +40,10 @@ import {
   type TaskAction,
 } from "../../lib/tasks";
 import { humanizeError } from "../../lib/format";
-import { toast } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
 import { Alert, ExternalLink, Loading, Stat, Tip } from "../../components/ui";
 import { ListTime } from "../../components/ui/ListTime";
-import { KindTag, PriorityBadge, StatusPill } from "./TaskBits";
+import { KindTag, PriorityBadge, StatusPill, copyTaskId } from "./TaskBits";
 import { MenuTrigger } from "../../components/ui/Menu";
 
 /**
@@ -410,12 +409,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
   const act = (a: TaskAction) => onAction(a, a === "edit" && task ? task : current);
   const primary = PRIMARY_ACTIONS.find((p) => allowed.has(p.action));
   const secondary = SECONDARY_ACTIONS.find((p) => allowed.has(p.action));
-  const copyId = () => {
-    navigator.clipboard
-      ?.writeText(current.task_id)
-      .then(() => toast("Task id copied", "ok"))
-      .catch(() => toast(current.task_id, "ok"));
-  };
+  const copyId = () => copyTaskId(current.task_id);
 
   const menu: MenuItem[] = MENU_ACTIONS.filter((a) => allowed.has(a) && a !== secondary?.action).map((a) => ({
     label: menuLabel(a),

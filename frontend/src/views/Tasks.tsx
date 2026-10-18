@@ -60,6 +60,7 @@ import { ALL_INBOXES, InboxRail, InboxSelect, railCounts } from "./tasks/InboxRa
 import { TaskList, type RowContext } from "./tasks/TaskList";
 import { TaskBoard } from "./tasks/TaskBoard";
 import { TaskPanel } from "./tasks/TaskPanel";
+import { copyTaskId } from "./tasks/TaskBits";
 import type { ReasonAction } from "../flows/TaskActionDialog";
 import { shortcutOff } from "../lib/shortcuts";
 import { useMedia } from "../lib/useMedia";
@@ -146,13 +147,6 @@ function neighbourOf(taskId: string): string | null {
   const ids = shownTaskIds();
   const i = ids.indexOf(taskId);
   return i < 0 ? null : (ids[i + 1] ?? ids[i - 1] ?? null);
-}
-
-function copyId(id: string) {
-  navigator.clipboard
-    ?.writeText(id)
-    .then(() => toast("Task id copied", "ok"))
-    .catch(() => toast(id, "ok"));
 }
 
 /** Where a move was made: a row (its button, its menu, a key) or the open panel. */
@@ -535,7 +529,8 @@ export function Tasks() {
         const r = list[Math.max(0, Math.min(list.length - 1, to))];
         if (r) stateRef.current.selectRow(r);
       };
-      const row = i >= 0 ? list[i] : null;
+      // The selected task, drawn or not (a deep link past a lane's first rows): its keys act on it.
+      const row = sel ? (stateRef.current.rowsById.get(sel) ?? null) : null;
       const origin: Origin = e.target instanceof Element && e.target.closest(".tq-panel") ? "panel" : "list";
       const keyed: Record<string, TaskAction> = { a: "accept", s: "start", c: "complete", x: "wont_do", d: "defer" };
       switch (e.key) {
@@ -582,7 +577,7 @@ export function Tasks() {
         onSelect: () => void onAction(a, r, "list"),
         danger: a === "cancel",
       }));
-      items.push({ label: "Copy id", onSelect: () => copyId(r.task_id) });
+      items.push({ label: "Copy id", onSelect: () => copyTaskId(r.task_id) });
       return items;
     },
     [mayWrite, onAction],
@@ -851,7 +846,7 @@ export function Tasks() {
                     forceOpen={filtering}
                   />
                 ) : (
-                  <TaskBoard groups={groups} ctx={ctx} />
+                  <TaskBoard groups={groups} ctx={ctx} filtering={filtering} />
                 ))}
             </div>
             {openRow && !sheetLayout && panelFor(openRow, false)}
