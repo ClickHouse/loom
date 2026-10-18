@@ -126,7 +126,7 @@ async def test_memory_set_returns_both_lines_for_a_large_double_encoded_value(
 ) -> None:
     seen: list[MemorySetInput] = []
 
-    async def _inner(input: MemorySetInput) -> MemorySetOutput:
+    async def _inner(input: MemorySetInput, *, op: str = "memory.set") -> MemorySetOutput:
         seen.append(input)
         return MemorySetOutput(
             version=7, memory_id="m1", namespace=input.namespace, memory_key=input.memory_key
