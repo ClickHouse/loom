@@ -73,6 +73,9 @@ REACTIVATED = "scim: reactivated"
 _BY = "scim"
 # SCIM ids are uuid5 of the email under this namespace: one id per person,
 # whichever replica or retry computes it. The provider holds the email anyway.
+# The id is a pseudonym, not a secret: from an address one already knows,
+# anyone can compute it. Keying it would change every id when the root secret
+# rotates, and the provider would find none of its users.
 _ID_NAMESPACE = uuid.UUID("6f1c3e0a-5b7d-4c2e-9a41-2d8f0b6e7c13")
 _LEASE_TTL_S = 60.0
 _LEASE_WAIT_S = 10.0
@@ -106,9 +109,10 @@ async def get(uid: str) -> dict[str, Any] | None:
 
 
 async def find(user_name: str) -> dict[str, Any] | None:
-    """The live SCIM user whose userName is `user_name`."""
+    """The live SCIM user whose userName is `user_name`, in any case (RFC 7643 §4.1.1)."""
     row = await get_client().query_one(
-        f"SELECT * FROM {TABLE} FINAL WHERE user_name = {{n:String}} AND deleted = 0 LIMIT 1",
+        f"SELECT * FROM {TABLE} FINAL "
+        "WHERE lower(user_name) = {n:String} AND deleted = 0 LIMIT 1",
         params={"n": normalized(user_name)},
     )
     return None if row is None else dict(row)
@@ -175,7 +179,7 @@ async def create(
                 row, cutoff = await _set_active(row, active)
         else:
             await _refuse_taken(user_name, uid)
-            changes = {"user_name": normalized(user_name), "deleted": 0, **_entry(email_entry)}
+            changes = {"user_name": user_name.strip(), "deleted": 0, **_entry(email_entry)}
             row, cutoff = await _set_active(row, active, **changes)
     if not row["active"]:  # a retry too: it finishes what a failed try left
         await _revoke_tokens(row)
@@ -199,12 +203,12 @@ async def update(
         if row is None:
             return None
         changes = _entry(email_entry)
-        if not user_name or normalized(user_name) == row["user_name"]:
+        if not user_name or user_name.strip() == row["user_name"]:
             new, cutoff = await _set_active(row, active, **changes)
         else:
             async with _held(_name_lease(user_name)):
                 await _refuse_taken(user_name, uid)
-                renamed = normalized(user_name)
+                renamed = user_name.strip()  # kept as sent, matched in any case
                 new, cutoff = await _set_active(row, active, user_name=renamed, **changes)
     if not new["active"]:  # a retry too: it finishes what a failed try left
         await _revoke_tokens(new)
@@ -324,11 +328,12 @@ async def _set_active(
     known = set(row["subjects"])
     async with subject_leases([*known, *found]):
         new["subjects"] = sorted(known | set(found))
-        # Going inactive revokes them all. Once inactive, a repeat revokes the
-        # accounts found since: one an operator narrowed (someone else's
-        # subject, given back) stays narrowed.
+        # Going inactive revokes what the email reaches now: an account an
+        # operator has since moved to another email is that person's. Once
+        # inactive, a repeat revokes the accounts found since: one an operator
+        # narrowed (someone else's subject, given back) stays narrowed.
         if row["active"]:
-            subjects = new["subjects"]
+            subjects = sorted(found)
         else:
             subjects = sorted(set(found) - known)
         for subject in subjects:
@@ -370,17 +375,13 @@ async def _converge_active(
     return new, cutoff
 
 
-async def _write_changed(row: dict[str, Any], new: dict[str, Any]) -> None:
-    if new != row or "version" not in row:  # a change, or a user not yet written
-        await _write(new)
-
-
 async def _write_audited(row: dict[str, Any], new: dict[str, Any]) -> None:
     """Write the row, then audit its transition. A write that raised may have
     landed and lost its reply, and a retry would find the row changed and
     audit nothing: so the row is read back, and what landed is audited."""
     try:
-        await _write_changed(row, new)
+        if new != row or "version" not in row:  # a change, or a user not yet written
+            await _write(new)
     except Exception:
         try:
             landed = await _row(row["id"])
@@ -533,8 +534,8 @@ def _keyed(subject: str) -> str:
 
 
 async def _audit(event: str, row: dict[str, Any]) -> None:
-    # No address or subject in clear: the SCIM id (which the provider holds
-    # with the email) and keyed hashes of the subjects.
+    # No address or subject in clear: the SCIM id (a pseudonym the provider
+    # holds with the email) and keyed hashes of the subjects.
     await audit.emit(
         event,
         org="-",

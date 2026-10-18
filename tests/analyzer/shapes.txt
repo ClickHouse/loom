@@ -34,6 +34,7 @@
 05d68e77b952	SELECT m.memory_id, m.memory_key, m.value, m.pinned, m.agent, m.user_id, m.session_id, m.run_id, m.valid_at, cosineDistance(e.embedding, {emb:Array(Float32)}) AS dist FROM loom.memory m FINAL JOIN loo
 05eb1769fceb	SELECT * FROM loom.code_summaries FINAL WHERE org = {org:String} AND namespace = {ns:String} AND embedding_model != {model:String} AND tombstoned_at IS NULL
 0615b57441da	SELECT chunk_id, path, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.code_chunks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND embedding_model = {model:String} A
+061985c0e7ef	SELECT * FROM loom.scim_users FINAL WHERE lower(user_name) = {n:String} AND deleted = ? LIMIT ?
 0622e75ca047	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 06360b1e4608	SELECT neighbor, sum(w) AS weight, argMax(seed, w) AS via_seed FROM ( SELECT entity_b AS neighbor, co_occur AS w, entity_a AS seed FROM loom.entity_edges WHERE org = {org:String} AND namespace IN {ns_
 070870d61652	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -471,7 +472,6 @@
 513947c6bd74	UPDATE loom.memory SET status = ?, rejection_reason = {reason:String} WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND memory_key = {key:S
 5163c1fd8d3c	SELECT count() AS n FROM loom.memory_record_versions WHERE org = {org:String} AND namespace = {ns:String}
 516db52eddcc	SELECT count() AS n FROM loom.session_brief_revisions WHERE org = {org:String} AND namespace = {ns:String} AND ?
-519225c7647b	SELECT * FROM loom.scim_users FINAL WHERE user_name = {n:String} AND deleted = ? LIMIT ?
 51af520b7286	SELECT DISTINCT tier, qualified_name, symbol_id FROM loom.code_symbol_names WHERE org = {org:String} AND namespace = {ns:String} AND name IN {names:Array(String)} AND (qualified_name = {full:String} O
 52448e9cfd6b	ALTER TABLE loom.memory_record_conflicts UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {er
 525d9e3b3774	SELECT count() AS n FROM loom.working_memory FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL

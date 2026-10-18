@@ -208,17 +208,24 @@ def _keyed_written(kind: str, attr: str, value: Any, row: dict[str, Any]) -> dic
         if kind == "remove":
             raise _no_change("the email cannot be removed")
         best = keyed_entry(value if isinstance(value, list) else [value])
-        if kind == "add":  # appends (RFC 7644 §3.5.2.1): only an entry that outranks counts
-            return best if best and _rank(best) > _rank(stored) else None
+        if kind == "add":  # appends (RFC 7644 §3.5.2.1): an entry that outranks counts,
+            # and a primary one always, as only one entry may be primary (RFC 7643 §2.4)
+            if best and (_rank(best) > _rank(stored) or _rank(best) == 2):
+                return best
+            return None
         if best is None:
             raise _no_change("the email cannot be removed")
         return best
     if "[" not in attr and "]" not in attr:
-        return None  # `emails.display` and the like
-    opening, closing = attr.find("["), attr.find("]")
-    if attr.count("[") != 1 or attr.count("]") != 1 or closing < opening:
-        raise ScimError(400, "an emails path is malformed", "invalidPath")
-    filt, sub = attr[opening + 1 : closing], attr[closing + 1 :]
+        # No filter: `emails.value` writes every entry (RFC 7644 §3.5.2.3), the keyed one too.
+        filt, sub = "", attr.removeprefix("emails")
+        if sub not in (".value", ".type", ".primary"):
+            return None  # `emails.display` and the like
+    else:
+        opening, closing = attr.find("["), attr.find("]")
+        if attr.count("[") != 1 or attr.count("]") != 1 or closing < opening:
+            raise ScimError(400, "an emails path is malformed", "invalidPath")
+        filt, sub = attr[opening + 1 : closing], attr[closing + 1 :]
     if sub not in ("", ".value", ".type", ".primary"):
         return None
     if sub == "":
@@ -329,10 +336,7 @@ def user_name_and_email(body: dict[str, Any]) -> tuple[str, str, dict[str, Any]]
     email = scim.normalized(entry.get("value") or name)
     if "@" not in email:
         raise ScimError(400, "userName or an email must be the person's email", "invalidValue")
-    if email != scim.normalized(name):
-        # Deactivations follow the email: say so where an operator will look.
-        log.warning("scim: a userName differs from its email; Loom keys on the email")
-    return scim.normalized(name), email, entry
+    return name.strip(), email, entry
 
 
 # ── resources ─────────────────────────────────────────────────────────────
@@ -346,7 +350,7 @@ def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
         "id": row["id"],
         "userName": row["user_name"],
         "active": bool(row["active"]),
-        "emails": [{"value": row["email"], "primary": True}],
+        "emails": [_email(row)],
         "meta": {
             "resourceType": "User",
             "created": _iso(row["created_at"]),
@@ -354,6 +358,14 @@ def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
             "location": f"{public_base_url(request)}/scim/v2/Users/{row['id']}",
         },
     }
+
+
+def _email(row: dict[str, Any]) -> dict[str, Any]:
+    """The keyed entry as the provider sent it, so a provider comparing it finds no change."""
+    entry: dict[str, Any] = {"value": row["email"], "primary": bool(row["email_primary"])}
+    if row["email_type"]:
+        entry["type"] = row["email_type"]
+    return entry
 
 
 def _iso(ts: Any) -> str:
@@ -445,6 +457,11 @@ async def create_user(request: Request) -> JSONResponse:
         row = await scim.create(name, email, active=active, email_entry=entry)
     except scim.Exists:
         raise ScimError(409, "a user with this email or userName exists", "uniqueness") from None
+    if email != scim.normalized(name):
+        # Deactivations follow the email: say so once, where an operator will look.
+        log.warning(
+            "scim: user %s has a userName other than its email; Loom keys on the email", row["id"]
+        )
     resource = _resource(request, row)
     return _answer(resource, 201, Location=resource["meta"]["location"])
 
@@ -476,7 +493,7 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
         name, entry = patched_names(body, row)
         if entry is not None:
             _refuse_another_email(row, str(entry.get("value") or row["email"]))
-        elif name is not None and row["user_name"] == row["email"]:
+        elif name is not None and scim.normalized(row["user_name"]) == row["email"]:
             _refuse_another_email(row, name)  # the userName may be where the email came from
         if active is not None or name is not None or entry is not None:
             row = await _update(uid, active, name, entry) or row

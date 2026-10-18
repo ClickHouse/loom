@@ -116,8 +116,9 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
 # Names a pass revokes at once: each is a lease round trip and an insert.
 _CLAIMS_AT_ONCE = 8
 # Creators read at once: their keys are one array parameter, which ClickHouse
-# refuses past its HTTP field size (a few thousand subjects).
-_CREATORS_AT_ONCE = 500
+# refuses past its HTTP field size (128 KiB by default). 100 subjects of the
+# longest names, three keys each, stay under a quarter of it.
+_CREATORS_AT_ONCE = 100
 _UNEXPIRED = "(expires_at IS NULL OR expires_at > now())"
 
 

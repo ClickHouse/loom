@@ -43,7 +43,7 @@ def test_okta_spec_test(scim_server) -> None:
     base, _, email, _, _ = scim_server
     okta = {
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
-        "userName": email,
+        "userName": email.capitalize(),  # kept as sent, matched in any case
         "name": {"givenName": "Lee", "familyName": "Okta"},
         "emails": [{"primary": True, "value": email, "type": "work"}],
         "password": "never-kept-1!",  # Okta sends one even without password sync
@@ -52,7 +52,7 @@ def test_okta_spec_test(scim_server) -> None:
     created = _scim(base, "POST", "/Users", json=okta)
     assert created.status_code == 201, created.text
     user = created.json()
-    assert user["userName"] == email and user["active"] is True and user["id"]
+    assert user["userName"] == email.capitalize() and user["active"] is True and user["id"]
     _is_error(_scim(base, "POST", "/Users", json=okta), 409)
 
     listed = _scim(base, "GET", "/Users", params={"count": "1", "startIndex": "1"}).json()
@@ -87,7 +87,7 @@ def test_okta_spec_test(scim_server) -> None:
 
 def test_entra_provisioning_and_validator(scim_server) -> None:
     base, _, email, _, _ = scim_server
-    upn = f"lee.upn-{uuid.uuid4().hex[:6]}@tenant.example"  # the UPN, another address
+    upn = f"Lee.UPN-{uuid.uuid4().hex[:6]}@Tenant.example"  # the UPN, another address
     entra = {
         "schemas": [
             "urn:ietf:params:scim:schemas:core:2.0:User",
@@ -108,6 +108,7 @@ def test_entra_provisioning_and_validator(scim_server) -> None:
     created = _scim(base, "POST", "/Users", json=entra)
     assert created.status_code == 201, created.text
     uid = created.json()["id"]
+    assert created.json()["userName"] == upn
     for match in (f'userName eq "{upn}"', f'emails[type eq "work"].value eq "{email}"'):
         found = _scim(base, "GET", "/Users", params={"filter": match}).json()
         assert [u["id"] for u in found["Resources"]] == [uid], match

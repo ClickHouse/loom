@@ -263,8 +263,9 @@ of the above, so they do not stop with someone's offboarding.
   third-party MCP client's session mints none that outlive it. Disabling
   someone at the provider ends their sessions at the next refresh (within the
   hour) but not these tokens: only a refresh asks the provider about a person.
-  With [SCIM](#deprovisioning-with-scim) set up, the provider tells Loom at
-  once, and Loom revokes the person and every token they made. Without it,
+  With [SCIM](#deprovisioning-with-scim) set up, the provider tells Loom on
+  its next provisioning run (Okta when the person is deactivated, Entra within
+  its cycle), and Loom revokes the person and every token they made. Without it,
   revoke the person when offboarding, which ends every token they made too:
   `loom revoke-token --subject <their subject>`.
 - Every sign-in, device approval and denial, MCP consent, JIT account and

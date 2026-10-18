@@ -40,6 +40,7 @@ async def _scim(ch: RecordingCH, c: dict[str, Any]) -> None:
     await scim._row(scim.user_id("alice@x.io"))
     await scim._subjects("alice@x.io")
     await scim._orgs_beyond("alice", {ORG})
+    await scim._orgs_beyond("alice", set())  # a subject the email no longer reaches: NOT IN []
     await scim._held_by_another_inactive("id", "alice")
     await revocation.refresh()
     await revocation.revoked_outright("alice")

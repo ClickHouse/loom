@@ -219,8 +219,8 @@ class _Table:
             return revocation_read(self.revocations, sql, params)
         if "count()" in sql:
             return {"n": len(self.live())}
-        if "user_name =" in sql:
-            return next((r for r in self.live() if r["user_name"] == params["n"]), None)
+        if "lower(user_name) =" in sql:
+            return next((r for r in self.live() if r["user_name"].lower() == params["n"]), None)
         if "max(version)" in sql:
             newest = self.newest(params["k"])
             return {"v": max(time.time_ns(), newest["version"] + 1 if newest else 0)}
@@ -419,6 +419,19 @@ async def test_a_subject_someone_else_has_elsewhere_is_revoked_and_flagged(world
     assert collateral["subject"]["orgs"] == ["other-org"]
     assert "alice" not in str(collateral["subject"]["subject"])
     assert revoked == {"alice": None}  # audited once the revocation landed
+
+
+async def test_an_account_moved_to_another_email_is_not_revoked_again(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.update(uid, active=False)
+    await scim.update(uid, active=True)
+    narrowed = world.ours["lee"]
+    assert narrowed is not None
+    world.person("lee@example.com")  # an operator gave the account to another address
+    await scim.update(uid, active=False)
+    assert world.ours == {"lee": narrowed}  # still narrowed: it's someone else's now
+    assert "auth.scim_collateral" not in [e for e, _ in world.audits]
 
 
 async def test_another_subjects_org_does_not_hide_collateral(world) -> None:
@@ -1144,8 +1157,8 @@ def test_a_provider_creates_finds_and_deactivates_a_person(client: TestClient, w
     assert created.status_code == 201, created.text
     user = created.json()
     uid = user["id"]
-    assert user["userName"] == "lee.upn@corp.example" and user["active"] is True
-    assert user["emails"] == [{"value": "lee@example.com", "primary": True}]
+    assert user["userName"] == "Lee.UPN@corp.example" and user["active"] is True  # as sent
+    assert user["emails"] == [{"value": "lee@example.com", "type": "work", "primary": True}]
     assert uid == scim.user_id("lee@example.com")  # keyed on the address sign-in carries
     assert created.headers["location"].endswith(f"/scim/v2/Users/{uid}")
     again = client.post("/scim/v2/Users", json={"userName": "lee@example.com"})
@@ -1254,10 +1267,21 @@ def test_a_schema_qualified_active_is_active(op: dict[str, Any]) -> None:
         },
         {"op": "replace", "value": {f"{_URN}emails": [{"value": "new@example.com"}]}},
         {"op": "add", "path": "emails", "value": [{"value": "new@example.com", "primary": True}]},
+        # No filter: written to every entry, the keyed one too (RFC 7644 §3.5.2.3).
+        {"op": "replace", "path": "emails.value", "value": "new@example.com"},
+        {"op": "replace", "value": {"emails.value": "new@example.com"}},
     ],
 )
 def test_every_shape_of_an_email_change_is_seen(op: dict[str, Any]) -> None:
     _, entry = patched_names({"Operations": [op]}, _WORK_ROW)
+    assert entry is not None and entry["value"] == "new@example.com"
+
+
+def test_a_new_primary_entry_replaces_a_primary_one() -> None:
+    # Only one entry may be primary (RFC 7643 §2.4): the added one takes its place.
+    primary = {"email": "lee@example.com", "email_type": "work", "email_primary": 1}
+    add = {"op": "add", "path": "emails", "value": [{"value": "new@example.com", "primary": True}]}
+    _, entry = patched_names({"Operations": [add]}, primary)
     assert entry is not None and entry["value"] == "new@example.com"
 
 
@@ -1415,7 +1439,7 @@ def test_another_address_changing_beside_a_disable_is_fine(
     ops = [{"op": "replace", "path": "active", "value": False}, other]
     r = client.patch(f"/scim/v2/Users/{uid}", json={"Operations": ops})
     assert r.status_code == 200 and r.json()["active"] is False
-    assert r.json()["emails"] == [{"value": "lee@example.com", "primary": True}]
+    assert [e["value"] for e in r.json()["emails"]] == ["lee@example.com"]
     assert world.ours == {"lee": None}
 
 

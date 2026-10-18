@@ -19,8 +19,8 @@ class _CH:
         self.rows = [
             {
                 "org": "acme",
-                "name": f"bot-{i}",
-                "sa_subject": f"sa:bot-{i}",
+                "name": f"{i:064d}",  # the longest token name
+                "sa_subject": f"sa:{i:064d}-abc123",
                 "created_by": "lee",
                 "created_at": None,
                 "live": False,
@@ -31,7 +31,8 @@ class _CH:
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         subs = params.get("subs") or params.get("keys") or []
-        self.largest = max(self.largest, len(subs))
+        # The array as it is sent: one quoted, comma-separated string field.
+        self.largest = max(self.largest, sum(len(s) + 3 for s in subs))
         if "loom.service_accounts" in sql:
             return [r for r in self.rows if r["created_by"] in subs]
         return []
@@ -43,5 +44,5 @@ async def test_thousands_of_creators_are_read_in_chunks(monkeypatch) -> None:
     ch = _CH(3000)
     monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
     await service_accounts.revoke_created_by(["lee"], revoked_by="scim")
-    # 3000 creators would be 9000 keys in the revocation read; 1500 fit.
-    assert 0 < ch.largest <= 1500
+    # 3000 creators would be about 750 KB in the revocation read.
+    assert 0 < ch.largest <= 32 * 1024

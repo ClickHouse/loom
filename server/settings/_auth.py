@@ -109,10 +109,8 @@ class AuthSettings(BaseModel):
     oidc_jit_org: str = ""
     # Comma-separated email domains JIT provisioning admits; empty admits any verified email.
     oidc_jit_email_domains: str = ""
-    # Bearer token an identity provider presents on SCIM 2.0 provisioning
-    # (/scim/v2), where it deactivates and reactivates people. Empty = SCIM off,
-    # its routes not mounted. A long random secret; nothing else authenticates SCIM.
-    # Comma-separated tokens are each accepted, to rotate one without downtime.
+    # Bearer tokens (comma-separated, any one accepted) an identity provider presents to
+    # deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = SCIM off.
     scim_token: str = ""
 
     @property
