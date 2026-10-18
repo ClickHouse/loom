@@ -107,7 +107,8 @@ tags, confidence, `valid_at`, `valid_to`, `source_trace`, and the entities and
 Concepts that land on the same row (one key exported for several writers) are written
 once: the most recently updated wins. Re-sending an identical row would count as a
 reinforcement, so importing the same bundle twice writes no concept or edge the second
-time. The last line counts concepts written, unchanged and failed.
+time, except a concept with `sources:`, which no read can compare and which is written on
+every run. The last line counts concepts written, unchanged and failed.
 
 The bundle's `evidence/` and `digests/` are written back through `memory.import_evidence`
 (`--no-evidence` skips them) and re-embedded by the importing server on every import,
@@ -121,8 +122,9 @@ changed or not: a scheduled import passes `--no-evidence`.
 | `--prune`         | delete the rows an earlier import with this `--agent` and token wrote (an `okf:` `source_trace`) whose key is no longer in the bundle, through `memory.delete`; needs `--agent` |
 
 Each bundle imported into a namespace with `--prune` needs an `--agent` of its own: prune
-deletes every row of that agent the bundle lacks. `--prune` refuses a bundle with no concepts, one exported with `--limit`, and one whose
-concept files do not hash to the root index's `loom.corpus_digest`, so a partial or hand-edited bundle never drives deletes.
+deletes every row of that agent the bundle lacks. `--prune` refuses a bundle with no
+concepts, one exported with `--limit`, and one whose concept files do not hash to the root
+index's `loom.corpus_digest`, so a partial or hand-edited bundle never drives deletes.
 Export into an empty directory for a prune: export overwrites concept files but never
 removes the file of a key that left the namespace, so a reused `--out` directory no longer
 matches its digest.

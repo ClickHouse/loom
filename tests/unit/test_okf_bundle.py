@@ -156,6 +156,9 @@ def test_bundle_has_root_index_sub_indexes_log_and_drift_free_listings() -> None
     pointer = _root_pointer(root)
     assert pointer["concepts"] == 2 and pointer["exported_at"] == "2026-09-11"
     assert pointer["corpus_digest"] == okf.corpus_digest(files) and "build_commit" not in pointer
+    assert "limit" not in pointer
+    limited = okf.plan_bundle([_entry()], namespace="ns", exported_at=_NOW, limit=1)
+    assert _root_pointer(limited["index.md"])["limit"] == 1  # import-okf --prune refuses it
     assert "* [Deploy window](semantic/deploy_window.md) - Tue and Thu only; never Friday." in root
     sub = files["semantic/index.md"]
     assert not sub.startswith("---")  # sub-indexes carry no frontmatter

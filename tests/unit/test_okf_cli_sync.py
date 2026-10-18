@@ -36,7 +36,7 @@ def _entry(key: str, **over: Any) -> dict[str, Any]:
         "memory_type": "semantic",
         "value": f"{key} fails when the part count passes 300.",
         "tags": ["lesson"],
-        "agent": "clickgap",
+        "agent": "writer-a",
         "namespace": "src",
         "created_at": "2026-09-01T10:00:00",
         "valid_at": "2026-08-30T08:00:00",
@@ -63,19 +63,22 @@ class _FakeLoom:
     """The ops the import calls, storing rows the way memory.set does."""
 
     def __init__(self) -> None:
-        self.token = _TOKEN
         self.rows: dict[tuple[str, str, str], dict[str, Any]] = {}  # (agent, session, key)
         self.edges: list[dict[str, Any]] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def put(self, agent: str, key: str, **row: Any) -> None:
-        self.rows[(agent, "-", key)] = {"memory_key": key, "session_id": "-", **row}
+    def put(self, agent: str, key: str, session_id: str = "-", **row: Any) -> None:
+        self.rows[(agent, session_id, key)] = {"memory_key": key, "session_id": session_id, **row}
 
     async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((op, body))
         if op == "memory.list":
             mine = sorted(
-                (r for (a, _s, _k), r in self.rows.items() if a == body["agent"]),
+                (
+                    r
+                    for (a, s, _k), r in self.rows.items()
+                    if a == body["agent"] and body["session_id"] in ("*", s)
+                ),
                 key=lambda r: r["memory_key"],
             )
             page = mine[body["offset"] : body["offset"] + body["limit"]]
@@ -104,12 +107,15 @@ class _FakeLoom:
             return {"edges": self.edges, "has_more": False}
         if op == "memory.set":
             # A target that labels the value adds its tag, as memory.set does.
-            labels = [] if "sensitivity:medium" in body["tags"] else ["sensitivity:medium"]
-            if "@" not in str(body["value"]):
-                labels = []
+            labels = (
+                ["sensitivity:medium"]
+                if "@" in str(body["value"]) and "sensitivity:medium" not in body["tags"]
+                else []
+            )
             self.put(
                 body["agent"],
                 body["memory_key"],
+                body["session_id"],
                 memory_type=body["memory_type"],
                 confidence=body["confidence"],
                 source_trace=body["source_trace"],
@@ -151,12 +157,12 @@ def loom(monkeypatch: pytest.MonkeyPatch) -> _FakeLoom:
     return fake
 
 
-def _run(root: Path, *flags: str, agent: str | None = "okf-sync") -> int:
+def _run(root: Path, *flags: str, agent: str | None = "okf-sync", namespace: str = "dst") -> int:
     parser = argparse.ArgumentParser()
     cli_okf.register_okf_cli(parser.add_subparsers())
     args = parser.parse_args(
-        ["import-okf", str(root), "--token", _TOKEN, "--org", "acme", "--namespace", "dst"]
-        + (["--agent", agent] if agent else [])
+        ["import-okf", str(root), "--token", _TOKEN, "--org", "acme", "--namespace", namespace]
+        + (["--agent", agent] if agent is not None else [])
         + list(flags)
     )
     return int(args.func(args))
@@ -175,25 +181,63 @@ def test_a_second_import_of_the_same_bundle_writes_nothing(tmp_path: Path, loom:
 @pytest.mark.parametrize(
     "change",
     [
+        {},
         {"value": "a fails when the part count passes 500."},
         {"tags": ["lesson", "flaky"]},
-        {"memory_type": "procedural"},
         {"confidence": 0.5},
         {"valid_at": "2026-08-31T08:00:00"},
         {"valid_to": "2026-12-01T00:00:00"},
         {"entities": ["MergeTree", "S3"]},
         {"source_class": "derived"},
     ],
-    ids=lambda c: next(iter(c)),
+    ids=lambda c: next(iter(c), "nothing"),
 )
 def test_a_changed_value_or_field_is_written(
     tmp_path: Path, loom: _FakeLoom, change: dict[str, Any]
 ) -> None:
-    assert _run(_bundle(tmp_path / "v1", [_entry("a")])) == 0
+    # Same directory name each run, so source_trace is the same.
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a")])) == 0
     loom.calls.clear()
-    assert _run(_bundle(tmp_path / "v2", [_entry("a", **change)])) == 0
-    sets = [b for op, b in loom.calls if op == "memory.set"]
-    assert [b["memory_key"] for b in sets] == ["a"]
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a", **change)])) == 0
+    sets = [b["memory_key"] for op, b in loom.calls if op == "memory.set"]
+    assert sets == (["a"] if change else [])
+
+
+def test_a_changed_type_is_written(tmp_path: Path, loom: _FakeLoom) -> None:
+    root = _bundle(tmp_path / "b", [_entry("a")])
+    assert _run(root) == 0
+    # Edited in place: an export would also move the file, which changes source_trace.
+    concept = root / "semantic" / "a.md"
+    concept.write_text(
+        concept.read_text().replace("memory_type: semantic", "memory_type: episodic")
+    )
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert [b["memory_type"] for op, b in loom.calls if op == "memory.set"] == ["episodic"]
+
+
+def test_a_copy_into_the_same_namespace_name_is_left_alone(tmp_path: Path, loom: _FakeLoom):
+    # The CronJob's setup: the same org and namespace on both sides, so no origin tags
+    # and no declared source_class.
+    root = _bundle(tmp_path / "b", [_entry("a")])
+    assert _run(root, namespace="src") == 0
+    assert "source_class" not in next(b for op, b in loom.calls if op == "memory.set")
+    loom.calls.clear()
+    assert _run(root, namespace="src") == 0
+    assert loom.writes() == []
+
+
+def test_an_import_from_the_current_directory_names_the_bundle(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    edge = {"from_key": "a", "to_key": "c", "relation": "supports", "author": "x"}
+    root = _bundle(tmp_path / "b", [_entry("a"), _entry("c")], edges=[edge])
+    monkeypatch.chdir(root)
+    assert _run(Path(".")) == 0
+    traces = {b["source_trace"] for op, b in loom.calls if op == "memory.set"}
+    assert traces == {"okf:b/semantic/a.md", "okf:b/semantic/c.md"}
+    link = next(b for op, b in loom.calls if op == "memory.link")
+    assert link["explanation"].startswith("okf bundle b: ")
 
 
 def test_the_bundle_directory_name_is_part_of_what_is_written(tmp_path: Path, loom: _FakeLoom):
@@ -233,7 +277,7 @@ def test_prune_deletes_only_rows_the_import_wrote(tmp_path: Path, loom: _FakeLoo
     # Same agent, not stamped by an import: someone else's row under that agent.
     loom.put("okf-sync", "hand-written", source_trace="cli:manual", tags=[])
     # Another writer's row with an import-looking trace.
-    loom.put("clickhouse-gh", "bot-note", source_trace="okf:b/x.md", tags=[])
+    loom.put("bot", "bot-note", source_trace="okf:b/x.md", tags=[])
     loom.calls.clear()
 
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
@@ -241,7 +285,7 @@ def test_prune_deletes_only_rows_the_import_wrote(tmp_path: Path, loom: _FakeLoo
     deleted = [b["memory_key"] for op, b in loom.calls if op == "memory.delete"]
     assert deleted == ["gone"]
     assert ("okf-sync", "-", "hand-written") in loom.rows
-    assert ("clickhouse-gh", "-", "bot-note") in loom.rows
+    assert ("bot", "-", "bot-note") in loom.rows
 
 
 def test_prune_dry_run_lists_and_writes_nothing(
@@ -254,7 +298,7 @@ def test_prune_dry_run_lists_and_writes_nothing(
     assert loom.writes() == []
     out = capsys.readouterr().out
     assert "would delete gone" in out
-    assert "dry run: 1 of 1 concepts" in out
+    assert "dry run: 1 of 1 rows" in out
     assert "1 would be pruned" in out
 
 
@@ -314,10 +358,13 @@ def test_prune_refuses_a_limited_export(tmp_path: Path, loom: _FakeLoom) -> None
 
 
 def test_prune_never_reaches_another_writers_row_through_the_delete_fallback(
-    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
-    loom.put("clickhouse-gh", "gone", source_trace="cli:bot", tags=[])
+    loom.put("bot", "gone", source_trace="cli:bot", tags=[])
     listed = loom.post
 
     async def tombstoned_after_the_read(op: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -328,9 +375,11 @@ def test_prune_never_reaches_another_writers_row_through_the_delete_fallback(
 
     monkeypatch.setattr(loom, "post", tombstoned_after_the_read)
     loom.calls.clear()
+    capsys.readouterr()
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
     assert "memory.delete" not in loom.writes()
-    assert ("clickhouse-gh", "-", "gone") in loom.rows
+    assert ("bot", "-", "gone") in loom.rows
+    assert "0 pruned\n" in capsys.readouterr().out  # not ours any more, so not "kept"
 
 
 def test_verify_re_attests_the_row_in_its_own_session(tmp_path: Path, loom: _FakeLoom) -> None:
@@ -340,6 +389,49 @@ def test_verify_re_attests_the_row_in_its_own_session(tmp_path: Path, loom: _Fak
     assert _run(_bundle(tmp_path / "b", [entry]), "--keep-sessions", "--verify") == 0
     verify = [b for op, b in loom.calls if op == "memory.verify"]
     assert [b["session_id"] for b in verify] == ["s1"]
+
+
+def test_verify_re_attests_a_skipped_row_only_when_it_lost_its_attestation(
+    tmp_path: Path, loom: _FakeLoom
+) -> None:
+    entry = _entry("a", verification="human", verified_by="human:alice@example.com")
+    root = _bundle(tmp_path / "b", [entry])
+    assert _run(root, "--verify") == 0
+    loom.rows[("okf-sync", "-", "a")]["verification"] = "process"
+    loom.calls.clear()
+    assert _run(root, "--verify") == 0
+    assert [op for op, _ in loom.calls if op in ("memory.set", "memory.verify")] == []
+
+    loom.rows[("okf-sync", "-", "a")]["verification"] = "stale"
+    assert _run(root, "--verify") == 0
+    verify = [b for op, b in loom.calls if op == "memory.verify"]
+    assert [(b["session_id"], b["memory_key"]) for b in verify] == [("-", "a")]
+    assert "memory.set" not in loom.writes()
+
+
+def test_an_edge_on_every_writer_of_a_key_is_linked_once(tmp_path: Path, loom: _FakeLoom):
+    edge = {"from_key": "k", "to_key": "c", "relation": "supports", "author": "x"}
+    entries = [
+        _entry("k", agent="a", updated_at="2026-08-01T00:00:00"),
+        _entry("k", agent="b", updated_at="2026-08-02T00:00:00"),
+        _entry("c"),
+    ]
+    assert _run(_bundle(tmp_path / "b", entries, edges=[edge])) == 0
+    assert [op for op in loom.writes() if op == "memory.link"] == ["memory.link"]
+
+
+def test_prune_with_keep_sessions_deletes_only_the_session_that_lost_the_key(
+    tmp_path: Path, loom: _FakeLoom
+) -> None:
+    both = [_entry("k", session_id="s1"), _entry("k", session_id="s2", agent="writer-b")]
+    assert _run(_bundle(tmp_path / "1" / "b", both), "--keep-sessions") == 0
+    assert {(s, k) for (_a, s, k) in loom.rows} == {("s1", "k"), ("s2", "k")}
+    loom.calls.clear()
+    root = _bundle(tmp_path / "2" / "b", [_entry("k", session_id="s1")])
+    assert _run(root, "--keep-sessions", "--prune") == 0
+    deleted = [(b["session_id"], b["memory_key"]) for op, b in loom.calls if op == "memory.delete"]
+    assert deleted == [("s2", "k")]
+    assert ("okf-sync", "s1", "k") in loom.rows
 
 
 def test_a_tag_the_target_adds_is_not_a_change(tmp_path: Path, loom: _FakeLoom) -> None:
@@ -390,7 +482,9 @@ def test_prune_refuses_an_export_into_a_reused_directory(tmp_path: Path, loom: _
 
 
 def test_prune_needs_an_explicit_agent(tmp_path: Path, loom: _FakeLoom) -> None:
-    assert _run(_bundle(tmp_path / "b", [_entry("a")]), "--prune", agent=None) == 2
+    root = _bundle(tmp_path / "b", [_entry("a")])
+    assert _run(root, "--prune", agent=None) == 2
+    assert _run(root, "--prune", agent="") == 2
     assert loom.calls == []
 
 

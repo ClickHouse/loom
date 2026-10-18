@@ -20,20 +20,26 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
   first and skips a concept whose row already holds the same value, type, tags,
   confidence, `valid_at`, `valid_to`, `source_trace`, and the entities and
   `source_class` when the bundle carries them. Tags `memory.set` adds itself
-  (`sensitivity:`, `attribute:`, `retyped_from:`) are not a difference. It skips an edge that is already live.
-  When several concepts in the bundle share a key (rows of different writers), the most
-  recently updated one is written. Re-sending an identical row would count as a
-  reinforcement: a version row, an audit row and a higher ranking boost on every run.
+  (`sensitivity:`, `attribute:`) are not a difference. It skips an edge that is already
+  live. When several concepts in the bundle share a key (rows of different writers), the
+  most recently updated one is written. Re-sending an identical row would count as a
+  reinforcement: a version row, an audit row and a higher ranking boost on every run. A
+  concept with `sources:` is the exception: it is written on every run, because no read
+  returns the source it links to.
 - **One `memory.set` per new or changed concept**, through the conflict, blacklist and
-  audit checks of any other write, as `source_class: imported`.
+  audit checks of any other write, with the token as its actor. A row the source marked
+  `derived`, `imported` or `external` keeps that class. With the same org and namespace
+  on both sides the copy carries no `origin:` tags, so any other row is stored as the
+  sync token's own statement.
 - **One `memory.delete` per pruned row.** `--prune` deletes only rows under the import's
   `--agent`, written by its token, whose `source_trace` starts with `okf:` and whose key is
   no longer in the bundle. Rows anyone else wrote in the namespace stay. Give each bundle
-  imported into the namespace its own `--agent` (`--prune` refuses without one). A delete is a tombstone:
-  `memory.restore` brings the row back within its 14-day window.
+  imported into the namespace its own `--agent` (`--prune` refuses without one). A delete
+  is a tombstone: `memory.restore` brings the row back within its 14-day window.
 
 The last line reports the counts:
-`imported 500 concepts into acme/shared-lessons: 0 written, 500 unchanged, 0 failed …, 0 pruned`.
+`500 rows from the bundle into acme/shared-lessons: 0 written, 500 unchanged, 0 failed …,
+0 pruned`.
 A non-zero exit means a write, link or delete failed.
 
 ## Guards
@@ -53,7 +59,11 @@ A non-zero exit means a write, link or delete failed.
 - `concurrencyPolicy: Forbid` keeps two runs from interleaving.
 
 There is no cap on how many rows one run may prune. A source namespace that loses most of
-its rows on purpose propagates on the next run without an operator. A key pruned by
+its rows on purpose propagates on the next run without an operator. One that loses all of
+them does not: the import refuses the empty bundle and the job fails on every run.
+Suspend the CronJob (`kubectl patch cronjob okf-sync -p '{"spec":{"suspend":true}}'`) and
+delete the copies on the public Loom with `memory.delete`, or through erasure when the
+content must go. A key pruned by
 mistake is written again by the next run whose bundle holds it. That also covers the one
 race the guards leave: export pages the source by offset, so a source row deleted while a
 large export is paging can push one live row out of that bundle, and its copy is pruned
@@ -65,9 +75,11 @@ The job holds two tokens, each scoped to the one namespace:
 
 ```bash
 # On the private Loom: read the namespace, nothing else.
-loom mint-token --subject okf-sync --org <org> --namespace-role shared-lessons=viewer --ttl-days 90
+loom mint-token --subject okf-sync --org <org> --namespace-role shared-lessons=viewer \
+  --ttl-days 90 --save ./private-viewer.jwt
 # On the public Loom: write the namespace, nothing else.
-loom mint-token --subject okf-sync --org <org> --namespace-role shared-lessons=writer --ttl-days 90
+loom mint-token --subject okf-sync --org <org> --namespace-role shared-lessons=writer \
+  --ttl-days 90 --save ./public-writer.jwt
 ```
 
 Store them in the Secret the CronJob reads:
@@ -81,7 +93,8 @@ kubectl create secret generic okf-sync \
 Re-mint before the TTL runs out, with the same `--subject`, and replace the Secret. Prune
 deletes only rows its token's subject wrote, so a token with another subject leaves the
 earlier copies in place (the last line counts them as kept); `loom revoke-token` retires a
-leaked one.
+leaked one. Prune needs a JWT: with a token that carries no subject (a server with
+authentication off) it deletes nothing and counts every candidate as kept.
 
 - On the public Loom, the job's token is the only writer on the namespace. Its readers
   (a bot in public CI) hold `viewer` tokens.

@@ -52,7 +52,6 @@ from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
 from server.memory.domain.edge_relations import canonical_link_relation
 from server.memory.domain.graph_quality import canonical_entities
-from server.memory.domain.procedural_contract import RETYPE_TAG
 from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX
 from server.memory.domain.trust import actor_for
 
@@ -61,9 +60,20 @@ _BULK = 500
 # Every concept row the import writes carries this source_trace prefix; --prune deletes
 # nothing else.
 _TRACE_PREFIX = "okf:"
-# Tags memory.set adds itself (sensitivity tier, attribute labels, a procedural retype); a
-# live row carrying one the bundle lacks is not a change, since the next write adds it back.
-_SERVER_TAGS = (SENSITIVITY_TAG_PREFIX, ATTRIBUTE_TAG_PREFIX, RETYPE_TAG)
+# Tags memory.set adds itself (sensitivity tier, attribute labels); a live row carrying one
+# the bundle lacks is not a change, since the next write adds it back.
+_SERVER_TAGS = (SENSITIVITY_TAG_PREFIX, ATTRIBUTE_TAG_PREFIX)
+_LIVE_FIELDS = [
+    "session_id",
+    "memory_type",
+    "confidence",
+    "source_trace",
+    "valid_at",
+    "tags",
+    "entities",
+    "content_sha256",
+    "verification",
+]
 
 
 def _resolve_token(args: argparse.Namespace) -> str:
@@ -89,7 +99,6 @@ class _Client:
     def __init__(self, base_url: str, token: str) -> None:
         import httpx
 
-        self.token = token
         self._c = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             timeout=60.0,
@@ -465,6 +474,7 @@ async def _import_evidence(
     args: argparse.Namespace,
     chunks: list[okf_ev.ChunkRecord],
     digests: list[okf_ev.DigestRecord],
+    root: Path,
     *,
     batch: int = 64,
 ) -> dict[str, int]:
@@ -510,7 +520,7 @@ async def _import_evidence(
         "namespace": args.namespace,
         "agent": args.agent,
         "user_id": args.user_id,
-        "source_trace": f"okf-import:{Path(args.path).name}",
+        "source_trace": f"okf-import:{root.name}",
     }
     batches: list[dict[str, Any]] = []
     for i in range(0, len(chunks), batch):
@@ -569,23 +579,10 @@ def _concept_payload(
             "agent": args.agent,
             "user_id": args.user_id,
             "session_id": session_id,
-            "source_trace": f"{_TRACE_PREFIX}{root.resolve().name}/{c.path}",
+            "source_trace": f"{_TRACE_PREFIX}{root.name}/{c.path}",
         }
     )
     return payload
-
-
-_LIVE_FIELDS = [
-    "session_id",
-    "memory_type",
-    "confidence",
-    "source_trace",
-    "valid_at",
-    "tags",
-    "entities",
-    "content_sha256",
-    "verification",
-]
 
 
 async def _live_rows(
@@ -690,12 +687,7 @@ def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
         row.get("content_sha256") == sha256_value(payload["value"])
         and row.get("memory_type") == payload["memory_type"]
         and row.get("source_trace") == payload["source_trace"]
-        and {
-            t
-            for t in row.get("tags") or []
-            if t in payload["tags"] or not t.startswith(_SERVER_TAGS)
-        }
-        == set(payload["tags"])
+        and _comparable_tags(row.get("tags") or [], payload["tags"]) == set(payload["tags"])
         and math.isclose(float(row.get("confidence") or 0), payload["confidence"], abs_tol=1e-6)
         # A bundle without entities leaves them to the target's extractor.
         and (
@@ -707,6 +699,11 @@ def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
         # Without a declared class the server derives one from the op and source_trace.
         and ("source_class" not in payload or row.get("source_class") == payload["source_class"])
     )
+
+
+def _comparable_tags(row_tags: list[str], payload_tags: list[str]) -> set[str]:
+    """The row's tags without those memory.set added that the payload does not carry."""
+    return {t for t in row_tags if t in payload_tags or not t.startswith(_SERVER_TAGS)}
 
 
 async def _import_concepts(
@@ -804,8 +801,10 @@ async def _import_links(
     if len(unresolved) > 10:
         print(f"  ! … {len(unresolved) - 10} more unresolved relates_to entries", file=sys.stderr)
     n = {"links": 0, "links_unchanged": 0, "links_failed": 0, "links_unresolved": len(unresolved)}
-    new = [e for e in links if _edge_key(e) not in live_edges]
-    n["links_unchanged"] = len(links) - len(new)
+    # One key exported for several writers carries its edges once per concept.
+    wanted = {_edge_key(e): e for e in links}
+    new = [e for k, e in wanted.items() if k not in live_edges]
+    n["links_unchanged"] = len(wanted) - len(new)
     if args.dry_run:
         n["links"] = len(new)
         return n
@@ -870,6 +869,7 @@ async def _prune(
     args: argparse.Namespace,
     live: dict[tuple[str, str], dict[str, Any]],
     keep: set[tuple[str, str]],
+    actor: str,
 ) -> dict[str, int]:
     """memory.delete each row an earlier import wrote whose key has left the bundle. Only
     rows under the import's identity with its source_trace stamp qualify, so rows anyone
@@ -879,9 +879,6 @@ async def _prune(
         for k, r in live.items()
         if k not in keep and str(r.get("source_trace") or "").startswith(_TRACE_PREFIX)
     )
-    claims = jwt_claims(client.token)
-    # The writer the server stamped on our rows: the agent name is the client's choice.
-    actor = actor_for(str(claims.get("sub") or ""), is_service_account=claims.get("sa") is True)
     n = {"pruned": 0, "prune_kept": 0, "prune_failed": 0}
     for session_id, key in gone:
         ident = {
@@ -896,10 +893,10 @@ async def _prune(
             # memory.delete falls back to the same key under any agent when ours is gone;
             # delete only while the row read is still ours.
             got = await client.post("memory.get", {**ident, "fields": ["agent", "actor"]})
-            if not (
-                got.get("found") and got.get("agent") == args.agent and got.get("actor") == actor
-            ):
-                n["prune_kept"] += int(bool(got.get("found")))
+            if not got.get("found") or got.get("agent") != args.agent:
+                continue
+            if got.get("actor") != actor:
+                n["prune_kept"] += 1
                 continue
             if args.dry_run:
                 where = f" (session {session_id})" if session_id != "-" else ""
@@ -919,7 +916,7 @@ def _print_import_summary(
     n: dict[str, int],
     args: argparse.Namespace,
     org: str,
-    concepts: list[okf.Concept],
+    rows: int,
     ev_chunks: list[okf_ev.ChunkRecord],
     ev_digests: list[okf_ev.DigestRecord],
 ) -> None:
@@ -944,14 +941,14 @@ def _print_import_summary(
     )
     if args.dry_run:
         print(
-            f"dry run: {n['written']} of {len(concepts)} concepts "
+            f"dry run: {n['written']} of {rows} rows "
             f"({n['unchanged']} unchanged), "
             f"{len(ev_chunks)} raw chunks and {len(ev_digests)} session digests would be "
             f"written to {org}/{args.namespace}{link_note}{prune_note}"
         )
     else:
         print(
-            f"imported {len(concepts)} concepts into {org}/{args.namespace}: "
+            f"{rows} rows from the bundle into {org}/{args.namespace}: "
             f"{n['written']} written, {n['unchanged']} unchanged, {n['failed']} failed"
             + (f", {n['merged']} merged into another key" if n["merged"] else "")
             + " "
@@ -961,7 +958,8 @@ def _print_import_summary(
 
 
 def _cmd_import_okf(args: argparse.Namespace) -> int:
-    root = Path(args.path)
+    # Resolved, so `import-okf .` names the bundle directory in every source_trace.
+    root = Path(args.path).resolve()
     if not root.is_dir():
         print(f"{root} is not a directory", file=sys.stderr)
         return 2
@@ -969,7 +967,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
     if refused is not None:
         return refused
     concepts = _walk_bundle(root)
-    if args.prune and args.agent is None:
+    if args.prune and not args.agent:
         # Prune deletes every import row of its agent that this bundle lacks, so each
         # bundle imported into a namespace needs an agent of its own.
         print("refusing to prune: --prune needs an explicit --agent", file=sys.stderr)
@@ -982,6 +980,9 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
             return 2
     token = _resolve_token(args)
     org = _resolve_org(args, token)
+    claims = jwt_claims(token)
+    # The writer the server stamps on the import's rows; the agent name is the client's choice.
+    actor = actor_for(str(claims.get("sub") or ""), is_service_account=claims.get("sa") is True)
     ev_chunks, ev_digests = ([], []) if args.no_evidence else _walk_evidence(root)
     if not concepts and not ev_chunks and not ev_digests:
         print("no concepts found")
@@ -1019,14 +1020,14 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
             if args.prune:
                 # Before the writes, so each delete follows the read that chose it closely.
                 keep = {(p["session_id"], p["memory_key"]) for _, p in planned}
-                n.update(await _prune(client, org, args, live, keep))
+                n.update(await _prune(client, org, args, live, keep, actor))
             n.update(await _import_concepts(client, org, args, planned, live))
             if not args.no_links:
                 n.update(
                     await _import_links(client, org, args, links, unresolved, root, live_edges)
                 )
             if (ev_chunks or ev_digests) and not args.dry_run:
-                ev = await _import_evidence(client, org, args, ev_chunks, ev_digests)
+                ev = await _import_evidence(client, org, args, ev_chunks, ev_digests, root)
                 print(
                     f"  evidence: {ev['chunks_written']}/{len(ev_chunks)} raw chunks "
                     f"({ev['links_written']} links), {ev['digests_written']}/{len(ev_digests)} "
@@ -1038,7 +1039,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                 n["failed"] += ev["failed"]
         finally:
             await client.close()
-        _print_import_summary(n, args, org, concepts, ev_chunks, ev_digests)
+        _print_import_summary(n, args, org, len(planned), ev_chunks, ev_digests)
         return 1 if n["failed"] or n["links_failed"] or n["prune_failed"] else 0
 
     return asyncio.run(_go())
