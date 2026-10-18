@@ -277,7 +277,8 @@ def _check_concept(
         rep.add(
             "high_sensitivity_present",
             rel,
-            "a sensitivity=high row travelled in the bundle (export skips them by default)",
+            "a high row (sensitivity or the sensitivity:high tag) travelled in the bundle "
+            "(export skips them by default)",
             WARNING,
         )
 

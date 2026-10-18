@@ -255,6 +255,14 @@ def test_a_high_row_known_only_by_its_tag_is_reported() -> None:
     assert "high_sensitivity_present" in {f.id for f in lint.lint_files(files).warnings}
 
 
+def test_tags_that_are_not_a_list_do_not_stop_the_lint() -> None:
+    files = _fresh_files()
+    files["semantic/deploy_window.md"] = _with_frontmatter(
+        files["semantic/deploy_window.md"], tags=5
+    )
+    lint.lint_files(files)  # a finding or none, never a traceback
+
+
 def test_index_missing_okf_version_and_listing() -> None:
     files = _fresh_files()
     del files["procedural/index.md"]

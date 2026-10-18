@@ -594,7 +594,9 @@ def is_high(sensitivity: Any, tags: Any) -> bool:
     """A row is high by its `sensitivity` or by the `sensitivity:high` tag memory.set adds."""
     if str(sensitivity or "").strip().lower() == HIGH:
         return True
-    return SENSITIVITY_TAG_PREFIX + HIGH in {str(t).strip().lower() for t in tags or []}
+    if not isinstance(tags, list):  # a hand-edited bundle can carry `tags: 5`
+        return False
+    return SENSITIVITY_TAG_PREFIX + HIGH in {str(t).strip().lower() for t in tags}
 
 
 # ------------------------------------------------------------------
