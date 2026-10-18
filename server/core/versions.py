@@ -1,4 +1,10 @@
-"""The version a ReplacingMergeTree(version) row is written with."""
+"""The version a ReplacingMergeTree(version) row is written with.
+
+`next_version` serves the tables several replicas write for one key at once
+(revoked_tokens, sso_links, scim_users). loom.service_accounts and a refresh
+grant's loom.oauth_state row stay on the host's clock: each is rewritten only
+under a claim on its key, past the version of the row it read there, so that
+is enough to replace it."""
 
 from __future__ import annotations
 

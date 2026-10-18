@@ -391,7 +391,10 @@ What Loom does with each request:
   names the email but was never linked to it (not adopted, linked or proven
   at an SSO sign-in) is not one an SSO sign-in reaches, so it is left alone:
   revoke it with `loom revoke-token --subject`, or adopt it before offboarding
-  ([Accounts](#accounts)). A subject is a name, not an org's: when one also
+  ([Accounts](#accounts)). Likewise a token an operator minted with the
+  email itself as its subject (`loom mint-token --subject <email>`) for an
+  adopted account whose subject is a handle: revoke the email with
+  `loom revoke-token --subject <email>`. A subject is a name, not an org's: when one also
   owns an account or holds a grant in an org where the email does not reach
   that subject (another person's `alice`), it is still revoked, and Loom
   logs a warning and audits `auth.scim_collateral` naming those orgs.
@@ -424,7 +427,7 @@ What Loom does with each request:
 SCIM keeps its revocations apart from an operator's. Each subject a
 deactivation revokes gets a SCIM revocation of its own, beside the one
 `loom revoke-token --subject` writes, and a subject is revoked while either
-says so. SCIM never reads or changes an operator's revocation, and an
+says so. SCIM never changes an operator's revocation, and an
 operator's never changes SCIM's: a time-boxed `--expires-at` or a lift with
 `--issued-before` while the person is deactivated does not let them in, and
 a reactivation lifts only SCIM's, so a subject an operator revoked stays

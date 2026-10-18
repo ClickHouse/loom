@@ -19,9 +19,10 @@ changes is `active`:
   a failed request left.
 
 SCIM's revocations are its own: each is stored under the subject's SCIM key
-(`revocation.SCIM_PREFIX`), and SCIM never reads or writes the row an
-operator's `loom revoke-token` writes. The two are independent, and either
-keeps a person out; a reactivation lifts only SCIM's. A subject another
+(`revocation.SCIM_PREFIX`), and SCIM never writes the row an operator's
+`loom revoke-token` writes (it reads it only to list dead tokens revoked).
+The two are independent, and either keeps a person out; a reactivation lifts
+only SCIM's. A subject another
 deactivated user still reaches stays revoked through a reactivation. The
 accounts and their data stay: this is not erasure.
 
