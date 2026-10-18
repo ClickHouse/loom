@@ -114,7 +114,7 @@ def test_the_projection_accepts_the_three_new_entry_fields() -> None:
 
 
 def test_the_memories_page_asks_for_the_fields_it_renders() -> None:
-    recent = (_ROOT / "frontend/src/views/Recent.tsx").read_text()
+    recent = (_ROOT / "frontend/src/views/memoryListReads.ts").read_text()
     assert "const MEMORIES_PREVIEW_CHARS = 160;" in recent  # the card shows 140
     fields_src = recent[
         recent.index("MEMORIES_LIST_FIELDS = [") : recent.index(

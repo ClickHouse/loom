@@ -37,7 +37,11 @@ def test_every_page_field_list_is_a_subset_of_its_row_model() -> None:
             conversations.ConversationThreadSummary,
         ),
         ("frontend/src/views/Documents.tsx", "LIBRARY_LIST_FIELDS", knowledge._KnowledgeListEntry),
-        ("frontend/src/views/Recent.tsx", "MEMORIES_LIST_FIELDS", memory_crud._MemoryListEntry),
+        (
+            "frontend/src/views/memoryListReads.ts",
+            "MEMORIES_LIST_FIELDS",
+            memory_crud._MemoryListEntry,
+        ),
     ]
     for path, name, model in checks:
         fields = _const(path, name)
