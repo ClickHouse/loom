@@ -51,14 +51,14 @@ and the CLI reports them rather than hiding them.
 **Provenance travels.** The `loom:` block carries the row's provenance tier so a round
 trip cannot turn an inference into a first-hand fact.
 
-| Flag                   | Effect                                                                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `--include-high`       | also export `sensitivity: high` rows. Off by default: a mirror repository is a wider audience than the namespace's grants |
-| `--no-evidence`        | concepts only; skip the raw chunks (`evidence/`) and session digests (`digests/`) the bundle carries by default           |
-| `--no-links`           | skip the typed edges (shared-entity links are still written)                                                              |
-| `--include-tombstoned` | also export soft-deleted rows, as `status: deprecated`                                                                    |
-| `--limit N`            | at most N most-recent rows (smoke runs)                                                                                   |
-| `--title`, `--dry-run` | the root index title; plan without writing                                                                                |
+| Flag                   | Effect                                                                                                                                                                                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--include-high`       | also export `sensitivity: high` rows, the raw chunks and digests linked to them, and raw text that reads as a credential (the server audits each released item). Off by default: a mirror repository is a wider audience than the namespace's grants |
+| `--no-evidence`        | concepts only; skip the raw chunks (`evidence/`) and session digests (`digests/`) the bundle carries by default                                                                                                                                      |
+| `--no-links`           | skip the typed edges (shared-entity links are still written)                                                                                                                                                                                         |
+| `--include-tombstoned` | also export soft-deleted rows, as `status: deprecated`; one the list does not carry in full (a value past the preview, or a `high` row) is named and left out                                                                                        |
+| `--limit N`            | at most N most-recent rows (smoke runs)                                                                                                                                                                                                              |
+| `--title`, `--dry-run` | the root index title; plan without writing                                                                                                                                                                                                           |
 
 ## Lint
 

@@ -3514,7 +3514,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Also export soft-deleted rows (status: deprecated)",
+       "help": "Also export soft-deleted rows (status: deprecated); one the list does not carry in full (a value past the preview, or a high row) is named and left out.",
        "metavar": null
       },
       {
@@ -3589,7 +3589,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Also export rows with sensitivity=high (they stay in the database by default — a mirror repository is a wider audience than the namespace's grants).",
+       "help": "Also export rows with sensitivity=high, the raw chunks and digests linked to them, and raw text that reads as a credential; the server audits each released item. Off by default: a mirror repository is a wider audience than the namespace's grants.",
        "metavar": null
       }
      ]

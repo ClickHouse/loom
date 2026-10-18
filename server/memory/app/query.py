@@ -400,7 +400,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                     expires_at=r.expires_at,
                     valid_at=r.valid_at,
                     tombstoned_at=r.tombstoned_at,
-                    status=str(getattr(r, "status", "") or "active"),
+                    status=r.status or "active",
                     pinned=r.pinned,
                     verified_by=r.verified_by,
                     verification=_trust.verification_state(
@@ -417,12 +417,12 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                     agent=r.agent or "",
                     user_id=r.user_id or "",
                     session_id=r.session_id or "",
-                    source_trace=getattr(r, "source_trace", "") or "",
+                    source_trace=r.source_trace,
                     value=pv,
                     value_truncated=pcut,
                     # A short secret's hash can be guessed; a high row's comes with the value.
                     content_sha256="" if r.sensitivity == "high" else _row_content_sha256(r),
-                    char_limit=getattr(r, "char_limit", None),
+                    char_limit=r.char_limit,
                 )
                 for r, (pv, pcut) in ((r, _preview_for_list(r, preview_chars)) for r in rows)
             ],

@@ -76,6 +76,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
     async def emit(kind: str, **kw: Any) -> None:
         e.audits.append(kind)
+        e.actor = kw.get("actor")
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(audit, "emit", emit)
@@ -139,3 +140,56 @@ async def test_exact_get_obeys_the_tokens_pinned_user(env) -> None:
         assert env.identity.user_id == "user-b"
     finally:
         current_auth_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_a_high_read_is_audited_as_the_tokens_principal(env) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.domain.trust import actor_for
+
+    env.row = _row(sensitivity="high")
+    set_current_auth(
+        AuthInfo(
+            subject="reader", org="acme", namespaces=("ns",), roles=(), is_service_account=True
+        )
+    )
+    try:
+        out = await mem._handle_memory_get(_input())
+    finally:
+        set_current_auth(None)
+    assert out.found and env.audits == ["memory.sensitive_read"]
+    assert env.actor == actor_for("reader", is_service_account=True)
+
+
+@pytest.mark.asyncio
+async def test_a_high_read_by_id_is_audited_as_the_tokens_principal(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.memory.store as memory_repo
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.api.models_crud import MemoryGetByIdInput
+    from server.memory.domain.trust import actor_for
+
+    async def by_id(*_a: Any, **_k: Any) -> Any:
+        return _row(sensitivity="high")
+
+    async def in_scope(*_a: Any, **_k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(memory_repo, "get_by_id", by_id)
+    monkeypatch.setattr("server.auth.authz.row_in_scope", in_scope)
+    set_current_auth(
+        AuthInfo(
+            subject="reader", org="acme", namespaces=("ns",), roles=(), is_service_account=True
+        )
+    )
+    try:
+        await mem.handle_memory_get_by_id(
+            MemoryGetByIdInput(org="acme", memory_id="11111111-1111-1111-1111-111111111111")
+        )
+    finally:
+        set_current_auth(None)
+    assert env.audits == ["memory.sensitive_read"]
+    assert env.actor == actor_for("reader", is_service_account=True)

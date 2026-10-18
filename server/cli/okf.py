@@ -805,7 +805,8 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p_exp.add_argument(
         "--include-tombstoned",
         action="store_true",
-        help="Also export soft-deleted rows (status: deprecated)",
+        help="Also export soft-deleted rows (status: deprecated); one the list does not "
+        "carry in full (a value past the preview, or a high row) is named and left out.",
     )
     p_exp.add_argument(
         "--limit",
@@ -829,9 +830,10 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p_exp.add_argument(
         "--include-high",
         action="store_true",
-        help="Also export rows with sensitivity=high (they stay "
-        "in the database by default — a mirror repository is a wider "
-        "audience than the namespace's grants).",
+        help="Also export rows with sensitivity=high, the raw chunks and digests linked to "
+        "them, and raw text that reads as a credential; the server audits each released "
+        "item. Off by default: a mirror repository is a wider audience than the "
+        "namespace's grants.",
     )
     p_exp.set_defaults(func=_cmd_export_okf)
 
