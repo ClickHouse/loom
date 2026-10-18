@@ -179,9 +179,9 @@ function ConflictsPanel() {
   // The visit to this namespace a decision or a Load more was made in, for an answer that
   // lands after: it changes nothing here, its busy flags included. A count, not the name:
   // a switch away and back is another visit.
-  const rowsFor = useRef(0);
+  const visit = useRef(0);
   if (queueFor !== queueKey) {
-    rowsFor.current += 1;
+    visit.current += 1;
     setQueueFor(queueKey);
     setRows(null);
     setTotal(null);
@@ -243,7 +243,7 @@ function ConflictsPanel() {
   // The next older page joins the queue; the decision in progress stays where it is.
   const loadMore = async () => {
     if (next === null || !rows) return;
-    const key = rowsFor.current;
+    const myVisit = visit.current;
     focusAdded.current = rows.length;
     setLoadingMore(true);
     try {
@@ -251,7 +251,7 @@ function ConflictsPanel() {
         { org: identity.org, namespace: identity.namespace },
         { limit: CONFLICT_PAGE, before_version: next },
       );
-      if (rowsFor.current !== key) return;
+      if (visit.current !== myVisit) return;
       // Against the rows as they are now: a conflict decided while this read was out stays gone.
       setRows((prev) => {
         if (!prev) return prev;
@@ -262,7 +262,7 @@ function ConflictsPanel() {
     } catch (e) {
       toast(`Couldn't load more conflicts: ${humanizeError(e)}`, "error");
     } finally {
-      if (rowsFor.current === key) setLoadingMore(false);
+      if (visit.current === myVisit) setLoadingMore(false);
     }
   };
 
@@ -292,7 +292,7 @@ function ConflictsPanel() {
   const held = total === null ? null : Math.max(total, rows.length);
 
   const decide = async (decision: ResolveDecision) => {
-    const key = rowsFor.current;
+    const myVisit = visit.current;
     setBusy(true);
     try {
       await resolveConflict(
@@ -302,19 +302,22 @@ function ConflictsPanel() {
         reason.trim() ? { reason: reason.trim() } : {},
       );
       toast("Resolved", "ok");
-      // The namespace changed while the decision was out: its queue is not this one's.
-      if (rowsFor.current !== key) return;
+      // The decided conflict is gone wherever it is listed: an id is org-wide, so dropping
+      // it can touch no other namespace's queue, and a queue read again on a return to this
+      // namespace must not offer it a second time.
+      setRows((prev) => prev && prev.filter((c) => c.memory_id !== current.memory_id));
+      // Another visit: the rest (its place, count and reason) is not this queue's.
+      if (visit.current !== myVisit) return;
       setReason("");
       // The decided conflict leaves the queue as it is now (a page Load more added meanwhile
       // stays); the next one takes its place.
       decided.current = true;
-      setRows((prev) => prev && prev.filter((c) => c.memory_id !== current.memory_id));
       setIndex(at);
       if (held !== null) setTotal(held - 1);
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {
-      if (rowsFor.current === key) setBusy(false);
+      if (visit.current === myVisit) setBusy(false);
     }
   };
 
