@@ -331,7 +331,8 @@ function MemoryList() {
         // soon as they arrive (a few hundred ms) and the ranked hits join them when the
         // search answers (it embeds the query first); a failed keyword read leaves the
         // ranked hits standing.
-        const rankedKey = `${identity.org}/${identity.namespace}\n${rawQuery}`;
+        // A local write (memoriesVersion) ranks again; a filter change alone does not.
+        const rankedKey = `${identity.org}/${identity.namespace}\n${memoriesVersion}\n${rawQuery}`;
         if (rankedRef.current?.key !== rankedKey) {
           rankedRef.current?.ac.abort();
           const rac = new AbortController();
@@ -889,7 +890,10 @@ function MemoryList() {
           ? // A tag or agent filter is matched on the server, whose total is exact; a status
             // is kept here among the rows read.
             matches(
-              !showDeleted && listFilter.status === "live" && serverMatches !== null ? serverMatches : flatList.length,
+              // Of the filter it read: not of a typed tag still on its way.
+              !showDeleted && listFilter.status === "live" && serverMatches !== null && filterRead && !filterPending
+                ? serverMatches
+                : flatList.length,
             )
           : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()}`;
   const lastCount = useRef("");

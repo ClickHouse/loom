@@ -171,7 +171,7 @@ describe("Memories list chrome", () => {
     expect(within(pager()).getByRole("status")).toBeEmptyDOMElement();
   });
 
-  it("counts a tag filter's matches from the server and says how many rows it read", async () => {
+  it("counts a cut-short tag filter's matches from the server", async () => {
     // A viewer's read is cut to 100 rows; the server still counts every match.
     vi.mocked(listMemories).mockImplementation(
       async (_id, limit = 50): Promise<MemoryListResponse> =>
@@ -189,6 +189,69 @@ describe("Memories list chrome", () => {
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
     await waitFor(() => expect(toolbar()).toHaveTextContent("340 matches"));
     expect(screen.getByText(/Showing the newest matches/)).toBeInTheDocument();
+  });
+
+  it("drops the server's count while a typed tag waits to be applied", async () => {
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, limit = 50): Promise<MemoryListResponse> =>
+        limit === 1000
+          ? {
+              entries: Array.from({ length: 100 }, (_, i) =>
+                entry(`t${i}`, { tags: i < 3 ? ["api", "web"] : ["api"] }),
+              ),
+              total: 340,
+              today: 0,
+              truncated: true,
+            }
+          : { entries: ROWS, total: 1234, today: 0, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    const box = screen.getByLabelText("Search memories");
+    await userEvent.type(box, "tag:api");
+    await waitFor(() => expect(toolbar()).toHaveTextContent("340 matches"));
+    // The second tag narrows the rows at once; its read waits for the typing to pause.
+    fireEvent.change(box, { target: { value: "tag:api tag:web" } });
+    expect(toolbar()).not.toHaveTextContent("340");
+  });
+
+  it("counts the rows on screen when the read was not cut short, whatever the server total", async () => {
+    // The page keeps profile rows out; the server counted them.
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, limit = 50): Promise<MemoryListResponse> =>
+        limit === 1000
+          ? {
+              entries: [entry("a1", { tags: ["api"] }), entry("a2", { tags: ["api"] })],
+              total: 300,
+              today: 0,
+              truncated: false,
+            }
+          : { entries: ROWS, total: 1234, today: 0, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
+    await waitFor(() => expect(toolbar()).toHaveTextContent("2 matches"));
+    expect(toolbar()).not.toHaveTextContent("300");
+  });
+
+  it("counts the rows on screen when a server a release behind ignored any-case on one tag", async () => {
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, limit = 50): Promise<MemoryListResponse> =>
+        limit === 1000
+          ? {
+              entries: [entry("a1", { tags: ["api"] })],
+              total: 300,
+              today: 0,
+              truncated: true,
+              ignored_args: ["tags_any_case"],
+            }
+          : { entries: ROWS, total: 1234, today: 0, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
+    await waitFor(() => expect(toolbar()).toHaveTextContent("1 match"));
   });
 
   it("counts the rows on screen when the server matched the tags another way (a release behind)", async () => {

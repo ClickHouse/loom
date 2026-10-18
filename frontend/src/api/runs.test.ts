@@ -16,4 +16,13 @@ describe("listRunsPage", () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { q: string };
     expect(body.q).toHaveLength(RUN_LIST_MAX_Q);
   });
+
+  it("cuts by characters, never inside one", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ runs: [], total: 0 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await listRunsPage({ org: "dev", namespace: "team" }, { q: "😀".repeat(RUN_LIST_MAX_Q + 50) });
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { q: string };
+    expect(Array.from(body.q)).toHaveLength(RUN_LIST_MAX_Q);
+    expect(body.q).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
 });
