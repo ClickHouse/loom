@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AllowlistRow, ConflictRow, LearningEntry } from "../../api";
 import { useStore } from "../../lib/state";
 import { ReviewQueue } from "./ReviewQueue";
@@ -122,6 +122,13 @@ describe("ReviewQueue", () => {
         ? { rows: [conflict("b/key")], next_before_version: null }
         : { rows: [conflict("a/key"), conflict("a/next")], next_before_version: null },
     );
+    // Each namespace has its own count: a stale decision would take one off B's.
+    vi.mocked(countConflicts).mockImplementation(async (id: { namespace: string }) =>
+      id.namespace === "ns-b" ? 5 : 2,
+    );
+    onTestFinished(() => {
+      vi.mocked(countConflicts).mockImplementation(async () => 0);
+    });
     let answer: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answer = r)));
     seed("ns-a");
@@ -130,9 +137,43 @@ describe("ReviewQueue", () => {
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
     seed("ns-b");
     await screen.findByText("value of b/key", {}, WAIT);
+    await screen.findByText(/Conflict 1 of 5/, {}, WAIT);
     await act(async () => answer({ resolved: true, affected_memory_ids: [] }));
     expect(screen.getByText("value of b/key")).toBeTruthy();
     expect(screen.queryByText("value of a/next")).toBeNull();
+    expect(screen.getByText(/Conflict 1 of 5/)).toBeInTheDocument();
+  });
+
+  it("a Load more answered after a namespace switch adds nothing to the new namespace's queue", async () => {
+    let older: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
+    vi.mocked(listConflicts).mockImplementation(async (id, opts) => {
+      if (id.namespace === "ns-b") return { rows: [conflict("b/key")], next_before_version: null };
+      if (opts?.before_version) return new Promise((r) => (older = r));
+      return { rows: [conflict("a/key")], next_before_version: 7 };
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/key", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    await act(async () => older({ rows: [conflict("a/older")], next_before_version: null }));
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    expect(within(table).queryByRole("button", { name: "a/older" })).toBeNull();
+  });
+
+  it("opens Learnings from the probe without a second read, and reads afresh when it opens again", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listLearnings).mockResolvedValue({ rows: [learning("a/learned")] });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
+    await screen.findByText("a/learned", {}, WAIT);
+    // The probe's read seeded it.
+    expect(listLearnings).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("tab", { name: /Conflicts/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /Learnings/ }));
+    await waitFor(() => expect(listLearnings).toHaveBeenCalledTimes(2), WAIT);
   });
 
   it("falls back to Conflicts when the new namespace hides the open sub-tab", async () => {

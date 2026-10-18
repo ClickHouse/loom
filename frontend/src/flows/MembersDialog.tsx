@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
@@ -19,6 +19,7 @@ import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { fieldError, ListTime, Loading, Tip } from "../components/ui";
+import { ListState } from "../components/ui/ListState";
 import { humanizeError } from "../lib/format";
 import { oneOf } from "../lib/oneOf";
 
@@ -81,22 +82,29 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
   // The re-read after a change keeps the members on screen, marked busy; another
   // namespace's members are not this one's, so a new namespace starts from the loader.
   const [refreshing, setRefreshing] = useState(false);
-  const rowsFor = useRef("");
+  // A failed read is said as one, with Retry: never as "no members". A failed re-read
+  // keeps the members on screen. Another namespace resets during render, so its members
+  // (and their actions) never paint under the new one.
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const rowsKey = `${org}/${namespace}`;
+  const [rowsFor, setRowsFor] = useState(rowsKey);
+  if (rowsFor !== rowsKey) {
+    setRowsFor(rowsKey);
+    setRows(null);
+    setLoadError(null);
+  }
 
   useEffect(() => {
     if (!open) return;
     let live = true;
-    if (rowsFor.current !== `${org}/${namespace}`) {
-      rowsFor.current = `${org}/${namespace}`;
-      setRows(null);
-    }
     setRefreshing(true);
+    setLoadError(null);
     listGrants({ org, namespace })
       .then((r) => {
         if (live) setRows(r.rows || []);
       })
-      .catch(() => {
-        if (live) setRows([]);
+      .catch((e) => {
+        if (live) setLoadError(e);
       })
       .finally(() => {
         if (live) setRefreshing(false);
@@ -226,7 +234,15 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
       className="w-full max-w-[600px]"
     >
       <div data-testid="members-body" aria-busy={(rows !== null && refreshing) || undefined}>
-        {rows === null && <Loading label={isCode ? "Loading readers" : "Loading members"} />}
+        {rows === null && loadError === null && <Loading label={isCode ? "Loading readers" : "Loading members"} />}
+        {loadError !== null && rows === null && (
+          <ListState kind="error" things={isCode ? "readers" : "members"} error={loadError} onRetry={load} />
+        )}
+        {loadError !== null && rows !== null && (
+          <div className="mb-3 text-xs text-text-muted" role="status">
+            {`Couldn't refresh the ${isCode ? "readers" : "members"}; showing the last read.`}
+          </div>
+        )}
         {rows !== null && rows.length === 0 && (
           <div className="py-8 text-center text-sm text-text-muted">
             No members yet.{canManage && ` Click ${addLabel} below to invite the first one.`}
@@ -234,7 +250,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
         )}
         {pendingRows.length > 0 && (
           <div className="mb-4">
-            <div className="mb-2 text-xs font-medium text-warn">Pending requests ({pendingRows.length})</div>
+            <div className="mb-2 text-xs font-medium text-info">Pending requests ({pendingRows.length})</div>
             <div className="space-y-1">
               {pendingRows.map((r) => {
                 const sinceDate = r.pending_since || r.granted_at;

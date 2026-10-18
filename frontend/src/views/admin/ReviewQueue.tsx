@@ -70,10 +70,15 @@ export function ReviewQueue() {
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
   // viewer on a hidden panel.
   const [tab, setTab] = useState("conflicts");
+  // A probe seeds its panel's first view once: a panel opened again (the tabs unmount an
+  // inactive one) reads afresh, so a learning promoted or an exception removed since does
+  // not come back from the probe.
+  const [seedsUsed, setSeedsUsed] = useState({ learnings: false, exceptions: false });
   useAbortableEffect(
     (signal, live) => {
       setProbedLearnings(null);
       setProbedExceptions(null);
+      setSeedsUsed({ learnings: false, exceptions: false });
       setTab("conflicts");
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", LEARNINGS_READ, { signal })
         .then((r) => {
@@ -127,12 +132,18 @@ export function ReviewQueue() {
         </Tabs.Content>
         {hasLearnings && (
           <Tabs.Content value="learnings">
-            <LearningsPanel initialPending={probedLearnings} />
+            <LearningsPanel
+              initialPending={seedsUsed.learnings ? null : probedLearnings}
+              onSeedUsed={() => setSeedsUsed((u) => ({ ...u, learnings: true }))}
+            />
           </Tabs.Content>
         )}
         {hasExceptions && (
           <Tabs.Content value="exceptions">
-            <AllowlistPanel initial={probedExceptions} />
+            <AllowlistPanel
+              initial={seedsUsed.exceptions ? null : probedExceptions}
+              onSeedUsed={() => setSeedsUsed((u) => ({ ...u, exceptions: true }))}
+            />
           </Tabs.Content>
         )}
       </Tabs>
@@ -450,7 +461,13 @@ const LEARNINGS_READ = 50;
 const LEARNING_STATUSES: readonly LearningStatus[] = ["pending", "promoted", "rejected"];
 const STATUS_LABEL: Record<LearningStatus, string> = { pending: "Pending", promoted: "Promoted", rejected: "Rejected" };
 
-function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] | null }) {
+function LearningsPanel({
+  initialPending,
+  onSeedUsed,
+}: {
+  initialPending?: LearningEntry[] | null;
+  onSeedUsed: () => void;
+}) {
   const identity = useIdentity();
   const [status, setStatus] = useState<LearningStatus>("pending");
   const [rows, setRows] = useState<LearningEntry[] | null>(initialPending ?? null);
@@ -476,6 +493,7 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
       // The first "pending" view was already fetched by the page's probe.
       if (seeded.current && status === "pending") {
         seeded.current = false;
+        onSeedUsed();
         return;
       }
       setRefreshing(true);
@@ -603,7 +621,7 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
 
 // ─── Exceptions (allowlist) panel ──────────────────────────────────────
 
-function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
+function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | null; onSeedUsed: () => void }) {
   const identity = useIdentity();
   const [rows, setRows] = useState<AllowlistRow[] | null>(initial ?? null);
   const seeded = useRef(initial != null);
@@ -626,6 +644,7 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
     (signal, live) => {
       if (seeded.current) {
         seeded.current = false;
+        onSeedUsed();
         return;
       }
       setRefreshing(true);

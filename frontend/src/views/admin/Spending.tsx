@@ -105,6 +105,9 @@ export function Spending() {
     setRowsFor(rowsKey);
     setRows(null);
     setError(null);
+    // The budget and its editor are the namespace's too; the org's budget is not.
+    setBudget(null);
+    setNsRow(null);
   }
   useAbortableEffect(
     (signal, live) => {

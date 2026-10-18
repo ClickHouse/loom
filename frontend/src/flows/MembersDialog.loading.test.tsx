@@ -47,6 +47,19 @@ describe("MembersDialog loading", () => {
   });
 });
 
+describe("MembersDialog failed reads", () => {
+  it("says a failed first read failed, with Retry, never 'No members yet'", async () => {
+    vi.mocked(api.listGrants)
+      .mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValueOnce({ rows: [PENDING] } as never);
+    render(<MembersDialog open onOpenChange={() => {}} org="clickhouse" namespace="team" />);
+    expect(await screen.findByText("Couldn't load members")).toBeInTheDocument();
+    expect(screen.queryByText(/No members yet/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("reporter-private")).toBeInTheDocument();
+  });
+});
+
 // A request's wait and a member's grant are the list's one time format, quiet in the row.
 describe("MembersDialog times", () => {
   it("draws a request's wait and a member's grant time with ListTime", async () => {
