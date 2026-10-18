@@ -18,7 +18,7 @@ from typing import Any
 
 from server.code.domain.scope import current_code_scope
 from server.operations.registry import OPERATIONS_BY_NAME
-from server.transport._common import begin_request, bind_request
+from server.transport._common import begin_call, bind_request
 from server.transport.mcp_config import (
     _LOOM_PRIMER_RESOURCE_URI,
     _LOOM_PROMPT_NAME,
@@ -119,7 +119,7 @@ async def _render_primer_and_emit(
     line for it. Shared by the `loom` prompt and the loom_activate tool so
     picker- and tool-driven activations record identically in cost/audit."""
     request_id = str(uuid.uuid4())
-    begin_request()  # a batch's earlier entry leaves nothing on this row
+    begin_call()  # a batch's earlier entry leaves nothing on this row
     bind_request(op_name, request_id)
     started = time.monotonic()
     defaults = await _caller_defaults(auth, client_name)

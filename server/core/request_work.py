@@ -12,9 +12,12 @@ This module is the request-scoped place those facts accumulate. The
 transport binds a fresh bag at op start (next to the cost accumulator and the
 degradation notes); the ClickHouse client, the ask service and the schema
 guard write into it; `event_args.request_work_columns` flattens it onto the
-ledger row. Like the cost accumulator, nothing is recorded when no bag is
-bound (a worker pass, a test) — a long-lived task never accumulates across
-requests. Never raises.
+ledger row. It also carries one authorization outcome the row's
+`status_class` reads: `answered_unverified`, which `server.auth.fail_closed`
+sets when the request hid a row because a read the check needed failed.
+Like the cost accumulator, nothing is recorded when no bag is bound (a
+worker pass, a test) — a long-lived task never accumulates across requests.
+Never raises.
 """
 
 from __future__ import annotations
@@ -48,8 +51,9 @@ class RequestWork:
     # Schema guard: tables a pending migration creates that a
     # leg of this request tried to read; the leg continued without them.
     schema_skipped: list[str] = field(default_factory=list)
-    # Something was hidden as if refused because a read the check needed
-    # failed (server.auth.fail_closed): the request's row is the server's.
+    # The request answered as if refused because a read the check needed
+    # failed (`row_in_scope`'s found=False; server.auth.fail_closed): its
+    # row is the server's.
     answered_unverified: bool = False
 
     def mark(self, name: str) -> float:

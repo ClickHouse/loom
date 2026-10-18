@@ -12,24 +12,22 @@ import functools
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 
+from server.core import request_work
+
 _unreadable: ContextVar[bool] = ContextVar("authz_unreadable", default=False)
 
 
 def note_answered_unverified() -> None:
-    """The request hid something as if refused because a read the check needed
-    failed (`row_in_scope`'s found=False, a namespace left out of a list): its
-    row is the server's. Kept on the request's work bag, which the tasks a
-    handler gathers share, rather than in a ContextVar they would copy."""
-    from server.core import request_work
-
+    """The request answered as if refused because a read the check needed
+    failed (`row_in_scope`'s found=False): its row is the server's. Kept on
+    the request's work bag, which the tasks a handler gathers share, rather
+    than in a ContextVar they would copy."""
     bag = request_work.current()
     if bag is not None:
         bag.answered_unverified = True
 
 
 def answered_unverified() -> bool:
-    from server.core import request_work
-
     bag = request_work.current()
     return bag is not None and bag.answered_unverified
 

@@ -651,11 +651,13 @@ def _emit_refused(
     batch, once per (op, code, org, status class), as `mcp_ledger` explains.
     False when the batch already wrote it, so the caller skips its other
     rows too."""
+    from server.auth.fail_closed import answered_unverified
     from server.observability.sli import status_class
     from server.transport._common import ledger_identity
 
     org = str(ledger_identity(arguments).get("org") or "")
-    first = first_in_batch(op_name, error_code, org, status_class(False, error_code, error))
+    status = "server" if answered_unverified() else status_class(False, error_code, error)
+    first = first_in_batch(op_name, error_code, org, status)
     if first:
         _emit_mcp_event(
             op_name,
