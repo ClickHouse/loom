@@ -21,6 +21,8 @@ one-directional modules (none import back into this one):
   • mcp_schemas   — JSON-Schema transformation for descriptors
   • mcp_identity  — client-name slugify / session→agent cache / caller defaults
   • mcp_tools     — tool descriptors, the loom_search rendering, the per-call ledger rows
+  • mcp_ledger    — the rows of calls refused before their handler, once per batch
+  • mcp_op        — the `loom_op` tool: an op by name, and the ones kept off MCP
   • mcp_primer    — the primer and the prompts / resources / initialize surfaces
   • mcp_auth      — bearer verification, 401 answers, the pre-dispatch screen
   • mcp_call      — one `tools/call`, from tool resolution to the handler

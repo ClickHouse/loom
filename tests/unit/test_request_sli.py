@@ -839,12 +839,15 @@ def test_a_5xx_from_the_gate_is_ledgered_on_both_transports(monkeypatch) -> None
 
 
 def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> None:
-    """A single POST can carry hundreds of thousands of refused entries;
-    each (op, code, org) is ledgered once, so they cannot fill the ledger
-    queue for every tenant."""
+    """A single POST can carry hundreds of thousands of refused entries; within
+    the batch each (op, code, org, status class) is ledgered once, so they
+    cannot fill the ledger queue for every tenant. A server fault is not
+    hidden behind a client refusal of the same code."""
     from server.auth.jwt import AuthInfo
     from server.observability import events
-    from server.transport.mcp_ledger import emit_refusal, one_refusal_row_each
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp, mcp_auth, mcp_call, mcp_op
+    from server.transport.mcp_ledger import emit_refusal
 
     emitted: list = []
 
@@ -857,14 +860,34 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
     eve = AuthInfo(
         subject="eve", org="eve-org", namespaces=(), roles=(Role.WRITER,), is_service_account=False
     )
-    with one_refusal_row_each():
-        for _ in range(10_000):
-            emit_refusal("blacklist.remove", eve, error_code="OP_NOT_ON_MCP")
-            emit_refusal("memory.set", eve, error_code="ORG_MISMATCH")
-    assert [(e.operation, e.error_code) for e in emitted] == [
-        ("blacklist.remove", "OP_NOT_ON_MCP"),
-        ("memory.set", "ORG_MISMATCH"),
+    hidden = {"name": "loom_op", "arguments": {"op": "blacklist.remove"}}
+    foreign = {"name": "loom_memory_set", "arguments": {"org": "acme", "namespace": "n"}}
+    misspelt = {"org": "eve-org", "namespace": "n", "memory_keyy": "k"}
+
+    async def _entry(req: dict[str, Any]) -> None:
+        params = req["params"]
+        if params["name"] == "loom_op":
+            mcp_op.route(req, toolset=None, auth=eve)
+        elif params["name"] == "loom_memory_set":
+            await mcp_auth._screen_tool_call(req, eve)
+        else:  # refused by mcp_call before its handler, with the same code twice
+            op = OPERATIONS_BY_NAME["memory.set"]
+            mcp_call._emit_refused(op.name, misspelt, error_code="UNKNOWN_ARGUMENT", request_id="r")
+            emit_refusal(op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE", server_fault=True)
+            emit_refusal(op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE")
+
+    batch = [{"id": i, "method": "tools/call", "params": hidden} for i in range(1000)]
+    batch += [{"id": i, "method": "tools/call", "params": foreign} for i in range(1000)]
+    batch += [{"id": i, "method": "tools/call", "params": {"name": "x"}} for i in range(1000)]
+    asyncio.run(mcp._dispatch_batch(batch, _entry))
+    assert sorted((e.operation, e.error_code, e.status_class) for e in emitted) == [
+        ("blacklist.remove", "OP_NOT_ON_MCP", "client"),
+        ("memory.set", "NAMESPACE_NOT_ACCESSIBLE", "client"),
+        ("memory.set", "NAMESPACE_NOT_ACCESSIBLE", "server"),
+        ("memory.set", "ORG_MISMATCH", "client"),
+        ("memory.set", "UNKNOWN_ARGUMENT", "client"),
     ]
     # Outside a batch, each call is its own request.
     emit_refusal("memory.set", eve, error_code="ORG_MISMATCH")
-    assert len(emitted) == 3
+    emit_refusal("memory.set", eve, error_code="ORG_MISMATCH")
+    assert len(emitted) == 7

@@ -37,7 +37,7 @@ from server.transport.mcp_config import (
 )
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
-from server.transport.mcp_ledger import emit_refusal
+from server.transport.mcp_ledger import emit_refusal, first_in_batch
 from server.transport.mcp_op import UNKNOWN_OP
 from server.transport.mcp_outcome import (
     _emit_success,
@@ -526,9 +526,7 @@ async def _idempotency_gate(
     )
     if replay.conflict:
         code = "IDEMPOTENT_IN_PROGRESS" if replay.in_progress else "IDEMPOTENT_CONFLICT"
-        _emit_mcp_event(
-            op.name, arguments, 0, success=False, error_code=code, request_id=request_id
-        )
+        _emit_refused(op.name, arguments, error_code=code, request_id=request_id)
         msg = "Idempotency key reused with different tool arguments."
         body: dict[str, Any] = {"error": msg, "code": code}
         if replay.in_progress:
@@ -573,13 +571,8 @@ def _validated_input(
 
     refused = named_argument_error(op, arguments)
     if refused is not None:
-        _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code=refused.error_detail()["code"],
-            request_id=request_id,
+        _emit_refused(
+            op.name, arguments, error_code=refused.error_detail()["code"], request_id=request_id
         )
         return _ok(req_id, refused_result(op, refused.error_detail()))
 
@@ -589,11 +582,9 @@ def _validated_input(
     except ValidationError as e:
         # The failing field on the row, and a code.* trace row.
         errors = _validation_errors(e)
-        _emit_mcp_event(
+        _emit_refused(
             op.name,
             arguments,
-            0,
-            success=False,
             error_code="VALIDATION_FAILED",
             request_id=request_id,
             error=validation_note(errors),
@@ -628,36 +619,47 @@ async def _authorize_call(
         )
         await gates.authorize(op, auth, target, transport="mcp")
     except PermissionError as e:
-        _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code=gates.ROLE_REFUSAL_CODE,
-            request_id=request_id,
-            error=e,
+        _emit_refused(
+            op.name, arguments, error_code=gates.ROLE_REFUSAL_CODE, request_id=request_id, error=e
         )
         return _ok(req_id, _forbidden_result(op, e, auth, target.org, target.namespace))
     except IdentityIncompleteError as e:
         # HTTP's 400 IDENTITY_INCOMPLETE, as a tool result: escaping, it
         # would become a bare HTTP 400 with no JSON-RPC frame and lose the batch.
-        _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code=e.code,
-            request_id=request_id,
-        )
+        _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id)
         return _ok(req_id, _refusal_result(e))
     except LoomServerError as e:
         # A read the gate could not make past its cache (a 503): counted
         # against the server, then answered as raised.
-        _emit_mcp_event(
-            op.name, arguments, 0, success=False, error_code=e.code, request_id=request_id, error=e
-        )
+        _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id, error=e)
         raise
     return target
+
+
+def _emit_refused(
+    op_name: str,
+    arguments: dict[str, Any],
+    *,
+    error_code: str,
+    request_id: str,
+    error: BaseException | None = None,
+) -> None:
+    """A call's row when it is refused before its handler runs: within a
+    batch, once per (op, code, org, status class), as `mcp_ledger` explains."""
+    from server.observability.sli import status_class
+    from server.transport._common import ledger_identity
+
+    org = str(ledger_identity(arguments).get("org") or "")
+    if first_in_batch(op_name, error_code, org, status_class(False, error_code, error)):
+        _emit_mcp_event(
+            op_name,
+            arguments,
+            0,
+            success=False,
+            error_code=error_code,
+            request_id=request_id,
+            error=error,
+        )
 
 
 def _refusal_result(e: BaseException) -> dict[str, Any]:
@@ -713,9 +715,7 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
     try:
         call.input_obj = gates.read_scope(op, auth, input_obj)
     except (AuthInsufficientError, IdentityIncompleteError) as e:
-        _emit_mcp_event(
-            op.name, arguments, 0, success=False, error_code=e.code, request_id=request_id
-        )
+        _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id)
         return _ok(req_id, _refusal_result(e))
 
     # History policy, at parity with HTTP: after authz, before the handler.
@@ -725,14 +725,8 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
     try:
         await gates.policy(op, target, call.input_obj, arguments, request_id=request_id)
     except _PolicyForbidden as e:
-        _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code="POLICY_FORBIDDEN",
-            request_id=request_id,
-            error=e,
+        _emit_refused(
+            op.name, arguments, error_code="POLICY_FORBIDDEN", request_id=request_id, error=e
         )
         return _ok(
             req_id,
@@ -749,14 +743,7 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
         # model as a failed tool call.
         rl = await _ratelimit_retry_once(rl, op, auth, target, traffic_class=traffic_class)
     if rl is not None and not rl.allowed:
-        _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code="RATE_LIMITED",
-            request_id=request_id,
-        )
+        _emit_refused(op.name, arguments, error_code="RATE_LIMITED", request_id=request_id)
         wait = gates.retry_after_s(rl)
         msg = (
             f"namespace {target.named_namespace!r} exceeded {op.name} rate limit (retry in {wait}s)"

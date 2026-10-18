@@ -185,7 +185,8 @@ _STORAGE_GAUGES: tuple[tuple[str, str, str, str], ...] = (
     (
         "loom.sli.rollup_lag_s",
         "sli_rollup_lag_s",
-        "Seconds loom_telemetry.sli_minute's mark trails now: about 70 to 130 "
+        "Seconds loom_telemetry.sli_minute's mark trailed now at the last storage "
+        "probe (every five minutes, on the workers-lease holder): about 70 to 130 "
         "when current; more is a rollup catching up, whose newest minutes read empty",
         "s",
     ),

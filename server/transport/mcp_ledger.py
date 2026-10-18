@@ -1,9 +1,13 @@
-"""The ledger rows MCP writes for calls it refuses before dispatch.
+"""The ledger rows MCP writes for calls it refuses before their handler runs.
 
-The caller is not bound yet, so a row is the token's: its org (or the one
-the screen authorized), subject and consumer, `-` for the rest, no
-arguments. In a batch, each (op, code, org) is written once, so one POST
-of many refused entries cannot fill the ledger queue for every tenant.
+A refusal before dispatch has no bound caller, so its row is the token's:
+its org (or the one the screen authorized), subject and consumer, `-` for
+the rest, no arguments (`emit_refusal`). Within one JSON-RPC batch, every
+refusal before a handler runs (these, and `mcp_call`'s argument, gate,
+policy and rate-limit refusals) is written once per (op, code, org, status
+class): the rows come before the rate limiter and a batch has no length
+cap, so one POST of many refused entries could otherwise fill the ledger
+queue for every tenant. A handler's failure is always its own row.
 """
 
 from __future__ import annotations
@@ -15,10 +19,11 @@ from contextlib import contextmanager
 from typing import Any
 
 from server.core.naming import SENTINEL
+from server.observability.sli import status_class
 
 # The refusals a batch has written, while one runs.
-_batch_refusals: contextvars.ContextVar[set[tuple[str, str, str]] | None] = contextvars.ContextVar(
-    "mcp_batch_refusals", default=None
+_batch_refusals: contextvars.ContextVar[set[tuple[str, str, str, str]] | None] = (
+    contextvars.ContextVar("mcp_batch_refusals", default=None)
 )
 
 
@@ -32,20 +37,31 @@ def one_refusal_row_each() -> Iterator[None]:
         _batch_refusals.reset(token)
 
 
+def first_in_batch(op_name: str, code: str, org: str, status_class: str) -> bool:
+    """False when this batch has already written this refusal."""
+    seen = _batch_refusals.get()
+    if seen is None:
+        return True
+    key = (op_name, code, org, status_class)
+    if key in seen:
+        return False
+    seen.add(key)
+    return True
+
+
 def emit_refusal(
     op_name: str, auth: Any, *, error_code: str, org: str = "", server_fault: bool = False
 ) -> None:
-    """Emit a token-attributed refusal row in an isolated request context.
-    The copy is reset so earlier batch entries cannot contaminate the row."""
+    """Emit a token-attributed refusal row in an isolated request context,
+    unless this batch already wrote it. The copy is reset so earlier batch
+    entries cannot contaminate the row."""
 
     org = org or str(getattr(auth, "org", "") or "")
     if org in ("", "*"):
         org = SENTINEL
-    seen = _batch_refusals.get()
-    if seen is not None:
-        if (op_name, error_code, org) in seen:
-            return
-        seen.add((op_name, error_code, org))
+    status = "server" if server_fault else status_class(False, error_code, None)
+    if not first_in_batch(op_name, error_code, org, status):
+        return
     contextvars.copy_context().run(_emit_refusal, op_name, auth, error_code, org, server_fault)
 
 
