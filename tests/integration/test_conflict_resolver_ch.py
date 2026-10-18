@@ -1311,3 +1311,37 @@ async def test_the_undo_of_a_retirement_rescinds_its_supersedes_edge(ch, wired) 
     )
     assert undone.restored
     assert await live_edges() == 0
+
+
+async def test_a_peer_flagged_by_another_rows_turn_is_still_judged_against_its_own_peers(
+    ch, wired, monkeypatch
+) -> None:
+    """A-B at 0.8, B-C at 0.8, A-C at 0.28; A and B owed. A's turn flags A-B; B keeps its
+    own mark, so its turn judges it against C, which A's cluster never held."""
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+    from server.settings import settings
+
+    org, llm = wired
+    monkeypatch.setitem(_SCRIPT, "e2_a", ("contradiction", 0.97))
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        for session, key in (("s1", "e2_a"), ("s2", "e2_b"), ("s3", "e2_c")):
+            await _set(org, session, key, f"The {key} note")
+            await _later()
+        await after_write.drain()
+    await _place(ch, org, "s1", "e2_a", _vec((92, 1.0)), owed=True)
+    await _place(ch, org, "s2", "e2_b", _vec((92, 0.8), (93, 0.6)), owed=True)
+    await _place(ch, org, "s3", "e2_c", _vec((92, 0.28), (93, 0.96)), owed=False)
+    monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 1)
+    monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
+    for _ in range(3):
+        await run_pass()
+    assert llm.calls[:2] == ["e2_a", "e2_b"], llm.calls
+    assert (await _marks(ch, org))["e2_b"] == 2
+
