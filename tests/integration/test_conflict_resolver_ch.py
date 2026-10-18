@@ -2366,3 +2366,56 @@ async def test_an_undo_holds_only_while_the_winner_holds_its_value(ch, wired, mo
     assert (await _rows(ch, org))["office_location"]["id"] == rows["office_location"]["id"]
     assert (await run_pass())["retired"] == 1
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+
+
+async def test_an_undo_is_not_flagged_from_the_other_side(ch, wired, monkeypatch) -> None:
+    """Rome retires Paris, whose own turn had not come, and a person undoes it. Paris's
+    turn then judges Rome, told it is the later statement, as a contradiction: the pair a
+    person settled is left alone, not flagged."""
+    from types import SimpleNamespace
+
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app.restore import handle_memory_restore
+    from server.memory.workers import conflict_resolver as worker
+    from server.settings import settings
+
+    org, llm = wired
+    monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 1)
+    monkeypatch.setattr(worker, "BURST_S", 0.0)
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        update = "NEW note (key office_location," in user
+        entries = [
+            {
+                "peer_id": pid,
+                "reason": "scripted",
+                "same_entity": True,
+                "same_attribute": True,
+                "verdict": "update" if update else "contradiction",
+                "confidence": 0.98,
+            }
+            for pid in re.findall(r"^\[(p\d+)\]", user, re.M)
+        ]
+        return SimpleNamespace(text=json.dumps({"peers": entries}))
+
+    monkeypatch.setattr(llm, "complete", complete)
+    await _pair(ch, org, "office_city", "office_location", 1100)
+    await _place(ch, org, "s1", "office_city", _vec((1100, 1.0)), owed=True)
+    assert (await worker.run_pass())["retired"] == 1
+    rows = await _rows(ch, org)
+    undone = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="office_city",
+            if_superseded_by=rows["office_location"]["id"],
+        )
+    )
+    assert undone.restored
+    out = await worker.run_pass()
+    assert out["flagged"] == 0, out
+    after = await _rows(ch, org)
+    assert after["office_city"]["status"] == after["office_location"]["status"] == "active"

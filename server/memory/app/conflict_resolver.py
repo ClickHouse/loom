@@ -492,23 +492,16 @@ async def _settle_locked_pair(
         str(head.memory_id) in row.conflict_with or str(row.memory_id) in head.conflict_with
     ):
         return None, None  # nothing flagged between them: nothing to clear
-    if action == cr.RETIRE:
+    if action in (cr.RETIRE, cr.FLAG):
         # Read under the locks: a valid_at corrected during the call moves the order.
         # If this read fails the row stays unstamped and the next pass judges it again
         # (another LLM call).
         order = await _assertion_order(org, namespace, [row, head])
-        if not order[str(head.memory_id)] < order[str(row.memory_id)]:
-            action = cr.FLAG  # the order does not show the judged row is newer: a person decides
-        elif await queue.retired_behind(
-            org,
-            namespace,
-            str(head.memory_id),
-            str(head.content_sha256 or ""),
-            str(row.memory_id),
-            since=order[str(row.memory_id)][1],
-        ):
+        if await _undone(org, namespace, row, head, order):
             counts.skipped_no_action += 1
-            return None, None  # retired behind this row before and undone: a person decided
+            return None, None  # a person undid a retirement between them: that stands
+        if action == cr.RETIRE and not order[str(head.memory_id)] < order[str(row.memory_id)]:
+            action = cr.FLAG  # the order does not show the judged row is newer: a person decides
     retired = None
     if action == cr.RETIRE:
         retired = await _retire(org, namespace, row, head, counts)
@@ -531,6 +524,24 @@ async def _settle_locked_pair(
         # or it stays on the review queue, stamped and never re-checked.
         taken["flag_cleared"] = await _unlink(org, row, str(head.memory_id))
     return taken, retired
+
+
+async def _undone(
+    org: str, namespace: str, row: Any, head: Any, order: Mapping[str, tuple[int, int]]
+) -> bool:
+    """Whether either row was retired behind the other, while that other held its current
+    value, and restored since: a person decided the pair."""
+    for loser, winner in ((head, row), (row, head)):
+        if await queue.retired_behind(
+            org,
+            namespace,
+            str(loser.memory_id),
+            str(loser.content_sha256 or ""),
+            str(winner.memory_id),
+            since=order[str(winner.memory_id)][1],
+        ):
+            return True
+    return False
 
 
 async def _audit(
