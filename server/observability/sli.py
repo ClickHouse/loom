@@ -8,9 +8,11 @@ the rows up per minute for SLO dashboards and alert rules to read.
 
 from __future__ import annotations
 
-# Ops that rank results against a query (most embed it), or build a recall
-# bundle from such a ranking, carry the search SLO: an embedder outage burns
-# it, not the read SLO of the point reads. A read by key is not one.
+# Ops that rank results against a query (most embed it), build a recall
+# bundle from such a ranking, or answer with the LLM over what they retrieved
+# or were named (memory.ask, knowledge.synthesize) carry the search SLO: an
+# embedder or LLM outage burns it, not the read SLO of the point reads. A
+# read by key alone is not one.
 _SEARCH_OPS = frozenset(
     {
         "memory.search",

@@ -791,36 +791,23 @@ def test_a_5xx_from_the_gate_is_ledgered_on_both_transports(monkeypatch) -> None
 
     from server.auth.jwt import AuthInfo
     from server.core.errors import BackendUnavailableError
+    from server.observability import events
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import gates, http, mcp_auth, mcp_call
+
+    emitted: list = []
+
+    class _Emitter:
+        def emit(self, event) -> None:
+            emitted.append(event)
 
     async def _unreadable(*a: Any, **k: Any) -> Any:
         raise BackendUnavailableError("grants unreadable")
 
-    rows: list[tuple[str, str]] = []
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
     monkeypatch.setattr(gates, "authorize", _unreadable)
     monkeypatch.setattr(mcp_auth, "_may_read", _unreadable)
-    monkeypatch.setattr(
-        http,
-        "_emit_event",
-        lambda op, rid, body, ms, **k: rows.append(
-            (k["error_code"], sli.status_class(False, k["error_code"], k.get("error")))
-        ),
-    )
-    monkeypatch.setattr(
-        mcp_call,
-        "_emit_mcp_event",
-        lambda name, args, ms, **k: rows.append(
-            (k["error_code"], sli.status_class(False, k["error_code"], k.get("error")))
-        ),
-    )
-    monkeypatch.setattr(
-        mcp_auth,
-        "_ledger_refusal",
-        lambda tool, auth, **k: rows.append(
-            (k["error_code"], sli.status_class(False, k["error_code"], None))
-        ),
-    )
     eve = AuthInfo(
         subject="eve",
         org="eve-org",
@@ -830,7 +817,8 @@ def test_a_5xx_from_the_gate_is_ledgered_on_both_transports(monkeypatch) -> None
     )
     op = OPERATIONS_BY_NAME["memory.get"]
     target = SimpleNamespace(org="eve-org", namespace="n")
-    call = http._HttpCall(request_id="r", auth=eve)
+    # HTTP's body names another org: the row is still the token's.
+    call = http._HttpCall(request_id="r", raw_body={"org": "acme", "namespace": "n"}, auth=eve)
     with pytest.raises(BackendUnavailableError):
         asyncio.run(http._authorize(op, Response(), call, target))
     with pytest.raises(BackendUnavailableError):
@@ -840,4 +828,9 @@ def test_a_5xx_from_the_gate_is_ledgered_on_both_transports(monkeypatch) -> None
         asyncio.run(
             mcp_auth._screen_tool_call({"id": 2, "method": "tools/call", "params": screened}, eve)
         )
-    assert rows == [("BACKEND_UNAVAILABLE", "server")] * 3
+    assert [(e.transport, e.error_code, e.status_class) for e in emitted] == [
+        ("http", "BACKEND_UNAVAILABLE", "server"),
+        ("mcp", "BACKEND_UNAVAILABLE", "server"),
+        ("mcp", "BACKEND_UNAVAILABLE", "server"),
+    ]
+    assert "acme" not in {e.org for e in emitted}
