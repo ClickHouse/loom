@@ -329,8 +329,8 @@ nothing on the server, so only an authenticated callback, a device sign-in start
 adds a key. Sign-in starts are limited per address (an IPv6 /64 counts as one), and the
 table's key limit is the backstop: past it new sign-ins answer 503 and `/v1/health` reports
 `oauth_signin_state_full`. When Keeper fails mid-change, the change is undone before the
-client is told to retry, so its retry is not taken for a replay. A refresh token issued before
-sessions had a family is refused, so its owner signs in once more.
+client is told to retry, so its retry is not taken for a replay. A refresh token without a
+family is refused, so its owner signs in again.
 
 **The IdP round trip is bound to its browser.** What the callback needs (the nonce, the
 PKCE verifier, where to send the result) travels sealed in an HttpOnly cookie of the

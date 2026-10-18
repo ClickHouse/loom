@@ -180,8 +180,8 @@ def _device(r: dict[str, Any]) -> Device:
     return cast(Device, d | {"upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"])})
 
 
-# Not main's 'refresh': a build without sessions would find this build's
-# refresh tokens under its own type and take a spent one as live.
+# Its own record type, apart from the client registrations' `refresh` rows,
+# so no reader of those takes a spent session token as live.
 _REFRESH_TYPE = "session_refresh"
 
 

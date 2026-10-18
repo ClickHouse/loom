@@ -470,9 +470,6 @@ class Scenario:
         """A sign-in whose steps land on both builds fails cleanly, as a client
         can retry, and leaves the grant to the build that started it."""
         new, old = self.builds["N"], self.builds["N-1"]
-        if not (new.tree / "server" / "auth" / "device.py").exists():
-            print("  note  N has no device grant; sign-in across builds is not checked")
-            return
         r = httpx.post(
             f"{new.url}/oauth/device_authorization", data={"client_id": "loom-cli"}, timeout=30
         )
