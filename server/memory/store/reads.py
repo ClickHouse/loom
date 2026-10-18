@@ -458,7 +458,7 @@ _BULK_FETCH_SQL = """
             org, namespace, agent, user_id, session_id,
             memory_key, memory_type, value, confidence, version, pinned,
             created_at, updated_at, expires_at, valid_at, valid_to, status, run_id,
-            source_trace, char_limit, tags, entities, content_sha256,
+            source_trace, char_limit, tags, entities, content_sha256, duplicate_of, superseded_by,
             verified_by, verified_at, verified_sha256, sensitivity, actor, source_class
         FROM loom.memory
         WHERE org = {org:String}

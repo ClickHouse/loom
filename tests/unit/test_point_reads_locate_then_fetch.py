@@ -275,16 +275,21 @@ def _selected(sql: str) -> set[str]:
 
 def test_the_bulk_fetch_selects_every_column_bulk_get_answers_with() -> None:
     # A column left out reads as its default: an empty `sensitivity` exports a high row,
-    # and a null `valid_to` rewrites every imported row that carries one.
+    # a null `valid_to` rewrites every imported row that carries one, and an empty
+    # `superseded_by` drops the supersedes chain from an export.
     import inspect
 
-    from server.memory.app import query
+    from server.memory.app import query, served_superseded
     from server.memory.store import reads
 
-    handler = inspect.getsource(query._handle_memory_bulk_get)
-    read = set(re.findall(r"\br\.(\w+)", handler)) | set(
-        re.findall(r'getattr\(r, "(\w+)"', handler)
+    # The handler and the helpers it passes the fetched rows to.
+    readers = (
+        query._handle_memory_bulk_get,
+        query._canonical_keys_for_rows,
+        served_superseded.shown_successors,
     )
-    assert {"sensitivity", "valid_to", "source_class"} <= read
+    source = "".join(inspect.getsource(f) for f in readers)
+    read = set(re.findall(r"\br\.(\w+)", source)) | set(re.findall(r'getattr\(r, "(\w+)"', source))
+    assert {"sensitivity", "valid_to", "superseded_by", "duplicate_of"} <= read
     for sql in (reads._BULK_FETCH_SQL, reads._BULK_FETCH_WHOLE_SQL):
         assert read <= _selected(sql), read - _selected(sql)

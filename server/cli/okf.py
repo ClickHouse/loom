@@ -716,7 +716,7 @@ async def _import_concepts(
 ) -> dict[str, int]:
     """memory.set per changed or new concept (conflict detection, blacklist and audit
     apply); `--verify` re-attests human-verified concepts as the caller."""
-    n = {"written": 0, "unchanged": 0, "merged": 0, "conflicted": 0, "verified": 0, "failed": 0}
+    n: Counter[str] = Counter()
     for c, payload in planned:
         bundle_actor = okf.human_verified_actor(c)
         row = live.get((payload["session_id"], payload["memory_key"]))
@@ -752,8 +752,10 @@ async def _import_concepts(
             n["merged"] += 1
             continue
         n["written"] += 1
-        if res.get("conflict_verdict") == "conflict":
-            n["conflicted"] += 1
+        # The judge runs after the write unless asked to wait: its conflicts arrive as pending.
+        verdict = res.get("conflict_verdict")
+        if verdict in ("conflict", "pending"):
+            n[verdict] += 1
         if args.verify and bundle_actor:
             n["verified"] += await _verify(client, org, args, payload, c)
     return n
@@ -928,7 +930,10 @@ def _print_import_summary(
         )
         if n["merged"]:
             head += f", {n['merged']} merged into another key"
-        head += f" ({n['conflicted']} flagged conflicted, {n['verified']} re-attested as caller)"
+        head += (
+            f" ({n['conflict']} flagged conflicted, {n['pending']} awaiting a conflict verdict, "
+            f"{n['verified']} re-attested as caller)"
+        )
     parts = [head]
     if not args.no_links:
         notes = [f"{n['links_unchanged']} unchanged"]

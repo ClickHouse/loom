@@ -683,3 +683,25 @@ def test_a_key_renamed_in_the_source_is_written_under_its_new_name(
     monkeypatch.setattr(loom, "post", merges_into_a_live_copy)
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("y", value="same fact")]), "--prune") == 0
     assert [k for (_a, _s, k) in loom.rows] == ["y"]
+
+
+def test_conflicts_found_inline_and_by_the_judge_are_counted(
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    serve = loom.post
+    verdicts = {"a": "conflict", "c": "pending"}
+
+    async def judged(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        out = await serve(op, body)
+        if op == "memory.set":
+            out["conflict_verdict"] = verdicts.get(body["memory_key"], "clear")
+        return out
+
+    monkeypatch.setattr(loom, "post", judged)
+    assert _run(_bundle(tmp_path / "b", [_entry("a"), _entry("c"), _entry("d")])) == 0
+    out = capsys.readouterr().out
+    assert "3 written" in out
+    assert "1 flagged conflicted, 1 awaiting a conflict verdict" in out

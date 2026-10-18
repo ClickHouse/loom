@@ -590,9 +590,10 @@ def is_exportable(entry: dict[str, Any], *, include_high: bool = False) -> bool:
     that leaves the column empty still keeps the row home."""
     if include_high:
         return True
+    if str(entry.get("sensitivity") or "").strip().lower() == HIGH:
+        return False
     tags = {str(t).strip().lower() for t in entry.get("tags") or []}
-    high = str(entry.get("sensitivity") or "").lower() == HIGH
-    return not (high or SENSITIVITY_TAG_PREFIX + HIGH in tags)
+    return SENSITIVITY_TAG_PREFIX + HIGH not in tags
 
 
 # ------------------------------------------------------------------
