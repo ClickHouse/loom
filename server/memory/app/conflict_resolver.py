@@ -66,7 +66,7 @@ class Counts:
     retired: int = 0
     flagged: int = 0
     cleared: int = 0
-    skipped_low_confidence: int = 0
+    skipped_no_action: int = 0
     skipped_changed: int = 0
     skipped_pinned: int = 0
     skipped_budget: int = 0
@@ -659,8 +659,9 @@ async def _settle_pairs(
         v = verdicts.get(str(peer["memory_id"]))
         action = cr.NOTHING if v is None else _action(v, policy)
         if v is None or action == cr.NOTHING:
-            # Unsure, or a peer the answer left out: the pair stays as it is.
-            counts.skipped_low_confidence += 1
+            # Unsure, self-contradicting, or a peer the answer left out: the pair
+            # stays as it is.
+            counts.skipped_no_action += 1
             continue
         taken = await _settle_pair(org, namespace, row, peer, action, order, counts)
         if taken is not None:

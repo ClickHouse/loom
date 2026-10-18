@@ -426,7 +426,7 @@ async def test_a_long_run_of_sessions_ends_with_one_live_value_per_attribute(ch,
     assert t["retired"] == len(OLDER) and t["flagged"] == 0, t
     assert t["cleared"] == len(FLAGGED_AT_WRITE), t
     assert t["errored"] == 1 and t["skipped_pinned"] >= 1, t
-    assert t["skipped_low_confidence"] >= len(LOW_CONFIDENCE) // 2, t
+    assert t["skipped_no_action"] >= len(LOW_CONFIDENCE) // 2, t
     assert not set(run.judge.calls) & SOLO
 
     # Another drain: nothing owed, nothing changes, the judge is not called.

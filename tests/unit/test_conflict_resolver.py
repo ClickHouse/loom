@@ -540,7 +540,13 @@ async def test_each_verdict_branch_acts_on_the_pair(
 
 @pytest.mark.parametrize(
     "answer",
-    [_answer(_entry("p1", "update", 0.85)), _answer(), "not json", ""],
+    [
+        _answer(_entry("p1", "update", 0.85)),
+        _answer({**_entry("p1", "update", 0.99), "same_entity": False}),
+        _answer(),
+        "not json",
+        "",
+    ],
 )
 async def test_unsure_missing_or_malformed_output_changes_nothing_but_stamps(
     row_env: NS, answer: str
@@ -549,7 +555,7 @@ async def test_unsure_missing_or_malformed_output_changes_nothing_but_stamps(
     counts = await _resolve()
     assert row_env.acted == [] and row_env.audits == []
     assert row_env.stamped == ["office_city"], "judged once: the row leaves the queue"
-    assert counts.skipped_low_confidence + counts.errored == 1
+    assert counts.skipped_no_action + counts.errored == 1
 
 
 async def test_a_failed_call_leaves_the_row_owed(row_env: NS, monkeypatch) -> None:
