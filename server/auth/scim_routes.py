@@ -574,10 +574,10 @@ async def unknown(rest: str, request: Request) -> Response:
     )
 
 
-def scim_settings_problem(raw: str, login_provider: str) -> str:
+def scim_settings_problem(raw: str, login_provider: str, auth_required: bool) -> str:
     """Why SCIM, with the `LOOM_SCIM_TOKEN` value `raw`, cannot start, or ''
-    (SCIM off is fine): a guessable token, or sign-in that is not SSO, where a
-    deactivation would answer 200 and refuse nobody."""
+    (SCIM off is fine): a guessable token, or sign-in that is not SSO or not
+    required, where a deactivation would answer 200 and refuse nobody."""
     tokens = scim.tokens(raw)
     for token in tokens:
         if len(token) < MIN_TOKEN_LENGTH:
@@ -590,12 +590,14 @@ def scim_settings_problem(raw: str, login_provider: str) -> str:
             "LOOM_SCIM_TOKEN is set but LOOM_OAUTH_LOGIN_PROVIDER is not oidc: SCIM "
             "deactivates SSO sign-ins, and there are none"
         )
+    if tokens and not auth_required:
+        return "LOOM_SCIM_TOKEN is set but auth is off: no sign-in is checked, so none is refused"
     return ""
 
 
-def require_scim_settings(raw: str, login_provider: str) -> None:
+def require_scim_settings(raw: str, login_provider: str, auth_required: bool) -> None:
     """Refuse to start with SCIM that could not deactivate anyone (run in the lifespan)."""
-    if problem := scim_settings_problem(raw, login_provider):
+    if problem := scim_settings_problem(raw, login_provider, auth_required):
         raise RuntimeError(f"refusing to start: {problem}")
 
 

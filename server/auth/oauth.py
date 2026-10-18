@@ -799,8 +799,23 @@ async def _signed_in_as(
     email: str,
 ) -> Response:
     """Carry on the sign-in `pending` began, as `identity`. Every SSO sign-in
-    ends here, so here is where a SCIM deactivation is sure to be checked: a
-    link page may have been open since before it."""
+    ends here, so here is where a SCIM deactivation is sure to be checked."""
+    from server.auth import device
+
+    if refused := await _refused_if_deactivated(email, pending, upstream):
+        return refused
+    if pending["kind"] == "device":
+        return await device.signed_in(pending["user_code"], identity, upstream)
+    if pending["kind"] == "dashboard":
+        return await _dashboard_signed_in(identity)
+    return await _connect_consent(pending, identity, upstream)
+
+
+async def _refused_if_deactivated(
+    email: str, pending: dict[str, Any], upstream: str
+) -> Response | None:
+    """The answer to a sign-in by `email` that SCIM has deactivated (or that
+    cannot be checked), or None to carry on."""
     from server.auth import device, oidc
     from server.auth.login import SignInUnavailable
 
@@ -809,17 +824,13 @@ async def _signed_in_as(
     except SignInUnavailable:
         await oidc.revoke(upstream)
         return _sign_in_unavailable(_restart_url(pending))
-    if deactivated:
-        await _signin_denied(email, _DEACTIVATED)
-        await oidc.revoke(upstream)
-        if pending["kind"] == "device":
-            await device.deny(pending["user_code"])
-        return _denied_page(f"{_DEACTIVATED}; ask your Loom operator for access")
+    if not deactivated:
+        return None
+    await _signin_denied(email, _DEACTIVATED)
+    await oidc.revoke(upstream)
     if pending["kind"] == "device":
-        return await device.signed_in(pending["user_code"], identity, upstream)
-    if pending["kind"] == "dashboard":
-        return await _dashboard_signed_in(identity)
-    return await _connect_consent(pending, identity, upstream)
+        await device.deny(pending["user_code"])
+    return _denied_page(f"{_DEACTIVATED}; ask your Loom operator for access")
 
 
 def _link_cookie(ticket: str) -> str:
@@ -912,6 +923,11 @@ async def link_account(request: Request) -> Response:
     if await store.take_pending(token_id(ticket)) is None:
         return _expired_sign_in()  # the form sent twice: the other one carries on
     upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
+    # Before any link or account is written: the page may have been open since before
+    # a deactivation, and what it wrote would be reachable but never revoked.
+    if refused := await _refused_if_deactivated(email, sign_in, upstream):
+        refused.delete_cookie(_link_cookie(ticket), path="/oauth/link")
+        return refused
     try:
         if proven is None:
             response = await _declined_password_account(email, sign_in, upstream)

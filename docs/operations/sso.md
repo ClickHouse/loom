@@ -292,8 +292,8 @@ LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
 
 Empty (the default) leaves SCIM off and its routes unmounted. Loom refuses to
 start with a token shorter than 32 characters, or with SCIM set while sign-in
-is not SSO (`LOOM_OAUTH_LOGIN_PROVIDER=oidc`): a deactivation would then refuse
-nobody. `loom doctor` says so too. The token is the only credential `/scim/v2`
+is not SSO (`LOOM_OAUTH_LOGIN_PROVIDER=oidc`) or auth is off: a deactivation
+would then refuse nobody. `loom doctor` says so too. The token is the only credential `/scim/v2`
 takes; keep it with the client secret.
 
 To rotate it without refusing the provider in between, list both tokens,

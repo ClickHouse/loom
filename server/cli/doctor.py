@@ -258,7 +258,10 @@ def _doctor_scim_token_check(settings: Any) -> tuple[str, str, str]:
     from server.auth.scim import tokens
     from server.auth.scim_routes import scim_settings_problem
 
-    if problem := scim_settings_problem(settings.scim_token, settings.oauth_login_provider):
+    problem = scim_settings_problem(
+        settings.scim_token, settings.oauth_login_provider, settings.auth_actually_required()
+    )
+    if problem:
         return ("scim_token", FAIL, problem)
     count = len(tokens(settings.scim_token))
     return ("scim_token", PASS, f"{count} token(s) set" if count else "SCIM off")

@@ -1202,8 +1202,8 @@ def test_scim_is_not_mounted_without_a_token(monkeypatch: pytest.MonkeyPatch) ->
 def test_scim_that_could_not_deactivate_refuses_to_start_and_doctor_says_so(monkeypatch) -> None:
     from server.cli import doctor
 
-    def require(raw: str, provider: str = "oidc") -> None:
-        scim_routes.require_scim_settings(raw, provider)
+    def require(raw: str, provider: str = "oidc", auth_required: bool = True) -> None:
+        scim_routes.require_scim_settings(raw, provider, auth_required)
 
     require("")  # off is fine
     require("", "password")
@@ -1216,6 +1216,9 @@ def test_scim_that_could_not_deactivate_refuses_to_start_and_doctor_says_so(monk
     # Without SSO there is no sign-in to refuse: a deactivation would answer 200 and do nothing.
     with pytest.raises(RuntimeError, match="not oidc"):
         require("x" * 32, "password")
+    with pytest.raises(RuntimeError, match="auth is off"):  # nor with no sign-in checked
+        require("x" * 32, auth_required=False)
+    require("", auth_required=False)
     monkeypatch.setattr(settings, "oauth_login_provider", "oidc")
     monkeypatch.setattr(settings, "scim_token", "x" * 31)
     assert doctor._doctor_scim_token_check(settings)[1] == doctor.FAIL
