@@ -575,7 +575,8 @@ async def _retry_status_mirror(
     erasure removed its embeddings with it: nothing is left to mirror. A payload
     no retry can read returns the reason that abandons it. Once `expired()`, the
     rows not yet mirrored wait for the next pass, so one failure overruns the
-    pass's deadline by one row's mirror at most (two reads, a lock wait and a write)."""
+    pass's deadline by one row's mirror at most (two reads, a lock wait and a write),
+    unless `expired` is None (the pass's forced first failure), which runs to its end."""
     import server.memory.store as memory_repo
 
     try:
