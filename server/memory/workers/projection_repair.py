@@ -81,7 +81,8 @@ async def run_pass(
                 # yet, is not read again this pass.
                 after = batch[-1]
         finally:
-            # One mark per org for the whole loop; a pass cut short marks what it did.
+            # Marked once for the whole loop, per org and reason, MARK_CHUNK ids to a
+            # mutation; a pass cut short marks what it did.
             await mark_retried(mirrored)
         retries = [r for _, r in mirrored]
         others = await scan_active_projection_failures(
