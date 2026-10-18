@@ -1443,10 +1443,6 @@ def test_a_put_naming_another_user_is_refused_before_anything(client: TestClient
     assert world.ours == {}  # nothing applied: the request is about another user
 
 
-def _subject_lease(subject: str) -> str:
-    return f"scim-subject:{scim._keyed(subject)[:32]}"
-
-
 async def test_leases_go_user_then_username_then_each_subject_sorted(world) -> None:
     world.person("lee@example.com", "lee", "alice")
     uid = await _create("lee@example.com")
@@ -1454,7 +1450,7 @@ async def test_leases_go_user_then_username_then_each_subject_sorted(world) -> N
     assert world.leases == [f"scim-user:{uid}", f"scim-username:{scim.user_id('lee@example.com')}"]
     world.leases.clear()
     await scim.set_active(uid, False)
-    by_subject = [_subject_lease(s) for s in ("alice", "lee")]  # sorted by subject
+    by_subject = [scim._subject_lease(s) for s in ("alice", "lee")]  # sorted by subject
     assert world.leases == [f"scim-user:{uid}", *by_subject]
     world.leases.clear()
     await scim.set_active(uid, True)
@@ -1666,12 +1662,36 @@ async def test_a_transition_whose_reply_was_lost_is_still_audited(world, active)
             raise RuntimeError("the reply timed out")
 
     world.table.insert = reply_lost  # type: ignore[method-assign]
+    before = list(world.events)
     with pytest.raises(RuntimeError):
         await scim.set_active(uid, active)
     world.table.insert = insert  # type: ignore[method-assign]
-    await scim.set_active(uid, active)  # the retry finds the row already changed
     event = "auth.scim_reactivated" if active else "auth.scim_deactivated"
-    assert world.events[-1] == event and world.table.newest(uid)["active"] == active  # type: ignore[index]
+    assert world.events == [*before, event]  # read back: it landed
+    await scim.set_active(uid, active)  # the retry finds the row already changed
+    assert world.events == [*before, event] and world.table.newest(uid)["active"] == active  # type: ignore[index]
+
+
+@pytest.mark.parametrize("active", [False, True])
+async def test_a_row_write_that_failed_audits_nothing_until_the_retry(world, active) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com", active=not active)
+    insert = world.table.insert
+
+    async def fails(table: str, rows: list[dict[str, Any]]) -> None:
+        if table == scim.TABLE:
+            raise RuntimeError("the insert failed")
+        await insert(table, rows)
+
+    world.table.insert = fails  # type: ignore[method-assign]
+    before = list(world.events)
+    with pytest.raises(RuntimeError):
+        await scim.set_active(uid, active)
+    assert world.events == before
+    world.table.insert = insert  # type: ignore[method-assign]
+    await scim.set_active(uid, active)
+    event = "auth.scim_reactivated" if active else "auth.scim_deactivated"
+    assert world.events == [*before, event]
 
 
 async def test_a_rename_of_an_inactive_user_revokes_the_tokens_of_an_account_since(world) -> None:
@@ -1828,7 +1848,15 @@ class _Run:
         self.who = ""
         self.seen: dict[str, int] = {}
         self.jitted = False  # the "jit" fault made its account
-        self.dirty: set[str] = set()  # people whose last SCIM request failed
+        self.fired: list[str] = []  # the faults this request raised, in order
+        self.clock = 0
+        # People a SCIM request failed for, or a refused sign-in left an account
+        # for: when. Only a request sent after that settles them.
+        self.dirty: dict[str, int] = {}
+        self.unaudited: Counter[str] = Counter()  # rows landed whose read-back failed
+        self.together = False  # requests at once: no faults, which they would share
+        self.race: random.Random | None = None  # whether a sign-in waits on a row write
+        self.refused_late = 0  # sign-ins refused at the second check
         self.operator: set[str] = set()  # subjects an operator revoked outright
         self.sessions: list[tuple[str, str, int]] = []  # (person, subject, iat) signed in
         for s in sorted({s for subjects in _REACHES.values() for s in subjects}):
@@ -1872,12 +1900,18 @@ class _Run:
 
     def fail(self, kind: str, n: int) -> None:
         if (kind, n) in self.faults:
+            self.fired.append(kind)
             raise RuntimeError("injected")
 
     def expire(self) -> None:
         # The real lease cancels the work and answers ClaimExpired, which `_held` makes Busy.
         if self.world.holding and ("expired", self.count("expired")) in self.faults:
+            self.fired.append("expired")
             raise scim.Busy
+
+    def now(self) -> int:
+        self.clock += 1
+        return self.clock
 
     def jit(self, person: str) -> None:
         if person in _PEOPLE and f"inv-{person}-jit" not in self.world.accounts[_PEOPLE[person]]:
@@ -1890,29 +1924,46 @@ class _Run:
         email = _PEOPLE[person]
         if await _DEACTIVATED(email):
             return
+        if self.race and self.race.random() < 0.5:
+            await self.row_written(email)  # a deactivation's row lands meanwhile
         self.jit(person)
+        jitted = self.now()
         await asyncio.sleep(0)
         if await _DEACTIVATED(email):
             # Refused, but the JIT account may be one the deactivation did not
-            # see: the provider's next push revokes it.
-            self.dirty.add(person)
+            # see: a SCIM request sent after it revokes it.
+            self.dirty[person] = max(self.dirty.get(person, 0), jitted)
+            self.refused_late += 1
             return
         iat = int(time.time())
         self.sessions += [(person, s, iat) for s in self.world.accounts[email]]
 
+    async def row_written(self, email: str) -> None:
+        """Turns given up until another request writes `email`'s row, a few dozen at most."""
+        uid = scim.user_id(email)
+        version = (self.world.table.newest(uid) or {}).get("version")
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if (self.world.table.newest(uid) or {}).get("version") != version:
+                return
+
     async def step(self, op: tuple[str, str, bool], faults: _Faults) -> bool:
         """Send `op`; whether it failed."""
-        self.faults, self.who, self.seen, self.jitted = faults, op[1], {}, False
+        assert not (faults and self.together), "requests at once would share the faults"
+        self.faults, self.who, self.seen, self.jitted, self.fired = faults, op[1], {}, False, []
+        started = self.now()
         try:
             settled = await self._send(*op)
         except (RuntimeError, scim.Busy, login.SignInUnavailable):
+            if "row-landed" in self.fired[:-1]:  # and the read-back failed after it
+                self.unaudited[op[1]] += 1
             if op[0] != "signin":  # a sign-in is no SCIM request
-                self.dirty.add(op[1])
+                self.dirty[op[1]] = self.now()
             return True
         finally:
             self.faults = ()
-        if settled:
-            self.dirty.discard(op[1])
+        if settled and self.dirty.get(op[1], 0) < started:
+            self.dirty.pop(op[1], None)
         return False
 
     async def _send(self, kind: str, arg: str, on: bool) -> bool:
@@ -1991,8 +2042,9 @@ class _Run:
             held = [p for p in reachers if p in self.dirty or (rows[p] and not rows[p]["active"])]
             if not held and s not in self.operator:
                 assert not await w.keeps_out(s, issued_at=later), s
-        # (e) Every transition a user's row made is audited.
-        for email in _PEOPLE.values():
+        # (e) Every transition a user's row made is audited once, unless its
+        # write lost its reply and the read-back failed too; none that did not land.
+        for p, email in _PEOPLE.items():
             uid = scim.user_id(email)
             went: Counter[str] = Counter()
             before = {"active": 1, "deleted": 0}
@@ -2005,7 +2057,8 @@ class _Run:
                     went["auth.scim_deleted"] += 1
                 before = r
             audited = Counter(e for e, kw in w.audits if kw["subject"].get("id") == uid)
-            assert all(audited[e] >= n for e, n in went.items()), (email, went, audited)
+            for e in set(went) | set(audited):
+                assert went[e] - self.unaudited[p] <= audited[e] <= went[e], (email, went, audited)
 
     def state(self) -> tuple[Any, ...]:
         """The users, the revocations, a cutoff's time aside, and the tokens listed live."""
@@ -2078,9 +2131,10 @@ async def test_every_sequence_keeps_the_invariants_and_a_retry_converges() -> No
     assert runs > 1500  # failures fired and were compared, not just drawn
 
 
-async def _run_together(groups: list[list[tuple[str, str, bool]]], rng: random.Random) -> None:
+async def _run_together(groups: list[list[tuple[str, str, bool]]], rng: random.Random) -> int:
     """Each group's requests sent at once, with leases that exclude and a few
-    turns given up around every store call; then the invariants."""
+    turns given up around every store call; then the invariants. The sign-ins
+    refused at their second check."""
     with _fresh_world() as world:
         locks: dict[str, asyncio.Lock] = {}
 
@@ -2116,21 +2170,25 @@ async def _run_together(groups: list[list[tuple[str, str, bool]]], rng: random.R
             mp.setattr(scim, "_held", held)
             mp.setattr(revocation, "refresh", turns)
             run = _Run(world)
+            run.together, run.race = True, rng
             for group in groups:
                 await asyncio.gather(*(run.step(op, ()) for op in group))  # Busy: dirty
                 await run.check()
+            return run.refused_late
 
 
 async def test_requests_at_once_keep_the_invariants() -> None:
     # Two or three requests at a time, an operator's among them taking no SCIM
     # lease, and sign-ins racing the deactivations.
     rng = random.Random(27)
+    refused_late = 0
     for _ in range(2_000):
         groups = [
             [rng.choice(_OPS) for _ in range(rng.choice((1, 2, 2, 3)))]
             for _ in range(rng.randint(2, 6))
         ]
         try:
-            await _run_together(groups, rng)
+            refused_late += await _run_together(groups, rng)
         except AssertionError as e:
             raise AssertionError(f"{groups}: {e}") from e
+    assert refused_late > 10  # a deactivation landed between a sign-in's two checks

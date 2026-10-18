@@ -27,6 +27,7 @@ import pytest
 from server import cli
 from server.auth import revocation, scim
 from server.auth.jwt import TokenError, mint_token, new_jti, verify_token
+from server.core import leases
 from tests.unit.revocation_fakes import revocation_read
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
@@ -374,3 +375,38 @@ def test_cli_scim_gives_back_a_subject_a_deactivation_caught(
     monkeypatch.setattr(scim, "_held", _busy)
     rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"])
     assert rc == 1 and "SCIM is changing 'alice'" in capsys.readouterr().err
+
+    async def away(name: str) -> AsyncIterator[None]:
+        raise scim.Busy from leases.LeaseUnavailable("the lease store did not answer")
+        yield
+
+    monkeypatch.setattr(scim, "_held", asynccontextmanager(away))
+    rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"])
+    assert rc == 1 and "the lease store did not answer" in capsys.readouterr().err
+
+
+def test_cli_and_servers_name_a_subjects_lease_alike_whatever_their_secret(
+    fake_ch: _FakeCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    asyncio.run(revocation.scim_revoke("alice", reason="scim: deactivated", revoked_by="scim"))
+    names: list[str] = []
+
+    @asynccontextmanager
+    async def held(name: str) -> AsyncIterator[None]:
+        names.append(name)
+        yield
+
+    monkeypatch.setattr(scim, "_held", held)
+    monkeypatch.setattr(settings, "jwt_secret", "the-servers-secret-" + "s" * 32)
+
+    async def server_side() -> None:
+        async with scim.subject_leases(["alice"]):
+            pass
+
+    asyncio.run(server_side())
+    monkeypatch.setattr(settings, "jwt_secret", "")  # a CLI without the servers' secret
+    when = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"]) == 0
+    assert len(names) == 2 and names[0] == names[1]

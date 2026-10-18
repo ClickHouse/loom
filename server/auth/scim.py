@@ -258,6 +258,11 @@ def _name_lease(user_name: str) -> str:
     return f"scim-username:{user_id(user_name)}"
 
 
+def _subject_lease(subject: str) -> str:
+    # Hashed, but not keyed as the audit's: the CLI may not hold the root secret.
+    return f"scim-subject:{uuid.uuid5(_ID_NAMESPACE, subject)}"
+
+
 @asynccontextmanager
 async def _held(name: str) -> AsyncIterator[None]:
     try:
@@ -277,8 +282,7 @@ async def subject_leases(subjects: list[str]) -> AsyncIterator[None]:
     between a reactivation's read of a revocation and its lift."""
     async with AsyncExitStack() as held:
         for subject in sorted(set(subjects)):
-            # Keyed like the audit's: the lease store is no place for an address.
-            await held.enter_async_context(_held(f"scim-subject:{_keyed(subject)[:32]}"))
+            await held.enter_async_context(_held(_subject_lease(subject)))
         yield
 
 
@@ -329,10 +333,7 @@ async def _set_active(
         for subject in subjects:
             await revocation.scim_revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)
             await _flag_collateral(new["id"], subject, set(found.values()))
-        # Audited before the row: a retry after a lost reply finds the row
-        # already changed and would never audit it. A failed write audits twice.
-        await _audit_transition(row, new)
-        await _write_changed(row, new)
+        await _write_audited(row, new)
     # The snapshot re-read each revocation would make, once and past the leases.
     await revocation.refresh()
     if set(await _subjects(row["email"])) - set(new["subjects"]):
@@ -353,8 +354,7 @@ async def _converge_active(
     subjects = sorted(set(row["subjects"]) | set(await _subjects(row["email"])))
     rows = await revocation.scim_revocations(subjects)
     if not _outright(rows):  # nothing to lift, as on most pushes: no subject lease
-        await _audit_transition(row, new)  # before the row, as a deactivation's
-        await _write_changed(row, new)
+        await _write_audited(row, new)
         return new, _newest_cutoff(rows)
     async with subject_leases(subjects):
         # Taken before the row: a token a sign-in gets once the row says active
@@ -363,8 +363,7 @@ async def _converge_active(
         lift_to = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
         # The row first: a lift that fails leaves the user active and still
         # revoked, never inactive with a subject let go. A retry lifts the rest.
-        await _audit_transition(row, new)
-        await _write_changed(row, new)
+        await _write_audited(row, new)
         cutoff = await _lift(row, subjects, lift_to)
     await revocation.refresh()
     return new, cutoff
@@ -373,6 +372,23 @@ async def _converge_active(
 async def _write_changed(row: dict[str, Any], new: dict[str, Any]) -> None:
     if new != row or "version" not in row:  # a change, or a user not yet written
         await _write(new)
+
+
+async def _write_audited(row: dict[str, Any], new: dict[str, Any]) -> None:
+    """Write the row, then audit its transition. A write that raised may have
+    landed and lost its reply, and a retry would find the row changed and
+    audit nothing: so the row is read back, and what landed is audited."""
+    try:
+        await _write_changed(row, new)
+    except Exception:
+        try:
+            landed = await _row(row["id"])
+        except Exception:  # noqa: BLE001 — the write's own error is the one to raise
+            landed = None
+        if landed is not None:
+            await _audit_transition(row, landed)
+        raise
+    await _audit_transition(row, new)
 
 
 async def _audit_transition(row: dict[str, Any], new: dict[str, Any]) -> None:

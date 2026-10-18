@@ -284,8 +284,8 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     `--subject S --issued-before T` retires only the tokens
     minted for S before T, so a token re-minted after the leak keeps working;
     with `--scim` it narrows SCIM's revocation of S instead (a subject a
-    deactivation caught that is someone else's). `--list` prints the unexpired
-    revocations."""
+    deactivation caught that is someone else's), waiting up to 10 s while SCIM
+    changes S. `--list` prints the unexpired revocations."""
     import getpass
 
     from server.auth import revocation
@@ -319,6 +319,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         by = f"cli:{getpass.getuser()}"
         if args.scim:
             from server.auth import scim
+            from server.core import leases
 
             try:  # SCIM's own lease on the subject: never amid its lift of it
                 async with scim.subject_leases([token_id]):
@@ -331,8 +332,11 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
                         reason=args.reason or "",
                         revoked_by=by,
                     )
-            except scim.Busy:
-                print(f"  ✗ SCIM is changing {token_id!r}; retry shortly", file=sys.stderr)
+            except scim.Busy as e:
+                if isinstance(e.__cause__, leases.LeaseUnavailable):
+                    print("  ✗ the lease store did not answer; retry once it does", file=sys.stderr)
+                else:
+                    print(f"  ✗ SCIM is changing {token_id!r}; retry shortly", file=sys.stderr)
                 return 1
         else:
             if issued_before is not None and await revocation.has_outright_row(token_id):
@@ -451,7 +455,8 @@ def _add_revoke_token_parser(sub: Any) -> None:
         action="store_true",
         help="With --subject and --issued-before: narrow SCIM's revocation of the "
         "subject instead of its own, to give back a subject a SCIM deactivation "
-        "caught that is someone else's.",
+        "caught that is someone else's. Waits up to 10 s while SCIM is changing "
+        "the subject.",
     )
     p_revoke.add_argument(
         "--reason", default=None, help="Free text stored on the row (audit trail)."
