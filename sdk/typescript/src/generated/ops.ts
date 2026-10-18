@@ -3086,6 +3086,7 @@ export interface KnowledgeListInput {
   namespace: string;
   tags?: string[];
   tags_any_case?: boolean;
+  tags_all?: boolean;
   uri_prefix?: string[];
   include_superseded?: boolean;
   limit?: number;

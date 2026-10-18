@@ -94,7 +94,7 @@ async def test_the_store_compares_lowercased_tags_only_when_asked() -> None:
         identity, scope=scope, tags=["API"], tags_any_case=True, ch=ch
     )
     any_sql, any_case = ch.calls[-1]
-    assert "hasAny(arrayMap(t -> lower(t), tags), {tags:Array(String)})" in any_sql
+    assert "hasAny(arrayMap(t -> lowerUTF8(t), tags), {tags:Array(String)})" in any_sql
     assert any_case["tags"] == ["api"]
 
 
@@ -108,7 +108,7 @@ async def test_the_store_requires_every_tag_when_asked() -> None:
         identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tags_any_case=True, tags_all=True, ch=ch
     )
     sql, params = ch.calls[-1]
-    assert "hasAll(arrayMap(t -> lower(t), tags), {tags:Array(String)})" in sql
+    assert "hasAll(arrayMap(t -> lowerUTF8(t), tags), {tags:Array(String)})" in sql
     assert params["tags"] == ["a", "b"]
 
 
@@ -127,3 +127,17 @@ async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
         )
     assert [c["tags_all"] for c in calls["list"]] == [False, True]
     assert [c["tags_all"] for c in calls["count"]] == [False, False, True, True]
+
+
+@pytest.mark.asyncio
+async def test_a_non_ascii_tag_folds_the_same_on_both_sides() -> None:
+    """ClickHouse `lower` folds only A–Z: `Ärger` must reach the store as `ärger` and meet
+    the row's tags folded by `lowerUTF8`, or the dashboard could not find it at all."""
+    identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
+    ch = StubCH()
+    await memory_repo.count_by_namespace(
+        identity, scope=WHOLE_NAMESPACE, tags=["Ärger"], tags_any_case=True, ch=ch
+    )
+    sql, params = ch.calls[-1]
+    assert "lowerUTF8(t)" in sql and "lower(t)" not in sql.replace("lowerUTF8(t)", "")
+    assert params["tags"] == ["ärger"]

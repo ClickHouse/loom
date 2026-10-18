@@ -613,11 +613,11 @@ def tag_filter(
 ) -> tuple[str, list[str]]:
     """The hard tag predicate and its values: any one of `tags` (OR), or with `every` all
     of them; exact, or with `any_case` the row's tags and the asked ones compared
-    lowercased."""
+    lowercased (`lowerUTF8`: ClickHouse's `lower` folds only A–Z, Python's every letter)."""
     fn = "hasAll" if every else "hasAny"
     if any_case:
         values = [str(t).lower() for t in tags]
-        return f"{fn}(arrayMap(t -> lower(t), tags), {{tags:Array(String)}})", values
+        return f"{fn}(arrayMap(t -> lowerUTF8(t), tags), {{tags:Array(String)}})", values
     return f"{fn}(tags, {{tags:Array(String)}})", [str(t) for t in tags]
 
 

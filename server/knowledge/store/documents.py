@@ -235,6 +235,7 @@ async def list_with_chunk_counts(
     include_superseded: bool = False,
     tags: list[str] | None = None,
     tags_any_case: bool = False,
+    tags_all: bool = False,
     uri_prefixes: list[str] | None = None,
     cursor: tuple[datetime, str] | None = None,
     limit: int = 50,
@@ -256,13 +257,13 @@ async def list_with_chunk_counts(
     # FINAL subquery below, not the post-join scope.
     if not include_superseded:
         extra_where += " AND superseded_at IS NULL"
-    if tags and tags_any_case:
-        # The row's tags and the asked ones compared lowercased (a browse page's filter).
-        extra_where += " AND hasAny(arrayMap(t -> lower(t), tags), {tags:Array(String)})"
-        params["tags"] = [t.lower() for t in tags]
-    elif tags:
-        extra_where += " AND hasAny(tags, {tags:Array(String)})"
-        params["tags"] = tags
+    if tags:
+        # Any one of the tags, or with `tags_all` every one; with `tags_any_case` the row's
+        # tags and the asked ones compared lowercased, Unicode-aware (a browse page's filter).
+        fn = "hasAll" if tags_all else "hasAny"
+        col = "arrayMap(t -> lowerUTF8(t), tags)" if tags_any_case else "tags"
+        extra_where += f" AND {fn}({col}, {{tags:Array(String)}})"
+        params["tags"] = [t.lower() for t in tags] if tags_any_case else tags
     live_prefixes = [p for p in (uri_prefixes or []) if p]
     if live_prefixes:
         # Directory scope: OR of startsWith over the (org, namespace,

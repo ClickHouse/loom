@@ -347,5 +347,19 @@ async def test_list_with_chunk_counts_matches_tags_in_any_case_when_asked() -> N
         "clickhouse", "ns", tags=["Specs"], tags_any_case=True, ch=ch
     )
     sql, params = ch.query_all_calls[1]
-    assert "hasAny(arrayMap(t -> lower(t), tags), {tags:Array(String)})" in sql
+    assert "hasAny(arrayMap(t -> lowerUTF8(t), tags), {tags:Array(String)})" in sql
     assert params["tags"] == ["specs"]
+
+
+@pytest.mark.asyncio
+async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
+    """The Library's stacked `tag:a tag:b` needs every tag, so the filter covers the whole
+    library rather than the documents loaded so far."""
+    ch = StubCH()
+    ch.query_all_returns.append([])
+    await documents_repo.list_with_chunk_counts(
+        "clickhouse", "ns", tags=["Specs", "onboarding"], tags_any_case=True, tags_all=True, ch=ch
+    )
+    sql, params = ch.query_all_calls[0]
+    assert "hasAll(arrayMap(t -> lowerUTF8(t), tags), {tags:Array(String)})" in sql
+    assert params["tags"] == ["specs", "onboarding"]
