@@ -1035,3 +1035,42 @@ async def test_a_point_write_is_owed_for_a_key_another_session_holds_only_where_
     )
     assert (mark == OWED_MARK) is want_owed
     assert bool(reads) is (policy not in ("newest_wins", "append_only")), "no read there"
+
+
+async def test_a_record_that_fails_is_owed_to_the_repair(monkeypatch) -> None:
+    """Every path that records a retirement (value updates, bulk writes, the triples
+    repair, point writes) goes through record_or_owe: a failed record is an intent."""
+    from server.memory.app import projection_errors
+
+    async def boom(*a, **k):
+        raise RuntimeError("audit insert failed")
+
+    owed: list[dict] = []
+
+    async def record(input, **kw):
+        owed.append(kw)
+
+    monkeypatch.setattr("server.observability.audit.emit", boom)
+    monkeypatch.setattr(projection_errors, "record_input_projection_failure", record)
+    await ar.record_or_owe(org="o", namespace="ns", retired=[_retired("m1")], reason="value_update")
+    ((kw),) = owed
+    assert kw["projection"] == "triples_follow_owed"
+    assert kw["payload"]["reason"] == "value_update"
+    assert [e["memory_id"] for e in kw["payload"]["retired"]] == ["m1"]
+
+
+async def test_a_value_update_whose_record_fails_owes_it(monkeypatch) -> None:
+    from server.memory.app import projection_errors
+
+    async def boom(*a, **k):
+        raise RuntimeError("audit insert failed")
+
+    owed: list[dict] = []
+
+    async def record(input, **kw):
+        owed.append(kw)
+
+    monkeypatch.setattr("server.observability.audit.emit", boom)
+    monkeypatch.setattr(projection_errors, "record_input_projection_failure", record)
+    await _value_updates(monkeypatch, {"o1": {}})
+    assert [kw["payload"]["reason"] for kw in owed] == ["value_update"]

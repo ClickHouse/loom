@@ -518,7 +518,7 @@ async def _record_intra_batch_retirements(
         return
     from server.memory.app.auto_resolution import (
         NEWEST_WINS_CONTRADICTION,
-        record_auto_supersessions,
+        record_or_owe,
     )
 
     # A key sent twice is two versions of one row, under one id: only a kept
@@ -532,7 +532,7 @@ async def _record_intra_batch_retirements(
         for r in kept.values()
         if str(r.get("memory_id") or "") in older and r.get("status") == "superseded"
     ]
-    await record_auto_supersessions(
+    await record_or_owe(
         org=input.org,
         namespace=input.namespace,
         retired=retired,
@@ -566,7 +566,7 @@ async def _bulk_settle_verdicts(
             plan.conflict_marks = [(n, p) for n, p in plan.conflict_marks if n not in clear]
             _settle_results(state, plan)
     if plan.refines:
-        from server.memory.app.auto_resolution import record_auto_supersessions
+        from server.memory.app.auto_resolution import record_or_owe
         from server.memory.app.conflicts import apply_refines
 
         # One record per reason for the whole write, not one per verdict.
@@ -585,7 +585,7 @@ async def _bulk_settle_verdicts(
             except Exception as e:  # noqa: BLE001 — the write stands
                 log.warning("bulk_set: apply_refines failed for %s: %s", new_id, e)
         for reason, retired in refined_out.items():
-            await record_auto_supersessions(
+            await record_or_owe(
                 org=input.org, namespace=input.namespace, retired=retired, reason=reason
             )
     # Merges and identity duplicates reinforce the row that already holds the fact. A

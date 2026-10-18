@@ -169,14 +169,21 @@ async def settle_retirements(
     reason: str,
     follows: list[tuple[str, str]],
 ) -> None:
-    """The record of rows a write just retired (`record_auto_supersessions`), and their
+    """The record of rows a point write just retired (`record_or_owe`), and their
     (loser, winner) pairs added to `follows`, which the caller follows once its own
     relations are projected (a follow before them writes the successor fact they then
-    write again). A record that fails is owed to the projection repair as a FOLLOW_OWED
-    intent with its entries and reason. Never raises."""
-    pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in retired]
-    follows.extend(pairs)
-    if not pairs or await record_auto_supersessions(
+    write again). Never raises."""
+    follows.extend((str(r["memory_id"]), str(r["superseded_by"])) for r in retired)
+    await record_or_owe(org=org, namespace=namespace, retired=retired, reason=reason)
+
+
+async def record_or_owe(
+    *, org: str, namespace: str, retired: Sequence[Mapping[str, Any]], reason: str
+) -> None:
+    """`record_auto_supersessions`; a record that fails is owed to the projection repair
+    as a FOLLOW_OWED intent with its entries and reason, which the repair writes once.
+    Never raises."""
+    if not retired or await record_auto_supersessions(
         org=org, namespace=namespace, retired=retired, reason=reason
     ):
         return
@@ -185,12 +192,13 @@ async def settle_retirements(
     from server.memory.app.projection_errors import record_input_projection_failure
     from server.memory.app.projection_failures import FOLLOW_OWED
 
+    pairs = [[str(r["memory_id"]), str(r["superseded_by"])] for r in retired]
     await record_input_projection_failure(
         SimpleNamespace(org=org, namespace=namespace, agent=""),
         projection=FOLLOW_OWED,
         error=f"retirement left for the repair to record: {len(pairs)} row(s)",
         payload={
-            "pairs": [list(p) for p in pairs],
+            "pairs": pairs,
             "retired": [retired_entry(r) for r in retired],
             "reason": reason,
         },

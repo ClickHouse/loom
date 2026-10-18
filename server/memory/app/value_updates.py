@@ -40,7 +40,7 @@ from server.identity.domain.read_scope import scope_and
 from server.memory.app.auto_resolution import (
     VALUE_UPDATE,
     RetirementTracker,
-    record_auto_supersessions,
+    record_or_owe,
     retired_entry,
 )
 from server.memory.store.conflict_candidates import vector_param, vector_params
@@ -470,7 +470,5 @@ async def link_value_updates(
             retired.append(
                 retired_entry(r, superseded_by=ln.newer_id, superseded_by_key=ln.newer_key)
             )
-    await record_auto_supersessions(
-        org=org, namespace=namespace, retired=retired, reason=VALUE_UPDATE
-    )
+    await record_or_owe(org=org, namespace=namespace, retired=retired, reason=VALUE_UPDATE)
     return report

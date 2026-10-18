@@ -1639,7 +1639,7 @@ async def _retire_memories_behind_repairs(
     from server.memory.app.auto_resolution import (
         NEWEST_WINS_CONTRADICTION,
         RetirementTracker,
-        record_auto_supersessions,
+        record_or_owe,
     )
     from server.memory.domain.lock import refuses_retirement
 
@@ -1658,7 +1658,7 @@ async def _retire_memories_behind_repairs(
         )
     finally:
         # What reached loom.memory, even when the embeddings mirror then failed.
-        await record_auto_supersessions(
+        await record_or_owe(
             org=input.org,
             namespace=input.namespace,
             retired=tracker.retired(victims),
