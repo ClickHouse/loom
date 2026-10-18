@@ -181,9 +181,7 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(conflicts, "namespace_conflict_policy", newest_wins)
     # Every pass reads the recheck: a test's flags are judged in the pass it runs.
     monkeypatch.setattr(worker, "RECHECK_IDLE_S", 0.0)
-    monkeypatch.setattr(worker, "_recheck_after", 0.0)  # another test's pass may have set it
-    monkeypatch.setattr(worker, "_unavailable", None)
-    monkeypatch.setattr(worker, "_no_key", False)
+    monkeypatch.setattr(worker, "_state", worker._State())  # another test's pass may have set it
     # A test that needs a second org appends it to `orgs`.
     only = _OnlyOrgs(ch, [org])
     for name in ("queued_namespaces", "owed_rows", "unjudged_conflicted_rows"):
@@ -2210,7 +2208,7 @@ async def test_a_flagged_peer_the_model_keeps_leaving_out_stops_costing_calls(
     from server.memory.workers import conflict_resolver as worker
 
     org, llm = wired
-    monkeypatch.setattr(worker, "_attempts", {})
+    monkeypatch.setattr(worker, "_state", worker._State())
 
     async def complete(system: str, user: str, **kw: Any) -> Any:
         llm.calls.append("x")

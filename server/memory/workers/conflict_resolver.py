@@ -12,6 +12,7 @@ import logging
 import random
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.ch import set_query_tag
@@ -29,19 +30,31 @@ NAME = "conflict_resolver"
 # The recheck's read scans every `conflicted` row (its predicate prunes nothing). A
 # backlog drains a batch per pass; once a read comes back short, the next waits this long.
 RECHECK_IDLE_S = 300.0
-_recheck_after = 0.0  # time.monotonic() before which the recheck is not read
 # A pass whose owed read came back full reads the next batch at once, for up to this
 # long (half the pass's deadline); a short read ends it, and the interval follows.
 BURST_S = 300.0
-# Why the model was unavailable at the last pass that knew (None: available). The
-# warning is logged when this changes, not on every pass.
-_unavailable: str | None = None
-_no_key = False  # no key last pass: unlike an outage, its end is known without a call
 # A row judged and left owed (a flagged peer the answer leaves out, an error after the
 # call) is paid for again every pass: after this many such attempts it is stamped,
 # errored. Counted per (identity, content hash) on this leader.
 MAX_ATTEMPTS = 3
-_attempts: dict[tuple[str, ...], int] = {}
+
+
+@dataclass
+class _State:
+    """What one leader keeps from pass to pass."""
+
+    # time.monotonic() before which the recheck is not read.
+    recheck_after: float = 0.0
+    # Why the model was unavailable at the last pass that knew (None: available): the
+    # warning is logged when this changes, not on every pass.
+    unavailable: str | None = None
+    # No key last pass: unlike an outage, its end is known without a call.
+    no_key: bool = False
+    # Attempts that left a row owed, per (identity, content hash).
+    attempts: dict[tuple[str, ...], int] = field(default_factory=dict)
+
+
+_state = _State()
 
 
 def _identity(r: Mapping[str, Any]) -> tuple[str, ...]:
@@ -83,9 +96,8 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
     its rows take no place in the pass."""
     from server.observability.budget import namespaces_over_cap
 
-    global _recheck_after
     recheck = int(settings.memory_conflict_resolver_recheck_batch)
-    due = recheck > 0 and time.monotonic() >= _recheck_after
+    due = recheck > 0 and time.monotonic() >= _state.recheck_after
     pairs = await queue.queued_namespaces(recheck=due)
     over = await namespaces_over_cap(pairs, **_cap_share()) if pairs else {}
     capped = sorted(pair for pair, is_over in over.items() if is_over)
@@ -98,7 +110,7 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
     if due:
         found = await queue.unjudged_conflicted_rows(limit=recheck, capped=capped, seed=seed)
         if len(found) < recheck:
-            _recheck_after = time.monotonic() + RECHECK_IDLE_S
+            _state.recheck_after = time.monotonic() + RECHECK_IDLE_S
         rows += found
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     seen: set[tuple[str, ...]] = set()
@@ -169,17 +181,18 @@ def _transient(e: Exception) -> bool:
 async def _out_of_attempts(r: Mapping[str, Any]) -> bool:
     """One more attempt that left the row owed; True (and the row stamped) on the last."""
     key = (*_identity(r), str(r.get("content_sha256") or ""))
-    if len(_attempts) > 10_000:
-        _attempts.clear()  # leader-local and bounded: a row seen again starts over
-    _attempts[key] = _attempts.get(key, 0) + 1
-    if _attempts[key] < MAX_ATTEMPTS:
+    attempts = _state.attempts
+    if len(attempts) > 10_000:
+        attempts.clear()  # leader-local and bounded: a row seen again starts over
+    attempts[key] = attempts.get(key, 0) + 1
+    if attempts[key] < MAX_ATTEMPTS:
         return False
     try:
         await queue.stamp_judged(r)
     except Exception as e:  # noqa: BLE001 — one row's stamp never stops the pass
         log.warning("%s: stamp after %d attempts failed: %s", NAME, MAX_ATTEMPTS, e)
         return False  # still at the last attempt: the next pass stamps it
-    del _attempts[key]
+    del attempts[key]
     return True
 
 
@@ -230,24 +243,22 @@ async def _resolve_all(p: _Pass, groups: dict[tuple[str, str], list[dict[str, An
 
 def _note_availability(reason: str | None) -> None:
     """Log the model going away or coming back, once per change."""
-    global _unavailable
     model = settings.conflict_resolver_model
-    if reason is not None and _unavailable is None:
+    if reason is not None and _state.unavailable is None:
         log.warning("%s: model %r is unavailable (%s); rows stay owed", NAME, model, reason)
-    elif reason is None and _unavailable is not None:
+    elif reason is None and _state.unavailable is not None:
         log.info("%s: model %r is available again", NAME, model)
-    _unavailable = reason
+    _state.unavailable = reason
 
 
 async def run_pass() -> dict[str, Any]:
-    global _no_key
     set_query_tag(f"worker.{NAME}")
     p = _Pass()
     with record_pass(NAME) as rec:
         missing = resolver.model_missing()
-        if missing is None and _no_key:
+        if missing is None and _state.no_key:
             _note_availability(None)  # the key is back, whether or not a row is queued
-        _no_key = missing is not None
+        _state.no_key = missing is not None
         if missing is not None:
             # Known before any read: the queue is not read for rows no call can judge.
             _note_availability(missing)

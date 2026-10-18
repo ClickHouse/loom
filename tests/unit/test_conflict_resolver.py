@@ -1197,13 +1197,11 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
 
     e = NS(owed=[], recheck=[], resolved=[], over=set(), raise_for={}, slow=0.0, stamped=[])
     e.left_owed = set()
-    monkeypatch.setattr(worker, "_attempts", {})
+    monkeypatch.setattr(worker, "_state", worker._State())
     e.in_flight = e.most_in_flight = 0
     e.recheck_reads = e.queue_reads = 0
     e.missing = None
-    monkeypatch.setattr(worker, "_recheck_after", 0.0)
-    monkeypatch.setattr(worker, "_unavailable", None)
-    monkeypatch.setattr(worker, "_no_key", False)
+    monkeypatch.setattr(worker, "_state", worker._State())
     monkeypatch.setattr(resolver, "model_missing", lambda: e.missing)
 
     def _ns(r: dict[str, Any]) -> tuple[str, str]:
@@ -1350,7 +1348,7 @@ async def test_each_pass_draws_a_new_namespace_order_for_both_reads(
     monkeypatch.setattr(worker.random, "getrandbits", lambda n: next(draws))
     pass_env.owed = [_q(memory_key="k1")]
     await pass_env.run()
-    monkeypatch.setattr(worker, "_recheck_after", 0.0)
+    monkeypatch.setattr(worker._state, "recheck_after", 0.0)
     await pass_env.run()
     assert pass_env.seeds == [("owed", 11), ("recheck", 11), ("owed", 22), ("recheck", 22)]
 
