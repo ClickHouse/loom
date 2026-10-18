@@ -399,7 +399,7 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
             projection=failure.projection,
             retried=False,
             resolved=False,
-            reason="key busy",
+            reason="key_busy",
         )
     except Exception as e:  # noqa: BLE001 — reported on the result; the row stays open
         return ProjectionFailureRetryResult(

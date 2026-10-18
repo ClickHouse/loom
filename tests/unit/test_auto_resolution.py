@@ -977,7 +977,7 @@ async def test_a_busy_key_leaves_the_reconcile_pending(monkeypatch) -> None:
     )
     async with kl.key_write_locks.hold("o", "n", "a", "u", "s", "m"):  # a settle holds it
         (out,) = await projection_failures.retry_failures([failure], ch=object())
-    assert (out.retried, out.resolved, out.reason, out.error) == (False, False, "key busy", "")
+    assert (out.retried, out.resolved, out.reason, out.error) == (False, False, "key_busy", "")
 
 
 async def test_a_failed_reconcile_mirror_leaves_the_failure_open(monkeypatch) -> None:
