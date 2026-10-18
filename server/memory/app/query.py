@@ -419,7 +419,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                     source_trace=getattr(r, "source_trace", "") or "",
                     value=pv,
                     value_truncated=pcut,
-                    content_sha256=_row_content_sha256(r),
+                    # A short secret's hash can be guessed; a high row's comes with the value.
+                    content_sha256="" if r.sensitivity == "high" else _row_content_sha256(r),
                     char_limit=getattr(r, "char_limit", None),
                 )
                 for r, (pv, pcut) in ((r, _preview_for_list(r, preview_chars)) for r in rows)

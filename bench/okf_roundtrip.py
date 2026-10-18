@@ -288,7 +288,12 @@ async def run(args: argparse.Namespace) -> int:
                 keep=args.keep_namespaces,
             )
         source, _ = await _fetch_namespace(
-            client, args.org, args.namespace, include_tombstoned=False, limit=args.limit
+            client,
+            args.org,
+            args.namespace,
+            include_tombstoned=False,
+            include_high=True,
+            limit=args.limit,
         )
         # Typed edges travel as relates_to
         src_edges = [] if args.no_links else await _fetch_edges(client, args.org, args.namespace)
@@ -362,7 +367,9 @@ async def run(args: argparse.Namespace) -> int:
             )
             ev_totals = await _import_evidence(client, args.org, ev_args, ev_chunks, ev_digests)
         t_import = (datetime.now(UTC) - t1).total_seconds()
-        imported, _ = await _fetch_namespace(client, args.org, target, include_tombstoned=False)
+        imported, _ = await _fetch_namespace(
+            client, args.org, target, include_tombstoned=False, include_high=True
+        )
         imp_chunks: list[okf_ev.ChunkRecord] = []
         imp_digests: list[okf_ev.DigestRecord] = []
         if not args.no_evidence:

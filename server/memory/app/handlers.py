@@ -867,7 +867,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
             org=input.org,
             namespace=row.namespace,
             # The reader, from the token; get_by_id names no agent to fall back on.
-            actor=writer_actor(row.agent or "-"),
+            actor=writer_actor("-"),
             subject={"memory_id": str(row.memory_id), "memory_key": row.memory_key},
         )
     return MemoryGetByIdOutput(

@@ -156,6 +156,8 @@ export interface MemoryListEntry {
   value_truncated?: boolean;
   content_sha256?: string;
   char_limit?: number | null;
+  // "" | low | medium | high. A high row's value is not in the list: memory.get reads it.
+  sensitivity?: string;
 }
 
 /** human | process: attested and unchanged since. stale: attested, then

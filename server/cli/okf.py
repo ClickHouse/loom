@@ -119,6 +119,7 @@ async def _fetch_namespace(
     namespace: str,
     *,
     include_tombstoned: bool,
+    include_high: bool = False,
     limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Every live row of `namespace` (all agents, users and sessions), full
@@ -165,7 +166,13 @@ async def _fetch_namespace(
     out: list[dict[str, Any]] = []
     unreadable: list[str] = []
     for (agent, user_id, session_id), rows in by_ident.items():
-        keys = [r["memory_key"] for r in rows]
+        # A row the list already calls high stays home, so its value is never read.
+        held = {
+            r["memory_key"]
+            for r in rows
+            if not include_high and is_high(r.get("sensitivity"), r.get("tags"))
+        }
+        keys = [r["memory_key"] for r in rows if r["memory_key"] not in held]
         full: dict[str, dict[str, Any]] = {}
         for i in range(0, len(keys), _BULK):
             got = await client.post(
@@ -182,7 +189,7 @@ async def _fetch_namespace(
             full.update(got.get("results") or {})
         for r in rows:
             g = full.get(r["memory_key"])
-            if g is None and r.get("value_truncated"):
+            if g is None and r.get("value_truncated") and r["memory_key"] not in held:
                 # Not answered by bulk_get (a tombstoned row, or one deleted since the
                 # list), and the list holds only a cut preview.
                 unreadable.append(r["memory_key"])
@@ -370,6 +377,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
                 org,
                 args.namespace,
                 include_tombstoned=bool(args.include_tombstoned),
+                include_high=bool(args.include_high),
                 limit=args.limit,
             )
             if not args.no_evidence:
@@ -384,6 +392,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             # The rows this export held home, which the server's rule may not cover (a level
             # it does not know, or a server that holds nothing back).
             held = {e["memory_key"] for e in entries if not okf.is_exportable(e)}
+            held.update(unreadable)  # left out, so their evidence is too
             chunks, digests, held_here = okf_ev.without_high(chunks, digests, held)
             held_evidence += held_here
         files, orphans, skipped_high = _plan_export(

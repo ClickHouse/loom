@@ -52,8 +52,11 @@ from server.memory.api.models_temporal import (
     _OutlineHub,
     _OutlineSession,
 )
+from server.memory.app.provenance import writer_actor
+from server.memory.domain.sensitivity import is_high
 from server.memory.domain.temporal_sql import status_predicate
 from server.memory.store.rows import MemoryRow
+from server.observability import audit as _audit
 
 _CURATED_KEY_SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -406,6 +409,18 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
         )
         for r in rows
     ]
+    # Each version of a 'high' row served by key is audited, as memory.get audits the head.
+    await _audit.emit_many(
+        "memory.sensitive_read",
+        org=input.org,
+        namespace=input.namespace,
+        actor=writer_actor(input.agent),
+        subjects=[
+            {"memory_key": input.memory_key, "memory_id": str(r.memory_id), "version": r.version}
+            for r in rows
+            if is_high(r.sensitivity, r.tags)
+        ],
+    )
     return MemoryHistoryOutput(rows=out_rows)
 
 

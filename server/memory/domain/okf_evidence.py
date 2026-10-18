@@ -72,28 +72,30 @@ class DigestRecord:
         return f"{DIGEST_DIR}/{slugify(self.session_id)}.md"
 
 
-def evidence_is_high(keys: list[str], text: str, held_keys: set[str]) -> bool:
+def evidence_keys(item: Any) -> list[str]:
+    """The memory keys a chunk or digest (a record here or its wire model) is linked to."""
+    if hasattr(item, "summary_text"):
+        return list(item.derived_from)
+    return [item.parent_memory_key, *item.memory_keys]
+
+
+def evidence_is_high(item: Any, held_keys: set[str]) -> bool:
     """A chunk or digest stays home when it is linked to a key held home, or when its text
     reads as a credential: raw text has no sensitivity column, so the detector memory.set
     runs decides."""
-    return bool(set(keys) & held_keys) or detect_sensitivity(text) == HIGH
-
-
-def chunk_is_high(c: ChunkRecord, held_keys: set[str]) -> bool:
-    return evidence_is_high([c.parent_memory_key, *c.memory_keys], c.content, held_keys)
-
-
-def digest_is_high(d: DigestRecord, held_keys: set[str]) -> bool:
-    text = "\n".join([d.summary_text, *d.key_facts])
-    return evidence_is_high(d.derived_from, text, held_keys)
+    if hasattr(item, "summary_text"):
+        text = "\n".join([item.summary_text, *item.key_facts])
+    else:
+        text = item.content
+    return bool(set(evidence_keys(item)) & held_keys) or detect_sensitivity(text) == HIGH
 
 
 def without_high(
     chunks: list[ChunkRecord], digests: list[DigestRecord], held_keys: set[str]
 ) -> tuple[list[ChunkRecord], list[DigestRecord], int]:
     """The evidence that may leave with the bundle, and how much stays home."""
-    keep_c = [c for c in chunks if not chunk_is_high(c, held_keys)]
-    keep_d = [d for d in digests if not digest_is_high(d, held_keys)]
+    keep_c = [c for c in chunks if not evidence_is_high(c, held_keys)]
+    keep_d = [d for d in digests if not evidence_is_high(d, held_keys)]
     return keep_c, keep_d, len(chunks) + len(digests) - len(keep_c) - len(keep_d)
 
 

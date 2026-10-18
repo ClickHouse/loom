@@ -1,5 +1,5 @@
-"""memory.export_evidence leaves out the raw chunks and digests behind a key that was
-ever 'high', and those whose text reads as a credential: raw text has no sensitivity
+"""memory.export_evidence leaves out the raw chunks and digests behind a key with any
+version labelled 'high', and those whose text reads as a credential: raw text has no sensitivity
 column, and a bundle reaches a wider audience than the namespace's grants."""
 
 from __future__ import annotations
@@ -35,13 +35,13 @@ def evidence(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _links(_ch: Any, **_k: Any) -> dict[tuple[str, int], list[str]]:
         return {("s", 0): ["k"], ("s", 1): ["vault"], ("s", 2): []}
 
-    async def _ever_high(_org: str, _ns: str, keys: Any, **_k: Any) -> set[str]:
-        # `vault` was high once and has since been deleted
+    async def _high_keys(_org: str, _ns: str, keys: Any, **_k: Any) -> set[str]:
+        # `vault` had a high version, and has since been deleted
         return {"vault"} & set(keys)
 
     monkeypatch.setattr(evidence_transfer, "get_client", lambda: _CH())
     monkeypatch.setattr(chunk_links, "chunk_memory_keys", _links)
-    monkeypatch.setattr(memory_repo, "high_keys", _ever_high)
+    monkeypatch.setattr(memory_repo, "high_keys", _high_keys)
 
 
 def _input(kind: str, **over: Any) -> MemoryExportEvidenceInput:

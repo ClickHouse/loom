@@ -38,6 +38,7 @@ class HistoryVersion:
     status: str
     conflict_with: tuple[str, ...]
     tags: tuple[str, ...]
+    sensitivity: str
     verified_at: Any
     verified_by: str
     verified_sha256: str
@@ -66,6 +67,7 @@ class HistoryVersion:
             status=str(r.get("status") or "active"),
             conflict_with=tuple(str(c) for c in r.get("conflict_with") or ()),
             tags=tuple(r.get("tags") or ()),
+            sensitivity=str(r.get("sensitivity") or ""),
             verified_at=r.get("verified_at"),
             verified_by=str(r.get("verified_by") or ""),
             verified_sha256=str(r.get("verified_sha256") or ""),
@@ -141,7 +143,7 @@ async def list_history(
     # of the listed versions alone — 13.6 MB → under 1 MB for eight versions.
     cols = """memory_id, version, confidence, source_trace, pinned,
                created_at, updated_at, expires_at, tombstoned_at, redacted_at, redaction_reason,
-               actor, source_class, agent, status, conflict_with, tags,
+               actor, source_class, agent, status, conflict_with, tags, sensitivity,
                verified_at, verified_by, verified_sha256, lock_mode, lock_reason, lock_until"""
     params = {
         "org": identity.org,

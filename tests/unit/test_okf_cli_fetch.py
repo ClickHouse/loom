@@ -212,3 +212,23 @@ def test_export_keeps_the_evidence_of_a_held_row_home(tmp_path, monkeypatch, cap
     evidence = "\n".join(p.read_text() for p in (out / "evidence").rglob("*.md"))
     assert "said in passing" in evidence and "the vault rotates" not in evidence
     assert "1 raw chunk(s) or session digest(s) stayed in the database" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_export_never_reads_the_value_of_a_row_the_list_calls_high() -> None:
+    asked: list[str] = []
+
+    class _Client(_MixedClient):
+        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+            if op == "memory.bulk_get":
+                asked.extend(body["memory_keys"])
+            return await super().post(op, body)
+
+    rows, _ = await cli_okf._fetch_namespace(
+        _Client(),  # type: ignore[arg-type]
+        "o",
+        "ns",
+        include_tombstoned=True,
+    )
+    assert "secret" not in asked and "split" not in asked and "plain" in asked
+    assert {r["memory_key"] for r in rows} >= {"secret", "split"}  # listed, kept home

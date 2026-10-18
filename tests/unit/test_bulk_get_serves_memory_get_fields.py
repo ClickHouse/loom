@@ -150,6 +150,93 @@ async def test_list_withholds_a_high_rows_value(served) -> None:
 
 
 def test_a_contains_search_never_matches_a_high_rows_value() -> None:
+    # A pin on the predicate's text; a migrated ClickHouse showed `contains` on a high
+    # row's value finds nothing and on its key finds the row.
     assert "sensitivity != 'high' AND positionCaseInsensitiveUTF8(value" in (
         memory_repo.CONTAINS_PREDICATE
     )
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_audits_the_reader_named_by_the_token(served) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.domain.trust import actor_for
+
+    set_current_auth(
+        AuthInfo(subject="ci-mirror", org="o", namespaces=("n",), roles=(), is_service_account=True)
+    )
+    try:
+        await query._handle_memory_bulk_get(
+            MemoryBulkGetInput(org="o", namespace="n", agent="*", memory_keys=["secret"])
+        )
+    finally:
+        set_current_auth(None)
+    assert served["actor"] == actor_for("ci-mirror", is_service_account=True)
+
+
+@pytest.mark.asyncio
+async def test_the_score_list_withholds_a_high_rows_value(monkeypatch) -> None:
+    def row(key: str, sensitivity: str) -> dict[str, Any]:
+        return {
+            "memory_key": key,
+            "memory_type": "semantic",
+            "confidence": 1.0,
+            "version": 1,
+            "created_at": "2026-09-19 00:00:00",
+            "value": '"plain words"' if sensitivity == "" else '"the door code"',
+            "value_truncated": 0,
+            "sensitivity": sensitivity,
+            "tags": [],
+            "entities": [],
+        }
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [row("plain", ""), row("secret", "high")]
+
+        async def query_one(self, sql: str, params: Any = None) -> dict[str, Any]:
+            return {"n": 2}
+
+    monkeypatch.setattr(query, "get_client", lambda: _CH())
+    out = await query._handle_memory_list(
+        MemoryListInput(org="o", namespace="n", agent="a", sort_by="score")
+    )
+    by_key = {e.memory_key: e for e in out.entries}
+    assert by_key["secret"].value is None and by_key["secret"].value_truncated is True
+    assert by_key["plain"].value == "plain words" and by_key["plain"].value_truncated is False
+
+
+@pytest.mark.asyncio
+async def test_history_audits_each_high_version_it_serves(monkeypatch) -> None:
+    from server.memory.api.models_temporal import MemoryHistoryInput
+    from server.memory.app import curation
+    from server.memory.store.history import HistoryVersion
+
+    def version(n: int, **over: Any) -> HistoryVersion:
+        base: dict[str, Any] = {
+            "memory_id": "m1",
+            "version": n,
+            "value": '"v"',
+            "confidence": 1.0,
+            "created_at": "2026-09-19 00:00:00",
+            "source_trace": "",
+            "redaction_reason": "",
+            "tags": [],
+        }
+        return HistoryVersion.from_row({**base, **over})
+
+    async def _history(*_a: Any, **_k: Any) -> list[HistoryVersion]:
+        return [version(3), version(2, sensitivity="high"), version(1, tags=["sensitivity:high"])]
+
+    audits: list[list[int]] = []
+
+    async def _emit_many(event: str, **kw: Any) -> None:
+        audits.append([s["version"] for s in kw["subjects"]])
+
+    monkeypatch.setattr(memory_repo, "list_history", _history)
+    monkeypatch.setattr(audit, "emit_many", _emit_many)
+    out = await curation.handle_memory_history(
+        MemoryHistoryInput(org="o", namespace="n", agent="a", memory_key="k")
+    )
+    assert len(out.rows) == 3 and audits == [[2, 1]]
