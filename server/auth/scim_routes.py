@@ -460,7 +460,8 @@ async def create_user(request: Request) -> JSONResponse:
     """Records the email; the Loom account comes from the person's first sign-in."""
     body = await _body(request)
     name, email, entry = user_name_and_email(body)
-    active = parse_active(body.get("active", True))
+    # A null is unassigned (RFC 7643 §2.5): a new user is active.
+    active = parse_active(True if body.get("active") is None else body["active"])
     try:
         row = await scim.create(name, email, active=active, email_entry=entry)
     except scim.Exists:
@@ -474,7 +475,7 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
     body = await _body(request)
     if "id" in body and body["id"] != uid:
         raise ScimError(400, "the body names another user", "invalidValue")
-    active = parse_active(body["active"]) if "active" in body else None
+    active = None if body.get("active") is None else parse_active(body["active"])
     row = await scim.get(uid)
     if row is None:
         raise _not_found()

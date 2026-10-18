@@ -280,10 +280,10 @@ of the above, so they do not stop with someone's offboarding.
 
 Identity providers push deactivations to apps over SCIM 2.0 (RFC 7643/7644).
 Loom accepts that push: once the provider sends it, the person's sessions and
-the tokens they made are refused at once by the replica that took the
-request, and by every other replica at its next revocation refresh
-(`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`, 30 s by default). No replica makes
-them a new token meanwhile: every mint reads revocations from ClickHouse. Set
+the tokens they made are refused at once by the Loom process that took the
+request, and by every other process, on that replica or another, at its next
+revocation refresh (`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`, 30 s by default).
+No process makes them a new token meanwhile: every mint reads revocations from ClickHouse. Set
 a long random token and restart:
 
 ```bash
@@ -423,8 +423,9 @@ What Loom does with each request:
   when it comes right after the deactivation), once every replica's clock is
   past its cutoff, so a sign-in after it gets a token that
   lives (one in that wait would get a token from before the cutoff, already
-  dead); a retry sent meanwhile waits out the rest. Another replica still
-  refuses the new session until its next revocation refresh, then takes it.
+  dead); a retry sent meanwhile waits out the rest. Another process, on that replica or
+  another, still refuses the new session until its next revocation refresh,
+  then takes it.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
   reactivates them, answering after the same wait; a retry of that create

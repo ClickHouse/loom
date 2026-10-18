@@ -2045,6 +2045,18 @@ def test_a_patch_cannot_blank_the_username(value: Any) -> None:
     assert (e.value.status, e.value.scim_type) == (400, "invalidValue")
 
 
+def test_a_null_active_is_unassigned(client: TestClient, world) -> None:
+    # RFC 7643 §2.5: a new user is active, and a PUT leaves the user as they are.
+    body = {"userName": "lee@example.com", "active": None}
+    created = client.post("/scim/v2/Users", json=body)
+    assert created.status_code == 201 and created.json()["active"] is True
+    uid = created.json()["id"]
+    off = {"Operations": [{"op": "replace", "path": "active", "value": False}]}
+    client.patch(f"/scim/v2/Users/{uid}", json=off)
+    put = client.put(f"/scim/v2/Users/{uid}", json=body)
+    assert put.status_code == 200 and put.json()["active"] is False
+
+
 def test_groups_is_an_empty_list(client: TestClient) -> None:
     # What Okta's and Entra's connection tests read when group push is on.
     r = client.get(
