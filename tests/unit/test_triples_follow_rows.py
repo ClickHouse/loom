@@ -31,6 +31,14 @@ def test_a_row_names_an_entity_as_the_graph_stores_it(text: str, written: str) -
     assert tfr.entity_in(text, stored)
 
 
+def test_a_row_names_an_entity_whatever_the_case_of_its_sharp_s() -> None:
+    from server.memory.domain.graph_quality import canonical_entity_text
+
+    assert canonical_entity_text("Straße") == "straße", "stored as before"
+    assert tfr.entity_in("The office is on STRASSE 5.", "straße")
+    assert tfr.entity_in("The office is on Straße 5.", "strasse")
+
+
 def test_a_retired_row_about_istanbul_closes_its_fact() -> None:
     open_triples = [{"subject": "office", "relation": "located_in", "object": "istanbul"}]
     pairs = [
