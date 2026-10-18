@@ -176,3 +176,17 @@ test("a g-jump focuses the new page's h1 and says where it went", async ({ page 
   await page.goBack();
   await expect(page.getByRole("heading", { level: 1, name: "Memories" })).toBeFocused();
 });
+
+// Every row list keys its rows (data-focus-key), so Back focuses the row that had it.
+test("Back after a g-jump focuses the Library row that had the focus", async ({ page }) => {
+  await installApi(page, { memoryRows: 3, knowledgeRows: 5 });
+  await page.goto("/library", { waitUntil: "domcontentloaded" });
+  const open = page.locator("[data-doc-row]").nth(2).locator("[data-row-open]");
+  await expect(open).toBeVisible();
+  await open.focus();
+  await page.keyboard.press("g");
+  await page.keyboard.press("m");
+  await expect(page).toHaveURL(/\/memories$/);
+  await page.goBack();
+  await expect(page.locator("[data-doc-row]").nth(2).locator("[data-row-open]")).toBeFocused();
+});

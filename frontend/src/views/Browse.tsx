@@ -521,7 +521,8 @@ function SpaceRow({
   menu: RowMenuItem[];
 }) {
   return (
-    <ListRow>
+    // Back to this page focuses the space that had the focus.
+    <ListRow data-focus-key={`space:${namespace}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1 basis-60">
           <div className="flex flex-wrap items-center gap-2">
@@ -597,7 +598,11 @@ function ManagedKindSection({
           <>
             {hint}
             {rows.map((r) => (
-              <ListRow key={r.namespace} leading={<Icon name={meta.icon} size="sm" aria-hidden="true" />}>
+              <ListRow
+                key={r.namespace}
+                data-focus-key={`space:${r.namespace}`}
+                leading={<Icon name={meta.icon} size="sm" aria-hidden="true" />}
+              >
                 <div className="flex items-center gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm text-text truncate">{r.description || r.namespace}</div>

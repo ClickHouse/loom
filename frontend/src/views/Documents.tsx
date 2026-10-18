@@ -95,6 +95,7 @@ export function Documents() {
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const focusSearchOnRead = useRef(false);
   const [sortBy, setSortBy] = useState<SortBy>("recency");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
@@ -248,6 +249,12 @@ export function Documents() {
         if (!ac.signal.aborted) toastError("Open failed", e);
       });
   }, [pendingDocSourceUri, rows, clearPendingDoc, identity.org, identity.namespace]);
+  // After a row's delete, the read that drops the row hands focus to the search field.
+  useEffect(() => {
+    if (!focusSearchOnRead.current) return;
+    focusSearchOnRead.current = false;
+    searchRef.current?.focus();
+  }, [rows]);
   const onDelete = async (source_uri: string) => {
     if (
       !(await confirmAction({
@@ -262,6 +269,8 @@ export function Documents() {
     try {
       await deleteKnowledge({ org: identity.org, namespace: identity.namespace }, source_uri);
       toast("Deleted", "ok");
+      // The row and its menu leave with the next read: focus then goes to the search.
+      focusSearchOnRead.current = true;
       reload();
     } catch (e) {
       toastError("Delete failed", e);
@@ -681,6 +690,7 @@ export function Documents() {
               <ListRow
                 key={r.source_uri}
                 data-doc-row={r.source_uri}
+                data-focus-key={`doc:${r.source_uri}`}
                 active={previewEntry?.source_uri === r.source_uri}
                 checked={selected.has(r.source_uri)}
                 leading={

@@ -383,7 +383,7 @@ export function Conversations() {
           {threads.map((t) => {
             const title = listedTitle(t);
             return (
-              <ListRow key={t.thread_id} data-thread-row="">
+              <ListRow key={t.thread_id} data-thread-row="" data-focus-key={`thread:${t.thread_id}`}>
                 <button
                   type="button"
                   data-row-open=""
@@ -589,7 +589,7 @@ export function Conversations() {
       {!busy && groupedHits !== null && groupedHits.length > 0 && (
         <div ref={hitsNav} className="space-y-2">
           {groupedHits.map((g) => (
-            <ListRow key={g.key} data-thread-row="">
+            <ListRow key={g.key} data-thread-row="" data-focus-key={`hit:${g.key}`}>
               <button
                 type="button"
                 data-row-open=""

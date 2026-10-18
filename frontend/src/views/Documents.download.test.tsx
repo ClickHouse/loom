@@ -1,7 +1,7 @@
 // A Library row's More menu's download fetches the document under the viewer's scope with the
 // original filename (or the Markdown name for a text-only document), and a failed call —
 // download or delete — raises an error toast that carries the request id.
-import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
@@ -117,6 +117,20 @@ describe("Library download", () => {
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Delete failed");
     expect(alert.textContent).toContain("request id rid-123");
+  });
+
+  // The deleted row took its menu and the focus with it: focus lands on the search field.
+  it("hands focus to the search field after a row's delete", async () => {
+    api.deleteKnowledge.mockImplementation(async () => {
+      const rest = ROWS.filter((r) => r.source_uri !== "docs/handbook.pdf");
+      api.listKnowledge.mockResolvedValue({ rows: rest, total: rest.length, next_cursor: null });
+      return {};
+    });
+    render(<Documents />);
+    await settle();
+    await pick("Handbook", "Delete");
+    await waitFor(() => expect(screen.queryByText("Handbook")).toBeNull());
+    expect(screen.getByLabelText("Search library")).toHaveFocus();
   });
 });
 

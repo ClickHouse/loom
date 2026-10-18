@@ -291,6 +291,7 @@ export function Profile() {
               ) : (
                 <ListRow
                   key={b.label}
+                  data-focus-key={`section:${b.label}`}
                   checked={selected.has(b.label)}
                   leading={
                     <Checkbox
