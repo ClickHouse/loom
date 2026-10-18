@@ -1417,6 +1417,38 @@ button.pane-card:hover {
   }
 }
 
+/* ui/Chip: Click UI's opaque badge shape (md), which Chip draws as a button or a static
+   chip; the colours are Chip's own classes. */
+@layer components {
+  .chip {
+    gap: var(--click-badge-space-md-gap);
+    padding: var(--click-badge-space-md-y) var(--click-badge-space-md-x);
+    border-radius: var(--click-badge-radii-all);
+    font: var(--click-badge-typography-label-md-default);
+  }
+}
+
+/* components/Toast: Click UI's toast tokens. Loom draws its own toast because it keys and
+   replaces messages, which Click UI's provider does not. */
+@layer components {
+  .toast {
+    gap: var(--click-toast-space-gap);
+    width: min(var(--click-toast-size-width), calc(100vw - 2rem));
+    padding: var(--click-toast-space-y) var(--click-toast-space-x);
+    border: 1px solid var(--click-toast-color-stroke-default);
+    border-radius: var(--click-toast-radii-all);
+    background: var(--color-bg);
+    box-shadow: var(--click-toast-shadow);
+  }
+  .toast-title {
+    font: var(--click-toast-typography-title-default);
+    color: var(--click-toast-color-title-default);
+  }
+  .toast-detail {
+    color: var(--click-toast-color-description-default);
+  }
+}
+
 /* Kbd (ui/Kbd.tsx): a key or a short chord on Click UI's tokens: Inter 12 px/500, muted
    text on the muted surface, the default stroke, inline code's radius, 20 px high. In the
    components layer, so a utility the caller passes (`hidden`, a position) still wins. */

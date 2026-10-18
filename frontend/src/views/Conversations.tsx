@@ -26,6 +26,7 @@ import { AgentBadge } from "../components/AgentBadge";
 import { displayAgent, truncate, humanizeError, sentenceCase } from "../lib/format";
 import { useAbortableEffect, useKeyboard } from "../lib/hooks";
 import { useRowNav } from "../lib/useRowNav";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { IconButton } from "../components/IconButton";
 import { SessionBriefsSection } from "../components/SessionBriefsSection";
 import { PageContainer } from "../layout/PageContainer";
@@ -439,18 +440,15 @@ export function Conversations() {
     );
   };
 
+  const phone = useMedia(PHONE_QUERY);
   const recording = canSetLogging && loggingEnabled !== null && (
     <span className="flex items-center gap-1">
       <Switch
         checked={loggingEnabled}
         onCheckedChange={toggleLogging}
-        // "Record" on a phone, beside the title, so the switch keeps to the title's row.
-        // Click UI names the switch with the label as a string, so the name is given here.
-        label={
-          <>
-            Record<span className="max-sm:sr-only"> conversations</span>
-          </>
-        }
+        // "Record" on a phone, beside the title, so the switch keeps to the title's row; the
+        // name stays whole.
+        label={phone ? "Record" : "Record conversations"}
         aria-label="Record conversations"
         orientation="horizontal"
         dir="start"

@@ -42,8 +42,7 @@ export interface ChipProps {
   className?: string;
 }
 
-const SHAPE =
-  "inline-flex items-center justify-center gap-1 max-w-full min-h-6 px-3 py-0.5 rounded-full border text-xs font-medium";
+const SHAPE = "chip inline-flex items-center justify-center max-w-full min-h-6 border";
 /** A chip that takes a press or a focus: a 44 px target under a coarse pointer. */
 const BASE = `${SHAPE} pointer-coarse:min-h-11 pointer-coarse:min-w-11`;
 const OFF = "bg-surface-2 border-border text-text-muted";

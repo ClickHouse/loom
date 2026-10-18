@@ -275,6 +275,9 @@ export async function countMemories(id: Identity, opts: RequestOpts = {}): Promi
   return r.total ?? 0;
 }
 
+// The largest `offset` memory.list serves (its `le`); a larger one is a 422.
+export const MEMORY_LIST_MAX_OFFSET = 100_000;
+
 export async function listMemories(
   id: Identity,
   limit: number = 200,

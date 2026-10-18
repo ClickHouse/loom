@@ -1678,7 +1678,7 @@ function LifecycleBadge({ status, pinned }: { status?: string; pinned: boolean }
   return (
     <span className="inline-flex items-center gap-0.5">
       <Badge size="sm" state={info.state} text={info.text} />
-      <IconButton icon="info-in-circle" size="xs" label={`About ${info.text.toLowerCase()}`} tooltip={info.about} />
+      <IconButton icon="info-in-circle" size="sm" label={`About ${info.text.toLowerCase()}`} tooltip={info.about} />
     </span>
   );
 }

@@ -110,7 +110,7 @@ describe("Chip with a tip", () => {
     const { container } = render(<Chip label="restricted" tip="Only members read it" />);
     const chip = screen.getByRole("note");
     expect(chip).toHaveTextContent("restricted");
-    expect(chip.className).toContain("rounded-full");
+    expect(chip.className).toContain("chip");
     expect(chip.className).not.toMatch(/(^|\s)rounded(\s|$)/);
     await user.tab();
     expect(chip).toHaveFocus();

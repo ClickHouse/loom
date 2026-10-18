@@ -113,6 +113,14 @@ describe("Memories list chrome", () => {
     };
   }
 
+  // memory.list serves offsets up to 100,000: the pager offers only the pages it can read.
+  it("offers only the pages memory.list can serve", async () => {
+    vi.mocked(listMemories).mockResolvedValue({ entries: ROWS, total: 5_000_000, today: 0, truncated: false });
+    render(<Recent />);
+    const pager = await screen.findByRole("navigation", { name: "Memories pages" });
+    await waitFor(() => expect(within(pager).getByText("Pages 1–2,001 can be opened.")).toBeInTheDocument());
+  });
+
   it("says it is loading, with the namespace's total, while a new page size reads", async () => {
     const holdReads = browseThenHold();
     render(<Recent />);
