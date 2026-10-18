@@ -563,7 +563,7 @@ async def test_a_delete_counts_a_turn_once_however_many_models_embed_it(
 
 @pytest.mark.asyncio
 async def test_a_deleted_turn_leaves_search_when_a_peer_reused_its_msg_id(
-    agent, control_plane_url: str, mint_test_token
+    agent, control_plane_url: str, ch_client, mint_test_token
 ) -> None:
     """A msg_id is unique per agent only: a peer's different turn under the same id
     shares the embedding row, which holds this agent's text when it wrote last. The
@@ -583,6 +583,15 @@ async def test_a_deleted_turn_leaves_search_when_a_peer_reused_its_msg_id(
         {"thread_id": tid, "msg_id": mid, "role": "user", "content": f"walrus mine {nonce}"},
         idempotency_key=uuid.uuid4().hex,
     )
+    # The shared row holds this agent's text, live, before the delete.
+    row = (
+        "SELECT content_excerpt, tombstoned_at IS NULL FROM loom.conversation_embeddings "
+        "FINAL WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND thread_id = {tid:String} AND msg_id = {mid:String}"
+    )
+    params = {"org": agent.org, "ns": agent.namespace, "tid": tid, "mid": mid}
+    before = [tuple(r) for r in ch_client.query(row, parameters=params).result_rows]
+    assert before == [(f"walrus mine {nonce}", True)]
 
     await _admin_post(
         mint_test_token,
@@ -599,6 +608,8 @@ async def test_a_deleted_turn_leaves_search_when_a_peer_reused_its_msg_id(
     )
     hits = await agent.conversations.search(f"walrus mine {nonce}", thread_id=tid, agent_id="*")
     assert not [h for h in hits["hits"] if "walrus" in h["content_excerpt"]], hits["hits"]
+    after = [tuple(r) for r in ch_client.query(row, parameters=params).result_rows]
+    assert after == [(f"walrus mine {nonce}", False)]
 
 
 @pytest.mark.asyncio
