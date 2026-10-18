@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
@@ -30,7 +31,8 @@ import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { displayAgent, humanizeError } from "../../lib/format";
+import { humanizeError, sentenceCase } from "../../lib/format";
+import { AgentBadge } from "../../components/AgentBadge";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
@@ -79,14 +81,38 @@ function ModeBadge({ mode }: { mode: string }) {
 
 function DecisionChip({ decision }: { decision: string }) {
   const deny = decision === "deny";
-  return <Badge text={decision} state={deny ? "danger" : "success"} iconDir="start" size="sm" />;
+  return <Badge text={sentenceCase(decision)} state={deny ? "danger" : "success"} size="sm" />;
+}
+
+/** A rule's condition as one summary line; the button opens the full JSON under it. */
+function Condition({ condition }: { condition: unknown }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <div className="font-mono text-xs">
+      <button
+        type="button"
+        className="inline-flex items-start gap-1 text-left cursor-pointer"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name="chevron-right" size="sm" aria-hidden="true" className={open ? "rotate-90" : ""} />
+        {summariseCondition(condition)}
+      </button>
+      <pre id={id} hidden={!open} className="mt-1 whitespace-pre-wrap break-words">
+        {JSON.stringify(condition, null, 2)}
+      </pre>
+    </div>
+  );
 }
 
 const DASH = <span className="text-text-muted">—</span>;
 
 function Bool({ v }: { v: boolean | null | undefined }) {
   if (v === null || v === undefined) return DASH;
-  return <span className={v ? "text-success" : "text-text-muted"}>{v ? "yes" : "no"}</span>;
+  // A yes/no is not a status: plain text, the colour left to the decision badges.
+  return <span className={v ? "text-text" : "text-text-muted"}>{v ? "Yes" : "No"}</span>;
 }
 
 const CMP_SYMBOL: Record<string, string> = { gt: ">", gte: "≥", lt: "<", lte: "≤", eq: "=" };
@@ -145,8 +171,6 @@ const GRAMMAR_HELP =
   '"key"?: "agent"|"session"|"user", "success"?: bool, "args_equal"?: {field: literal|"$args.<field>"}}. ' +
   'count_within adds "cmp": gt|gte|lt|lte|eq and "value": int; not_since adds "anchor": string|string[]. ' +
   'Combinators: {"op":"all"|"any","of":[…]}, {"op":"not","of":{…}}.';
-
-const TH_CLS = "text-left px-3 py-2 font-medium";
 
 function Card({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
@@ -310,17 +334,18 @@ export function Policies() {
                         </div>
                       ),
                     },
-                    { label: <Badge text={r.effect} state={r.effect === "forbid" ? "danger" : "info"} size="sm" /> },
-                    { label: <span className="font-mono text-xs">{r.actions.join(", ")}</span>, overflowMode: "wrap" },
                     {
                       label: (
-                        <details className="font-mono text-xs">
-                          <summary className="cursor-pointer">{summariseCondition(r.condition)}</summary>
-                          <pre className="mt-1 whitespace-pre-wrap break-words">
-                            {JSON.stringify(r.condition, null, 2)}
-                          </pre>
-                        </details>
+                        <Badge
+                          text={sentenceCase(r.effect)}
+                          state={r.effect === "forbid" ? "danger" : "neutral"}
+                          size="sm"
+                        />
                       ),
+                    },
+                    { label: <span className="font-mono text-xs">{r.actions.join(", ")}</span>, overflowMode: "wrap" },
+                    {
+                      label: <Condition condition={r.condition} />,
                       overflowMode: "wrap",
                     },
                     { label: <Bool v={r.enabled} /> },
@@ -639,16 +664,16 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
           {result.rules.length > 0 && (
             // Native: a rule spans one row per leaf (rowSpan), which Click UI's Table has no form for.
             <div className="rounded-lg border border-border overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-2 text-xs text-text-muted">
+              <table className="native-table text-sm">
+                <thead>
                   <tr>
-                    <th className={TH_CLS}>Rule</th>
-                    <th className={TH_CLS}>Effect</th>
-                    <th className={TH_CLS}>Holds</th>
-                    <th className={TH_CLS}>Denies</th>
-                    <th className={TH_CLS}>Leaf op</th>
-                    <th className={TH_CLS}>Leaf holds</th>
-                    <th className={TH_CLS}>Value</th>
+                    <th scope="col">Rule</th>
+                    <th scope="col">Effect</th>
+                    <th scope="col">Holds</th>
+                    <th scope="col">Denies</th>
+                    <th scope="col">Leaf op</th>
+                    <th scope="col">Leaf holds</th>
+                    <th scope="col">Value</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -658,25 +683,22 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                       <tr key={`${v.policy_id}-${i}`} className="border-t border-border">
                         {i === 0 && (
                           <>
-                            <td
-                              rowSpan={leaves.length}
-                              className="px-3 py-2 font-mono text-xs whitespace-nowrap align-top"
-                            >
+                            <td rowSpan={leaves.length} className="font-mono text-xs whitespace-nowrap align-top">
                               {v.policy_id}
                             </td>
-                            <td rowSpan={leaves.length} className="px-3 py-2 align-top">
+                            <td rowSpan={leaves.length} className="align-top">
                               {v.effect}
                             </td>
-                            <td rowSpan={leaves.length} className="px-3 py-2 align-top">
+                            <td rowSpan={leaves.length} className="align-top">
                               <Bool v={v.holds} />
                             </td>
-                            <td rowSpan={leaves.length} className="px-3 py-2 align-top">
+                            <td rowSpan={leaves.length} className="align-top">
                               <Bool v={v.denies} />
                             </td>
                           </>
                         )}
-                        <td className="px-3 py-2 font-mono text-xs">{lf ? lf.op : DASH}</td>
-                        <td className="px-3 py-2">
+                        <td className="font-mono text-xs">{lf ? lf.op : DASH}</td>
+                        <td>
                           {lf ? (
                             lf.skipped ? (
                               <span className="text-text-muted">skipped</span>
@@ -689,7 +711,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                             DASH
                           )}
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs max-w-[32ch]">
+                        <td className="font-mono text-xs max-w-[32ch]">
                           {lf ? (
                             <div className="break-words">
                               {lf.error ||
@@ -818,7 +840,7 @@ function DecisionsPanel({ version }: { version: number }) {
                   // ListTime is the time and its UTC tooltip: no second one around it.
                   label: <ListTime iso={r.ts} quiet className="text-text-muted" />,
                 },
-                { label: displayAgent(r.agent) },
+                { label: <AgentBadge agent={r.agent} /> },
                 { label: <span className="font-mono text-xs">{r.operation}</span> },
                 { label: <DecisionChip decision={r.decision} /> },
                 { label: <Bool v={r.enforced} /> },

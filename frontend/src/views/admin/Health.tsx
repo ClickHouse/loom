@@ -360,13 +360,9 @@ export function WorkersPanel() {
           rows !== null &&
           rows.length > 0 &&
           (allHealthy ? (
-            <Badge text="All systems running" state="success" iconDir="start" />
+            <Badge text="All systems running" state="success" />
           ) : issues.length > 0 ? (
-            <Badge
-              text={`${issues.length} ${issues.length === 1 ? "issue" : "issues"}`}
-              state="danger"
-              iconDir="start"
-            />
+            <Badge text={`${issues.length} ${issues.length === 1 ? "issue" : "issues"}`} state="danger" />
           ) : (
             <span className="truncate text-sm text-text-muted">No workers reporting</span>
           ))}
@@ -382,7 +378,7 @@ export function WorkersPanel() {
         </BusyButton>
       </ListToolbar>
       {!error && rows !== null && colours.length > 0 && (
-        <p className="-mt-1 mb-3 text-xs text-text-muted" data-testid="reporting-colours">
+        <p className="mb-3 text-xs text-text-muted" data-testid="reporting-colours">
           Reporting from {colours.join(", ")}
           {store?.rows ? (
             <>
@@ -471,7 +467,7 @@ export function WorkersPanel() {
                           <Badge
                             size="sm"
                             state="danger"
-                            text={`${w.consecutive_failures} consecutive failure${(w.consecutive_failures ?? 0) === 1 ? "" : "s"}${(w.consecutive_failures ?? 0) >= 3 ? " — DEGRADED" : ""}`}
+                            text={`${w.consecutive_failures} consecutive failure${(w.consecutive_failures ?? 0) === 1 ? "" : "s"}${(w.consecutive_failures ?? 0) >= 3 ? ", degraded" : ""}`}
                           />
                         )}
                         {pill && status !== "disabled" && <Badge size="sm" state={pill.state} text={pill.label} />}

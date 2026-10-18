@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
@@ -23,7 +23,7 @@ import {
 import { useIdentity } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
-import { LoadingSkeleton, PageHeader, TabTrigger } from "../../components/ui";
+import { LoadingSkeleton, PageHeader, SectionHeading, TabTrigger } from "../../components/ui";
 import { Skeleton, TableSkeleton } from "../../components/Skeleton";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
@@ -439,20 +439,12 @@ function ConflictsPanel() {
         </div>
       </Panel>
 
-      <div className="mt-6">
-        <ListToolbar
-          label="Queue"
-          search={false}
-          count={
-            <>
-              {held === null ? `${rows.length} loaded` : `${rows.length} of ${held}`}
-              <span className="sr-only"> conflicts loaded</span>
-            </>
-          }
-        >
-          <h2 className="text-sm font-semibold">Queue</h2>
-        </ListToolbar>
-      </div>
+      <SectionHeading
+        label="Queue"
+        level={2}
+        className="mt-6"
+        caption={held === null ? `${rows.length} loaded` : `${rows.length} of ${held} loaded`}
+      />
       <div ref={queueBox}>
         <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} picking={!busy} />
       </div>
@@ -508,15 +500,18 @@ function QueueTable({
         items: [
           {
             label: (
-              <button
+              <Link
+                component="button"
                 type="button"
-                className="min-w-0 max-w-full truncate rounded text-left font-mono text-xs"
+                size="sm"
+                weight="mono"
+                className="min-w-0 max-w-full truncate text-left"
                 aria-current={c.memory_id === current || undefined}
-                disabled={!picking}
-                onClick={() => onPick(i)}
+                aria-disabled={!picking || undefined}
+                onClick={() => picking && onPick(i)}
               >
                 {c.memory_key}
-              </button>
+              </Link>
             ),
           },
           { label: <span className="tabular">v{c.version}</span> },
@@ -640,7 +635,7 @@ function LearningsPanel({
                 <span className="font-mono text-sm text-text-muted">{r.memory_key}</span>
                 <span className="text-xs text-text-muted tabular">
                   {r.supporter_count} supporters · conf {(r.confidence_avg ?? 0).toFixed(2)} ·{" "}
-                  <ListTime iso={r.proposed_at} />
+                  <ListTime iso={r.proposed_at} quiet />
                 </span>
               </div>
               <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
@@ -680,7 +675,7 @@ function LearningsPanel({
                   {r.decided_at && (
                     <>
                       {" "}
-                      <ListTime iso={r.decided_at} />
+                      <ListTime iso={r.decided_at} quiet />
                     </>
                   )}
                   {r.decided_by && <> by {r.decided_by}</>}
@@ -858,8 +853,8 @@ function Side({
       </div>
       <div className="flex items-center gap-2 text-xs text-text-muted tabular">
         {version != null && <span>v{version}</span>}
-        {pinned && <Badge text="Pinned" state="info" size="sm" />}
-        {createdAt && <ListTime iso={createdAt} />}
+        {pinned && <span>Pinned</span>}
+        {createdAt && <ListTime iso={createdAt} quiet />}
       </div>
     </Panel>
   );

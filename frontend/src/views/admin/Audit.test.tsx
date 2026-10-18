@@ -166,7 +166,7 @@ describe("Audit table", () => {
   });
 });
 
-// A namespace's history is longer than one read: "Load older" asks for the next, older page
+// A namespace's history is longer than one read: "Load more" asks for the next, older page
 // with the cursor the last one answered, and adds it under the rows already shown.
 describe("Audit: older events", () => {
   it("loads the next page under the first, and stops at the last", async () => {
@@ -175,11 +175,11 @@ describe("Audit: older events", () => {
       .mockResolvedValueOnce({ rows: [row("bob", '{"namespace":"ops","visibility":"org"}')], next_cursor: null });
     render(<Audit />);
     await screen.findByText("Created namespace team (org)");
-    fireEvent.click(screen.getByRole("button", { name: "Load older" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(await screen.findByText("Created namespace ops (org)")).toBeTruthy();
     expect(screen.getByText("Created namespace team (org)")).toBeTruthy();
     expect(vi.mocked(api.listAuditLog).mock.calls[1][1]).toMatchObject({ cursor: "c1" });
-    expect(screen.queryByRole("button", { name: "Load older" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
   // A namespace switch while an older page is in flight: the answer belongs to the old
@@ -192,14 +192,14 @@ describe("Audit: older events", () => {
       .mockResolvedValueOnce({ rows: [row("carol", '{"namespace":"two","visibility":"org"}')], next_cursor: "c2" });
     render(<Audit />);
     await screen.findByText("Created namespace team (org)");
-    fireEvent.click(screen.getByRole("button", { name: "Load older" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     const signal = vi.mocked(api.listAuditLog).mock.calls[1][1]?.signal;
     act(() => useStore.setState({ identity: { org: "dev", namespace: "ns2", agent: "loom-ui" } }));
     await screen.findByText("Created namespace two (org)");
     expect(signal?.aborted).toBe(true);
     await act(async () => land({ rows: [row("bob", '{"namespace":"ops","visibility":"org"}')], next_cursor: null }));
     expect(screen.queryByText("Created namespace ops (org)")).toBeNull();
-    expect(screen.getByRole("button", { name: "Load older" })).not.toHaveAttribute("aria-busy");
+    expect(screen.getByRole("button", { name: "Load more" })).not.toHaveAttribute("aria-busy");
   });
 
   // The button unmounts with the last page; focus goes to the first row it added, and stays
@@ -211,12 +211,12 @@ describe("Audit: older events", () => {
       .mockResolvedValueOnce({ rows: [row("dave", '{"namespace":"last","visibility":"org"}')], next_cursor: null });
     render(<Audit />);
     await screen.findByText("Created namespace team (org)");
-    const button = screen.getByRole("button", { name: "Load older" });
+    const button = screen.getByRole("button", { name: "Load more" });
     button.focus();
     fireEvent.click(button);
     await screen.findByText("Created namespace ops (org)");
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Load older" })));
-    fireEvent.click(screen.getByRole("button", { name: "Load older" }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Load more" })));
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await screen.findByText("Created namespace last (org)");
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByText("Created namespace last (org)").closest("tr")),
@@ -231,7 +231,7 @@ describe("Audit: older events", () => {
       .mockImplementationOnce(() => new Promise((r) => (answer = r)));
     render(<Audit />);
     await screen.findByText("Created namespace team (org)");
-    const button = screen.getByRole("button", { name: "Load older" });
+    const button = screen.getByRole("button", { name: "Load more" });
     button.focus();
     fireEvent.click(button);
     const filter = screen.getByRole("textbox", { name: "Filter audit events" });
@@ -252,10 +252,10 @@ describe("Audit: older events", () => {
       .mockResolvedValueOnce({ rows: [system, system], next_cursor: null });
     render(<Audit />);
     await screen.findByText("Created namespace team (org)");
-    const button = screen.getByRole("button", { name: "Load older" });
+    const button = screen.getByRole("button", { name: "Load more" });
     button.focus();
     fireEvent.click(button);
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Load older" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Load more" })).toBeNull());
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByText("Created namespace team (org)").closest("tr")),
     );

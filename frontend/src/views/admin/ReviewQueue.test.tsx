@@ -752,7 +752,7 @@ describe("ReviewQueue", () => {
     );
     seed("ns-a");
     render(<ReviewQueue />);
-    expect(await screen.findByText("2 of 120", {}, WAIT)).toBeInTheDocument();
+    expect(await screen.findByText("2 of 120 loaded", {}, WAIT)).toBeInTheDocument();
     seed("ns-b");
     await screen.findByText("value of b/one", {}, WAIT);
     expect(screen.queryByText(/of 120/)).toBeNull();
@@ -770,12 +770,12 @@ describe("ReviewQueue", () => {
     await screen.findByText("value of k/one", {}, WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
     expect(within(table).getAllByRole("row")).toHaveLength(3);
-    expect(await screen.findByText("2 of 3", {}, WAIT)).toBeInTheDocument();
+    expect(await screen.findByText("2 of 3 loaded", {}, WAIT)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Load more" }));
     await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(4), WAIT);
     expect(vi.mocked(listConflicts).mock.calls.at(-1)?.[1]?.before_version).toBe(7);
-    expect(screen.getByText("3 of 3")).toBeInTheDocument();
+    expect(screen.getByText("3 of 3 loaded")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
     // The last page took the button that held the focus: it goes to the first conflict added.
     expect(within(table).getByRole("button", { name: "k/three" })).toHaveFocus();
@@ -798,7 +798,7 @@ describe("ReviewQueue", () => {
     const table = screen.getByRole("table", { name: "Conflicts" });
     await waitFor(() => expect(within(table).queryByRole("button", { name: "k/one" })).toBeNull(), WAIT);
     expect(within(table).getByRole("button", { name: "k/two" })).toBeInTheDocument();
-    expect(screen.getByText("1 of 1")).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 loaded")).toBeInTheDocument();
   });
 
   it("keeps a conflict decided while Load more reads out of the queue", async () => {
@@ -885,13 +885,16 @@ describe("ReviewQueue", () => {
     await screen.findByText("value of k/one", {}, WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    expect(within(table).getByRole("button", { name: "k/two" })).toBeDisabled();
+    expect(within(table).getByRole("button", { name: "k/two" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByLabelText("Reason for the decision")).toBeDisabled();
     await act(async () => decided({ resolved: true, affected_memory_ids: [] } as never));
-    await waitFor(() => expect(within(table).getByRole("button", { name: "k/two" })).toBeEnabled(), WAIT);
+    await waitFor(
+      () => expect(within(table).getByRole("button", { name: "k/two" })).not.toHaveAttribute("aria-disabled"),
+      WAIT,
+    );
   });
 
-  it("counts the queue in its toolbar and shows each conflict's time as a list time", async () => {
+  it("counts the queue under its heading and shows each conflict's time as a list time", async () => {
     vi.mocked(countConflicts).mockResolvedValue(4);
     vi.mocked(listConflicts).mockResolvedValue({
       rows: [conflict("k/one"), conflict("k/two")],
@@ -900,8 +903,8 @@ describe("ReviewQueue", () => {
     seed("ns-a");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
-    const bar = document.querySelector<HTMLElement>('[role="group"][aria-label="Queue"]');
-    await waitFor(() => expect(bar).toHaveTextContent("2 of 4"), WAIT);
+    const heading = screen.getByRole("heading", { name: "Queue", level: 2 });
+    await waitFor(() => expect(heading.parentElement).toHaveTextContent("2 of 4 loaded"), WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
     expect(within(table).getAllByText("Sep 20")[0].tagName).toBe("TIME");
   });

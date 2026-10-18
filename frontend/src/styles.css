@@ -1354,6 +1354,24 @@ textarea[aria-invalid="true"]:focus-visible {
   }
 }
 
+/* A native table where Click UI's Table has no form for the layout (a cell spanning rows,
+   a row that opens a detail row): Table size="sm"'s cell spacing and header type. */
+@layer components {
+  .native-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .native-table th {
+    padding: var(--click-table-header-cell-space-sm-y) var(--click-table-header-cell-space-sm-x);
+    font: var(--click-table-header-title-default);
+    color: var(--click-table-header-color-title-default);
+    text-align: left;
+  }
+  .native-table td {
+    padding: var(--click-table-body-cell-space-sm-y) var(--click-table-body-cell-space-sm-x);
+  }
+}
+
 /* Kbd (ui/Kbd.tsx): a key or a short chord on Click UI's tokens: Inter 12 px/500, muted
    text on the muted surface, the default stroke, inline code's radius, 20 px high. In the
    components layer, so a utility the caller passes (`hidden`, a position) still wins. */

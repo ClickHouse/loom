@@ -67,6 +67,34 @@ describe("Policies condition summary", () => {
     render(<Policies />);
     expect(await screen.findByText("all(formerly memory.get within 1h AND x)")).toBeTruthy();
   });
+
+  it("opens the condition's JSON from a disclosure button", async () => {
+    vi.mocked(api.listPolicies).mockResolvedValueOnce({
+      mode: "enforce",
+      rules: [
+        {
+          policy_id: "p1",
+          effect: "require",
+          actions: ["memory.delete"],
+          condition: { op: "all", of: [] },
+          description: "",
+          enabled: true,
+          created_by: "alice",
+          created_at: null,
+          updated_at: null,
+        },
+      ],
+    });
+    render(<Policies />);
+    const toggle = await screen.findByRole("button", { name: "all()" });
+    const json = document.getElementById(toggle.getAttribute("aria-controls") ?? "");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(json).not.toBeVisible();
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(json).toBeVisible();
+    expect(screen.getByText("Require")).toBeInTheDocument();
+  });
 });
 
 describe("Policies add rule", () => {

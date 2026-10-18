@@ -113,7 +113,7 @@ describe("WorkersPanel", () => {
     expect(screen.getByText("Audit integrity")).toBeInTheDocument();
     expect(screen.getByText(/Idle — ran, nothing to do/)).toBeInTheDocument();
     expect(screen.getByText(/Last pass failed/)).toBeInTheDocument();
-    expect(screen.getByText(/3 consecutive failures — DEGRADED/)).toBeInTheDocument();
+    expect(screen.getByText("3 consecutive failures, degraded")).toBeInTheDocument();
     expect(screen.getByText(/ConnectionError: refused/)).toBeInTheDocument();
     expect(screen.getByText(/took 12\.3 s/)).toBeInTheDocument();
     expect(screen.getByText(/took 420 ms/)).toBeInTheDocument();

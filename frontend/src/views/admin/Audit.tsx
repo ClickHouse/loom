@@ -20,6 +20,7 @@ import { TableSkeleton } from "../../components/Skeleton";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { PageContainer } from "../../layout/PageContainer";
+import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
 import { PageHeader, TabTrigger, TipTarget } from "../../components/ui";
 
 // Events recorded by the control plane that don't represent a user
@@ -188,6 +189,7 @@ export function Audit() {
   const [older, setOlder] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [showSystem, setShowSystem] = useState(false);
+  const phone = useMedia(PHONE_QUERY);
   const [onlyMe, setOnlyMe] = useState(false);
   // Free-text filter — matches against actor (email / agent name)
   // and event_type. Done client-side over the loaded window since
@@ -305,6 +307,25 @@ export function Audit() {
   const hiddenSystemCount =
     (rows || []).length - (rows || []).filter((r) => showSystem || !SYSTEM_EVENT_TYPES.has(r.event_type)).length;
 
+  // The filters in force sit in the bar with the search. The count of hidden system events
+  // rides beside its checkbox, whose label stays the same.
+  const filters =
+    !error && rows !== null && rows.length > 0 ? (
+      <>
+        {me && <Checkbox label="Only my actions" checked={onlyMe} onCheckedChange={(c) => setOnlyMe(c === true)} />}
+        <span className="flex shrink-0 items-center gap-1.5">
+          <Checkbox
+            label="Include system events"
+            checked={showSystem}
+            onCheckedChange={(c) => setShowSystem(c === true)}
+          />
+          {hiddenSystemCount > 0 && !showSystem && (
+            <span className="text-xs text-text-muted tabular">{hiddenSystemCount} hidden</span>
+          )}
+        </span>
+      </>
+    ) : null;
+
   return (
     <PageContainer>
       <div className="mb-6">
@@ -351,23 +372,10 @@ export function Audit() {
                 aria-label="Filter audit events"
               />
             </div>
+            {!phone && filters}
           </ListToolbar>
-          {!error && rows !== null && rows.length > 0 && (
-            <div className="mb-3 flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
-              {me && (
-                <Checkbox label="Only my actions" checked={onlyMe} onCheckedChange={(c) => setOnlyMe(c === true)} />
-              )}
-              <Checkbox
-                label={
-                  hiddenSystemCount > 0 && !showSystem
-                    ? `Include system events (${hiddenSystemCount} hidden — budget / rate-limit / worker)`
-                    : "Include system events"
-                }
-                checked={showSystem}
-                onCheckedChange={(c) => setShowSystem(c === true)}
-              />
-            </div>
-          )}
+          {/* On a phone the filters take a row of their own under the bar. */}
+          {phone && filters && <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">{filters}</div>}
 
           {!!error && (
             <ListState kind="error" things="audit events" error={error} onRetry={() => setReload((n) => n + 1)} />
@@ -403,7 +411,7 @@ export function Audit() {
           {rows !== null && older && (
             <div className="mt-4 flex justify-center">
               <BusyButton type="secondary" htmlType="button" busy={loadingOlder} onClick={loadOlder}>
-                Load older
+                Load more
               </BusyButton>
             </div>
           )}
@@ -581,7 +589,7 @@ function AuditEvent({ row }: { row: AuditEntry }) {
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
           >
-            {expanded ? "Hide" : "Details"}
+            Details
           </Button>
         )}
       </div>

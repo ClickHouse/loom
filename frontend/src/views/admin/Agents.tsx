@@ -6,6 +6,7 @@ import { Table } from "@clickhouse/click-ui/Table";
 import { useStore } from "../../lib/state";
 import { listConnectedAgents, type ConnectedAgentRow } from "../../api";
 import { parseChTime } from "../../lib/format";
+import { AgentBadge } from "../../components/AgentBadge";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
@@ -30,7 +31,7 @@ const HEADERS = [
   { label: "Ops" },
   { label: "Namespaces" },
   { label: "Primary" },
-  { label: "LLM $" },
+  { label: "LLM cost" },
   { label: "Last seen" },
 ];
 
@@ -154,7 +155,7 @@ export function Agents() {
               return {
                 id: r.agent,
                 items: [
-                  { label: <span className="font-mono">{r.agent}</span> },
+                  { label: <AgentBadge agent={r.agent} /> },
                   { label: <span className="tabular">{r.ops.toLocaleString()}</span> },
                   { label: <span className="tabular">{r.namespaces_touched}</span> },
                   { label: <span className="font-mono text-xs text-text-muted">{r.primary_namespace}</span> },

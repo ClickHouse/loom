@@ -238,27 +238,21 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
               </p>
             ) : (
               <div className="overflow-x-auto -mx-1 px-1">
-                <table className="w-full text-sm border-collapse" aria-label="Audit findings">
+                <table className="native-table text-sm" aria-label="Audit findings">
                   <thead>
-                    <tr className="text-left text-xs text-text-muted">
-                      <th scope="col" className="py-1.5 pr-2 w-9">
+                    <tr>
+                      <th scope="col" className="w-9">
                         <span className="sr-only">Details</span>
                       </th>
-                      <th scope="col" className="py-1.5 pr-3">
-                        Finding
-                      </th>
-                      <th scope="col" className="py-1.5 pr-3">
-                        Severity
-                      </th>
-                      <th scope="col" className="py-1.5 pr-3 text-right">
+                      <th scope="col">Finding</th>
+                      <th scope="col">Severity</th>
+                      <th scope="col" className="text-right">
                         Count
                       </th>
-                      <th scope="col" className="py-1.5 pr-3 text-right">
+                      <th scope="col" className="text-right">
                         Share
                       </th>
-                      <th scope="col" className="py-1.5">
-                        First sample
-                      </th>
+                      <th scope="col">First sample</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -352,7 +346,7 @@ function FindingRows({
         data-code={f.code}
         data-severity={f.severity}
       >
-        <td className="py-1 pr-2">
+        <td>
           <IconButton
             icon={isOpen ? "chevron-down" : "chevron-right"}
             size="sm"
@@ -362,13 +356,13 @@ function FindingRows({
             aria-controls={detailId}
           />
         </td>
-        <td className="py-2 pr-3 font-medium text-text whitespace-nowrap">{label}</td>
-        <td className="py-2 pr-3">
+        <td className="font-medium text-text whitespace-nowrap">{label}</td>
+        <td>
           <SeverityBadge severity={f.severity} />
         </td>
-        <td className="py-2 pr-3 text-right tabular">{f.count.toLocaleString()}</td>
-        <td className="py-2 pr-3 text-right tabular">{pct(f.share)}</td>
-        <td className="py-1 min-w-0">
+        <td className="text-right tabular">{f.count.toLocaleString()}</td>
+        <td className="text-right tabular">{pct(f.share)}</td>
+        <td className="min-w-0">
           {firstKey ? (
             <KeyButton memoryKey={firstKey} onInspect={onInspect} />
           ) : (
@@ -379,7 +373,7 @@ function FindingRows({
       {isOpen && (
         <tr id={detailId} className="bg-surface-2/60" data-testid="audit-finding-detail">
           <td />
-          <td colSpan={5} className="py-3 pr-3 text-sm leading-relaxed">
+          <td colSpan={5} className="text-sm leading-relaxed">
             <p className="text-text">{f.detail}</p>
             <p className="mt-1.5 text-text-muted">
               <span className="font-medium text-text">Remedy:</span> {f.remedy}
