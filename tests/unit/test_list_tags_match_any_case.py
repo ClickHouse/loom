@@ -114,8 +114,7 @@ async def test_the_hidden_under_prefix_count_matches_tags_as_the_total_does(
 
 @pytest.mark.asyncio
 async def test_the_store_requires_every_tag_when_asked() -> None:
-    """`folded_all`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
-    of them are found past the newest rows that hold any one."""
+    """`folded_all` (`tags_every=True`) needs every tag."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
