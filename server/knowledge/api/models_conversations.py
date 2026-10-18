@@ -342,8 +342,8 @@ class ConversationCompactInput(BaseModel):
     # The newest this many messages stay verbatim; older ones are summarized, as many
     # as fit the summarizer's prompt.
     keep_recent: int = Field(default=10, ge=1, le=200)
-    # Skip when fewer new turns than this precede the last keep_recent, or when none fits
-    # the summarizer's prompt after earlier summaries; an earlier summary does not count.
+    # Skip when fewer new turns than this precede the last keep_recent; an earlier
+    # summary does not count.
     min_to_compact: int = Field(default=4, ge=1, le=50)
 
 
@@ -360,5 +360,6 @@ class ConversationCompactOutput(BaseModel):
     # Completion tokens of the summary; 0 when no call was made.
     tokens_out: int = 0
     # Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted,
+    # prompt-full (earlier summaries fill the prompt before any new turn),
     # summarizer-empty, or embed-failed (retry once the embedder answers).
     reason: str = ""

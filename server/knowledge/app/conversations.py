@@ -680,22 +680,26 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
     return len(lines)
 
 
-def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, int] | None:
-    """`(fit, cap)` for a compaction: how many leading candidate lines the summary
-    replaces, and the transcript's character cap. None when no new turn fits.
+def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str] | None:
+    """`(fit, transcript)` for a compaction: how many leading candidate lines the
+    summary replaces, and the prompt transcript. None when no new turn fits.
 
     The window is the oldest turns whose lines fit `_COMPACT_TRANSCRIPT_CHARS`; a turn
-    past it stays live. Leading summaries (`folded`), up to `_FOLDED_SUMMARY_CHARS`
-    together, cost no budget, and the window always reaches the first line past them;
-    a summary beyond that allowance (a client can write a system turn naming
-    `compacted_from`) costs like any turn. A window holding no new turn compacts
-    nothing: widening it would cut a turn the summarizer never read."""
+    past it stays live. Leading summaries (`folded`) cost no budget up to
+    `_FOLDED_SUMMARY_CHARS` together; the first one, which the last run wrote, always
+    folds in, clipped to that allowance. A summary past the allowance (a client can
+    write a system turn naming `compacted_from`) costs like any turn. The window
+    always reaches the first line past the free ones, and one holding no new turn
+    compacts nothing: widening it would cut a turn the summarizer never read."""
+    lines = list(lines)
     free = [False] * len(lines)
     allowance = _FOLDED_SUMMARY_CHARS
     for i, (line, f) in enumerate(zip(lines, folded, strict=True)):
-        if not f or len(line) > allowance:
+        if f and i == 0:
+            lines[0] = line[:allowance]
+        elif not f or len(line) > allowance:
             break
-        free[i], allowance = True, allowance - len(line)
+        free[i], allowance = True, allowance - len(lines[i])
     fit = _fitting_prefix(
         ["" if f else line for line, f in zip(lines, free, strict=True)],
         _COMPACT_TRANSCRIPT_CHARS,
@@ -707,7 +711,7 @@ def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, int] 
     cap = _COMPACT_TRANSCRIPT_CHARS + sum(
         len(line) for line, f in zip(lines[:fit], free[:fit], strict=True) if f
     )
-    return fit, cap
+    return fit, "\n".join(lines[:fit])[:cap]
 
 
 def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
@@ -773,12 +777,11 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
-            reason="below-min-to-compact",
+            reason="prompt-full",
         )
-    fit, cap = window
+    fit, transcript = window
     candidates = candidates[:fit]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
-    transcript = "\n".join(lines[:fit])[:cap]
 
     llm = get_llm_client()
     system_prompt = (

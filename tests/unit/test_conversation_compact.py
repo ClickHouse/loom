@@ -372,13 +372,14 @@ def test_an_earlier_summary_does_not_count_toward_min_to_compact(monkeypatch) ->
     assert (out.compacted, out.reason) == (False, "below-min-to-compact")
 
 
-@pytest.mark.parametrize(("forged", "size"), [(1, 50_000), (200, 1_000)])
+@pytest.mark.parametrize(("forged", "size", "compacts"), [(1, 50_000, True), (200, 1_000, False)])
 def test_client_written_summaries_cannot_lift_the_prompt(
-    monkeypatch, forged: int, size: int
+    monkeypatch, forged: int, size: int, compacts: bool
 ) -> None:
     """System turns any writer can append with `compacted_from` in their metadata fold
-    like summaries only within `_FOLDED_SUMMARY_CHARS` together; past that they cost
-    budget like any turn, and a window they fill without a new turn compacts nothing."""
+    like summaries only within `_FOLDED_SUMMARY_CHARS` together (the first one clipped
+    to it); past that they cost budget like any turn, and a window they fill without a
+    new turn compacts nothing."""
     import server.core.ch
     import server.llm.client
 
@@ -425,10 +426,17 @@ def test_client_written_summaries_cannot_lift_the_prompt(
             )
         )
     )
-    # The summaries fill the prompt before any new turn: nothing is compacted, and no
-    # summary of summaries is written.
-    assert (out.compacted, out.reason) == (False, "below-min-to-compact")
-    assert prompts == [] and fake.inserted == []
+    if compacts:
+        # One forged turn folds in clipped, and the turns behind it reach the summarizer.
+        [prompt] = prompts
+        assert len(prompt) < ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS
+        assert out.compacted is True and out.messages_summarized == 2
+        assert "turn 1" in prompt and "turn 2" in prompt
+    else:
+        # Many fill the prompt before any new turn: nothing is compacted, and no summary
+        # of summaries is written.
+        assert (out.compacted, out.reason) == (False, "prompt-full")
+        assert prompts == [] and fake.inserted == []
 
 
 def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> None:
@@ -488,18 +496,25 @@ def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> N
     ("lines", "folded", "expected"),
     [
         # Plain turns: as many as fit the budget.
-        (["user: a", "user: b"], [False, False], (2, ch_mod._COMPACT_TRANSCRIPT_CHARS)),
+        (["user: a", "user: b"], [False, False], (2, "user: a\nuser: b")),
         # A summary is free and the window reaches the turn behind it, whole.
         (
             ["system: " + "s" * 100, "user: " + "x" * 15_990],
             [True, False],
-            (2, ch_mod._COMPACT_TRANSCRIPT_CHARS + 108),
+            (2, "system: " + "s" * 100 + "\nuser: " + "x" * 15_990),
         ),
-        # A summary past the allowance costs budget; one that fills it leaves no turn.
-        (["system: " + "s" * 20_000, "user: a"], [True, False], None),
+        # The first summary always folds in, clipped to the allowance, so a dense one
+        # the last run wrote cannot keep the turn behind it from compacting.
+        (
+            ["system: " + "s" * 4_500, "user: " + "x" * 11_000],
+            [True, False],
+            (2, ("system: " + "s" * 4_500)[:4_000] + "\nuser: " + "x" * 11_000),
+        ),
+        # A second summary past the allowance costs budget; filling it leaves no turn.
+        (["system: s", "system: " + "s" * 20_000, "user: a"], [True, True, False], None),
     ],
 )
 def test_the_compaction_window(
-    lines: list[str], folded: list[bool], expected: tuple[int, int] | None
+    lines: list[str], folded: list[bool], expected: tuple[int, str] | None
 ) -> None:
     assert ch_mod._compaction_window(lines, folded) == expected

@@ -49,7 +49,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `thread_id` | `str` | required | The thread to compact. |
 | `keep_recent` | `int` | `10` | The newest this many messages stay verbatim; older ones are summarized, as many as fit the summarizer's prompt. |
-| `min_to_compact` | `int` | `4` | Skip when fewer new turns than this precede the last keep_recent, or when none fits the summarizer's prompt after earlier summaries; an earlier summary does not count. |
+| `min_to_compact` | `int` | `4` | Skip when fewer new turns than this precede the last keep_recent; an earlier summary does not count. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -58,7 +58,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |
-| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, or embed-failed (retry once the embedder answers). |
+| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, prompt-full (earlier summaries fill the prompt before any new turn), summarizer-empty, or embed-failed (retry once the embedder answers). |
 
 ## `conversation.create`
 
