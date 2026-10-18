@@ -42,7 +42,7 @@ describe("opening a tracker source", () => {
     act(() => result.current.open(ns));
     expect(history.length).toBe(before + 1);
     expect(location.pathname + location.search).toBe("/graph?mode=patterns");
-    expect(history.state).toEqual({ loomBack: "Repositories" });
+    expect(history.state).toMatchObject({ loomBack: "Repositories" });
     expect(useStore.getState()).toMatchObject({ view: "graph", identity: { namespace: "tracker-clickhouse" } });
     expect(toast).toHaveBeenCalledWith("Switched to tracker-clickhouse", "info");
   });

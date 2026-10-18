@@ -35,7 +35,7 @@ describe("graph as a drill-down", () => {
     const before = history.length;
     openGraphAt("Redis", { from: "memory api/cache", focusKey: "entity:redis" });
     expect(history.length).toBe(before + 1);
-    expect(history.state).toEqual({ loomBack: "memory api/cache" });
+    expect(history.state).toMatchObject({ loomBack: "memory api/cache" });
     expect(useStore.getState().navNote).toBe("Graph, walked from redis");
   });
 

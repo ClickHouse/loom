@@ -109,7 +109,7 @@ describe("Users count, times and failure", () => {
     render(<Users />);
     await screen.findByText("user-1@example.com");
     expect(toolbar()).toHaveTextContent("the first 1,000 of 3,421 accounts");
-    expect(screen.getByRole("button", { name: /All/ })).toHaveTextContent("All3421");
+    expect(screen.getByRole("button", { name: /All/ })).toHaveTextContent("All1,000");
   });
 
   it("counts the page in the toolbar, once", async () => {

@@ -111,9 +111,16 @@ export function Users() {
   };
   const options = data
     ? [
-        { value: "all", label: "All", count: data.total },
-        { value: "pending", label: "Pending elevation", count: data.total_pending_elevations, icon: "clock" as const },
-        { value: "active7d", label: "Active last 7d", count: data.total_active_last_7d },
+        // Each counts the accounts loaded, as its filter lists them (the toolbar says when
+        // they are the first 1,000 of more).
+        { value: "all", label: "All", count: data.users.length },
+        {
+          value: "pending",
+          label: "Pending elevation",
+          count: filtered(data, "pending").length,
+          icon: "clock" as const,
+        },
+        { value: "active7d", label: "Active last 7d", count: filtered(data, "active7d").length },
       ]
     : [];
   const dataCurrent = dataWithServiceAccounts === includeServiceAccounts;
@@ -347,7 +354,7 @@ function FilterLabel({ label, count, icon }: { label: string; count: number; ico
     <span className="inline-flex items-center gap-1.5">
       {icon && <Icon name={icon} size="xs" aria-hidden="true" />}
       {label}
-      <span className="tabular">{count}</span>
+      <span className="tabular">{count.toLocaleString()}</span>
     </span>
   );
 }

@@ -271,7 +271,7 @@ describe("a navigation leaves a place for Back to restore", () => {
     expect(left).toMatchObject({
       loomPlace: { scrollTop: 420, focusKey: "memory:k", inspected: "k", inspectedAgent: "bot" },
     });
-    expect(history.state).toEqual({ loomBack: "memory k" });
+    expect(history.state).toMatchObject({ loomBack: "memory k" });
     expect(window.location.pathname + window.location.search).toBe("/graph?seed=x");
     expect(useStore.getState()).toMatchObject({
       view: "graph",
@@ -287,14 +287,11 @@ describe("a navigation leaves a place for Back to restore", () => {
       inspectedMemoryKey: null,
       identity: { org: "dev", namespace: "team", agent: "loom-ui" },
     });
+    history.replaceState({ loomNamespace: "team" }, "", "/memories");
     const seq = useStore.getState().navSeq;
-    useStore.getState().arriveFromHistory("memories", {
-      scrollTop: 420,
-      focusKey: null,
-      inspected: "k",
-      inspectedAgent: "bot",
-      namespace: "team",
-    });
+    useStore
+      .getState()
+      .arriveFromHistory("memories", { scrollTop: 420, focusKey: null, inspected: "k", inspectedAgent: "bot" });
     expect(useStore.getState()).toMatchObject({
       view: "memories",
       inspectedMemoryKey: "k",
@@ -303,41 +300,61 @@ describe("a navigation leaves a place for Back to restore", () => {
     });
   });
 
-  it("Back to an entry left in another namespace does not reopen its memory here", () => {
+  it("Back to an entry made in another namespace reopens nothing it names", () => {
     useStore.setState({
       view: "graph",
       inspectedMemoryKey: null,
+      pendingConversationThread: null,
       identity: { org: "dev", namespace: "other", agent: "loom-ui" },
     });
-    // The entry as the app wrote it in "team": the URL names the memory, the state its namespace.
-    history.replaceState({ loomInspect: { key: "k", agent: "bot", namespace: "team" } }, "", "/memories?memory=k");
-    useStore.getState().arriveFromHistory("memories", {
-      scrollTop: 0,
-      focusKey: null,
-      inspected: "k",
-      inspectedAgent: "bot",
-      namespace: "team",
-    });
+    history.replaceState({ loomNamespace: "team" }, "", "/memories?memory=k");
+    useStore
+      .getState()
+      .arriveFromHistory("memories", { scrollTop: 0, focusKey: null, inspected: "k", inspectedAgent: "bot" });
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
+    // An address boot rewrites (the old /sessions path) keeps the entry's namespace.
+    history.replaceState({ loomNamespace: "team" }, "", "/sessions?thread=t");
+    useStore.getState().arriveFromHistory("sessions", null);
+    expect(useStore.getState().pendingConversationThread).toBeNull();
+    // A reload of such an entry opens nothing either.
+    useStore.getState().bootView("sessions");
+    expect(useStore.getState().pendingConversationThread).toBeNull();
   });
 
-  it("a namespace switch takes the open memory and thread out of the URL", () => {
+  it("a namespace switch takes the open memory, thread and document out of the URL", () => {
     useStore.setState({ view: "memories", identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
     history.replaceState(null, "", "/memories?memory=k");
     useStore.getState().inspect("k", { agent: "bot" });
     useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" });
     expect(window.location.search).toBe("");
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
-    // A reload of this entry opens nothing.
     useStore.getState().bootView("memories");
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
   });
 
-  it("a reload opens the memory the URL names when the entry was left in this namespace", () => {
-    useStore.setState({ view: "memories", identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
-    history.replaceState(null, "", "/memories");
-    useStore.getState().inspect("k", { agent: "bot" });
-    useStore.setState({ inspectedMemoryKey: null });
+  it("boot's namespace correction keeps a deep link's memory open", () => {
+    // A link opened from outside: no namespace on the entry.
+    history.replaceState(null, "", "/memories?memory=k");
+    useStore.setState({ identity: null, inspectedMemoryKey: null });
+    useStore.getState().bootIdentity({ org: "dev", namespace: "first-claim", agent: "loom-ui" });
+    useStore.getState().bootView("memories");
+    useStore.getState().bootIdentity({ org: "dev", namespace: "joined", agent: "loom-ui" });
+    useStore.getState().bootView("memories");
+    expect(window.location.search).toBe("?memory=k");
+    expect(useStore.getState().inspectedMemoryKey).toBe("k");
+  });
+
+  it("a reload with the drawer open reopens it once boot settles on the entry's namespace", () => {
+    history.replaceState(
+      { loomNamespace: "joined", loomInspect: { key: "k", agent: "bot" } },
+      "",
+      "/memories?memory=k",
+    );
+    useStore.setState({ identity: null, inspectedMemoryKey: null });
+    useStore.getState().bootIdentity({ org: "dev", namespace: "first-claim", agent: "loom-ui" });
+    useStore.getState().bootView("memories");
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+    useStore.getState().bootIdentity({ org: "dev", namespace: "joined", agent: "loom-ui" });
     useStore.getState().bootView("memories");
     expect(useStore.getState()).toMatchObject({ inspectedMemoryKey: "k", inspectedAgent: "bot" });
   });

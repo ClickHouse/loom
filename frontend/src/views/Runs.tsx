@@ -693,7 +693,8 @@ export function Runs() {
   const rows = localRows ? localRows.slice(page * pageSize, (page + 1) * pageSize) : (shown?.runs ?? []);
   const busy = loading && shown !== null;
   // The opened run as run.get answers it: the list row carries only RUNS_FIELDS.
-  const replayed = detail?.run ?? open;
+  // A run.get answer for the run opened before is not this one's.
+  const replayed = detail?.run && detail.run.run_id === open?.run_id ? detail.run : open;
   // The page the rows on screen are: the pager pages from it while they are what the list
   // shows, so a second Next during a read asks for the same page; for another filter or
   // page size it pages from the page asked for.

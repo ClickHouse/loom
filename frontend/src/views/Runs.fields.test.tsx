@@ -132,6 +132,31 @@ describe("Runs: the projected field list covers what the row reads", () => {
       expect(screen.getByText("confidence 0.80")).toBeInTheDocument();
     });
 
+    it("opening another run never shows the run opened before's request", async () => {
+      const second = { ...FULL, run_id: "r-2", goal: "second goal" };
+      listRuns.mockResolvedValue([projected(RUNS_FIELDS, FULL), projected(RUNS_FIELDS, second)]);
+      const answer = (run: RunRow) => ({
+        found: true,
+        run,
+        recalled: 0,
+        recalled_keys: [],
+        memories_written: [],
+        observations: 0,
+        turns: 0,
+        cost_usd: 0,
+      });
+      vi.mocked(getRun)
+        .mockResolvedValueOnce(answer({ ...FULL, user_request: "the first request" }) as never)
+        .mockReturnValueOnce(new Promise(() => {}));
+      render(<Runs />);
+      await userEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+      expect(await screen.findByText("the first request")).toBeInTheDocument();
+      await userEvent.keyboard("{Escape}");
+      await userEvent.click(await screen.findByRole("button", { name: "second goal" }));
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      expect(screen.queryByText("the first request")).toBeNull();
+    });
+
     it("a row missing a list field renders as zero, never a crash (the 93bf0598f defect)", async () => {
       const nineFields = RUNS_FIELDS.filter((f) => f !== "memories_used");
       listRuns.mockResolvedValue([projected(nineFields, FULL)]);

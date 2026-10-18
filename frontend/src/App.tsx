@@ -132,7 +132,9 @@ export default function App() {
   const setAuthed = useStore((s) => s.setAuthed);
   const gateReason = useStore((s) => s.gateReason);
   const setWhoami = useStore((s) => s.setWhoami);
-  const setIdentity = useStore((s) => s.setIdentity);
+  // Boot settles the identity (a provisional namespace, then the answer): not a switch, so
+  // the deep link's memory or thread stays open.
+  const bootIdentity = useStore((s) => s.bootIdentity);
   const setView = useStore((s) => s.setView);
   const arriveFromHistory = useStore((s) => s.arriveFromHistory);
   const bootView = useStore((s) => s.bootView);
@@ -260,7 +262,7 @@ export default function App() {
             roles: ["PLATFORM_ADMIN"],
             is_service_account: false,
           });
-          setIdentity({ org: "dev", namespace: authOffNs, agent: "loom-ui" });
+          bootIdentity({ org: "dev", namespace: authOffNs, agent: "loom-ui" });
           // Local mode uses one namespace, but explicit links still choose the
           // view: model onboarding and refreshes must not land on Memories.
           bootView(pathnameView() ?? "memories");
@@ -308,7 +310,7 @@ export default function App() {
         // only list_mine knows.
         const provisional = initial ? provisionalNamespace(initial, saved, claims) : null;
         if (initial && provisional) {
-          setIdentity({ org: effectiveOrg, namespace: provisional, agent: "loom-ui" });
+          bootIdentity({ org: effectiveOrg, namespace: provisional, agent: "loom-ui" });
           bootView(initial);
         }
         let mine: MyNamespaceEntry[] = [];
@@ -335,7 +337,7 @@ export default function App() {
           // when it changed: views key their reads on it, and the
           // provisional paint above usually already holds this answer.
           const next = { org: effectiveOrg, namespace: ns ?? "", agent: "loom-ui" };
-          if (!sameIdentity(useStore.getState().identity, next)) setIdentity(next);
+          if (!sameIdentity(useStore.getState().identity, next)) bootIdentity(next);
           bootView(initial);
         } else {
           // The bare root: the default-namespace chain (saved pick → own memory namespace →
@@ -345,7 +347,7 @@ export default function App() {
           // with the picker on that namespace; only a token that reaches nothing lands on
           // Setup, whose notice says how to get in.
           const target = landingTarget(saved, claims, mine);
-          setIdentity({ org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" });
+          bootIdentity({ org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" });
           if (target.namespace === null) {
             // Setup's notice says how to get in and opens the picker on request; opened here
             // it would cover that notice's actions.
