@@ -555,3 +555,15 @@ def test_otlp_metrics_reach_a_collector() -> None:
         server.shutdown()
     assert received and received[0][0] == "/v1/metrics"
     assert b"loom.auth.refusals" in received[0][1]
+
+
+def test_the_rollup_waits_longer_than_a_ledger_insert_may_run() -> None:
+    """A refresh passes over rows ClickHouse took more recently than its
+    margin; an insert still running past it would be skipped for good."""
+    from pathlib import Path
+
+    from server.settings._clickhouse import ClickHouseSettings
+
+    sql = Path("schemas/migrations/043_request_sli.sql").read_text()
+    margin = int(re.search(r"now64\(3\) - toIntervalSecond\((\d+)\)\) AS fold_to", sql).group(1))
+    assert margin > ClickHouseSettings.model_fields["ch_timeout_write_s"].default

@@ -20,8 +20,8 @@ CREATE DATABASE IF NOT EXISTS loom_telemetry;
 -- alert rules to read, so an evaluation scans minutes rather than the ledger.
 -- `rate_limited` is among `client_errors`; `slow` counts successful requests
 -- over their budget; `latency` holds the quantile state of successful
--- requests; `ingested_hwm` is the newest `ingested_at` folded in, where the
--- next refresh resumes.
+-- requests; `ingested_hwm` is set on the refresh's sentinel row only (see
+-- below), where the next refresh resumes.
 CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
 (
     `minute` DateTime,
@@ -45,20 +45,34 @@ TTL minute + toIntervalDay(400)
 SETTINGS ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000;
 
 -- Folds the ledger in once a minute. Each row is folded once, by when
--- ClickHouse took it, into the minute of its `ts`, so a row whose flush was
--- delayed still counts. A refresh reads rows taken at least 10 s ago: an insert
--- (at most 500 rows) commits well within that, and one that took longer would
--- be missed. Rows with a `ts` over 31 days old, past every SLO window, are left
--- out, which keeps the read to the newest partitions. Rows with no SLO class
--- (the `/v1/me/*` routes, and MCP calls that name no registered op, such as
--- initialize) are left out. The high-water mark is a sentinel row, all keys ''
--- but the refresh's minute and all counts 0, so reading it is a range read on
--- the sort key and a reader's sums are unchanged by it. Its branch filters on
--- no column it renames: `'' AS slo_class` would shadow `slo_class`.
+-- ClickHouse took it (`ingested_at`), into the minute of its `ts`, so a row
+-- whose flush was delayed still counts.
+--  * `folded` is where the last refresh stopped, kept in a sentinel row: every
+--    key '' but the refresh's minute and every count 0, so reading it is a
+--    range read on the sort key and a reader's sums are unchanged by it.
+--  * A refresh folds up to `fold_to`: at most six hours past the first row not
+--    folded yet, so catching up after a stall is many small inserts rather
+--    than one large one, and no later than 70 s ago, longer than a ledger
+--    insert may run (LOOM_CH_TIMEOUT_WRITE_S, 60 s), so a slow insert is not
+--    passed over before it commits.
+-- Rows with a `ts` over 31 days old, past every SLO window, are left out,
+-- which keeps the read to the newest partitions. Rows with no SLO class (the
+-- `/v1/me/*` routes, and MCP calls that name no registered op, such as
+-- initialize) are left out.
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_refresh
 REFRESH EVERY 1 MINUTE APPEND TO loom_telemetry.sli_minute
 DEFINER = CURRENT_USER SQL SECURITY DEFINER
-AS SELECT
+AS WITH
+    greatest(
+        (SELECT max(ingested_hwm) FROM loom_telemetry.sli_minute
+         WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))),
+        now64(3) - toIntervalDay(31)) AS folded,
+    (SELECT min(ingested_at) FROM loom.agent_events
+     WHERE kind = 'request' AND slo_class != '' AND ts >= now64(3) - toIntervalDay(31)
+       AND ingested_at > folded) AS first_unfolded,
+    least(greatest(first_unfolded, folded) + toIntervalHour(6),
+          now64(3) - toIntervalSecond(70)) AS fold_to
+SELECT
     toStartOfMinute(ts) AS minute,
     slo_class,
     operation,
@@ -71,15 +85,10 @@ AS SELECT
     countIf(error_code = 'RATE_LIMITED') AS rate_limited,
     countIf(success AND budget_ms > 0 AND latency_ms > budget_ms) AS slow,
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
-    max(ingested_at) AS ingested_hwm
+    toDateTime64(0, 3) AS ingested_hwm
 FROM loom.agent_events
-WHERE kind = 'request' AND slo_class != ''
-  AND ts >= now64(3) - toIntervalDay(31)
-  AND ingested_at > greatest(
-      (SELECT max(ingested_hwm) FROM loom_telemetry.sli_minute
-       WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))),
-      now64(3) - toIntervalDay(31))
-  AND ingested_at <= now64(3) - toIntervalSecond(10)
+WHERE kind = 'request' AND slo_class != '' AND ts >= now64(3) - toIntervalDay(31)
+  AND ingested_at > folded AND ingested_at <= fold_to
 GROUP BY minute, slo_class, operation, transport, traffic_class, org
 UNION ALL
 SELECT
@@ -94,14 +103,6 @@ SELECT
     0 AS client_errors,
     0 AS rate_limited,
     0 AS slow,
-    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, false) AS latency,
-    max(ingested_at) AS ingested_hwm
-FROM loom.agent_events
-WHERE kind = 'request'
-  AND ts >= now64(3) - toIntervalDay(31)
-  AND ingested_at > greatest(
-      (SELECT max(ingested_hwm) FROM loom_telemetry.sli_minute
-       WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))),
-      now64(3) - toIntervalDay(31))
-  AND ingested_at <= now64(3) - toIntervalSecond(10)
-HAVING count() > 0;
+    quantilesTDigestStateIf(0.5, 0.95, 0.99)(toUInt32(0), false) AS latency,
+    fold_to AS ingested_hwm
+WHERE fold_to > folded;

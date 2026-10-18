@@ -49,7 +49,9 @@ class ClickHouseSettings(BaseModel):
     # and as a client-side bound that frees the pool slot. 0 = no bound for
     # that class.
     ch_timeout_read_s: float = 30.0
-    # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound.
+    # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. The SLI
+    # rollup waits 70 s for a ledger insert to commit (migration 043); a longer
+    # deadline lets a slow insert's rows be passed over.
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0

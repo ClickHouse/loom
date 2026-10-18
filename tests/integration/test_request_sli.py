@@ -115,7 +115,7 @@ def _rolled(ch_client, org: str) -> tuple:
 
 
 async def _rolled_once(ch_client, org: str, requests: int) -> tuple:
-    """Refresh until `org` has `requests` folded. Rows qualify 10 s after
+    """Refresh until `org` has `requests` folded. Rows qualify 70 s after
     ClickHouse took them, so the first polls fold nothing."""
 
     async def _seen() -> tuple | None:
@@ -124,7 +124,7 @@ async def _rolled_once(ch_client, org: str, requests: int) -> tuple:
         got = _rolled(ch_client, org)
         return got if got[0] >= requests else None
 
-    return await eventually(_seen, max_wait=45.0, interval=2.0, description="the rollup")
+    return await eventually(_seen, max_wait=150.0, interval=5.0, description="the rollup")
 
 
 @pytest.mark.asyncio

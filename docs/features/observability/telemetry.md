@@ -37,11 +37,13 @@ minute (requests, server and client errors, rate-limited requests, which are amo
 client errors, over-budget successes, latency quantiles, kept 400 days), for SLO
 dashboards and alert rules to read without scanning the ledger. It resumes from when
 ClickHouse took each row (`ingested_at`), not from the row's `ts`, so a row whose flush
-was delayed is still counted once, in the minute of its `ts`; a row is folded 10 seconds
-after ClickHouse took it. Rows with no SLO class (the `/v1/me/*` routes, and MCP calls that name no
-registered op, such as `initialize`) are left out. A minute can arrive as several rows
-until they merge, so a reader groups by its keys with `sum()` for the counts and
-`quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)` for the latencies.
+was delayed is still counted once, in the minute of its `ts`; a row is folded 70 seconds
+after ClickHouse took it, longer than a ledger insert may run. Rows with no SLO class (the
+`/v1/me/*` routes, and MCP calls that name no registered op, such as `initialize`) are
+left out. A minute can arrive as several rows until they merge, so a reader groups by its
+keys with `sum()` for the counts and `quantilesTDigestMerge(0.5, 0.95, 0.99)(latency)` for
+the latencies. Each refresh also writes a row with every key empty and every count 0,
+where the next refresh resumes: a reader filters `slo_class != ''`.
 
 The emitter is batched and never fails a request; a crash can lose the unflushed queue.
 

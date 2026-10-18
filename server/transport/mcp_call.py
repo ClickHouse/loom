@@ -59,6 +59,11 @@ log = logging.getLogger("server.transport.mcp")
 _TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 
 
+def op_for_tool(name: str) -> Operation | None:
+    """The op an MCP tool name calls, or None."""
+    return _TOOLS_BY_NAME.get(name)
+
+
 async def _ratelimit_retry_once(
     rl: CheckResult, op: Operation, auth: Any, target: gates.Target, *, traffic_class: str
 ) -> CheckResult | None:

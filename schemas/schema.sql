@@ -4288,10 +4288,22 @@ REFRESH EVERY 1 MINUTE APPEND TO loom_telemetry.sli_minute
     `rate_limited` UInt64,
     `slow` UInt64,
     `latency` AggregateFunction(quantilesTDigest(0.5, 0.95, 0.99), UInt32),
-    `ingested_hwm` DateTime64(3)
+    `ingested_hwm` Nullable(DateTime64(3))
 )
 DEFINER = loom SQL SECURITY DEFINER
-AS SELECT
+AS WITH
+    greatest((
+        SELECT max(ingested_hwm)
+        FROM loom_telemetry.sli_minute
+        WHERE (slo_class = '') AND (minute >= toStartOfMinute(now() - toIntervalDay(31)))
+    ), now64(3) - toIntervalDay(31)) AS folded,
+    (
+        SELECT min(ingested_at)
+        FROM loom.agent_events
+        WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded)
+    ) AS first_unfolded,
+    least(greatest(first_unfolded, folded) + toIntervalHour(6), now64(3) - toIntervalSecond(70)) AS fold_to
+SELECT
     toStartOfMinute(ts) AS minute,
     slo_class,
     operation,
@@ -4304,13 +4316,9 @@ AS SELECT
     countIf(error_code = 'RATE_LIMITED') AS rate_limited,
     countIf(success AND (budget_ms > 0) AND (latency_ms > budget_ms)) AS slow,
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
-    max(ingested_at) AS ingested_hwm
+    toDateTime64(0, 3) AS ingested_hwm
 FROM loom.agent_events
-WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > greatest((
-    SELECT max(ingested_hwm)
-    FROM loom_telemetry.sli_minute
-    WHERE (slo_class = '') AND (minute >= toStartOfMinute(now() - toIntervalDay(31)))
-), now64(3) - toIntervalDay(31))) AND (ingested_at <= (now64(3) - toIntervalSecond(10)))
+WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded) AND (ingested_at <= fold_to)
 GROUP BY
     minute,
     slo_class,
@@ -4319,6 +4327,18 @@ GROUP BY
     traffic_class,
     org
 UNION ALL
+WITH
+    greatest((
+        SELECT max(ingested_hwm)
+        FROM loom_telemetry.sli_minute
+        WHERE (slo_class = '') AND (minute >= toStartOfMinute(now() - toIntervalDay(31)))
+    ), now64(3) - toIntervalDay(31)) AS folded,
+    (
+        SELECT min(ingested_at)
+        FROM loom.agent_events
+        WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded)
+    ) AS first_unfolded,
+    least(greatest(first_unfolded, folded) + toIntervalHour(6), now64(3) - toIntervalSecond(70)) AS fold_to
 SELECT
     toStartOfMinute(now()) AS minute,
     '' AS slo_class,
@@ -4331,12 +4351,6 @@ SELECT
     0 AS client_errors,
     0 AS rate_limited,
     0 AS slow,
-    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, false) AS latency,
-    max(ingested_at) AS ingested_hwm
-FROM loom.agent_events
-WHERE (kind = 'request') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > greatest((
-    SELECT max(ingested_hwm)
-    FROM loom_telemetry.sli_minute
-    WHERE (slo_class = '') AND (minute >= toStartOfMinute(now() - toIntervalDay(31)))
-), now64(3) - toIntervalDay(31))) AND (ingested_at <= (now64(3) - toIntervalSecond(10)))
-HAVING count() > 0;
+    quantilesTDigestStateIf(0.5, 0.95, 0.99)(toUInt32(0), false) AS latency,
+    fold_to AS ingested_hwm
+WHERE fold_to > folded;
