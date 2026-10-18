@@ -1345,3 +1345,51 @@ async def test_a_peer_flagged_by_another_rows_turn_is_still_judged_against_its_o
     assert llm.calls[:2] == ["e2_a", "e2_b"], llm.calls
     assert (await _marks(ch, org))["e2_b"] == 2
 
+
+async def test_a_repair_before_the_supersede_commits_leaves_the_follow_owed(
+    ch, wired, monkeypatch
+) -> None:
+    """The repair runs between the intent and the supersede: the loser is still live, so
+    it leaves the intent alone. The supersede commits, the resolver's follow fails, and
+    the next repair follows the pair."""
+    from server.memory.app import after_write, conflicts, entity_projections
+    from server.memory.app.projection_failures import FOLLOW_OWED, retry_projection_failures
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        office = ("office", "located_in", "paris")
+        await _set(org, "s1", "office_city", "The office is in Paris", relations=[office])
+        await _later()
+        await _set(org, "s2", "office_location", "The office moved to Rome")
+        await after_write.drain()
+    await _place(ch, org, "s1", "office_city", _vec((94, 1.0)), owed=False)
+    await _place(ch, org, "s2", "office_location", _vec((94, 0.8), (95, 0.6)), owed=True)
+    assert await _paris_open(ch, org, want=True)
+    refines, follow = conflicts.apply_refines, entity_projections.follow_row_supersessions
+    early: list[Any] = []
+
+    async def repair_first(**kw: Any) -> Any:
+        early.extend(await retry_projection_failures(org=org, projection=FOLLOW_OWED))
+        return await refines(**kw)
+
+    async def boom(*a: Any, **kw: Any) -> Any:
+        raise RuntimeError("graph unavailable")
+
+    monkeypatch.setattr(conflicts, "apply_refines", repair_first)
+    monkeypatch.setattr(entity_projections, "follow_row_supersessions", boom)
+    assert (await run_pass())["retired"] == 1
+    assert [(r.retried, r.reason) for r in early] == [(False, "pending")]
+    (intent,) = await _follow_intents(ch, org, want_active=1)
+    assert intent["status"] == "active"
+
+    monkeypatch.setattr(entity_projections, "follow_row_supersessions", follow)
+    (retry,) = await retry_projection_failures(org=org, projection=FOLLOW_OWED)
+    assert retry.resolved, retry
+    assert not await _paris_open(ch, org, want=False)

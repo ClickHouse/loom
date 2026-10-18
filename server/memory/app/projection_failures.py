@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
-from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.datetimes import naive_utc_now, parse_iso_dt, to_naive_utc
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     WHOLE_NAMESPACE,
@@ -78,6 +78,9 @@ FOLLOW_ROWS = "triples_follow_rows"
 # FOLLOW_ROWS. Its own name, since an older build replays FOLLOW_ROWS without checking
 # that the loser is still retired, and leaves a name it does not know active.
 FOLLOW_OWED = "triples_follow_owed"
+# A FOLLOW_OWED intent is committed right before its supersede: until each loser is
+# retired, or this long has passed, the retirement may still land and the intent waits.
+FOLLOW_OWED_GRACE_S = 600
 STATUS_MIRROR = "memory_status_mirror"
 # Triples a follow closed but could not re-check for a live row holding them.
 TRIPLES_REOPEN = "triples_reopen"
@@ -312,6 +315,14 @@ async def retry_projection_failure(
             TRIPLES_REPAIR,
         }:
             reason = await _retry_graph_projection(failure, ch=ch)
+        elif failure.projection == FOLLOW_OWED and await _retirement_pending(failure, ch=ch):
+            return ProjectionFailureRetryResult(
+                failure_id=failure.failure_id,
+                projection=failure.projection,
+                retried=False,
+                resolved=False,
+                reason="pending",
+            )
         elif failure.projection in (FOLLOW_ROWS, FOLLOW_OWED):
             reason = await _retry_follow_rows(failure, ch=ch)
         elif failure.projection == STATUS_MIRROR:
@@ -520,6 +531,26 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
         failure.namespace,
     )
     return f"unfollowable_chain: {len(outcome.unfollowed)} pair(s)"
+
+
+async def _retirement_pending(failure: ProjectionFailureRow, *, ch: Any) -> bool:
+    """Whether a fresh FOLLOW_OWED intent still has a loser that is live: its supersede
+    may not have committed yet, so following (nothing) and resolving now would lose it."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import get_by_id
+
+    created = failure.created_at
+    if created is None or (naive_utc_now() - to_naive_utc(created)).total_seconds() > (
+        FOLLOW_OWED_GRACE_S
+    ):
+        return False
+    for loser, _winner in failure.payload.get("pairs") or []:
+        head = await get_by_id(
+            str(loser), org=failure.org, ch=ch, scope=WHOLE_NAMESPACE, strong=True
+        )
+        if head is not None and head.tombstoned_at is None and head.status != "superseded":
+            return True
+    return False
 
 
 async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) -> None:
