@@ -83,7 +83,8 @@ def _in_turns(where: str) -> str:
     namespace's oldest row, then every namespace's second oldest, and so on, so one
     namespace's backlog cannot hold the others back. Only the identity is ranked; the
     vectors are read for the picked rows alone. The FINAL read covers only the
-    namespaces `_queued_pairs` names, not the whole table."""
+    namespaces `_queued_pairs` names, not the whole table. Read strongly: a burst reads
+    again right after its stamps, and a stamp a replica lacks is a row paid for twice."""
     return f"""
         SELECT {_QUEUE_COLUMNS}
         FROM loom.memory_embeddings FINAL
@@ -103,6 +104,7 @@ def _in_turns(where: str) -> str:
         )
           AND {where}
         ORDER BY created_at ASC
+        SETTINGS select_sequential_consistency = 1
         """
 
 
