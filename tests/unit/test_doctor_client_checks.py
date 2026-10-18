@@ -203,6 +203,40 @@ def test_rejected_token_is_the_named_cause_of_vanishing_captures(tmp_path: Path)
     assert _grades(checks)["client:namespace"] == "WARN"
 
 
+def test_a_rejected_token_tells_an_agent_to_drop_it_not_to_sign_up(tmp_path: Path) -> None:
+    get_json, post_json, _ = _http(
+        mine=(401, {"detail": {"code": "AUTH_INVALID", "message": "expired"}})
+    )
+    env = {"LOOM_API_KEY": TOKEN, "LOOM_CLIENT_ID": "ci", "LOOM_WORKLOAD_TOKEN": "proof"}
+    checks = dc.client_checks(
+        _args(),
+        get_json=get_json,
+        post_json=post_json,
+        home=tmp_path,
+        env=env,
+        tmp=tmp_path,
+        now=NOW,
+    )
+    d = _detail(checks, "client:auth")
+    assert _grades(checks)["client:auth"] == "FAIL"
+    assert "drop --token and LOOM_API_KEY" in d and "namespace.list_mine" in d
+    assert "loom init" not in d
+    assert "so a rejected one makes captures vanish" in d
+
+
+@pytest.mark.parametrize(
+    ("claims", "grade"),
+    [({"exp": NOW - 7200}, "FAIL"), ({"exp": NOW + 3600}, "WARN"), ({}, "FAIL")],
+)
+def test_an_agents_bad_token_gets_the_same_fix_as_a_rejected_one(
+    claims: dict[str, Any], grade: str
+) -> None:
+    check = dc.token_check("t", "LOOM_API_KEY", claims, NOW, _client.DEFAULT_BASE_URL, agent=True)
+    assert check[1] == grade
+    assert "drop --token and LOOM_API_KEY" in check[2]
+    assert "mint" not in check[2] and "re-copy" not in check[2]
+
+
 def test_viewer_on_the_write_namespace_fails_with_the_writer_fix(tmp_path: Path) -> None:
     get_json, post_json, _ = _http(
         mine=(200, {"rows": [{"namespace": "coding", "role": "viewer"}]})
@@ -244,6 +278,7 @@ def test_token_lines_expired_soon_and_missing() -> None:
             {"exp": NOW - 7200},
             NOW,
             _client.DEFAULT_BASE_URL,
+            agent=False,
         )[1]
         == "FAIL"
     )
@@ -253,11 +288,15 @@ def test_token_lines_expired_soon_and_missing() -> None:
         {"exp": NOW + 3600, "sub": "a", "org": "o"},
         NOW,
         _client.DEFAULT_BASE_URL,
+        agent=False,
     )
     assert soon[1] == "WARN" and "expires in 1 h" in soon[2]
-    assert dc.token_check("", "none", {}, NOW, _client.DEFAULT_BASE_URL)[1] == "WARN"
+    assert dc.token_check("", "none", {}, NOW, _client.DEFAULT_BASE_URL, agent=False)[1] == "WARN"
     assert (
-        dc.token_check("not-a-jwt", "LOOM_API_KEY", {}, NOW, _client.DEFAULT_BASE_URL)[1] == "FAIL"
+        dc.token_check("not-a-jwt", "LOOM_API_KEY", {}, NOW, _client.DEFAULT_BASE_URL, agent=False)[
+            1
+        ]
+        == "FAIL"
     )
     sa = dc.token_check(
         "t",
@@ -265,6 +304,7 @@ def test_token_lines_expired_soon_and_missing() -> None:
         {"sub": "sa:x", "org": "o", "sa": True, "namespaces": ["n"]},
         NOW,
         _client.DEFAULT_BASE_URL,
+        agent=False,
     )
     assert sa[1] == "PASS" and sa[2].startswith("service account sa:x @ o")
 
