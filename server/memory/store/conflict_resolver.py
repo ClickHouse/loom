@@ -246,7 +246,8 @@ def _nearest_sql() -> str:
 
 
 # The candidates' rows, joined by the full identity (a key alone repeats across sessions),
-# within the row's subject like every read of the cluster.
+# within the row's subject like every read of the cluster. A pinned row is no peer: no
+# verdict may change it, so judging it is a paid call for nothing.
 _PEER_ROWS_SQL = """
         SELECT toString(memory_id) AS memory_id, agent, user_id, session_id, memory_key,
                toString(value) AS value, pinned, valid_at, created_at, updated_at, version,
@@ -259,6 +260,7 @@ _PEER_ROWS_SQL = """
         WHERE user_id = {u:String} AND (user_id != '-' OR agent = {a:String})
           AND memory_type = {mt:String}
           AND tombstoned_at IS NULL
+          AND NOT pinned
           AND status IN ('active', 'conflicted')
           AND sensitivity != 'high'
           AND (expires_at IS NULL OR expires_at > now())

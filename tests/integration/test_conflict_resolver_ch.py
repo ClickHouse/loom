@@ -291,7 +291,8 @@ async def test_one_pass_retires_clears_and_leaves_the_rest_then_changes_nothing(
     # Unsure, and pinned: untouched.
     for k in ("budget_now", "budget_next", "deploy_day", "deploy_day_now"):
         assert rows[k]["status"] == "active" and rows[k]["version"] == before[k]["version"], k
-    assert out["retired"] == 1 and out["cleared"] == 1 and out["skipped_pinned"] == 1
+    assert out["retired"] == 1 and out["cleared"] == 1 and out["skipped_pinned"] == 0
+    assert "deploy_day_now" not in llm.calls, "a pinned row is no peer: no call is paid for it"
     assert out["skipped_no_action"] >= 1 and out["errored"] == 0
     # Every judged row is stamped at its write; search reads the cleared rows as active.
     marks = await _marks(ch, org)

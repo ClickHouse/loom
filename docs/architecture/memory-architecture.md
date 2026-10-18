@@ -276,7 +276,8 @@ actions, verdicts and confidences, never the text.
   overtook records nothing.
 - Only `auto_reinforce` and `newest_wins` retire; `manual_review` only flags, and
   `append_only` is never judged.
-- A pinned row is never retired, flagged or cleared; a lock that refuses retirement holds.
+- A pinned row is never retired, flagged or cleared, and is no peer (no call is paid for a
+  pair no verdict may change); a lock that refuses retirement holds.
 - An Undo (`memory.restore`) keeps the restored row's content hash, so it stays the older
   statement, and leaves both rows unowed: the next pass does not judge the pair again.
   A later write of either row carries its own mark and is judged afresh.
