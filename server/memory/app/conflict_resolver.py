@@ -481,6 +481,8 @@ async def _settle_locked_pair(
     action: str,
     counts: Counts,
 ) -> tuple[dict[str, Any] | None, Retired | None]:
+    # Known gap, by design: an unconditional memory.set takes no lock, so one landing on
+    # the winner between this re-read and the supersede is not seen here.
     row, head = await _head(org, str(judged.memory_id)), await _head(org, str(peer["memory_id"]))
     if not (
         _holds(row, namespace, str(judged.content_sha256 or ""))
@@ -520,7 +522,12 @@ async def _settle_locked_pair(
         done = await _clear(org, row, head)
     if not done:
         return None, None
-    setattr(counts, _COUNTED[action], getattr(counts, _COUNTED[action]) + 1)
+    if action == cr.RETIRE:
+        counts.retired += 1
+    elif action == cr.FLAG:
+        counts.flagged += 1
+    else:
+        counts.cleared += 1
     taken: dict[str, Any] = {"action": action}
     if action == cr.RETIRE and str(head.memory_id) in row.conflict_with:
         # The pair is settled: the winner's flag against the row it retired goes too,
