@@ -226,3 +226,43 @@ async def test_a_compacted_turn_leaves_search(agent) -> None:
     hit_ids = {h["msg_id"] for h in after["hits"]}
     assert not hit_ids & set(old), after["hits"]
     assert hit_ids <= listed
+
+
+@pytest.mark.asyncio
+async def test_a_turn_another_agent_logged_survives_compaction(agent) -> None:
+    """Two agents logging one turn share its embedding row: one agent's compaction
+    leaves the turn searchable across agents while the other's copy is still live."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    other = f"{agent.agent}-peer"
+    shared = uuid.uuid4().hex
+    old = [shared, *(uuid.uuid4().hex for _ in range(3))]
+    # The peer logs the turn first, so this agent's copy is the newer one, the row a
+    # FINAL read keeps. Its own idempotency key: the SDK's is derived from the thread
+    # and msg id alone.
+    await agent.call(
+        "conversation.append",
+        {
+            "thread_id": tid,
+            "msg_id": shared,
+            "role": "user",
+            "content": f"okapi rollout {nonce} turn 0",
+        },
+        agent_id=other,
+        idempotency_key=uuid.uuid4().hex,
+    )
+    for i, mid in enumerate(old):
+        role = "user" if i % 2 == 0 else "assistant"
+        await agent.conversations.append(tid, mid, role, f"okapi rollout {nonce} turn {i}")
+    await agent.conversations.append(tid, uuid.uuid4().hex, "user", f"okapi rollout {nonce} last")
+
+    out = await agent.call(
+        "conversation.compact", {"thread_id": tid, "keep_recent": 1, "min_to_compact": 2}
+    )
+    assert out["compacted"] is True, out
+
+    mine = await agent.conversations.search(f"okapi rollout {nonce}", thread_id=tid)
+    assert not {h["msg_id"] for h in mine["hits"]} & set(old[1:]), mine["hits"]
+    # Across agents ("*"): the shared row carries whichever agent wrote it last.
+    every = await agent.conversations.search(f"okapi rollout {nonce}", thread_id=tid, agent_id="*")
+    assert shared in {h["msg_id"] for h in every["hits"]}, every["hits"]

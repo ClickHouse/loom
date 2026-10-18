@@ -314,7 +314,23 @@ async def tombstone_thread(
     }
     counts: dict[str, int] = {}
 
-    # 1. Messages.
+    # 1. Embeddings, first: a retry after a failure below still finds the thread's
+    # turns live and tombstones them again.
+    own = await ch.query_all(
+        """
+        SELECT DISTINCT msg_id FROM loom.conversations
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String}
+          AND thread_id = {tid:String} AND tombstoned_at IS NULL
+        """,
+        params=params,
+    )
+    ids = [str(r["msg_id"]) for r in own]
+    counts["loom.conversation_embeddings"] = await _tombstone_embeddings(
+        org, namespace, agent, thread_id, ids, when=when, ch=ch
+    )
+
+    # 2. Messages.
     await ch.execute(
         """
         ALTER TABLE loom.conversations
@@ -337,7 +353,7 @@ async def tombstone_thread(
     )
     counts["loom.conversations"] = int(msg_n["n"]) if msg_n else 0
 
-    # 2. Thread row.
+    # 3. Thread row.
     await ch.execute(
         """
         ALTER TABLE loom.conversation_threads
@@ -350,29 +366,6 @@ async def tombstone_thread(
         params=params,
     )
     counts["loom.conversation_threads"] = 1  # at most one thread row per identity tuple
-
-    # 3. Embeddings.
-    await ch.execute(
-        """
-        ALTER TABLE loom.conversation_embeddings
-        UPDATE tombstoned_at = parseDateTimeBestEffort({ts:String})
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String} AND tombstoned_at IS NULL
-        SETTINGS mutations_sync = 2
-        """,
-        params=params,
-    )
-    emb_n = await ch.query_one(
-        """
-        SELECT count() AS n FROM loom.conversation_embeddings
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String} AND tombstoned_at IS NOT NULL
-        """,
-        params=params,
-    )
-    counts["loom.conversation_embeddings"] = int(emb_n["n"]) if emb_n else 0
 
     return counts
 
@@ -714,16 +707,10 @@ async def tombstone_messages(
 ) -> None:
     """Tombstone the named messages of one thread and their embeddings, so
     conversation.search stops returning them too. Synchronous mutations, so the
-    next read sees a coherent thread."""
+    next read sees a coherent thread. The embeddings go first: a retry after a
+    failure still finds the messages live and repeats both."""
     ch = ch or _default_client()
-    params = {
-        "now": when,
-        "org": org,
-        "ns": namespace,
-        "agent": agent,
-        "tid": thread_id,
-        "ids": msg_ids,
-    }
+    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids, when=when, ch=ch)
     await ch.execute(
         """
         ALTER TABLE loom.conversations
@@ -735,21 +722,68 @@ async def tombstone_messages(
           AND msg_id IN {ids:Array(String)}
         SETTINGS mutations_sync = 2
         """,
+        params={
+            "now": when,
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "ids": msg_ids,
+        },
+    )
+
+
+async def _tombstone_embeddings(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_ids: list[str],
+    *,
+    when: datetime,
+    ch: _CHClient,
+) -> int:
+    """Tombstone the embeddings of `agent`'s turns `msg_ids`, and return how many
+    are tombstoned. The embeddings key has no agent: a turn several agents logged
+    is one row, so it is tombstoned by turn, and only once no other agent's copy
+    of the turn is live."""
+    params = {"org": org, "ns": namespace, "agent": agent, "tid": thread_id, "ids": msg_ids}
+    shared = await ch.query_all(
+        """
+        SELECT DISTINCT msg_id FROM loom.conversations
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND thread_id = {tid:String} AND agent != {agent:String}
+          AND msg_id IN {ids:Array(String)} AND tombstoned_at IS NULL
+        """,
         params=params,
     )
+    held = {str(r["msg_id"]) for r in shared}
+    ids = [i for i in msg_ids if i not in held]
+    if not ids:
+        return 0
     await ch.execute(
         """
         ALTER TABLE loom.conversation_embeddings
         UPDATE tombstoned_at = {now:DateTime}
         WHERE org = {org:String}
           AND namespace = {ns:String}
-          AND agent = {agent:String}
           AND thread_id = {tid:String}
           AND msg_id IN {ids:Array(String)}
+          AND tombstoned_at IS NULL
         SETTINGS mutations_sync = 2
         """,
-        params=params,
+        params={**params, "now": when, "ids": ids},
     )
+    n = await ch.query_one(
+        """
+        SELECT count() AS n FROM loom.conversation_embeddings
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND thread_id = {tid:String}
+          AND msg_id IN {ids:Array(String)} AND tombstoned_at IS NOT NULL
+        """,
+        params={**params, "ids": ids},
+    )
+    return int(n["n"]) if n else 0
 
 
 async def titler_candidates(

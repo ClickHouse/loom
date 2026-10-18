@@ -41,18 +41,21 @@ from server.knowledge.api.models_conversations import (
     _ConversationEntry,
     _ConversationHit,
 )
-from server.knowledge.app.conversation_search import HIT_EXCERPT_CHARS
+from server.knowledge.app.conversation_search import (
+    HIT_EXCERPT_CHARS,
+    ConversationHit,
+    ConversationVectorQuery,
+    vector_search,
+)
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
 
 if TYPE_CHECKING:
-    from server.knowledge.app.conversation_search import ConversationHit
     from server.knowledge.store.conversations import ConversationEmbeddingRow
 
 log = logging.getLogger(__name__)
 
-_EXCERPT_LIMIT = HIT_EXCERPT_CHARS
 _EMBED_EXCERPT_LIMIT = 2048
 
 
@@ -203,7 +206,7 @@ async def handle_conversation_append(
         "msg_id": msg_id,
         "role": input.role,
         # The text the vector was built from, so a re-embed rebuilds the same vector;
-        # search hits show its first _EXCERPT_LIMIT characters.
+        # search hits show its first HIT_EXCERPT_CHARS characters.
         "content_excerpt": excerpt,
         "embedding_model": embedder.model_name,
         "embedding_dim": embedding_dim,
@@ -496,10 +499,6 @@ async def handle_conversation_search(
     """
     import asyncio
 
-    from server.knowledge.app.conversation_search import (
-        ConversationVectorQuery,
-        vector_search,
-    )
     from server.settings import settings
 
     embedder = get_embedder()
@@ -582,7 +581,9 @@ async def _search_substring_fallback(
             msg_id=r.msg_id,
             role=r.role,
             content_excerpt=(
-                r.content[:_EXCERPT_LIMIT] + "…" if len(r.content) > _EXCERPT_LIMIT else r.content
+                r.content[:HIT_EXCERPT_CHARS] + "…"
+                if len(r.content) > HIT_EXCERPT_CHARS
+                else r.content
             ),
             ts=r.ts,
             namespace=r.namespace,
