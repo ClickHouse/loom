@@ -181,6 +181,7 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(conflicts, "namespace_conflict_policy", newest_wins)
     # Every pass reads the recheck: a test's flags are judged in the pass it runs.
     monkeypatch.setattr(worker, "RECHECK_IDLE_S", 0.0)
+    monkeypatch.setattr(worker, "_recheck_after", 0.0)  # another test's pass may have set it
     monkeypatch.setattr(worker, "_unavailable", None)
     monkeypatch.setattr(worker, "_no_key", False)
     # A test that needs a second org appends it to `orgs`.

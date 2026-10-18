@@ -169,9 +169,13 @@ async def run(ch, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureReques
     import server.embedding.embedder as embedder_mod
     import server.llm.client as llm_client
     from server.memory.store import conflict_resolver as queue
+    from server.memory.workers import conflict_resolver as worker
     from server.settings import settings
 
     org = unique_org("long-session")
+    # Every pass reads the recheck, whatever another test's pass left.
+    monkeypatch.setattr(worker, "RECHECK_IDLE_S", 0.0)
+    monkeypatch.setattr(worker, "_recheck_after", 0.0)
     real = embedder_mod.get_embedder()
     monkeypatch.setattr(embedder_mod, "_cached", ScenarioEmbedder(real.dim, real.model_name))
     judge = ScriptedJudge()
