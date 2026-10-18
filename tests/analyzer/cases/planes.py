@@ -470,7 +470,7 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 # One turn whose embedding a tombstone finds live, so the mutation that names it runs.
 _CONVERSATION_ROWS = rows_by_substring(
-    {"SELECT DISTINCT msg_id FROM loom.conversation_embeddings": [{"msg_id": "m1"}]}
+    {"SELECT DISTINCT msg_id FROM loom.conversation_embeddings FINAL": [{"msg_id": "m1"}]}
 )
 
 
