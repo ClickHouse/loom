@@ -734,6 +734,9 @@ async def tombstone_messages(
     )
 
 
+# Characters of a turn its embedding is built from, which the embedding row keeps.
+EMBEDDED_EXCERPT_CHARS = 2048
+
 # Turns per embeddings tombstone mutation. A whole-thread delete has no cap on its
 # turns, so its list goes in chunks, one synchronous mutation each: a thread of
 # 10,000 turns runs ten. A compaction's window is bounded by its prompt.
@@ -768,7 +771,9 @@ async def _tombstone_embeddings(
 
     The turns are `msg_ids`, or every turn the agent logged in the thread
     (`_THREAD_TURNS`). The embeddings key has no agent, so a turn several agents
-    logged is one row: it goes by turn, and only once no other agent's copy is live.
+    logged is one row: it goes by turn, and stays only while another agent holds a
+    live copy with the row's text (a msg_id is unique per agent only, so another
+    agent's different turn under the same id does not keep it).
     The turns are read first, with FINAL so a row's agent and tombstone are those
     search and the delete count see, and the mutation names them, so it evaluates no
     subquery (a replicated table refuses one)."""
@@ -783,14 +788,15 @@ async def _tombstone_embeddings(
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND thread_id = {{tid:String}} AND tombstoned_at IS NULL
           AND {turns}
-          AND msg_id NOT IN (
-            SELECT msg_id FROM loom.conversations
+          AND (msg_id, content_excerpt) NOT IN (
+            SELECT msg_id, substringUTF8(content, 1, {{embedded:UInt32}})
+            FROM loom.conversations
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND thread_id = {{tid:String}} AND agent != {{agent:String}}
               AND tombstoned_at IS NULL
           )
         """,
-        params=params,
+        params={**params, "embedded": EMBEDDED_EXCERPT_CHARS},
     )
     due = [str(r["msg_id"]) for r in rows]
     for i in range(0, len(due), _TOMBSTONE_CHUNK):

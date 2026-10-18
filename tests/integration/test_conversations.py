@@ -559,3 +559,43 @@ async def test_a_delete_counts_a_turn_once_however_many_models_embed_it(
         parameters={"org": agent.org, "ns": agent.namespace, "tid": tid},
     ).result_rows[0][0]
     assert live == 0
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_turn_leaves_search_when_a_peer_reused_its_msg_id(
+    agent, control_plane_url: str, mint_test_token
+) -> None:
+    """A msg_id is unique per agent only: a peer's different turn under the same id
+    shares the embedding row, which holds this agent's text when it wrote last. The
+    peer's live turn does not keep that text searchable after this agent's delete."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    mid = "1"  # a client numbering its own turns
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": mid, "role": "user", "content": f"heron peer {nonce}"},
+        agent_id=f"{agent.agent}-peer",
+        idempotency_key=uuid.uuid4().hex,
+    )
+    # Its own key too: the SDK derives one from the msg_id, here a fixed "1".
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": mid, "role": "user", "content": f"walrus mine {nonce}"},
+        idempotency_key=uuid.uuid4().hex,
+    )
+
+    await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    hits = await agent.conversations.search(f"walrus mine {nonce}", thread_id=tid, agent_id="*")
+    assert not [h for h in hits["hits"] if "walrus" in h["content_excerpt"]], hits["hits"]

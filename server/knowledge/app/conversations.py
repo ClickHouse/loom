@@ -47,6 +47,7 @@ from server.knowledge.app.conversation_search import (
     ConversationVectorQuery,
     vector_search,
 )
+from server.knowledge.store.conversations import EMBEDDED_EXCERPT_CHARS
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
@@ -55,8 +56,6 @@ if TYPE_CHECKING:
     from server.knowledge.store.conversations import ConversationEmbeddingRow, MessageInsert
 
 log = logging.getLogger(__name__)
-
-_EMBED_EXCERPT_LIMIT = 2048
 
 
 async def namespace_recording_enabled(org: str, namespace: str) -> bool:
@@ -196,10 +195,10 @@ class EmbeddedTurn(NamedTuple):
 async def _embed_turn(
     content: str, *, org: str, namespace: str, thread_id: str, msg_id: str
 ) -> EmbeddedTurn:
-    """Embed a turn's first `_EMBED_EXCERPT_LIMIT` characters. Fail-open: a failed
+    """Embed a turn's first `EMBEDDED_EXCERPT_CHARS` characters. Fail-open: a failed
     embed returns no vector and the error."""
     embedder = get_embedder()
-    excerpt = content[:_EMBED_EXCERPT_LIMIT]
+    excerpt = content[:EMBEDDED_EXCERPT_CHARS]
     try:
         with traced(
             "embed.compute.conversation", model=embedder.model_name, excerpt_len=len(excerpt)
@@ -531,7 +530,7 @@ async def handle_conversation_search(
     max_distance = 1.0 - settings.conversation_search_min_similarity
     query_vec: list[float] | None
     try:
-        query_vec = await embedder.embed(input.query[:_EMBED_EXCERPT_LIMIT])
+        query_vec = await embedder.embed(input.query[:EMBEDDED_EXCERPT_CHARS])
     except Exception as e:  # noqa: BLE001 — embed failure falls back to substring search
         log.warning("conversation embed query failed; falling back to substring: %s", e)
         query_vec = None
