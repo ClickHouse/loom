@@ -85,6 +85,18 @@ covers the one race the guards leave: export pages the source by offset, so a so
 deleted while a large export is paging can push one live row out of that bundle, and its
 copy is pruned until the next run.
 
+## What a run costs
+
+A run that finds nothing to change sends only reads. For a namespace of N rows:
+
+| Side                 | Requests                                                                                                                                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Export, private Loom | `memory.list` pages of 100 rows (`LOOM_MEMORY_LIST_VIEWER_LIMIT` caps a viewer token's page), one `memory.bulk_get` per 500 rows, and one `memory.export_evidence` page per 2,000 typed edges                                   |
+| Import, public Loom  | `memory.list` pages of 1,000 rows, one `memory.bulk_get` per 500 rows, and the edge pages again; then one `memory.set` per changed row, one `memory.link` per new edge, and a `memory.get` and a `memory.delete` per pruned row |
+
+At 500 rows that is 13 requests; at 50,000 rows about 750, under one a second over a
+15-minute schedule.
+
 ## Tokens
 
 The job holds two tokens, each scoped to the one namespace:

@@ -253,10 +253,9 @@ def test_a_second_import_of_the_same_bundle_writes_nothing(tmp_path: Path, loom:
 def test_a_changed_value_or_field_is_written(
     tmp_path: Path, loom: _FakeLoom, change: dict[str, Any]
 ) -> None:
-    # Same directory name each run, so source_trace is the same.
-    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a")])) == 0
+    assert _run(_bundle(tmp_path / "1", [_entry("a")])) == 0
     loom.calls.clear()
-    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a", **change)])) == 0
+    assert _run(_bundle(tmp_path / "2", [_entry("a", **change)])) == 0
     sets = [b["memory_key"] for op, b in loom.calls if op == "memory.set"]
     assert sets == (["a"] if change else [])
 
@@ -285,25 +284,22 @@ def test_a_copy_into_the_same_namespace_name_is_left_alone(tmp_path: Path, loom:
     assert loom.writes() == []
 
 
-def test_an_import_from_the_current_directory_names_the_bundle(
+def test_a_bundle_moved_to_another_directory_is_unchanged(
     tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Each run may export to a fresh directory; the trace names the path inside the bundle.
     edge = {"from_key": "a", "to_key": "c", "relation": "supports", "author": "x"}
-    root = _bundle(tmp_path / "b", [_entry("a"), _entry("c")], edges=[edge])
-    monkeypatch.chdir(root)
+    first = _bundle(tmp_path / "run-1", [_entry("a"), _entry("c")], edges=[edge])
+    monkeypatch.chdir(first)
     assert _run(Path(".")) == 0
     traces = {b["source_trace"] for op, b in loom.calls if op == "memory.set"}
-    assert traces == {"okf:b/semantic/a.md", "okf:b/semantic/c.md"}
+    assert traces == {"okf:semantic/a.md", "okf:semantic/c.md"}
     link = next(b for op, b in loom.calls if op == "memory.link")
-    assert link["explanation"].startswith("okf bundle b: ")
-
-
-def test_the_bundle_directory_name_is_part_of_what_is_written(tmp_path: Path, loom: _FakeLoom):
-    assert _run(_bundle(tmp_path / "v1", [_entry("a")])) == 0
+    assert link["explanation"] == "okf bundle: semantic/a.md"
     loom.calls.clear()
-    # source_trace names the bundle directory, so a renamed directory rewrites the row once.
-    assert _run(_bundle(tmp_path / "v2", [_entry("a")])) == 0
-    assert loom.writes() == ["memory.set"]
+    moved = _bundle(tmp_path / "elsewhere" / "tmp.x7f2", [_entry("a"), _entry("c")], edges=[edge])
+    assert _run(moved) == 0
+    assert loom.writes() == []
 
 
 def test_only_the_new_key_is_written(tmp_path: Path, loom: _FakeLoom) -> None:
@@ -481,18 +477,6 @@ def test_an_edge_stored_under_its_canonical_verb_is_not_linked_again(
     assert loom.edges == [{"from_key": "c", "to_key": "a", "relation": "blocks"}]
     loom.calls.clear()
     assert _run(root) == 0
-    assert loom.writes() == []
-
-
-def test_a_symlinked_bundle_keeps_the_name_it_was_given(tmp_path: Path, loom: _FakeLoom):
-    current = tmp_path / "current"
-    current.symlink_to(_bundle(tmp_path / "run-1", [_entry("a")]))
-    assert _run(current) == 0
-    assert loom.rows[("okf-sync", "-", "a")]["source_trace"] == "okf:current/semantic/a.md"
-    current.unlink()
-    current.symlink_to(_bundle(tmp_path / "run-2", [_entry("a")]))
-    loom.calls.clear()
-    assert _run(current) == 0
     assert loom.writes() == []
 
 

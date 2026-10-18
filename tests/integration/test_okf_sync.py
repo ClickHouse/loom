@@ -1,6 +1,8 @@
-"""export-okf → import-okf between two namespaces, as the scheduled copy runs it: a
-second import of the same bundle writes no version and no audit row, and `--prune`
-removes a copy whose source was deleted while another writer's row stays."""
+"""export-okf → import-okf from one tenant to another, as the scheduled private → public
+copy runs it, with a viewer token on the source and a writer token on the target: a second
+import of the same bundle writes no version and no audit row, a `high` row stays home, and
+`--prune` removes a copy whose source was deleted while rows other writers put in the
+target, under another agent or under the import's own agent name, stay."""
 
 from __future__ import annotations
 
@@ -15,13 +17,13 @@ import httpx
 
 from tests.integration._resources import unique_org
 
-ORG = unique_org("okfsync")
+SRC_ORG, DST_ORG = unique_org("okfsrc"), unique_org("okfdst")
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _op(url: str, token: str, op: str, body: dict[str, Any]) -> dict[str, Any]:
+def _op(url: str, token: str, org: str, op: str, body: dict[str, Any]) -> dict[str, Any]:
     r = httpx.post(
-        f"{url}/v1/{op}", json={"org": ORG, **body}, headers={"Authorization": f"Bearer {token}"}
+        f"{url}/v1/{op}", json={"org": org, **body}, headers={"Authorization": f"Bearer {token}"}
     )
     assert r.status_code == 200, r.text
     return dict(r.json())
@@ -43,7 +45,11 @@ def _loom(url: str, token: str, *argv: str) -> str:
 
 def _versions(url: str, token: str, ns: str, key: str) -> int:
     rows = _op(
-        url, token, "memory.history", {"namespace": ns, "agent": "okf-sync", "memory_key": key}
+        url,
+        token,
+        DST_ORG,
+        "memory.history",
+        {"namespace": ns, "agent": "okf-sync", "memory_key": key},
     )["rows"]
     return len(rows)
 
@@ -51,7 +57,7 @@ def _versions(url: str, token: str, ns: str, key: str) -> int:
 def _audit_rows(ch_client: Any, ns: str) -> int:
     res = ch_client.query(
         "SELECT count() FROM loom.audit_log WHERE org = {org:String} AND namespace = {ns:String}",
-        parameters={"org": ORG, "ns": ns},
+        parameters={"org": DST_ORG, "ns": ns},
     )
     return int(res.result_rows[0][0])
 
@@ -59,16 +65,21 @@ def _audit_rows(ch_client: Any, ns: str) -> int:
 def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
     control_plane_url: str, mint_test_token: Any, ch_client: Any, tmp_path: Path
 ) -> None:
-    src, dst = f"okf-src-{uuid.uuid4().hex[:6]}", f"okf-dst-{uuid.uuid4().hex[:6]}"
-    url, tok = control_plane_url, mint_test_token(org=ORG, namespaces=[src, dst])
+    ns = f"okf-{uuid.uuid4().hex[:6]}"
+    url = control_plane_url
+    seed = mint_test_token(org=SRC_ORG, namespaces=[ns], subject="seeder")
+    reader = mint_test_token(org=SRC_ORG, namespaces=[ns], roles=["viewer"], subject="reader")
+    writer = mint_test_token(org=DST_ORG, namespaces=[ns], subject="okf-sync-writer")
+    bot = mint_test_token(org=DST_ORG, namespaces=[ns], subject="other-bot")
     keys = [f"lesson-{i}" for i in range(3)]
     for k in keys:
         _op(
             url,
-            tok,
+            seed,
+            SRC_ORG,
             "memory.set",
             {
-                "namespace": src,
+                "namespace": ns,
                 "agent": "writer-a",
                 "memory_key": k,
                 "memory_type": "semantic",
@@ -82,40 +93,81 @@ def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
         )
     _op(
         url,
-        tok,
+        seed,
+        SRC_ORG,
         "memory.link",
-        {"namespace": src, "from_key": keys[0], "to_key": keys[1], "relation": "supports"},
+        {"namespace": ns, "from_key": keys[0], "to_key": keys[1], "relation": "supports"},
     )
     # A high row stays on the source side.
     _op(
         url,
-        tok,
+        seed,
+        SRC_ORG,
         "memory.set",
         {
-            "namespace": src,
+            "namespace": ns,
             "agent": "writer-a",
             "memory_key": "secret",
             "value": "s3cret",
             "sensitivity": "high",
         },
     )
-    # Another writer's row in the copy's namespace: prune must leave it.
+    # Rows other writers put in the copy's namespace: prune must leave them, including one
+    # written under the import's own agent name with an okf-looking trace.
     _op(
         url,
-        tok,
+        writer,
+        DST_ORG,
         "memory.set",
-        {"namespace": dst, "agent": "bot", "memory_key": "bot-note", "value": "kept"},
+        {"namespace": ns, "agent": "bot", "memory_key": "bot-note", "value": "kept"},
+    )
+    _op(
+        url,
+        bot,
+        DST_ORG,
+        "memory.set",
+        {
+            "namespace": ns,
+            "agent": "okf-sync",
+            "memory_key": "bot-as-sync",
+            "value": "kept too",
+            "source_trace": "okf:bot.md",
+        },
     )
 
     def sync(run: int, *flags: str) -> str:
-        bundle = tmp_path / str(run) / "bundle"
-        _loom(url, tok, "export-okf", "--namespace", src, "--no-evidence", "--out", str(bundle))
+        # A fresh directory each run, as the scheduled job's emptyDir gives it.
+        bundle = tmp_path / str(run)
+        _loom(
+            url,
+            reader,
+            "export-okf",
+            "--org",
+            SRC_ORG,
+            "--namespace",
+            ns,
+            "--no-evidence",
+            "--out",
+            str(bundle),
+        )
         return _loom(
-            url, tok, "import-okf", str(bundle), "--namespace", dst, "--agent", "okf-sync", *flags
+            url,
+            writer,
+            "import-okf",
+            str(bundle),
+            "--org",
+            DST_ORG,
+            "--namespace",
+            ns,
+            "--agent",
+            "okf-sync",
+            *flags,
         )
 
     def get(agent: str, key: str) -> dict[str, Any]:
-        return _op(url, tok, "memory.get", {"namespace": dst, "agent": agent, "memory_key": key})
+        return _op(
+            url, writer, DST_ORG, "memory.get", {"namespace": ns, "agent": agent, "memory_key": key}
+        )
 
     first = sync(1)
     assert "3 written, 0 unchanged, 0 failed" in first
@@ -123,20 +175,36 @@ def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
     copied = get("okf-sync", keys[0])
     assert str(copied["valid_to"]).startswith("2030-01-01")
     assert copied["source_class"] == "derived"
-    versions = {k: _versions(url, tok, dst, k) for k in keys}
-    audit = _audit_rows(ch_client, dst)
+    versions = {k: _versions(url, writer, ns, k) for k in keys}
+    audit = _audit_rows(ch_client, ns)
 
     second = sync(2)
     assert "0 written, 3 unchanged, 0 failed" in second
     assert "0 typed edges linked (1 unchanged)" in second
-    assert {k: _versions(url, tok, dst, k) for k in keys} == versions
-    assert _audit_rows(ch_client, dst) == audit
+    assert {k: _versions(url, writer, ns, k) for k in keys} == versions
+    assert _audit_rows(ch_client, ns) == audit
 
-    _op(url, tok, "memory.delete", {"namespace": src, "agent": "writer-a", "memory_key": keys[2]})
+    _op(
+        url,
+        seed,
+        SRC_ORG,
+        "memory.delete",
+        {"namespace": ns, "agent": "writer-a", "memory_key": keys[2]},
+    )
     third = sync(3, "--prune")
     assert "0 written, 2 unchanged, 0 failed" in third
-    assert "1 pruned" in third
+    assert "1 pruned (1 kept: written by another token under this --agent" in third
 
     assert not get("okf-sync", keys[2])["found"]
     assert get("okf-sync", keys[0])["found"]
     assert get("bot", "bot-note")["found"]
+    assert get("okf-sync", "bot-as-sync")["found"]
+    # A prune is a tombstone: memory.restore brings the copy back.
+    restored = _op(
+        url,
+        writer,
+        DST_ORG,
+        "memory.restore",
+        {"namespace": ns, "agent": "okf-sync", "memory_key": keys[2]},
+    )
+    assert restored["restored"] and get("okf-sync", keys[2])["found"]

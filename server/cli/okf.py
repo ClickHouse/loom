@@ -39,7 +39,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import math
-import os
 import sys
 from collections import Counter
 from datetime import UTC, datetime
@@ -539,7 +538,7 @@ async def _import_evidence(
         "namespace": args.namespace,
         "agent": args.agent,
         "user_id": args.user_id,
-        "source_trace": f"okf-import:{root.name}",
+        "source_trace": "okf-import",
     }
     batches: list[dict[str, Any]] = []
     for i in range(0, len(chunks), batch):
@@ -598,7 +597,9 @@ def _concept_payload(
             "agent": args.agent,
             "user_id": args.user_id,
             "session_id": session_id,
-            "source_trace": f"{_TRACE_PREFIX}{root.name}/{c.path}",
+            # The path inside the bundle, not where the bundle sits on disk: a run that
+            # exports to a new directory must not look like a change to every row.
+            "source_trace": f"{_TRACE_PREFIX}{c.path}",
         }
     )
     return payload
@@ -836,7 +837,7 @@ async def _import_links(
                     "from_key": e["from_key"],
                     "to_key": e["to_key"],
                     "relation": e["relation"],
-                    "explanation": f"okf bundle {root.name}: {e['path']}",
+                    "explanation": f"okf bundle: {e['path']}",
                 },
             )
             n["links"] += 1
@@ -1000,9 +1001,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         print("refusing to prune: --prune needs an explicit --agent", file=sys.stderr)
         return 2
     args.agent = args.agent or "okf-import"
-    # Absolute, so `import-okf .` names the bundle directory in every source_trace; not
-    # resolved, so a symlink passed as the path keeps its name (`.` inside it does not).
-    root = Path(os.path.abspath(args.path))
+    root = Path(args.path)
     if not root.is_dir():
         print(f"{root} is not a directory", file=sys.stderr)
         return 2
