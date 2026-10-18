@@ -195,13 +195,13 @@ function ConflictsPanel() {
     [identity.org, identity.namespace, reload],
   );
 
-  // A decision that empties the queue reads it again: more may wait past what was loaded.
+  // A decision that empties the loaded queue while more wait past it reads the queue again.
   const decided = useRef(false);
   useEffect(() => {
     if (!decided.current || rows === null) return;
     decided.current = false;
-    if (rows.length === 0) setReload((n) => n + 1);
-  }, [rows]);
+    if (rows.length === 0 && next !== null) setReload((n) => n + 1);
+  }, [rows, next]);
 
   // The last page removes Load more, which held the focus: it goes to the first conflict
   // that page added, else the last one in the queue.
@@ -245,7 +245,9 @@ function ConflictsPanel() {
   if (error) {
     return <ListState kind="error" things="conflicts" error={error} onRetry={() => setReload((n) => n + 1)} />;
   }
-  if (rows === null) return <QueueTable rows={[]} current={null} onPick={() => {}} loading />;
+  // Emptied with more past it: the reload is reading them, so the queue is loading, not empty.
+  if (rows === null || (rows.length === 0 && next !== null))
+    return <QueueTable rows={[]} current={null} onPick={() => {}} loading />;
   if (rows.length === 0) {
     return (
       <ListState
@@ -313,6 +315,8 @@ function ConflictsPanel() {
           label="Reason for the decision"
           value={reason}
           onChange={(value) => setReason(value)}
+          // Like the buttons, held while a decision is out: its answer moves on from here.
+          disabled={busy}
           placeholder="Optional — recorded in the audit trail"
           rows={3}
         />
@@ -358,7 +362,7 @@ function ConflictsPanel() {
         </ListToolbar>
       </div>
       <div ref={queueBox}>
-        <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} />
+        <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} picking={!busy} />
       </div>
       {next !== null && (
         <BusyButton
@@ -384,12 +388,15 @@ function QueueTable({
   onPick,
   loading = false,
   busy = false,
+  picking = true,
 }: {
   rows: ConflictRow[];
   current: string | null;
   onPick: (index: number) => void;
   loading?: boolean;
   busy?: boolean;
+  /** Off while a decision is out: its answer picks the next conflict. */
+  picking?: boolean;
 }) {
   return (
     <Table
@@ -413,6 +420,7 @@ function QueueTable({
                 type="button"
                 className="min-w-0 max-w-full truncate rounded text-left font-mono text-xs"
                 aria-current={c.memory_id === current || undefined}
+                disabled={!picking}
                 onClick={() => onPick(i)}
               >
                 {c.memory_key}

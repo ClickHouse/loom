@@ -265,6 +265,71 @@ describe("Recent search after a local write", () => {
     expect(screen.getAllByText("milk_note").length).toBeGreaterThan(0);
   });
 
+  it("a failed re-rank that kept nothing still forgets its ranking for the next run", async () => {
+    let phase = 0;
+    onTestFinished(() => {
+      vi.mocked(bulkGetMemories).mockImplementation(async () => ({ results: {}, missing: [] }));
+    });
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains || phase < 2
+        ? { entries: [entry("milk_note")], total: 1, today: 0, truncated: false }
+        : { entries: [entry("milk_note"), entry("far_pref")], total: 2, today: 0, truncated: false },
+    );
+    vi.mocked(bulkGetMemories).mockImplementation(async (_id, keys) => ({
+      results: Object.fromEntries(keys.map((k) => [k, { ...entry(k), value: k } as unknown as MemoryDetail])),
+      missing: [],
+    }));
+    vi.mocked(searchMemory).mockImplementation(async () => {
+      if (phase === 1) throw new Error("search down");
+      if (phase === 2) return new Promise(() => {}) as never;
+      return {
+        results: [
+          {
+            memory_key: "far_pref",
+            memory_type: "semantic",
+            content_excerpt: "far_pref",
+            distance: 0.3,
+            similarity: 0.7,
+          },
+        ],
+        embedding_model: "m",
+      } as never;
+    });
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    expect((await screen.findAllByText("far_pref", {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+    const runs = () => vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk").length;
+    // A write; the ranking fails, and far_pref (outside the page) is not kept.
+    phase = 1;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(runs()).toBe(2), { timeout: 3000 });
+    await waitFor(() => expect(screen.queryAllByText("far_pref")).toHaveLength(0));
+    // far_pref joins the page; another write ranks again and is still reading.
+    phase = 2;
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(runs()).toBe(3), { timeout: 3000 });
+    // The run's keyword read answers at once; let it draw before the negative check.
+    await act(async () => {});
+    expect(screen.queryAllByText("far_pref")).toHaveLength(0);
+    expect(screen.getAllByText("milk_note").length).toBeGreaterThan(0);
+  });
+
+  it("says no memory matches the typed words, bare", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? { entries: [], total: 0, today: 0, truncated: false }
+        : { entries: [entry("milk_note")], total: 1, today: 0, truncated: false },
+    );
+    vi.mocked(searchMemory).mockResolvedValue({ results: [], embedding_model: "m" } as never);
+    render(<Recent />);
+    await screen.findByText("milk_note");
+    await userEvent.type(screen.getByLabelText("Search memories"), "zebra");
+    expect(
+      await screen.findByText((_, el) => el?.textContent === "No memories match zebra", {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
+  });
+
   it("a search that failed outright brings none of its earlier ranked hits back on the next run", async () => {
     let phase = 0;
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>

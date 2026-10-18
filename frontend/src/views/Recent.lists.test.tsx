@@ -137,6 +137,23 @@ describe("Memories list chrome", () => {
     expect(pager).not.toHaveTextContent(/\b2 in all/);
   });
 
+  // A select narrows the list too: the row does not blame the typed tag alone.
+  it("says the filters in force match nothing when a status narrows a typed tag", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.tags?.length
+        ? { entries: [], total: 0, today: 0, truncated: false }
+        : { entries: ROWS, total: 4, today: 0, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:nomatch");
+    expect(await screen.findByText((_, el) => el?.textContent === "No memories match tag:nomatch")).toBeInTheDocument();
+    await pick("Status", "pinned");
+    expect(
+      await screen.findByText((_, el) => el?.textContent === "No memories match the filters in force"),
+    ).toBeInTheDocument();
+  });
+
   it("offers no pager over the old rows while a new filter's read is in flight", async () => {
     vi.mocked(listMemories).mockImplementation(async (_id, limit = 50): Promise<MemoryListResponse> => {
       if (limit === 1000) return new Promise<MemoryListResponse>(() => {});

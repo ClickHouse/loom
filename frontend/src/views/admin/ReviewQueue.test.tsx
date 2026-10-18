@@ -87,9 +87,10 @@ describe("ReviewQueue", () => {
     let finishStale: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
     vi.mocked(listConflicts).mockImplementation(async (id) => {
       if (id.namespace === "ns-b") return { rows: [conflict("b/key")], next_before_version: null };
-      // ns-a: the first read shows one conflict; the reload after deciding it hangs.
+      // ns-a: the first read shows one conflict with more past it; the reload after
+      // deciding it hangs.
       if (vi.mocked(listConflicts).mock.calls.filter(([c]) => c.namespace === "ns-a").length === 1) {
-        return { rows: [conflict("a/key")], next_before_version: null };
+        return { rows: [conflict("a/key")], next_before_version: 7 };
       }
       return new Promise((resolve) => {
         finishStale = resolve;
@@ -341,6 +342,42 @@ describe("ReviewQueue", () => {
     await waitFor(() => expect(within(table).queryByRole("button", { name: "k/one" })).toBeNull(), WAIT);
     expect(within(table).getByRole("button", { name: "k/two" })).toBeInTheDocument();
     expect(within(table).getByRole("button", { name: "k/three" })).toBeInTheDocument();
+  });
+
+  it("deciding the last loaded conflict while more wait shows the queue loading, not 'No conflicts'", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(3);
+    let reads = 0;
+    vi.mocked(listConflicts).mockImplementation(async () => {
+      reads += 1;
+      if (reads === 1) return { rows: [conflict("k/one")], next_before_version: 7 };
+      return new Promise(() => {});
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    await waitFor(() => expect(reads).toBe(2), WAIT);
+    expect(screen.queryByText("No conflicts")).toBeNull();
+    expect(screen.getByLabelText("Loading conflicts")).toBeInTheDocument();
+  });
+
+  it("holds the queue's picks and the reason while a decision is out", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(2);
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [conflict("k/one"), conflict("k/two")],
+      next_before_version: null,
+    });
+    let decided: (v: never) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (decided = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    expect(within(table).getByRole("button", { name: "k/two" })).toBeDisabled();
+    expect(screen.getByLabelText("Reason for the decision")).toBeDisabled();
+    await act(async () => decided(undefined as never));
+    await waitFor(() => expect(within(table).getByRole("button", { name: "k/two" })).toBeEnabled(), WAIT);
   });
 
   it("counts the queue in its toolbar and shows each conflict's time as a list time", async () => {

@@ -161,7 +161,7 @@ export function actionTip(b: ActionButton, sheet: boolean): string {
 // Everything else the status allows, under More, in this order.
 const MENU_ACTIONS: TaskAction[] = ["block", "defer", "wont_do", "edit", "reassign", "cancel"];
 
-export interface ActionButton {
+interface ActionButton {
   action: TaskAction;
   label: string;
   tip?: string;

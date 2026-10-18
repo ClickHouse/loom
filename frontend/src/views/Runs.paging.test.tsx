@@ -279,10 +279,28 @@ describe("Runs paging, sorting and search on the server", () => {
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
     fireEvent.change(screen.getByRole("textbox", { name: "Search runs" }), { target: { value: "nothing" } });
-    expect(await screen.findByText(/No runs match/)).toBeInTheDocument();
+    // The typed words, bare, among the runs the default fold keeps.
+    expect(
+      await screen.findByText((_, el) => el?.textContent === "No runs match nothing in runs with memory activity"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(await screen.findByRole("button", { name: "goal 1" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Search runs" })).toHaveValue("");
+  });
+
+  it("with a status picked too, says the filters in force match nothing, not the words", async () => {
+    server(3);
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Filter runs by status" })).getByRole("button", { name: "Failed" }),
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Search runs" }), { target: { value: "nothing" } });
+    expect(
+      await screen.findByText(
+        (_, el) => el?.textContent === "No runs match the filters in force in runs with memory activity",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("draws the first read as the table's header over a skeleton, marked busy", async () => {

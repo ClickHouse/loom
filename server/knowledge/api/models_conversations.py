@@ -288,10 +288,10 @@ class ConversationThreadsInput(BaseModel):
     # At most this many threads (1-200).
     limit: int = Field(default=30, ge=1, le=200)
     # Skip this many threads of the most-recent-first list (0-100,000): the next page starts
-    # at the previous page's offset plus its length. A build that predates it answers the first
-    # page again, which a caller tells apart by thread_id. A larger one is a 422: the store
-    # sorts the window's threads and keeps offset + limit of them, so the bound caps that
-    # sort. The dashboard offers no page past it.
+    # at the previous page's offset plus its length. A replica a release behind has no
+    # `offset`: it serves the first page and names the key in `ignored_args`. A larger one
+    # is a 422: the store sorts the window's threads and keeps offset + limit of them, so
+    # the bound caps that sort. The dashboard offers no page past it.
     offset: int = Field(default=0, ge=0, le=100_000)
     # The output fields the caller reads (a whitelist
     # resolved against the row model; an unknown name is a 422); unset, every

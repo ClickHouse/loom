@@ -895,6 +895,7 @@ export function Runs() {
           things="runs"
           // The typed words alone; with a status or agent picked too, "the filters in force".
           filter={(!filter && !agent && q) || undefined}
+          among={hideConn ? "runs with memory activity" : undefined}
           onClear={clearFilters}
         />
       )}
