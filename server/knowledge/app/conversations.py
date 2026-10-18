@@ -727,7 +727,8 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             messages_summarized=0,
             reason="already-compacted",
         )
-    if len(candidates) < input.min_to_compact:
+    # Only new turns count: an earlier summary in the window is folded in, not compacted.
+    if sum(not _is_compaction_summary(r) for r in candidates) < input.min_to_compact:
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
@@ -845,7 +846,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
 
     return ConversationCompactOutput(
         compacted=True,
-        messages_summarized=len(candidates),
+        messages_summarized=sum(not _is_compaction_summary(r) for r in candidates),
         summary_msg_id=summary_msg_id,
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,

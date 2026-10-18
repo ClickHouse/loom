@@ -54,7 +54,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `compacted` | `bool` | True when a summary was written and the originals tombstoned; `reason` says why not. |
-| `messages_summarized` | `int` | How many older messages the summary replaced; 0 when not compacted. |
+| `messages_summarized` | `int` | How many older messages the summary replaced, an earlier summary it folded in not counted; 0 when not compacted. |
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |

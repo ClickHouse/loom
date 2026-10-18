@@ -42,7 +42,8 @@ up front.
   from. `system` and `tool` turns stay in the transcript unindexed, except a
   compaction's summary.
 - **The embed is fail-open.** A failed embed still stores the turn, with the error
-  recorded on its embedding row.
+  recorded on its embedding row. Nothing retries it: the turn stays out of vector
+  search and is found only by the substring fallback.
 
 ### Reading and searching
 

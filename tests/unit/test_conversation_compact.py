@@ -314,9 +314,56 @@ def test_a_large_turn_behind_a_summary_is_compacted_whole(monkeypatch) -> None:
             )
         )
     )
-    assert out.compacted is True
+    assert out.compacted is True and out.messages_summarized == 2  # m1, m2; not the summary
     [summary] = fake.inserted
     # The summary is free, so the 15,000-character turn and the short one after it fit.
     assert '"compacted_from": ["compact-1", "m1", "m2"]' in summary["metadata"]
     [prompt] = prompts
     assert big in prompt  # the large turn reached the summarizer whole
+
+
+def test_an_earlier_summary_does_not_count_toward_min_to_compact(monkeypatch) -> None:
+    """min_to_compact counts new turns: a summary and three turns are below a minimum
+    of four, and no LLM call is made."""
+    import server.core.ch
+    import server.llm.client
+
+    rows = [
+        {
+            "msg_id": "compact-1",
+            "role": "system",
+            "content": "a summary",
+            "ts": T0,
+            "metadata": '{"compacted_from": ["m0"]}',
+            "user_id": "alice",
+            "run_id": "run-1",
+        },
+        *(
+            {
+                "msg_id": f"m{i}",
+                "role": "user",
+                "content": f"turn {i}",
+                "ts": T0 + timedelta(seconds=i),
+                "metadata": "{}",
+                "user_id": "alice",
+                "run_id": "run-1",
+            }
+            for i in range(1, 5)
+        ),
+    ]
+
+    class _NoLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            raise AssertionError("three new turns are below min_to_compact")
+
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _NoLLM())
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=4
+            )
+        )
+    )
+    assert (out.compacted, out.reason) == (False, "below-min-to-compact")

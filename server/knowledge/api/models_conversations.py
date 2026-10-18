@@ -346,7 +346,8 @@ class ConversationCompactInput(BaseModel):
 class ConversationCompactOutput(BaseModel):
     # True when a summary was written and the originals tombstoned; `reason` says why not.
     compacted: bool
-    # How many older messages the summary replaced; 0 when not compacted.
+    # How many older messages the summary replaced, an earlier summary it folded in not
+    # counted; 0 when not compacted.
     messages_summarized: int
     # Id of the synthetic `system` summary message; empty when not compacted.
     summary_msg_id: str = ""
