@@ -25,6 +25,7 @@ from server.core.provider_process import host_proof, pod_gone, process_identity,
 from server.insights.store.provider_participants import (
     OWN_VERSION_SQL,
     SEQUENTIAL,
+    STALE_AFTER_S,
     TABLE,
     participants,
     prune_retired,
@@ -37,8 +38,6 @@ log = logging.getLogger(__name__)
 # Every participant writes its row this often, from a thread of its own, so a
 # boot migration or a blocked event loop does not stop it.
 HEARTBEAT_S = 10.0
-# A participant whose last heartbeat is older than this may count as stopped.
-STALE_AFTER_S = 60
 # How often the workers leader retires the stopped participants it finds,
 # and deletes the long-retired ones.
 SWEEP_S = 60.0
@@ -46,10 +45,6 @@ PRUNE_S = 3600.0
 
 _COLUMNS = ["participant_id", "transition_id", "state", "version", "stale_after_s", "host_proof"]
 _TAG = {"log_comment": "provider.participant_heartbeat"}
-EXPIRY_COLUMN_SQL = (
-    "SELECT count() FROM system.columns WHERE database = 'loom' "
-    "AND table = '_provider_participants' AND name = 'stale_after_s'"
-)
 
 
 class _Own:
@@ -89,7 +84,6 @@ class _Heartbeat:
         self.ch: Any = None
         self.thread: threading.Thread | None = None
         self.stopping = threading.Event()
-        self.expiry_column = False
 
     @property
     def running(self) -> bool:
@@ -116,15 +110,7 @@ class _Heartbeat:
         if state == "retired":
             return
         row = [me, transition, state, version, STALE_AFTER_S, host_proof()]
-        # Before the heartbeat migration the row has no expiry: it never expires.
-        columns = _COLUMNS if self._has_expiry_column() else _COLUMNS[:4]
-        self.ch.insert(TABLE, [row[: len(columns)]], column_names=columns, settings=_TAG)
-
-    def _has_expiry_column(self) -> bool:
-        if not self.expiry_column:
-            rows = self.ch.query(EXPIRY_COLUMN_SQL, settings=_TAG).result_rows
-            self.expiry_column = bool(rows and rows[0][0])
-        return self.expiry_column
+        self.ch.insert(TABLE, [row], column_names=_COLUMNS, settings=_TAG)
 
     def _run(self) -> None:
         while not self.stopping.wait(HEARTBEAT_S):
@@ -177,10 +163,12 @@ async def register_process() -> None:
 
 
 async def enroll_before_migrations(ch: Any) -> None:
-    """A reconfiguration activated while this process migrates then waits for it."""
+    """A reconfiguration activated while this process migrates then waits for it.
+    Skipped on a database whose migrations stopped before the heartbeat columns:
+    the heartbeat could not land, and the boot enrolls after migrating anyway."""
     row = await ch.query_one(
-        "SELECT count() AS n FROM system.tables "
-        "WHERE database = 'loom' AND name = '_provider_participants'"
+        "SELECT count() AS n FROM system.columns "
+        "WHERE database = 'loom' AND table = '_provider_participants' AND name = 'host_proof'"
     )
     if row is not None and row.get("n") == 1:
         await register_process()
@@ -213,9 +201,7 @@ async def acknowledge_drain(transition: UUID) -> bool:
     if not await _server_side_settled():
         return False
     _, _, version = _OWN.stamp(transition, "drained")
-    await record_participant(
-        process_identity(), transition, "drained", version=version, stale_after_s=STALE_AFTER_S
-    )
+    await record_participant(process_identity(), transition, "drained", version=version)
     return True
 
 
@@ -303,8 +289,7 @@ def participant_lifespan[T](
 
 async def retire_participant(participant: UUID, *, ch: Any = None) -> str:
     """`retired`, `absent` (no live row), or `live`: its heartbeat is fresh or a
-    query tagged with its id still runs. A row from a build without heartbeats
-    is retired on the operator's word that its process stopped."""
+    query tagged with its id still runs."""
     row = next(
         (r for r in await participants(ch=ch) if str(r["participant_id"]) == str(participant)),
         None,
@@ -313,7 +298,7 @@ async def retire_participant(participant: UUID, *, ch: Any = None) -> str:
         return "absent"
     if str(participant) == str(process_identity()):
         return "live"
-    if int(row.get("stale_after_s") or 0) > 0 and not row.get("expired"):
+    if not row.get("expired"):
         return "live"
     if await running_queries(participant, ch=ch) != 0:
         return "live"
@@ -381,9 +366,7 @@ async def sweep_stopped(*, now: float | None = None) -> None:
         if participant == me:
             continue
         entry = {"participant_id": participant, "heartbeat_at": str(row.get("heartbeat_at", ""))}
-        if not int(row.get("stale_after_s") or 0):
-            stale.append({**entry, "reason": "no_heartbeat"})
-        elif row.get("expired"):
+        if row.get("expired"):
             running = await running_queries(participant) != 0
             if not running and await pod_gone(str(row.get("host_proof") or "")):
                 await record_participant(

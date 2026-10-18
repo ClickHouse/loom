@@ -272,7 +272,7 @@ export function Board({
         <EmptyState
           icon="services"
           title="No board was planned"
-          description={`${trackerNamespace} answered, but its catalogue routed the board question to nothing; the server may predate the bug board.`}
+          description={`${trackerNamespace} answered, but its catalogue routed the board question to nothing.`}
         />
       </div>
     );

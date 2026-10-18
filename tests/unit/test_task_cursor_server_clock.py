@@ -37,7 +37,7 @@ async def test_server_version_reads_the_server_clock_and_beats_the_row() -> None
     v = await repo.server_version(0, ch=ch)  # type: ignore[arg-type]
     assert v >= SERVER_NOW_US
     assert "now64(6)" in ch.sql[0][0]
-    # A row an older build stamped ahead of the server keeps losing to nothing.
+    # A row stamped ahead of the server's clock keeps losing to nothing.
     ahead = SERVER_NOW_US + 10**9
     assert await repo.server_version(ahead, ch=ch) == ahead + 1  # type: ignore[arg-type]
     # Strictly increasing inside the process.

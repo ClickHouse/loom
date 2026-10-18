@@ -116,7 +116,6 @@ class _Hangs:
 
 barrier.HEARTBEAT_S = 0.05
 beat = barrier._Heartbeat(lambda: _Hangs())
-beat.expiry_column = True
 barrier._HEARTBEAT = beat
 beat.start()
 time.sleep(0.3)  # the second beat is now stuck

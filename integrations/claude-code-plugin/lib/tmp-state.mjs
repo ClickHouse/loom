@@ -105,7 +105,7 @@ export function writePrivateFile(file, text, { append = false } = {}) {
     if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
       throw new Error(`${file} belongs to another user`);
     }
-    // A file left by an older version keeps its mode on open; tighten it.
+    // An existing file keeps its mode on open; tighten it.
     fs.fchmodSync(fd, 0o600);
     if (!append) fs.ftruncateSync(fd, 0);
     fs.writeSync(fd, text);

@@ -202,7 +202,7 @@ function openedByUrl(v: View): Partial<AppState> {
     inspectedMemoryKey: memory,
     inspectedAgent: memory ? linkedAgent(memory) : "",
     ...(doc ? { pendingDocSourceUri: doc } : {}),
-    ...(thread ? { pendingConversationThread: { threadId: thread, agent: "" } } : {}),
+    ...(thread ? { pendingConversationThread: { threadId: thread } } : {}),
   };
 }
 
@@ -244,8 +244,8 @@ interface AppState {
   memoryTagFilter: string | null;
   // Header-search document target; Documents.tsx opens its preview dialog.
   pendingDocSourceUri: string | null;
-  /** A thread to open on Conversations, with the agent its link knows (or ""). */
-  pendingConversationThread: { threadId: string; agent: string } | null;
+  /** A thread to open on Conversations. */
+  pendingConversationThread: { threadId: string } | null;
   // Header-search profile-section target; App.tsx opens ProfileSectionDialog.
   inspectedProfileLabel: string | null;
   // Profile section to open directly in edit mode after navigation.
@@ -284,7 +284,7 @@ interface AppState {
   setMemoryTagFilter: (tag: string | null) => void;
   openDocument: (sourceUri: string) => void;
   clearPendingDoc: () => void;
-  openConversationThread: (threadId: string, agent?: string) => void;
+  openConversationThread: (threadId: string) => void;
   clearPendingConversationThread: () => void;
   inspectProfile: (label: string | null) => void;
   requestEditProfile: (label: string | null) => void;
@@ -415,9 +415,9 @@ export const useStore = create<AppState>((set, get) => ({
     set({ pendingDocSourceUri: sourceUri });
   },
   clearPendingDoc: () => set({ pendingDocSourceUri: null }),
-  openConversationThread: (threadId, agent = "") => {
+  openConversationThread: (threadId) => {
     get().navigate("sessions", { query: { thread: threadId } });
-    set({ pendingConversationThread: { threadId, agent } });
+    set({ pendingConversationThread: { threadId } });
   },
   clearPendingConversationThread: () => set({ pendingConversationThread: null }),
   inspectProfile: (inspectedProfileLabel) => set({ inspectedProfileLabel }),

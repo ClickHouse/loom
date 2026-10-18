@@ -402,8 +402,7 @@ def compact_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
 #            tool set, same descriptions, same arguments as `full`.
 # full     — standard plus outputSchema, for a host that validates results
 #            against it. Opt in per request with `?schema_profile=full` or
-#            per deployment with LOOM_MCP_SCHEMA_PROFILE=full (the
-#            compatibility surface, unchanged byte for byte).
+#            per deployment with LOOM_MCP_SCHEMA_PROFILE=full.
 # compact  — first paragraph + argument tree only.
 
 SCHEMA_PROFILES = ("standard", "full", "compact")

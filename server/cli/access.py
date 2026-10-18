@@ -393,7 +393,7 @@ def _add_revoke_token_parser(sub: Any) -> None:
         default=None,
         help="The `jti` claim: retires exactly one token. Every token from "
         "`loom mint-token` (printed with --json / --save) and the admin endpoint "
-        "carries one; older tokens may not — use --subject.",
+        "carries one; a gateway's token may not — use --subject.",
     )
     which.add_argument(
         "--subject",

@@ -122,9 +122,9 @@ describe("navigating actions mirror the view into the URL", () => {
   });
 
   it("opening a conversation thread lands on /conversations", () => {
-    useStore.getState().openConversationThread("t-1", "claude-code");
+    useStore.getState().openConversationThread("t-1");
     expect(useStore.getState().view).toBe("sessions");
-    expect(useStore.getState().pendingConversationThread).toEqual({ threadId: "t-1", agent: "claude-code" });
+    expect(useStore.getState().pendingConversationThread).toEqual({ threadId: "t-1" });
     expect(window.location.pathname).toBe("/conversations");
   });
 
@@ -198,7 +198,7 @@ describe("the object a page shows is in its URL", () => {
     expect(useStore.getState().pendingDocSourceUri).toBe("docs/a.md");
     setLocation("/conversations?thread=t-1");
     useStore.getState().bootView("sessions");
-    expect(useStore.getState().pendingConversationThread).toEqual({ threadId: "t-1", agent: "" });
+    expect(useStore.getState().pendingConversationThread).toEqual({ threadId: "t-1" });
   });
 
   it("a reload keeps the writer agent the memory was opened as", () => {

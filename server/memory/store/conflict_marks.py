@@ -83,7 +83,7 @@ async def stamp_checked(
 ) -> int:
     """Stamp the embedding rows of the judged write with now: those still marked at
     its `version` or above (a touch, verify or apply re-emits at read + 1) that carry
-    its `content_sha256` (rows from before 038: its `created_at`). A newer write's
+    its `content_sha256` (a row stored without one: its `created_at`). A newer write's
     row keeps its own mark for its own settle."""
     ch = ch or _default_client()
     rows = await live_embedding_rows_for_key(

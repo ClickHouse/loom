@@ -613,8 +613,8 @@ export function parseOpMix(d: unknown): OpMixData | null {
 
 /** ops.health's op_mix answer, with the scope it was read for: a report ({check, data}), a
  *  check the server ran but could not compute (data: null — status "fail", detail says
- *  why), or null when the check is absent or the request was refused. Any other failed
- *  read is said as one. */
+ *  why), or null when the request was refused (an answer always carries the op_mix
+ *  check). Any other failed read is said as one. */
 export function OpMixPanel() {
   const identity = useIdentity();
   const [scope, setScope] = useState<"namespace" | "org">("namespace");
@@ -708,7 +708,7 @@ export function OpMixPanel() {
       <EmptyState
         icon="pie-chart"
         title="Operation mix unavailable"
-        description="ops.health needs an org-admin token, or the server predates the op_mix check."
+        description="ops.health needs an org-admin token."
       />,
     );
   }

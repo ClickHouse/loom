@@ -168,6 +168,18 @@ def test_retiring_default_writes_its_row_once_another_key_signs() -> None:
     assert not asyncio.run(keyring.retire("nope", ch=_CH()))
 
 
+def test_retiring_default_under_a_pem_root_needs_another_signing_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pem, _ = _rsa()
+    monkeypatch.setattr(settings, "jwt_secret", pem)
+    with pytest.raises(ValueError, match="no key to sign with"):
+        asyncio.run(keyring.retire("default", ch=_CH()))
+    ch = _CH([_row("k1", at=_now() - timedelta(minutes=1))])
+    assert asyncio.run(keyring.retire("default", ch=ch))
+    assert ch.inserted[-1]["kid"] == "default"
+
+
 def test_nothing_is_signed_or_verified_before_the_keyring_loads() -> None:
     """A retired root secret is not known yet: a retryable refusal, not a 401,
     and no token a loaded verifier would refuse."""
@@ -182,19 +194,6 @@ def test_nothing_is_signed_or_verified_before_the_keyring_loads() -> None:
         mint_token("s", "o", ["ns"], ["writer"])
     _load([])
     assert verify_token(token).subject == "s"
-
-
-def test_an_imported_verify_only_kid_never_signs() -> None:
-    """Retiring the active kid must not hand signing back to an older one."""
-    _load(
-        [
-            _row("old", at=keyring.VERIFY_ONLY),
-            _row("default", at=datetime(1970, 1, 1), retired=True),
-        ]
-    )
-    assert keyring.verification_keys("old", "HS256") == ["s" * 40]
-    with pytest.raises(keyring.NoSigningKey, match="retired"):
-        keyring.signing_key()
 
 
 def test_a_key_that_does_not_unseal_is_warned_about_once(caplog: pytest.LogCaptureFixture) -> None:
@@ -214,25 +213,6 @@ def test_a_failed_read_keeps_the_last_keyring() -> None:
 
     asyncio.run(keyring.refresh(ch=_Down()))
     assert keyring.signing_key().kid == "k1"
-
-
-def test_an_imported_kid_map_keeps_its_tokens_verifying() -> None:
-    """The former LOOM_JWT_SECRETS_JSON copied in: the active kid signs, the
-    old one still verifies the tokens it signed."""
-    old = pyjwt.encode(
-        {"sub": "s", "iss": settings.jwt_issuer, "aud": settings.jwt_audience, "iat": 1},
-        "o" * 40,
-        algorithm="HS256",
-        headers={"kid": "k1"},
-    )
-    ch = _CH()
-    asyncio.run(keyring.import_keys({"k1": "o" * 40, "k2": "n" * 40}, "k2", "HS256", ch=ch))
-    ch.rows = [{**r, "retired": False} for r in ch.inserted]
-    asyncio.run(keyring.refresh(ch=ch))
-    assert keyring.signing_key().kid == "k2"
-    assert verify_token(old).subject == "s"
-    with pytest.raises(ValueError, match="not in the map"):
-        asyncio.run(keyring.import_keys({"k1": "x"}, "k9", "HS256", ch=_CH()))
 
 
 async def test_the_refresh_loop_retries_fast_until_loaded_then_keeps_its_cadence(
@@ -262,15 +242,6 @@ async def test_the_refresh_loop_retries_fast_until_loaded_then_keeps_its_cadence
     assert sleeps[:3] == [2.0, 2.0, 30.0]
 
 
-def test_import_leaves_existing_kids_and_refuses_weak_keys() -> None:
-    """A re-run must not bring back a retired kid."""
-    ch = _CH([{**_row("k1", at=_now()), "retired": True}])
-    with pytest.raises(ValueError, match="32 bytes"):
-        asyncio.run(keyring.import_keys({"k2": "short"}, "k2", "HS256", ch=ch))
-    done = asyncio.run(keyring.import_keys({"k1": "o" * 40, "k2": "n" * 40}, "k2", "HS256", ch=ch))
-    assert done == ["k2"] and [r["kid"] for r in ch.inserted if r["kid"] != "default"] == ["k2"]
-
-
 def _root_row(secret: str, *, retired: bool = False) -> dict[str, Any]:
     """The `default` row as `record_root` writes it for root secret `secret`."""
     mac = hmac.new(secret.encode(), keyring._ROOT_LABEL, hashlib.sha256).hexdigest()
@@ -281,30 +252,10 @@ def _root_row(secret: str, *, retired: bool = False) -> dict[str, Any]:
 def test_a_default_row_never_replaces_the_root_secret() -> None:
     """Kid `default` signs with LOOM_JWT_SECRET, so it must verify with it too,
     whatever a `default` row in the table holds."""
-    _load([_root_row("i" * 40), _row("k1", at=keyring.VERIFY_ONLY)])
+    _load([_root_row("i" * 40), _row("k1", at=_now() + timedelta(days=1))])
     token = mint_token("s", "o", ["ns"], ["writer"])
     assert pyjwt.get_unverified_header(token)["kid"] == "default"
     assert verify_token(token).subject == "s"
-
-
-def test_import_refuses_a_default_kid_that_is_not_the_root_secret() -> None:
-    ch = _CH()
-    with pytest.raises(ValueError, match="not LOOM_JWT_SECRET"):
-        asyncio.run(
-            keyring.import_keys({"default": "i" * 40, "k1": "o" * 40}, "k1", "HS256", ch=ch)
-        )
-    assert ch.inserted == []
-    done = asyncio.run(
-        keyring.import_keys({"default": settings.jwt_secret, "k1": "o" * 40}, "k1", "HS256", ch=ch)
-    )
-    assert done == ["k1"]
-
-
-def test_import_delays_the_active_kid_when_asked() -> None:
-    ch = _CH()
-    asyncio.run(keyring.import_keys({"k1": "o" * 40}, "k1", "HS256", ch=ch, activate_in_s=300))
-    (row,) = [r for r in ch.inserted if r["kid"] == "k1"]
-    assert row["activate_at"] - _now() > timedelta(seconds=290)
 
 
 def test_a_change_under_another_root_secret_is_refused() -> None:
@@ -313,7 +264,6 @@ def test_a_change_under_another_root_secret_is_refused() -> None:
     ch = _CH([_root_row("x" * 40), _row("k1", secret="t" * 40, at=_now())])
     for change in (
         keyring.rotate("HS256", activate_in_s=60, ch=ch),
-        keyring.import_keys({"k9": "o" * 40}, "k9", "HS256", ch=ch),
         keyring.retire("k1", ch=ch),
     ):
         with pytest.raises(ValueError, match="not the servers' root secret"):
@@ -502,7 +452,7 @@ def test_a_keyring_past_the_staleness_bound_neither_signs_nor_verifies(
     assert verify_token(token).subject == "s"
 
 
-def test_a_pem_root_signs_rs256_as_default_like_the_earlier_build(
+def test_a_pem_root_signs_rs256_as_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pem, public = _rsa()
@@ -513,7 +463,8 @@ def test_a_pem_root_signs_rs256_as_default_like_the_earlier_build(
     assert pyjwt.get_unverified_header(token) == {"alg": "RS256", "kid": "default", "typ": "JWT"}
     assert pyjwt.decode(token, public, algorithms=["RS256"], audience=settings.jwt_audience)
     assert verify_token(token).subject == "s"
-    assert keyring.public_keys()["default"] == public
+    assert keyring.public_keys() == {"default": public}
+    assert keyring.status()["signing_kid"] == "default"
     # A retired `default` takes the PEM root with it.
     _load([{**_row("default", at=_now()), "sealed_key": "", "retired": True}])
     with pytest.raises(keyring.NoSigningKey):
@@ -611,9 +562,8 @@ def test_a_retire_cancelled_by_its_lost_claim_is_a_message(
 def test_a_gateway_entry_of_the_roots_own_key_dies_with_the_retire(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An earlier RS256 build verified its own tokens through the gateway map: a
-    `default` entry holding the PEM root's public key must not keep them alive
-    once `default` is retired."""
+    """A gateway map's `default` entry holding the PEM root's public key must
+    not keep the root's tokens alive once `default` is retired."""
     import json
 
     root_pem, root_public = _rsa()
@@ -634,18 +584,17 @@ def test_a_gateway_entry_of_the_roots_own_key_dies_with_the_retire(
         verify_token(token)
 
 
-def test_retiring_the_imported_root_key_stops_its_default_tokens_in_the_gateway_map(
+def test_a_retired_key_stops_its_default_tokens_in_the_gateway_map(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The upgrade imports the old PEM as `default-rs256` and keeps the gateway
-    map that verified its `default` tokens; retiring `default-rs256` must stop
-    them under that map's `default` too."""
+    """A gateway map that verifies `default` tokens with a key this deployment
+    retired stops them too."""
     import json
 
     old_pem, old_public = _rsa()
     monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps({"default": old_public}))
     retired = {
-        **_row(keyring.ROOT_RS256_KID, at=_now() - timedelta(days=1), retired=True),
+        **_row("k0", at=_now() - timedelta(days=1), retired=True),
         "algorithm": "RS256",
         "public_pem": old_public,
     }
@@ -678,7 +627,7 @@ def test_a_retired_key_stays_retired_in_any_pem_layout_of_the_gateway_map(
         listed = layout(old_public)
     monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps({"default": listed}))
     retired = {
-        **_row(keyring.ROOT_RS256_KID, at=_now() - timedelta(days=1), retired=True),
+        **_row("k0", at=_now() - timedelta(days=1), retired=True),
         "algorithm": "RS256",
         "public_pem": old_public,
     }

@@ -110,9 +110,8 @@ async def _live_chunks(
     """The key's live memory.set chunks that belong to `user_id`: a primary-key
     read under FINAL so a chunk already tombstoned by an earlier write is not
     tombstoned twice. Every user holding the key shares its chunk session, so
-    the read keeps to the writer's own chunks and the legacy ones stamped '-'
-    (written before chunks carried a user; they may be the writer's) — never
-    another user's."""
+    the read keeps to the writer's own chunks and those stamped '-' (no user;
+    they may be the writer's) — never another user's."""
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT {", ".join(_CHUNK_COLUMNS)}, created_at
@@ -149,8 +148,8 @@ async def tombstone_set_chunks(
     now: datetime | None = None,
     strong: bool = False,
 ) -> int:
-    """Tombstone `user_id`'s live memory.set chunks of the key (and the legacy
-    '-' ones) except those in `keep` (`(chunk_index, content_sha256)` pairs the
+    """Tombstone `user_id`'s live memory.set chunks of the key (and the '-'
+    ones) except those in `keep` (`(chunk_index, content_sha256)` pairs the
     caller is about to re-insert live), or only those in `only` when given. `strong`
     reads them with sequential consistency. Each tombstone is a replacing row
     (`_tombstone_row`). Returns the number of tombstones written."""
@@ -285,26 +284,6 @@ def plan_set_chunks(
     if len(text) <= limit:
         return [], 0
     return chunk_text_with_truncation(text, max_chunks=_max_chunks())
-
-
-async def set_chunks_current(
-    ch: Any,
-    *,
-    org: str,
-    namespace: str,
-    memory_key: str,
-    chunks: list[tuple[str, int, int]],
-    user_id: str = "-",
-) -> bool:
-    """True when `user_id`'s live memory.set chunks of the key are exactly
-    `chunks` (same index, same content hash): a rewrite would re-embed them for
-    nothing."""
-    live = await _live_chunks(
-        ch, org=org, namespace=namespace, memory_key=memory_key, user_id=user_id
-    )
-    have = {(int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256"))) for r in live}
-    want = {(i, _chunk_sha(c)) for i, (c, _, _) in enumerate(chunks)}
-    return bool(want) and have == want
 
 
 def _chunk_sha(chunk: str) -> str:

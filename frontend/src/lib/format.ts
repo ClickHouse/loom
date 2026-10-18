@@ -198,8 +198,8 @@ const LOST_CONNECTION =
 
 /** One readable line for any thrown value. An `ApiError` maps by server code, then by
  *  HTTP status, then falls back to the server's message — the raw response body never
- *  reaches the screen. Legacy `CODE: detail` strings and bare network errors keep their
- *  mapping; any other value is shown as `String(err)`. */
+ *  reaches the screen. Plain `CODE: detail` strings and bare network errors map too; any
+ *  other value is shown as `String(err)`. */
 export function humanizeError(err: unknown): string {
   if (!err) return "Unknown error";
   if (err instanceof ApiError) return humanizeApiError(err);

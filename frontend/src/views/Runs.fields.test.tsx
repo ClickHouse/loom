@@ -73,6 +73,8 @@ const FULL: RunRow = {
   memories_used: ["a", "b"],
   memories_written: ["c"],
   metadata: {},
+  budget_usd: 0,
+  budget_seconds: 0,
 };
 
 describe("Runs: the projected field list covers what the row reads", () => {
@@ -124,6 +126,9 @@ describe("Runs: the projected field list covers what the row reads", () => {
         observations: 0,
         turns: 0,
         cost_usd: 0,
+        unpriced_turns: 0,
+        elapsed_seconds: 0,
+        over_budget: [],
       } as never);
       render(<Runs />);
       await userEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
@@ -144,6 +149,9 @@ describe("Runs: the projected field list covers what the row reads", () => {
         observations: 0,
         turns: 0,
         cost_usd: 0,
+        unpriced_turns: 0,
+        elapsed_seconds: 0,
+        over_budget: [],
       });
       vi.mocked(getRun)
         .mockResolvedValueOnce(answer({ ...FULL, user_request: "the first request" }) as never)

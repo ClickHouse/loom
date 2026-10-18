@@ -61,6 +61,8 @@ const row = (over: Partial<RunRow> = {}): RunRow => ({
   memories_used: [],
   memories_written: [],
   metadata: { work_type: "ISSUE_TRIAGE" },
+  budget_usd: 0,
+  budget_seconds: 0,
   ...over,
 });
 const full = row({
@@ -82,6 +84,9 @@ const detail = (over: Partial<RunGetResponse> = {}): RunGetResponse => ({
   observations: 0,
   turns: 0,
   cost_usd: 0,
+  unpriced_turns: 0,
+  elapsed_seconds: 0,
+  over_budget: [],
   ...over,
 });
 

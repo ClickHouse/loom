@@ -364,22 +364,11 @@ async def idle_session_runs(ch: Any, *, idle_seconds: int, limit: int) -> list[R
         WITH candidates AS (
             SELECT run_id FROM loom.agent_runs
             WHERE status = 'active' AND environment = 'mcp'
-              AND (
-                  -- Only the transport writes this shape (run.begin remaps it).
-                  match(run_id, '^mcp-[0-9a-f]{40}$')
-                  -- An earlier server's `mcp-<session id>`, which records no subject.
-                  -- Its session id was the client's, so it has no tighter shape: a
-                  -- hand-begun run copying all of this metadata is closed like one.
-                  -- Drop this clause once runs begun before this release have closed.
-                  OR (
-                      startsWith(run_id, 'mcp-')
-                      AND JSONExtractString(metadata, 'transport') = 'mcp'
-                      AND NOT JSONHas(metadata, 'subject')
-                  )
-              )
+              -- Only the transport writes this shape (run.begin remaps it).
+              AND match(run_id, '^mcp-[0-9a-f]{40}$')
         ),
-        -- Calls by run and token; a run that records no subject (an earlier
-        -- server's, or no auth) stays busy while any call reaches it.
+        -- Calls by run and token; a run that records no subject (no auth) stays
+        -- busy while any call reaches it.
         recent AS (
             SELECT org, run_id, subject FROM loom.agent_events
             WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates

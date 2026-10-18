@@ -49,6 +49,8 @@ const run = (i: number, over: Partial<RunRow> = {}): RunRow => ({
   memories_used: ["a"],
   memories_written: [],
   metadata: {},
+  budget_usd: 0,
+  budget_seconds: 0,
   ...over,
 });
 

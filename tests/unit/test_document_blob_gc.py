@@ -77,22 +77,3 @@ def test_the_sweep_runs_on_its_own_switch_and_cadence(monkeypatch: pytest.Monkey
     monkeypatch.setattr(settings, "document_blob_gc_enabled", False)
     assert registry.worker_meta()["document_blob_gc"]["enabled"] is False
     assert "document_blob_gc" not in {s.name for s in registry.enabled_workers()}
-
-
-def test_a_legacy_path_names_the_original_it_ends_in() -> None:
-    """A row an edit wrote back with its old blob directory path still names the
-    original the import stored under that sha: the sweep must not delete it."""
-    import asyncio
-
-    from server.knowledge.store import documents
-
-    seen: list[str] = []
-
-    class _CH:
-        async def query_all(self, sql: str, params: Any = None) -> list[Any]:
-            seen.append(sql)
-            return []
-
-    asyncio.run(blobs.unreferenced("o", "ns", 60, 10, ch=_CH()))
-    assert f"SELECT {documents.ORIGINAL_SHA_SQL} FROM loom.documents" in seen[0]
-    assert documents.original_sha("o/ns/ab/" + "a" * 64) == documents.original_sha("a" * 64)

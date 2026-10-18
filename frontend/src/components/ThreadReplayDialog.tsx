@@ -22,12 +22,11 @@ import { CopyButton } from "./CopyButton";
 import { SessionBriefPanel } from "./SessionBriefPanel";
 import { ScopeBadge } from "./ScopeBadge";
 
-/** The thread a replay shows: its id and namespace, the agent its opener named (for a
- *  replica of the previous release) and the search hit it was opened from, if any. */
+/** The thread a replay shows: its id and namespace, and the search hit it was opened
+ *  from, if any. */
 export interface ReplayThread {
   thread_id: string;
   namespace: string;
-  knownAgent?: string;
   hit?: ConversationHit;
   /** The name its opener shows (`threadTitle`), until the thread's own detail lands. */
   knownTitle?: string;
@@ -204,7 +203,7 @@ export function ThreadReplayDialog({
     const ctl = new AbortController();
     threadReads.current = ctl;
     const { signal } = ctl;
-    const { thread_id, namespace, knownAgent, hit } = thread;
+    const { thread_id, namespace, hit } = thread;
     setHighlight(hit ? { msgId: hit.msg_id, excerpt: hit.content_excerpt } : null);
     setThreadLoading(true);
     // What durable memories did this conversation produce? (provenance link)
@@ -224,14 +223,10 @@ export function ThreadReplayDialog({
     (async () => {
       try {
         // Every read asks for "*", every agent's turns, however the thread was opened.
-        const read = (agent: string) =>
-          getConversationThread({ org: identity.org, namespace }, agent, thread_id, { limit: 200, signal });
-        let d = await read("*");
-        // A replica of the previous release reads "*" as a literal agent; the thread
-        // list's agent still opens the thread there. Drop with the next release.
-        if (!d.found && knownAgent && !signal.aborted) {
-          d = await read(knownAgent);
-        }
+        const d = await getConversationThread({ org: identity.org, namespace }, "*", thread_id, {
+          limit: 200,
+          signal,
+        });
         if (signal.aborted) return;
         setThreadDetail(d);
         // More turns follow: conversation.list pages on from the cursor get issued.
@@ -281,20 +276,14 @@ export function ThreadReplayDialog({
     const reads = threadReads.current;
     if (!reads || !thread || !threadDetail || !moreCursor || loadingMore) return;
     const { signal } = reads;
-    const { thread_id, namespace, knownAgent } = thread;
+    const { thread_id, namespace } = thread;
     setLoadingMore(true);
     try {
-      const page = (as: string) =>
-        listConversationMessages({ org: identity.org, namespace }, as, thread_id, {
-          cursor: moreCursor,
-          limit: 200,
-          signal,
-        });
-      let r = await page("*");
-      // A replica of the previous release answers "*" with no rows; the opener's agent
-      // still pages there. Drop with the next release.
-      const fellBack = r.rows.length === 0 && !!knownAgent && !signal.aborted;
-      if (fellBack && knownAgent) r = await page(knownAgent);
+      const r = await listConversationMessages({ org: identity.org, namespace }, "*", thread_id, {
+        cursor: moreCursor,
+        limit: 200,
+        signal,
+      });
       if (signal.aborted) return;
       // Merge into the detail as it is now, and only if it is still this thread's. New
       // rows append (server returns chronological order; we render in-place).
@@ -302,9 +291,7 @@ export function ThreadReplayDialog({
         if (!prev || prev.thread_id !== thread_id) return prev;
         return { ...prev, messages: [...prev.messages, ...r.rows] };
       });
-      // A fallback page is one agent's: its cursor would resume every agent's walk past the
-      // others' turns, so paging stops there and the dialog says how much it shows.
-      const next = fellBack ? null : r.next_cursor;
+      const next = r.next_cursor;
       setMoreCursor(next);
       // The last page removes Load more; its focus moves to the transcript, at the first
       // turn the page brought, if any.
@@ -382,10 +369,7 @@ export function ThreadReplayDialog({
           <ListState kind="error" things="the thread" error={loadError} onRetry={() => setRetries((n) => n + 1)} />
         )}
         {!threadLoading && threadDetail && !threadDetail.found && (
-          <div className="text-center text-sm text-text-muted py-12">
-            {/* The upgrade clause goes with the previous-release fallback above. */}
-            Thread not found. It may have been deleted, or a server is being upgraded: try again shortly.
-          </div>
+          <div className="text-center text-sm text-text-muted py-12">Thread not found. It may have been deleted.</div>
         )}
         {!threadLoading && threadDetail && threadDetail.found && threadDetail.messages.length === 0 && (
           <div className="text-center text-sm text-text-muted py-12">Thread exists but contains no messages.</div>
@@ -429,12 +413,6 @@ export function ThreadReplayDialog({
                   {`Load more (${threadDetail.msg_count - threadDetail.messages.length} remaining)`}
                 </BusyButton>
               </div>
-            )}
-            {/* No cursor though turns remain: a replica of the previous release read it. */}
-            {!moreCursor && threadDetail.msg_count > threadDetail.messages.length && (
-              <p className="pt-3 text-center text-xs text-text-muted">
-                {`Showing ${threadDetail.messages.length} of ${threadDetail.msg_count} messages.`}
-              </p>
             )}
           </section>
         )}

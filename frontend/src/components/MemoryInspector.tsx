@@ -852,12 +852,8 @@ export function MemoryInspector({
                     <ProvenanceSection
                       provenance={provenance}
                       onInspect={openMemory}
-                      onOpenThread={(threadId, agent) =>
-                        setSourceThread({
-                          thread_id: threadId,
-                          namespace: identity.namespace,
-                          knownAgent: agent || undefined,
-                        })
+                      onOpenThread={(threadId) =>
+                        setSourceThread({ thread_id: threadId, namespace: identity.namespace })
                       }
                       embedded
                     />
@@ -1118,9 +1114,9 @@ export function MemoryInspector({
                   onClick={(e: React.MouseEvent) => {
                     if (isModifiedClick(e)) return;
                     e.preventDefault();
-                    const { thread_id, knownAgent } = sourceThread;
+                    const { thread_id } = sourceThread;
                     setSourceThread(null);
-                    openConversationThread(thread_id, knownAgent ?? "");
+                    openConversationThread(thread_id);
                   }}
                 >
                   Open in Conversations
@@ -1169,7 +1165,7 @@ function ProvenanceSection({
 }: {
   provenance: MemoryProvenance | null;
   onInspect: (key: string) => void;
-  onOpenThread: (threadId: string, agent: string) => void;
+  onOpenThread: (threadId: string) => void;
   /** Inside a Disclosure: the heading is the disclosure's. */
   embedded?: boolean;
 }) {
@@ -1201,7 +1197,7 @@ function ProvenanceSection({
                     component="button"
                     type="button"
                     size="sm"
-                    onClick={() => onOpenThread(p.thread_id, p.agent)}
+                    onClick={() => onOpenThread(p.thread_id)}
                     className="break-all text-left"
                   >
                     {p.thread_title || "View source conversation"}

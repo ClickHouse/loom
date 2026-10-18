@@ -152,7 +152,7 @@ class Retrieval:
     kinds: list[str] = field(default_factory=list)
     latency_ms: float = 0.0
     # The served route and the PR numbers of the history
-    # section (empty when the intent did not fire or the server predates it)
+    # section (empty when the intent did not fire)
     route: str = ""
     history_prs: list[int] = field(default_factory=list)
     # Index revision the answer was served from (code.search `as_of.commit`) and

@@ -1055,7 +1055,7 @@ def judged_write(
     """(skip, version) for `write_versions_by_ids` landing a deferred verdict on the
     write it judged: a row of other content is left alone, and the new version is
     the read's + 1, so a revision committed after the read stays the newest row.
-    No-ops without `sha` (an inline verdict, or a row from before 038)."""
+    No-ops without `sha` (an inline verdict, or a row stored without one)."""
     if not sha:
         return None, lambda _row: {}
     return (

@@ -80,15 +80,6 @@ async def knowledge_download(
         # An upload through another replica may not have reached this one yet.
         with sequential_reads():
             response = await _original_response(org, namespace, doc, inline=inline)
-    if response is None and documents_repo.is_legacy_blob_path(doc.blob_path):
-        raise HTTPException(
-            status_code=410,
-            detail={
-                "code": "BLOB_GONE",
-                "message": "this original is still a file of the old blob directory; "
-                "run `loom blobs import` on the host that holds it",
-            },
-        )
     if response is None:
         raise HTTPException(
             status_code=410,
@@ -111,7 +102,7 @@ async def _original_response(
     """The answer carrying `doc`'s original, or None when no row holds it."""
     from server.knowledge.store import blobs
 
-    sha = documents_repo.original_sha(doc.blob_path)
+    sha = doc.blob_path
     size = await blobs.size(org, namespace, sha)
     if size is None:
         return None

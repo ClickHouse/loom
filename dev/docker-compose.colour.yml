@@ -11,7 +11,7 @@
 #     docker compose -p loom-green --env-file .env -f dev/docker-compose.colour.yml up -d --build
 #
 # `redeploy.sh` does this. Two projects (`loom-blue`, `loom-green`) share
-# `.env`, the blob volume, the code mirrors, and one `loom-shared` volume that
+# `.env`, the code mirrors, and one `loom-shared` volume that
 # carries the rate-limit table (keyed by path so both colours draw from one
 # cap during the overlap). The supervisor lease lives in ClickHouse: the new
 # colour takes it when the old one exits. Volumes are named explicitly so
@@ -63,7 +63,6 @@ x-colour-common: &colour-common
   networks:
     - loom-net
   volumes:
-    - loom-blob-data:/app/var/blobs
     - loom-shared:/app/var/shared
     # Code-plane git mirrors (bare clones); see docker-compose.cloud.yml.
     - ../var/code_repos:/app/var/code_repos
@@ -100,7 +99,6 @@ services:
     # the healthcheck, /v1/health for `docker exec loom-<colour>-workers ... ?include=workers`.
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
-      LOOM_BLOB_DIR: /app/var/blobs
       # This stack ships the sandbox profiles: refuse repository jobs rather
       # than run them unsandboxed if the sandbox cannot run.
       LOOM_CODE_SANDBOX_REQUIRED: "true"
@@ -128,7 +126,6 @@ services:
     # and fd headroom are both in the common block.
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
-      LOOM_BLOB_DIR: /app/var/blobs
       # This stack ships the sandbox profiles: refuse repository jobs rather
       # than run them unsandboxed if the sandbox cannot run.
       LOOM_CODE_SANDBOX_REQUIRED: "true"
@@ -159,7 +156,5 @@ networks:
     name: loom-net
 
 volumes:
-  loom-blob-data:
-    name: loom-blob-data
   loom-shared:
     name: loom-shared

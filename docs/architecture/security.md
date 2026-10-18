@@ -38,11 +38,11 @@ are in [tokens and grants](../guides/tokens-and-grants.md).
 - The key is picked by the header's `kid` and `alg` (`server/auth/keyring.py`): a key in
   `loom.signing_keys`, the root secret (kid `default`, HS256), or a gateway's RS256 public
   key in `LOOM_JWT_PUBLIC_KEYS_JSON`. A missing `kid` means `default`; an RS256 token of
-  `default` verifies with the `default-rs256` key (imported, else a PEM RSA root secret,
-  which signs as `default`) and with the gateway map's `default`. A `kid`
-  with no key under the token's algorithm is refused, and so is a retired one, unless
-  the gateway map still lists it with a key this deployment never retired: a retire stops
-  Loom's keys under every kid, and a gateway kid verifies until it leaves the map.
+  `default` verifies with a PEM RSA root secret (which signs as `default`) and with the
+  gateway map's `default`. A `kid` with no key under the token's algorithm is refused,
+  and so is a retired one, unless the gateway map still lists it with a key this
+  deployment never retired: a retire stops Loom's keys under every kid, and a gateway
+  kid verifies until it leaves the map.
 - `iss` must be `LOOM_JWT_ISSUER` or in `LOOM_JWT_TRUSTED_ISSUERS`; `aud` must be
   `LOOM_JWT_AUDIENCE`. `iat`, `sub`, `iss` and `aud` are required. `exp` is enforced when
   present, with `LOOM_JWT_LEEWAY_SECONDS` (30) of skew.
@@ -329,8 +329,8 @@ nothing on the server, so only an authenticated callback, a device sign-in start
 adds a key. Sign-in starts are limited per address (an IPv6 /64 counts as one), and the
 table's key limit is the backstop: past it new sign-ins answer 503 and `/v1/health` reports
 `oauth_signin_state_full`. When Keeper fails mid-change, the change is undone before the
-client is told to retry, so its retry is not taken for a replay. A refresh token issued before
-sessions had a family is refused, so its owner signs in once more.
+client is told to retry, so its retry is not taken for a replay. A refresh token without a
+family is refused, so its owner signs in again.
 
 **The IdP round trip is bound to its browser.** What the callback needs (the nonce, the
 PKCE verifier, where to send the result) travels sealed in an HttpOnly cookie of the

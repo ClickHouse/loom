@@ -16,13 +16,12 @@ from server.insights.store import provider_participants as pp
 from server.settings import settings
 
 
-def _row(pid, transition=None, state="running", *, version=1, stale=60, expired=False):
+def _row(pid, transition=None, state="running", *, version=1, expired=False):
     return {
         "participant_id": pid,
         "transition_id": transition or UUID(int=0),
         "state": state,
         "version": version,
-        "stale_after_s": stale,
         "heartbeat_at": "2026-01-01 00:00:00",
         "expired": expired,
     }
@@ -57,7 +56,6 @@ async def test_active_request_prevents_ack(setup):
     record.assert_not_awaited()
     assert await barrier.acknowledge_drain(transition)
     assert record.call_args.args[1:] == (transition, "drained")
-    assert record.call_args.kwargs["stale_after_s"] == barrier.STALE_AFTER_S
 
 
 @pytest.mark.asyncio
@@ -118,14 +116,13 @@ async def test_an_expired_heartbeat_alone_never_lets_the_rebuild_through(setup, 
 
 
 @pytest.mark.asyncio
-async def test_unknown_query_census_or_a_row_without_heartbeats_never_expires(setup, monkeypatch):
-    identity, transition, _, record = setup
-    rows = [_row(identity, transition, "drained"), _row(uuid4(), stale=0)]
+async def test_an_unknown_query_census_never_counts_as_stopped(setup, monkeypatch):
+    identity, _, _, record = setup
+    quiet = uuid4()
+    rows = [_row(identity), _row(quiet, expired=True)]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
-    assert not await barrier.distributed_drain(transition)
-    rows[1] = _row(uuid4(), expired=True)
     monkeypatch.setattr(barrier, "running_queries", AsyncMock(return_value=None))
-    assert not await barrier.distributed_drain(transition)
+    assert await barrier.retire_participant(quiet) == "live"
     record.assert_not_awaited()
 
 
@@ -163,24 +160,17 @@ async def test_retirement_refuses_pending_writers(setup, monkeypatch):
 
 
 class _SyncCH:
-    """The heartbeat's sync client; `old_schema` is main's table, before 028."""
+    """The heartbeat's sync client."""
 
-    def __init__(self, *, seen=0, old_schema=False):
+    def __init__(self, *, seen=0):
         self.seen = seen
-        self.old_schema = old_schema
         self.inserts: list[tuple[list, list]] = []
 
     def query(self, sql, parameters=None, settings=None):
-        if sql == barrier.EXPIRY_COLUMN_SQL:
-            return SimpleNamespace(result_rows=[(0 if self.old_schema else 1,)])
         assert sql == pp.OWN_VERSION_SQL and settings["select_sequential_consistency"] == 1
         return SimpleNamespace(result_rows=[(self.seen,)])
 
     def insert(self, table, data, column_names, settings=None):
-        if self.old_schema and "stale_after_s" in column_names:
-            raise RuntimeError(
-                "Unrecognized column 'stale_after_s' in table _provider_participants"
-            )
         self.inserts.append((column_names, data[0]))
 
 
@@ -202,21 +192,6 @@ def test_a_heartbeat_carries_the_latest_state_above_any_version_seen(setup):
     }
     # An acknowledgement stamped after the beat outranks it.
     assert barrier._OWN.stamp(transition, "drained")[2] > row[3]
-
-
-@pytest.mark.asyncio
-async def test_enrolling_before_migrations_works_on_the_old_schema(setup, monkeypatch):
-    ch = _SyncCH(old_schema=True)
-    beat = barrier._Heartbeat(lambda: ch)
-    monkeypatch.setattr(barrier, "_HEARTBEAT", beat)
-    monkeypatch.setattr(barrier, "_registered", False)
-    await barrier.register_process()
-    beat.stop()
-    assert ch.inserts[-1][0] == ["participant_id", "transition_id", "state", "version"]
-    ch.old_schema = False  # the boot migration ran: the next beat carries the expiry
-    beat.ch = ch
-    beat.beat()
-    assert ch.inserts[-1][0][-2:] == ["stale_after_s", "host_proof"]
 
 
 @pytest.mark.asyncio
@@ -313,12 +288,11 @@ def test_loom_participant_retire_refuses_a_live_one(setup, monkeypatch, capsys):
 @pytest.mark.asyncio
 async def test_sweep_retires_nobody_and_lists_what_blocks(setup, monkeypatch):
     identity, _, _, record = setup
-    expired, busy, legacy, live = uuid4(), uuid4(), uuid4(), uuid4()
+    expired, busy, live = uuid4(), uuid4(), uuid4()
     rows = [
         _row(identity),
         _row(expired, expired=True, version=7),
         _row(busy, expired=True),
-        _row(legacy, stale=0),
         _row(live),
     ]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
@@ -331,7 +305,6 @@ async def test_sweep_retires_nobody_and_lists_what_blocks(setup, monkeypatch):
     assert [(p["participant_id"], p["reason"]) for p in barrier.stale_participants()] == [
         (str(expired), "heartbeat_expired"),
         (str(busy), "queries_running"),
-        (str(legacy), "no_heartbeat"),
     ]
     barrier.running_queries.reset_mock()
     await barrier.sweep_stopped(now=1000.0 + barrier.SWEEP_S / 2)
@@ -458,3 +431,29 @@ async def test_shutdown_retirement_never_outlives_its_budget(setup, monkeypatch,
     started = time.monotonic()
     assert not await barrier.retire_at_shutdown(object(), budget_s=0.05)
     assert time.monotonic() - started < 0.5
+
+
+@pytest.mark.asyncio
+async def test_a_live_row_expires_after_the_heartbeat_window_and_a_retired_one_at_once():
+    ch = SimpleNamespace(insert=AsyncMock())
+    await pp.record_participant(uuid4(), UUID(int=0), "running", ch=ch)
+    (row,) = ch.insert.call_args.args[1]
+    assert row["stale_after_s"] == pp.STALE_AFTER_S > barrier.HEARTBEAT_S
+    await pp.record_participant(uuid4(), UUID(int=0), "retired", ch=ch)
+    (row,) = ch.insert.call_args.args[1]
+    assert row["stale_after_s"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("columns", [0, 1])
+async def test_boot_enrolls_before_migrating_only_once_the_heartbeat_columns_exist(
+    monkeypatch, columns
+):
+    """A database whose migrations stopped before the heartbeat columns would
+    refuse the first heartbeat and fail the boot before it could migrate."""
+    register = AsyncMock()
+    monkeypatch.setattr(barrier, "register_process", register)
+    ch = SimpleNamespace(query_one=AsyncMock(return_value={"n": columns}))
+    await barrier.enroll_before_migrations(ch)
+    assert "host_proof" in ch.query_one.call_args.args[0]
+    assert register.await_count == columns

@@ -809,8 +809,8 @@ async def _gather_sections(st: _PackState) -> None:
     import asyncio
 
     input = st.input
-    # Best-effort assembly: one section failing (a missing table on an older
-    # deployment, a slow upstream) degrades that block to empty rather than
+    # Best-effort assembly: one section failing (a table a pending migration has
+    # not created yet, a slow upstream) degrades that block to empty rather than
     # 500-ing the whole pack. return_exceptions keeps the others' results.
     # gather() runs in _DEFAULT_SECTION_ORDER; zip the results back to it.
     _results = await asyncio.gather(

@@ -1213,8 +1213,6 @@ export interface CodeRepoAddInput {
   branch?: string;
   join_policy?: "open" | "approval";
   classification?: "standard" | "restricted";
-  /** Deprecated alias of access_token. */
-  github_token?: string;
   /** Token for a private HTTPS remote; stored encrypted, never returned. */
   access_token?: string;
   path_prefixes?: string[];
@@ -1251,8 +1249,6 @@ export interface CodeRepoRemoteBranchesInput {
   org: string;
   /** GitHub owner/name or an HTTPS/SSH Git URL. */
   repo: string;
-  /** Deprecated alias of access_token. */
-  github_token?: string;
   /** Token for a private HTTPS remote; used once. */
   access_token?: string;
   /** Case-insensitive substring of the branch name to match. */

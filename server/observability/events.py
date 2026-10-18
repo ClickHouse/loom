@@ -78,13 +78,13 @@ class AgentEvent:
     response_tokens: int = 0
     # The traffic class the request ran under — production |
     # interactive | bench — resolved from the token claim, the namespace row
-    # or the request's hint. Projected away on an older table.
+    # or the request's hint.
     traffic_class: str = ""
     # The verified token subject that made the call
     # (`sa:<client>-<hash>` for a service account, the login subject for a
     # person). `user_id` is the request body's field and `consumer` the
     # subject's class, so neither could answer "when was this token last
-    # used". Projected away on an older table.
+    # used".
     subject: str = ""
 
     def to_row(self) -> dict[str, Any]:

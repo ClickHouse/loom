@@ -113,7 +113,6 @@ export function Conversations() {
   const firstPageRef = useRef<Set<string>>(new Set());
   // Selected thread for the message-replay dialog. Click a thread
   // card OR a search-hit thread header → the dialog reads the full messages and shows them.
-  // `knownAgent`: the agent the opener named, for a replica of the previous release.
   const [openThread, setOpenThread] = useState<ReplayThread | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   // Bumped per search and per namespace switch: only the latest search writes hits.
@@ -285,15 +284,11 @@ export function Conversations() {
 
   // The open thread is the page's URL (`?thread=`): a reload or Back reopens it.
   const openThreadDialog = useCallback(
-    (
-      thread_id: string,
-      opts: { namespace?: string; hit?: ConversationHit; knownAgent?: string; knownTitle?: string } = {},
-    ) => {
+    (thread_id: string, opts: { namespace?: string; hit?: ConversationHit; knownTitle?: string } = {}) => {
       setViewParam("thread", thread_id);
       setOpenThread({
         thread_id,
         namespace: opts.namespace || identity.namespace,
-        knownAgent: opts.knownAgent,
         hit: opts.hit,
         knownTitle: opts.knownTitle,
       });
@@ -309,8 +304,7 @@ export function Conversations() {
   // Deep-link from a memory's "View source conversation" → open that thread.
   useEffect(() => {
     if (!pendingConversationThread) return;
-    const { threadId, agent } = pendingConversationThread;
-    void openThreadDialog(threadId, { knownAgent: agent || undefined });
+    void openThreadDialog(pendingConversationThread.threadId);
     clearPendingConversationThread();
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
 
@@ -391,9 +385,7 @@ export function Conversations() {
                 <button
                   type="button"
                   data-row-open=""
-                  onClick={() =>
-                    openThreadDialog(t.thread_id, { knownAgent: t.agent, knownTitle: title || UNTITLED_THREAD })
-                  }
+                  onClick={() => openThreadDialog(t.thread_id, { knownTitle: title || UNTITLED_THREAD })}
                   className="block w-full text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:content-['']"
                 >
                   {/* Line 1: the thread; right, when it was last active. */}
@@ -605,7 +597,6 @@ export function Conversations() {
                 onClick={() =>
                   openThreadDialog(g.thread_id, {
                     namespace: g.namespace,
-                    knownAgent: g.agent,
                     knownTitle: g.title || UNTITLED_THREAD,
                   })
                 }
@@ -634,7 +625,6 @@ export function Conversations() {
                       openThreadDialog(g.thread_id, {
                         namespace: g.namespace,
                         hit: h,
-                        knownAgent: g.agent,
                         knownTitle: g.title || UNTITLED_THREAD,
                       })
                     }

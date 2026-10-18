@@ -10,7 +10,16 @@ import { Runs } from "./Runs";
 // started · took. Grouped by session, each session is a heading over its runs.
 
 const listRunsPage = vi.fn<(id: unknown, opts?: RunListOptions) => Promise<RunListPage>>();
-const getRun = vi.fn(async () => ({ found: false, run: null, recalled: -1, recalled_keys: [], memories_written: [] }));
+const getRun = vi.fn(async () => ({
+  found: false,
+  run: null,
+  recalled: -1,
+  recalled_keys: [],
+  memories_written: [],
+  over_budget: [],
+  unpriced_turns: 0,
+  elapsed_seconds: 0,
+}));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
@@ -42,6 +51,8 @@ const run = (run_id: string, goal: string, session_id: string, over: Partial<Run
   memories_used: ["a"],
   memories_written: [],
   metadata: {},
+  budget_usd: 0,
+  budget_seconds: 0,
   ...over,
 });
 
