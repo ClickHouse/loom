@@ -741,6 +741,7 @@
 7a4cae66e431	SELECT count() AS n FROM loom.session_briefs WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 7a543640c602	ALTER TABLE loom.working_memory DELETE WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 7a7293a13239	SELECT d.source_uri AS source_uri, d.title AS title, d.description AS description, d.tags AS tags, d.ingested_at AS ingested_at, d.superseded_at AS superseded_at, d.blob_path AS blob_path, d.blob_size
+7a83d23405ce	SELECT toString(failure_id) AS failure_id, org, namespace, agent, projection, source_operation, source_resource_id, memory_keys, error_type, error_message, payload, status, created_at, resolved_at FRO
 7a8545148669	SELECT memory_key, memory_type, content_excerpt, valid_at, created_at, namespace, count() OVER () AS total_matching FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:Strin
 7a9d47bbc467	SELECT session_id, summary_text, key_facts, derived_from, valid_at, created_at, version FROM loom.session_summaries FINAL WHERE org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL OR
 7aad3247f4a7	SELECT count() AS n FROM loom.session_summaries FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
@@ -1428,7 +1429,6 @@ da16c635942f	SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {
 da513f62197d	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 da559eaff77f	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 daa35ab01384	SELECT count() AS n, countIf(embedding_dim > ?) AS embedded, countIf(NOT startsWith(embed_last_error, {unembedded:String})) AS embeddable FROM loom.code_chunks FINAL WHERE org = {org:String} AND names
-dab5b78799d1	SELECT toString(failure_id) AS failure_id, org, namespace, agent, projection, source_operation, source_resource_id, memory_keys, error_type, error_message, payload, status, created_at, resolved_at FRO
 dabe37717488	SELECT state_key, state_value, detail, updated_at FROM loom.code_index_state FINAL WHERE org = {org:String} AND namespace = {ns:String} ORDER BY state_key
 dad2058d8ba6	DELETE FROM loom.entity_vectors WHERE (org = {org:String} AND (user_id = {uid:String} OR (namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id
 dad4eb2b661d	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_

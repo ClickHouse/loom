@@ -15,6 +15,10 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
+# STATUS_MIRROR intents a pass replays, before and apart from the other failures: one per
+# judged retirement, nearly all no-ops, so a burst of them never delays a real failure.
+STATUS_MIRRORS_PER_PASS = 300
+
 
 @dataclass(frozen=True)
 class ProjectionRepairConfig:
@@ -47,7 +51,10 @@ async def run_pass(
         )
 
         failures = await scan_active_projection_failures(
-            limit=max(1, int(cfg.max_failures_per_pass)),
+            limit=STATUS_MIRRORS_PER_PASS, status_mirror=True
+        )
+        failures += await scan_active_projection_failures(
+            limit=max(1, int(cfg.max_failures_per_pass)), status_mirror=False
         )
         result.scanned = len(failures)
         for failure in failures:

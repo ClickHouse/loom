@@ -71,9 +71,9 @@ async def test_a_repair_pass_counts_each_outcome_and_survives_a_poison_row(
     ]
     limits: list[int] = []
 
-    async def _scan(*, limit: int, **_: Any) -> list[ProjectionFailureRow]:
+    async def _scan(*, limit: int, status_mirror: bool = False) -> list[ProjectionFailureRow]:
         limits.append(limit)
-        return rows
+        return [] if status_mirror else rows
 
     async def _retry(f: ProjectionFailureRow, **_: Any) -> ProjectionFailureRetryResult:
         if f.projection == "legacy_projection":
@@ -92,7 +92,7 @@ async def test_a_repair_pass_counts_each_outcome_and_survives_a_poison_row(
     result = await projection_repair.run_pass(
         projection_repair.ProjectionRepairConfig(max_failures_per_pass=0)
     )
-    assert limits == [1], "a zero cap still scans one row, never an unbounded batch"
+    assert limits[-1] == 1, "a zero cap still scans one row, never an unbounded batch"
     assert (result.scanned, result.retried, result.resolved, result.unsupported) == (4, 3, 2, 1)
     # The failing row is reported, bounded, and the row after it was still retried.
     (failed,) = result.failed
@@ -106,6 +106,33 @@ async def test_a_repair_pass_counts_each_outcome_and_survives_a_poison_row(
         "abandoned": 0,
         "failed": 1,
     }
+
+
+async def test_status_mirrors_queued_first_do_not_hold_back_a_real_failure(
+    monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.workers import projection_repair
+
+    queued = [_failure(i, pf.STATUS_MIRROR) for i in range(30)] + [_failure(99, "entity_edges")]
+
+    async def _scan(*, limit: int, status_mirror: bool | None = None) -> list[ProjectionFailureRow]:
+        if status_mirror is None:  # one scan of every kind
+            return queued[:limit]
+        return [f for f in queued if (f.projection == pf.STATUS_MIRROR) == status_mirror][:limit]
+
+    retried: list[str] = []
+
+    async def _retry(f: ProjectionFailureRow, **_: Any) -> ProjectionFailureRetryResult:
+        retried.append(f.projection)
+        return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
+
+    monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
+    monkeypatch.setattr(pf, "retry_projection_failure", _retry)
+    await projection_repair.run_pass(
+        projection_repair.ProjectionRepairConfig(max_failures_per_pass=25)
+    )
+    assert "entity_edges" in retried and retried.count(pf.STATUS_MIRROR) == 30
 
 
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(
