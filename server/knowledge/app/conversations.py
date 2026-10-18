@@ -333,7 +333,8 @@ async def handle_conversation_delete(
 
     Tombstone, not hard-delete: rows disappear from reader queries
     immediately because the read paths filter `tombstoned_at IS NULL`;
-    the retention TTL hard-deletes them later. For user/namespace-wide
+    the retention TTL on `loom.conversations`, when set, hard-deletes the
+    messages. For user/namespace-wide
     erasure use `erasure.request_user_id` / `erasure.request_namespace`.
     """
     from datetime import UTC

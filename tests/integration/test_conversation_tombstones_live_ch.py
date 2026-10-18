@@ -268,9 +268,9 @@ async def test_a_compaction_of_long_msg_ids_binds_them_in_slices(ch, scope) -> N
 
 
 @pytest.mark.asyncio
-async def test_a_delete_of_long_msg_ids_binds_them_in_slices(ch, scope) -> None:
-    """The same 300 live turns, deleted: the row-version list goes in byte-bounded
-    slices and every embedding is tombstoned."""
+async def test_a_delete_of_long_msg_ids_tombstones_every_turn(ch, scope) -> None:
+    """The same 300 live turns, deleted as a whole thread: every embedding is
+    tombstoned and counted."""
     await _long_turns(ch, scope)
     now = datetime.now(UTC).replace(tzinfo=None)
     out = await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=now, ch=ch)
