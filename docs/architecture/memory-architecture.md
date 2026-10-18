@@ -313,7 +313,10 @@ actions, verdicts and confidences, never the text.
 version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged. The
 resolver shares the namespace's daily cost cap with the other workers
 (`daily_cost_cap_usd`, else `LOOM_DEFAULT_DAILY_COST_CAP_USD`, $1): about 200 judged rows a
-day per namespace, so a large import needs that namespace's cap raised. A pass whose
+day per namespace, so a large import needs that namespace's cap raised. The cap is read
+before each call, and each call's cost is flushed before the next row starts, so a pass
+goes past the cap by at most the calls already in flight
+(`LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY`). A pass whose
 owed read comes back full reads the next batch at once, for up to five minutes, instead
 of waiting the interval.
 `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` resolves at load: off when `LOOM_LLM_PROVIDER` or

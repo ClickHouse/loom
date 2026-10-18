@@ -1849,3 +1849,84 @@ async def test_a_row_flagged_against_thousands_of_rows_is_still_judged(ch, wired
     out = await run_pass()
     assert out["errored"] == 0 and llm.calls == ["office_location"], out
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+
+
+async def test_the_resolver_stops_at_the_namespace_cap_within_one_round_in_flight(
+    ch, wired, monkeypatch
+) -> None:
+    """A namespace capped at $0.05 a day holds 30 owed rows, each judged by a call that
+    bills about $0.0106 (1,300 tokens in, 800 out on gpt-6.1-sol) and takes 0.5 s. The
+    cap is read from loom.agent_events as in production. The worker stops within one
+    round of calls in flight past the cap; the rest stay owed, and the next pass leaves
+    the namespace out of its read."""
+    from datetime import UTC, datetime
+
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+    from server.observability import cost_accumulator
+    from server.observability.events import get_emitter
+    from server.settings import settings
+
+    org, llm = wired
+    cap, rows_n, concurrency = 0.05, 30, int(settings.memory_conflict_resolver_concurrency)
+    per_call = cost_accumulator.llm_cost_usd("gpt-6.1-sol", 1300, 800)
+    scripted = llm.complete
+
+    async def billed(system: str, user: str, **kw: Any) -> Any:
+        await asyncio.sleep(0.5)
+        cost_accumulator.report_llm("gpt-6.1-sol", 1300, 800)
+        return await scripted(system, user, **kw)
+
+    monkeypatch.setattr(llm, "complete", billed)
+    now = datetime.now(UTC)
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "created_at": now,
+                "updated_at": now,
+                "active": True,
+                "daily_cost_cap_usd": cap,
+            }
+        ],
+    )
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        for i in range(rows_n):
+            await _set(org, f"s{i}", f"note_{i}", f"The user note number {i}")
+        await after_write.drain()
+    for i in range(rows_n):
+        await _place(ch, org, f"s{i}", f"note_{i}", _vec((40, 1.0), (41 + i % 5, 0.3)), owed=True)
+
+    async def spent() -> float:
+        await get_emitter().flush_now()
+        rows = await ch.query_all(
+            "SELECT toFloat64(sum(upstream_cost_usd)) AS usd, sum(llm_calls) AS calls"
+            " FROM loom.agent_events WHERE org = {org:String} AND namespace = {ns:String}"
+            " AND operation = 'worker.conflict_resolver'",
+            params={"org": org, "ns": NS},
+        )
+        return float(rows[0]["usd"] or 0.0)
+
+    await get_emitter().start()
+    try:
+        first = await run_pass()
+        after_first = await spent()
+        second = await run_pass()
+        after_second = await spent()
+    finally:
+        await get_emitter().flush_now()
+    marks = await _marks(ch, org)
+    owed = sum(1 for v in marks.values() if v == 1)
+    assert after_first >= cap, "the pass ran until the cap was crossed"
+    assert after_first <= cap + concurrency * per_call + 1e-9, "at most one round past the cap"
+    assert first["skipped_budget"] > 0 and owed > 0
+    assert after_second == after_first, "the next pass spends nothing"
+    assert second["capped_namespaces"] >= 1 and second["judged"] == 0

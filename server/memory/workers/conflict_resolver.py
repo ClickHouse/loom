@@ -88,6 +88,7 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
 async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
     from server.observability import cost_accumulator
     from server.observability.budget import namespace_over_cap
+    from server.observability.events import get_emitter
     from server.workers.cost_event import emit_worker_cost_event_for
 
     org, namespace = str(r["org"]), str(r["namespace"])
@@ -122,6 +123,8 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             emit_worker_cost_event_for(
                 org=org, namespace=namespace, operation=f"worker.{NAME}", started=started
             )
+            # The next row's cap read follows at once: the spend must be readable by then.
+            await get_emitter().flush_now()
 
 
 async def _resolve_all(p: _Pass, groups: dict[tuple[str, str], list[dict[str, Any]]]) -> None:
