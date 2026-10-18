@@ -326,8 +326,7 @@ async def test_list_with_chunk_counts_cursor_strips_tz_for_ch() -> None:
 
 @pytest.mark.asyncio
 async def test_list_with_chunk_counts_matches_tags_in_any_case() -> None:
-    """`tag:specs` finds a document tagged `Specs`: the tags always compare lowercased on
-    both sides, with the asked tags bound as typed."""
+    """The folded predicate, with the asked tags bound as typed."""
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
@@ -341,8 +340,7 @@ async def test_list_with_chunk_counts_matches_tags_in_any_case() -> None:
 
 @pytest.mark.asyncio
 async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
-    """The Library's stacked `tag:a tag:b` needs every tag, so the filter covers the whole
-    library rather than the documents loaded so far."""
+    """`tags_every=True` needs every tag: the folded predicate with `hasAll`."""
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(

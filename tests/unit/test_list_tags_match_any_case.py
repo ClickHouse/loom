@@ -114,8 +114,7 @@ async def test_the_hidden_under_prefix_count_matches_tags_as_the_total_does(
 
 @pytest.mark.asyncio
 async def test_the_store_requires_every_tag_when_asked() -> None:
-    """`folded_all`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
-    of them are found past the newest rows that hold any one."""
+    """`folded_all` (`tags_every=True`) needs every tag."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
@@ -244,3 +243,8 @@ def test_exact_any_renders_the_tags_as_typed() -> None:
     params: dict[str, Any] = {}
     assert tag_where(TagFilter(("API",), "exact_any"), params) == _EXACT
     assert params["tags"] == ["API"]
+
+
+def test_every_tag_empty_asks_for_no_tag_filter() -> None:
+    """An empty `hasAll` would match every row: empty tags never become a filter."""
+    assert list_tag_filter(["", ""], every=True) is None

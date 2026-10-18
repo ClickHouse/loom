@@ -1,5 +1,5 @@
 """Tag predicates: the any-case matches memory.list and knowledge.list share, and the exact
-match every other tag filter uses."""
+match memory.search's legs use."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class TagFilter:
     match: TagMatch
 
     def __post_init__(self) -> None:
-        # An absent filter is None; an empty tuple would match no row.
+        # An absent filter is None; an empty tuple would match no row (any) or every row (all).
         if not self.tags:
             raise ValueError("a TagFilter needs at least one tag")
 
