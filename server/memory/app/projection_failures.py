@@ -303,14 +303,6 @@ class _KeyBusy(Exception):
     """A row's key lock is held past the repair's short wait: retried next pass."""
 
 
-async def retry_projection_failure(
-    failure: ProjectionFailureRow, *, ch: Any | None = None
-) -> ProjectionFailureRetryResult:
-    """Retry one supported projection failure and resolve it on success."""
-    (out,) = await retry_failures([failure], ch=ch)
-    return out
-
-
 async def retry_failures(
     failures: list[ProjectionFailureRow], *, ch: Any | None = None
 ) -> list[ProjectionFailureRetryResult]:

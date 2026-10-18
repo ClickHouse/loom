@@ -380,12 +380,12 @@ async def test_the_repair_follows_the_pairs_a_write_left(monkeypatch) -> None:
         projection="triples_follow_rows",
         payload={"pairs": [[_uid(f"o{i}"), _uid(f"n{i}")] for i in range(70)]},
     )
-    out = await projection_failures.retry_projection_failure(failure, ch=object())
+    (out,) = await projection_failures.retry_failures([failure], ch=object())
     assert out.resolved and chunks == [("o", "ns", 64), ("o", "ns", 6)]
     # A chain even the repair cannot read (a cycle, or past its budget) never will be:
     # the failure is abandoned with its reason, neither resolved nor left to block the queue.
     unread["n"] = 1
-    out = await projection_failures.retry_projection_failure(failure, ch=object())
+    (out,) = await projection_failures.retry_failures([failure], ch=object())
     assert out.abandoned and not out.resolved
     assert out.reason == "unfollowable_chain: 2 pair(s)"  # one per chunk
     assert marked[-1] == "unfollowable_chain: 2 pair(s)"
@@ -1005,7 +1005,7 @@ async def test_a_reopen_that_fails_is_left_for_the_repair(monkeypatch) -> None:
         error_message="reopen",
         payload=payload,
     )
-    out = await projection_failures.retry_projection_failure(failure, ch=graph)
+    (out,) = await projection_failures.retry_failures([failure], ch=graph)
     assert (out.retried, out.resolved, resolved) == (True, True, [["f1"]])
     assert "london" in graph.objects()
 
@@ -1032,7 +1032,7 @@ async def test_a_reopen_no_retry_can_read_is_abandoned(monkeypatch) -> None:
         error_message="reopen",
         payload={"closes": [["user", "live_in", "london", "not a date"]]},
     )
-    out = await projection_failures.retry_projection_failure(failure, ch=_Graph([], set()))
+    (out,) = await projection_failures.retry_failures([failure], ch=_Graph([], set()))
     assert (out.resolved, abandoned) == (False, ["malformed_payload"])
 
 
@@ -1076,7 +1076,7 @@ async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
         payload={"memory_ids": ["m1"], "reopen": True, "content_sha256": {"m1": "0" * 64}}
         | payload,
     )
-    out = await projection_failures.retry_projection_failure(failure, ch=_Graph([], set()))
+    (out,) = await projection_failures.retry_failures([failure], ch=_Graph([], set()))
     assert (out.resolved, abandoned, called) == (False, ["malformed_payload"], [])
 
 
@@ -1114,7 +1114,7 @@ async def test_a_payload_no_retry_can_read_is_abandoned(monkeypatch, projection,
         error_message="late",
         payload=payload,
     )
-    out = await projection_failures.retry_projection_failure(failure, ch=_Graph([], set()))
+    (out,) = await projection_failures.retry_failures([failure], ch=_Graph([], set()))
     assert (out.resolved, out.error, abandoned) == (False, "", ["malformed_payload"])
 
 

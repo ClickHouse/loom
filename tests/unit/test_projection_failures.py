@@ -8,7 +8,7 @@ import pytest
 from server.memory.app.projection_failures import (
     ProjectionFailureRow,
     _session_from_source_resource_id,
-    retry_projection_failure,
+    retry_failures,
 )
 
 
@@ -24,20 +24,22 @@ def test_session_from_source_resource_id_parses_message_ingest_id() -> None:
     assert _session_from_source_resource_id("other") == "-"
 
 
-async def test_retry_projection_failure_reports_unsupported_projection() -> None:
-    result = await retry_projection_failure(
-        ProjectionFailureRow(
-            failure_id="f1",
-            org="o",
-            namespace="n",
-            agent="a",
-            projection="memory_evidence",
-            source_operation="memory.set_from_messages",
-            source_resource_id="memory.set_from_messages:s:r",
-            memory_keys=[],
-            error_type="RuntimeError",
-            error_message="boom",
-        ),
+async def test_a_retry_reports_an_unsupported_projection() -> None:
+    (result,) = await retry_failures(
+        [
+            ProjectionFailureRow(
+                failure_id="f1",
+                org="o",
+                namespace="n",
+                agent="a",
+                projection="memory_evidence",
+                source_operation="memory.set_from_messages",
+                source_resource_id="memory.set_from_messages:s:r",
+                memory_keys=[],
+                error_type="RuntimeError",
+                error_message="boom",
+            )
+        ],
         ch=object(),
     )
 
@@ -113,8 +115,8 @@ async def test_a_graph_replay_inserts_under_the_failures_dedup_token(projection,
     replay can run twice; the second insert carries the same token per table
     and ClickHouse drops it instead of counting the co-occurrence again."""
     ch = _GraphCH()
-    first = await retry_projection_failure(_graph_failure(projection), ch=ch)
-    second = await retry_projection_failure(_graph_failure(projection), ch=ch)
+    (first,) = await retry_failures([_graph_failure(projection)], ch=ch)
+    (second,) = await retry_failures([_graph_failure(projection)], ch=ch)
     assert first.resolved and second.resolved, (first, second)
     seen = [(t, s) for t, s in ch.inserts if t in tables]
     assert {t for t, _ in seen} == tables and len(seen) == 4
@@ -139,7 +141,7 @@ async def test_a_replay_writes_nothing_for_a_row_that_no_longer_holds_its_value(
     monkeypatch.setattr("server.embedding.get_embedder", lambda: object())
     ch = _GraphCH(held=False)
     failure = _graph_failure(projection)
-    result = await retry_projection_failure(failure, ch=ch)
+    (result,) = await retry_failures([failure], ch=ch)
     assert result.resolved and not result.abandoned
     assert not [t for t, _ in ch.inserts if t.startswith("loom.entity")]
     # Asked by the row and the version its entry wrote, as its triple links are keyed.
@@ -158,7 +160,7 @@ async def test_a_failure_recorded_before_results_named_their_row_replays_as_it_d
     ch = _GraphCH(held=False)
     failure = _graph_failure(projection)
     failure.payload["results"] = [{"memory_key": "k1", "version": 1}]
-    result = await retry_projection_failure(failure, ch=ch)
+    (result,) = await retry_failures([failure], ch=ch)
     assert result.resolved and not result.abandoned
     assert table in {t for t, _ in ch.inserts}
 
@@ -190,10 +192,10 @@ async def test_a_triples_replay_retires_only_within_the_writers_scope(monkeypatc
     failure = _graph_failure("entity_triples")
     scope = {"scope": "own_user", "user_id": "u1", "session_id": None}
     failure.payload[READ_SCOPE_KEY] = scope
-    assert (await retry_projection_failure(failure, ch=_GraphCH())).resolved
+    assert (await retry_failures([failure], ch=_GraphCH()))[0].resolved
     # Recorded before the scope rode the payload: the whole namespace, as then.
     del failure.payload[READ_SCOPE_KEY]
-    assert (await retry_projection_failure(failure, ch=_GraphCH())).resolved
+    assert (await retry_failures([failure], ch=_GraphCH()))[0].resolved
     assert seen == [ReadFilters(**scope), WHOLE_NAMESPACE]
     # A scope refused or incomplete is never replayed wider, nor retried again.
     for stored, reason in (
@@ -202,7 +204,7 @@ async def test_a_triples_replay_retires_only_within_the_writers_scope(monkeypatc
     ):
         failure.payload[READ_SCOPE_KEY] = stored
         ch = _GraphCH()
-        result = await retry_projection_failure(failure, ch=ch)
+        (result,) = await retry_failures([failure], ch=ch)
         assert result.abandoned and result.reason == reason
         assert any("status = 'abandoned'" in sql for sql in ch.executed)
     assert len(seen) == 2
@@ -239,7 +241,7 @@ async def test_a_retry_an_admin_runs_replays_under_the_writers_scope(monkeypatch
     set_current_auth(admin)
     bind_request_read_filters(admin, WHOLE_NAMESPACE)
     try:
-        assert (await retry_projection_failure(failure, ch=_GraphCH())).resolved
+        assert (await retry_failures([failure], ch=_GraphCH()))[0].resolved
     finally:
         set_current_auth(None)
         bind_request_read_filters(None, WHOLE_NAMESPACE)
@@ -252,7 +254,7 @@ async def test_only_a_triples_replay_reads_the_stored_scope() -> None:
 
     failure = _graph_failure("entity_edges")
     failure.payload[READ_SCOPE_KEY] = {"scope": "refused"}
-    assert (await retry_projection_failure(failure, ch=_GraphCH())).resolved
+    assert (await retry_failures([failure], ch=_GraphCH()))[0].resolved
 
 
 def _payload_under(scope: Any) -> dict[str, Any]:
@@ -326,7 +328,7 @@ async def test_a_failed_interval_repair_replays_only_the_repair(monkeypatch) -> 
     monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
     failure.payload.update(payload)
     ch = _OpenCH()
-    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    assert (await retry_failures([failure], ch=ch))[0].resolved
     assert not [t for t, _ in ch.inserts if t.startswith("loom.entity_triple")]
     # Dated at the write, not at the replay.
     assert repaired == [("alice", "bob", arrived.replace(microsecond=0), arrived, arrived)]
@@ -377,7 +379,7 @@ async def test_a_repair_replay_resolves_names_as_the_write_did(monkeypatch) -> N
         return []
 
     monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
-    assert (await retry_projection_failure(failure, ch=_OpenCH())).resolved
+    assert (await retry_failures([failure], ch=_OpenCH()))[0].resolved
     assert repaired == [("alice", "bob")]
 
 
@@ -427,7 +429,7 @@ async def test_a_replay_finishes_the_closes_the_failed_repair_made(monkeypatch) 
 
     monkeypatch.setattr(projections, "_repair_contradictory_triples", no_close)
     monkeypatch.setattr(projections, "_retire_memories_behind_repairs", retire_ok)
-    assert (await retry_projection_failure(failure, ch=_GraphCH())).resolved
+    assert (await retry_failures([failure], ch=_GraphCH()))[0].resolved
     assert closed == [made, made] and retired == [made]
 
 
@@ -473,7 +475,7 @@ async def test_the_closes_a_failed_replay_made_are_finished_by_the_next(monkeypa
     monkeypatch.setattr(projections, "_repair_contradictory_edges", edges)
     monkeypatch.setattr(projections, "_retire_memories_behind_repairs", retire)
     ch = _FailureRowCH(failure)
-    assert not (await retry_projection_failure(failure, ch=ch)).resolved
+    assert not (await retry_failures([failure], ch=ch))[0].resolved
     assert not any("status = 'resolved'" in sql for sql in ch.executed)
 
     async def no_close(input, triples, *, ch, at):
@@ -484,7 +486,7 @@ async def test_the_closes_a_failed_replay_made_are_finished_by_the_next(monkeypa
 
     monkeypatch.setattr(projections, "_repair_contradictory_triples", no_close)
     monkeypatch.setattr(projections, "_retire_memories_behind_repairs", retire_ok)
-    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    assert (await retry_failures([failure], ch=ch))[0].resolved
     assert retired == [made]
 
 
@@ -513,7 +515,7 @@ async def test_a_failed_replay_keeps_only_the_entries_it_wrote(monkeypatch) -> N
 
     monkeypatch.setattr(entity_projections, "versions_held", holding)
     monkeypatch.setattr(projections, "write_entity_triples", fails)
-    assert not (await retry_projection_failure(failure, ch=_FailureRowCH(failure))).resolved
+    assert not (await retry_failures([failure], ch=_FailureRowCH(failure)))[0].resolved
     payload = failure.payload
     assert [e["memory_key"] for e in payload["triples_landed_entries"]] == ["k1"]
     assert [r["memory_key"] for r in payload["triples_landed_results"]] == ["k1"]
@@ -540,7 +542,7 @@ async def test_a_failed_replay_that_closed_nothing_new_leaves_the_payload(monkey
     failure = _graph_failure("entity_triples")
     failure.payload.update(json.loads(json.dumps(repair_failure_payload(error))))
     ch = _FailureRowCH(failure)
-    assert not (await retry_projection_failure(failure, ch=ch)).resolved
+    assert not (await retry_failures([failure], ch=ch))[0].resolved
     assert not any("UPDATE payload" in sql for sql in ch.executed)
 
 
@@ -616,7 +618,7 @@ async def test_a_replayed_triples_insert_is_dated_at_the_write(monkeypatch) -> N
     monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
     monkeypatch.setattr(projections, "naive_utc_now", lambda: datetime(2026, 10, 16))
     failure.payload.update(payload)
-    assert (await retry_projection_failure(failure, ch=_Recording())).resolved
+    assert (await retry_failures([failure], ch=_Recording()))[0].resolved
     assert inserted == [("bob", arrived, arrived.replace(microsecond=0))]
     assert repaired == [arrived]
 
@@ -672,7 +674,7 @@ async def test_a_failed_triples_insert_replays_the_names_the_write_resolved(
     monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
     monkeypatch.setattr(projections, "resolve_projection_entity_map", resolve_as({"bob": "bobby"}))
     failure.payload.update(payload)
-    assert (await retry_projection_failure(failure, ch=_Recording())).resolved
+    assert (await retry_failures([failure], ch=_Recording()))[0].resolved
     assert objects == [resolved.get("bob", "bob")]
 
 
@@ -693,9 +695,8 @@ async def test_an_insert_failure_recorded_without_its_arrival_replays_as_it_did(
         return []
 
     monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
-    assert (
-        await retry_projection_failure(_graph_failure("entity_triples"), ch=_GraphCH())
-    ).resolved
+    (result,) = await retry_failures([_graph_failure("entity_triples")], ch=_GraphCH())
+    assert result.resolved
     assert repaired == [now]
 
 
@@ -734,7 +735,7 @@ async def test_a_follow_replay_first_finishes_a_fallbacks_recorded_repair(monkey
         error_message="boom",
         payload=payload,
     )
-    result = await retry_projection_failure(failure, ch=_GraphCH())
+    (result,) = await retry_failures([failure], ch=_GraphCH())
     assert result.resolved
     assert calls == [("finish", "r1", at, [paris]), ("follow", [("a", "b")])]
 
@@ -767,7 +768,7 @@ async def test_a_follow_replay_whose_fallback_fails_records_its_repair(monkeypat
         error_message="boom",
         payload={"pairs": [["a", "b"]]},
     )
-    assert not (await retry_projection_failure(failure, ch=_FailureRowCH(failure))).resolved
+    assert not (await retry_failures([failure], ch=_FailureRowCH(failure)))[0].resolved
     assert failure.payload[TRIPLES_RESTORE_ID] == "r1"
     assert _recorded_repairs(failure.payload) == [paris]
 
@@ -813,7 +814,7 @@ async def test_a_replay_whose_finish_of_a_recorded_repair_fails_records_its_clos
             TRIPLES_REPAIRS: [],
         },
     )
-    assert not (await retry_projection_failure(failure, ch=_FailureRowCH(failure))).resolved
+    assert not (await retry_failures([failure], ch=_FailureRowCH(failure)))[0].resolved
     assert failure.payload[TRIPLES_RESTORE_ID] == "r1"
     assert _recorded_repairs(failure.payload) == [paris]
 
@@ -859,7 +860,7 @@ async def test_a_late_edges_cleanup_replays_with_the_revisions_end(
     if payload_end:
         payload["ended_at"] = payload_end
     failure = dataclasses.replace(_graph_failure("entity_edges_close"), payload=payload)
-    assert (await retry_projection_failure(failure, ch=_GraphCH())).resolved
+    assert (await retry_failures([failure], ch=_GraphCH()))[0].resolved
     assert calls == [("o", "n", _ROW_ID, "a" * 64, ended_at)]
 
 

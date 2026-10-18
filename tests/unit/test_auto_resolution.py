@@ -945,7 +945,7 @@ async def test_the_reconcile_mirrors_each_rows_head(monkeypatch) -> None:
         resolved.extend(kw["failure_ids"])
 
     monkeypatch.setattr(projection_failures, "mark_projection_failures_resolved", mark)
-    out = await projection_failures.retry_projection_failure(failure, ch=object())
+    (out,) = await projection_failures.retry_failures([failure], ch=object())
     # Live: mirrored as live, at read + 1 (above a judged copy over the head's
     # version). Deleted since: its tombstone is mirrored at the head's version. Erased:
     # the erasure took its embeddings, nothing to mirror.
@@ -976,7 +976,7 @@ async def test_a_busy_key_leaves_the_reconcile_pending(monkeypatch) -> None:
         created_at=None,
     )
     async with kl.key_write_locks.hold("o", "n", "a", "u", "s", "m"):  # a settle holds it
-        out = await projection_failures.retry_projection_failure(failure, ch=object())
+        (out,) = await projection_failures.retry_failures([failure], ch=object())
     assert (out.retried, out.resolved, out.reason, out.error) == (False, False, "key busy", "")
 
 
@@ -1004,7 +1004,7 @@ async def test_a_failed_reconcile_mirror_leaves_the_failure_open(monkeypatch) ->
         projection="memory_status_mirror",
         created_at=None,
     )
-    out = await projection_failures.retry_projection_failure(failure, ch=object())
+    (out,) = await projection_failures.retry_failures([failure], ch=object())
     assert out.retried and not out.resolved and "embeddings insert" in out.error
 
 
@@ -1021,7 +1021,7 @@ async def test_a_fresh_status_mirror_waits_for_a_write_in_flight() -> None:
         projection="memory_status_mirror",
         created_at=naive_utc_now(),
     )
-    out = await projection_failures.retry_projection_failure(failure, ch=object())
+    (out,) = await projection_failures.retry_failures([failure], ch=object())
     assert not out.retried and out.reason == "pending"
 
 

@@ -18,7 +18,7 @@ from server.memory.app.projection_errors import (
     failed_projection,
     repair_failure_payload,
 )
-from server.memory.app.projection_failures import ProjectionFailureRow, retry_projection_failure
+from server.memory.app.projection_failures import ProjectionFailureRow, retry_failures
 
 _ROW_ID = "22222222-2222-2222-2222-222222222222"
 _AT = datetime(2026, 10, 1, 9)
@@ -100,7 +100,7 @@ async def test_a_repair_failure_replays_only_the_repair(monkeypatch) -> None:
 
     monkeypatch.setattr(projections, "_repair_contradictory_triples", _no_repair)
     ch = _CH()
-    result = await retry_projection_failure(_failure(TRIPLES_REPAIR, **_inserted_payload()), ch=ch)
+    (result,) = await retry_failures([_failure(TRIPLES_REPAIR, **_inserted_payload())], ch=ch)
     assert result.resolved, result
     assert ch.triple_inserts() == []
 
@@ -113,9 +113,7 @@ async def test_a_legacy_triples_failure_that_landed_still_replays_only_the_repai
 
     monkeypatch.setattr(projections, "_repair_contradictory_triples", _no_repair)
     ch = _CH()
-    result = await retry_projection_failure(
-        _failure("entity_triples", **_inserted_payload()), ch=ch
-    )
+    (result,) = await retry_failures([_failure("entity_triples", **_inserted_payload())], ch=ch)
     assert result.resolved, result
     assert ch.triple_inserts() == []
 
@@ -143,7 +141,7 @@ async def test_a_replay_that_inserted_records_it_in_the_failure_itself(monkeypat
     monkeypatch.setattr(projections, "_repair_contradictory_triples", failing_repair)
     ch = _PayloadCH()
     failure = _failure("entity_triples")
-    result = await retry_projection_failure(failure, ch=ch)
+    (result,) = await retry_failures([failure], ch=ch)
     assert not result.resolved and "TriplesRepairFailed" in result.error
     assert not [t for t, _ in ch.inserts if t == "loom.memory_projection_failures"]
     (payload,) = ch.payloads
@@ -158,7 +156,7 @@ async def test_a_replay_that_inserted_records_it_in_the_failure_itself(monkeypat
     landed.payload.clear()
     landed.payload.update(payload)
     ch = _CH()
-    assert (await retry_projection_failure(landed, ch=ch)).resolved
+    assert (await retry_failures([landed], ch=ch))[0].resolved
     assert ch.triple_inserts() == []
 
 
