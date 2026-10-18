@@ -97,11 +97,9 @@ export function Conversations() {
   // Threads come a page at a time, most recently active first, over the past year.
   const [threadPage, setThreadPage] = useState(0);
   const [threadsPaged, setThreadsPaged] = useState(true);
-  // Known only once a page past the end comes back empty: from the page shown before it,
-  // when that one was short, or was full and just before it.
+  // Known only once the page after the last full one comes back empty (without a total the
+  // pager goes no further than the next page).
   const [threadsTotal, setThreadsTotal] = useState<number | undefined>(undefined);
-  // The page whose threads are on screen, and how many it holds.
-  const shownPageRef = useRef<{ page: number; rows: number } | null>(null);
   const [seenAgents, setSeenAgents] = useState<string[]>([]);
   // The first page's threads: a later page that repeats them came from a build that ignores
   // `offset`, even if a thread moved to the top between the reads.
@@ -144,7 +142,6 @@ export function Conversations() {
     setSeenAgents([]);
     setThreadsPaged(true);
     setThreadsTotal(undefined);
-    shownPageRef.current = null;
     setAgentFilter("*");
     setLoggingEnabled(null);
   }, [identity.org, identity.namespace]);
@@ -174,17 +171,11 @@ export function Conversations() {
             setThreadPage(0);
             return;
           } else if (rows.length === 0) {
-            // Past the end (Next after a full page, or a page typed in): go back to the page
-            // shown before, and count the threads when that page says how many there are.
-            const last = shownPageRef.current;
-            if (last && last.page < threadPage) {
-              if (last.rows < THREADS_PAGE) setThreadsTotal(last.page * THREADS_PAGE + last.rows);
-              else if (last.page === threadPage - 1) setThreadsTotal(threadPage * THREADS_PAGE);
-              setThreadPage(last.page);
-            } else setThreadPage(0);
+            // The page before was full and this one is empty: that is how many threads there
+            // are, and the pager steps back to the last page.
+            setThreadsTotal(threadPage * THREADS_PAGE);
             return;
           }
-          shownPageRef.current = { page: threadPage, rows: rows.length };
           setThreads(rows);
           setSeenAgents((prev) => Array.from(new Set([...prev, ...rows.map((t) => t.agent)])).sort());
         })
@@ -341,7 +332,6 @@ export function Conversations() {
         onSelect={(value) => {
           setAgentFilter(value);
           setThreadsTotal(undefined);
-          shownPageRef.current = null;
           setThreadPage(0);
         }}
         triggerProps={{ "aria-label": "Agent" }}

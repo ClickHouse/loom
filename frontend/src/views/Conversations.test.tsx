@@ -479,7 +479,7 @@ describe("Conversations: thread pages", () => {
     expect(screen.getByText("Thread 0")).toBeInTheDocument();
   });
 
-  it("a page typed past the end goes back to the page shown and counts its threads", async () => {
+  it("a page typed past a short last page goes nowhere and reads nothing", async () => {
     listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => {
       const from = opts.offset ?? 0;
       return { threads: from === 0 ? page(0, 30) : from === 30 ? page(30, 15) : [] };
@@ -490,22 +490,14 @@ describe("Conversations: thread pages", () => {
       within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
     );
     expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    const calls = listConversationThreads.mock.calls.length;
     const field = within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("spinbutton", {
       name: "Page",
     });
     fireEvent.change(field, { target: { value: "6" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    await waitFor(() =>
-      expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent("31–45 of 45"),
-    );
+    expect(listConversationThreads).toHaveBeenCalledTimes(calls);
     expect(screen.getByText("Thread 30")).toBeInTheDocument();
-    // The page it lands on is announced, not the page typed.
-    expect(within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("status")).toHaveTextContent(
-      "Page 2 of 2",
-    );
-    // One read past the end, not one per page stepped back.
-    const offsets = listConversationThreads.mock.calls.map((c) => (c[1] as { offset?: number }).offset ?? 0);
-    expect(offsets.filter((o) => o > 30)).toEqual([150]);
   });
 
   it("with an exact multiple of 30 threads, the empty page after the last goes back to it", async () => {
@@ -528,6 +520,10 @@ describe("Conversations: thread pages", () => {
     );
     expect(screen.getByText("Thread 30")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent("31–60 of 60");
+    // The page it steps back to is announced, not the empty page asked for.
+    expect(within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("status")).toHaveTextContent(
+      "Page 2 of 2",
+    );
     expect(screen.queryByText("No conversations yet in this namespace")).toBeNull();
   });
 });

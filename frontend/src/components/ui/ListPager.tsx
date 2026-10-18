@@ -67,8 +67,8 @@ export function ListPager({
   topId,
 }: ListPagerProps) {
   const [said, setSaid] = useState("");
-  // The page the reader asked for: when the view sends them back from it to the last page
-  // (a typed page past the end), the page they land on is announced instead.
+  // The page the status speaks of: when the view moves the list elsewhere (a filter takes it
+  // to its first page), the status is cleared rather than left naming a page not on screen.
   const saidPage = useRef<number | null>(null);
   // The page being typed into the field: Click UI reports every keystroke as a page, so the
   // pager goes there only on Enter or when the field loses focus.
@@ -95,24 +95,21 @@ export function ListPager({
   const counted = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : undefined;
   const cut = counted !== undefined && reachable !== undefined && counted > reachable;
   const pages = cut ? reachable : counted;
-  // A page past the end (its last rows deleted) steps back to the last one.
+  // A page past the end (its last rows deleted, or Next onto an empty page) steps back to
+  // the last one, and says so.
   const pastEnd = pages !== undefined && page > pages - 1;
   useEffect(() => {
-    if (pastEnd && pages !== undefined) onPage(pages - 1);
+    if (!pastEnd || pages === undefined) return;
+    saidPage.current = pages - 1;
+    setSaid(`Page ${pages} of ${pages}`);
+    onPage(pages - 1);
   }, [pastEnd, pages, onPage]);
   useEffect(() => {
-    const asked = saidPage.current;
-    if (asked === null) return;
-    if (page === asked) {
-      // The page asked for is there: nothing will send the reader back from it.
-      if (pages !== undefined && page <= pages - 1) saidPage.current = null;
-      return;
-    }
+    // A page past the end is stepping back, and says so itself.
+    if (pastEnd || saidPage.current === null || saidPage.current === page) return;
     saidPage.current = null;
-    // A filter, a search or a sort also moves the page (to the first): only a move back to
-    // the last page is the view's answer to the page asked for.
-    if (pages !== undefined && page < asked && page === pages - 1) setSaid(`Page ${page + 1} of ${pages}`);
-  }, [page, pages]);
+    setSaid("");
+  }, [page, pastEnd]);
   const lastKnown =
     pages !== undefined ? page >= pages - 1 : shown < pageSize || (reachable !== undefined && page >= reachable - 1);
   // With a page size picked, the choice stays reachable while the list is longer than the
@@ -123,12 +120,18 @@ export function ListPager({
   const end = page * pageSize + shown;
   const span = shown === 0 ? `${start.toLocaleString()}` : `${start.toLocaleString()}–${end.toLocaleString()}`;
   const counts = total === undefined ? span : `${span} of ${capped ? "the newest " : ""}${total.toLocaleString()}`;
+  // Where the server's offset limit stops the pages: with a total, once it cuts them; without
+  // one, on the last page it can serve.
+  const stopped = cut || (total === undefined && reachable !== undefined && page >= reachable - 1);
   const range =
-    cut && reachable !== undefined ? `${counts} · pages 1–${reachable.toLocaleString()} can be opened` : counts;
+    stopped && reachable !== undefined ? `${counts} · pages 1–${reachable.toLocaleString()} can be opened` : counts;
 
   const go = (typed: number, { focusList }: { focusList: boolean }) => {
     setDraft(null);
-    const n = reachable !== undefined ? Math.min(typed, reachable) : typed;
+    // Without a total the pages past the next one are unknown (and a short page is the last):
+    // a typed page goes at most there.
+    const last = pages ?? Math.min(shown < pageSize ? page + 1 : page + 2, reachable ?? Number.POSITIVE_INFINITY);
+    const n = Math.min(typed, last);
     if (n === page + 1) return;
     onPage(n - 1);
     saidPage.current = n - 1;

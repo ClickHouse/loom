@@ -384,6 +384,29 @@ describe("Runs paging, sorting and search on the server", () => {
     );
   });
 
+  // Runs that left the filter while the next page was read: its read comes back empty with a
+  // smaller total, and the list steps back to the last page instead of showing nothing.
+  it("steps back to the last page when the next page's read finds it gone", async () => {
+    let shrunk = false;
+    listRunsPage.mockImplementation(async (_id, opts = {}) => {
+      const total = shrunk ? 45 : 60;
+      const from = opts.offset ?? 0;
+      return {
+        runs: Array.from({ length: Math.max(0, Math.min(50, total - from)) }, (_, i) => run(from + i + 1)),
+        total,
+      };
+    });
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    shrunk = true;
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Runs pages" })).getByRole("button", { name: "Next page" }),
+    );
+    await waitFor(() => expect(lastOpts()).toMatchObject({ offset: 0 }));
+    expect(await screen.findByRole("button", { name: "goal 1" })).toBeInTheDocument();
+    expect(toolbar()).toHaveTextContent("1–45 of 45");
+  });
+
   // Runs that started together keep run.list's order: run_id in the direction of the sort.
   it("against a server that does not page, breaks a tie in start by run_id, newest first", async () => {
     const at = { started_at: "2026-09-20T07:00:00Z" };

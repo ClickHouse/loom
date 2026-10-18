@@ -917,7 +917,9 @@ export function Runs() {
           </div>
         )}
       </div>
-      {error === null && shown !== null && rows.length > 0 && (
+      {/* Kept on an empty later page (runs finished or left the filter meanwhile), so it steps
+          back to the last page. */}
+      {error === null && shown !== null && (rows.length > 0 || page > 0) && (
         <ListPager
           label="Runs pages"
           page={page}

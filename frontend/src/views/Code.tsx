@@ -2743,7 +2743,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
         </LoadingSkeleton>
       )}
 
-      {rows !== null && rows.length === 0 && (
+      {rows !== null && rows.length === 0 && offset === 0 && (
         <EmptyState
           icon="cards"
           title="No packs yet"
@@ -2813,7 +2813,8 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
         </div>
       )}
 
-      {rows !== null && rows.length > 0 && (
+      {/* Kept on an empty later page (packs retired meanwhile), so it steps back to the last. */}
+      {rows !== null && (rows.length > 0 || offset > 0) && (
         <ListPager
           label="PR pack pages"
           page={Math.floor(offset / pageSize)}

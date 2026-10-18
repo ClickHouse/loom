@@ -137,28 +137,62 @@ describe("ListPager, typed and edge pages", () => {
     expect(onPage).not.toHaveBeenCalled();
   });
 
-  it("announces the last page when the view sends the reader back to it", () => {
-    const props = { label: "Thread pages", pageSize: 30, onPage: vi.fn() };
-    const { rerender } = render(<ListPager {...props} page={1} shown={15} />);
-    const field = screen.getByRole("spinbutton", { name: "Page" });
-    fireEvent.change(field, { target: { value: "6" } });
-    fireEvent.keyDown(field, { key: "Enter" });
-    expect(screen.getByRole("status")).toHaveTextContent("Page 6");
-    rerender(<ListPager {...props} page={5} shown={15} />);
-    rerender(<ListPager {...props} page={1} shown={15} total={45} />);
+  it("steps back from an empty page past the end and says where the reader is", () => {
+    const onPage = vi.fn();
+    const props = { label: "Thread pages", pageSize: 30, shown: 30, onPage };
+    const { rerender } = render(<ListPager {...props} page={1} />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Page 3");
+    // The view read page 3, found it empty, and now knows the total.
+    rerender(<ListPager {...props} page={2} total={60} />);
+    expect(onPage).toHaveBeenLastCalledWith(1);
+    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 2");
+    rerender(<ListPager {...props} page={1} total={60} />);
     expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 2");
   });
 
-  it("says nothing of a page when a filter takes the list back to its first page", () => {
+  it("without a total, a typed page goes no further than the next page", () => {
+    const onPage = vi.fn();
+    const { rerender } = render(<ListPager label="Thread pages" page={1} pageSize={30} shown={30} onPage={onPage} />);
+    const field = screen.getByRole("spinbutton", { name: "Page" });
+    fireEvent.change(field, { target: { value: "9" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onPage).toHaveBeenCalledWith(2);
+    // A short page is the last: a typed page goes nowhere.
+    onPage.mockClear();
+    rerender(<ListPager label="Thread pages" page={2} pageSize={30} shown={12} onPage={onPage} />);
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Page" }), { target: { value: "9" } });
+    fireEvent.keyDown(screen.getByRole("spinbutton", { name: "Page" }), { key: "Enter" });
+    expect(onPage).not.toHaveBeenCalled();
+  });
+
+  it("clears what it said when a filter takes the list back to its first page", () => {
     const props = { label: "Runs pages", pageSize: 50, shown: 50, onPage: vi.fn() };
     const { rerender } = render(<ListPager {...props} page={0} total={1000} />);
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     rerender(<ListPager {...props} page={1} total={1000} />);
     expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 20");
-    // A filter: the first page, then the new total.
+    // The first page, then the new total.
     rerender(<ListPager {...props} page={0} total={1000} />);
     rerender(<ListPager {...props} page={0} total={30} shown={30} onPageSize={() => {}} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 20");
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("clears what it said when a filter leaves one page in the same render", () => {
+    const props = { label: "Users", pageSize: 50, onPage: vi.fn(), onPageSize: () => {} };
+    const { rerender } = render(<ListPager {...props} page={0} total={120} shown={50} />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    rerender(<ListPager {...props} page={1} total={120} shown={50} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 3");
+    rerender(<ListPager {...props} page={0} total={30} shown={30} />);
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("without a total, says which pages can be opened on the last one the server serves", () => {
+    render(
+      <ListPager label="Thread pages" page={3333} pageSize={30} shown={30} maxOffset={100_000} onPage={() => {}} />,
+    );
+    expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent("pages 1–3,334 can be opened");
   });
 
   it("steps back to the last page when its page is past the end", () => {
@@ -186,16 +220,6 @@ describe("ListPager, page size", () => {
     );
     expect(screen.getByRole("navigation", { name: "Memories pages" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rows per page" })).toBeInTheDocument();
-  });
-
-  it("says nothing of a page when a filter leaves one page in the same render", () => {
-    const props = { label: "Users", pageSize: 50, onPage: vi.fn(), onPageSize: () => {} };
-    const { rerender } = render(<ListPager {...props} page={0} total={120} shown={50} />);
-    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
-    rerender(<ListPager {...props} page={1} total={120} shown={50} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 3");
-    rerender(<ListPager {...props} page={0} total={30} shown={30} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 3");
   });
 
   it("says the new page size after paging, not only the page it starts again from", async () => {
