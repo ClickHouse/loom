@@ -1,6 +1,7 @@
 """The lock files beside a bare mirror: whole-file `flock(2)`s that keep the
 processes of one host apart (`.clone-lock` for a clone, `.fetch-lock` for every
-fetch, `.gc-lock` for gc). The kernel drops a lock when its holder exits."""
+fetch, `.gc-lock` for gc). The kernel drops a lock when its holder exits. Also
+the name of a clone's temp tree, `<mirror>.partial-<pid>-<ns>`."""
 
 from __future__ import annotations
 
