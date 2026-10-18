@@ -449,9 +449,19 @@ def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> N
         {
             "msg_id": "compact-1",
             "role": "system",
-            "content": "s" * 5000,
+            "content": "a short summary",
             "ts": T0,
             "metadata": '{"compacted_from": ["m0"]}',
+            "user_id": "alice",
+            "run_id": "run-1",
+        },
+        # Past the remaining allowance: it costs budget like a turn, and is read whole.
+        {
+            "msg_id": "compact-2",
+            "role": "system",
+            "content": "s" * 5000,
+            "ts": T0,
+            "metadata": '{"compacted_from": ["m00"]}',
             "user_id": "alice",
             "run_id": "run-1",
         },
@@ -488,8 +498,15 @@ def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> N
     assert out.compacted is True and out.messages_summarized == 3
     [prompt] = prompts
     assert all(f"turn {i}" in prompt for i in range(1, 4))
+    assert "system: " + "s" * 5000 in prompt  # the paid summary, whole
     [summary] = fake.inserted
-    assert json.loads(summary["metadata"])["compacted_from"] == ["compact-1", "m1", "m2", "m3"]
+    assert json.loads(summary["metadata"])["compacted_from"] == [
+        "compact-1",
+        "compact-2",
+        "m1",
+        "m2",
+        "m3",
+    ]
 
 
 @pytest.mark.parametrize(
