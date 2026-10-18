@@ -228,7 +228,7 @@ async def test_a_row_keyed_by_the_model_alone_is_never_adopted(env) -> None:
     store.rows[MODEL] = {
         "thresholds_json": json.dumps(asdict(_cal(conflict=0.91)), sort_keys=True),
         "calibration_hash": "x",
-        "calibrated_by": "an earlier build",
+        "calibrated_by": "another process",
         "calibrated_at": "",
         "version": 1,
     }
