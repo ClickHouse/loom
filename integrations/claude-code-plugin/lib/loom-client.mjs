@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // --- bounds -------------------------------------------------------------------
 // The request bound comes from the round trip SessionStart measured against
@@ -222,9 +223,11 @@ export function agentToken({ env = process.env, renew = renewAgentToken, now = D
 
 function renewAgentToken(env) {
   // A child, so every caller stays synchronous; once per half-life of the token.
-  const script = new URL("../bin/loom-agent-token.mjs", import.meta.url);
+  // A path, not the URL's pathname: that is percent-encoded (a space) and,
+  // on Windows, starts with a slash before the drive.
+  const script = fileURLToPath(new URL("../bin/loom-agent-token.mjs", import.meta.url));
   try {
-    execFileSync(process.execPath, [script.pathname], { env, timeout: 3000, stdio: "ignore" });
+    execFileSync(process.execPath, [script], { env, timeout: 3000, stdio: "ignore" });
   } catch {
     // Loom away or the workload token refused: what is saved still serves.
   }

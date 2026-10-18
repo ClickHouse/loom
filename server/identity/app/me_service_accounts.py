@@ -145,6 +145,11 @@ def token_name(raw: object) -> str:
             status_code=422,
             detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a NUL character"},
         )
+    if ":" in name:  # reserved: `sa:<trust>:<agent>` is a machine trust's agent (auth.agents)
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a ':'"},
+        )
     if name.startswith(AGENT_NAME_PREFIX):  # self-signup's, written without this check
         raise HTTPException(
             status_code=422,

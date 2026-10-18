@@ -415,13 +415,15 @@ export class Transport {
           await this.authorize(ctx, timeoutMs);
         } catch (e) {
           // The token endpoint was away: the op was never sent, so it is retried
-          // as a connection failure is.
+          // as a connection failure is, under the same send count.
           if (
             e instanceof BackendUnavailable &&
             policy.retryConnectionErrors &&
             (await retryAfter(attempt, `token unavailable: ${describe(e)}`))
-          )
+          ) {
+            ctx.resending = true;
             continue;
+          }
           throw e;
         }
       }

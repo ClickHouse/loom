@@ -963,10 +963,10 @@ async def _declined_password_account(
         subject={"namespaces": [a["namespace"] for a in declined]},
     )
     if any(a["org"] == settings.oidc_jit_org for a in declined):
-        reason = "another account uses this email; ask your Loom operator to release it"
+        reason, advice = "another account uses this email", "ask your Loom operator to release it"
         identity = None
     else:
-        reason = "no loom account for this email; ask your Loom operator for access"
+        reason, advice = "no loom account for this email", "ask your Loom operator for access"
         try:
             identity = await jit_provision_for_email(email)
         except SignInUnavailable:
@@ -977,7 +977,7 @@ async def _declined_password_account(
         await oidc.revoke(upstream)
         if sign_in["kind"] == "device":
             await device.deny(sign_in["user_code"])
-        return _denied_page(reason)
+        return _denied_page(f"{reason}; {advice}")
     return await _signed_in_as(sign_in, identity, upstream)
 
 
@@ -1099,6 +1099,7 @@ async def _dashboard_signed_in(identity: Identity) -> Response:
         # A sign-in session like the CLI's: revocable as one, and what it mints
         # is bounded like the person, not by its hour.
         session_id=family,
+        first_party=True,
     )
     await audit.emit(
         "auth.sso_signin",
@@ -1127,6 +1128,7 @@ async def issue_tokens(
     issued) gets nothing; that is read from ClickHouse, not this process's
     snapshot, and a failed read raises so the caller puts the credential back.
     `generation` is the refresh token's place in its session's rotations."""
+    from server.auth.device import DEVICE_CLIENT_ID
     from server.auth.revocation import subjects_revoked
 
     issued_at = int(time.time())  # before the read: a revocation after it postdates the tokens
@@ -1140,6 +1142,8 @@ async def issue_tokens(
         ttl_seconds=_ACCESS_TTL,
         is_service_account=False,
         session_id=grant["family"] or None,
+        # A third-party MCP client's session mints nothing that outlives it.
+        first_party=client_id == DEVICE_CLIENT_ID,
         issued_at=issued_at,
     )
     body = {

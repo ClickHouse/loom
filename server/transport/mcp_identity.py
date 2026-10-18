@@ -105,12 +105,12 @@ _DEFAULT_NOTE: ContextVar[str] = ContextVar("loom_default_namespace_note", defau
 
 
 def note_default_namespace(filled: bool, namespace: str, auth: Any) -> None:
-    """`auth`'s home is its creator's for a delegated token (`home_subject`),
-    and an agent's own namespace for an agent (`agents.home_of`)."""
+    """`auth`'s home is its creator's for a delegated token (`home_subject`);
+    an agent's, direct or delegated, is its own namespace (`agents.home_of`)."""
     from server.auth.agents import home_of
 
-    home = home_of(str(getattr(auth, "subject", "") or ""))
-    home = home or home_subject(auth).strip().lower().split("@", 1)[0]
+    subject = home_subject(auth).strip()
+    home = home_of(subject) or subject.lower().split("@", 1)[0]
     away = bool(filled and namespace and namespace.lower() != home)
     _DEFAULT_NOTE.set(namespace if away else "")
 

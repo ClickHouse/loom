@@ -35,9 +35,11 @@ The plugin brings its own MCP entry (`.mcp.json`): the server URL with
 with the same name replaces the plugin's, and one under another name lists
 every tool twice.
 
-The helper and the hooks read the token from `LOOM_API_KEY`, then
-`~/.loom/config.json`, then `~/.loom/token`; org and namespace come from the
-token's own claims. Codex plugins have no install-time options, so the
+The helper and the hooks read the token from `LOOM_API_KEY`; then, for an
+agent (`LOOM_CLIENT_ID` with `LOOM_WORKLOAD_TOKEN` or
+`LOOM_WORKLOAD_TOKEN_FILE`), the token its workload token is exchanged for,
+and nothing else; otherwise `~/.loom/config.json`, then `~/.loom/token`. Org
+and namespace come from the token's own claims. Codex plugins have no install-time options, so the
 server URL is fixed in `.mcp.json` and `plugin-defaults.json`
 (`http://localhost:7777`); for another server, see
 [docs/features/integrations/codex.md](../../docs/features/integrations/codex.md) (a `[mcp_servers.loom]` override in

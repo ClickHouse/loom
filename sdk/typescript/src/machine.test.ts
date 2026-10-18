@@ -462,6 +462,8 @@ describe("Transport with a token provider", () => {
     });
     expect(await t.post("memory.get", { org: "o" })).toEqual({ ok: true });
     expect([asked, v1(srv).map(auth)]).toEqual([2, ["Bearer t"]]);
+    const count = (c: { init: RequestInit }) => (c.init.headers as Record<string, string>)["X-Loom-Retry-Count"];
+    expect(v1(srv).map(count)).toEqual(["0"]); // the server saw it once
   });
 
   it("takes a provider that answers a plain string, with or without a signal", async () => {

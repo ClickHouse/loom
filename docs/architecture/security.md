@@ -289,8 +289,10 @@ the subject are never touched by it, and nothing automatic writes a subject-wide
 (which could replace an operator's outright ban). A subject revoked outright is issued
 nothing.
 
-Tokens delegated from a session are not clipped to the session's hour, and they outlive
-logout. Every one is saved to the person's token list, where they see and revoke it, and
+Tokens delegated from a session of Loom's own sign-in (`loom login` and the dashboard; the
+access token's `fps` claim) are not clipped to the session's hour, and they outlive logout.
+A session a third-party MCP client holds is not one: what it mints ends with its access
+token, so disconnecting the client ends its reach. Every one is saved to the person's token list, where they see and revoke it, and
 lasts what they asked for (blank 90 days, 0 never). Any other parent bounds its children by
 its own expiry. Under OIDC each refresh first spends the provider's refresh token, so a user
 deactivated there loses their sessions within the hour. Their machine tokens are not

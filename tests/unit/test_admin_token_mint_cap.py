@@ -314,6 +314,7 @@ def test_a_session_mints_what_was_asked_and_an_expiring_token_never_forever(clie
             ttl_seconds=3600,
             is_service_account=False,
             session_id="s1",
+            first_party=True,
         )
     }
     body = {"name": "forever", "org": ORG, "namespaces": ["clickgap-public"], "ttl_seconds": 0}

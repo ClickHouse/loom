@@ -24,7 +24,7 @@ AGENT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
 
 def subject(trust: str, agent: str) -> str:
-    # ':' is never in a bot's or a person's service-account name.
+    # ':' is never in a bot's name or a person's token name (`token_name`).
     return f"{machines.subject(trust)}:{agent}"
 
 

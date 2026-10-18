@@ -502,3 +502,33 @@ def test_import_loom_survives_any_loom_log_level() -> None:
         )
         assert out.returncode == 0, out.stderr
         assert ("invalid log level 'loud'" in out.stderr) is warned
+
+
+async def test_a_call_whose_token_endpoint_was_away_is_retried_once_sent(
+    sleeps: list[float],
+) -> None:
+    """A bot's token provider raising BackendUnavailable means the op was
+    never sent: retried as a connection failure, and the server sees it once."""
+    seen: list[str] = []
+
+    class _FlakyTokens(httpx.Auth):
+        asked = 0
+
+        def auth_flow(self, request: httpx.Request) -> Any:
+            _FlakyTokens.asked += 1
+            if _FlakyTokens.asked == 1:
+                raise BackendUnavailable("token endpoint: 503; retry shortly")
+            request.headers["Authorization"] = "Bearer t"
+            yield request
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["X-Loom-Retry-Count"])
+        return httpx.Response(200, json={"ok": True})
+
+    t = Transport("http://x", retry=RetryPolicy(backoff_s=0.1, backoff_jitter=0))
+    t._client = httpx.AsyncClient(
+        base_url=t.base_url, transport=httpx.MockTransport(handler), auth=_FlakyTokens()
+    )
+    assert await t.post("/v1/memory.get", {}) == {"ok": True}
+    assert (_FlakyTokens.asked, seen, len(sleeps)) == (2, ["0"], 1)
+    await t.close()

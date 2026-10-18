@@ -146,7 +146,7 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         row = await namespaces.fetch_row(org, namespace)
         if row is None or not row["active"] or not row["password_hash"]:
             raise ValueError(f"{org}/{namespace} is not an active password account")
-        was = str(row["contact_email"]).lower()
+        was = str(row["contact_email"])
         if was == email:
             if (org, namespace) in await sso_links.linked(email):
                 raise ValueError(f"{org}/{namespace} is linked to {email} already")
@@ -154,7 +154,7 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
             raise ValueError(f"{org}/{namespace} already names {email}: adopt it instead")
         other = await get_client().query_one(
             "SELECT org, namespace FROM loom.namespaces FINAL "
-            "WHERE lower(contact_email) = {email:String} AND active = 1 LIMIT 1",
+            "WHERE contact_email = {email:String} AND active = 1 LIMIT 1",
             params={"email": email},
         )
         if other is not None:

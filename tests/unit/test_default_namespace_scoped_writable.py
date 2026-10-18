@@ -8,6 +8,7 @@ read would answer FORBIDDEN, or land on a viewer-only plane."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from typing import Any
 
 import pytest
@@ -184,6 +185,10 @@ def test_an_agent_landing_in_its_own_namespace_is_not_away() -> None:
     assert mi.default_namespace_note() == {}
     mi.note_default_namespace(True, "ci-other", _Auth("sa:ci:review"))
     assert mi.default_namespace_note() == {"namespace_defaulted": "ci-other"}
+    # A token the agent delegated lands in the agent's namespace too.
+    delegated = dataclasses.replace(_Auth("sa:review-tok-1a2b3c"), creator="sa:ci:review")
+    mi.note_default_namespace(True, "ci-review", delegated)
+    assert mi.default_namespace_note() == {}
 
 
 def test_a_scoped_writer_outside_its_write_claim_is_not_the_default(wire) -> None:

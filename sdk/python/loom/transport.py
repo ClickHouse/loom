@@ -588,6 +588,19 @@ class Transport:
                 why = f"connection failed: {type(e).__name__}"
                 slept_s += await self._backoff(op_path, policy, attempt, delay, why, request_id)
                 continue
+            except BackendUnavailable as e:
+                # The token provider (the auth flow) could not get a token: the
+                # op was never sent, so it is retried as a connection failure,
+                # under the same send count.
+                call.sent -= 1
+                delay = self._retry_delay(
+                    op_path, policy, attempt, slept_s, allowed=policy.retry_connection_errors
+                )
+                if delay is None:
+                    raise
+                why = f"token unavailable: {e}"
+                slept_s += await self._backoff(op_path, policy, attempt, delay, why, request_id)
+                continue
             except _TIMEOUT_ERRORS as e:
                 allowed = policy.retries_timeout(idempotent=deduplicated)
                 delay = self._retry_delay(op_path, policy, attempt, slept_s, allowed=allowed)
