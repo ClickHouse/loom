@@ -8,7 +8,7 @@ import json
 import logging
 from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from server.auth.fanout import namespaces_to_search
 from server.core.cursors import decode_cursor as _decode_cursor
@@ -194,18 +194,30 @@ async def handle_conversation_append(
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
 
+class EmbeddedTurn(NamedTuple):
+    """One turn's embed: the text embedded, its vector, the model that built it, and
+    the error when it failed (no vector, `dim` 0)."""
+
+    excerpt: str
+    vector: list[float]
+    dim: int
+    model: str
+    error: str
+
+
 async def _embed_turn(
     content: str, *, org: str, namespace: str, thread_id: str, msg_id: str
-) -> tuple[str, list[float], int, str]:
-    """`(excerpt, vector, dim, error)` for one turn: its first `_EMBED_EXCERPT_LIMIT`
-    characters, embedded. Fail-open: a failed embed returns no vector and the error."""
+) -> EmbeddedTurn:
+    """Embed a turn's first `_EMBED_EXCERPT_LIMIT` characters. Fail-open: a failed
+    embed returns no vector and the error."""
     embedder = get_embedder()
     excerpt = content[:_EMBED_EXCERPT_LIMIT]
     try:
         with traced(
             "embed.compute.conversation", model=embedder.model_name, excerpt_len=len(excerpt)
         ):
-            return excerpt, await embedder.embed(excerpt), embedder.dim, ""
+            vector = await embedder.embed(excerpt)
+        return EmbeddedTurn(excerpt, vector, embedder.dim, embedder.model_name, "")
     except Exception as e:  # noqa: BLE001 — embed failure still stores the turn
         log.warning(
             "conversation embed failed (org=%s ns=%s thread=%s msg=%s): %s",
@@ -215,7 +227,7 @@ async def _embed_turn(
             msg_id,
             e,
         )
-        return excerpt, [], 0, f"{type(e).__name__}: {e}"
+        return EmbeddedTurn(excerpt, [], 0, embedder.model_name, f"{type(e).__name__}: {e}")
 
 
 async def _store_embedding(
@@ -229,13 +241,12 @@ async def _store_embedding(
     user_id: str,
     run_id: str,
     ts: datetime,
-    embedded: tuple[str, list[float], int, str],
+    embedded: EmbeddedTurn,
 ) -> None:
     """Store one turn's embedding row from `_embed_turn`'s result. A failed embed is
     stored too, with the dead-letter columns recording the error."""
     from server.knowledge.store import conversations as conversation_repo
 
-    excerpt, embedding, embedding_dim, embed_err = embedded
     embedding_row: ConversationEmbeddingRow = {
         "org": org,
         "namespace": namespace,
@@ -245,18 +256,18 @@ async def _store_embedding(
         "role": role,
         # The text the vector was built from, which a re-embed starts from again;
         # search hits show its first HIT_EXCERPT_CHARS characters.
-        "content_excerpt": excerpt,
-        "embedding_model": get_embedder().model_name,
-        "embedding_dim": embedding_dim,
-        "embedding": embedding,
+        "content_excerpt": embedded.excerpt,
+        "embedding_model": embedded.model,
+        "embedding_dim": embedded.dim,
+        "embedding": embedded.vector,
         "user_id": user_id,
         "run_id": run_id,
-        "embed_attempts": 1 if embedding_dim > 0 else 0,
-        "embed_last_error": embed_err,
-        "embed_failed_at": naive_utc_now() if embed_err else None,
+        "embed_attempts": 1 if embedded.dim > 0 else 0,
+        "embed_last_error": embedded.error,
+        "embed_failed_at": naive_utc_now() if embedded.error else None,
         "ts": ts,
     }
-    with traced("ch.insert.conversation_embedding", embedded=embedding_dim > 0):
+    with traced("ch.insert.conversation_embedding", embedded=embedded.dim > 0):
         await conversation_repo.insert_embedding(embedding_row)
 
 
@@ -692,11 +703,12 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
 
 @staged("compact")
 async def handle_conversation_compact(input: ConversationCompactInput) -> ConversationCompactOutput:
-    """LLM-summarize messages older than `keep_recent`, tombstone the
-    originals, write the summary as one synthetic system message.
+    """LLM-summarize messages older than `keep_recent`, write the summary as one
+    embedded system message, then tombstone the originals and their embeddings.
 
     The new summary row carries metadata.compacted_from = [msg_ids]
-    so reruns can detect the candidate window is already covered.
+    so reruns can detect the candidate window is already covered. A summary that
+    cannot be embedded compacts nothing (`reason="embed-failed"`).
     """
     import json as _json
     import uuid as _uuid
@@ -786,7 +798,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         thread_id=input.thread_id,
         msg_id=summary_msg_id,
     )
-    if embedded[3]:
+    if embedded.error:
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,

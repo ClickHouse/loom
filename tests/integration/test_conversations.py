@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -204,7 +205,7 @@ async def test_thread_scope_isolation(agent) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_compacted_turn_leaves_search(agent) -> None:
+async def test_a_compacted_turn_leaves_search(agent, ch_client) -> None:
     """conversation.compact tombstones the summarised turns' embeddings with the turns,
     so search returns only what conversation.list still shows."""
     tid = f"thr-{uuid.uuid4().hex[:6]}"
@@ -224,12 +225,38 @@ async def test_a_compacted_turn_leaves_search(agent) -> None:
     assert out["compacted"] is True, out
 
     after = await agent.conversations.search(f"zebra migration {nonce}", thread_id=tid)
-    listed = {r["msg_id"] for r in (await agent.conversations.list(tid, limit=50))["rows"]}
+    rows = (await agent.conversations.list(tid, limit=50))["rows"]
+    listed = {r["msg_id"] for r in rows}
     hit_ids = {h["msg_id"] for h in after["hits"]}
     assert not hit_ids & set(old), after["hits"]
     assert hit_ids <= listed
     # The summary is embedded: the compacted content is still found through it.
     assert out["summary_msg_id"] in hit_ids, after["hits"]
+    [summary] = [r for r in rows if r["msg_id"] == out["summary_msg_id"]]
+    stored = ch_client.query(
+        "SELECT agent, thread_id, role, content_excerpt, embedding_dim > 0, tombstoned_at, "
+        "user_id, run_id, embed_attempts, embed_last_error, toDateTime(ts) "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND msg_id = {mid:String}",
+        parameters={"org": agent.org, "ns": agent.namespace, "mid": out["summary_msg_id"]},
+    ).result_rows
+    [row] = [tuple(r) for r in stored]
+    assert row[:10] == (
+        agent.agent,
+        tid,
+        "system",
+        summary["content"][:2048],
+        True,
+        None,
+        "-",
+        "-",
+        1,
+        "",
+    )
+    # Placed where the turns it replaces began, as the summary message is.
+    assert row[10].replace(tzinfo=None) == datetime.fromisoformat(
+        rows[0]["ts"].replace("Z", "+00:00")
+    ).replace(tzinfo=None, microsecond=0)
 
 
 @pytest.mark.asyncio
@@ -429,3 +456,46 @@ async def test_a_deleted_thread_takes_an_embedding_no_message_backs(
 
     hits = await agent.conversations.search(f"quokka {nonce}", thread_id=tid, agent_id="*")
     assert hits["hits"] == [], hits["hits"]
+
+
+@pytest.mark.asyncio
+async def test_a_delete_counts_a_turn_once_however_many_models_embed_it(
+    agent, control_plane_url: str, ch_client, mint_test_token
+) -> None:
+    """A re-embed to a new model leaves a turn with one row per model until the old
+    rows are dropped: a delete tombstones every model's row and counts the turn once."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    mids = [uuid.uuid4().hex for _ in range(2)]
+    for i, mid in enumerate(mids):
+        await agent.conversations.append(tid, mid, "user", f"okapi {nonce} {i}")
+    ch_client.command(
+        "INSERT INTO loom.conversation_embeddings "
+        "SELECT * REPLACE ('next-model' AS embedding_model) "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String}",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid},
+    )
+
+    out = await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    assert out["rows_affected"]["loom.conversation_embeddings"] == 2
+
+    live = ch_client.query(
+        "SELECT count() FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND tombstoned_at IS NULL",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid},
+    ).result_rows[0][0]
+    assert live == 0

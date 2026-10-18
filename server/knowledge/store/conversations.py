@@ -302,7 +302,9 @@ async def tombstone_thread(
 
     Sets `tombstoned_at = when`; read paths here filter
     `tombstoned_at IS NULL`, so rows vanish from subsequent fetch / list
-    / search / count. Returns `{table_name: rows_tombstoned}`.
+    / search / count. Returns `{table_name: rows tombstoned}`; for
+    loom.conversation_embeddings, turns (one per turn however many embedding models
+    hold it).
     """
     ch = ch or _default_client()
     params = {
@@ -724,8 +726,9 @@ async def tombstone_messages(
     )
 
 
-# Ids per tombstone mutation: each chunk is one HTTP parameter. One synchronous
-# mutation per chunk: a thread of 10,000 turns runs ten.
+# Turns per embeddings tombstone mutation. A whole-thread delete has no cap on its
+# turns, so its list goes in chunks, one synchronous mutation each: a thread of
+# 10,000 turns runs ten. A compaction's window is bounded by its prompt.
 _TOMBSTONE_CHUNK = 1000
 
 
@@ -740,13 +743,15 @@ async def _tombstone_embeddings(
     ch: _CHClient,
     count: bool = True,
 ) -> int:
-    """Tombstone the embeddings of `agent`'s turns in one thread (`msg_ids`, or every
-    turn it logged there, live or tombstoned, and its embedding rows no message backs)
-    and, with `count`, return how many of
-    those turns have a tombstoned embedding. The embeddings key has no agent: a turn several agents
-    logged is one row, so it goes by turn, and only once no other agent's copy is
-    live. The turns are read first and the mutation names them, so it evaluates no
-    subquery (a replicated table refuses one)."""
+    """Tombstone the embeddings of `agent`'s turns in one thread.
+
+    The turns are `msg_ids`, or every turn the agent logged in the thread (live or
+    tombstoned) plus its embedding rows that no message row backs. The embeddings key
+    has no agent, so a turn several agents logged is one row: it goes by turn, and
+    only once no other agent's copy is live. The turns are read first and the
+    mutation names them, so it evaluates no subquery (a replicated table refuses
+    one). With `count`, it returns how many of those turns have a tombstoned
+    embedding."""
     within = "AND msg_id IN {ids:Array(String)}" if msg_ids is not None else ""
     turns = f"""msg_id IN (
             SELECT msg_id FROM loom.conversations
