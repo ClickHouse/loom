@@ -655,3 +655,14 @@ def test_participants_a_reconfiguration_would_wait_on_are_a_warn(
     )
     assert found.severity == "warn" and "p-1 (queries_running)" in found.message
     assert "loom participant retire" in found.fix
+
+
+def test_a_full_sign_in_table_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.observability.problems import HealthState, _oauth_claim_problems
+
+    on = _settings(monkeypatch, LOOM_OAUTH_ENABLED="true")
+    assert _oauth_claim_problems(on, HealthState()) == []
+    off = _settings(monkeypatch, LOOM_OAUTH_ENABLED="false", LOOM_AUTH_REQUIRED="false")
+    assert _oauth_claim_problems(off, HealthState(oauth_signin_state_full=True)) == []
+    (full,) = _oauth_claim_problems(on, HealthState(oauth_signin_state_full=True))
+    assert full.code == "oauth_signin_state_full"

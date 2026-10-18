@@ -21,9 +21,14 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("boot claims", () => {
+  it("names the sign-in session a token belongs to", () => {
+    const payload = btoa(JSON.stringify({ sub: "alice", sid: "s1" })).replace(/=+$/, "");
+    expect(claimsFromToken(`h.${payload}.s`)?.session).toBe("s1");
+  });
+
   it("reads org, namespaces and subject from the token payload without verifying it", () => {
     const c = claimsFromToken(jwt({ sub: "alice", org: "acme", namespaces: ["team", "code-x"], roles: ["ADMIN"] }));
-    expect(c).toEqual({ org: "acme", namespaces: ["team", "code-x"], subject: "alice" });
+    expect(c).toEqual({ org: "acme", namespaces: ["team", "code-x"], subject: "alice", session: null });
   });
 
   it("is null for a missing, malformed or payload-less token", () => {
@@ -43,7 +48,7 @@ describe("boot claims", () => {
 
   it("tolerates a payload with the wrong shapes", () => {
     const c = claimsFromToken(jwt({ org: 7, namespaces: "team", sub: null }));
-    expect(c).toEqual({ org: null, namespaces: [], subject: null });
+    expect(c).toEqual({ org: null, namespaces: [], subject: null, session: null });
   });
 
   it("decodes non-ASCII claim text", () => {

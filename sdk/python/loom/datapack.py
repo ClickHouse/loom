@@ -52,6 +52,7 @@ class Datapack:
         retry: RetryPolicy | dict[str, Any] | None = None,
         consumer: str = "",
         mentor_brief: bool | None = None,
+        profile: str | None = None,
     ) -> None:
         self.org = org
         self.namespace = namespace
@@ -66,6 +67,7 @@ class Datapack:
             "retry": retry,
             "consumer": consumer,
             "mentor_brief": mentor_brief,
+            "profile": profile,
         }
 
     def agent(self, name: str, **overrides: Any) -> Agent:

@@ -16,6 +16,8 @@ export interface TokenClaims {
   org: string | null;
   namespaces: string[];
   subject: string | null;
+  /** The sign-in session (`sid`) the token belongs to; null for a minted token. */
+  session: string | null;
 }
 
 /** The token's own org / namespaces / subject, read without verification —
@@ -37,7 +39,8 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
       ? (json.namespaces as unknown[]).filter((n): n is string => typeof n === "string")
       : [];
     const subject = typeof json.sub === "string" ? json.sub : null;
-    return { org, namespaces, subject };
+    const session = typeof json.sid === "string" && json.sid ? json.sid : null;
+    return { org, namespaces, subject, session };
   } catch {
     return null;
   }

@@ -804,58 +804,99 @@ async def admin_token_mint(
 ) -> TokenMintOutput:
     """Mint a Loom JWT. Requires ORG_ADMIN in `input.org`; the token is
     delegated from the caller's (`server.auth.delegation`), so it never
-    outranks the caller's token or live grants."""
-    from server.auth.delegation import delegable_role, delegate
-    from server.auth.jwt import mint_token, new_jti
+    outranks the caller's token or live grants. It is saved to the caller's
+    token list under `input.name`, with its own `sa:` subject, and revoked
+    there; `loom mint-token` mints for any other subject."""
+    from server.auth.delegation import DEFAULT_TTL_DAYS, NEVER, Delegated, delegable_role, delegate
+    from server.auth.grant_claims import service_account_change
+    from server.auth.jwt import new_jti
+    from server.core.datetimes import naive_utc_now_seconds
+    from server.identity.app import me_service_accounts as tokens
+    from server.identity.app import token_grants
 
     # Redundant with the router-level dependency; kept so the gate holds even
     # if this handler is ever mounted on another router.
     info = await require_org_admin(request)
     refuse_foreign_org(info, input.org, "mint a token for")
+    body = await request.json()
+    if info is not None:
+        creator = info.subject
+    else:
+        # Auth off: a valid bearer names the owner, in its own org; else "dev".
+        # The token list reads the same owner, so the token is listed and revocable.
+        bearer = tokens.dev_bearer(request)
+        refuse_foreign_org(bearer, input.org, "mint a token for")
+        creator = bearer.subject if bearer is not None else "dev"
+    if input.name is None and "subject" in body:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "`subject` is retired: pass `name` (the token gets its own `sa:` "
+                "subject); `loom mint-token` mints for a given subject",
+            },
+        )
+    name = tokens.token_name(input.name)
+    for role in input.roles:
+        delegable_role(role)
+    requested: dict[str, str | None] = {ns: input.requested_role_for(ns) for ns in input.namespaces}
 
     jti = new_jti()
-    if info is None:
-        # Auth off: nothing to delegate from.
-        minted = mint_token(
-            jti=jti,
-            subject=input.subject,
-            org=input.org,
-            namespaces=list(input.namespaces),
-            roles=list(input.roles),
-            ns_roles=dict(input.ns_roles) if input.ns_roles else None,
-            consumer=input.consumer or None,
-            ttl_seconds=input.ttl_seconds,
-            is_service_account=input.is_service_account,
+    async with service_account_change(input.org, name):
+        await tokens.refuse_taken_name(input.org, name, creator)
+        if info is not None:
+            delegated = await delegate(
+                info,
+                org=input.org,
+                requested=requested,
+                scoped=bool(input.ns_roles),
+                ttl_seconds=input.ttl_seconds,
+                is_service_account=True,
+            )
+        else:
+            # Auth off: nothing to delegate from.
+            ttl = DEFAULT_TTL_DAYS * 86400 if input.ttl_seconds is None else input.ttl_seconds
+            delegated = Delegated(
+                org=input.org,
+                namespaces=list(input.namespaces),
+                roles=[] if input.ns_roles else list(input.roles),
+                ns_roles=dict(input.ns_roles) if input.ns_roles else None,
+                write_namespaces=None,
+                read_scope="",
+                read_user_id="",
+                ttl_seconds=None if ttl == NEVER else ttl,
+                parents=[],
+                parent_subjects=[],
+                parent_iats=[],
+                creator="",
+                is_service_account=True,
+            )
+        sa_subject = tokens.new_token_subject(input.org, name, creator)
+        minted = delegated.mint(sa_subject, jti=jti, consumer=input.consumer or None)
+        await tokens.save_token(
+            name, sa_subject, delegated, created_by=creator, now=naive_utc_now_seconds()
         )
-        namespaces, roles, ns_roles = list(input.namespaces), list(input.roles), input.ns_roles
-        ttl_seconds = input.ttl_seconds
-    else:
-        for name in input.roles:
-            delegable_role(name)
-        delegated = await delegate(
-            info,
-            org=input.org,
-            requested={ns: input.requested_role_for(ns) for ns in input.namespaces},
-            scoped=bool(input.ns_roles),
-            ttl_seconds=input.ttl_seconds,
-            is_service_account=input.is_service_account,
-        )
-        minted = delegated.mint(input.subject, jti=jti, consumer=input.consumer or None)
-        namespaces, roles, ns_roles = delegated.namespaces, delegated.roles, delegated.ns_roles
-        ttl_seconds = delegated.ttl_seconds
-        await _audit_mint(info, input, delegated, jti)
+    # A restricted namespace is read only by a subject with a direct grant there.
+    flat_role = (delegated.roles or ["viewer"])[0]
+    roles_on = delegated.ns_roles or dict.fromkeys(delegated.namespaces, flat_role)
+    await token_grants.grant_restricted_to_token(input.org, sa_subject, creator, roles_on)
+    if info is not None:
+        await _audit_mint(info, input, delegated, sa_subject, jti)
+    # Retired: the token's subject is its own, and it is always a service account.
+    ignored = sorted({"subject", "is_service_account"} & set(body))
     return TokenMintOutput.model_validate(
         {
             "token": minted,
             "jti": jti,
-            "subject": input.subject,
+            "name": name,
+            "subject": sa_subject,
             "org": input.org,
-            "namespaces": namespaces,
-            "roles": roles,
-            "ns_roles": ns_roles or None,
+            "namespaces": delegated.namespaces,
+            "roles": delegated.roles,
+            "ns_roles": delegated.ns_roles or None,
             "consumer": input.consumer,
-            "ttl_seconds": ttl_seconds,
-            "is_service_account": input.is_service_account,
+            "ttl_seconds": delegated.ttl_seconds,
+            "ignored_args": ignored,
         }
     )
 
@@ -872,7 +913,9 @@ def refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
         )
 
 
-async def _audit_mint(info: AuthInfo, input: TokenMintInput, granted: Delegated, jti: str) -> None:
+async def _audit_mint(
+    info: AuthInfo, input: TokenMintInput, granted: Delegated, subject: str, jti: str
+) -> None:
     """Records what the child was granted, not what was asked for."""
     namespaces = granted.namespaces
     await audit.emit(
@@ -881,13 +924,13 @@ async def _audit_mint(info: AuthInfo, input: TokenMintInput, granted: Delegated,
         namespace=namespaces[0] if len(namespaces) == 1 else "-",
         actor=info.subject,
         subject={
-            "subject": input.subject,
+            "subject": subject,
+            "name": input.name,
             "jti": jti,
             "namespaces": namespaces,
             "roles": granted.roles,
             "ns_roles": granted.ns_roles,
             "consumer": input.consumer,
-            "is_service_account": input.is_service_account,
         },
     )
 

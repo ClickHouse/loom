@@ -19,6 +19,25 @@ NAMESPACE_MAX_LEN = 128
 # The value of an absent optional identity field (user_id, session_id, run_id)
 # on the wire and in every row.
 SENTINEL = "-"
+# Namespaces single sign-on creates on a first sign-in (`u-<name>-<hash>`).
+# Their names follow from the email, so where it creates them nobody else
+# may: it would be waiting, with its creator's grants, for that person's
+# first sign-in.
+SSO_NAMESPACE_PREFIX = "u-"
+
+
+# The names JIT tries (server/auth/jit.py): `u-`, the email's local part (up
+# to 40), 8 hex of its hash, then maybe `-2` to `-6` or 8 more random hex.
+_SSO_NAMESPACE_RE = re.compile(
+    rf"{SSO_NAMESPACE_PREFIX}.{{1,40}}-[0-9a-f]{{8}}(-[2-6]|-[0-9a-f]{{8}})?"
+)
+
+
+def reserved_for_sso(namespace: str) -> bool:
+    """Whether a new namespace by this name is single sign-on's to create."""
+    from server.settings import settings
+
+    return settings.oidc_jit_provision and bool(_SSO_NAMESPACE_RE.fullmatch(namespace))
 
 
 def names_session(session_id: str) -> bool:

@@ -435,12 +435,14 @@ from server.auth import login as _login  # noqa: E402
 from server.auth import oauth as _oauth  # noqa: E402
 from server.auth import self_signup as _self_signup  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
+from server.identity.app import password_link as _password_link  # noqa: E402
 
 _self_signup.attach(app)
 _login.attach(app)
 _claim_release.attach(app)
-# OAuth 2.1 AS for MCP one-click connect — mounts only when LOOM_OAUTH_ENABLED.
+# Sign-in (device grant, SSO) wherever auth is on; MCP connect only with LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
+_password_link.attach(app)
 
 from server.insights.app.admin_routes import admin_router as _admin_router  # noqa: E402
 from server.insights.app.admin_routes import org_admin_router as _org_admin_router  # noqa: E402
@@ -449,6 +451,10 @@ from server.insights.app.provider_routes import provider_router as _provider_rou
 app.include_router(_admin_router)
 app.include_router(_org_admin_router)
 app.include_router(_provider_router)
+
+from server.identity.app.admin_account_routes import router as _account_admin_router  # noqa: E402
+
+app.include_router(_account_admin_router)
 
 # The caller API (/v1/me/*); the dashboard page itself attaches last, below.
 from server.identity.app import me_routes as _me_handlers  # noqa: E402

@@ -41,6 +41,8 @@ from loom.run import _ACTIVE_RUN, RunClient, RunScope
 _CLIENT_ATTRS: tuple[str, ...] = (
     # Every op as a generated method; its groups are nested clients.
     "client",
+    "account",
+    "deployment",
     "memory",
     "working_memory",
     "briefs",
@@ -206,6 +208,8 @@ class SyncAgent:
     # The blocking client proxies `__init__` attaches, one per `_CLIENT_ATTRS`
     # name, declared so a type checker sees `sa.memory.set(...)`.
     client: _SyncClientProxy
+    account: _SyncClientProxy
+    deployment: _SyncClientProxy
     memory: _SyncClientProxy
     working_memory: _SyncClientProxy
     briefs: _SyncClientProxy
@@ -248,6 +252,7 @@ class SyncAgent:
         retry: RetryPolicy | dict[str, Any] | None = None,
         consumer: str = "",
         mentor_brief: bool | None = None,
+        profile: str | None = None,
     ) -> None:
         self._closed = False
         self._close_lock = threading.Lock()
@@ -276,6 +281,7 @@ class SyncAgent:
                     retry=retry,
                     consumer=consumer,
                     mentor_brief=mentor_brief,
+                    profile=profile,
                 )
 
             self._agent: Agent = self._submit(_build()).result(_CLOSE_TIMEOUT_S)

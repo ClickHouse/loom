@@ -201,6 +201,12 @@ ignore_missing_imports = true
 module = ["re2"]
 ignore_missing_imports = true
 
+# boto3 is the SDK's optional `aws` extra (a bot key in Secrets Manager), and
+# ships no types.
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*"]
+ignore_missing_imports = true
+
 # The SDK's framework adapters: langgraph and strands are optional, so each adapter
 # subclasses the real base class when it imports and a structural twin otherwise.
 # Without the framework the base is Any, which strict mode refuses to subclass.

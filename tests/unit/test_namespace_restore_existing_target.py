@@ -5,6 +5,8 @@ row's `created_at` and `duplicate_threshold`."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,6 +18,7 @@ from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError
 from server.identity.api.models import (
+    NamespaceDeleteInput,
     NamespaceRegisterInput,
     NamespaceRestoreInput,
     NamespaceSnapshotOutput,
@@ -238,3 +241,40 @@ async def test_the_auto_registered_owner_completes_a_registration_but_cannot_res
         NamespaceRegisterInput(org=ORG, namespace=NS, owner_email="alice@x")
     )
     assert ch.rows_for("loom.namespace_grants") == []
+
+
+def _released_on_claim(monkeypatch: pytest.MonkeyPatch, ch: _CH, *modules: Any) -> None:
+    """A release that lands while the change waits for the account's claim: the
+    row the change reads is the released one, never the one before it."""
+
+    @asynccontextmanager
+    async def released_meanwhile(org: str, namespace: str) -> AsyncIterator[None]:
+        assert ch.namespace_row is not None
+        ch.namespace_row.update(active=False, owner_email="", contact_email="", password_hash="")
+        yield
+
+    for module in modules:
+        monkeypatch.setattr(module, "account_change", released_meanwhile)
+
+
+@pytest.mark.asyncio
+async def test_no_account_rewrite_puts_back_a_row_released_meanwhile(wire, monkeypatch) -> None:
+    from server.core import ch as core_ch
+    from server.identity.app import conversation_logging
+
+    install, grants = wire
+    grants[(ORG, NS, "ops@x")] = Role.ADMIN
+    changes = [
+        lambda: conversation_logging.set_conversation_logging(ORG, NS, True),
+        lambda: namespace_snapshot.handle_namespace_restore(_restore_input()),
+        lambda: h.handle_namespace_delete(NamespaceDeleteInput(org=ORG, namespace=NS)),
+        lambda: h.handle_namespace_register(
+            NamespaceRegisterInput(org=ORG, namespace=NS, owner_email="ops@x")
+        ),
+    ]
+    for change in changes:
+        ch = install(_deleted_row(active=True), "ops@x", Role.ADMIN)
+        monkeypatch.setattr(core_ch, "get_client", lambda ch=ch: ch)
+        _released_on_claim(monkeypatch, ch, h, namespace_snapshot, conversation_logging)
+        await change()
+        assert all(r["password_hash"] == "" for r in ch.rows_for("loom.namespaces"))

@@ -370,8 +370,9 @@ def _print_revocations(rows: list[dict[str, Any]], *, as_json: bool) -> int:
     )
     for r in rows:
         before = r.get("issued_before")
+        key = ("cutoff→" if r.get("kind") == "cutoff" else "") + str(r.get("jti", ""))
         print(
-            f"{str(r.get('jti', '')):<40} {str(r.get('revoked_at', ''))[:19]:<20} "
+            f"{key:<40} {str(r.get('revoked_at', ''))[:19]:<20} "
             f"{str(r.get('expires_at', ''))[:19]:<20} "
             f"{(str(before)[:19] if before else '-'):<20} {r.get('revoked_by', '')}  "
             f"{r.get('reason', '')}"
@@ -417,7 +418,7 @@ def _add_revoke_token_parser(sub: Any) -> None:
         default=None,
         metavar="ISO8601",
         help="When the revocation may lapse — the token's own exp. Omit for a "
-        "token without exp: the row is kept for 100 years.",
+        "token without exp: the row is kept for good (to 2105).",
     )
     p_revoke.add_argument("--json", action="store_true", help="Machine-readable output.")
     p_revoke.set_defaults(func=_cmd_revoke_token)

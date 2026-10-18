@@ -26,7 +26,9 @@ from pathlib import Path
 from typing import Any
 
 from server.cli._client import (
+    AGENT_SOURCE,
     CONFIG_SOURCE,
+    agent_mode,
     jwt_claims,
     loom_config,
     resolve_server_url,
@@ -48,10 +50,11 @@ _FLUSH_RE = re.compile(r"^loom-flush-(\d{13})-\d+\.json$")
 
 def intended_namespace(home: Path, env: dict[str, str], claims: dict[str, Any]) -> str:
     """The namespace the hooks will write to: LOOM_NAMESPACE, the config
-    file, the token's first non-wildcard claim, else `coding` (resolveScope)."""
+    file (never for an agent), the token's first non-wildcard claim, else
+    `coding` (resolveScope)."""
     if env.get("LOOM_NAMESPACE", "").strip():
         return env["LOOM_NAMESPACE"].strip()
-    cfg = str(loom_config(home, env).get("namespace") or "").strip()
+    cfg = "" if agent_mode(env) else str(loom_config(home, env).get("namespace") or "").strip()
     if cfg:
         return cfg
     ns = claims.get("namespaces") or []
@@ -119,8 +122,19 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
     return (name, PASS, f"{base_url} (from {source}) — build {build}, status {health}"), body
 
 
-def token_check(token: str, source: str, claims: dict[str, Any], now: float) -> Check:
+def token_check(
+    token: str, source: str, claims: dict[str, Any], now: float, base_url: str
+) -> Check:
     name = "client:token"
+    if not token and source == AGENT_SOURCE:
+        return (
+            name,
+            WARN,
+            "agent mode (LOOM_CLIENT_ID with a workload token): these checks act for no one. "
+            "The hooks exchange the workload token themselves; "
+            f"`loom call --server {base_url} namespace.list_mine` runs that exchange against "
+            "this server and lists what the agent reaches, or says why it was refused.",
+        )
     if not token:
         return (
             name,
@@ -168,6 +182,8 @@ def token_shadow_check(token: str, source: str, home: Path, env: dict[str, str])
     Code applies to its hooks and MCP servers) keeps a dead token in play
     after the config file was refreshed — and the doctor, run from a shell
     without that export, would report the fresh one and pass."""
+    if agent_mode(env):
+        return []  # an agent uses none of the tokens saved here
     others: list[tuple[str, str]] = []
     cfg = str(loom_config(home, env).get("token") or "").strip()
     if cfg and source != CONFIG_SOURCE:
@@ -880,7 +896,7 @@ def client_checks(
     checks: list[Check] = []
     server, _ = server_check(base_url, url_src, get_json)
     checks.append(server)
-    checks.append(token_check(token, tok_src, claims, now))
+    checks.append(token_check(token, tok_src, claims, now, base_url))
     checks.extend(token_shadow_check(token, tok_src, home, env))
     checks.extend(hook_override_check(home, env))
     auth, rows = (
@@ -893,9 +909,22 @@ def client_checks(
     )
     checks.append(auth)
     target = intended_namespace(home, env, claims)
-    checks.append(namespace_check(target, rows, token, auth[1] == PASS))
-    checks.append(recording_check(base_url, token, claims, target, post_json, auth[1] == PASS))
-    checks.append(reads_check(base_url, token, claims, rows, post_json, auth[1] == PASS))
+    if tok_src == AGENT_SOURCE:
+        # What the agent's own token reaches is the server's to say (the
+        # token check names the command); none of these can ask it.
+        why = "skipped in agent mode: these checks act for no one"
+        where = (
+            f"{target!r} (LOOM_NAMESPACE)"
+            if env.get("LOOM_NAMESPACE", "").strip()
+            else "the exchanged token's namespace"
+        )
+        checks.append(("client:namespace", WARN, f"{why}; the hooks write to {where}"))
+        checks.append(("client:recording", WARN, why))
+        checks.append(("client:reads", WARN, why))
+    else:
+        checks.append(namespace_check(target, rows, token, auth[1] == PASS))
+        checks.append(recording_check(base_url, token, claims, target, post_json, auth[1] == PASS))
+        checks.append(reads_check(base_url, token, claims, rows, post_json, auth[1] == PASS))
     probe = post_json if server[1] != FAIL else None
     checks.extend(claude_code_checks(home, base_url, post_json=probe, now=now))
     if (home / ".claude").is_dir():  # A Claude Code machine

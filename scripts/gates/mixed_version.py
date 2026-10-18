@@ -205,6 +205,7 @@ class Server:
             LOOM_CH_PASSWORD=CH_PASSWORD,
             LOOM_CH_SECURE="false",
             LOOM_AUTH_REQUIRED="true",
+            LOOM_OAUTH_ENABLED="true",  # a sign-in on every build, so they answer each other's
             LOOM_JWT_SECRET=JWT_SECRET,
             LOOM_EMBEDDING_MODEL="fake-ngram-1024",
             LOOM_LLM_PROVIDER="fake",
@@ -349,6 +350,7 @@ class Scenario:
             self.verdict_survives(a, b)
         self.unknown_column_survives(ids)
         self.newer_ledger_warns()
+        self.sign_in_across()
         self.dashboard_loads_across()
         self.one_leader()
         return self.failures
@@ -464,6 +466,78 @@ class Scenario:
             "N booting on a newer ledger logs the WARNING naming the file",
         )
 
+    def sign_in_across(self) -> None:
+        """A sign-in whose steps land on both builds fails cleanly, as a client
+        can retry, and leaves the grant to the build that started it."""
+        new, old = self.builds["N"], self.builds["N-1"]
+        if not (new.tree / "server" / "auth" / "device.py").exists():
+            print("  note  N has no device grant; sign-in across builds is not checked")
+            return
+        r = httpx.post(
+            f"{new.url}/oauth/device_authorization", data={"client_id": "loom-cli"}, timeout=30
+        )
+        self.check(r.status_code == 200, f"N starts a device grant ({r.status_code})")
+        if r.status_code != 200:
+            return
+        poll = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": r.json()["device_code"],
+            "client_id": "loom-cli",
+        }
+        answer = httpx.post(f"{old.url}/oauth/token", data=poll, timeout=30)
+        self.check(
+            answer.status_code < 500, f"N-1 answers N's device poll cleanly ({answer.status_code})"
+        )
+        again = httpx.post(f"{new.url}/oauth/token", data=poll, timeout=30)
+        pending = again.status_code == 400 and "authorization_pending" in again.text
+        self.check(pending, "N's device grant outlives a poll N-1 answered")
+        refresh = {
+            "grant_type": "refresh_token",
+            "refresh_token": "not-a-token",
+            "client_id": "loom-cli",
+        }
+        for label, srv in self.builds.items():
+            got = httpx.post(f"{srv.url}/oauth/token", data=refresh, timeout=30)
+            refused = got.status_code == 400 and "invalid_grant" in got.text
+            # A build that serves no sign-in has no token endpoint at all.
+            self.check(
+                refused or (label == "N-1" and got.status_code == 404),
+                f"{label} refuses an unknown refresh as invalid_grant ({got.status_code})",
+            )
+            if label == "N-1" and "Loom-Sessions" in got.headers:
+                print("  note  N-1 keeps sessions; a refresh it answers is not checked")
+                return
+        self.check("Loom-Sessions" not in answer.headers, "N-1's answers say they are N-1's")
+        self.refresh_across(old.url, kept=True)
+        self.refresh_across(new.url, kept=False)
+
+    def refresh_across(self, url: str, *, kept: bool) -> None:
+        """The SDK refreshing a session against `url`: N-1's refusal leaves it
+        to ask again, N's ends it."""
+        sys.path.insert(0, str(ROOT / "sdk" / "python"))
+        from loom import credentials
+        from loom.errors import AuthInvalid, BackendUnavailable, LoomError
+
+        real = credentials.CREDENTIALS_FILE
+        with tempfile.TemporaryDirectory() as tmp:
+            credentials.CREDENTIALS_FILE = Path(tmp) / "credentials"
+            spent = {"access_token": "x", "refresh_token": "not-a-token", "expires_in": 0}
+            credentials._save("gate", url, spent, session="s", marked=True)
+            failed: Exception | None = None
+            try:
+                credentials.access_token("gate", refused="x")
+            except LoomError as e:
+                failed = e
+            finally:
+                stored = credentials.stored_login(url, "gate") is not None
+                credentials.CREDENTIALS_FILE = real
+        want = BackendUnavailable if kept else AuthInvalid
+        label = "N-1" if kept else "N"
+        self.check(
+            isinstance(failed, want) and stored == kept,
+            f"the SDK {'keeps' if kept else 'ends'} a session {label} refuses ({failed!r})",
+        )
+
     def dashboard_loads_across(self) -> None:
         """A page served by one build asks any replica for its assets."""
         pages = {"N-1": self.builds["N-1"], "N": self.new, "N+1": self.next}
@@ -503,15 +577,20 @@ class Scenario:
         for srv in servers.values():
             srv.workers = "auto"
             srv.restart()
-        # N takes the lease first and hands it over once N+1's beats name it.
+        # N takes the lease first and hands it over once N+1's beats name it. A
+        # first beat goes out before its lease exists, so N+1 may hold it before
+        # the older builds read a beat of N+1's naming it: wait for both.
         deadline = time.monotonic() + SETTLE_S
         steady = 0
         holders: list[str] = []
+        reasons: dict[str, str] = {}
         while time.monotonic() < deadline and steady < 3:
-            holders = [k for k, s in servers.items() if s.leader()[0]]
-            steady = steady + 1 if holders == ["N+1"] else 0
+            state = {k: s.leader() for k, s in servers.items()}
+            holders = [k for k, (held, _) in state.items() if held]
+            reasons = {k: why for k, (_, why) in state.items()}
+            aside = all("to a newer build" in reasons[k] for k in ("N-1", "N"))
+            steady = steady + 1 if holders == ["N+1"] and aside else 0
             time.sleep(2)
-        reasons = {k: s.leader()[1] for k, s in servers.items()}
         self.check(
             holders == ["N+1"],
             f"one process of the newest build runs the workers ({holders}; {reasons})",

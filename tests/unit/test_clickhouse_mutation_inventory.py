@@ -46,6 +46,11 @@ _EXPECTED_MUTATIONS = Counter(
         ("server/memory/store/graph_projections.py", "graph_projections", "UPDATE"): 1,
         # The leader's hourly sweep of the slot keys of projections that died.
         ("server/core/leases.py", "graph_projections", "DELETE"): 1,
+        # Sign-in state, a KeeperMap key per pending login: a compare-and-swap
+        # on the key's value under strict mode, its drop when the login ends,
+        # and the sweep of expired keys.
+        ("server/auth/claims.py", "oauth_signin_state", "UPDATE"): 1,
+        ("server/auth/claims.py", "oauth_signin_state", "DELETE"): 2,
         # Conditional Keeper key recovery, only after a kernel death proof and
         # a server-side quiescence check; not a MergeTree data mutation.
         ("server/insights/store/provider_lock.py", "_migration_lock", "DELETE"): 1,

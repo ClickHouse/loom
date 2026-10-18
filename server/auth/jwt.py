@@ -128,7 +128,8 @@ class AuthInfo:
     # then interactive) decides.
     traffic_class: str = ""
     # Delegation chain (server/auth/delegation.py). `parents`: the token ids
-    # of every ancestor token, root first; revoking any of them kills this
+    # of every ancestor token, root first, and the sign-in session of a
+    # third-party MCP client that minted it; revoking any of them kills this
     # token. `creator`: the root principal whose live grants and account this
     # token is rechecked against on every request. '' = not a delegated token.
     # `parent_subjects`: the ancestors' `sub`s, in the same order, so revoking
@@ -139,6 +140,14 @@ class AuthInfo:
     parent_subjects: tuple[str, ...] = ()
     parent_iats: tuple[int, ...] = ()
     creator: str = ""
+    # `sid` claim: the sign-in session (server/auth/oauth.py) an hour-long
+    # access token belongs to. Revoking it ends every token of the session;
+    # '' = a token minted outside a sign-in session.
+    session_id: str = ""
+    # `fps` claim: the session is Loom's own sign-in (`loom login`, the
+    # dashboard), whose children may outlive it (`delegation._child_ttl`);
+    # False for a session a third-party client holds.
+    first_party: bool = False
     # `iat` as unix seconds; None for an identity no token backs (dev mode).
     issued_at: int | None = None
     # `exp` as unix seconds; None for a token without one.
@@ -222,6 +231,8 @@ def mint_token(
     traffic_class: str | None = None,
     consumer: str | None = None,
     jti: str | None = None,
+    session_id: str | None = None,
+    first_party: bool = False,
     parents: list[str] | None = None,
     parent_subjects: list[str] | None = None,
     parent_iats: list[int] | None = None,
@@ -251,6 +262,9 @@ def mint_token(
     before that read, so a revocation that landed after it still postdates
     the token.
     """
+    if "\x00" in subject:
+        # Reserved: revocation keys an operator's cutoffs by a NUL a subject never has.
+        raise ValueError("a token subject may not contain a NUL character")
     now = int(time.time()) if issued_at is None else issued_at
     payload: dict[str, Any] = {
         "sub": subject,
@@ -263,6 +277,10 @@ def mint_token(
         "jti": jti or new_jti(),
         "sa": is_service_account,
     }
+    if session_id:
+        payload["sid"] = session_id
+        if first_party:
+            payload["fps"] = True
     if write_namespaces is not None:
         payload["ns_write"] = write_namespaces
     if ns_roles is not None:
@@ -380,6 +398,8 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     org = decoded.get("org", "")
     if not isinstance(org, str):
         raise TokenError("claim 'org' must be a string")
+    if "\x00" in str(decoded["sub"]):
+        raise TokenError("claim 'sub' may not contain a NUL character")
     exp = decoded.get("exp")
 
     return AuthInfo(
@@ -399,6 +419,8 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         parent_subjects=tuple(_str_list(decoded, "parent_subjects")),
         parent_iats=tuple(_parent_iats(decoded)),
         creator=_creator_claim(decoded),
+        session_id=_optional_str_claim(decoded, "sid"),
+        first_party=_bool_claim(decoded, "fps"),
         issued_at=_iat_of(decoded),
         expires_at=int(exp) if exp is not None else None,
     )
@@ -425,9 +447,10 @@ def _decode(token: str, keys: list[str], algorithm: str) -> dict[str, Any]:
 
 
 def _check_not_revoked(decoded: dict[str, Any]) -> None:
-    """Refuse a token revoked by `jti` (one token), by `sub` (every token of
-    a principal) or by `sub` with an issued-before cutoff (tokens minted
-    before it die, a re-mint after it stays valid). A delegated token also
+    """Refuse a token revoked by `jti` (one token), by `sid` (its sign-in
+    session), by `sub` (every token of a principal) or by `sub` with an
+    issued-before cutoff (tokens minted before it die, a re-mint after it
+    stays valid). A delegated token also
     dies with any ancestor token (`parents`), any ancestor's `sub`
     (`parent_subjects`, each judged by its own `parent_iats` entry: a child
     minted after the cutoff from an older parent must die with it) and its
@@ -442,6 +465,9 @@ def _check_not_revoked(decoded: dict[str, Any]) -> None:
     jti = decoded.get("jti")
     if jti and is_revoked(str(jti)):
         raise TokenError(f"token jti {jti!r} is revoked")
+    sid = decoded.get("sid")
+    if sid and is_revoked(str(sid)):
+        raise TokenError("the sign-in session of this token has ended")
     issued_at = _iat_of(decoded)
     sub_for_revoke = decoded.get("sub")
     if sub_for_revoke and is_revoked(str(sub_for_revoke), issued_at=issued_at):

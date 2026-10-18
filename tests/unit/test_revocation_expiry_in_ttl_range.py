@@ -8,22 +8,22 @@ from server.auth.revocation import revocation_expiry
 
 # The last second `toDateTime` represents, minus the TTL's 10-day tail.
 _TTL_SAFE = datetime(2106, 2, 7, 6, 28, 15) - timedelta(days=10)
-NOW = datetime(2026, 9, 30, 15, 0, 0)
 
 
-def test_a_token_without_exp_gets_a_revocation_inside_the_ttl_range() -> None:
-    expiry = revocation_expiry(None, NOW)
-    assert NOW + timedelta(days=365) < expiry < _TTL_SAFE
+def test_a_token_without_exp_stays_revoked_as_long_as_the_table_can_hold_it() -> None:
+    # Ten years would let a revoked token that never expires work again after.
+    expiry = revocation_expiry(None)
+    assert datetime(2105, 1, 1) < expiry < _TTL_SAFE
 
 
 def test_an_expiry_past_the_datetime_range_is_clamped() -> None:
-    assert revocation_expiry(datetime(2200, 1, 1), NOW) < _TTL_SAFE
+    assert revocation_expiry(datetime(2200, 1, 1)) < _TTL_SAFE
 
 
 def test_an_ordinary_expiry_is_kept_as_naive_utc() -> None:
     aware = datetime(2026, 10, 1, 12, 0, tzinfo=timezone(timedelta(hours=2)))
-    assert revocation_expiry(aware, NOW) == datetime(2026, 10, 1, 10, 0)
-    assert revocation_expiry(datetime(2026, 10, 1, 10, 0), NOW) == datetime(2026, 10, 1, 10, 0)
+    assert revocation_expiry(aware) == datetime(2026, 10, 1, 10, 0)
+    assert revocation_expiry(datetime(2026, 10, 1, 10, 0)) == datetime(2026, 10, 1, 10, 0)
 
 
 def test_the_schema_ttl_is_the_one_this_clamp_protects() -> None:
