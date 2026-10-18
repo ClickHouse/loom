@@ -12,7 +12,7 @@ from typing import Any, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from server.core.repo_base import _CHClient, _default_client, param_slices
+from server.core.repo_base import _CHClient, _default_client, param_slices, query_all_sliced
 from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
 
 
@@ -791,9 +791,7 @@ async def _tombstone_embeddings(
     else:
         # Named turns are the agent's own (compaction reads them from its live turns).
         named = select.format(turns="msg_id IN {ids:Array(String)}")
-        rows = []
-        for part in param_slices(msg_ids):
-            rows += await ch.query_all(named, params={**params, "ids": part})
+        rows = await query_all_sliced(ch, named, {**params, "ids": msg_ids}, "ids")
     # One row version at a time: during a re-embed a turn has a row per model, each
     # judged on its own text, and a peer's row written since the read is not this one.
     due = [

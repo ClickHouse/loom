@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from server.knowledge.store import conversations as repo
+from tests.integration._resources import unique_org
 
 T0 = datetime(2026, 9, 1, 12, 0, 0)
 MODEL = "test-model"
@@ -28,7 +29,7 @@ async def ch() -> Any:
 @pytest.fixture
 def scope() -> dict[str, str]:
     tag = uuid.uuid4().hex[:10]
-    return {"org": f"tomb-{tag}", "ns": f"ns-{tag}", "tid": f"t-{tag}"}
+    return {"org": unique_org("conv-tomb"), "ns": f"ns-{tag}", "tid": f"t-{tag}"}
 
 
 async def _message(ch: Any, s: dict[str, str], agent: str, mid: str, text: str, ts: datetime):
@@ -139,21 +140,40 @@ async def test_an_orphan_embedding_goes_although_a_peer_reused_its_id(ch, scope)
     assert await _rows(ch, scope) == [("1", "mine", False)]
 
 
-@pytest.mark.asyncio
-async def test_long_msg_ids_are_bound_in_slices(ch, scope) -> None:
-    """300 turns with 512-character ids: delete and compaction both bind their id
-    lists in byte-bounded slices and tombstone every row."""
-    ids = [f"{i:04d}" + "x" * 508 for i in range(300)]
-    for i, mid in enumerate(ids):
+_LONG_IDS = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
+
+
+async def _long_turns(ch: Any, s: dict[str, str]) -> None:
+    for i, mid in enumerate(_LONG_IDS):
         ts = T0 + timedelta(seconds=i)
-        await _message(ch, scope, "a", mid, f"turn {i}", ts)
-        await _embedding(ch, scope, "a", mid, f"turn {i}", ts)
+        await _message(ch, s, "a", mid, f"turn {i}", ts)
+        await _embedding(ch, s, "a", mid, f"turn {i}", ts)
+
+
+@pytest.mark.asyncio
+async def test_a_compaction_of_long_msg_ids_binds_them_in_slices(ch, scope) -> None:
+    """300 turns with 512-character ids, one unsliced parameter past the server's
+    form-field cap: compaction tombstones every message and embedding."""
+    await _long_turns(ch, scope)
     now = datetime.now(UTC).replace(tzinfo=None)
-
     await repo.tombstone_messages(
-        scope["org"], scope["ns"], "a", scope["tid"], ids, when=now, ch=ch
+        scope["org"], scope["ns"], "a", scope["tid"], _LONG_IDS, when=now, ch=ch
     )
-    out = await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=now, ch=ch)
+    assert {live for _, _, live in await _rows(ch, scope)} == {False}
+    left = await ch.query_one(
+        "SELECT count() AS n FROM loom.conversations WHERE org = {org:String} "
+        "AND namespace = {ns:String} AND thread_id = {tid:String} AND tombstoned_at IS NULL",
+        params={"org": scope["org"], "ns": scope["ns"], "tid": scope["tid"]},
+    )
+    assert left["n"] == 0
 
+
+@pytest.mark.asyncio
+async def test_a_delete_of_long_msg_ids_binds_them_in_slices(ch, scope) -> None:
+    """The same 300 live turns, deleted: the row-version list goes in byte-bounded
+    slices and every embedding is tombstoned."""
+    await _long_turns(ch, scope)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    out = await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=now, ch=ch)
     assert out["loom.conversation_embeddings"] == 300
     assert {live for _, _, live in await _rows(ch, scope)} == {False}
