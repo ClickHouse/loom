@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
@@ -59,7 +59,7 @@ vi.mock("../api", async (importOriginal) => {
     })),
   };
 });
-import { listMemories, searchMemory } from "../api";
+import { conflictKeys, listMemories, searchMemory } from "../api";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
@@ -122,6 +122,72 @@ describe("Recent search why-line", () => {
     // One count, in the toolbar; no summary line or Results heading on screen.
     expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1 match");
     expect(screen.queryByRole("heading", { name: /Results/ })).toBeNull();
+  });
+});
+
+describe("Recent across a namespace switch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: admin,
+      myNamespaces: [row("alice", "admin")],
+      identity: { org: "dev", namespace: "alice", agent: "loom-ui" },
+      view: "memories",
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("drops the old namespace's search results while the new one's search reads", async () => {
+    const pending = new Promise<never>(() => {});
+    vi.mocked(listMemories).mockImplementation(async (id, _limit, opts) => {
+      const bob = (id as { namespace: string }).namespace === "bob";
+      if (opts?.contains)
+        return bob ? pending : { entries: [entry("alice_only")], total: 1, today: 0, truncated: false };
+      return {
+        entries: bob ? [entry("bob_row")] : [entry("coffee_pref"), entry("tea_pref")],
+        total: 2,
+        today: 0,
+        truncated: false,
+      };
+    });
+    vi.mocked(searchMemory).mockImplementation(async (id) => {
+      if ((id as { namespace: string }).namespace === "bob") return pending;
+      return { results: [], embedding_model: "fake" } as never;
+    });
+    render(<Recent />);
+    await screen.findByText("coffee_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    expect(await screen.findByText("alice_only", {}, { timeout: 3000 })).toBeInTheDocument();
+    act(() =>
+      useStore.setState({
+        identity: { org: "dev", namespace: "bob", agent: "loom-ui" },
+        myNamespaces: [row("bob", "admin")],
+      }),
+    );
+    await waitFor(() => expect(screen.queryByText("alice_only")).toBeNull());
+  });
+
+  it("shows no conflict chip from the old namespace while the new one's conflicts read", async () => {
+    vi.mocked(conflictKeys).mockImplementation(async (id) =>
+      (id as { namespace: string }).namespace === "bob" ? new Promise<string[]>(() => {}) : ["tea_pref"],
+    );
+    render(<Recent />);
+    await screen.findByText("tea_pref");
+    await waitFor(() => expect(screen.getAllByText("Conflicted").length).toBeGreaterThan(0));
+    // bob holds a row of the same key; its conflict read has not answered.
+    act(() =>
+      useStore.setState({
+        identity: { org: "dev", namespace: "bob", agent: "loom-ui" },
+        myNamespaces: [row("bob", "admin")],
+      }),
+    );
+    await screen.findByText("tea_pref");
+    expect(screen.queryByText("Conflicted")).toBeNull();
   });
 });
 

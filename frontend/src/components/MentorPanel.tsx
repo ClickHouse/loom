@@ -119,14 +119,15 @@ export function MentorPanel({ identity }: { identity: Identity }) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // A different namespace is a different brief; a run still in flight for the old one
-  // must not land under the new one.
+  // A different namespace is a different brief, about its own agents; a run still in
+  // flight for the old one must not land under the new one.
   const scope = `${identity.org}/${identity.namespace}`;
   const scopeRef = useRef(scope);
   useEffect(() => {
     scopeRef.current = scope;
     setResult(null);
     setError(null);
+    setAgent("");
   }, [scope]);
 
   if (!allowed) return null;

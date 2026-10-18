@@ -350,7 +350,14 @@ export const useStore = create<AppState>((set, get) => ({
         loomNamespace: identity.namespace,
         ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "" } } : {}),
       });
-      set({ identity, inspectedMemoryKey: null, pendingConversationThread: null, pendingDocSourceUri: null });
+      // The Recall Lab's run filter names a run of the namespace left.
+      set({
+        identity,
+        inspectedMemoryKey: null,
+        pendingConversationThread: null,
+        pendingDocSourceUri: null,
+        recallRunFilter: null,
+      });
     } else set({ identity });
   },
   bootIdentity: (identity) => set({ identity }),

@@ -263,9 +263,14 @@ export function Audit() {
   // The loading button is disabled, which drops focus: once the page lands it goes back to
   // the button while more remain, else to the first row the page added — or, when the page
   // added none that are shown (all system events), the last row shown, else the table.
+  // Only the render where a load ends moves focus: another render in between (the deferred
+  // rows' transition) must not spend it on the button before it is disabled.
+  const wasLoadingOlder = useRef(false);
   useEffect(() => {
+    const ended = wasLoadingOlder.current && !loadingOlder;
+    wasLoadingOlder.current = loadingOlder;
     const at = focusAfterLoad.current;
-    if (at === null || loadingOlder) return;
+    if (!ended || at === null) return;
     focusAfterLoad.current = null;
     if (older) {
       olderButton.current?.focus();

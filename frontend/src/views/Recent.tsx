@@ -213,6 +213,21 @@ function MemoryList() {
   const [searching, setSearching] = useState(false);
   // The keyword rows are on screen and the ranked search is still answering.
   const [ranking, setRanking] = useState(false);
+  // Another namespace's search results, conflict keys and agent are not this one's: they
+  // go during render, before the new namespace's first read or paint can use them.
+  const namespaceKey = `${identity.org}/${identity.namespace}`;
+  const [stateFor, setStateFor] = useState(namespaceKey);
+  if (stateFor !== namespaceKey) {
+    setStateFor(namespaceKey);
+    setSearchHits(null);
+    setSearchWhy(new Map());
+    setSearchExtra(new Map());
+    setKeywordKeys(new Set());
+    setKeywordTotal(0);
+    setRanking(false);
+    setConflictKeys(new Set());
+    setAgentFilter(null);
+  }
   const knownKeysRef = useRef<Set<string>>(new Set());
   // Latest preloaded entries, read inside the search effect without making
   // it a dependency (that would re-run search on every 8s poll).
@@ -236,7 +251,8 @@ function MemoryList() {
 
   // Inline search: debounced semantic match on the server; the result
   // becomes a key-set filter on the already-loaded entries, so day
-  // grouping, pinned star, conflict badge, and selection state stay intact.
+  // grouping, the pinned star and the conflict badge stay intact (a selected row that is
+  // not a hit leaves the selection).
   //
   // Query language:
   //   `tag:work`              — only memories tagged `work`
@@ -403,6 +419,9 @@ function MemoryList() {
   const whoami = useStore((s) => s.whoami);
   const conflictsReadable = canCall("conflicts.list", role, whoami);
   useEffect(() => {
+    // A role here that cannot read conflicts, or a failed read, shows no chip (never
+    // another namespace's).
+    setConflictKeys(new Set());
     if (!conflictsReadable) return;
     let cancelled = false;
     // The chips need the keys, not 500 rows with values.
@@ -465,11 +484,7 @@ function MemoryList() {
 
   // The agents the namespace's rows were written by, gathered as pages and filters load
   // (sentinels "*" and "-" are not writers); a new namespace starts again.
-  // The agent filter goes with them: another namespace's agent is not one of this one's.
-  useEffect(() => {
-    setSeenAgents([]);
-    setAgentFilter(null);
-  }, [identity.org, identity.namespace]);
+  useEffect(() => setSeenAgents([]), [identity.org, identity.namespace]);
   useEffect(() => {
     const here = (entries ?? []).map((e) => e.agent || "").filter((a) => a && !SENTINEL_AGENTS.has(a));
     setSeenAgents((prev) => {

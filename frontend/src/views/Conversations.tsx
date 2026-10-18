@@ -137,11 +137,12 @@ export function Conversations() {
   useKeyboard(keys);
 
   // Hits, threads, the agent filter and the recording switch belong to the namespace
-  // they were read for; a switch clears them so B never shows A's rows or toggles A's
-  // value into B.
-  useEffect(() => {
-    searchSeq.current += 1;
-    scopeGen.current += 1;
+  // they were read for; a switch clears them during render, so B's first read asks for its
+  // own first page under every agent, and B never shows A's rows or toggles A's value.
+  const namespaceKey = `${identity.org}/${identity.namespace}`;
+  const [stateFor, setStateFor] = useState(namespaceKey);
+  if (stateFor !== namespaceKey) {
+    setStateFor(namespaceKey);
     setHits(null);
     setSearchError(null);
     setBusy(false);
@@ -153,6 +154,11 @@ export function Conversations() {
     setThreadsTotal(undefined);
     setAgentFilter("*");
     setLoggingEnabled(null);
+  }
+  // Answers already in flight for the namespace left are dropped by their sequence numbers.
+  useEffect(() => {
+    searchSeq.current += 1;
+    scopeGen.current += 1;
   }, [identity.org, identity.namespace]);
 
   useAbortableEffect(
