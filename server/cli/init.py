@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from server.cli._client import TOKEN_FILE, default_base_url, post_json
+from server.cli._client import TOKEN_FILE, agent_mode, default_base_url, post_json
 from server.cli._paths import write_private
 
 CONFIG_PATH = "~/.loom/config.json"
@@ -109,6 +109,15 @@ def connect_lines(out: dict[str, Any], *, base_url: str, token_path: str, config
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
+    if agent_mode():
+        # An agent signs in as its workload trust or not at all: a signed-up
+        # identity would be a second one, and its files would replace the saved config.
+        print(
+            "ERROR: not signing up in agent mode: this agent signs in through its workload "
+            "token (`loom call` exchanges it). To sign a new agent up, unset LOOM_CLIENT_ID first.",
+            file=sys.stderr,
+        )
+        return 2
     if not args.agent:
         print("loom init: pass --agent NAME (a person signs up in the dashboard).", file=sys.stderr)
         return 2

@@ -128,6 +128,40 @@ def test_install_refuses_in_agent_mode_whatever_the_token(
     assert not (tmp_path / ".claude" / "settings.json").exists()
 
 
+@pytest.mark.parametrize("no_files", [False, True])
+def test_init_refuses_in_agent_mode_before_it_signs_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    no_files: bool,
+) -> None:
+    import argparse
+
+    from server.cli import init
+
+    for k, v in _AGENT.items():
+        monkeypatch.setenv(k, v)
+    sent: list[str] = []
+    monkeypatch.setattr(init, "_post_json", lambda url, body, timeout=15.0: sent.append(url))
+    token, config = tmp_path / "token", tmp_path / "config.json"
+    args = argparse.Namespace(
+        agent="nightly",
+        server_url="https://loom.example",
+        org=None,
+        purpose="",
+        ttl_days=None,
+        token_path=str(token),
+        config_path=str(config),
+        no_files=no_files,
+        json=False,
+    )
+    assert init._cmd_init(args) == 2
+    out = capsys.readouterr()
+    assert "not signing up in agent mode" in out.err and out.out == ""
+    assert sent == []
+    assert not token.exists() and not config.exists()
+
+
 def test_every_command_that_needs_a_token_refuses_an_agent_without_one(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
