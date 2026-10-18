@@ -76,7 +76,6 @@ async def record_participant(
     *,
     after: int = 0,
     version: int | None = None,
-    stale_after_s: int = STALE_AFTER_S,
     ch: _CHClient | None = None,
 ) -> None:
     """`heartbeat_at` takes the server's clock (its column default); this process's
@@ -92,7 +91,7 @@ async def record_participant(
                 "transition_id": transition,
                 "state": state,
                 "version": version if version is not None else max(time_ns(), after + 1),
-                "stale_after_s": stale_after_s,
+                "stale_after_s": STALE_AFTER_S,
                 "host_proof": host_proof() if own else "",
             }
         ],

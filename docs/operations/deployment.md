@@ -786,7 +786,7 @@ flowchart LR
   P -.->|idle or stopped| G["loom-green :7782 + loom-green-workers"]
   B --> CH[(ClickHouse)]
   G --> CH
-  B --- V["shared: .env, blob dir, code mirrors, loom-shared"]
+  B --- V["shared: .env, code mirrors, loom-shared"]
   G --- V
 ```
 

@@ -461,7 +461,7 @@ needs no step on them.
 
 Run the keyring commands with the servers' `LOOM_JWT_SECRET`. The keyring's `default`
 row records an HMAC of that root secret, written by the workers leader or the first
-keyring command; `rotate`, `import`, `retire` and `loom mint-token` refuse to run where
+keyring command; `rotate`, `retire`, `record-root` and `loom mint-token` refuse to run where
 it does not match (a key sealed or a token signed there would not open on the servers),
 and the keyring commands refuse when the keyring cannot be read. `/v1/health` reports a
 server that never read the keyring (`keyring_not_loaded`), one whose root differs

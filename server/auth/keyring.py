@@ -22,8 +22,8 @@ commands and `loom mint-token` refuse to run there and `/v1/health` and
 `loom doctor` say so. The workers leader (or a keyring command) writes it.
 
 A PEM RSA `LOOM_JWT_SECRET` seals, and signs and verifies RS256 as kid
-`default`: it is held as `ROOT_RS256_KID` unless `default` is retired. A
-gateway key of kid `default` (`jwt_public_keys_json`) verifies beside it.
+`default` unless `default` is retired. A gateway key of kid `default`
+(`jwt_public_keys_json`) verifies beside it.
 """
 
 from __future__ import annotations
@@ -55,8 +55,6 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 ROOT_KID = "default"
-# The kid a PEM RSA root secret is held under; it signs and verifies as `default`.
-ROOT_RS256_KID = "default-rs256"
 ALGORITHMS = ("HS256", "RS256")
 _PURPOSE = "signing_key"
 _COLUMNS = (
@@ -248,16 +246,16 @@ def _pem_root(secret: str) -> SigningKey | None:
         .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
         .decode()
     )
-    return SigningKey(ROOT_RS256_KID, "RS256", secret, public, datetime.min)
+    return SigningKey(ROOT_KID, "RS256", secret, public, datetime.min)
 
 
 def _keys(view: _View) -> dict[str, SigningKey]:
-    """The view's keys, plus a PEM root as `ROOT_RS256_KID` unless `default`
-    is retired."""
+    """The view's keys, plus a PEM root as `default` unless `default` is
+    retired."""
     if ROOT_KID in view.retired:
         return view.keys
     key = _pem_root(str(settings.jwt_secret))
-    return view.keys if key is None else {**view.keys, ROOT_RS256_KID: key}
+    return view.keys if key is None else {**view.keys, ROOT_KID: key}
 
 
 def _is_pem_root(key: SigningKey) -> bool:
@@ -297,15 +295,7 @@ def signing_key() -> SigningKey:
             "LOOM_JWT_SECRET is neither an HMAC secret nor an RSA private key, and no "
             "signing key is active here: run `loom signing-key rotate`"
         )
-    if key.kid == ROOT_RS256_KID:
-        # A PEM root signs as `default`.
-        return dataclasses.replace(key, kid=ROOT_KID)
     return key
-
-
-def _wire_kid(kid: str) -> str:
-    """The kid tokens carry: a PEM root's internal kid is `default`."""
-    return ROOT_KID if kid == ROOT_RS256_KID else kid
 
 
 def status(rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -318,7 +308,7 @@ def status(rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     signer = _signer(view) if loaded else None
     return {
         "loaded": loaded,
-        "signing_kid": "" if signer is None else _wire_kid(signer.kid),
+        "signing_kid": "" if signer is None else signer.kid,
         "unsealable": sorted(view.unsealable),
         "root_row": view.root_row,
     }
@@ -328,15 +318,13 @@ def verification_keys(kid: str, algorithm: str) -> list[str]:
     """The keys that may verify a token of `kid` signed with `algorithm`, in
     order: a keyring key or the root secret, then a gateway's public key of
     that kid (`jwt_public_keys_json`). An RS256 token of kid `default` (the PEM
-    root's, or a gateway's without a kid) tries `ROOT_RS256_KID` and the
-    gateway's `default` both. A retire stops this deployment's keys only: the
+    root's, or a gateway's without a kid) tries the PEM root and the gateway's
+    `default` both. A retire stops this deployment's keys only: the
     gateway's are its operator's."""
     keys = _keys(_view)  # never a retired kid
-    key = None if kid == ROOT_RS256_KID else keys.get(kid)
-    if key is None and kid == ROOT_KID:
-        if algorithm == "HS256":
-            return [_root().secret] if _root_signs(_view.retired) else []
-        key = keys.get(ROOT_RS256_KID)
+    key = keys.get(kid)
+    if key is None and kid == ROOT_KID and algorithm == "HS256":
+        return [_root().secret] if _root_signs(_view.retired) else []
     out: list[str] = []
     if key is not None and key.algorithm == algorithm:
         out.append(key.public_pem if algorithm == "RS256" else key.secret)
@@ -373,10 +361,7 @@ def _retired_key(public_pem: str) -> bool:
 
 def public_keys() -> dict[str, str]:
     """kid → public PEM of this deployment's RS256 keys, for the JWKS."""
-    out = {k.kid: k.public_pem for k in _keys(_view).values() if k.algorithm == "RS256"}
-    if ROOT_RS256_KID in out:
-        out[ROOT_KID] = out.pop(ROOT_RS256_KID)
-    return out
+    return {k.kid: k.public_pem for k in _keys(_view).values() if k.algorithm == "RS256"}
 
 
 READ_SQL = (
