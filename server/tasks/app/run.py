@@ -996,7 +996,7 @@ def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime]:
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:
-    """One page of a namespace's agent runs, filtered, searched and sorted as asked."""
+    """A page of a namespace's agent runs and their match count (`total`), filtered and sorted."""
 
     where: list[str] = []
     params: dict[str, Any] = {}
@@ -1024,7 +1024,7 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
         where.append("grade = {grade:String}")
         params["grade"] = input.grade
     # The Runs page's search box: goal, run id or agent, any case.
-    q = (input.q or "").strip()
+    q = input.q.strip()
     if q:
         where.append(runs_store.RUN_TEXT_MATCH)
         params["q"] = q

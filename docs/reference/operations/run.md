@@ -137,7 +137,7 @@ A verdict on a CLOSED run, usually days after it — a maintainer confirmed the 
 
 ## `run.list`
 
-One page of a namespace's agent runs, filtered, searched and sorted as asked.
+A page of a namespace's agent runs and their match count (`total`), filtered and sorted.
 
 `POST /v1/run.list` · MCP `loom_run_list` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -151,7 +151,7 @@ One page of a namespace's agent runs, filtered, searched and sorted as asked.
 | `limit` | `int` | `50` | At most this many runs, in `order_by` order; the server caps it at 200. |
 | `offset` | `int` | `0` | Runs to skip before the page (0-100,000); default 0, the first page. |
 | `order_by` | `Literal['started_desc', 'started_asc', 'duration_desc', 'duration_asc', 'relied_on_desc', 'relied_on_asc']` | `'started_desc'` | Sort by start time, duration (0 while active) or memories relied on; default newest first. |
-| `q` | `str \| None` | `None` | Only runs whose goal, run id or agent holds this text, in any case; unset, no filter. |
+| `q` | `str` | `''` | Only runs whose goal, run id or agent holds this text, in any case; "" is no filter. |
 | `memory_activity` | `Literal['', 'with', 'without']` | `''` | The Runs page folds runs that neither relied on nor wrote a memory. |
 | `grade` | `Literal['', 'ungraded', 'graded', 'pass', 'fail']` | `''` | `ungraded` / `graded` / a verdict (`pass`, `fail`); "" = every run. |
 | `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |

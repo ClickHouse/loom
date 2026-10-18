@@ -252,7 +252,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         list(input.fields or []),
         always=read_projection.LIST_ENTRY_ALWAYS,
     )
-    tag_filter = list_tag_filter(input.tags, input.tags_every)
+    tag_filter = list_tag_filter(input.tags, every=input.tags_every)
 
     identity = memory_repo.Identity(
         org=input.org,

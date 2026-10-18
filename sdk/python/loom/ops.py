@@ -15210,7 +15210,7 @@ class RunListInput(TypedDict, total=False):
             "relied_on_asc",
         ]
     ]
-    q: NotRequired[Optional[str]]
+    q: NotRequired[str]
     memory_activity: NotRequired[Literal["", "with", "without"]]
     grade: NotRequired[Literal["", "ungraded", "graded", "pass", "fail"]]
     fields: NotRequired[Optional[list[str]]]
@@ -15234,7 +15234,7 @@ class RunListBody(TypedDict, total=False):
             "relied_on_asc",
         ]
     ]
-    q: NotRequired[Optional[str]]
+    q: NotRequired[str]
     memory_activity: NotRequired[Literal["", "with", "without"]]
     grade: NotRequired[Literal["", "ungraded", "graded", "pass", "fail"]]
     fields: NotRequired[Optional[list[str]]]

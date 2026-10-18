@@ -338,8 +338,7 @@ class RunClient:
             "duration_asc",
             "relied_on_desc",
             "relied_on_asc",
-        ]
-        | None = None,
+        ] = "started_desc",
         q: str = "",
     ) -> dict[str, Any]:
         """Runs in `order_by` order (newest first by default).
@@ -363,7 +362,7 @@ class RunClient:
         }
         if offset:
             payload["offset"] = offset
-        if order_by is not None:
+        if order_by != "started_desc":
             payload["order_by"] = order_by
         if q.strip():
             payload["q"] = q

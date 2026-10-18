@@ -235,7 +235,12 @@ async def test_knowledge_list_drops_empty_tags_as_memory_list_does(
 def test_a_tag_filter_needs_a_tag() -> None:
     with pytest.raises(ValueError):
         TagFilter((), "folded_any")
-    assert list_tag_filter(["", ""], every=False) is None
+
+
+@pytest.mark.parametrize("every", [False, True])
+def test_empty_tags_ask_for_no_tag_filter(every: bool) -> None:
+    """An empty `hasAll` would match every row: empty tags never become a filter."""
+    assert list_tag_filter(["", ""], every=every) is None
 
 
 def test_exact_any_renders_the_tags_as_typed() -> None:
@@ -243,8 +248,3 @@ def test_exact_any_renders_the_tags_as_typed() -> None:
     params: dict[str, Any] = {}
     assert tag_where(TagFilter(("API",), "exact_any"), params) == _EXACT
     assert params["tags"] == ["API"]
-
-
-def test_every_tag_empty_asks_for_no_tag_filter() -> None:
-    """An empty `hasAll` would match every row: empty tags never become a filter."""
-    assert list_tag_filter(["", ""], every=True) is None
