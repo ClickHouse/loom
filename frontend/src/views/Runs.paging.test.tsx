@@ -168,7 +168,7 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(lastOpts()).toMatchObject({ limit: 50, offset: 0, orderBy: "started_desc" });
   });
 
-  it("reads a page at a time again once a local read carries a total (the server upgraded)", async () => {
+  it("stays local when a later read carries a total, until the namespace changes", async () => {
     let upgraded = false;
     listRunsPage.mockImplementation(async () =>
       upgraded ? { runs: [run(3)], total: 1 } : { runs: [run(1)], total: null },
@@ -179,8 +179,8 @@ describe("Runs paging, sorting and search on the server", () => {
     upgraded = true;
     fireEvent.click(within(screen.getByLabelText("Filter runs by status")).getByRole("button", { name: "Failed" }));
     await screen.findByRole("button", { name: "goal 3" });
-    expect(lastOpts()).toMatchObject({ status: "failed", limit: 50, offset: 0, orderBy: "started_desc" });
-    expect(toolbar()).toHaveTextContent("1–1 of 1");
+    expect(lastOpts()).toMatchObject({ status: "failed", limit: 200 });
+    expect(lastOpts()).not.toHaveProperty("offset");
   });
 
   it("sends the search to the server after 250 ms and starts again from page 1", async () => {
@@ -320,5 +320,22 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(screen.queryByText(/No runs match/)).toBeNull();
     answer({ runs: [run(1)], total: 1 });
     await screen.findByRole("button", { name: "goal 1" });
+  });
+
+  // Review finding: with a release and the one before it behind one URL, answers
+  // alternate between "no total" and "a total"; flipping modes on each one read forever and
+  // never showed a row. Every answer is shown, and the mode only moves to local.
+  it("settles on a mixed fleet, whose answers alternate between no total and a total", async () => {
+    let n = 0;
+    listRunsPage.mockImplementation(async (_id, opts = {}) => {
+      n += 1;
+      const runs = Array.from({ length: Math.min(opts.limit ?? 50, 120) }, (_, i) => run(i + 1));
+      return { runs, total: n % 2 === 1 ? null : 120 };
+    });
+    render(<Runs />);
+    expect(await screen.findByRole("button", { name: "goal 1" })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(listRunsPage.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(bodyRows().length).toBeGreaterThan(0);
   });
 });

@@ -66,8 +66,8 @@ export const RUNS_FIELDS = [
  * limit, order_by, q and the filters) and shows the server's total. A server a release
  * behind ignores offset, order_by and q and sends no total: the page then reads its newest
  * 200 runs once and pages, searches and sorts those here (`local`), and when it holds more
- * it says the list is the newest 200 instead of counting 200 as every run. Another
- * namespace, or a local read that carries a total, reads a page at a time again.
+ * it says the list is the newest 200 instead of counting 200 as every run. Only another
+ * namespace reads a page at a time again.
  *
  * The run is the primary object; a SESSION is not a separate tab but a
  * grouping of the runs that shared one connection (1 session → N runs).
@@ -614,12 +614,10 @@ export function Runs() {
     )
       .then((p) => {
         if (!live) return;
-        // No total: a server that does not page. Read its newest runs once and page here.
-        // A total in that read: it pages now, so read a page at a time again.
-        if ((p.total === null) !== local) {
-          setLocal(!local);
-          return;
-        }
+        // No total: a server that does not page. Show its answer, then read its newest runs
+        // once and page here. Only another namespace leaves `local`: behind one URL a release
+        // and the one before it answer in turn, and flipping back on each total never settles.
+        if (p.total === null && !local) setLocal(true);
         setShown({ runs: p.runs, total: p.total, page });
         const seen = p.runs.map((r) => r.agent).filter(Boolean);
         setAgents((prev) => (seen.every((a) => prev.includes(a)) ? prev : [...new Set([...prev, ...seen])].sort()));
