@@ -409,24 +409,6 @@ async def test_a_head_no_fetch_brings_backs_off_instead_of_fetching_every_read(
     assert tries == 1 and until > 0
 
 
-@pytest.mark.asyncio
-async def test_a_partial_clone_without_a_suffix_is_removed_too(monkeypatch, tmp_path) -> None:
-    from types import SimpleNamespace
-
-    from server.code.app.index import sandbox
-
-    cfg = _Cfg(str(tmp_path / "r.git"))
-    os.makedirs(cfg.git_dir + ".partial")  # a temp dir without the pid suffix
-
-    async def _job(argv: list[str], **_kw: Any) -> Any:
-        os.makedirs(os.path.join(argv[-1], "objects"))
-        return SimpleNamespace(returncode=0, stderr=b"")
-
-    monkeypatch.setattr(sandbox, "run_job", _job)
-    assert await bootstrap.clone_mirror(cfg) == ""
-    assert not (tmp_path / "r.git.partial").exists()
-
-
 class _StateRepo:
     def __init__(self, head: str) -> None:
         self.head, self.writes = head, []

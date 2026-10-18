@@ -1948,8 +1948,8 @@ async def main() -> int:
         "number. 'oracle-routed' picks the mode from the dataset's GOLD "
         "question_type (temporal-reasoning→temporal, multi-session→graph, "
         "else rrf) — an oracle-router ablation, since production callers "
-        "don't know the category. Pass a "
-        "single mode to ablate (e.g. bm25_hybrid for the old fixed posture).",
+        "don't know the category. Pass a single mode to ablate (e.g. "
+        "bm25_hybrid).",
     )
     parser.add_argument(
         "--rerank",

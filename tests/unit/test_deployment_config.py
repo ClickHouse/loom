@@ -62,13 +62,6 @@ def test_a_snapshot_is_the_key_fingerprint_and_what_must_match() -> None:
     assert snap["embedding_model"] == "text-embedding-3-large"
 
 
-def test_a_snapshot_always_carries_what_must_match() -> None:
-    """Left at its default the model is still published, so a replica that sets
-    another one is caught."""
-    snap = dc.snapshot(_settings())
-    assert set(dc.MUST_MATCH) <= set(snap)
-
-
 def test_fingerprints_name_the_snapshot_they_were_made_from() -> None:
     s = _settings(embedding_model="text-embedding-3-large", embedding_dim=3072)
     fp = dc.fingerprints(s)

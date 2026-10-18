@@ -17,7 +17,8 @@ from server.cli._ch import run_connected
 def _cmd_backfill_chunks(args: argparse.Namespace) -> int:
     """Backfill loom.memory_chunks from existing rows in loom.memory.
 
-    For namespaces that predate the chunks layer: each live row goes through
+    For memory rows written without chunks (a restore that left
+    `memory_chunks` out, a namespace rollback): each live row goes through
     memory.set's own chunk writer (`write_set_chunks`), so a backfilled chunk
     is the one memory.set would have written — the value's human text, under
     session `memory.set:<key>` — and a later re-set or delete of the key finds
