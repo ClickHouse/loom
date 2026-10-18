@@ -3739,7 +3739,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Writer agent of the imported rows (default: okf-import); --prune needs it given, one per bundle imported into the namespace",
+       "help": "Writer agent of the imported rows (default: okf-import). Required with --prune; use one agent per bundle imported into a namespace.",
        "metavar": null
       },
       {
@@ -3889,7 +3889,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Delete the rows an earlier import wrote (this --agent and token, an okf: source_trace) whose key is no longer in the bundle. Refuses a bundle whose concept files do not match its loom.corpus_digest; with --dry-run, lists them.",
+       "help": "Delete the rows an earlier import wrote (this --agent and token, an okf: source_trace) whose key is no longer in the bundle. Refuses an empty bundle, one whose export stopped at --limit, or one that does not match its loom.corpus_digest. With --dry-run, lists the rows it would delete.",
        "metavar": null
       }
      ]

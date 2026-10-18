@@ -1101,8 +1101,8 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p_imp.add_argument(
         "--agent",
         default=None,
-        help="Writer agent of the imported rows (default: okf-import); --prune needs it "
-        "given, one per bundle imported into the namespace",
+        help="Writer agent of the imported rows (default: okf-import). Required with "
+        "--prune; use one agent per bundle imported into a namespace.",
     )
     p_imp.add_argument("--user-id", default="-")
     p_imp.add_argument("--session-id", default="-")
@@ -1142,9 +1142,9 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--prune",
         action="store_true",
         help="Delete the rows an earlier import wrote (this --agent and token, an okf: "
-        "source_trace) whose key is no longer in the bundle. Refuses a bundle "
-        "whose concept files do not match its loom.corpus_digest; with --dry-run, "
-        "lists them.",
+        "source_trace) whose key is no longer in the bundle. Refuses an empty bundle, "
+        "one whose export stopped at --limit, or one that does not match its "
+        "loom.corpus_digest. With --dry-run, lists the rows it would delete.",
     )
     p_imp.set_defaults(func=_cmd_import_okf)
 

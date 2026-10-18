@@ -683,3 +683,11 @@ def test_a_key_renamed_in_the_source_is_written_under_its_new_name(
     monkeypatch.setattr(loom, "post", merges_into_a_live_copy)
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("y", value="same fact")]), "--prune") == 0
     assert [k for (_a, _s, k) in loom.rows] == ["y"]
+
+
+def test_the_server_bulk_read_returns_every_field_the_import_compares() -> None:
+    from server.memory.store import reads
+
+    for sql in (reads._BULK_FETCH_SQL, reads._BULK_FETCH_WHOLE_SQL):
+        select = sql.split("FROM")[0]
+        assert all(f in select for f in cli_okf._BULK_FIELDS), sql

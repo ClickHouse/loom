@@ -75,6 +75,9 @@ def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
                 "value": f"{k}: the test fails when the part count passes {len(k) * 100}.",
                 "tags": ["lesson"],
                 "entities": ["MergeTree"],
+                # Compared through memory.bulk_get rather than memory.list.
+                "valid_to": "2030-01-01T00:00:00",
+                "source_class": "derived",
             },
         )
     _op(
