@@ -494,7 +494,8 @@ def test_a_delegated_claim_its_creator_holds_stays_named_after_its_own_grant_goe
     _wired, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The gate decides a delegated token on its claim and its creator's grant,
-    # never on its own subject's: the revoked grant takes nothing away.
+    # never on its own subject's: the revoked grant takes nothing away, from
+    # the names or from the default.
     from server.auth import authz
     from server.operations.base import Role
 
@@ -503,9 +504,25 @@ def test_a_delegated_claim_its_creator_holds_stays_named_after_its_own_grant_goe
     token = _token(("agent-box-claude-code", "alice"))
     readable = asyncio.run(readable_named_claims(token, "clickhouse"))
     assert readable == ["agent-box-claude-code", "alice"]
-    default = _defaults(token)["namespace"]
-    assert default in readable
-    asyncio.run(authz.check_authorized(token, Role.WRITER, "clickhouse", default))
+    # Both stay writable through the creator; the creator's own namespace
+    # ranks first, as for any token (`home_namespace`).
+    assert _defaults(token)["namespace"] == "alice"
+    asyncio.run(authz.check_authorized(token, Role.WRITER, "clickhouse", "agent-box-claude-code"))
+
+
+def test_a_delegated_default_follows_the_creators_write_grant_not_the_subjects(
+    _wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The subject's own revoked grant used to drop the first claim as a write
+    # home, so the default moved to `team-notes`; the gate still admits the write.
+    from server.auth import authz
+    from server.operations.base import Role
+
+    _revoke_subject_grant(monkeypatch, "agent-box-claude-code")
+    _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "team-notes"]))
+    token = _token(("agent-box-claude-code", "team-notes"))
+    assert _defaults(token)["namespace"] == "agent-box-claude-code"
+    asyncio.run(authz.check_authorized(token, Role.WRITER, "clickhouse", "agent-box-claude-code"))
 
 
 def test_a_claim_the_creator_no_longer_holds_is_not_named(_wired) -> None:

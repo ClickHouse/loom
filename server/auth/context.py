@@ -185,17 +185,42 @@ async def readable_named_claims(auth: AuthInfo | None, org: str) -> list[str]:
     return await _without_unreadable_restricted(org, named, auth, cached_grants=True)
 
 
-async def _creator_holds(auth: AuthInfo, org: str, named: list[str]) -> list[str]:
-    """A delegated token's claims as `authz._check_delegated` decides them:
-    the token's own role reaches the claim and its creator holds a live grant
-    there. None while the creator's account is disabled."""
+async def delegated_writable_claims(auth: AuthInfo, org: str, claimed: list[str]) -> list[str]:
+    """The `claimed` namespaces, in order, a delegated token may write by the
+    gate's rules (`authz._check_delegated` at WRITER): its own claim reaches
+    writer there and its creator holds a live writer grant, plus the
+    restricted two-factor check. Read from the same cached grant maps."""
+    from server.operations.base import Role
+
+    writable = await _creator_holds(auth, org, claimed, Role.WRITER)
+    return await _without_unreadable_restricted(
+        org, writable, auth, cached_grants=True, role=Role.WRITER
+    )
+
+
+async def _creator_holds(
+    auth: AuthInfo, org: str, named: list[str], role: Role | None = None
+) -> list[str]:
+    """A delegated token's claims as `authz._check_delegated` decides them at
+    `role` (viewer by default): the token's own role there reaches it and its
+    creator holds a live grant that does. None while the creator's account
+    is disabled."""
     from server.auth.delegation import ceiling_role, creator_account_active
     from server.core.grant_cache import grant_map
+    from server.operations.base import Role, grant_rank
 
+    role = role or Role.VIEWER
     if not named or not await creator_account_active(org, auth.creator):
         return []
     creator = await grant_map(org, auth.creator)
-    return [ns for ns in named if ceiling_role(auth, org, ns) and (creator.rank(ns) or 0) > 0]
+    needed = grant_rank(role.name.lower())
+    write = role.value >= Role.WRITER.value
+
+    def _admits(ns: str) -> bool:
+        own = ceiling_role(auth, org, ns, write=write)
+        return own is not None and own.value >= role.value and (creator.rank(ns) or 0) >= needed
+
+    return [ns for ns in named if _admits(ns)]
 
 
 async def _claim_reaches(auth: AuthInfo, org: str, named: list[str]) -> list[str]:
@@ -228,13 +253,15 @@ async def _without_unreadable_restricted(
     auth: AuthInfo | None = None,
     *,
     cached_grants: bool = False,
+    role: Role | None = None,
 ) -> list[str]:
     """A restricted namespace stays in a caller's list only
     when the caller passes the two-factor read check for it. Membership,
     grants, inheritance and wildcards put it in the list; this takes it out
     again. Order is preserved. `auth` defaults to the request's caller; with
     auth disabled nothing is removed. `cached_grants`: read the caller's own
-    grants from the grant cache rather than once per namespace."""
+    grants from the grant cache rather than once per namespace. `role`: the
+    check's role, viewer by default (writer for a list of write targets)."""
     if not namespaces:
         return namespaces
     from server.auth.authz import restricted_allows
@@ -258,7 +285,7 @@ async def _without_unreadable_restricted(
         if ns in restricted or directory().config_classification(org, ns) == "restricted":
             if cached_grants and grants is None:
                 grants = await grant_map(org, auth.subject)
-            if await restricted_allows(auth, Role.VIEWER, org, ns, grants=grants):
+            if await restricted_allows(auth, role or Role.VIEWER, org, ns, grants=grants):
                 out.append(ns)
             continue
         out.append(ns)
@@ -345,6 +372,7 @@ __all__ = [
     "OrgScopeFilter",
     "current_auth",
     "current_auth_var",
+    "delegated_writable_claims",
     "readable_named_claims",
     "resolve_my_namespaces",
     "resolve_org_scope",

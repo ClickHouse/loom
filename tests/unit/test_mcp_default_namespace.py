@@ -133,8 +133,10 @@ def test_the_claimed_default_follows_the_home_subject_and_fails_open(monkeypatch
         raise RuntimeError("down")
 
     monkeypatch.setattr(home, "claim_cap", _boom)
-    pick = home.claimed_home_default(auth, "clickhouse", CLAIMED, KINDS, "alice")
-    assert asyncio.run(pick) == ""
+    monkeypatch.setattr(home, "delegated_writable_claims", _boom)
+    for token in (auth, _auth("alice")):
+        pick = home.claimed_home_default(token, "clickhouse", CLAIMED, KINDS, "alice")
+        assert asyncio.run(pick) == ""
 
 
 def test_the_resolver_asks_the_claims_before_it_ranks_grants() -> None:

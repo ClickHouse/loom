@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.auth.authz import claim_cap, names_namespace
-from server.auth.context import readable_named_claims
+from server.auth.context import delegated_writable_claims, readable_named_claims
 from server.auth.personal_namespace import derive_personal_slug
 from server.identity.app import caller_defaults
 from server.operations.base import Role, grant_rank
@@ -204,11 +204,17 @@ async def claimed_home_default(
 ) -> str:
     """`pick_default_namespace` over live inputs: the token's own write test
     and live claim caps, with the namespace kinds and the home subject's login
-    and saved default the caller read. Fail-open to "" (the grant ranking then
-    decides)."""
+    and saved default the caller read. A delegated token writes where the
+    gate lets it (`delegated_writable_claims`), not by its subject's caps.
+    Fail-open to "" (the grant ranking then decides)."""
     if not claimed:
         return ""
     try:
+        if getattr(auth_info, "creator", ""):
+            writable = await delegated_writable_claims(auth_info, org, claimed)
+            return pick_default_namespace(
+                claimed, kinds, lambda ns: ns in writable, home, owner_default
+            )
         # A claim capped below writer there is not a write home.
         caps = {ns: await claim_cap(auth_info, org, ns) for ns in claimed}
 

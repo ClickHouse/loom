@@ -1,6 +1,8 @@
 """The namespaces the MCP transport tells a token to name are exactly the
 named claims the gate lets it read: `readable_named_claims` and
-`authz.check_authorized(VIEWER, ns)` agree for every kind of token."""
+`authz.check_authorized(VIEWER, ns)` agree for every kind of token. And the
+default an unaddressed call lands in is one the gate lets it write, whenever
+it may write any of its claims."""
 
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ RESTRICTED = frozenset({"secret"})
 GRANTS = {
     ("alice", "team"): 2,
     ("alice", "secret"): 1,
+    ("alice", "docs"): 1,
     ("alice", "left"): 0,
     ("alice", "gone"): 0,
     ("sa:cli", "team"): 0,
@@ -59,6 +62,35 @@ def _grants(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(nc, "restricted_set", _restricted_set)
 
 
+class _NoRows:
+    """No saved default and no ranked grants: the default comes from the claims."""
+
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        return None
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        return []
+
+
+@pytest.fixture()
+def _default_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.auth.aliases as aliases
+    import server.core.ch as chmod
+    import server.identity.app.namespace_kinds as nk
+    from server.settings import settings
+
+    async def _aliases(org: str, subject: str, *, ch: Any = None) -> list[str]:
+        return [subject]
+
+    async def _kinds(org: str) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr(aliases, "subject_aliases", _aliases)
+    monkeypatch.setattr(nk, "kind_map", _kinds)
+    monkeypatch.setattr(chmod, "get_client", lambda: _NoRows())
+    monkeypatch.setattr(settings, "identity_provider", "trust-network")
+
+
 def _token(subject: str, namespaces: tuple[str, ...], **kw: Any) -> AuthInfo:
     base: dict[str, Any] = {"org": ORG, "roles": (Role.WRITER,), "is_service_account": False}
     return AuthInfo(subject=subject, namespaces=namespaces, **{**base, **kw})
@@ -83,17 +115,24 @@ TOKENS = {
     "delegated restricted claim": _token(
         "sa:cli", ("secret", "team"), creator="alice", is_service_account=True
     ),
+    "delegated, creator only reads the first claim": _token(
+        "sa:cli", ("docs", "team"), creator="alice", is_service_account=True
+    ),
     "token of another org": _token("alice", ("team", "home"), org="other"),
     "org-wide token": _token("alice", ("secret", "team"), org="*"),
 }
 
 
-async def _gate_reads(token: AuthInfo, namespace: str) -> bool:
+async def _gate_admits(token: AuthInfo, role: Role, namespace: str, org: str = ORG) -> bool:
     try:
-        await authz.check_authorized(token, Role.VIEWER, ORG, namespace)
+        await authz.check_authorized(token, role, org, namespace)
     except PermissionError:
         return False
     return True
+
+
+async def _gate_reads(token: AuthInfo, namespace: str) -> bool:
+    return await _gate_admits(token, Role.VIEWER, namespace)
 
 
 @pytest.mark.parametrize("kind", list(TOKENS))
@@ -106,6 +145,36 @@ def test_the_named_claims_are_the_ones_the_gate_lets_the_token_read(kind: str) -
 
     readable, admitted = asyncio.run(_both())
     assert readable == admitted
+
+
+@pytest.mark.parametrize("kind", list(TOKENS))
+def test_the_default_is_one_the_gate_lets_the_token_write(_default_inputs, kind: str) -> None:
+    from server.identity.app.caller_home import caller_org, default_and_readable
+
+    token = TOKENS[kind]
+    org = caller_org(token) or ORG
+
+    async def _check() -> tuple[str, bool, bool]:
+        default, _ = await default_and_readable(token, org)
+        writes_somewhere = any(
+            [await _gate_admits(token, Role.WRITER, ns, org) for ns in token.namespaces]
+        )
+        writes_default = bool(default) and await _gate_admits(token, Role.WRITER, default, org)
+        return default, writes_somewhere, writes_default
+
+    default, writes_somewhere, writes_default = asyncio.run(_check())
+    if writes_somewhere:
+        assert writes_default, default
+    elif default:  # a token that writes nowhere still reads its default
+        assert asyncio.run(_gate_admits(token, Role.VIEWER, default, org)), default
+
+
+def test_a_delegated_default_skips_a_claim_its_creator_only_reads(_default_inputs) -> None:
+    # alice reads `docs` but writes `team`: the write home is `team`.
+    from server.identity.app.caller_home import default_namespace
+
+    token = TOKENS["delegated, creator only reads the first claim"]
+    assert asyncio.run(default_namespace(token, ORG)) == "team"
 
 
 def test_the_cases_cover_both_outcomes() -> None:
