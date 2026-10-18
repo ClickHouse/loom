@@ -200,7 +200,7 @@ async def test_writes_are_refused_and_ddl_is_not(monkeypatch: pytest.MonkeyPatch
     c = _client(fake)
     rw.begin()
     with pytest.raises(SchemaPendingError):
-        await c.insert("loom.memory_reinforcement", [{"a": 1}], project_onto_table=False)
+        await c.insert("loom.memory_reinforcement", [{"a": 1}])
     with pytest.raises(SchemaPendingError):
         await c.execute("INSERT INTO loom.memory_reinforcement (a) VALUES (1)")
     assert fake.calls == []
@@ -248,7 +248,7 @@ async def test_a_fully_migrated_service_sees_every_statement_unchanged(
     ]
     for sql in stmts:
         await c.query_all(sql)
-    await c.insert("loom.memory_reinforcement", [{"a": 1}], project_onto_table=False)
+    await c.insert("loom.memory_reinforcement", [{"a": 1}])
     issued = [sql for kind, sql in fake.calls if kind == "query" and not sql.startswith("DESCRIBE")]
     assert issued == stmts  # byte-identical text, same order
     assert rw.current() is not None and rw.current().schema_skipped == []
@@ -319,7 +319,8 @@ async def test_an_anomalous_ledger_idles_the_guard_instead_of_refusing_everythin
     assert await ch_schema_guard.pending_tables(now=20.0) == {}
     fake = _FakeAsync()
     c = _client(fake)
-    await c.insert("loom.agent_events", [{"a": 1}], project_onto_table=False)
+    monkeypatch.setattr(ch_mod, "PROJECTED_TABLES", frozenset())  # no DESCRIBE first
+    await c.insert("loom.agent_events", [{"a": 1}])
     assert [k for k, _ in fake.calls if k == "insert"] == ["insert"]
 
 

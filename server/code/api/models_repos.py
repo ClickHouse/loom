@@ -151,7 +151,6 @@ class CodeRepoAddInput(BaseModel):
     # `standard` or `restricted` (a reader needs an approved grant and a token that
     # names the namespace).
     classification: Literal["standard", "restricted"] = "standard"
-    github_token: str = Field("", description="Deprecated alias of access_token.")
     access_token: str = Field(
         "", description="Token for a private HTTPS remote; stored encrypted, never returned."
     )
@@ -183,7 +182,6 @@ class CodeRepoRemoteBranchesInput(BaseModel):
 
     org: str = Field(..., description="The org adding the repository.")
     repo: str = Field(..., description="GitHub owner/name or an HTTPS/SSH Git URL.")
-    github_token: str = Field("", description="Deprecated alias of access_token.")
     access_token: str = Field("", description="Token for a private HTTPS remote; used once.")
     # a repository can have thousands of heads (ClickHouse has ~16,000)
     query: str = Field(

@@ -23,18 +23,6 @@ def test_with_require_the_gate_fails_where_it_cannot_run(
     assert "cannot run" in capsys.readouterr().out
 
 
-def test_a_build_carries_when_it_has_the_carry_module() -> None:
-    assert mixed_version.carries(mixed_version.ROOT)
-    assert mixed_version.warns_newer_schema(mixed_version.ROOT)
-
-
-def test_the_dashboard_and_leader_checks_know_which_builds_take_part(tmp_path) -> None:
-    assert mixed_version.publishes_bundle(mixed_version.ROOT)
-    assert mixed_version.elects_in_clickhouse(mixed_version.ROOT)
-    assert not mixed_version.publishes_bundle(tmp_path)
-    assert not mixed_version.elects_in_clickhouse(tmp_path)
-
-
 def test_without_npm_no_bundle_is_built(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "frontend").mkdir()
     (tmp_path / "frontend" / "package.json").write_text("{}")
@@ -49,11 +37,3 @@ def test_the_next_tree_carries_one_migration_more(tmp_path) -> None:
     (migrations / "030_shared_replica_state.sql").write_text("SELECT 1;\n")
     assert mixed_version.add_noop_migration(tmp_path) == "031_mixed_version_gate.sql"
     assert (migrations / "031_mixed_version_gate.sql").read_text().endswith("SELECT 1;\n")
-
-
-def test_the_readiness_check_knows_which_builds_have_the_probe(tmp_path) -> None:
-    (tmp_path / "server").mkdir()
-    (tmp_path / "server" / "health.py").write_text('@router.get("/v1/health")\n')
-    srv = mixed_version.Server("head", mixed_version.ROOT, 0, tmp_path)
-    assert srv.has_ready_probe()
-    assert not mixed_version.Server("base", tmp_path, 0, tmp_path).has_ready_probe()

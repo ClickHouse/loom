@@ -1,6 +1,7 @@
 """The lock files beside a bare mirror: whole-file `flock(2)`s that keep the
 processes of one host apart (`.clone-lock` for a clone, `.fetch-lock` for every
-fetch, `.gc-lock` for gc). The kernel drops a lock when its holder exits."""
+fetch, `.gc-lock` for gc). The kernel drops a lock when its holder exits. Also
+the name of a clone's temp tree, `<mirror>.partial-<pid>-<ns>`."""
 
 from __future__ import annotations
 
@@ -8,7 +9,23 @@ import asyncio
 import contextlib
 import fcntl
 import os
+import re
+import time
 from collections.abc import AsyncIterator
+
+# A clone's temp tree beside its mirror: `<mirror>.partial-<pid>-<monotonic ns>`.
+_PARTIAL = re.compile(r"(.+)\.partial-\d+-\d+")
+
+
+def partial_temp_dir(git_dir: str) -> str:
+    """A new temp tree name for a clone of `git_dir`."""
+    return f"{git_dir}.partial-{os.getpid()}-{time.monotonic_ns()}"
+
+
+def partial_mirror(path: str) -> str | None:
+    """The mirror a clone's temp tree belongs to; None for any other path."""
+    m = _PARTIAL.fullmatch(os.path.basename(path))
+    return os.path.join(os.path.dirname(path), m.group(1)) if m else None
 
 
 def try_lock(path: str) -> int | None:

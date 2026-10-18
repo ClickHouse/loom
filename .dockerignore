@@ -21,7 +21,7 @@ frontend/dist
 .mypy_cache
 *.egg-info
 
-# Operator-local state. `var/` holds the blob store and vector backups: large,
+# Operator-local state. `var/` holds the code mirrors, checkouts and vector backups: large,
 # machine-specific, and never needed at build time.
 var/
 

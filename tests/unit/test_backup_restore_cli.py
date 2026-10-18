@@ -390,8 +390,17 @@ def test_a_table_with_rows_in_scope_needs_into_nonempty(
         lambda b: (b / "manifest.json").write_text(
             json.dumps({**json.loads((b / "manifest.json").read_text()), "backup_version": 1})
         ),
+        lambda b: (b / "manifest.json").write_text(
+            json.dumps(
+                {
+                    k: v
+                    for k, v in json.loads((b / "manifest.json").read_text()).items()
+                    if k != "views"
+                }
+            )
+        ),
     ],
-    ids=["content-changed", "file-missing", "no-manifest", "old-version"],
+    ids=["content-changed", "file-missing", "no-manifest", "old-version", "no-views"],
 )
 def test_a_backup_that_fails_verification_is_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tamper: Any
@@ -589,28 +598,6 @@ def test_restore_exclude_leaves_tables_out(monkeypatch: pytest.MonkeyPatch, tmp_
     assert _restore(monkeypatch, client, argv) == 0
     assert client.inserted == {}
     assert _restore(monkeypatch, client, ["--in-dir", str(b), "--exclude", "nope"]) == 2
-
-
-def test_an_older_manifest_reads_the_views_of_its_source_database() -> None:
-    class _Views:
-        def query(self, sql: str, parameters: Any = None) -> _Result:
-            if sql == backup_loom.VIEW_SOURCES_SQL:
-                return _Result([("memory", "memory_versions_mv")])
-            return _Result(
-                [
-                    (
-                        "memory_versions_mv",
-                        "CREATE MATERIALIZED VIEW loom.memory_versions_mv "
-                        "TO loom.memory_versions (`org` String) AS SELECT",
-                    )
-                ]
-            )
-
-    edges = restore_loom.view_edges(_Views(), {"source_database": "loom"})
-    assert edges == [
-        {"view": "memory_versions_mv", "source": "memory", "target": "memory_versions"}
-    ]
-    assert restore_loom.view_edges(_Views(), {"views": []}) == []
 
 
 def test_each_restore_stages_under_its_own_run_id(

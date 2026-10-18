@@ -560,7 +560,7 @@ def concept_to_memory(
 
 def concept_session_id(c: Concept) -> str:
     """The session the concept's row was written under, from `loom.session_id`;
-    '' when the bundle carries no session (an older export) or the row had
+    '' when the bundle was written without `loom.session_id` or the row had
     none."""
     raw_loom = c.extra.get("loom")
     loom: dict[str, Any] = raw_loom if isinstance(raw_loom, dict) else {}

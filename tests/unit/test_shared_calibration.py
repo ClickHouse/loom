@@ -124,7 +124,7 @@ async def test_a_missing_table_falls_back_to_the_local_probe_then_publishes(env)
 async def test_another_models_row_is_not_adopted(env) -> None:
     store, _probes, calls = env
     other = replace(_cal(), embedder_model="gemini-embedding-001")
-    store.rows[MODEL] = {"thresholds_json": json.dumps(asdict(other))}
+    store.rows[ec.shared_key(MODEL)] = {"thresholds_json": json.dumps(asdict(other))}
     await ec.adopt_or_probe()
     assert calls["probe"] == 1
 
@@ -220,17 +220,3 @@ async def test_the_same_label_in_another_space_probes_instead_of_adopting(
     await ec.adopt_or_probe()
     assert calls["probe"] == 1 and ec.calibration_source() == "shared"
     assert len(store.rows) == 2  # each space keeps its own row
-
-
-@pytest.mark.asyncio
-async def test_a_row_keyed_by_the_model_alone_is_never_adopted(env) -> None:
-    store, _probes, calls = env
-    store.rows[MODEL] = {
-        "thresholds_json": json.dumps(asdict(_cal(conflict=0.91)), sort_keys=True),
-        "calibration_hash": "x",
-        "calibrated_by": "an earlier build",
-        "calibrated_at": "",
-        "version": 1,
-    }
-    await ec.adopt_or_probe()
-    assert calls["probe"] == 1

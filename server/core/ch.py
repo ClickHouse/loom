@@ -1092,20 +1092,17 @@ class CHClient:
         table: str,
         rows: list[dict[str, Any]],
         settings: dict[str, Any] | None = None,
-        *,
-        project_onto_table: bool | None = None,
     ) -> None:
         """Batch insert via the native typed insert path. `settings` forwards
         CH query settings; fire-and-forget settings are normalised by
         `normalize_insert_settings`.
 
-        `project_onto_table` (default on for the ledger tables
-        in `PROJECTED_TABLES`): columns the live table does not have are
-        dropped from the statement — one WARNING per (table, column) per
-        process — instead of failing the batch. A process running code newer
-        than the service's schema (an isolated server, or the deployment
-        between an image build and its boot migration) then loses a column's
-        values, not its rows."""
+        For the ledger tables in `PROJECTED_TABLES`, columns the live table
+        does not have are dropped from the statement — one WARNING per
+        (table, column) per process — instead of failing the batch. A process
+        running code newer than the service's schema (an isolated server, or
+        the deployment between an image build and its boot migration) then
+        loses a column's values, not its rows."""
         if not rows:
             return
         # Before the DESCRIBE — that read is the first statement
@@ -1114,19 +1111,18 @@ class CHClient:
         from server.core import rmt_carry
 
         if not rmt_carry.carries(table):
-            await self._insert_batch(table, rows, settings, project_onto_table)
+            await self._insert_batch(table, rows, settings)
             return
         async with rmt_carry.writing():
             # A version row keeps the columns a newer build's migration added.
             for batch in await rmt_carry.carry_unknown_columns(self, table, rows):
-                await self._insert_batch(table, batch, settings, project_onto_table)
+                await self._insert_batch(table, batch, settings)
 
     async def _insert_batch(
         self,
         table: str,
         rows: list[dict[str, Any]],
         settings: dict[str, Any] | None,
-        project_onto_table: bool | None,
     ) -> None:
         # A coded vector column needs every row at full length.
         from server.core.vectors import codes_state, placeholders
@@ -1134,7 +1130,7 @@ class CHClient:
         await codes_state.refuse_other_widths(table, rows)  # skips the empty vectors
         padded = placeholders.pad_rows(table, rows)
         try:
-            await self._insert_rows(table, rows, settings, project_onto_table)
+            await self._insert_rows(table, rows, settings)
             return
         except Exception as e:
             if error_code(e) != WIDTH_MISMATCH_CODE:
@@ -1151,7 +1147,7 @@ class CHClient:
         # before it: a background probe may have published the new width mid-insert.
         if all(codes_state.stored_width(table, c) == n for c, n in sized.items()):
             raise refused  # the fresh reading does not explain it
-        await self._insert_rows(table, rows, settings, project_onto_table)
+        await self._insert_rows(table, rows, settings)
 
     async def _fenced_insert(
         self,
@@ -1187,11 +1183,9 @@ class CHClient:
         table: str,
         rows: list[dict[str, Any]],
         settings: dict[str, Any] | None,
-        project_onto_table: bool | None,
     ) -> None:
         columns = list(rows[0].keys())
-        if project_onto_table is None:
-            project_onto_table = table in PROJECTED_TABLES
+        project_onto_table = table in PROJECTED_TABLES
         if project_onto_table:
             columns = await self._project_columns(table, columns)
         # Rows must agree on their key set: the column list comes from row 0,
@@ -1214,7 +1208,8 @@ class CHClient:
         # connection held for a trip that returns nothing new). The
         # types are read once per table per process and handed to the driver;
         # a schema that has changed under the cache fails the insert once,
-        # the entry is dropped, and the insert runs again the old way.
+        # the entry is dropped, and the insert runs again with the driver
+        # reading the column types itself.
         type_names = await self._column_type_names(table, columns)
         data = _insert_data(rows, columns, type_names)
 
@@ -1389,10 +1384,9 @@ class CHClient:
 # the number of tables loom writes; dropped per table on an insert failure.
 _COLUMN_TYPES: dict[str, dict[str, str]] = {}
 
-# Ledger tables whose inserts are projected onto the live column set by
-# default: rows here are telemetry a request or a pass has
-# already finished — losing a new column's value is a gap, losing the row is
-# a hole in the cost and audit series.
+# Ledger tables whose inserts are projected onto the live column set: rows
+# here are telemetry a request or a pass has already finished — losing a new
+# column's value is a gap, losing the row is a hole in the cost and audit series.
 # loom.llm_response_cache joins them: a cache row a service behind the schema
 # cannot store whole is still a row worth storing.
 PROJECTED_TABLES: frozenset[str] = frozenset(

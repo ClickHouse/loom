@@ -55,7 +55,7 @@ def _as_dt(value: datetime | str | None) -> datetime | None:
         dt = datetime.fromisoformat(text)
         return dt.replace(tzinfo=None) if dt.tzinfo else dt
     # Date-only: anchor to start-of-day, matching the server's
-    # date-only legacy normalization for valid_from.
+    # date-only normalization for valid_from.
     return datetime.fromisoformat(text)
 
 

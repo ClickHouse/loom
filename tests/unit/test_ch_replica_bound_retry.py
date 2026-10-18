@@ -105,7 +105,7 @@ def test_read_only_and_keeper_session_errors_are_replica_bound(code: int) -> Non
         "Code: 999. DB::Exception: Coordination error: Node exists. (KEEPER_EXCEPTION)",
         "Code: 999. DB::Exception: Coordination error: Bad version. (KEEPER_EXCEPTION)",
         "Code: 999. DB::Exception: Coordination::Exception: Transaction failed (No node): "
-        "Op #0, path: /keeper_map_tables/loom/oauth_claims/data/BXQ6bm4x. (KEEPER_EXCEPTION)",
+        "Op #0, path: /keeper_map_tables/loom/oauth_signin_state/data/BXQ6bm4x. (KEEPER_EXCEPTION)",
     ],
 )
 def test_a_strict_keepermap_answer_is_not_retried(msg: str) -> None:

@@ -163,29 +163,6 @@ def test_blob_gone_is_still_410(client: TestClient, monkeypatch: pytest.MonkeyPa
     assert r.json()["detail"]["code"] == "BLOB_GONE"
 
 
-def test_a_legacy_path_is_410_naming_the_import(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _serve(monkeypatch, _row(blob_path="acme/team-alerts/ab/" + "a" * 64, blob_size=3), {})
-    r = client.get(URL)
-    assert r.status_code == 410
-    assert "loom blobs import" in r.json()["detail"]["message"]
-
-
-def test_a_legacy_path_whose_original_was_imported_serves_it(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An edit that read the row before `loom blobs import` writes the old path
-    back; the path ends in the sha the import stored the bytes under."""
-    _serve(
-        monkeypatch,
-        _row(blob_path="acme/team-alerts/aa/" + "a" * 64, blob_size=3),
-        {"a" * 64: b"abc"},
-    )
-    r = client.get(URL)
-    assert r.status_code == 200 and r.content == b"abc"
-
-
 def test_a_large_blob_streams_in_chunks_and_closes_its_stream(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

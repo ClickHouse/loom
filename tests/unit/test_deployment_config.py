@@ -50,40 +50,16 @@ def deployment(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---- snapshot -------------------------------------------------------------
 
 
-def test_process_and_secret_settings_are_not_published() -> None:
-    for name in ("ch_password", "ch_host", "jwt_secret", "background_workers", "blob_dir"):
-        assert not dc.publishable(name), name
-    for name in ("instance_heartbeat_seconds", "replica_count", "code_github_token"):
-        assert not dc.publishable(name), name
-    for name in ("code_repos_json", "embedding_model", "tracker_code_namespace_bindings_json"):
-        assert dc.publishable(name), name
-
-
-def test_a_snapshot_strips_credentials() -> None:
-    repos = [
-        {
-            "org": "acme",
-            "namespace": "code-widgets",
-            "repo": "acme/widgets",
-            "github_token": "ghp_secret",
-            "git_remote": "https://x-access-token:ghp_secret@github.com/acme/widgets.git",
-        }
-    ]
-    s = _settings(code_repos_json=json.dumps(repos), embedding_model="text-embedding-3-large")
+def test_a_snapshot_is_the_key_fingerprint_and_what_must_match() -> None:
+    s = _settings(
+        code_repos_json="[]",
+        instance_heartbeat_seconds=7,
+        embedding_model="text-embedding-3-large",
+    )
     snap = dc.snapshot(s)
-    assert "ghp_secret" not in json.dumps(snap)
-    entry = json.loads(snap["code_repos_json"])[0]
-    assert entry["git_remote"] == "https://github.com/acme/widgets.git"
+    assert set(snap) == {dc.KEYS_ENTRY, *dc.MUST_MATCH}
+    assert set(snap[dc.KEYS_ENTRY]) == {"root"}
     assert snap["embedding_model"] == "text-embedding-3-large"
-    assert set(snap[dc.KEYS_ENTRY]) == {"root", "signing", "active_kid", "sealing"}
-    assert "ch_host" not in snap
-
-
-def test_a_snapshot_always_carries_what_must_match() -> None:
-    """Left at its default the model is still published, so a replica that sets
-    another one is caught."""
-    snap = dc.snapshot(_settings())
-    assert set(dc.MUST_MATCH) <= set(snap)
 
 
 def test_fingerprints_name_the_snapshot_they_were_made_from() -> None:
@@ -112,7 +88,19 @@ def test_compare_names_a_different_secret_and_a_different_embedding_space() -> N
     assert any("LOOM_JWT_SECRET" in p for p in problems)
     assert any("LOOM_EMBEDDING_MODEL" in p for p in problems)
     assert any("LOOM_EMBEDDING_PROVIDER='fake'" in p for p in problems)  # as the model implies
-    assert dc.compare(other, {}) == []  # nothing published: nothing to differ from
+
+
+@pytest.mark.usefixtures("deployment")
+def test_a_row_without_the_root_fingerprint_is_drift_and_the_leader_keeps_it() -> None:
+    """It proves nothing about the root secret: no process is ready against it,
+    and only `loom deployment publish` replaces it."""
+    stored = {k: v for k, v in dc.snapshot(settings).items() if k != dc.KEYS_ENTRY}
+    ch = _Ch(stored)
+    asyncio.run(dc.check(ch))
+    assert any("root-secret fingerprint" in p for p in dc.drift())
+    assert not dc.readiness_check().ok
+    assert not asyncio.run(dc.publish(ch, live=[]))
+    assert ch.inserted == []
 
 
 @pytest.mark.usefixtures("deployment")
@@ -174,6 +162,15 @@ def test_the_leader_publishes_when_nothing_is_published() -> None:
 
 
 @pytest.mark.usefixtures("deployment")
+def test_an_empty_row_is_nothing_published() -> None:
+    ch = _Ch({})
+    asyncio.run(dc.check(ch))
+    assert dc.drift() == []
+    assert asyncio.run(dc.publish(ch, live=[]))
+    assert ch.stored == dc.snapshot(settings)
+
+
+@pytest.mark.usefixtures("deployment")
 def test_the_same_snapshot_is_not_rewritten() -> None:
     ch = _Ch(dc.snapshot(settings))
     assert not asyncio.run(dc.publish(ch, live=[]))
@@ -181,10 +178,11 @@ def test_the_same_snapshot_is_not_rewritten() -> None:
 
 
 @pytest.mark.usefixtures("deployment")
-def test_a_mixed_env_never_flaps_the_snapshot() -> None:
-    """Two leaders in turn, with different envs, while both run: the stored
-    snapshot is the first one's until no live instance runs it."""
-    theirs = dc.snapshot(_settings(conflict_threshold=0.9))
+def test_two_snapshot_shapes_never_flap_the_snapshot() -> None:
+    """Two builds' leaders in turn, publishing different snapshot shapes, while
+    both run: the stored snapshot is the first one's until no live instance
+    runs it."""
+    theirs = {**dc.snapshot(settings), "note": "another build's snapshot"}
     ch = _Ch(theirs)
     live = [_live(dc._digest(theirs))]
     assert not asyncio.run(dc.publish(ch, live=live))
@@ -196,7 +194,7 @@ def test_a_mixed_env_never_flaps_the_snapshot() -> None:
 
 @pytest.mark.usefixtures("deployment")
 def test_the_leader_adopts_its_env_once_the_old_one_is_gone() -> None:
-    theirs = dc.snapshot(_settings(conflict_threshold=0.9))
+    theirs = {**dc.snapshot(settings), "note": "another build's snapshot"}
     ch = _Ch(theirs)
     mine = dc.fingerprints(settings)["config_fp"]
     assert asyncio.run(dc.publish(ch, live=[_live(mine)]))
@@ -282,25 +280,6 @@ def test_a_branch_server_never_publishes(monkeypatch: pytest.MonkeyPatch) -> Non
     assert ch.inserted == []
 
 
-# ---- retired settings -----------------------------------------------------
-
-
-def test_retired_replica_settings_are_ignored_and_named(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    from server.settings import log_unknown_env_keys
-
-    retired = ("LOOM_READ_REPLICA", "LOOM_READ_REPLICA_MAIN_URL")
-    for name in retired:
-        monkeypatch.setenv(name, "true" if name == "LOOM_READ_REPLICA" else "https://main")
-    s = _settings()
-    assert not hasattr(s, "read_replica")
-    assert s.boot_migrate == settings.boot_migrate
-    with caplog.at_level("WARNING"):
-        log_unknown_env_keys()
-    assert all(name in caplog.text for name in retired)
-
-
 def test_one_label_and_width_on_two_endpoints_are_two_spaces() -> None:
     model = {"embedding_model": "text-embedding-3-large", "embedding_dim": 3072}
     published = dc.snapshot(_settings(embedding_base_url="https://one.example/v1", **model))
@@ -354,19 +333,20 @@ def test_the_embedding_endpoint_is_published_and_compared_without_credentials() 
     assert "u:secret" not in problem
 
 
-def test_an_older_builds_row_is_judged_as_this_build_normalises_it() -> None:
-    """Main published the env's values as set: an empty provider, a trailing
-    slash, userinfo. The same env on this build is the same space."""
+def test_a_published_row_is_judged_as_this_process_normalises_it() -> None:
+    """A row holding the env's values as set (an empty provider, a trailing
+    slash, userinfo) is the same space as that env."""
     s = settings.model_copy(
         update={"embedding_provider": "", "embedding_base_url": "https://u:p@emb.example.com/v1/"}
     )
-    older = {
+    stored = {
+        dc.KEYS_ENTRY: dc.key_fingerprints(s),
         "embedding_provider": "",
         "embedding_model": s.embedding_model,
         "embedding_dim": s.embedding_dim,
         "embedding_base_url": "https://emb.example.com/v1/",
     }
-    assert dc.compare(s, older) == []
+    assert dc.compare(s, stored) == []
 
 
 @pytest.mark.parametrize(

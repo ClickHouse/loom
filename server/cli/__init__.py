@@ -18,9 +18,11 @@ dispatches; each command family lives in its own module and registers its
 own subcommands:
 
   access         mint-token, revoke-token, claim-release
+  ch_setup       ch-setup
   code           the `loom code …` tree (code-intelligence ingest and upkeep)
   code_*         its subcommand bodies: run, backfill, prs, scip, maintenance
   demo           demo
+  deployment     deployment
   doctor         doctor, report
   doctor_client  the `doctor --client` checks of this machine as a client
   hygiene        drops, namespaces-gc, namespaces-adopt, erasure-re-verify
@@ -30,11 +32,14 @@ own subcommands:
   maintenance    reconcile-status, period-digest, demote-activity-narration,
                  reextract, reembed
   okf            export-okf, import-okf, okf-lint
-  ops            recalibrate, backfill-chunks, sensitivity, integrity, rechunk,
-                 lexical stats
+  ops            recalibrate, sensitivity, integrity, rechunk, lexical stats
+  participant    participant
+  provider_lock  provider-lock
   reports        export-actions, entity-export, audit-namespace, deploy-delta, mentor
+  secrets        secrets
   serve          serve, migrate
   shell          config, memory-search, ingest-transcript, set-host
+  signing_keys   signing-key
   tracker        tracker-probe, tracker-contract-check, tracker-dupcheck-fit,
                  tracker-embed-reset
   up             up

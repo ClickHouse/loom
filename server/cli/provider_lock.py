@@ -2,9 +2,8 @@
 that cannot be taken over by itself.
 
 A boot or a reconfiguration takes over an expired lock once its holder's
-participant heartbeat expired. A holder from a build without heartbeats, or
-one with no participant row, never counts as stopped; an operator who has
-confirmed its process is gone clears it here.
+participant heartbeat expired. A holder with no participant row never counts
+as stopped; an operator who has confirmed its process is gone clears it here.
 """
 
 from __future__ import annotations

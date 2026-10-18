@@ -32,11 +32,10 @@ class FakeCH(FakeLockTable):
         r = self.participants.get(pid)
         if r is None:
             return None
-        expired = r["stale"] > 0 and r["beat"] + r["stale"] < self.now()
+        expired = r["beat"] + r["stale"] < self.now()
         return {
             "state": r["state"],
             "version": r["version"],
-            "stale_after_s": r["stale"],
             "expired": expired,
         }
 
@@ -112,7 +111,7 @@ async def test_another_process_takes_over_once_ttl_and_heartbeat_expired(ch, kil
     assert ch.keys == {}  # released after the block
 
 
-@pytest.mark.parametrize("case", ["beating", "query_running", "no_row", "no_heartbeat"])
+@pytest.mark.parametrize("case", ["beating", "query_running", "no_row"])
 async def test_an_expired_lock_is_not_taken_from_a_holder_that_may_still_run(
     ch, killed_holder, case
 ):
@@ -122,10 +121,8 @@ async def test_an_expired_lock_is_not_taken_from_a_holder_that_may_still_run(
         ch.participants[a]["beat"] = ch.now() - 5
     elif case == "query_running":
         ch.tags.add(participant_tag(a))
-    elif case == "no_row":
-        del ch.participants[a]
     else:
-        ch.participants[a]["stale"] = 0
+        del ch.participants[a]
     assert not await _takes(ch)
     assert ch.holder(provider_lock.LOCK_NAME) == killed_holder
 
@@ -157,12 +154,22 @@ def test_clear_refuses_while_the_holder_is_live(ch):
     ch.advance(provider_lock.LOCK_TTL_S + 1)
     ch.participants[a]["beat"] = ch.now()
     assert provider_lock.clear_holder(ch, holder) == "live"
-    ch.participants[a]["stale"] = 0  # a build without heartbeats: the operator's word
+    ch.advance(provider_lock.LOCK_TTL_S + 1)  # its heartbeat expired too
     ch.tags.add(participant_tag(a))
     assert provider_lock.clear_holder(ch, holder) == "running"
     ch.tags.clear()
     assert provider_lock.clear_holder(ch, holder) == "cleared"
     assert provider_lock.LOCK_NAME not in ch.keys
+
+
+def test_clear_frees_a_retired_holder_before_its_row_expires(ch):
+    a = str(uuid4())
+    ch.participant(a)
+    holder = f"{a}/{uuid4()}"
+    ch.seed(provider_lock.LOCK_NAME, holder, ttl=provider_lock.LOCK_TTL_S)
+    ch.advance(provider_lock.LOCK_TTL_S + 1)
+    ch.participants[a].update(state="retired", beat=ch.now())
+    assert provider_lock.clear_holder(ch, holder) == "cleared"
 
 
 def test_the_cli_clears_only_a_stopped_holder(ch, monkeypatch, capsys):

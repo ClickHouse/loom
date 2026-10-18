@@ -1,6 +1,6 @@
-"""Operator command bodies for the `loom` CLI: recalibration, the chunk
-backfill, knowledge rechunk and lexical stats, and the sensitivity and
-integrity repairs. `loom --help` lists them."""
+"""Operator command bodies for the `loom` CLI: recalibration, knowledge rechunk
+and lexical stats, and the sensitivity and integrity repairs. `loom --help`
+lists them."""
 
 from __future__ import annotations
 
@@ -12,91 +12,6 @@ from typing import Any
 
 from server.cli._apply import add_apply_flags
 from server.cli._ch import run_connected
-
-
-def _cmd_backfill_chunks(args: argparse.Namespace) -> int:
-    """Backfill loom.memory_chunks from existing rows in loom.memory.
-
-    For namespaces that predate the chunks layer: each live row goes through
-    memory.set's own chunk writer (`write_set_chunks`), so a backfilled chunk
-    is the one memory.set would have written — the value's human text, under
-    session `memory.set:<key>` — and a later re-set or delete of the key finds
-    and tombstones it. Idempotent: a key whose live chunks already match is
-    skipped without embedding.
-
-    Scope:
-      --org / --namespace: required, no global backfill (cost guard)
-      --dry-run: report counts without writing
-    """
-    from types import SimpleNamespace
-
-    from server.cli._ch import run_connected
-    from server.embedding import get_embedder
-    from server.memory.app.set_chunks import (
-        plan_set_chunks,
-        set_chunks_current,
-        write_set_chunks,
-    )
-    from server.memory.store import parse_memory_value
-
-    async def _run(ch: Any) -> int:
-        embedder = get_embedder()
-        rows = await ch.query_all(
-            """
-            SELECT memory_key, agent, user_id, run_id, memory_type,
-                   if(length(toString(value_json)) > 2, toString(value_json), value) AS value
-            FROM loom.memory FINAL
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND tombstoned_at IS NULL
-            """,
-            params={"org": args.org, "ns": args.namespace},
-        )
-        if not rows:
-            print(f"no memories in {args.org}/{args.namespace}", file=sys.stderr)
-            return 0
-        chunks_written = keys_current = 0
-        for row in rows:
-            value = parse_memory_value(row.get("value"))
-            memory_type = str(row.get("memory_type") or "")
-            chunks, _ = plan_set_chunks(value, memory_type)
-            if not chunks:
-                continue
-            if await set_chunks_current(
-                ch,
-                org=args.org,
-                namespace=args.namespace,
-                memory_key=row["memory_key"],
-                chunks=chunks,
-                user_id=str(row.get("user_id") or "-"),
-            ):
-                keys_current += 1
-                continue
-            if args.dry_run:
-                chunks_written += len(chunks)
-                continue
-            chunks_written += await write_set_chunks(
-                SimpleNamespace(
-                    org=args.org,
-                    namespace=args.namespace,
-                    agent=str(row.get("agent") or ""),
-                    user_id=str(row.get("user_id") or "-"),
-                    run_id=str(row.get("run_id") or "-"),
-                    memory_key=row["memory_key"],
-                    value=value,
-                ),
-                memory_type=memory_type,
-                ch=ch,
-                embedder=embedder,
-            )
-        verb = "would write" if args.dry_run else "wrote"
-        print(
-            f"backfill-chunks: {len(rows)} memories, {keys_current} keys already chunked; "
-            f"{verb} {chunks_written} chunks"
-        )
-        return 0
-
-    return run_connected(_run)
 
 
 def _cmd_recalibrate(args: argparse.Namespace) -> int:
@@ -407,26 +322,11 @@ def _add_sensitivity_sweep_parser(sub: Any) -> None:
     p_ssw.set_defaults(func=_cmd_sensitivity_sweep)
 
 
-def _add_recalibrate_and_chunks_parsers(sub: Any) -> None:
-    """The `recalibrate` and `backfill-chunks` subcommands."""
+def _add_recalibrate_parser(sub: Any) -> None:
+    """The `recalibrate` subcommand."""
     p_recal = sub.add_parser(
         "recalibrate",
         help="Re-probe the embedder + run per-NS calibration immediately "
         "(otherwise this runs weekly via the recalibration worker).",
     )
     p_recal.set_defaults(func=_cmd_recalibrate)
-
-    p_chunks = sub.add_parser(
-        "backfill-chunks",
-        help="Backfill loom.memory_chunks from existing memory rows in "
-        "one namespace. Idempotent (skips chunks already present by "
-        "content_sha256). Use after migrating from a pre-chunks deploy.",
-    )
-    p_chunks.add_argument("--org", required=True)
-    p_chunks.add_argument("--namespace", required=True)
-    p_chunks.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Report what would be written without inserting.",
-    )
-    p_chunks.set_defaults(func=_cmd_backfill_chunks)

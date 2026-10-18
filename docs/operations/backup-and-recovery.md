@@ -208,16 +208,15 @@ back every feature. Carry three things:
 Everything else comes back from ClickHouse: document originals, signing keys, runtime
 overrides, the supervisor lease, revocations, sign-in attempt counts and graph-walk
 invalidation marks. Git mirrors re-clone from their recorded remotes on the next ingest
-pass, or on the first history read on the new host. A deployment from a build that kept
-document originals on disk moves them once with `loom blobs import <dir> --apply`
-([upgrades](./upgrades.md#from-a-build-that-kept-state-on-the-host)).
+pass, or on the first history read on the new host.
 
 Bounded exceptions:
 
 - The events stream (budget violations) is drained on `SIGTERM`. A `SIGKILL` or OOM loses
   at most one flush interval of that telemetry, never audit or memory rows.
-- Provider reconfiguration recovers from a dead process by its expired heartbeat. A
-  process of an older build never expires: once it is confirmed gone, retire it with
+- Provider reconfiguration waits on a dead process until a process on its host proves it
+  gone, or, on Kubernetes, until the workers leader sees its pod gone. Elsewhere, one
+  whose host is gone too (a move to a new host) is retired by hand with
   `loom participant retire --participant <id> --yes`
   ([provider reconfiguration](../architecture/provider-reconfiguration.md)).
 - Rate-limit bucket fill is per host. It refills in seconds, so a new host starts with

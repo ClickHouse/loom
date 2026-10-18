@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.knowledge.store.documents import LIVE_ORIGINAL_SQL, ORIGINAL_SHA_SQL
+from server.knowledge.store.documents import LIVE_ORIGINAL_SQL
 
 TABLE = "loom.document_blobs"
 _KEY = "org = {org:String} AND namespace = {ns:String} AND sha256 = {sha:String}"
@@ -141,7 +141,7 @@ async def unreferenced(
         FROM {TABLE}
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND sha256 > {{after:String}}
           AND toString(sha256) NOT IN (
-              SELECT {ORIGINAL_SHA_SQL} FROM loom.documents FINAL
+              SELECT blob_path FROM loom.documents FINAL
               WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {LIVE_ORIGINAL_SQL}
           )
         GROUP BY sha256
