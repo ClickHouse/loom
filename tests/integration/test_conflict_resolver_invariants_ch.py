@@ -16,15 +16,22 @@ import asyncio
 import json
 import random
 import re
-import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 import tests.integration.test_conflict_resolver_ch as base
 from tests.integration._resources import unique_org
-from tests.integration.test_conflict_resolver_ch import NS, USER, _audit, _pair, _place, _set, _vec
+from tests.integration.test_conflict_resolver_ch import (
+    NS,
+    USER,
+    _audit,
+    _pair,
+    _place,
+    _request_erasure,
+    _set,
+    _vec,
+)
 
 # The resolver tests' fixtures: a client, and the scripted, org-scoped worker.
 ch = base.ch
@@ -167,27 +174,6 @@ class _Writer:
             await asyncio.gather(*self.tasks)
 
 
-async def _erase(ch: Any, org: str) -> None:
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    await ch.insert(
-        "loom.erasure_requests",
-        [
-            {
-                "id": str(uuid.uuid4()),
-                "org": org,
-                "scope_type": "org",
-                "scope_value": org,
-                "requester": "test",
-                "status": "queued",
-                "failure_reason": "",
-                "requested_at": now,
-                "last_checkpoint_at": now,
-                "version": 1,
-            }
-        ],
-    )
-
-
 # Every table a resolver write lands in.
 _WRITTEN = (
     "memory",
@@ -239,7 +225,7 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
             await writer.run(0)
             await after_write.drain()
             stored.update(await _stored(ch, org))
-            await _erase(ch, org)
+            await _request_erasure(ch, org)
 
     if erasing:
         # One row at a time: no other row's write is in flight beside the call.

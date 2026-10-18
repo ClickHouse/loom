@@ -1098,12 +1098,29 @@ async def test_a_value_that_came_back_orders_from_its_return(ch, wired) -> None:
     assert out["retired"] == 0 and out["flagged"] == 1
 
 
-async def test_an_erasure_requested_during_the_call_stops_the_acting(
-    ch, wired, monkeypatch
-) -> None:
+async def _request_erasure(ch: Any, org: str) -> None:
     import uuid
     from datetime import UTC, datetime
 
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    row = {
+        "id": str(uuid.uuid4()),
+        "org": org,
+        "scope_type": "org",
+        "scope_value": org,
+        "requester": "test",
+        "status": "queued",
+        "failure_reason": "",
+        "requested_at": now,
+        "last_checkpoint_at": now,
+        "version": 1,
+    }
+    await ch.insert("loom.erasure_requests", [row])
+
+
+async def test_an_erasure_requested_during_the_call_stops_the_acting(
+    ch, wired, monkeypatch
+) -> None:
     from server.memory.workers.conflict_resolver import run_pass
 
     org, llm = wired
@@ -1111,20 +1128,7 @@ async def test_an_erasure_requested_during_the_call_stops_the_acting(
     real = llm.complete
 
     async def complete(system: str, user: str, **kw: Any) -> Any:
-        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-        row = {
-            "id": str(uuid.uuid4()),
-            "org": org,
-            "scope_type": "org",
-            "scope_value": org,
-            "requester": "test",
-            "status": "queued",
-            "failure_reason": "",
-            "requested_at": now,
-            "last_checkpoint_at": now,
-            "version": 1,
-        }
-        await ch.insert("loom.erasure_requests", [row])
+        await _request_erasure(ch, org)
         return await real(system, user, **kw)
 
     monkeypatch.setattr(llm, "complete", complete)
@@ -1184,9 +1188,6 @@ async def test_an_erasure_requested_while_a_pair_waits_for_its_lock_gets_no_writ
 ) -> None:
     """The erasure is read under the pair's locks, right before the write: one requested
     while the resolver waits for the peer's key leaves both rows and the mark as they were."""
-    import uuid
-    from datetime import UTC, datetime
-
     from server.memory.store.key_write_lock import key_write_locks
     from server.memory.workers.conflict_resolver import run_pass
 
@@ -1196,24 +1197,7 @@ async def test_an_erasure_requested_while_a_pair_waits_for_its_lock_gets_no_writ
     async with key_write_locks.hold(org, NS, "bot", USER, "s1", "office_city"):
         resolving = asyncio.create_task(run_pass())
         await asyncio.sleep(2)
-        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-        await ch.insert(
-            "loom.erasure_requests",
-            [
-                {
-                    "id": str(uuid.uuid4()),
-                    "org": org,
-                    "scope_type": "org",
-                    "scope_value": org,
-                    "requester": "test",
-                    "status": "queued",
-                    "failure_reason": "",
-                    "requested_at": now,
-                    "last_checkpoint_at": now,
-                    "version": 1,
-                }
-            ],
-        )
+        await _request_erasure(ch, org)
     out = await resolving
     assert out["judged"] == 1 and out["retired"] == 0
     after = await _rows(ch, org)
@@ -1221,6 +1205,30 @@ async def test_an_erasure_requested_while_a_pair_waits_for_its_lock_gets_no_writ
         k: r["version"] for k, r in before.items()
     }
     assert (await _marks(ch, org))["office_location"] == 1, "owed, left to after the saga"
+
+
+async def test_an_erasure_requested_once_a_retirement_lands_gets_no_record_or_audit(
+    ch, wired, monkeypatch
+) -> None:
+    """The retirement landed, the erasure came next: its record, follow and audit row,
+    written after the locks, are left to the saga (the follow intent stays)."""
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 92)
+    real = resolver._settle_locked_pair
+
+    async def then_erase(*a: Any, **kw: Any) -> Any:
+        out = await real(*a, **kw)
+        await _request_erasure(ch, org)
+        return out
+
+    monkeypatch.setattr(resolver, "_settle_locked_pair", then_erase)
+    assert (await run_pass())["retired"] == 1
+    assert await _audit(ch, org, "memory.auto_supersede") == []
+    assert await _audit(ch, org, "memory.conflict_resolver") == []
+    assert [r["status"] for r in await _follow_intents(ch, org, want_active=1)] == ["active"]
 
 
 @pytest.mark.parametrize("earlier", [False, True])

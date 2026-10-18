@@ -778,6 +778,10 @@ def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.log.append(("resolved", failure_ids))
         return 1
 
+    async def no_erasure(org: str, **kw: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(queue, "under_erasure", no_erasure)
     monkeypatch.setattr(conflicts, "apply_refines", refines)
     monkeypatch.setattr(auto_resolution, "record_auto_supersessions", record)
     monkeypatch.setattr(resolver, "_follow", follow)

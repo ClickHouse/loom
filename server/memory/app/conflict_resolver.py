@@ -281,6 +281,8 @@ async def _after_retire(org: str, namespace: str, done: Any) -> None:
     memory row."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
 
+    if await queue.under_erasure(org):
+        return  # the saga deletes the intent with the rest; nothing is written meanwhile
     recorded = await record_auto_supersessions(
         org=org, namespace=namespace, retired=done.retired, reason=CONFLICT_RESOLVER
     )
@@ -637,7 +639,7 @@ async def _act_on_verdicts(
     try:
         await _settle_pairs(org, namespace, row, peers, verdicts, policy, order, counts, acted)
     finally:
-        if acted:
+        if acted and not await queue.under_erasure(org):
             await _audit(org, namespace, row, acted, model)
 
 
