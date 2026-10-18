@@ -650,3 +650,41 @@ async def test_code_calibrate_writes_the_workers_row_through_the_attributed_inse
         **{k: row[k] for k in ("calibrated_at", "version")},
     }
     assert row["noise_floor"] == _calibration().noise_floor and row["version"] > 0
+
+
+async def test_a_fresh_follow_owed_intent_is_left_to_its_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resolver records and follows its retirement itself, right after the supersede:
+    a repair replaying the intent then would write a second record beside the writer's."""
+    import dataclasses
+    from datetime import timedelta
+
+    from server.core.datetimes import naive_utc_now
+    from server.memory.app import projection_failures as pf
+    from server.memory.store import conflict_resolver as queue
+
+    replayed: list[str] = []
+
+    async def follow(f: ProjectionFailureRow, **_: Any) -> str:
+        replayed.append(f.failure_id)
+        return ""
+
+    monkeypatch.setattr(pf, "_retry_follow_rows", follow)
+    fresh = dataclasses.replace(_failure(1, pf.FOLLOW_OWED), created_at=naive_utc_now())
+    (out,) = await pf.retry_failures([fresh], ch=object())
+    assert (out.retried, out.reason) == (False, "pending") and replayed == []
+    past_grace = timedelta(seconds=pf.FOLLOW_OWED_GRACE_S + 1)
+    aged = dataclasses.replace(fresh, created_at=naive_utc_now() - past_grace)
+    marks: list[Any] = []
+
+    class CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            marks.append(params)
+
+    async def no(org: str, **kw: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(queue, "under_erasure", no)
+    (out,) = await pf.retry_failures([aged], ch=CH())
+    assert out.resolved and replayed == ["f1"]

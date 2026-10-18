@@ -873,6 +873,14 @@ async def test_closer_rows_of_another_type_do_not_hide_a_peer(ch, wired) -> None
         await _drop_vectors(ch, org, NS, "pref")
 
 
+def _past_the_writers_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The repair takes over a fresh FOLLOW_OWED intent, as it does once its writer had
+    FOLLOW_OWED_GRACE_S to finish."""
+    from server.memory.app import projection_failures
+
+    monkeypatch.setattr(projection_failures, "FOLLOW_OWED_GRACE_S", 0)
+
+
 async def _follow_intents(ch: Any, org: str, want_active: int) -> list[dict[str, Any]]:
     # Resolving is a mutation: poll up to ten seconds for `want_active` active rows.
     rows: list[dict[str, Any]] = []
@@ -916,6 +924,7 @@ async def test_a_retirement_owes_its_follow_until_the_follow_lands(
         from server.memory.app.projection_failures import FOLLOW_OWED, retry_projection_failures
 
         monkeypatch.undo()
+        _past_the_writers_grace(monkeypatch)
         (retry,) = await retry_projection_failures(org=org, projection=FOLLOW_OWED)
         assert retry.resolved, retry
 
@@ -1031,6 +1040,7 @@ async def test_a_retirement_clears_the_winners_flag_against_the_retired_row(
 
         monkeypatch.setattr(resolver, "_unlink", fail_once)
         assert (await run_pass())["errored"] == 1
+        _past_the_writers_grace(monkeypatch)
         await projection_failures.retry_projection_failures(
             org=org, projection="triples_follow_owed"
         )
@@ -1271,6 +1281,7 @@ async def test_an_erasure_requested_once_a_retirement_lands_gets_no_record_or_au
     assert await _audit(ch, org, "memory.auto_supersede") == []
     assert await _audit(ch, org, "memory.conflict_resolver") == []
     assert [r["status"] for r in await _follow_intents(ch, org, want_active=1)] == ["active"]
+    _past_the_writers_grace(monkeypatch)
     (retry,) = await projection_failures.retry_projection_failures(
         org=org, projection="triples_follow_owed"
     )
@@ -1331,6 +1342,7 @@ async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
     (intent,) = await _follow_intents(ch, org, want_active=1)
     assert intent["status"] == "active"
 
+    _past_the_writers_grace(monkeypatch)
     for _ in range(2):  # a second replay writes no second record
         await projection_failures.retry_projection_failures(
             org=org, projection="triples_follow_owed"
@@ -1478,6 +1490,7 @@ async def test_a_repair_before_the_supersede_commits_leaves_the_follow_owed(
     assert intent["status"] == "active"
 
     monkeypatch.setattr(entity_projections, "follow_row_supersessions", follow)
+    _past_the_writers_grace(monkeypatch)
     (retry,) = await retry_projection_failures(org=org, projection=FOLLOW_OWED)
     assert retry.resolved, retry
     assert not await _paris_open(ch, org, want=False)

@@ -79,8 +79,9 @@ FOLLOW_ROWS = "triples_follow_rows"
 # FOLLOW_ROWS. Its own name, since an older build replays FOLLOW_ROWS without checking
 # that the loser is still retired, and leaves a name it does not know active.
 FOLLOW_OWED = "triples_follow_owed"
-# A FOLLOW_OWED intent is committed right before its supersede: until each loser is
-# retired, or this long has passed, the retirement may still land and the intent waits.
+# A FOLLOW_OWED intent is committed right before its supersede, and its writer records
+# and follows the retirement itself: the repair leaves it this long, so the two never
+# write the record side by side.
 FOLLOW_OWED_GRACE_S = 600
 STATUS_MIRROR = "memory_status_mirror"
 # A STATUS_MIRROR intent waits this long: a same-content write in flight when it was
@@ -391,13 +392,12 @@ async def _retry(
 
     reason = ""
     try:
-        if failure.projection == STATUS_MIRROR and _younger_than(failure, STATUS_MIRROR_GRACE_S):
+        grace = {STATUS_MIRROR: STATUS_MIRROR_GRACE_S, FOLLOW_OWED: FOLLOW_OWED_GRACE_S}
+        if failure.projection in grace and _younger_than(failure, grace[failure.projection]):
             return _pending(failure)
         # Read for each failure, right before its write: an erasure can be requested
         # mid-batch. A failed read raises below and leaves the row active.
-        if await under_erasure(failure.org, ch=ch) or (
-            failure.projection == FOLLOW_OWED and await _retirement_pending(failure, ch=ch)
-        ):
+        if await under_erasure(failure.org, ch=ch):
             return _pending(failure)
         if failure.projection == "memory_belief_sources":
             await _retry_belief_sources(failure, ch=ch)
@@ -663,23 +663,6 @@ def _younger_than(failure: ProjectionFailureRow, seconds: float) -> bool:
     return created is not None and (
         (naive_utc_now() - to_naive_utc(created)).total_seconds() <= seconds
     )
-
-
-async def _retirement_pending(failure: ProjectionFailureRow, *, ch: Any) -> bool:
-    """Whether a fresh FOLLOW_OWED intent still has a loser that is live: its supersede
-    may not have committed yet, so following (nothing) and resolving now would lose it."""
-    from server.identity.domain.read_scope import WHOLE_NAMESPACE
-    from server.memory.store import get_by_id
-
-    if not _younger_than(failure, FOLLOW_OWED_GRACE_S):
-        return False
-    for loser, _winner in failure.payload.get("pairs") or []:
-        head = await get_by_id(
-            str(loser), org=failure.org, ch=ch, scope=WHOLE_NAMESPACE, strong=True
-        )
-        if head is not None and head.tombstoned_at is None and head.status != "superseded":
-            return True
-    return False
 
 
 async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) -> None:

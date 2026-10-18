@@ -251,17 +251,18 @@ asserted later, flag the pair for review instead. A row is always judged as itse
 a newer peer comes to its own turn from its own mark. A retirement goes through `apply_refines`: the older row is superseded behind the
 newer (its `superseded_by`), one `memory.auto_supersede` record names it
 (reason `conflict_resolver`, so `memory.restore` undoes it), and the triple plane follows
-(`follow_row_supersessions`). A flag the newer row held against the retired one is
-removed as a clear removes it, and the audit row's pair says `flag_cleared`, so the
-winner does not stay on the review queue against a retired row. The follow and the record are owed before the supersede commits: one
-committed `triples_follow_owed` projection-failure row holds the pair and the record's
-entry, and is resolved once both land, so a failure or a crash in between leaves them for
-the projection repair, which follows a pair, writes its record when none exists and clears
-the winner's flag against the loser, only while its loser is retired behind its winner. While a loser is still live and the intent is
-under ten minutes old, the supersede may not have committed yet: the repair leaves the
-intent as it is. The acting of a
-judged row (its pairs, records, follows and audit row) is shielded from cancellation, and
-a cancelled pass ends only once it has finished. A flag is
+(`follow_row_supersessions`). A flag the newer row held against the retired one is removed
+as a clear removes it, and the audit row's pair says `flag_cleared`, so the winner does
+not stay on the review queue against a retired row. The follow and the record are owed
+before the supersede commits: one committed `triples_follow_owed` projection-failure row
+holds the pair and the record's entry, and is resolved once both land, so a failure or a
+crash in between leaves them for the projection repair, which follows a pair, writes its
+record when none exists and clears the winner's flag against the loser, only while its
+loser is retired behind its winner. The repair leaves an intent under ten minutes old
+(`FOLLOW_OWED_GRACE_S`) to its writer, which records and follows the retirement itself, so
+the two never write a record side by side. The acting of a judged row (its pairs, records,
+follows and audit row) is shielded from cancellation, and a cancelled pass ends only once
+it has finished. A flag is
 `mark_peers_conflicted`; a clear removes the pair from each side's `conflict_with`, and a
 row left with no flag is `active` again, on its vector row too. One hash-only
 `memory.conflict_resolver` audit row per judged row that changed memory lists the pairs,
