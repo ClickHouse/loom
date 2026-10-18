@@ -6,6 +6,7 @@
 [gaps]
 "ch:code_scip_parts" = { owner = "code", reason = "No test names this object; only schema-check pins its DDL." }
 "ch:code_unit_signal" = { owner = "code", reason = "No test names this object; only schema-check pins its DDL." }
+"ch:oauth_claims" = { owner = "platform", reason = "No code path writes it." }
 "ch:task_claims" = { owner = "memory", reason = "No code path writes it." }
 "cli:entity-export" = { owner = "platform", reason = "No test invokes this command." }
 "cli:export-actions" = { owner = "platform", reason = "No test invokes this command." }
