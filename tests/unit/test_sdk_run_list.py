@@ -47,7 +47,7 @@ def test_order_by_offers_the_generated_orders() -> None:
     from loom.ops import RunListInput
     from loom.run import RunClient
 
-    hand = [a for a in get_args(get_type_hints(RunClient.list)["order_by"]) if a is not type(None)]
+    hand = get_type_hints(RunClient.list)["order_by"]
     generated = get_type_hints(RunListInput)["order_by"]
-    assert len(hand) == 1 and get_origin(hand[0]) is Literal
-    assert get_args(hand[0]) == get_args(generated)
+    assert get_origin(hand) is Literal
+    assert get_args(hand) == get_args(generated)
