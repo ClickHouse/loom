@@ -347,6 +347,9 @@ async def _creator_account(org: str, creator: str) -> _Account:
         )
     except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
         log.warning("account lookup failed for %s/%s: %s", org, creator, e)
+        from server.auth.fail_closed import note_unreadable
+
+        note_unreadable()
         return _Account(active=False, best_grant=None)
     account = _account_from_row(row or {})
     if len(_account_active) >= _ACCOUNT_CACHE_MAX:

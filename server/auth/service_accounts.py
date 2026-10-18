@@ -66,6 +66,9 @@ async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SAC
         )
     except Exception as e:  # noqa: BLE001 — a failed read inherits nothing (fail closed)
         log.warning("service_accounts lookup failed for %s/%s: %s", org, sa_subject, e)
+        from server.auth.fail_closed import note_unreadable
+
+        note_unreadable()
         return None
     creator = str((row or {}).get("created_by") or "")
     if not creator:

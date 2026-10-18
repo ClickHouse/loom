@@ -71,6 +71,11 @@ def _ledger_refusal(
         emit_refusal(op.name, auth, error_code=error_code, org=org, server_fault=server_fault)
 
 
+# Set on a refusal `_plane_namespace` made without a readable grant; the screen
+# pops it before answering.
+_UNVERIFIED = "_unverified"
+
+
 async def _plane_namespace(tool_name: Any, auth: Any, ns: str) -> str | dict[str, Any] | None:
     """For a code/tracker tool's inaccessible `namespace`: the namespace it
     resolves to (and the resolution noted for the result),
@@ -88,8 +93,11 @@ async def _plane_namespace(tool_name: Any, auth: Any, ns: str) -> str | dict[str
         return None
     to = nr.match(ns, known, default_branch=nr.default_branches(org))
     if to and to != ns:
-        if not await _may_read(auth, org, to):
-            return _not_accessible_result(tool_name, auth, to)
+        readable = await _may_read(auth, org, to)
+        if not readable:
+            refusal = _not_accessible_result(tool_name, auth, to)
+            refusal[_UNVERIFIED] = readable is None
+            return refusal
         nr.RESOLVED.set({"from": ns, "to": to})
         return to
     return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access)))
@@ -295,19 +303,20 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
             },
         )
     target_org = str(req_org or auth.org)
-    readable = await _may_read(auth, target_org, str(req_ns)) if req_ns else True
-    if req_ns and not readable:
+    if req_ns and not (readable := await _may_read(auth, target_org, str(req_ns))):
         # A code/tracker tool's `namespace` that is not a namespace resolves
         # to one or says so — never the claim text meant for a real refusal.
         fixed = await _plane_namespace(tool_name, auth, req_ns)
         refusal = fixed if isinstance(fixed, dict) else None
+        unverified = bool(refusal.pop(_UNVERIFIED, False)) if refusal else False
         if not fixed:
             refusal = _not_accessible_result(tool_name, auth, req_ns)
+            unverified = readable is None
         if refusal is not None:
             # The org the token may act in, as HTTP records the same refusal.
             code = str(refusal["structuredContent"]["code"])
             _ledger_refusal(
-                tool_name, auth, error_code=code, org=target_org, server_fault=readable is None
+                tool_name, auth, error_code=code, org=target_org, server_fault=unverified
             )
             return _ok(req.get("id"), refusal)
         args["namespace"] = fixed

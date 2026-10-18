@@ -95,10 +95,12 @@ def status_class(success: bool, error_code: str, error: BaseException | str | No
     # So is an access refusal made because a grant or a classification could
     # not be read (server.auth.authz), whatever error it was raised as.
     cause = error if isinstance(error, BaseException) else None
-    while cause is not None:
+    seen: set[int] = set()
+    while cause is not None and id(cause) not in seen:  # a chain can loop
         if getattr(cause, "unverified", False):
             return "server"
-        cause = cause.__cause__ or cause.__context__
+        seen.add(id(cause))
+        cause = cause.__cause__ or (None if cause.__suppress_context__ else cause.__context__)
     status = getattr(error, "status_code", None) if isinstance(error, BaseException) else None
     if not isinstance(status, int):
         status = _coded_statuses().get(error_code)

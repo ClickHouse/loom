@@ -81,6 +81,22 @@ def test_every_op_that_changes_state_is_in_the_write_slo() -> None:
     assert sli_columns("namespace.restore", "http")["slo_class"] == "write"
 
 
+def test_status_class_reads_the_unverified_mark_through_the_chain() -> None:
+    marked = PermissionError("no grant could be read")
+    marked.unverified = True  # type: ignore[attr-defined]
+    raised = HTTPException(status_code=403)
+    raised.__cause__ = marked
+    assert sli.status_class(False, "AUTH_INSUFFICIENT", raised) == "server"
+
+    # `from None` hides the context; a chain that loops ends.
+    hidden = HTTPException(status_code=403)
+    hidden.__context__, hidden.__suppress_context__ = marked, True
+    assert sli.status_class(False, "AUTH_INSUFFICIENT", hidden) == "client"
+    looped = PermissionError("x")
+    looped.__cause__ = looped
+    assert sli.status_class(False, "AUTH_INSUFFICIENT", looped) == "client"
+
+
 def test_sli_columns_resolve_the_effective_budget() -> None:
     cols = sli_columns("memory.get", "mcp")
     assert cols["transport"] == "mcp" and cols["slo_class"] == "read"
@@ -593,16 +609,24 @@ def test_the_rollup_waits_longer_than_a_ledger_insert_may_run() -> None:
 
 
 def test_a_refusal_made_without_readable_grants_is_the_server_s(monkeypatch) -> None:
-    """A grants or classification read that fails still refuses (fail closed),
-    but the refusal must not read as the caller's, or an outage of either
-    leaves the SLO green."""
-    from server.auth import authz
+    """A grant, alias, account or classification read that fails still refuses
+    (fail closed), but the refusal must not read as the caller's, or an outage
+    of those reads leaves the SLO green."""
+    from server.auth import aliases, authz, delegation, service_accounts
     from server.auth.directory import ClassificationUnavailable
     from server.auth.jwt import AuthInfo
 
-    class _Down:
-        async def query_one(self, *a: Any, **k: Any) -> None:
-            raise ConnectionError("ClickHouse is down")
+    class _Client:
+        fails = ""  # a fragment of the one statement that fails
+
+        async def query_one(self, sql: str, **k: Any) -> None:
+            if self.fails and self.fails in sql:
+                raise ConnectionError("ClickHouse is down")
+            return None
+
+        async def query_all(self, sql: str, **k: Any) -> list:
+            await self.query_one(sql)
+            return []
 
     class _Directory:
         down = False
@@ -615,36 +639,33 @@ def test_a_refusal_made_without_readable_grants_is_the_server_s(monkeypatch) -> 
         def code_entry(self, org: str, namespace: str) -> None:
             return None
 
-    async def _none(*a: Any, **k: Any) -> None:
-        return None
-
-    async def _alone(org: str, subject: str, **k: Any) -> list[str]:
-        return [subject]
-
-    directory = _Directory()
+    client, directory = _Client(), _Directory()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     monkeypatch.setattr(authz, "directory", lambda: directory)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: _Down())
-    monkeypatch.setattr("server.auth.aliases.subject_aliases", _alone)
-    monkeypatch.setattr("server.auth.service_accounts.inheriting_creator", _none)
-    auth = AuthInfo(
-        subject="u", org="o", namespaces=["mine"], roles=[Role.VIEWER], is_service_account=False
-    )
 
-    def refusal() -> PermissionError:
+    def status(auth: AuthInfo, fails: str = "") -> str:
+        client.fails = fails
+        for cache in (aliases._CACHE, service_accounts._creators, delegation._account_active):
+            cache.clear()
         with pytest.raises(PermissionError) as e:
             asyncio.run(authz.check_authorized(auth, Role.VIEWER, org="o", namespace="theirs"))
-        return e.value
+        return sli.status_class(False, "AUTH_INSUFFICIENT", e.value)
 
-    # The grants read fails.
-    assert sli.status_class(False, "AUTH_INSUFFICIENT", refusal()) == "server"
+    def token(subject: str, **k: Any) -> AuthInfo:
+        return AuthInfo(subject=subject, org="o", namespaces=["mine"], roles=[Role.VIEWER], **k)
 
-    # No grant: the caller's, and the mark does not leak from the call before.
-    monkeypatch.setattr(authz, "grant_role_for", _none)
-    assert sli.status_class(False, "AUTH_INSUFFICIENT", refusal()) == "client"
+    person = token("u@x.com", is_service_account=False)
+    bot = token("sa:bot", is_service_account=True)
+    delegated = token("u@x.com", is_service_account=False, creator="root@x.com")
 
-    # The classification read fails.
+    assert status(person) == "client"  # no grant: the caller's
+    assert status(person, fails="namespace_grants") == "server"
+    assert status(person, fails="contact_email") == "server"  # the aliases read
+    assert status(person) == "client"  # the mark does not outlive its call
+    assert status(bot, fails="service_accounts") == "server"
+    assert status(delegated, fails="owned_live") == "server"  # the creator's account
     directory.down = True
-    assert sli.status_class(False, "AUTH_INSUFFICIENT", refusal()) == "server"
+    assert status(person) == "server"
 
 
 def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatch) -> None:
@@ -673,6 +694,25 @@ def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatc
     )
     # The caller is told the same; only the ledger knows it was the server.
     assert result["result"]["structuredContent"]["code"] == "NAMESPACE_NOT_ACCESSIBLE"
+
+    # A code index name: one that names nothing is the caller's mistake
+    # whatever the grants say; one resolved to an index is refused on that one.
+    from server.transport import access_refusal
+    from server.transport import namespace_resolve as nr
+
+    monkeypatch.setattr(nr, "known_namespaces", lambda org: {"code-x"})
+    monkeypatch.setattr(nr, "match", lambda ns, *a, **k: "code-x" if ns == "code-x-main" else None)
+    monkeypatch.setattr(nr, "default_branches", lambda org: {})
+    monkeypatch.setattr(nr, "suggestable", lambda *a: [])
+    monkeypatch.setattr(access_refusal, "reason_fields", lambda ns: {})
+    for ns in ("nope", "code-x-main"):
+        call = {"name": "loom_code_search", "arguments": {"namespace": ns, "query": "q"}}
+        result = asyncio.run(
+            mcp_auth._screen_tool_call({"id": 2, "method": "tools/call", "params": call}, eve)
+        )
+        assert "_unverified" not in result["result"]
     assert [(e.error_code, e.status_class) for e in emitted] == [
-        ("NAMESPACE_NOT_ACCESSIBLE", "server")
+        ("NAMESPACE_NOT_ACCESSIBLE", "server"),
+        ("UNKNOWN_NAMESPACE", "client"),
+        ("AUTH_INSUFFICIENT", "server"),
     ]
