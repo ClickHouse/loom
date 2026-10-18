@@ -1204,7 +1204,8 @@ class CHClient:
         # connection held for a trip that returns nothing new). The
         # types are read once per table per process and handed to the driver;
         # a schema that has changed under the cache fails the insert once,
-        # the entry is dropped, and the insert runs again the old way.
+        # the entry is dropped, and the insert runs again with the driver
+        # reading the column types itself.
         type_names = await self._column_type_names(table, columns)
         data = _insert_data(rows, columns, type_names)
 
