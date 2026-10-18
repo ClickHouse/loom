@@ -2438,6 +2438,7 @@
           "valid_at",
           "valid_to",
           "char_limit",
+          "relations",
           "dry_run"
         ],
         "promote": [
@@ -2571,6 +2572,7 @@
           "valid_at",
           "valid_to",
           "char_limit",
+          "relations",
           "dry_run"
         ],
         "set_from_messages": [
@@ -2636,6 +2638,7 @@
           "concepts",
           "confidence",
           "reason",
+          "relations",
           "revive"
         ],
         "update_by_id": [
@@ -2645,6 +2648,7 @@
           "char_limit",
           "tags",
           "concepts",
+          "relations",
           "revive"
         ],
         "verify": [
