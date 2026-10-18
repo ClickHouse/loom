@@ -174,7 +174,7 @@ async def run(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
     real = embedder_mod.get_embedder()
     monkeypatch.setattr(embedder_mod, "_cached", ScenarioEmbedder(real.dim, real.model_name))
     judge = ScriptedJudge()
-    monkeypatch.setattr(llm_client, "get_llm_client_for_model", lambda m: judge)
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: judge)
     monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", True)
     owed, recheck = queue.owed_rows, queue.unjudged_conflicted_rows
     monkeypatch.setattr(queue, "owed_rows", lambda **kw: owed(**kw, ch=_OnlyOrg(ch, org)))
@@ -454,7 +454,6 @@ async def test_a_long_run_of_sessions_ends_with_one_live_value_per_attribute(ch,
         )
         assert undone.restored, k
     after = await _rows(ch, org)
-    # Each is back at the status it had before it retired: `ci` was flagged at its write.
-    assert {k: after[k]["status"] for k in OLDER} == {
-        k: "conflicted" if k == "ci" else "active" for k in OLDER
-    }
+    # Each is active again. `ci` was flagged at its write, but the retirement cleared the
+    # winner's side of that flag, so no peer lists it back and nothing is left to review.
+    assert {k: after[k]["status"] for k in OLDER} == dict.fromkeys(OLDER, "active")
