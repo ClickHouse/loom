@@ -66,8 +66,8 @@ def test_real_credential_shapes_are_caught(
 
 
 # --- must stay quiet -----------------------------------------------------------
-# Every one of these is a real line from this repo that a naive scanner flags.
-# They are the reason it gates on shape.
+# Lines of the kinds this repo holds that a naive scanner flags. They are the
+# reason it gates on shape.
 IGNORED = [
     ("env.example.txt", "LOOM_JWT_SECRET=dev-only-jwt-secret-do-not-use-in-prod"),
     ("ci.txt", "LOOM_JWT_SECRET: ci-only-jwt-secret"),
@@ -75,7 +75,7 @@ IGNORED = [
     ("help.txt", "raise SystemExit(\"set LOOM_LANGFUSE_ADMIN_TOKEN='pk-lf-...:sk-lf-...'\")"),
     ("docs.txt", "LOOM_CH_PASSWORD=your-password-here"),
     ("shell.txt", 'LOOM_CH_PASSWORD="${LOOM_CH_PASSWORD:?set it}"'),
-    ("keydoc.txt", '# LOOM_JWT_SECRETS_JSON={"prod-2026":"-----BEGIN PRIVATE KEY-----..."}'),
+    ("keydoc.txt", "# LOOM_JWT_SECRET may be a PEM RSA key: -----BEGIN PRIVATE KEY-----..."),
     ("example_sk.txt", "ANTHROPIC_API_KEY=sk-ant-example-not-a-real-key-000"),
     ("kebab.txt", "css_class = 'sk-" + "navigation-drawer-collapsed-state'"),
     ("binary.bin", "OPENAI_API_KEY=" + "sk-" + "proj-" + _BODY),

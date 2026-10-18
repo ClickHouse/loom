@@ -1,6 +1,6 @@
-"""The keyring's RS256 paths (a PEM root, a gateway's RS256 tokens), the root
-record, and the keyring's guards (another root, the leader-only root record,
-the rotate floor from every process's refresh interval)."""
+"""The keyring's guards (another root, the leader-only root record, the rotate
+floor from every process's refresh interval), the root record, and two RS256
+cases (a PEM root that is no RSA key, a gateway token without a kid)."""
 
 from __future__ import annotations
 
