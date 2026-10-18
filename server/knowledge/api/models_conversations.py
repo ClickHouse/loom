@@ -327,7 +327,7 @@ class ConversationCompactInput(BaseModel):
 
     The turns are the oldest ones before the last `keep_recent` that fit the
     summarizer's prompt; their embeddings are tombstoned too, except a turn another
-    agent of the thread still holds.
+    agent of the thread still holds live with the same text.
     The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
     nothing is written (`reason="embed-failed"`).
 
