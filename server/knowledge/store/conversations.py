@@ -778,7 +778,13 @@ async def _tombstone_embeddings(
     subquery (a replicated table refuses one)."""
     # Named turns are the agent's own (compaction reads them from its live turns).
     turns = "msg_id IN {ids:Array(String)}" if msg_ids is not None else _THREAD_TURNS
-    params: dict[str, Any] = {"org": org, "ns": namespace, "agent": agent, "tid": thread_id}
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "agent": agent,
+        "tid": thread_id,
+        "embedded": EMBEDDED_EXCERPT_CHARS,
+    }
     if msg_ids is not None:
         params["ids"] = msg_ids
     rows = await ch.query_all(
@@ -795,7 +801,7 @@ async def _tombstone_embeddings(
               AND tombstoned_at IS NULL
           )
         """,
-        params={**params, "embedded": EMBEDDED_EXCERPT_CHARS},
+        params=params,
     )
     # By (model, turn): during a re-embed a turn has a row per model, and each row's
     # text decides on its own whether another agent still holds it.

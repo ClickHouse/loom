@@ -730,12 +730,14 @@ def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
 
 @staged("compact")
 async def handle_conversation_compact(input: ConversationCompactInput) -> ConversationCompactOutput:
-    """LLM-summarize messages older than `keep_recent`, write the summary as one
-    embedded system message, then tombstone the originals and their embeddings.
+    """LLM-summarize the oldest turns before the last `keep_recent` that fit the prompt
+    (`_compaction_window`), write the summary as one embedded system message, then
+    tombstone the originals and their embeddings.
 
-    The new summary row carries metadata.compacted_from = [msg_ids]
-    so reruns can detect the candidate window is already covered. A summary that
-    cannot be embedded compacts nothing (`reason="embed-failed"`).
+    The summary row's metadata.compacted_from = [msg_ids] marks it as a summary: a
+    later run folds it into its window, and a window of nothing but summaries is
+    already compacted. A summary that cannot be embedded compacts nothing
+    (`reason="embed-failed"`).
     """
     import uuid as _uuid
     from datetime import UTC, datetime
