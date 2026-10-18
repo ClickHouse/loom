@@ -217,7 +217,7 @@ def compose_argv(
         "--env-file",
         str(root / env_file),
         *files,
-        # The bundled ClickHouse runs whatever COMPOSE_PROFILES an older .env says.
+        # The bundled ClickHouse runs whatever COMPOSE_PROFILES the .env names.
         "--profile",
         "bundled",
         *tail,

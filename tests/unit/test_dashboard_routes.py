@@ -91,7 +91,6 @@ def test_no_api_route_uses_a_page_segment() -> None:
         ("/metrics", 404, {"detail": "Not Found"}),
         ("/robots.txt", 404, {"detail": "Not Found"}),
         ("/memoriesx", 404, {"detail": "Not Found"}),
-        # no longer a page or a redirect to one
         ("/me", 404, {"detail": "Not Found"}),
         ("/me/tokens", 404, {"detail": "Not Found"}),
     ],

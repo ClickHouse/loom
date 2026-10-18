@@ -125,6 +125,8 @@ def load_manifest(in_dir: Path) -> dict[str, Any]:
             f"backup_version {version!r} is not {BACKUP_VERSION}; take a new backup with "
             "dev/backup_loom.py"
         )
+    if "views" not in manifest:
+        raise Refused(f"{path} lists no views; the backup is incomplete")
     return manifest
 
 

@@ -258,10 +258,6 @@ def _keys(view: _View) -> dict[str, SigningKey]:
     return view.keys if key is None else {**view.keys, ROOT_KID: key}
 
 
-def _is_pem_root(key: SigningKey) -> bool:
-    return key == _pem_root(str(settings.jwt_secret))
-
-
 def root_algorithm() -> str:
     """What LOOM_JWT_SECRET signs as kid `default`: HS256, RS256 (a PEM RSA key) or ''."""
     if root_is_hmac_key():
@@ -714,12 +710,7 @@ async def _retire(kid: str, *, ch: _CHClient, held: Callable[[], bool]) -> bool:
     if row is None and kid != ROOT_KID:
         return False
     now = await _ch_now(ch)
-    signers = {
-        k.kid
-        for k in _keys(view).values()
-        # A PEM root stops signing with `default`.
-        if k.activate_at <= now and not (kid == ROOT_KID and _is_pem_root(k))
-    }
+    signers = {k.kid for k in _keys(view).values() if k.activate_at <= now}
     if _root_signs(view.retired):
         signers.add(ROOT_KID)
     if signers <= {kid}:

@@ -390,8 +390,17 @@ def test_a_table_with_rows_in_scope_needs_into_nonempty(
         lambda b: (b / "manifest.json").write_text(
             json.dumps({**json.loads((b / "manifest.json").read_text()), "backup_version": 1})
         ),
+        lambda b: (b / "manifest.json").write_text(
+            json.dumps(
+                {
+                    k: v
+                    for k, v in json.loads((b / "manifest.json").read_text()).items()
+                    if k != "views"
+                }
+            )
+        ),
     ],
-    ids=["content-changed", "file-missing", "no-manifest", "old-version"],
+    ids=["content-changed", "file-missing", "no-manifest", "old-version", "no-views"],
 )
 def test_a_backup_that_fails_verification_is_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tamper: Any

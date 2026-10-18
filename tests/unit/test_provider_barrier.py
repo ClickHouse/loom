@@ -436,7 +436,7 @@ async def test_shutdown_retirement_never_outlives_its_budget(setup, monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_a_participant_row_expires_after_the_heartbeat_window_by_default():
+async def test_every_participant_row_expires_after_the_heartbeat_window():
     ch = SimpleNamespace(insert=AsyncMock())
     await pp.record_participant(uuid4(), UUID(int=0), "running", ch=ch)
     (row,) = ch.insert.call_args.args[1]
