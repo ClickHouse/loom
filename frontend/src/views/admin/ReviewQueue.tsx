@@ -205,10 +205,15 @@ function ConflictsPanel() {
   // for its own answer: a page the server read before the resolve wrote still lists them,
   // at versions the resolve answer does not name.
   const readsOut = useRef(new Set<Set<string>>());
-  // Each count read out collects the rows decisions take meanwhile, for its own answer: a
-  // count made before the resolve wrote still includes them, one made after comes out that
-  // many low; a count read once the server's minute-long cache has passed the write is right.
-  const countsOut = useRef(new Set<{ taken: number }>());
+  // The count is read fresh (no replica's cache) and a resolve answers the namespace's
+  // count after its writes, which the queue takes as is; a count read still out then is
+  // older, and its answer is dropped. From a server a release behind, which answers no
+  // count, each count read out collects the rows decisions take meanwhile instead and
+  // subtracts them from its answer.
+  const countsOut = useRef(new Set<{ taken: number; stale: boolean }>());
+  // The namespace on screen as of the latest render, for a resolve's count.
+  const queueNow = useRef(queueKey);
+  queueNow.current = queueKey;
   // The rows on screen as of the latest render, for an answer from another visit.
   const rowsNow = useRef(rows);
   rowsNow.current = rows;
@@ -232,11 +237,11 @@ function ConflictsPanel() {
           if (live()) setError(e);
         })
         .finally(() => readsOut.current.delete(goneHere));
-      const countHere = { taken: 0 };
+      const countHere = { taken: 0, stale: false };
       countsOut.current.add(countHere);
-      countConflicts({ org: identity.org, namespace: identity.namespace }, { signal })
+      countConflicts({ org: identity.org, namespace: identity.namespace }, { fresh: true, signal })
         .then((n) => {
-          if (live()) setTotal(Math.max(n - countHere.taken, 0));
+          if (live() && !countHere.stale) setTotal(Math.max(n - countHere.taken, 0));
         })
         .catch(() => {
           if (live()) setTotal(null);
@@ -319,6 +324,7 @@ function ConflictsPanel() {
 
   const decide = async (decision: ResolveDecision) => {
     const myVisit = visit.current;
+    const myQueue = queueKey;
     setBusy(true);
     try {
       const res = await resolveConflict(
@@ -353,14 +359,21 @@ function ConflictsPanel() {
       // after it does not move the open conflict.
       const left = shown.length - dropped;
       setIndex((i) => Math.max(Math.min(i - before(i), left - 1), 0));
-      // The rows taken off the screen come off the count as it is now (another answer may
-      // have changed it meanwhile). A peer on a page not loaded is not known to be
-      // conflicted here; the next count read takes it off.
       const sameVisit = visit.current === myVisit;
-      // On this visit the decided row was on screen even if an earlier answer took it off.
-      const taken = sameVisit ? Math.max(dropped, 1) : dropped;
-      setTotal((t) => (t === null ? t : Math.max(t - taken, 0)));
-      for (const out of countsOut.current) out.taken += taken;
+      if (typeof res.total === "number" && queueNow.current === myQueue) {
+        // The resolve's own count, made after its writes, for the namespace on screen.
+        const total = res.total;
+        for (const out of countsOut.current) out.stale = true;
+        setTotal(total);
+      } else if (typeof res.total !== "number") {
+        // A server a release behind: the rows taken off the screen come off the count as it
+        // is now (another answer may have changed it meanwhile); a peer on a page not
+        // loaded comes off at the next count read. On this visit the decided row was on
+        // screen even if an earlier answer took it off.
+        const taken = sameVisit ? Math.max(dropped, 1) : dropped;
+        setTotal((t) => (t === null ? t : Math.max(t - taken, 0)));
+        for (const out of countsOut.current) out.taken += taken;
+      }
       // Another visit: the reason is not this decision's. An emptied page with more past
       // it reads the queue again (the decided flag).
       if (!sameVisit) return;

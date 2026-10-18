@@ -1846,6 +1846,7 @@ export interface ConflictsListInput {
   limit?: number;
   before_version?: number | null;
   count_only?: boolean;
+  fresh?: boolean;
   keys_only?: boolean;
   fields?: string[] | null;
 }
@@ -1915,6 +1916,7 @@ export interface ConflictsResolveOutput {
   decision: "revise" | "contract" | "allow";
   affected_memory_ids: string[];
   resolved_at?: string | null;
+  total?: number | null;
 }
 
 export interface ConsolidationsListInput {

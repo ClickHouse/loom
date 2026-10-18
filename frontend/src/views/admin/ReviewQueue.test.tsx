@@ -530,6 +530,77 @@ describe("ReviewQueue", () => {
     await screen.findByText(/Conflict 1 of 2/, {}, WAIT);
   });
 
+  it("takes the count a resolve answers with, and asks for counts fresh", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(9);
+    onTestFinished(() => {
+      vi.mocked(countConflicts).mockImplementation(async () => 0);
+    });
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("a/x"), conflict("a/y")], next_before_version: 7 });
+    vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: true, affected_memory_ids: [], total: 6 });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText(/Conflict 1 of 9/, {}, WAIT);
+    expect(vi.mocked(countConflicts).mock.calls.at(-1)?.[1]).toMatchObject({ fresh: true });
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    // The resolve's own count, not 9 minus one.
+    await screen.findByText(/Conflict 1 of 6/, {}, WAIT);
+  });
+
+  it("drops a count read still out when a resolve answers with its own count", async () => {
+    let lateCount: (n: number) => void = () => {};
+    let aCounts = 0;
+    vi.mocked(countConflicts).mockImplementation(async () => {
+      aCounts += 1;
+      return aCounts === 1 ? 5 : new Promise<number>((r) => (lateCount = r));
+    });
+    onTestFinished(() => {
+      vi.mocked(countConflicts).mockImplementation(async () => 0);
+    });
+    let reads = 0;
+    vi.mocked(listConflicts).mockImplementation(async () => {
+      reads += 1;
+      return { rows: [conflict(`a/x${reads}`), conflict("a/y")], next_before_version: 7 };
+    });
+    let answer: (v: { resolved: boolean; affected_memory_ids: string[]; total: number }) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText(/Conflict 1 of 5/, {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    // A switch away and back reads the count again; that read is still out.
+    seed("ns-b");
+    seed("ns-a");
+    await waitFor(() => expect(aCounts).toBeGreaterThanOrEqual(2), WAIT);
+    await act(async () => answer({ resolved: true, affected_memory_ids: [], total: 3 }));
+    await screen.findByText(/of 3 · resolve in order/, {}, WAIT);
+    await act(async () => lateCount(5));
+    expect(screen.getByText(/of 3 · resolve in order/)).toBeInTheDocument();
+  });
+
+  it("ignores a resolve's count for a namespace no longer on screen", async () => {
+    vi.mocked(countConflicts).mockImplementation(async (id: { namespace: string }) =>
+      id.namespace === "ns-b" ? 4 : 2,
+    );
+    onTestFinished(() => {
+      vi.mocked(countConflicts).mockImplementation(async () => 0);
+    });
+    vi.mocked(listConflicts).mockImplementation(async (id) =>
+      id.namespace === "ns-b"
+        ? { rows: [conflict("b/key")], next_before_version: 7 }
+        : { rows: [conflict("a/x"), conflict("a/y")], next_before_version: null },
+    );
+    let answer: (v: { resolved: boolean; affected_memory_ids: string[]; total: number }) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/x", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText(/Conflict 1 of 4/, {}, WAIT);
+    await act(async () => answer({ resolved: true, affected_memory_ids: [], total: 1 }));
+    expect(screen.getByText(/Conflict 1 of 4/)).toBeInTheDocument();
+  });
+
   it("a Load more answered after a namespace switch adds nothing to the new namespace's queue", async () => {
     let older: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
     vi.mocked(listConflicts).mockImplementation(async (id, opts) => {

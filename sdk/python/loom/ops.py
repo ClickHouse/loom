@@ -7055,6 +7055,7 @@ class ConflictsListInput(TypedDict, total=False):
     limit: NotRequired[int]
     before_version: NotRequired[Optional[int]]
     count_only: NotRequired[bool]
+    fresh: NotRequired[bool]
     keys_only: NotRequired[bool]
     fields: NotRequired[Optional[list[str]]]
 
@@ -7065,6 +7066,7 @@ class ConflictsListBody(TypedDict, total=False):
     limit: NotRequired[int]
     before_version: NotRequired[Optional[int]]
     count_only: NotRequired[bool]
+    fresh: NotRequired[bool]
     keys_only: NotRequired[bool]
     fields: NotRequired[Optional[list[str]]]
 
@@ -7151,6 +7153,7 @@ class ConflictsResolveOutput(TypedDict, total=False):
     decision: Required[Literal["revise", "contract", "allow"]]
     affected_memory_ids: Required[list[str]]
     resolved_at: NotRequired[Optional[str]]
+    total: NotRequired[Optional[int]]
 
 
 class ConsolidationsListInput(TypedDict, total=False):

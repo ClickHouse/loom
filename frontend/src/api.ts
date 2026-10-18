@@ -754,10 +754,15 @@ export async function listConflicts(
 
 /** The live conflicted count for a badge: the same operation with `count_only`, answered
  *  from a 60 s server cache with no value column read. */
-export async function countConflicts(id: Pick<Identity, "org" | "namespace">, opts: RequestOpts = {}): Promise<number> {
+/** The namespace's conflicted count. `fresh` counts now instead of answering from the
+ *  replica's minute-long cache (the review queue; the sidebar badge takes the cache). */
+export async function countConflicts(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: RequestOpts & { fresh?: boolean } = {},
+): Promise<number> {
   const r = await post<{ total?: number | null }>(
     "/v1/conflicts.list",
-    { org: id.org, namespace: id.namespace, count_only: true },
+    { org: id.org, namespace: id.namespace, count_only: true, ...(opts.fresh ? { fresh: true } : {}) },
     opts.signal,
   );
   return r.total ?? 0;
@@ -821,7 +826,13 @@ export async function resolveConflict(
   memory_id: string,
   decision: ResolveDecision,
   opts: { peer_id?: string; reason?: string; resolved_by?: string } = {},
-): Promise<{ resolved: boolean; affected_memory_ids: string[] }> {
+): Promise<{
+  resolved: boolean;
+  affected_memory_ids: string[];
+  /** The namespace's conflicted count after the writes; absent from a server a release
+   *  behind, null when nothing was resolved. */
+  total?: number | null;
+}> {
   const body: Record<string, unknown> = {
     org: id.org,
     namespace: id.namespace,

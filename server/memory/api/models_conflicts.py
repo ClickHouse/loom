@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 
 ResolveDecision = Literal["revise", "contract", "allow"]
@@ -29,6 +30,11 @@ class ConflictsListInput(BaseModel):
     # A badge needs the number, not the rows. With
     # count_only the answer is `total` and no row (no value column read).
     count_only: bool = False
+    # With count_only, count now instead of answering from the replica's minute-long cache
+    # (the review queue, which must not show a count another replica's resolve made stale).
+    # A dashboard flag: hidden from the MCP listing. A build without it answers from its
+    # cache and names it in `ignored_args`.
+    fresh: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # The Memories view marks cards that have a
     # conflict and needs only the keys. With keys_only the answer is `keys`
     # from one FINAL read of the key columns — no value column.
@@ -85,8 +91,9 @@ class ConflictsResolveInput(BaseModel):
 
 
 class ConflictsResolveOutput(BaseModel):
-    # False when the memory or the named peer is unknown, or the caller is not an admin
-    # of every row it names; nothing was written then.
+    # False when the memory or the named peer is unknown, the memory is no longer
+    # conflicted (an earlier decision resolved it), or the caller is not an admin of every
+    # row it names; nothing was written then.
     resolved: bool
     # The decision, echoed.
     decision: ResolveDecision
@@ -94,6 +101,9 @@ class ConflictsResolveOutput(BaseModel):
     affected_memory_ids: list[str]
     # When the resolve ran (UTC); null when nothing was resolved.
     resolved_at: datetime | None = None
+    # The namespace's conflicted count under the caller's read scope, counted after the
+    # writes; null when nothing was resolved.
+    total: int | None = None
 
 
 class ConflictsProposeRevisionInput(BaseModel):
