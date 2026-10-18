@@ -26,7 +26,11 @@ from server.operations.base import Role
 
 ROOT = Path(__file__).resolve().parents[2]
 CLICKHOUSE = shutil.which("clickhouse")
-pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+# `claim_cap`: the gate reads the real grant rows through the grant cache.
+pytestmark = [
+    pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed"),
+    pytest.mark.claim_cap,
+]
 
 _ROWS = """INSERT INTO loom.namespace_grants
 (org, namespace, subject, role, granted_by, revoked_at, version, status) VALUES
@@ -39,15 +43,17 @@ _ROWS = """INSERT INTO loom.namespace_grants
 ('o', 'asked',  'mallory', 'admin', 'mallory', NULL, 1, 'pending')"""
 
 
-def _ddl() -> str:
+def _ddl(table: str) -> str:
     schema = (ROOT / "schemas" / "schema.sql").read_text()
-    body = schema.split("CREATE TABLE IF NOT EXISTS loom.namespace_grants\n", 1)[1]
-    return "CREATE TABLE loom.namespace_grants\n" + body.split(";", 1)[0]
+    body = schema.split(f"CREATE TABLE IF NOT EXISTS loom.{table}\n", 1)[1]
+    return f"CREATE TABLE loom.{table}\n" + body.split(";", 1)[0]
 
 
 def _render(sql: str, params: dict[str, Any]) -> str:
     def lit(m: re.Match[str]) -> str:
         v = params[m.group(1)]
+        if isinstance(v, bool):
+            return "true" if v else "false"
         return "[" + ",".join(f"'{x}'" for x in v) + "]" if isinstance(v, list) else f"'{v}'"
 
     return re.sub(r"\{(\w+):[^}]+\}", lit, sql)
@@ -60,7 +66,9 @@ class _LocalCH:
         script = ";\n".join(
             [
                 "CREATE DATABASE loom",
-                _ddl(),
+                _ddl("namespace_grants"),
+                # The gate reads each namespace's classification from here.
+                _ddl("namespaces"),
                 _ROWS,
                 _render(sql, params or {}) + " FORMAT JSONEachRow",
             ]
