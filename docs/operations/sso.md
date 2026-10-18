@@ -282,7 +282,8 @@ Identity providers push deactivations to apps over SCIM 2.0 (RFC 7643/7644).
 Loom accepts that push: once the provider sends it, the person's sessions and
 the tokens they made are refused at once by the replica that took the
 request, and by every other replica at its next revocation refresh
-(`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`, 30 s by default). Set a long random
+(`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`, 30 s by default). No replica makes
+them a new token meanwhile: every mint reads revocations from ClickHouse. Set a long random
 token and restart:
 
 ```bash
