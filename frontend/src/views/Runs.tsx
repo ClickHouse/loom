@@ -518,6 +518,10 @@ interface Shown {
   runs: RunRow[];
   total: number | null;
   page: number;
+  pageSize: number;
+  /** What the rows were read for (filters, search, order, page size): the page above means
+   *  something only while it is still what the list shows. */
+  key: string;
 }
 
 export function Runs() {
@@ -578,6 +582,9 @@ export function Runs() {
 
   // Another namespace is another list: its first page, from nothing on screen.
   const scope = `${identity.org}\n${identity.namespace}`;
+  // What the list holds (a change starts it again from page 1), and what one read asked for.
+  const filterKey = [scope, filter, agent, hideConn, q, order].join("\n");
+  const readKey = `${filterKey}\n${pageSize}\n${local}`;
   const shownScope = useRef(scope);
 
   // A response that lands after the page, a filter or the namespace moved on is dropped,
@@ -627,7 +634,7 @@ export function Runs() {
           setLocal(true);
           return;
         }
-        setShown({ runs: p.runs, total: p.total, page });
+        setShown({ runs: p.runs, total: p.total, page, pageSize, key: readKey });
         setLoading(false);
         const seen = p.runs.map((r) => r.agent).filter(Boolean);
         setAgents((prev) => (seen.every((a) => prev.includes(a)) ? prev : [...new Set([...prev, ...seen])].sort()));
@@ -683,12 +690,16 @@ export function Runs() {
   const capped = local && shown !== null && shown.runs.length >= LOCAL_LIMIT;
   const rows = localRows ? localRows.slice(page * pageSize, (page + 1) * pageSize) : (shown?.runs ?? []);
   const busy = loading && shown !== null;
+  // The page the rows on screen are: the pager pages from it while they are what the list
+  // shows, so a second Next during a read asks for the same page; for another filter or
+  // page size it pages from the page asked for.
+  const pagerPage = localRows ? page : shown && shown.key === readKey ? shown.page : page;
   const searching = q !== "" || filter !== "" || agent !== "";
   const count =
     shown && !error
       ? countText(
           localRows ? page : shown.page,
-          pageSize,
+          localRows ? pageSize : shown.pageSize,
           rows.length,
           localRows ? (capped && q === "" ? null : localRows.length) : shown.total,
           q !== "",
@@ -919,10 +930,11 @@ export function Runs() {
       </div>
       {/* Kept on an empty later page (runs finished or left the filter meanwhile), so it steps
           back to the last page. */}
-      {error === null && shown !== null && (rows.length > 0 || (localRows ? page : shown.page) > 0) && (
+      {error === null && shown !== null && (rows.length > 0 || pagerPage > 0) && (
         <ListPager
           label="Runs pages"
-          page={localRows ? page : shown.page}
+          page={pagerPage}
+          resetKey={filterKey}
           pageSize={pageSize}
           shown={rows.length}
           total={localRows ? localRows.length : (shown.total ?? undefined)}

@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunListOptions, RunListPage, RunRow } from "../api";
 import { ApiError } from "../api";
@@ -408,6 +409,25 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(within(screen.getByRole("navigation", { name: "Runs pages" })).getByRole("status")).toHaveTextContent(
       "Page 1 of 1",
     );
+  });
+
+  // A new page size starts again from page 1, even from a later page whose rows are still on
+  // screen: their page counts in the old size.
+  it("starts again from page 1 when the page size changes on a later page", async () => {
+    server(120);
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    const pager = () => screen.getByRole("navigation", { name: "Runs pages" });
+    fireEvent.click(within(pager()).getByRole("button", { name: "Next page" }));
+    await screen.findByRole("button", { name: "goal 51" });
+    fireEvent.click(within(pager()).getByRole("button", { name: "Next page" }));
+    await screen.findByRole("button", { name: "goal 101" });
+    await userEvent.click(within(pager()).getByRole("button", { name: "Rows per page" }));
+    await userEvent.click(await screen.findByText(/^100/));
+    await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 100, offset: 0 }));
+    expect(await screen.findByRole("button", { name: "goal 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "goal 101" })).toBeNull();
+    expect(within(pager()).getByRole("status")).toHaveTextContent("100 rows per page, page 1");
   });
 
   // Runs that started together keep run.list's order: run_id in the direction of the sort.

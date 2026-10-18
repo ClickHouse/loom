@@ -188,6 +188,18 @@ describe("ListPager, typed and edge pages", () => {
     expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
+  it("drops what it said when a filter replaces a page read still in flight", () => {
+    const props = { label: "Runs pages", pageSize: 50, shown: 50, onPage: vi.fn() };
+    const { rerender } = render(<ListPager {...props} page={0} total={120} resetKey="all" />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 3");
+    // The page read has not answered; a filter replaces it, and the new list has one page.
+    rerender(<ListPager {...props} page={0} total={120} resetKey="failed" />);
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    rerender(<ListPager {...props} page={0} total={30} shown={30} resetKey="failed" onPageSize={() => {}} />);
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
   it("without a total, says which pages can be opened on the last one the server serves", () => {
     render(
       <ListPager label="Thread pages" page={3333} pageSize={30} shown={30} maxOffset={100_000} onPage={() => {}} />,

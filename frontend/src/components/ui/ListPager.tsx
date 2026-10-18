@@ -40,6 +40,8 @@ export interface ListPagerProps {
   capped?: boolean;
   /** The largest offset the server serves: no page that starts past it is offered. */
   maxOffset?: number;
+  /** What the list holds (its filters): a change clears what the pager last said. */
+  resetKey?: string;
   onPage: (page: number) => void;
   /** With it, a page-size choice sits beside the pages. */
   onPageSize?: (size: number) => void;
@@ -62,6 +64,7 @@ export function ListPager({
   total,
   capped,
   maxOffset,
+  resetKey,
   onPage,
   onPageSize,
   topId,
@@ -101,6 +104,15 @@ export function ListPager({
   // A page past the end (its last rows deleted, or Next onto an empty page) steps back to
   // the last one, and says so.
   const pastEnd = pages !== undefined && page > pages - 1;
+  // Another filter is another list: what was asked of, or said about, this one is dropped.
+  const keyRef = useRef(resetKey);
+  useEffect(() => {
+    if (keyRef.current === resetKey) return;
+    keyRef.current = resetKey;
+    asked.current = null;
+    spoken.current = null;
+    setSaid("");
+  }, [resetKey]);
   const sayLast = (last: number) => {
     asked.current = null;
     spoken.current = last - 1;

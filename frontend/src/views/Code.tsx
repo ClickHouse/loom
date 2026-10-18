@@ -2661,8 +2661,10 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
   // A new filter or page keeps the rows on screen, marked busy, until it answers; another
   // branch's rows are not this one's, so a new branch starts from the skeleton.
   const [refreshing, setRefreshing] = useState(false);
-  // The offset the rows on screen came from: the pager pages from it.
+  // The offset the rows on screen came from, and what they were read for: the pager pages
+  // from that offset while it is still what the list shows.
   const [rowsOffset, setRowsOffset] = useState(0);
+  const [rowsKey, setRowsKey] = useState("");
   const rowsFor = useRef(`${id.org}/${id.namespace}`);
   useAbortableEffect(
     (signal, live) => {
@@ -2682,6 +2684,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           if (live()) {
             setRows(r.rows);
             setRowsOffset(offset);
+            setRowsKey(`${prSettled}\n${pageSize}`);
             setTotal(r.total);
             setError(null);
             setRefreshing(false);
@@ -2696,6 +2699,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
     },
     [id.org, id.namespace, offset, pageSize, prSettled],
   );
+  const pagerOffset = rowsKey === `${prSettled}\n${pageSize}` ? rowsOffset : offset;
 
   const toggle = async (pr: number) => {
     if (open === pr) {
@@ -2746,7 +2750,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
         </LoadingSkeleton>
       )}
 
-      {rows !== null && rows.length === 0 && rowsOffset === 0 && (
+      {rows !== null && rows.length === 0 && pagerOffset === 0 && (
         <EmptyState
           icon="cards"
           title="No packs yet"
@@ -2761,7 +2765,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       {/* Rows expand inline into their pack, so this stays a list of disclosure rows
           rather than a table. Mounted on an empty later page too: the pager moved focus here,
           and the step-back to the last page keeps it. */}
-      {rows !== null && (
+      {rows !== null && (rows.length > 0 || pagerOffset > 0) && (
         <div
           id="packs-list"
           tabIndex={-1}
@@ -2818,10 +2822,11 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       )}
 
       {/* Kept on an empty later page (packs retired meanwhile), so it steps back to the last. */}
-      {rows !== null && (rows.length > 0 || rowsOffset > 0) && (
+      {rows !== null && (rows.length > 0 || pagerOffset > 0) && (
         <ListPager
           label="PR pack pages"
-          page={Math.floor(rowsOffset / pageSize)}
+          page={Math.floor(pagerOffset / pageSize)}
+          resetKey={`${id.org}\n${id.namespace}\n${prSettled}`}
           pageSize={pageSize}
           shown={rows.length}
           total={total}

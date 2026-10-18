@@ -99,6 +99,9 @@ export function Conversations() {
   // The page the threads on screen came from: the pager pages from it, so a second Next
   // while a page loads asks for that same page again.
   const [shownThreadPage, setShownThreadPage] = useState(0);
+  // The agent filter those threads were read for: under another, the pager pages from the
+  // page asked for instead.
+  const [shownThreadAgent, setShownThreadAgent] = useState<string | null>(null);
   const [threadsPaged, setThreadsPaged] = useState(true);
   // Known only once the page after the last full one comes back empty (without a total the
   // pager goes no further than the next page).
@@ -182,6 +185,7 @@ export function Conversations() {
             return;
           }
           setShownThreadPage(threadPage);
+          setShownThreadAgent(agentFilter);
           setThreads(rows);
           setSeenAgents((prev) => Array.from(new Set([...prev, ...rows.map((t) => t.agent)])).sort());
         })
@@ -313,6 +317,10 @@ export function Conversations() {
   // One count, at the end of the toolbar: the matches of a search, the
   // threads shown (the total is known only once the last page is read), the last one while
   // a read is in flight, nothing on an error.
+  // Under another agent filter the threads on screen are not the new list's: the pager has
+  // nothing to page from until its first page answers.
+  const threadsCurrent = shownThreadAgent === agentFilter;
+  const pagerPage = threadsCurrent ? shownThreadPage : threadPage;
   const pageStart = shownThreadPage * THREADS_PAGE;
   const countText =
     hits !== null
@@ -407,9 +415,10 @@ export function Conversations() {
         {threadsPaged && hits === null && (
           <ListPager
             label="Thread pages"
-            page={shownThreadPage}
+            page={pagerPage}
+            shown={threadsCurrent ? threads.length : 0}
+            resetKey={`${identity.org}\n${identity.namespace}\n${agentFilter}`}
             pageSize={THREADS_PAGE}
-            shown={threads.length}
             total={threadsTotal}
             maxOffset={THREADS_MAX_OFFSET}
             onPage={setThreadPage}

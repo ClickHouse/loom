@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationHit, ConversationThreadDetail, ConversationThreadSummary, MemoryListResponse } from "../api";
 import { useStore } from "../lib/state";
@@ -524,6 +525,45 @@ describe("Conversations: thread pages", () => {
     act(() => pending.forEach((answer) => answer()));
     expect(await screen.findByText("Thread 30")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Thread pages" })).not.toHaveTextContent(/of 60/);
+  });
+
+  it("pages a new agent filter from its first page, not from the page the old filter showed", async () => {
+    const mixed = (from: number, n: number) =>
+      page(from, n).map((t, i) => ({ ...t, agent: (from + i) % 2 ? "beta" : "alpha" }));
+    let answerBeta: () => void = () => {};
+    listConversationThreads.mockImplementation(
+      (_id: unknown, opts: { offset?: number; agent?: string }) =>
+        new Promise((resolve) => {
+          const from = opts.offset ?? 0;
+          if (opts.agent === "beta") {
+            answerBeta = () =>
+              resolve({ threads: from === 0 ? page(500, 5).map((t) => ({ ...t, agent: "beta" })) : [] });
+            if (from > 0) answerBeta();
+          } else resolve({ threads: from < 60 ? mixed(from, 30) : [] });
+        }),
+    );
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole("button", { name: "Agent" })[0]);
+    // The open list renders last, after the rows that also name the agent.
+    await userEvent.click((await screen.findAllByText("beta")).at(-1)!);
+    await waitFor(() =>
+      expect(listConversationThreads.mock.calls.at(-1)?.[1]).toMatchObject({ agent: "beta", offset: 0 }),
+    );
+    // The new filter's first page has not answered: the old rows give the pager nothing to page.
+    const nav = screen.queryByRole("navigation", { name: "Thread pages" });
+    if (nav) expect(within(nav).getByRole("button", { name: "Next page" })).toBeDisabled();
+    act(() => answerBeta());
+    expect(await screen.findByText("Thread 500")).toBeInTheDocument();
+    const betaOffsets = listConversationThreads.mock.calls
+      .filter((c) => (c[1] as { agent?: string }).agent === "beta")
+      .map((c) => (c[1] as { offset?: number }).offset ?? 0);
+    expect(betaOffsets).toEqual([0]);
+    expect(screen.queryByText(/of 30/)).toBeNull();
   });
 
   it("with an exact multiple of 30 threads, the empty page after the last goes back to it", async () => {
