@@ -171,7 +171,8 @@ class ConversationsClient:
         """Soft-delete one thread (ADMIN role).
 
         Tombstones the thread row, its messages, and the embeddings no other
-        agent of the thread still holds with the same text; retention TTL
+        agent of the thread still holds with the same text (its first 240
+        characters); retention TTL
         eventually hard-deletes, and read paths filter tombstoned rows out.
 
         `confirm_thread_id` must equal `thread_id`, guarding against

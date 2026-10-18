@@ -434,10 +434,10 @@ def test_client_written_summaries_cannot_lift_the_prompt(
     assert "turn 1" in prompt and "turn 2" in prompt
 
 
-def test_summaries_past_the_allowance_are_clipped_and_the_turns_compact(monkeypatch) -> None:
-    """Two earlier summaries (say, two compactions that ran at once) fold in together
-    within the allowance: the second is clipped to what is left, and the turns behind
-    them compact, each one read whole."""
+def test_a_summary_past_the_allowance_stays_live_and_the_turns_compact(monkeypatch) -> None:
+    """Of two earlier summaries (say, two compactions that ran at once), the one past
+    the allowance is neither read nor tombstoned, and the turns behind them compact,
+    each one read whole."""
     import server.core.ch
     import server.llm.client
 
@@ -451,7 +451,7 @@ def test_summaries_past_the_allowance_are_clipped_and_the_turns_compact(monkeypa
             "user_id": "alice",
             "run_id": "run-1",
         },
-        # Past the remaining allowance: clipped to what is left of it.
+        # Past the remaining allowance: left live.
         {
             "msg_id": "compact-2",
             "role": "system",
@@ -494,12 +494,10 @@ def test_summaries_past_the_allowance_are_clipped_and_the_turns_compact(monkeypa
     assert out.compacted is True and out.messages_summarized == 3
     [prompt] = prompts
     assert all(f"turn {i}" in prompt for i in range(1, 4))
-    assert "system: " + "s" * 5000 not in prompt  # clipped to the allowance left
-    assert len(prompt) < ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS
+    assert "a short summary" in prompt and "sss" not in prompt
     [summary] = fake.inserted
     assert json.loads(summary["metadata"])["compacted_from"] == [
         "compact-1",
-        "compact-2",
         "m1",
         "m2",
         "m3",
@@ -510,46 +508,37 @@ def test_summaries_past_the_allowance_are_clipped_and_the_turns_compact(monkeypa
     ("lines", "folded", "expected"),
     [
         # Plain turns: as many as fit the budget.
-        (["user: a", "user: b"], [False, False], (2, "user: a\nuser: b")),
+        (["user: a", "user: b"], [False, False], ([0, 1], "user: a\nuser: b")),
         # A summary is free and the window reaches the turn behind it, whole.
         (
             ["system: " + "s" * 100, "user: " + "x" * 15_990],
             [True, False],
-            (2, "system: " + "s" * 100 + "\nuser: " + "x" * 15_990),
+            ([0, 1], "system: " + "s" * 100 + "\nuser: " + "x" * 15_990),
         ),
-        # The first summary always folds in, clipped to the allowance, so a dense one
-        # the last run wrote cannot keep the turn behind it from compacting.
+        # A summary past the allowance stays live and out of the prompt, and the turn
+        # behind it still compacts.
         (
             ["system: " + "s" * 4_500, "user: " + "x" * 11_000],
             [True, False],
-            (2, ("system: " + "s" * 4_500)[:4_000] + "\nuser: " + "x" * 11_000),
+            ([1], "user: " + "x" * 11_000),
         ),
-        # A second summary past the allowance is clipped to what is left, so two of them
-        # never keep a turn that fits on its own from compacting.
+        # A second summary past what is left stays live too; the first folds in whole.
         (
             ["system: " + "s" * 3_500, "system: " + "s" * 1_000, "user: " + "x" * 15_500],
             [True, True, False],
-            (
-                3,
-                "system: "
-                + "s" * 3_500
-                + "\n"
-                + ("system: " + "s" * 1_000)[:492]
-                + "\nuser: "
-                + "x" * 15_500,
-            ),
+            ([0, 2], "system: " + "s" * 3_500 + "\nuser: " + "x" * 15_500),
         ),
-        # One clipped to nothing is left out of the prompt.
+        # A later summary that fits still folds in after one that does not.
         (
             ["system: " + "s" * 4_000, "system: s", "user: a"],
             [True, True, False],
-            (3, ("system: " + "s" * 4_000)[:4_000] + "\nuser: a"),
+            ([1, 2], "system: s\nuser: a"),
         ),
         # Nothing but summaries (the handler answers already-compacted before this).
-        (["system: s"], [True], (1, "system: s")),
+        (["system: s"], [True], ([0], "system: s")),
     ],
 )
 def test_the_compaction_window(
-    lines: list[str], folded: list[bool], expected: tuple[int, str]
+    lines: list[str], folded: list[bool], expected: tuple[list[int], str]
 ) -> None:
     assert ch_mod._compaction_window(lines, folded) == expected

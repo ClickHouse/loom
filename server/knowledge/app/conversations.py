@@ -685,21 +685,23 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
     return len(lines)
 
 
-def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str]:
-    """`(fit, transcript)`: how many leading candidate lines the summary replaces, and
-    the prompt transcript."""
-    lines = list(lines)
-    # Leading summaries fold in free, together clipped to the allowance: past it one
-    # shrinks to nothing (and is left out of the prompt), so however many there are,
-    # the window always reaches the first new turn.
-    k, allowance = 0, _FOLDED_SUMMARY_CHARS
+def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[list[int], str]:
+    """`(replaced, transcript)`: the indices of the leading candidate lines the summary
+    replaces, and the prompt transcript."""
+    # Leading summaries fold in free while each fits what is left of the allowance
+    # whole. One that does not stays live and out of the prompt (tombstoning it would
+    # drop text the summarizer never read), and the window still reaches the first
+    # new turn.
+    k, allowance, read = 0, _FOLDED_SUMMARY_CHARS, []
     while k < len(lines) and folded[k]:
-        lines[k] = lines[k][:allowance]
-        allowance -= len(lines[k])
+        if len(lines[k]) <= allowance:
+            allowance -= len(lines[k])
+            read.append(k)
         k += 1
     fit = k + _fitting_prefix(lines[k:], _COMPACT_TRANSCRIPT_CHARS)
     turns = "\n".join(lines[k:fit])[:_COMPACT_TRANSCRIPT_CHARS]
-    return fit, "\n".join(part for part in (*lines[:k], turns) if part)
+    transcript = "\n".join(part for part in (*(lines[i] for i in read), turns) if part)
+    return [*read, *range(k, fit)], transcript
 
 
 def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
@@ -762,8 +764,8 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
-    fit, transcript = _compaction_window(lines, folded)
-    candidates = candidates[:fit]
+    replaced, transcript = _compaction_window(lines, folded)
+    candidates = [candidates[i] for i in replaced]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
 
     llm = get_llm_client()
@@ -856,7 +858,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
 
     return ConversationCompactOutput(
         compacted=True,
-        messages_summarized=folded[:fit].count(False),
+        messages_summarized=sum(not folded[i] for i in replaced),
         summary_msg_id=summary_msg_id,
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,

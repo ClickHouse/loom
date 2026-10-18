@@ -717,7 +717,9 @@ async def tombstone_messages(
     """Tombstone the named messages of one thread and their embeddings, so
     conversation.search stops returning them too. Synchronous mutations, so the
     next read sees a coherent thread. The embeddings go first: a retry after a
-    failure still finds the messages live and repeats both."""
+    failure still finds the messages live and repeats both. They go again after the
+    messages: a turn whose embedding lands after the first read is caught there, or by
+    append's re-check (`tombstone_embedding_if_message_gone`)."""
     ch = ch or _default_client()
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
     for part in param_slices(msg_ids):
@@ -741,6 +743,7 @@ async def tombstone_messages(
                 "ids": part,
             },
         )
+    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
 
 
 async def tombstone_embedding_if_message_gone(

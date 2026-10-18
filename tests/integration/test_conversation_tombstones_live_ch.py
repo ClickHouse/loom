@@ -164,6 +164,43 @@ async def test_a_turn_appended_during_the_delete_leaves_search(ch, scope) -> Non
 
 
 @pytest.mark.asyncio
+async def test_a_turn_embedded_during_compaction_leaves_search(ch, scope) -> None:
+    """A compacted turn whose embedding lands after compaction's first embeddings read
+    is tombstoned by the pass after the messages mutation."""
+    await _message(ch, scope, "a", "1", "slow embed", T0)
+
+    class _EmbedDuring:
+        """Passes through, and lands the turn's embedding after the first read."""
+
+        def __init__(self) -> None:
+            self.done = False
+
+        async def query_all(self, sql: str, params: Any = None) -> Any:
+            rows = await ch.query_all(sql, params=params)
+            if not self.done and "toUnixTimestamp64Milli(ts) AS ts_ms" in sql:
+                self.done = True
+                await _embedding(ch, scope, "a", "1", "slow embed", T0)
+            return rows
+
+        async def query_one(self, sql: str, params: Any = None) -> Any:
+            return await ch.query_one(sql, params=params)
+
+        async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
+            return await ch.execute(sql, params, **kw)
+
+    await repo.tombstone_messages(
+        scope["org"],
+        scope["ns"],
+        "a",
+        scope["tid"],
+        ["1"],
+        when=datetime.now(UTC).replace(tzinfo=None),
+        ch=_EmbedDuring(),
+    )
+    assert await _rows(ch, scope) == [("1", "slow embed", False)]
+
+
+@pytest.mark.asyncio
 async def test_an_orphan_embedding_goes_although_a_peer_reused_its_id(ch, scope) -> None:
     """This agent's embedding whose message row is gone is its own, whatever another
     agent logged under the same msg_id: the delete tombstones it."""

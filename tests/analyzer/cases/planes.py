@@ -476,7 +476,7 @@ _CONVERSATION_ROWS = rows_by_substring(
         "max(tombstoned_at) AS gone": [{"gone": _DT}],
         "toUnixTimestamp64Milli(ts) AS ts_ms": [
             {"embedding_model": "m", "msg_id": "m1", "agent": "a", "ts_ms": 0}
-        ]
+        ],
     }
 )
 
