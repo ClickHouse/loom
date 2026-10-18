@@ -241,8 +241,9 @@ class ConversationListOutput(BaseModel):
 class ConversationSearchInput(BaseModel):
     """Rank conversation messages by embedding similarity to `query`.
 
-    Narrowed by `thread_id`, `run_id` or `role`. Only user and assistant turns are
-    embedded; substring matching stands in when the embedder is unavailable."""
+    `thread_id`, `run_id` and `role` each narrow the hits, and they combine. Only user
+    and assistant turns are embedded; when the embedder is unavailable a substring
+    match stands in, and it reads every role."""
 
     org: str
     namespace: str
