@@ -996,8 +996,7 @@ def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime]:
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:
-    """One page of a namespace's agent runs, filtered, searched and sorted as asked, with the
-    match count."""
+    """One page of a namespace's agent runs, filtered, searched and sorted as asked."""
 
     where: list[str] = []
     params: dict[str, Any] = {}

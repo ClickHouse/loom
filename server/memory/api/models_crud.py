@@ -555,10 +555,10 @@ class MemoryListInput(_Identity):
     # unless asked for; `memory.proposals` lists them with their graded counts.
     include_proposed: bool = False
     as_of: datetime | None = None  # see MemoryGetInput.as_of
-    # Only rows carrying any one of these tags (every one with `tags_every`), in any case;
-    # empty = no tag filter.
+    # Only rows carrying any one of these tags, in any case; empty = no tag filter.
     tags: list[str] = Field(default_factory=list, max_length=64)
-    # Require every one of `tags` instead of any one; default off.
+    # Require every one of `tags` instead of any one; default off. Not in the MCP listing:
+    # the dashboard's stacked tag chips set it.
     tags_every: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Only rows whose value or key holds this text, any case — the keyword
     # filter of a browse page's search box, which must find every row that
