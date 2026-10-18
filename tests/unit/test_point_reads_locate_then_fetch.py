@@ -273,23 +273,49 @@ def _selected(sql: str) -> set[str]:
     return {re.findall(r"\w+", part)[-1] for part in select.split(",")}
 
 
-def test_the_bulk_fetch_selects_every_column_bulk_get_answers_with() -> None:
+@pytest.mark.asyncio
+async def test_the_plain_bulk_fetch_returns_the_row_the_strong_one_does() -> None:
     # A column left out reads as its default: an empty `sensitivity` exports a high row,
     # a null `valid_to` rewrites every imported row that carries one, and an empty
     # `superseded_by` drops the supersedes chain from an export.
-    import inspect
+    # Every column off its default, so any one the plain fetch leaves out shows.
+    row = {
+        **_full(),
+        "pinned": True,
+        "updated_at": "2026-09-20 00:00:00",
+        "run_id": "run-1",
+        "source_trace": "okf:b/k.md",
+        "char_limit": 100,
+        "tags": ["t"],
+        "entities": ["e"],
+        "content_sha256": "c" * 64,
+        "verified_by": "human:x",
+        "verified_at": "2026-09-20 00:00:00",
+        "verified_sha256": "v" * 64,
+        "valid_at": "2026-09-19 00:00:00",
+        "valid_to": "2027-01-01 00:00:00",
+        "sensitivity": "high",
+        "superseded_by": "k-new",
+        "duplicate_of": "k-canon",
+    }
 
-    from server.memory.app import query, served_superseded
-    from server.memory.store import reads
+    class _Columns(_CH):
+        """Answers a fetch with only the columns its SELECT list names, as ClickHouse does."""
 
-    # The handler and the helpers it passes the fetched rows to.
-    readers = (
-        query._handle_memory_bulk_get,
-        query._canonical_keys_for_rows,
-        served_superseded.shown_successors,
-    )
-    source = "".join(inspect.getsource(f) for f in readers)
-    read = set(re.findall(r"\br\.(\w+)", source)) | set(re.findall(r'getattr\(r, "(\w+)"', source))
-    assert {"sensitivity", "valid_to", "superseded_by", "duplicate_of"} <= read
-    for sql in (reads._BULK_FETCH_SQL, reads._BULK_FETCH_WHOLE_SQL):
-        assert read <= _selected(sql), read - _selected(sql)
+        def _answer(self, sql: str) -> list[dict[str, Any]]:
+            rows = super()._answer(sql)
+            if rows is self.located:
+                return rows
+            cols = _selected(sql)
+            return [{k: v for k, v in r.items() if k in cols} for r in rows]
+
+    got = {}
+    for strong in (False, True):
+        ch = _Columns([_located()], [row])
+        rows = await memory_repo.get_many_by_keys(
+            _IDENT, ["k"], ch=ch, scope=WHOLE_NAMESPACE, strong=strong
+        )
+        got[strong] = rows[0]
+    assert got[False].sensitivity == "high" and got[False].superseded_by == "k-new"
+    assert got[False].duplicate_of == "k-canon" and got[False].valid_to is not None
+    assert got[False] == got[True]

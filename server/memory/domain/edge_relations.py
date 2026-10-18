@@ -15,7 +15,7 @@ contradiction reaches conflicts.list next to the ones loom detects itself.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import NamedTuple
 
 # Preferred verbs, in the order the MCP description lists them.
 CANONICAL_RELATIONS: tuple[str, ...] = (
@@ -159,8 +159,7 @@ def canonical_link_relation(raw: str) -> tuple[str, bool]:
     return _SYNONYMS.get(verb, verb), flip
 
 
-@dataclass(frozen=True)
-class CanonicalEdge:
+class CanonicalEdge(NamedTuple):
     from_key: str
     to_key: str
     relation: str

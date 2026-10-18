@@ -542,9 +542,9 @@ async def handle_memory_link(input: MemoryLinkInput) -> MemoryLinkOutput:
     # An edge without a verb is a co-occurrence, which loom.entity_edges already records, and
     # most authored edges arrive without one. Store the honest fallback and say so on the
     # output, so the row can guide a read and the ledger can count the habit.
-    edge = canonical_edge(input.from_key, input.to_key, input.relation)
-    from_key, to_key, relation = edge.from_key, edge.to_key, edge.relation
-    relation_defaulted = edge.defaulted
+    from_key, to_key, relation, relation_defaulted = canonical_edge(
+        input.from_key, input.to_key, input.relation
+    )
     evidence = [
         str(e).strip()[:_EDGE_EVIDENCE_ITEM_LIMIT] for e in (input.evidence or []) if str(e).strip()
     ]

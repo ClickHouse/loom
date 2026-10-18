@@ -726,7 +726,7 @@ async def _import_concepts(
     args: argparse.Namespace,
     planned: list[tuple[okf.Concept, dict[str, Any]]],
     live: dict[tuple[str, str], dict[str, Any]],
-) -> dict[str, int]:
+) -> Counter[str]:
     """memory.set per changed or new concept (conflict detection, blacklist and audit
     apply); `--verify` re-attests human-verified concepts as the caller."""
     n: Counter[str] = Counter()
@@ -735,10 +735,10 @@ async def _import_concepts(
         row = live.get((payload["session_id"], payload["memory_key"]))
         if row is not None and _unchanged(payload, row):
             n["unchanged"] += 1
-            # The row keeps the attestation it got when it was written.
-            if args.verify and bundle_actor and not args.dry_run:
-                if row.get("verification") in ("none", "stale"):
-                    n["verified"] += await _verify(client, org, args, payload, c)
+            # A skipped row is re-attested only when it lost its attestation.
+            lost = row.get("verification") in ("none", "stale")
+            if args.verify and bundle_actor and not args.dry_run and lost:
+                n["verified"] += await _verify(client, org, args, payload, c)
             continue
         if args.dry_run:
             note = (
@@ -759,14 +759,14 @@ async def _import_concepts(
             n["failed"] += 1
             print(f"  ✗ {c.path}: {e}", file=sys.stderr)
             continue
-        if res.get("conflict_verdict") == "merge":
+        verdict = res.get("conflict_verdict")
+        if verdict == "merge":
             # Folded into another key's row, so nothing lands at this key and the next run
             # sends it again.
             n["merged"] += 1
             continue
         n["written"] += 1
         # The judge runs after the write unless asked to wait: its conflicts arrive as pending.
-        verdict = res.get("conflict_verdict")
         if verdict in ("conflict", "pending"):
             n[verdict] += 1
         if args.verify and bundle_actor:
@@ -804,7 +804,7 @@ async def _import_links(
     unresolved: list[dict[str, str]],
     root: Path,
     live_edges: set[tuple[str, str, str]],
-) -> dict[str, int]:
+) -> Counter[str]:
     """Re-create the bundle's `relates_to` edges that are not live yet with memory.link; the
     author is whoever the token names. Entries that name no concept in the bundle (a
     `loom://` pointer, a file that did not travel) are reported, never written."""
@@ -816,9 +816,9 @@ async def _import_links(
         )
     if len(unresolved) > 10:
         print(f"  ! … {len(unresolved) - 10} more unresolved relates_to entries", file=sys.stderr)
-    n = {"links": 0, "links_unchanged": 0, "links_failed": 0, "links_unresolved": len(unresolved)}
+    n: Counter[str] = Counter(links_unresolved=len(unresolved))
     # One key exported for several writers carries its edges once per concept.
-    wanted = {_edge_key(e): e for e in links}
+    wanted = {canonical_edge(e["from_key"], e["to_key"], e["relation"])[:3]: e for e in links}
     new = [e for k, e in wanted.items() if k not in live_edges]
     n["links_unchanged"] = len(wanted) - len(new)
     if args.dry_run:
@@ -844,15 +844,9 @@ async def _import_links(
     return n
 
 
-def _edge_key(e: dict[str, str]) -> tuple[str, str, str]:
-    """(from_key, to_key, relation) as memory.link stores the edge."""
-    c = canonical_edge(e["from_key"], e["to_key"], e["relation"])
-    return c.from_key, c.to_key, c.relation
-
-
 def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
-    """Why this bundle must not drive deletes, or '' for a complete export: the concept
-    files still hash to the `loom.corpus_digest` the export wrote into index.md."""
+    """Why this bundle must not drive deletes, or '' when index.md marks it a complete
+    export and its concept files still hash to `loom.corpus_digest`."""
     if not concepts:
         return "the bundle has no concepts"
     from server.memory.domain import okf_lint
@@ -882,7 +876,7 @@ async def _prune(
     live: dict[tuple[str, str], dict[str, Any]],
     keep: set[tuple[str, str]],
     actor: str,
-) -> dict[str, int]:
+) -> Counter[str]:
     """memory.delete each row an earlier import wrote whose key has left the bundle. Only
     rows under the import's identity with its source_trace stamp, whose live version this
     token wrote, qualify, and the delete names that version, so rows anyone else wrote in
@@ -892,7 +886,7 @@ async def _prune(
         for k, r in live.items()
         if k not in keep and str(r.get("source_trace") or "").startswith(_TRACE_PREFIX)
     )
-    n = {"pruned": 0, "prune_kept": 0, "prune_failed": 0}
+    n: Counter[str] = Counter()
     for session_id, key in gone:
         ident = {
             "org": org,
