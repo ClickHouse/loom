@@ -129,12 +129,13 @@ async def delegate(
     if parent.is_service_account and not is_service_account:
         raise _refuse("a service-account token can only mint service-account tokens")
     parents = [*parent.parents, parent.token_id] if parent.token_id else list(parent.parents)
-    if len(parents) > MAX_CHAIN_DEPTH:
-        raise _refuse(f"delegation chain is limited to {MAX_CHAIN_DEPTH} tokens")
     if parent.session_id and not parent.first_party:
         # A third-party client's session: what it mints ends when the session
         # is revoked, not when the parent's access token runs out.
         parents.append(parent.session_id)
+    if len(parents) > MAX_CHAIN_DEPTH:
+        # Entries: the ancestor tokens and a third-party session among them.
+        raise _refuse(f"a delegation chain is limited to {MAX_CHAIN_DEPTH} ancestors")
     if scoped and "*" in requested:
         raise _refuse("a per-namespace token cannot name '*'")
     if parent.issued_at is None:

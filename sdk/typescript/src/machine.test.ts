@@ -243,7 +243,8 @@ describe("answers other than the token's", () => {
     };
     const bot = machineLogin(BASE, { fetch: answer }) as MachineLogin;
     await expect(bot.token()).rejects.toBeInstanceOf(error);
-    expect(asked.every((u) => u.startsWith("https://actions.example/"))).toBe(true);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatch(/^https:\/\/actions\.example\/token\?audience=/);
   });
 });
 

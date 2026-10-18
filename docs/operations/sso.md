@@ -258,12 +258,12 @@ of the above, so they do not stop with someone's offboarding.
 - Okta refusing the user at a refresh ends that session.
 - Service accounts and MCP tokens a person creates from a `loom login` or
   dashboard SSO session outlive it, including `loom logout`, for as long as
-  they chose (blank is 90 days, 0 never expires). A third-party MCP client's
-  session mints none that outlive it. Every one is saved to their token list, so nothing a
-  person cannot see outlives the session. Disabling someone at the provider ends their
-  sessions at the next refresh (within the hour) but not these tokens: only a
-  refresh asks the provider about a person. When offboarding, revoke the
-  person, which ends every token they made too:
+  they chose (blank is 90 days, 0 never expires). Every one is saved to their
+  token list, so nothing a person cannot see outlives the session. A
+  third-party MCP client's session mints none that outlive it. Disabling
+  someone at the provider ends their sessions at the next refresh (within the
+  hour) but not these tokens: only a refresh asks the provider about a person.
+  When offboarding, revoke the person, which ends every token they made too:
   `loom revoke-token --subject <their subject>`.
 - Every sign-in, device approval and denial, MCP consent, JIT account and
   ended session writes an `auth.*` row to the audit log:

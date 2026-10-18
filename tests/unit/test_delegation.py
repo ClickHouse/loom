@@ -295,6 +295,16 @@ async def test_ending_a_third_party_clients_session_kills_what_it_minted(
 
 
 @pytest.mark.asyncio
+async def test_a_third_party_session_counts_toward_the_chain_limit(world) -> None:
+    exp = int(time.time()) + 3600
+    seven = tuple(f"t{i}" for i in range(7))  # with the parent's own id: 8 ancestors
+    own = _login(parents=seven, session_id="fam-cli", first_party=True, expires_at=exp)
+    assert len((await _child(own, {"a": None})).parents) == 8
+    third_party = _login(parents=seven, session_id="fam-mcp", expires_at=exp)
+    assert "limited to 8 ancestors" in await _refused(third_party, {"a": None})
+
+
+@pytest.mark.asyncio
 async def test_revoking_the_creator_kills_the_child(world, monkeypatch: pytest.MonkeyPatch) -> None:
     d = await delegate(
         _login(),
