@@ -94,7 +94,7 @@ describe("Transport logging", () => {
     expect(error[0]).toMatch(/^memory\.get failed after \d+ ms: NotFound RESOURCE_NOT_FOUND \(404\) \(rid=/);
     const debug = lines.filter(([l]) => l === "debug").map(([, t]) => t);
     expect(debug[0]).toContain("Bearer …1234");
-    expect(debug[0]).toMatch(/→ POST http:\/\/x\/v1\/memory\.get attempt 1 timeout 60000 ms bytes \d+/);
+    expect(debug[0]).toMatch(/→ POST http:\/\/x\/v1\/memory\.get attempt 1 waits \d+ of 60000 ms bytes \d+/);
   });
 
   it("logLevel off writes nothing; the default level is warn", async () => {

@@ -24,7 +24,7 @@ from server.transport.mcp_schemas import _shape_schema
 
 @pytest.fixture(autouse=True)
 def _no_ch_default_context(monkeypatch):
-    async def _empty(auth):
+    async def _empty(auth, defaults=None):
         return ""
 
     monkeypatch.setattr(mcp_primer, "_caller_default_context", _empty)

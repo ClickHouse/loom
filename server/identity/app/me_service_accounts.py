@@ -6,13 +6,17 @@ namespaces, with no operator round-trip.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
-from datetime import datetime, timedelta
+from collections.abc import Mapping
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
-from server.auth.delegation import delegate
+from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
+from server.auth.self_signup import AGENT_NAME_PREFIX
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, token_grants
@@ -34,84 +38,27 @@ def json_int(value: object) -> int:
 
 def parse_ttl_days(ttl_raw: object) -> int | None:
     """`ttl_days` of a minted token in seconds: None = the delegation default
-    (90 days); else 1..3650 days; anything else is a 422."""
+    (90 days); 0 = never expires; else 1..3650 days; anything else is a 422."""
     if ttl_raw is None:
         return None
     try:
         ttl_days = json_int(ttl_raw)
-        if ttl_days < 1 or ttl_days > 3650:
+        if ttl_days < 0 or ttl_days > 3650:
             raise ValueError
     except (TypeError, ValueError) as e:
         raise HTTPException(
             status_code=422,
             detail={
                 "code": "VALIDATION_FAILED",
-                "message": "ttl_days must be 1..3650 or null",
+                "message": "ttl_days must be 1..3650, 0 for never, or null for 90",
             },
         ) from e
     return ttl_days * 86400
 
 
-def dev_parent(payload: dict[str, object]) -> AuthInfo:
-    """The parent a token is delegated from in dev mode (no auth, no bearer): a
-    flat writer for the body's subject and org, issued now."""
-    return AuthInfo(
-        subject=str(payload.get("subject") or "dev"),
-        org=str(payload.get("org") or "default"),
-        namespaces=("*",),
-        roles=(Role.WRITER,),
-        is_service_account=False,
-        issued_at=int(time.time()),
-    )
-
-
-@router.post("/v1/me/service_accounts.create")
-async def me_service_accounts_create(
-    request: Request,
-    payload: dict[str, object],
-) -> dict[str, object]:
-    """Mint a service-account JWT scoped to a chosen subset of the caller's
-    namespaces, with a per-namespace role and an explicit priority order.
-
-    Body:
-      name: str          # human-friendly label (e.g. 'agent-detector')
-      namespaces: [ ... ] # ORDERED (order = read priority). Each entry is
-                          #   either a bare "namespace" string, or an object
-                          #   {"namespace": str, "role"?: str}. Role per entry
-                          #   defaults to the top-level `role`, else the
-                          #   caller's live grant on that namespace.
-      role: str|null      # default role for bare entries (viewer|writer|admin)
-      ttl_days: int|null  # default and null: 90 days
-
-    Each namespace's role is delegated from the caller's token
-    (`server.auth.delegation.delegate`): at most the caller's token allows and
-    the caller's live grant — the caller may DOWNGRADE (or keep) but never
-    escalate. The token carries an `ns_roles` claim (authoritative
-    per-namespace role) and an ordered `namespaces` claim (the read priority).
-    Returns the JWT exactly once.
-    """
-    import hashlib
-    import json as _json
-    import time as _time
-
-    from server.core.ch import get_client
-
-    if settings.auth_actually_required():
-        parent = me_callers.require_authed_info(request)
-    else:
-        parent = dev_parent(payload)
-    subject, org = parent.subject, parent.org
-
-    name = str(payload.get("name") or "").strip()
-    if not name or not (1 <= len(name) <= 64):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "name required, 1-64 chars",
-            },
-        )
-
+def _requested_roles(payload: dict[str, object]) -> dict[str, str | None]:
+    """The body's namespaces in read-priority order, each with the role asked
+    for there (None: the caller's live grant); 422 on a malformed one."""
     raw_namespaces = payload.get("namespaces") or []
     if not isinstance(raw_namespaces, list) or not raw_namespaces:
         raise HTTPException(
@@ -136,7 +83,6 @@ async def me_service_accounts_create(
     # Parse ordered entries (order = read priority). Each is a bare string or
     # {namespace, role?}. Duplicate namespaces collapse to first occurrence so
     # priority stays stable; the last-seen role wins for that namespace.
-    ordered_ns: list[str] = []
     requested_role: dict[str, str | None] = {}
     for entry in raw_namespaces:
         if isinstance(entry, dict):
@@ -156,10 +102,8 @@ async def me_service_accounts_create(
                     "message": f"role for {ns} must be viewer | writer | admin",
                 },
             )
-        if ns not in requested_role:
-            ordered_ns.append(ns)
         requested_role[ns] = r
-    if not ordered_ns:
+    if not requested_role:
         raise HTTPException(
             status_code=422,
             detail={
@@ -167,52 +111,215 @@ async def me_service_accounts_create(
                 "message": "namespaces must be a non-empty array",
             },
         )
+    return requested_role
 
-    delegated = await delegate(
-        parent,
-        org=org,
-        requested=requested_role,
-        scoped=True,
-        ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
-        is_service_account=True,
+
+async def _name_holder(org: str, name: str) -> str | None:
+    """Who made the token, not yet revoked or expired, that holds `name` in
+    `org`; None when it is free. A new row would replace its row, leaving it
+    live and listed nowhere. Read under the name's claim, as of every write."""
+    from server.core.ch import get_client
+
+    row = await get_client().query_one(
+        "SELECT created_by FROM loom.service_accounts FINAL WHERE org = {org:String} "
+        "AND name = {name:String} AND revoked_at IS NULL "
+        "AND (expires_at IS NULL OR expires_at > now()) LIMIT 1",
+        params={"org": org, "name": name},
     )
-    ordered_ns = delegated.namespaces
+    return str(row["created_by"]) if row is not None else None
+
+
+def token_name(raw: object) -> str:
+    """A new token's name in its owner's token list; 422 for one off its shape."""
+    name = str(raw or "").strip()
+    if not name or not (1 <= len(name) <= 64):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "name required, 1-64 chars",
+            },
+        )
+    if "\x00" in name:  # reserved: revocation cutoffs key on a NUL (mint_token refuses it)
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a NUL character"},
+        )
+    if ":" in name:  # reserved: `sa:<trust>:<agent>` is a machine trust's agent (auth.agents)
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_FAILED", "message": "name cannot hold a ':'"},
+        )
+    if name.startswith(AGENT_NAME_PREFIX):  # self-signup's, written without this check
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": f"names starting {AGENT_NAME_PREFIX!r} are agents'",
+            },
+        )
+    return name
+
+
+async def refuse_taken_name(org: str, name: str, subject: str) -> None:
+    """409 when a live token holds `name` in `org`. Called under the name's claim."""
+    holder = await _name_holder(org, name)
+    if holder is not None:
+        # Names are one per org; whose token holds one is not the caller's to learn.
+        taken = f"your token {name!r} is live" if holder == subject else "that name is in use"
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "TOKEN_NAME_TAKEN", "message": f"{taken}; choose another name"},
+        )
+
+
+def new_token_subject(org: str, name: str, creator: str) -> str:
+    """A new token's own `sa:` subject, so revoking it ends this token alone."""
+    sa_hash = hashlib.sha1(f"{org}:{name}:{creator}:{time.time_ns()}".encode()).hexdigest()[:6]
+    return f"sa:{name}-{sa_hash}"
+
+
+async def save_token(
+    name: str,
+    sa_subject: str,
+    delegated: Delegated,
+    *,
+    created_by: str,
+    now: datetime,
+    kind: str = "service_account",
+    client: str = "",
+) -> None:
+    """List the token in its owner's token list (`loom.service_accounts`).
+    `kind` is "mcp" for a Setup-page token, with the MCP client it was made for."""
+    from server.core.ch import get_client
+
     ns_roles = delegated.ns_roles or {}
-
-    sa_hash = hashlib.sha1(
-        f"{org}:{name}:{subject}:{_time.time_ns()}".encode(),
-    ).hexdigest()[:6]
-    sa_subject = f"sa:{name}-{sa_hash}"
-    minted = delegated.mint(sa_subject)
-
-    now = naive_utc_now_seconds()
-    expires_at = now + timedelta(seconds=delegated.ttl_seconds)
-
-    # `roles` column keeps the distinct effective roles for the list view;
-    # `ns_roles` persists the authoritative per-namespace map (JSON).
-    distinct_roles = sorted({r for r in ns_roles.values()}, key=grant_rank)
-
-    ch = get_client()
-    await ch.insert(
+    # `roles` keeps the distinct effective roles for the list view; `ns_roles`
+    # the authoritative per-namespace map (JSON), when the token has one.
+    roles = sorted(set(ns_roles.values()), key=grant_rank) if ns_roles else delegated.roles
+    await get_client().insert(
         "loom.service_accounts",
         [
             {
-                "org": org,
+                "org": delegated.org,
                 "name": name,
                 "sa_subject": sa_subject,
-                "namespaces": ordered_ns,
-                "roles": distinct_roles,
-                "ns_roles": _json.dumps(ns_roles),
+                "namespaces": delegated.namespaces,
+                "roles": roles,
+                "ns_roles": json.dumps(ns_roles),
                 "ttl_days": delegated.ttl_days,
-                "created_by": subject,
+                "created_by": created_by,
                 "created_at": now,
-                "expires_at": expires_at,
+                "expires_at": delegated.expires_at(now),
                 "revoked_at": None,
                 "revoked_by": "",
-                "version": _time.time_ns(),
+                "version": time.time_ns(),
+                "kind": kind,
+                "client": client,
+                # The gate and the namespace listings read this flag: a token
+                # reads through its creator's live grants (server/auth/service_accounts.py).
+                "inherit_creator_grants": True,
             }
         ],
     )
+
+
+def dev_bearer(request: Request) -> AuthInfo | None:
+    """With auth off, the principal of a valid bearer the request sends; None
+    for no bearer or one that does not verify, which auth off ignores. 503 while
+    a bearer cannot be checked yet, as `verify_bearer` answers."""
+    from server.auth.bearer import auth_unavailable, bearer_token
+    from server.auth.jwt import AuthUnavailable, TokenError, verify_token
+
+    try:
+        token = bearer_token(request.headers.get("Authorization"))
+        return None if token is None else verify_token(token)
+    except AuthUnavailable as e:
+        raise auth_unavailable(e) from e
+    except TokenError:
+        return None
+
+
+def dev_caller(request: Request, params: Mapping[str, object]) -> tuple[str, str]:
+    """(subject, org) of the caller in dev mode (auth off): a valid bearer's,
+    else the request's `subject` and `org`, else "dev" in "default". Every
+    route that saves, lists or revokes a token reads it, so a token minted
+    with auth off is in the list it is revoked from."""
+    info = dev_bearer(request)
+    if info is not None:
+        return info.subject, info.org
+    return str(params.get("subject") or "dev"), str(params.get("org") or "default")
+
+
+def dev_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
+    """The parent a token is delegated from in dev mode (auth off): a flat
+    writer for `dev_caller`, issued now. A bearer only names the owner; its
+    scope and lifetime do not cap the token, as with token.mint."""
+    subject, org = dev_caller(request, payload)
+    return AuthInfo(
+        subject=subject,
+        org=org,
+        namespaces=("*",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+        issued_at=int(time.time()),
+    )
+
+
+@router.post("/v1/me/service_accounts.create")
+async def me_service_accounts_create(
+    request: Request,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    """Mint a service-account JWT scoped to a chosen subset of the caller's
+    namespaces, with a per-namespace role and an explicit priority order.
+
+    Body:
+      name: str          # human-friendly label (e.g. 'agent-detector')
+      namespaces: [ ... ] # ORDERED (order = read priority). Each entry is
+                          #   either a bare "namespace" string, or an object
+                          #   {"namespace": str, "role"?: str}. Role per entry
+                          #   defaults to the top-level `role`, else the
+                          #   caller's live grant on that namespace.
+      role: str|null      # default role for bare entries (viewer|writer|admin)
+      ttl_days: int|null  # default and null: 90 days; 0: never expires
+
+    Each namespace's role is delegated from the caller's token
+    (`server.auth.delegation.delegate`): at most the caller's token allows and
+    the caller's live grant — the caller may DOWNGRADE (or keep) but never
+    escalate. The token carries an `ns_roles` claim (authoritative
+    per-namespace role) and an ordered `namespaces` claim (the read priority).
+    Returns the JWT exactly once.
+    """
+    if settings.auth_actually_required():
+        parent = me_callers.require_authed_info(request)
+    else:
+        parent = dev_parent(request, payload)
+    subject, org = parent.subject, parent.org
+
+    name = token_name(payload.get("name"))
+    requested_role = _requested_roles(payload)
+    ttl_seconds = parse_ttl_days(payload.get("ttl_days"))
+
+    from server.auth.grant_claims import service_account_change
+
+    async with service_account_change(org, name):
+        await refuse_taken_name(org, name, subject)
+        delegated = await delegate(
+            parent,
+            org=org,
+            requested=requested_role,
+            scoped=True,
+            ttl_seconds=ttl_seconds,
+            is_service_account=True,
+        )
+        ordered_ns = delegated.namespaces
+        ns_roles = delegated.ns_roles or {}
+        sa_subject = new_token_subject(org, name, subject)
+        minted = delegated.mint(sa_subject)
+        now = naive_utc_now_seconds()
+        expires_at = delegated.expires_at(now)
+        await save_token(name, sa_subject, delegated, created_by=subject, now=now)
     # A restricted namespace ticked here is read only when the token's own subject holds a
     # direct grant — write it now, capped, revoked with the token; a name in the claim alone
     # would have every read of it refused.
@@ -242,8 +349,7 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
     if settings.auth_actually_required():
         subject, org = me_callers.require_authed_caller(request)
     else:
-        subject = request.query_params.get("subject", "dev")
-        org = request.query_params.get("org", "default")
+        subject, org = dev_caller(request, request.query_params)
 
     subs = await me_callers.subject_aliases_of(org, subject)
     rows = await get_client().query_all(
@@ -297,7 +403,8 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
     )
 
     def _iso(v: datetime | None) -> str | None:
-        return v.isoformat() if v else None
+        # A token never used joins no row: its last use reads as the epoch.
+        return v.isoformat() if v and v.year > 1970 else None
 
     return {
         "rows": [
@@ -327,18 +434,15 @@ async def me_service_accounts_revoke(
     request: Request,
     payload: dict[str, object],
 ) -> dict[str, object]:
-    """Mark an SA as revoked. The JWT itself remains valid until TTL —
-    for hard cutoff, also revoke the grants the SA depends on. Caller
-    must be the creator or admin on at least one of the SA's namespaces."""
-    import time as _time
-
+    """Mark an SA as revoked and revoke its subject, so its token stops
+    verifying. Caller must be the creator or admin on at least one of the
+    SA's namespaces."""
     from server.core.ch import get_client
 
     if settings.auth_actually_required():
         subject, org = me_callers.require_authed_caller(request)
     else:
-        subject = str(payload.get("subject") or "dev")
-        org = str(payload.get("org") or "default")
+        subject, org = dev_caller(request, payload)
 
     name = str(payload.get("name") or "").strip()
     if not name:
@@ -347,92 +451,87 @@ async def me_service_accounts_revoke(
             detail={"code": "VALIDATION_FAILED", "message": "name required"},
         )
 
-    ch = get_client()
-    row = await ch.query_one(
-        """
-        SELECT sa_subject, namespaces, created_by, created_at,
-               expires_at, ttl_days, roles, kind, client,
-               inherit_creator_grants, ns_roles
-        FROM loom.service_accounts FINAL
-        WHERE org = {org:String} AND name = {name:String}
-        LIMIT 1
-        """,
-        params={"org": org, "name": name},
-    )
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "NOT_FOUND",
-                "message": f"service account {name!r} not found",
-            },
+    from server.auth.grant_claims import service_account_change
+
+    # Held as create holds it: a create of this name between the read and the
+    # write would be replaced by the revoked copy of the row read here.
+    async with service_account_change(org, name):
+        ch = get_client()
+        row = await ch.query_one(
+            """
+            SELECT sa_subject, namespaces, created_by, created_at,
+                   expires_at, ttl_days, roles, kind, client,
+                   inherit_creator_grants, ns_roles, revoked_at
+            FROM loom.service_accounts FINAL
+            WHERE org = {org:String} AND name = {name:String}
+            LIMIT 1
+            """,
+            params={"org": org, "name": name},
         )
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": f"service account {name!r} not found",
+                },
+            )
 
-    authorized = row["created_by"] == subject
-    if not authorized:
-        for ns in row["namespaces"]:
-            if await me_callers.caller_admin_of(org, ns, subject):
-                authorized = True
-                break
-    if not authorized:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "AUTH_INSUFFICIENT",
-                "message": "must be the creator or admin on a scoped namespace",
-            },
-        )
+        authorized = row["created_by"] == subject
+        if not authorized:
+            for ns in row["namespaces"]:
+                if await me_callers.caller_admin_of(org, ns, subject):
+                    authorized = True
+                    break
+        if not authorized:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "AUTH_INSUFFICIENT",
+                    "message": "must be the creator or admin on a scoped namespace",
+                },
+            )
 
-    now = naive_utc_now_seconds()
-    await ch.insert(
-        "loom.service_accounts",
-        [
-            {
-                "org": org,
-                "name": name,
-                "sa_subject": row["sa_subject"],
-                "namespaces": row["namespaces"],
-                "roles": row["roles"],
-                "ttl_days": row["ttl_days"],
-                "created_by": row["created_by"],
-                "created_at": row["created_at"],
-                "expires_at": row["expires_at"],
-                "revoked_at": now,
-                "revoked_by": subject,
-                "version": _time.time_ns(),
-                # Column-mirror discipline: carry every column
-                # forward or the merge zeros it.
-                "kind": row.get("kind") or "service_account",
-                "client": row.get("client") or "",
-                "inherit_creator_grants": bool(row.get("inherit_creator_grants", True)),
-                "ns_roles": row.get("ns_roles") or "{}",
-            }
-        ],
+        # Revoked already (a retry, a second click): its revocation stands as it was.
+        now = row["revoked_at"] or naive_utc_now_seconds()
+        if not row["revoked_at"]:
+            await ch.insert(
+                "loom.service_accounts",
+                [
+                    {
+                        "org": org,
+                        "name": name,
+                        "sa_subject": row["sa_subject"],
+                        "namespaces": row["namespaces"],
+                        "roles": row["roles"],
+                        "ttl_days": row["ttl_days"],
+                        "created_by": row["created_by"],
+                        "created_at": row["created_at"],
+                        "expires_at": row["expires_at"],
+                        "revoked_at": now,
+                        "revoked_by": subject,
+                        "version": time.time_ns(),
+                        # Column-mirror discipline: carry every column
+                        # forward or the merge zeros it.
+                        "kind": row.get("kind") or "service_account",
+                        "client": row.get("client") or "",
+                        "inherit_creator_grants": bool(row.get("inherit_creator_grants", True)),
+                        "ns_roles": row.get("ns_roles") or "{}",
+                    }
+                ],
+            )
+
+    # The row keeps no jti, so revoke by `sub` (the sa_subject); its children
+    # die with it through `parent_subjects`. Through `revoke`, so this replica
+    # holds it at once, whatever a refresh in flight reads.
+    from server.auth.revocation import revoke
+
+    await revoke(
+        str(row["sa_subject"]),
+        expires_at=row.get("expires_at"),
+        reason=f"service_account.revoke name={name}",
+        revoked_by=subject,
     )
-
-    # Also revoke the JWT itself. SA tokens carry no `jti`, so revoke by
-    # `sub` (the sa_subject); verify_token checks both. Without this the
-    # token keeps authenticating until its TTL.
-    from server.auth.revocation import revocation_expiry
-
-    revocation_expires = revocation_expiry(row.get("expires_at"), now)
-    await ch.insert(
-        "loom.revoked_tokens",
-        [
-            {
-                "jti": row["sa_subject"],
-                "revoked_at": now,
-                "expires_at": revocation_expires,
-                "reason": f"service_account.revoke name={name}",
-                "revoked_by": subject,
-            }
-        ],
-    )
-    # Refresh so this replica sees the revocation immediately; other
-    # replicas pick it up on the next worker tick.
-    from server.auth.revocation import refresh
-
-    await refresh()
     # The token's own restricted grants die with it.
     grants_revoked = await token_grants.revoke_token_grants(org, str(row["sa_subject"]))
 

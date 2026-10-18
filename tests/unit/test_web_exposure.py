@@ -304,6 +304,11 @@ def test_oauth_metadata_and_challenge_ignore_forwarded_host(
 def test_the_mcp_config_url_ignores_forwarded_host(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.main import app
 
+    class _CH:
+        async def insert(self, table: str, rows: list, **kw: object) -> None:
+            pass  # the token list's row
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
     client = TestClient(app, base_url="http://localhost:7777")
     body = {"client": "claude-code"}
     r = client.post("/v1/me/setup/mcp_config", json=body, headers=SPOOF)

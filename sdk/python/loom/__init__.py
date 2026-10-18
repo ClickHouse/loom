@@ -3,6 +3,8 @@
 Primary surface:
 - `Datapack(org, namespace)` — the encapsulating unit for an agentic app
 - `Agent(org, namespace, agent)` — one runnable agent inside a datapack
+- `login()` / `logout()` / `whoami()` — sign in once (`loom login`); every
+  Agent given no api_key then uses the stored, self-refreshing session
 
 A Datapack holds the (org, namespace) tuple plus platform defaults
 (base_url, api_key, timeout) so `.agent(name)` spawns Agents without
@@ -17,6 +19,7 @@ from loom._version import __version__
 from loom.agent import Agent
 from loom.capabilities import Capabilities
 from loom.client import OpsClient
+from loom.credentials import login, logout, whoami
 from loom.datapack import Datapack
 from loom.errors import (
     INVALID_RESPONSE_CODE,
@@ -67,5 +70,8 @@ __all__ = [
     "ValidationError",
     "__version__",
     "decode_token_claims",
+    "login",
+    "logout",
     "tool_definitions",
+    "whoami",
 ]

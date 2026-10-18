@@ -16,6 +16,7 @@ from server.auth.directory import ClassificationUnavailable, directory
 from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
+    from server.auth.authz import CachedGate
     from server.auth.fanout import Fanout
     from server.auth.jwt import AuthInfo
     from server.operations.base import Role
@@ -80,16 +81,16 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
       `namespaces` claim and active `loom.namespace_grants` rows (grants
       widen), returned sorted.
 
-    Either way a claim on a namespace where the subject holds a grant row is
-    capped at that grant (`authz.claim_cap`), and stays while it is live
-    (`authz.live_claims`).
-
     A delegated token (a `creator` claim) is neither: its claim narrowed to
     the creator's live grants (`_delegated_namespaces`).
 
+    Every candidate then stays only where the gate lets the token read it
+    (`authz.CachedGate`), so the list never names what a read would refuse:
+    a claim capped at a revoked grant (`authz.claim_cap`) drops out there.
+
     `subject` lets dev mode pass an explicit identity when no JWT is present.
     """
-    from server.auth.authz import live_claims, may_act_in_org
+    from server.auth.authz import may_act_in_org
     from server.auth.service_accounts import inheriting_creator
 
     auth = current_auth()
@@ -103,20 +104,18 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
 
     # Delegated token: its claim, cut down to the creator's live grants.
     if auth is not None and auth.creator:
-        return await _without_unreadable_restricted(org, await _delegated_namespaces(auth, org))
+        return await _gate_readable(auth, org, await _delegated_namespaces(auth, org))
 
     # Scoped token: the ordered namespace claim is authoritative. Preserve
     # order (= read priority); do not union other grants (= subset restrict).
     if auth is not None and auth.has_ns_roles():
-        return await _without_unreadable_restricted(
-            org, await live_claims(auth, org, auth.namespaces)
-        )
+        return await _gate_readable(auth, org, named_claims(auth))
 
     jwt_namespaces: set[str] = set()
     resolved_subject: str | None = None
     if auth is not None and auth.subject:
         resolved_subject = auth.subject
-        jwt_namespaces = set(await live_claims(auth, org, auth.namespaces))
+        jwt_namespaces = set(named_claims(auth))
     if not resolved_subject:
         resolved_subject = subject
 
@@ -133,11 +132,28 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
             subjects = [*subjects, *await subject_aliases(org, creator)]
         grant_namespaces = await _granted_namespaces(org, subjects)
 
-    return await _without_unreadable_restricted(org, sorted(jwt_namespaces | grant_namespaces))
+    return await _gate_readable(auth, org, sorted(jwt_namespaces | grant_namespaces))
+
+
+def named_claims(auth: AuthInfo) -> list[str]:
+    """The namespaces the token's claim names, in order, without `*`."""
+    return list(dict.fromkeys(ns for ns in auth.namespaces if ns and ns != "*"))
+
+
+async def _gate_readable(auth: AuthInfo | None, org: str, namespaces: list[str]) -> list[str]:
+    """Those of `namespaces`, in order, the gate lets `auth` read; all of them
+    with auth disabled."""
+    from server.auth.authz import CachedGate
+    from server.operations.base import Role
+
+    if auth is None:
+        return namespaces
+    gate = CachedGate(auth, org)
+    return [ns for ns in namespaces if await gate.admits(ns, Role.VIEWER)]
 
 
 async def _granted_namespaces(org: str, subjects: list[str]) -> set[str]:
-    """Namespaces of `org` where any of `subjects` holds a live grant."""
+    """Namespaces of `org` where any of `subjects`, in any case, holds a live grant."""
     from server.core.ch import get_client
     from server.core.grant_sql import LIVE_GRANT
 
@@ -145,9 +161,9 @@ async def _granted_namespaces(org: str, subjects: list[str]) -> set[str]:
         """
         SELECT DISTINCT namespace
         FROM (SELECT * FROM loom.namespace_grants FINAL)
-        WHERE org = {org:String} AND subject IN {subs:Array(String)} AND {live}
+        WHERE org = {org:String} AND lower(subject) IN {subs:Array(String)} AND {live}
         """.replace("{live}", LIVE_GRANT),
-        params={"org": org, "subs": subjects},
+        params={"org": org, "subs": [s.lower() for s in subjects]},
     )
     return {str(r["namespace"]) for r in rows if r.get("namespace")}
 
@@ -167,35 +183,42 @@ async def _delegated_namespaces(auth: AuthInfo, org: str) -> list[str]:
     return [ns for ns in auth.namespaces if ns in granted]
 
 
-async def _without_unreadable_restricted(org: str, namespaces: list[str]) -> list[str]:
-    """A restricted namespace stays in a caller's list only
-    when the caller passes the two-factor read check for it. Membership,
-    grants, inheritance and wildcards put it in the list; this takes it out
-    again. Order is preserved. With auth disabled nothing is removed."""
-    if not namespaces:
-        return namespaces
-    from server.auth.authz import restricted_allows
+async def readable_named_claims(
+    auth: AuthInfo | None, org: str, gate: CachedGate | None = None
+) -> list[str]:
+    """The namespaces `auth` names (no `*`), in claim order, that the gate
+    (`authz.check_authorized`) lets it read, asked through `gate` (a new
+    `authz.CachedGate` when not given). Empty with no token. The MCP transport
+    names these when a token has no default. Grants come from the cached grant
+    maps, so a steady-state call reads nothing new."""
+    from server.auth.authz import CachedGate, may_act_in_org
     from server.operations.base import Role
 
-    auth = current_auth()
-    if auth is None:
-        return namespaces
-    try:
-        restricted = await directory().restricted_set(org)
-    except ClassificationUnavailable:
-        # Fail closed: the set is unknown, so nothing that could be
-        # restricted is served — every namespace is treated as restricted
-        # and only the ones the caller passes for (which then also fail, as
-        # the gate re-reads the directory) survive.
-        restricted = frozenset(namespaces)
-    out: list[str] = []
-    for ns in namespaces:
-        if ns in restricted or directory().config_classification(org, ns) == "restricted":
-            if await restricted_allows(auth, Role.VIEWER, org, ns):
-                out.append(ns)
-            continue
-        out.append(ns)
-    return out
+    if auth is None or not may_act_in_org(auth, org):
+        return []
+    gate = gate or CachedGate(auth, org)
+    return [ns for ns in named_claims(auth) if await gate.admits(ns, Role.VIEWER)]
+
+
+async def delegated_reach(
+    auth: AuthInfo, org: str, gate: CachedGate | None = None
+) -> tuple[list[str], list[str]]:
+    """(writable, readable): the namespaces a delegated token may write and
+    read by the gate's rules, asked through `gate` (a new `authz.CachedGate`
+    when not given). The candidates are its named claims, in order, and under
+    a `*` claim every namespace its creator holds a live grant on, sorted. The
+    subject's own grants never widen it."""
+    from server.auth.authz import CachedGate
+    from server.operations.base import Role
+
+    gate = gate or CachedGate(auth, org)
+    candidates = named_claims(auth)
+    if "*" in auth.namespaces:
+        ranks = (await gate.grants(auth.creator)).ranks
+        candidates += sorted(ns for ns, rank in ranks.items() if rank and ns not in candidates)
+    readable = [ns for ns in candidates if await gate.admits(ns, Role.VIEWER)]
+    writable = [ns for ns in readable if await gate.admits(ns, Role.WRITER)]
+    return writable, readable
 
 
 async def restricted_namespaces_hidden_from(org: str) -> list[str]:
@@ -278,6 +301,9 @@ __all__ = [
     "OrgScopeFilter",
     "current_auth",
     "current_auth_var",
+    "delegated_reach",
+    "named_claims",
+    "readable_named_claims",
     "resolve_my_namespaces",
     "resolve_org_scope",
     "restricted_namespaces_hidden_from",

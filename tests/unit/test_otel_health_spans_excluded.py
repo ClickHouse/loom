@@ -14,11 +14,15 @@ from server.observability import otel
 
 
 def test_default_excludes_the_health_path(settings_override) -> None:
-    assert otel._fastapi_excluded_urls() == "/v1/health"
-    settings_override(otel_excluded_urls="")
-    assert otel._fastapi_excluded_urls() is None
+    assert otel._fastapi_excluded_urls() == "/v1/health,/oauth/"
     settings_override(otel_excluded_urls=" /v1/health,/assets ")
-    assert otel._fastapi_excluded_urls() == "/v1/health,/assets"
+    assert otel._fastapi_excluded_urls() == "/v1/health,/assets,/oauth/"
+
+
+def test_sign_in_urls_never_reach_a_trace(settings_override) -> None:
+    """Their query strings carry user codes, codes and state."""
+    settings_override(otel_excluded_urls="")
+    assert otel._fastapi_excluded_urls() == "/oauth/"
 
 
 def _fake_instrumentor(calls: list[dict]) -> types.ModuleType:
@@ -40,10 +44,10 @@ def test_instrument_app_receives_the_excluded_urls(monkeypatch: pytest.MonkeyPat
     )
     app = object()
     otel._instrument_fastapi(app)
-    assert calls == [{"app": app, "excluded_urls": "/v1/health"}]
+    assert calls == [{"app": app, "excluded_urls": "/v1/health,/oauth/"}]
 
 
-def test_a_blank_setting_instruments_every_path(
+def test_a_blank_setting_instruments_every_path_but_sign_in(
     monkeypatch: pytest.MonkeyPatch, settings_override
 ) -> None:
     calls: list[dict] = []
@@ -52,7 +56,7 @@ def test_a_blank_setting_instruments_every_path(
     )
     settings_override(otel_excluded_urls="")
     otel._instrument_fastapi(object())
-    assert calls[0]["excluded_urls"] is None
+    assert calls[0]["excluded_urls"] == "/oauth/"
 
 
 def test_an_instrumentor_failure_never_fails_the_boot(

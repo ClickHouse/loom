@@ -17,19 +17,23 @@ subject gives its `owner_email`. Only rows a person signed up (a non-empty
 grant under either spelling is a grant to that person and nobody else.
 Service-account subjects (`sa:` prefix) and wildcards have no aliases.
 
-Reads are cached for `TTL_S` per (org, subject): the auth context, the
-login widening and the restricted gate each ask once per request.
+Reads are cached per (org, subject) for `grant_cache_ttl_seconds`, the bound
+other processes see a grant change within: the auth context, the login
+widening and the restricted gate each ask once per request. A change to a
+row's spellings calls `invalidate`, which clears this process's entries only.
+`canonical_subject`, which picks the subject a grant is written under, reads
+the directory itself.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from typing import Any
 
 log = logging.getLogger("loom.auth.aliases")
 
-TTL_S = 60.0
 _CACHE: dict[tuple[str, str], tuple[float, tuple[str, ...]]] = {}
 _CACHE_MAX = 10_000
 
@@ -41,33 +45,17 @@ def _is_human_subject(subject: str) -> bool:
 async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -> list[str]:
     """`subject` first, then the other spelling(s) the directory ties to it;
     the subject alone when the read fails or nothing is tied to it."""
+    from server.settings import settings
+
     if not _is_human_subject(subject):
         return [subject] if subject else []
     key = (org, subject)
     hit = _CACHE.get(key)
     now = time.monotonic()
-    if hit is not None and now - hit[0] < TTL_S:
+    if hit is not None and now - hit[0] < settings.grant_cache_ttl_seconds:
         return list(hit[1])
-    out = [subject]
     try:
-        from server.core.ch import get_client
-
-        client = ch or get_client()
-        rows = await client.query_all(  # type: ignore[attr-defined]
-            """
-            SELECT owner_email, contact_email
-            FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND ifNull(active, true) = true
-              AND contact_email != ''
-              AND (owner_email = {sub:String} OR lower(contact_email) = lower({sub:String}))
-            LIMIT 8
-            """,
-            params={"org": org, "sub": subject},
-        )
-        for r in rows:
-            for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
-                if spelling and spelling.lower() not in {s.lower() for s in out}:
-                    out.append(spelling)
+        out = await _read(org, subject, ch)
     except Exception:
         log.warning(
             "aliases: lookup failed for %r in %r; subject stands alone", subject, org, exc_info=True
@@ -79,13 +67,51 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
     return out
 
 
+async def _read(org: str, subject: str, ch: object | None) -> list[str]:
+    from server.core.ch import get_client
+
+    client = ch or get_client()
+    rows = await client.query_all(  # type: ignore[attr-defined]
+        """
+        SELECT owner_email, contact_email
+        FROM loom.namespaces FINAL
+        WHERE org = {org:String} AND ifNull(active, true) = true
+          AND contact_email != ''
+          AND lower({sub:String}) IN (lower(owner_email), lower(contact_email))
+        LIMIT 8
+        """,
+        params={"org": org, "sub": subject},
+    )
+    out = [subject]
+    for r in rows:
+        for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
+            if spelling and spelling.lower() not in {s.lower() for s in out}:
+                out.append(spelling)
+    return out
+
+
+def invalidate(org: str, subjects: Iterable[str]) -> None:
+    """Drop the cached reads of `org` that asked about, or found, one of
+    `subjects`: a row naming them changed."""
+    lowered = {s.lower() for s in subjects if s}
+    for key, (_, spellings) in list(_CACHE.items()):
+        if key[0] == org and lowered & {s.lower() for s in (key[1], *spellings)}:
+            del _CACHE[key]
+
+
 async def canonical_subject(org: str, subject: str, *, ch: object | None = None) -> str:
     """The login handle for a human spelling (the row's `owner_email`), so a
     new grant is written under the one subject every read folds onto; the
-    spelling as given when the directory ties nothing to it."""
+    spelling as given when the directory ties nothing to it. Read uncached,
+    so a link or release another process just made cannot strand the grant;
+    a failed read raises rather than guess."""
+    from server.core.ch import own_write_reads
+
     if not _is_human_subject(subject) or "@" not in subject:
         return subject
-    for alias in await subject_aliases(org, subject, ch=ch):
+    with own_write_reads():
+        spellings = await _read(org, subject, ch)
+    for alias in spellings:
         if "@" not in alias:
             return alias
     return subject
@@ -121,4 +147,4 @@ def fold_by_alias(
     return groups
 
 
-__all__ = ["TTL_S", "canonical_subject", "fold_by_alias", "subject_aliases"]
+__all__ = ["canonical_subject", "fold_by_alias", "invalidate", "subject_aliases"]

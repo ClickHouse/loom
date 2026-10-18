@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator
@@ -65,6 +66,26 @@ class Attempts:
                 return await _admit([(self, key)], released=False) is not None
         except Busy:
             return False
+
+    async def blocked(self, key: str) -> bool:
+        """Whether `key` is at its limit, for a limit that counts failures only
+        (a wrong device code, a refused callback): checked before the attempt,
+        `record`ed after one that failed. A process too busy to check refuses."""
+        known = (self.kind, _digest(key))
+        if _known_over.get(known, 0.0) > _clock():
+            return True
+        try:
+            async with slot():
+                [n] = await _counts([(self, key)], released=False)
+        except Busy:
+            return True
+        if n >= self.limit:
+            _remember_over(known)
+        return n >= self.limit
+
+    async def record(self, key: str) -> None:
+        """Count one failed attempt of `key`."""
+        await _insert([(self.kind, key)], _at())
 
 
 @dataclass(frozen=True)
@@ -216,3 +237,17 @@ def client_address(request: Any) -> str:
     already replaced it with the X-Forwarded-For client when the peer is one
     of LOOM_TRUSTED_PROXIES, so a header from any other peer changes nothing."""
     return request.client.host if request.client else "?"
+
+
+def address_key(address: str) -> str:
+    """Who a per-address limit counts: the address, or its /64 for IPv6, where
+    one host holds a whole /64 to spread requests over."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    if ip.version == 6 and ip.ipv4_mapped:  # an IPv4 client of a dual-stack socket
+        return str(ip.ipv4_mapped)
+    if ip.version == 6:
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return address
