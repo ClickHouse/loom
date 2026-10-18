@@ -153,3 +153,21 @@ describe("Policies across a namespace switch", () => {
     expect(screen.getByText("b-rule")).toBeInTheDocument();
   });
 });
+
+describe("Policies, a failed read", () => {
+  it("says the rules and the decisions failed to load, never that there are none, and Retry reads again", async () => {
+    vi.mocked(api.listPolicies).mockRejectedValueOnce(new Error("down"));
+    vi.mocked(api.listPolicyDecisions).mockRejectedValueOnce(new Error("down"));
+    render(<Policies />);
+    expect(await screen.findByText("Couldn't load rules")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load decisions")).toBeInTheDocument();
+    expect(screen.queryByText("No rules")).toBeNull();
+    const retries = screen.getAllByRole("button", { name: "Retry" });
+    fireEvent.click(retries[0]);
+    fireEvent.click(retries[1]);
+    await waitFor(() => expect(screen.queryByText("Couldn't load rules")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Couldn't load decisions")).toBeNull());
+    expect(api.listPolicies).toHaveBeenCalledTimes(2);
+    expect(api.listPolicyDecisions).toHaveBeenCalledTimes(2);
+  });
+});

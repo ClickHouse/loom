@@ -186,24 +186,23 @@ describe("buildCards joins code.repos and tracker.source.list by repository", ()
 describe("primaryAction: exactly one primary button", () => {
   it("Open the branch you read, before anything else", () => {
     const [c] = buildCards([branch({ my_status: "member" })], [source()]);
-    expect(primaryAction(c)).toMatchObject({ verb: "Open", facet: "code", branch: { branch: "master" } });
+    expect(primaryAction(c)).toMatchObject({ verb: "Open", branch: { branch: "master" } });
   });
   it("Open the record when only the record is read", () => {
     const [c] = buildCards(
       [branch({ join_policy: "approval" })],
       [source({ namespaces: [ns({ member_role: "viewer" })] })],
     );
-    expect(primaryAction(c)).toMatchObject({ verb: "Open", facet: "record" });
+    expect(primaryAction(c)).toMatchObject({ verb: "Open", record: expect.any(Object) });
   });
   it("Join the open branch first; the record's Join when the code is restricted; Request access when nothing is open", () => {
     expect(primaryAction(buildCards([branch()], [source()])[0])).toMatchObject({
       verb: "Join",
-      facet: "code",
       branch: { branch: "master" },
     });
     expect(primaryAction(buildCards([branch({ join_policy: "approval" })], [source()])[0])).toMatchObject({
       verb: "Join",
-      facet: "record",
+      record: expect.any(Object),
     });
     expect(
       primaryAction(
@@ -212,7 +211,7 @@ describe("primaryAction: exactly one primary button", () => {
           [source({ namespaces: [ns({ classification: "restricted", join_policy: "approval" })] })],
         )[0],
       ),
-    ).toMatchObject({ verb: "Request access", facet: "code" });
+    ).toMatchObject({ verb: "Request access", branch: expect.any(Object) });
   });
   it("Withdraw request when the only thing left is pending; nothing on a closed repository", () => {
     expect(primaryAction(buildCards([branch({ my_status: "pending", join_policy: "approval" })], [])[0])).toMatchObject(

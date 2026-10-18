@@ -36,6 +36,7 @@ import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
 import { Alert, ListTime, LoadingSkeleton, PageHeader } from "../../components/ui";
+import { ListState } from "../../components/ui/ListState";
 
 /**
  * Policies — history rules over what an agent may do next.
@@ -182,7 +183,7 @@ export function Policies() {
   const identity = useIdentity();
   const [rules, setRules] = useState<PolicyRule[] | null>(null);
   const [mode, setMode] = useState<PolicyMode | string>("off");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
 
@@ -209,9 +210,10 @@ export function Policies() {
           }
         })
         .catch((e) => {
+          // Not an empty list: the error says the read failed, with Retry.
           if (live()) {
-            setError(humanizeError(e));
-            setRules([]);
+            setError(e);
+            setRules(null);
           }
         })
         .finally(() => {
@@ -264,12 +266,12 @@ export function Policies() {
             </Button>
           }
         >
-          {rules === null && (
+          {rules === null && !error && (
             <LoadingSkeleton label="Loading rules">
               <Skeleton className="h-24 w-full" />
             </LoadingSkeleton>
           )}
-          {rules !== null && error && <div className="text-sm text-danger">{error}</div>}
+          {!!error && <ListState kind="error" things="rules" error={error} onRetry={() => setReads((n) => n + 1)} />}
           {rules !== null && !error && rules.length === 0 && (
             <EmptyState
               icon="secure"
@@ -277,7 +279,7 @@ export function Policies() {
               description="Add a rule to forbid or require an action based on the caller's recent history. Rules only take effect once the server mode leaves off."
             />
           )}
-          {rules !== null && rules.length > 0 && (
+          {rules !== null && !error && rules.length > 0 && (
             <div aria-busy={refreshing || undefined}>
               <Table
                 size="sm"
@@ -720,7 +722,9 @@ const FILTER_LABEL: Record<string, string> = { all: "All", deny: "Deny", allow: 
 function DecisionsPanel({ version }: { version: number }) {
   const identity = useIdentity();
   const [rows, setRows] = useState<PolicyDecisionRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  // Retry reads again through the effect.
+  const [reads, setReads] = useState(0);
   const [filter, setFilter] = useState<DecisionFilter>("");
   // A new rules version keeps the ledger on screen, marked busy; another namespace or
   // filter is another list, so it starts from the skeleton.
@@ -745,15 +749,15 @@ function DecisionsPanel({ version }: { version: number }) {
         })
         .catch((e) => {
           if (live()) {
-            setError(humanizeError(e));
-            setRows([]);
+            setError(e);
+            setRows(null);
           }
         })
         .finally(() => {
           if (live()) setRefreshing(false);
         });
     },
-    [identity.org, identity.namespace, filter, version],
+    [identity.org, identity.namespace, filter, version, reads],
   );
 
   return (
@@ -775,7 +779,7 @@ function DecisionsPanel({ version }: { version: number }) {
         The ledger of evaluated calls in shadow and enforce mode, newest first. Nothing is written while the mode is
         off.
       </div>
-      {rows === null && (
+      {rows === null && !error && (
         <LoadingSkeleton label="Loading decisions">
           <div className="space-y-3">
             <SkeletonCard />
@@ -783,13 +787,13 @@ function DecisionsPanel({ version }: { version: number }) {
           </div>
         </LoadingSkeleton>
       )}
-      {rows !== null && error && <div className="text-sm text-danger">{error}</div>}
+      {!!error && <ListState kind="error" things="decisions" error={error} onRetry={() => setReads((n) => n + 1)} />}
       {rows !== null && !error && rows.length === 0 && (
         <div className="text-xs text-text-muted py-4 text-center">
           No decisions{filter ? ` with decision=${filter}` : ""} yet.
         </div>
       )}
-      {rows !== null && rows.length > 0 && (
+      {rows !== null && !error && rows.length > 0 && (
         <div aria-busy={refreshing || undefined}>
           <Table
             size="sm"

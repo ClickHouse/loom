@@ -122,6 +122,27 @@ describe("Agents: late answers", () => {
     expect(await screen.findByText("claude-code")).toBeInTheDocument();
   });
 
+  it("a switch away from a window with clients shows neither its rows nor its count", async () => {
+    listConnectedAgents.mockResolvedValueOnce({ rows: [ROW] });
+    render(<Agents />);
+    await screen.findByText("claude-code");
+    listConnectedAgents.mockReturnValueOnce(new Promise(() => {}));
+    fireEvent.click(within(screen.getByRole("group", { name: "Time window" })).getByRole("button", { name: "7 days" }));
+    await waitFor(() => expect(screen.queryByText("claude-code")).toBeNull());
+    expect(screen.queryByText("1 client")).toBeNull();
+  });
+
+  it("Refresh on an empty window keeps its empty state on screen", async () => {
+    listConnectedAgents.mockResolvedValueOnce({ rows: [] });
+    render(<Agents />);
+    expect(await screen.findByText("No client has written in this window")).toBeInTheDocument();
+    listConnectedAgents.mockReturnValueOnce(new Promise(() => {}));
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    await waitFor(() => expect(listConnectedAgents).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Refresh/ })).toHaveAttribute("aria-busy", "true"));
+    expect(screen.getByText("No client has written in this window")).toBeInTheDocument();
+  });
+
   it("drops a Refresh's answer that lands after a new window's", async () => {
     listConnectedAgents.mockResolvedValueOnce({ rows: [ROW] });
     render(<Agents />);

@@ -22,7 +22,6 @@ import {
  */
 
 export type Verb = "Open" | "Join" | "Request access" | "Withdraw request" | "Leave";
-type FacetKind = "code" | "record";
 
 /** The facet's contents, as a person names them. */
 // One noun for the linked database — a tracker (issues, PRs, incidents). "issues & PRs"
@@ -125,7 +124,7 @@ export interface RecordNamespace {
   label: string;
 }
 
-/** The Issues & PRs facet: the tracker namespace(s) whose `repos` name the repository. */
+/** The Tracker facet: the tracker namespace(s) whose `repos` name the repository. */
 export interface RecordFacet {
   namespaces: RecordNamespace[];
   /** Distinct sources behind the namespaces, in first-seen order. */
@@ -189,7 +188,7 @@ export interface RepositoryCard {
   record: RecordFacet | null;
   /** Every facet namespace needs a maintainer's approval (or is closed). */
   restricted: boolean;
-  /** The caller maintains a facet namespace: the Details disclosure renders. */
+  /** The caller maintains a facet namespace: the Settings disclosure renders. */
   maintained: boolean;
   joinedCount: number;
   pendingCount: number;
@@ -265,7 +264,6 @@ export function buildCards(repos: readonly CodeRepoSummary[], sources: readonly 
 /** The header's one primary button. */
 interface PrimaryAction {
   verb: Exclude<Verb, "Leave">;
-  facet: FacetKind;
   branch?: CodeRepoSummary;
   record?: RecordNamespace;
 }
@@ -284,18 +282,18 @@ export function primaryAction(card: Pick<RepositoryCard, "code" | "record">): Pr
   const { code, record } = card;
   const rec = (st: TrackerNamespaceState) => record?.namespaces.find((n) => n.state === st);
   const readBranch = code?.joined[0];
-  if (readBranch) return { verb: "Open", facet: "code", branch: readBranch };
+  if (readBranch) return { verb: "Open", branch: readBranch };
   const readRecord = rec("member");
-  if (readRecord) return { verb: "Open", facet: "record", record: readRecord };
+  if (readRecord) return { verb: "Open", record: readRecord };
   for (const [st, verb] of [
     ["open", "Join"],
     ["approval", "Request access"],
     ["pending", "Withdraw request"],
   ] as const) {
     const b = code ? codeTarget(code, st) : undefined;
-    if (b) return { verb, facet: "code", branch: b };
+    if (b) return { verb, branch: b };
     const r = rec(st);
-    if (r) return { verb, facet: "record", record: r };
+    if (r) return { verb, record: r };
   }
   return null;
 }

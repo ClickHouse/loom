@@ -739,13 +739,7 @@ const TYPE_ICONS: Record<"namespace" | "profile" | "memory" | "document", IconNa
 };
 function TypeIcon({ kind }: { kind: keyof typeof TYPE_ICONS }) {
   return (
-    <Icon
-      name={TYPE_ICONS[kind]}
-      size="sm"
-      color="var(--global-color-text-muted)"
-      aria-hidden="true"
-      className="shrink-0"
-    />
+    <Icon name={TYPE_ICONS[kind]} size="sm" color="var(--color-text-muted)" aria-hidden="true" className="shrink-0" />
   );
 }
 

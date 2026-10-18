@@ -524,18 +524,18 @@ export function Tasks() {
       const list = shownTaskIds()
         .map((id) => stateRef.current.rowsById.get(id))
         .filter((r): r is TaskListRow => !!r);
-      const i = list.findIndex((r) => r.task_id === sel);
+      // A key pressed on a row or card acts on that one, and j / k move from it (focus and
+      // selection can part: a card Tabbed to, the row Show all focused).
+      const focusedId =
+        e.target instanceof Element ? e.target.closest<HTMLElement>("[data-task-id]")?.dataset.taskId : undefined;
+      const focused = focusedId ? stateRef.current.rowsById.get(focusedId) : undefined;
+      const i = list.findIndex((r) => r.task_id === (focused?.task_id ?? sel));
       const move = (to: number) => {
         const r = list[Math.max(0, Math.min(list.length - 1, to))];
         if (r) stateRef.current.selectRow(r);
       };
-      // A key pressed on a row or card acts on that one (focus and selection can part: a card
-      // Tabbed to, the row Show all focused). Else the selected row as drawn, else the task
-      // open in the panel (a deep link past a lane's first rows); a selection a filter hid,
-      // with no panel open, takes no keys.
-      const focusedId =
-        e.target instanceof Element ? e.target.closest<HTMLElement>("[data-task-id]")?.dataset.taskId : undefined;
-      const focused = focusedId ? stateRef.current.rowsById.get(focusedId) : undefined;
+      // Else the selected row as drawn, else the task open in the panel (a deep link past a
+      // lane's first rows); a selection a filter hid, with no panel open, takes no keys.
       const row =
         focused ??
         (i >= 0 ? list[i] : open && open.task_id === sel ? (stateRef.current.rowsById.get(sel) ?? open) : null);

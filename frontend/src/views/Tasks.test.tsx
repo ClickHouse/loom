@@ -871,6 +871,34 @@ describe("Tasks page", () => {
     }
   });
 
+  it("on the board, j moves from the card that has focus", async () => {
+    vi.mocked(listTasks).mockResolvedValue({
+      tasks: [
+        task("t-a", { created_at: iso(5) }),
+        task("t-b", { created_at: iso(4) }),
+        task("t-c", { created_at: iso(3) }),
+      ],
+      truncated: false,
+    });
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      seed(admin, [row("admin")]);
+      const user = userEvent.setup();
+      render(<Tasks />);
+      await screen.findByRole("region", { name: "Tasks board" });
+      await user.click(document.querySelector<HTMLElement>('[data-task-id="t-a"]') as HTMLElement);
+      await screen.findByRole("complementary", { name: "Task detail" });
+      await user.keyboard("{Escape}");
+      document.querySelector<HTMLElement>('[data-task-id="t-b"]')?.focus();
+      await user.keyboard("j");
+      await waitFor(() =>
+        expect(document.querySelector('[data-task-id="t-c"]')).toHaveAttribute("aria-current", "true"),
+      );
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+    }
+  });
+
   it("a selected row a filter hid, with no panel open, takes no keys", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();

@@ -44,9 +44,13 @@ const WINDOWS = [
 export function Agents() {
   const identity = useStore((s) => s.identity);
   const [windowHours, setWindowHours] = useState<number>(24);
-  const [rows, setRows] = useState<ConnectedAgentRow[] | null>(null);
+  // The rows read, with the org and window they were read for: another's are not shown.
+  const readFor = `${identity?.org}/${windowHours}`;
+  const [read, setRead] = useState<{ key: string; rows: ConnectedAgentRow[] } | null>(null);
+  const rows = read && read.key === readFor ? read.rows : null;
   const [error, setError] = useState<unknown>(null);
-  // A refresh or a new window keeps the table on screen, marked busy, until it answers.
+  // A refresh keeps the table on screen, marked busy, until it answers; a new window reads
+  // as loading.
   const [refreshing, setRefreshing] = useState(false);
 
   // Refresh and Retry read again through the effect, so a newer read drops an older one.
@@ -55,9 +59,10 @@ export function Agents() {
     if (!identity) return;
     setError(null);
     setRefreshing(true);
+    const key = readFor;
     listConnectedAgents({ org: identity.org, window_hours: windowHours }, { signal })
       .then((r) => {
-        if (live()) setRows(r.rows || []);
+        if (live()) setRead({ key, rows: r.rows || [] });
       })
       .catch((e) => {
         if (live()) setError(e);
@@ -102,11 +107,7 @@ export function Agents() {
 
       <ListToolbar
         label="Time window and count"
-        count={
-          !error && rows !== null && !(refreshing && rows.length === 0)
-            ? `${rows.length} client${rows.length === 1 ? "" : "s"}`
-            : undefined
-        }
+        count={!error && rows !== null ? `${rows.length} client${rows.length === 1 ? "" : "s"}` : undefined}
       >
         <ButtonGroup
           aria-label="Time window"
@@ -119,8 +120,7 @@ export function Agents() {
       {!!error && (
         <ListState kind="error" things="connected clients" error={error} onRetry={() => setReads((n) => n + 1)} />
       )}
-      {/* Another window's read: its rows are not this window's, so it reads as loading. */}
-      {!error && (rows === null || (refreshing && rows.length === 0)) && (
+      {!error && rows === null && (
         <Table
           aria-label="Connected clients"
           aria-busy
@@ -130,7 +130,7 @@ export function Agents() {
           noDataMessage={<TableSkeleton label="Loading connected clients" />}
         />
       )}
-      {!error && rows !== null && rows.length === 0 && !refreshing && (
+      {!error && rows !== null && rows.length === 0 && (
         <ListState
           kind="empty"
           icon="plug"

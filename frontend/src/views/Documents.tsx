@@ -217,6 +217,12 @@ export function Documents() {
     row?.querySelector<HTMLElement>("[data-row-open]")?.focus();
   });
 
+  // The read behind a `?doc=` link past the loaded rows. It ends with the page, with its
+  // namespace, and when the reader opens or closes a document themselves: its answer then
+  // opens nothing.
+  const linkRead = useRef<AbortController | null>(null);
+  useEffect(() => () => linkRead.current?.abort(), [identity.org, identity.namespace]);
+
   useEffect(() => {
     if (!pendingDocSourceUri || !rows) return;
     const uri = pendingDocSourceUri;
@@ -232,26 +238,17 @@ export function Documents() {
     linkRead.current?.abort();
     const ac = new AbortController();
     linkRead.current = ac;
-    const scope = `${identity.org}/${identity.namespace}`;
-    // Nor in another namespace than the one it was read in.
-    const stale = () => {
-      const now = useStore.getState().identity;
-      return ac.signal.aborted || `${now?.org}/${now?.namespace}` !== scope;
-    };
     void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
       .then((found) => {
-        if (stale()) return;
+        if (ac.signal.aborted) return;
+        linkRead.current = null;
         if (found) void onOpenRef.current(found);
         else setViewParam("doc", null);
       })
       .catch((e) => {
-        if (!stale()) toastError("Open failed", e);
+        if (!ac.signal.aborted) toastError("Open failed", e);
       });
   }, [pendingDocSourceUri, rows, clearPendingDoc, identity.org, identity.namespace]);
-  // A link's read ends with the page: its answer opens nothing on another one.
-  const linkRead = useRef<AbortController | null>(null);
-  useEffect(() => () => linkRead.current?.abort(), []);
-
   const onDelete = async (source_uri: string) => {
     if (
       !(await confirmAction({
@@ -285,6 +282,7 @@ export function Documents() {
   };
 
   const onOpen = async (r: KnowledgeEntry) => {
+    linkRead.current?.abort();
     // The open document is the page's URL (`?doc=`): a reload or Back reopens it.
     setViewParam("doc", r.source_uri);
     setPreviewEntry(r);
@@ -319,6 +317,7 @@ export function Documents() {
   onOpenRef.current = onOpen;
 
   const closePreview = () => {
+    linkRead.current?.abort();
     if (inlineBlob?.url) {
       try {
         URL.revokeObjectURL(inlineBlob.url);

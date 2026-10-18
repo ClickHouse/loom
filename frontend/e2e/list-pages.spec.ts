@@ -178,7 +178,8 @@ test("the Profile's sections are a list with a selection toolbar", async ({ page
 });
 
 // The Kbd and Recall Lab bar rules use Click UI's radius tokens, not raw 4 px and 2 px (the
-// computed values match, so the stylesheet itself is read).
+// computed values match, so the stylesheet itself is read). It runs here, not in vitest,
+// which hands a test an empty stylesheet.
 test("styles.css draws the Kbd and the score bar on radius tokens", () => {
   const css = fs.readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
   const rule = (selector: string) => css.slice(css.indexOf(`${selector} {`)).split("}")[0];

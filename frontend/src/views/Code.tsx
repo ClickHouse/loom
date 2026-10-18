@@ -214,8 +214,8 @@ export function CodeView() {
 }
 
 // ---------------------------------------------------------------------------
-// Repositories home. One card per repository; each branch is a chip that carries its own
-// state. A person is joined to nothing by default: an open repository joins in one click,
+// Repositories home. One card per repository; each branch is a row of its table, with its
+// state and a menu of its own. A person is joined to nothing by default: an open repository joins in one click,
 // a restricted one is requested and a maintainer approves. Every surface here says
 // read-only.
 // ---------------------------------------------------------------------------

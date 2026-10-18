@@ -136,6 +136,25 @@ describe("Library keeps the open document in its URL", () => {
     expect(location.search).toBe("");
   });
 
+  it("a linked document's read that lands after the reader opened another opens nothing", async () => {
+    let answer: (v: unknown) => void = () => {};
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[] }) =>
+      opts.uriPrefix ? new Promise((r) => (answer = r)) : { rows: ROWS, next_cursor: "c-2" },
+    );
+    history.replaceState(null, "", "/library?doc=docs%2Flate.md");
+    useStore.getState().bootView("knowledge");
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Preview Handbook" }));
+    await settle();
+    await act(async () =>
+      answer({ rows: [{ ...ROWS[0], source_uri: "docs/late.md", title: "Late doc" }], next_cursor: null }),
+    );
+    await settle();
+    expect(screen.getByRole("dialog", { name: "Handbook" })).toBeInTheDocument();
+    expect(new URLSearchParams(location.search).get("doc")).toBe("docs/handbook.md");
+  });
+
   it("a linked document's read that lands after a namespace switch opens nothing", async () => {
     let answer: (v: unknown) => void = () => {};
     api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: { uriPrefix?: string[] }) => {
