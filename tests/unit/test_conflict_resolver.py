@@ -909,6 +909,7 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     e.missing = None
     monkeypatch.setattr(worker, "_recheck_after", 0.0)
     monkeypatch.setattr(worker, "_unavailable", None)
+    monkeypatch.setattr(worker, "_no_key", False)
     monkeypatch.setattr(resolver, "model_missing", lambda: e.missing)
 
     def _ns(r: dict[str, Any]) -> tuple[str, str]:

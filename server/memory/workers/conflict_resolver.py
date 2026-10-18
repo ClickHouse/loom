@@ -35,6 +35,7 @@ BURST_S = 300.0
 # Why the model was unavailable at the last pass that knew (None: available). The
 # warning is logged when this changes, not on every pass.
 _unavailable: str | None = None
+_no_key = False  # the last pass found no key for the model
 
 
 def _identity(r: Mapping[str, Any]) -> tuple[str, ...]:
@@ -151,12 +152,14 @@ def _note_availability(reason: str | None) -> None:
 
 
 async def run_pass() -> dict[str, Any]:
+    global _no_key
     set_query_tag(f"worker.{NAME}")
     p = _Pass()
     with record_pass(NAME) as rec:
         missing = resolver.model_missing()
-        if missing is None and (_unavailable or "").startswith(resolver.NO_KEY):
+        if missing is None and _no_key:
             _note_availability(None)  # the key is back, whether or not a row is queued
+        _no_key = missing is not None
         if missing is not None:
             # Known before any read: the queue is not read for rows no call can judge.
             _note_availability(missing)

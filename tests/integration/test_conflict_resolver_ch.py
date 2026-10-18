@@ -182,6 +182,7 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
     # Every pass reads the recheck: a test's flags are judged in the pass it runs.
     monkeypatch.setattr(worker, "RECHECK_IDLE_S", 0.0)
     monkeypatch.setattr(worker, "_unavailable", None)
+    monkeypatch.setattr(worker, "_no_key", False)
     # A test that needs a second org appends it to `orgs`.
     only = _OnlyOrgs(ch, [org])
     for name in ("queued_namespaces", "owed_rows", "unjudged_conflicted_rows"):
