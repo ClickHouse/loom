@@ -5,10 +5,8 @@ report a failed call."""
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
-import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -20,6 +18,8 @@ DEFAULT_BASE_URL = "http://localhost:7777"
 TOKEN_FILE = "~/.loom/token"
 # The source label for values read from the client config file.
 CONFIG_SOURCE = "~/.loom/config.json"
+# The source label of an agent's (no) token: see `resolve_token`.
+AGENT_SOURCE = "agent mode"
 
 # Every command resolves the server URL and the token in the plugin hooks'
 # order (`resolveServerUrl` / `resolveToken` in the plugin's loom-client.mjs),
@@ -81,41 +81,17 @@ def agent_mode(env: Mapping[str, str] | None = None) -> bool:
     )
 
 
-def _agent_token(home: Path | None, env: Mapping[str, str] | None) -> tuple[str, str]:
-    """The token the plugin exchanged for this agent's workload token
-    (`~/.loom/agent-token-<hash>.json`, `agentToken`), while it is this
-    client's, this server's and this proof's and has not expired; this CLI
-    never exchanges, so nothing else stands in for it."""
-    environ = _env(env)
-    client_id = environ["LOOM_CLIENT_ID"]
-    key = hashlib.sha256(client_id.encode()).hexdigest()[:16]
-    path = (home or Path.home()) / ".loom" / f"agent-token-{key}.json"
-    try:
-        proof = environ.get("LOOM_WORKLOAD_TOKEN") or Path(
-            environ.get("LOOM_WORKLOAD_TOKEN_FILE", "")
-        ).read_text(encoding="utf-8")
-        saved = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return "", "agent mode: no exchanged token"
-    ours = (
-        isinstance(saved, dict)
-        and saved.get("client_id") == client_id
-        and saved.get("server") == resolve_server_url(None, home, env)[0]
-        and saved.get("proof") == hashlib.sha256(proof.strip().encode()).hexdigest()
-    )
-    token = str(saved.get("token") or "") if ours else ""
-    if not token or float(saved.get("exp") or 0) <= time.time():
-        return "", "agent mode: no exchanged token"
-    return token, str(path)
-
-
 def resolve_token(
     explicit: str | None, home: Path | None = None, env: Mapping[str, str] | None = None
 ) -> tuple[str, str]:
-    """(token, source): the flag, `LOOM_API_KEY`; for an agent its exchanged
-    token and nothing else; otherwise the config file's `token`,
-    `LOOM_API_KEY_FILE` or `~/.loom/token`, else ('', 'none') for the
-    tokenless single-user stack."""
+    """(token, source): the flag, `LOOM_API_KEY`; for an agent nothing
+    (`AGENT_SOURCE`); otherwise the config file's `token`, `LOOM_API_KEY_FILE`
+    or `~/.loom/token`, else ('', 'none') for the tokenless single-user stack.
+
+    An agent's Loom token lives minutes and is bound to the server it was
+    exchanged at, so these commands neither borrow the plugin's copy nor take
+    a person's saved one; `loom call` (the SDK's `Agent`) exchanges the
+    workload token itself."""
     if explicit and explicit.strip():
         return explicit.strip(), "--token"
     environ = _env(env)
@@ -123,7 +99,7 @@ def resolve_token(
     if from_env:
         return from_env, "LOOM_API_KEY"
     if agent_mode(env):
-        return _agent_token(home, env)
+        return "", AGENT_SOURCE
     cfg = str(loom_config(home, env).get("token") or "").strip()
     if cfg:
         return cfg, CONFIG_SOURCE

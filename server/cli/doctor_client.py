@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from server.cli._client import (
+    AGENT_SOURCE,
     CONFIG_SOURCE,
     agent_mode,
     jwt_claims,
@@ -123,6 +124,14 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
 
 def token_check(token: str, source: str, claims: dict[str, Any], now: float) -> Check:
     name = "client:token"
+    if not token and source == AGENT_SOURCE:
+        return (
+            name,
+            WARN,
+            "agent mode (LOOM_CLIENT_ID with a workload token): these checks act for no one. "
+            "The hooks exchange the workload token themselves; `loom call namespace.list_mine` "
+            "runs that exchange and lists what the agent reaches, or says why it was refused.",
+        )
     if not token:
         return (
             name,
@@ -170,6 +179,8 @@ def token_shadow_check(token: str, source: str, home: Path, env: dict[str, str])
     Code applies to its hooks and MCP servers) keeps a dead token in play
     after the config file was refreshed — and the doctor, run from a shell
     without that export, would report the fresh one and pass."""
+    if agent_mode(env):
+        return []  # an agent uses none of the tokens saved here
     others: list[tuple[str, str]] = []
     cfg = str(loom_config(home, env).get("token") or "").strip()
     if cfg and source != CONFIG_SOURCE:

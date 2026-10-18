@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from server.cli._client import DEFAULT_BASE_URL, default_base_url, resolve_token
+from server.cli._client import AGENT_SOURCE, DEFAULT_BASE_URL, default_base_url, resolve_token
 from server.cli._paths import write_private
 
 # ============================================================
@@ -598,7 +598,15 @@ def _cmd_install(args: argparse.Namespace) -> int:
     --client, auto-detects every supported editor present and wires them in a
     single pass; a per-client failure is reported and does not abort the rest.
     """
-    token, _ = resolve_token(args.token)
+    token, source = resolve_token(args.token)
+    if not token and source == AGENT_SOURCE:
+        print(
+            "ERROR: an agent's Loom token is exchanged from its workload token and lives "
+            "minutes, so it is not installed; the plugin's hooks exchange it themselves. "
+            "Pass --token to install a person's token.",
+            file=sys.stderr,
+        )
+        return 2
     if not token:
         print(
             "ERROR: --token is required (or set LOOM_API_KEY, or save one to ~/.loom/token). "

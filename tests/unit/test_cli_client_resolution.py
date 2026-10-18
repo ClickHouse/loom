@@ -86,39 +86,38 @@ _AGENT = {
 }
 
 
-def _save_agent_token(home: Path, **fields: object) -> None:
-    import hashlib
-    import time
-
-    key = hashlib.sha256(b"ci").hexdigest()[:16]
-    saved = {
-        "client_id": "ci",
-        "server": "https://loom.example",
-        "proof": hashlib.sha256(b"proof").hexdigest(),
-        "token": "agent.tok",
-        "exp": time.time() + 600,
-        **fields,
-    }
-    (home / ".loom" / f"agent-token-{key}.json").write_text(json.dumps(saved))
-
-
-def test_an_agent_never_resolves_the_persons_saved_token(tmp_path: Path) -> None:
+def test_an_agent_resolves_no_saved_token_only_an_explicit_one(tmp_path: Path) -> None:
     home = _home(tmp_path, config={"token": "personal", "namespace": "theirs"}, token="file")
-    assert _client.resolve_token(None, home, _AGENT) == ("", "agent mode: no exchanged token")
-    _save_agent_token(home)
-    token, source = _client.resolve_token(None, home, _AGENT)
-    assert token == "agent.tok" and source.endswith(".json")
-    # Another proof, another server or an expired one is not this agent's.
-    for stale in ({"proof": "x"}, {"server": "https://other"}, {"exp": 1}):
-        _save_agent_token(home, **stale)
-        assert _client.resolve_token(None, home, _AGENT)[0] == ""
-    # The explicit flag and LOOM_API_KEY still win.
+    # The plugin's own exchanged copy is not borrowed either: it lives minutes
+    # and is bound to the server it was exchanged at.
+    (home / ".loom" / "agent-token-0123456789abcdef.json").write_text('{"token": "agent.tok"}')
+    assert _client.resolve_token(None, home, _AGENT) == ("", _client.AGENT_SOURCE)
+    assert _client.resolve_token("flag", home, _AGENT)[0] == "flag"
     assert _client.resolve_token(None, home, {**_AGENT, "LOOM_API_KEY": "env"})[0] == "env"
 
 
-def test_doctor_never_reads_the_persons_namespace_for_an_agent(tmp_path: Path) -> None:
-    from server.cli.doctor_client import intended_namespace
+def test_doctor_never_reads_the_persons_namespace_or_tokens_for_an_agent(tmp_path: Path) -> None:
+    from server.cli.doctor_client import intended_namespace, token_check, token_shadow_check
 
     home = _home(tmp_path, config={"token": "personal", "namespace": "theirs"})
     assert intended_namespace(home, dict(_AGENT), {"namespaces": ["ci-review"]}) == "ci-review"
     assert intended_namespace(home, {}, {}) == "theirs"
+    assert token_shadow_check("", _client.AGENT_SOURCE, home, dict(_AGENT)) == []
+    name, grade, detail = token_check("", _client.AGENT_SOURCE, {}, 0)
+    assert grade == "WARN" and "agent mode" in detail and "mint" not in detail
+
+
+def test_install_refuses_to_save_an_agents_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import argparse
+
+    from server.cli import install
+
+    for k, v in _AGENT.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("LOOM_API_KEY", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert install._cmd_install(argparse.Namespace(token=None)) == 2
+    assert "agent's Loom token" in capsys.readouterr().err
+    assert not (tmp_path / ".loom" / "config.json").exists()

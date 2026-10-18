@@ -55,7 +55,7 @@ export async function clientStatus({
 
   const claims = decodeTokenClaims(token);
   const validJwt = Boolean(token && token.split(".").length === 3 && Object.keys(claims).length);
-  if (!validJwt && !token && agentMode()) {
+  if (!token && agentMode()) {
     add(
       "token",
       "FAIL",
