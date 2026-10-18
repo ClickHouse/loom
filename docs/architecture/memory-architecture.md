@@ -243,8 +243,9 @@ actions, verdicts and confidences, never the text.
 - Both rows are re-read read-your-writes before any action, and acted on only while both
   are live, unexpired, with `valid_to` open, and still hold the content judged; the queued
   row is held to the same rule before its call. A row revised meanwhile is left to its new
-  mark; the flag and clear writes land at the read version + 1, so a later revision stays
-  newest.
+  mark; every resolver write (supersede, flag, clear) lands at the read version + 1, so
+  a write that started after the read, locked or not, stays newest, and a retirement it
+  overtook records nothing.
 - A pinned row is never retired, flagged or cleared; a lock that refuses retirement holds.
 - A row is stamped judged only after its actions. A pass cut short judges it again, and
   acting twice changes nothing: a retired row is no longer live, an existing flag is left

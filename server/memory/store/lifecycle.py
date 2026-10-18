@@ -157,6 +157,7 @@ async def supersede_duplicates(
     strong: bool = False,
     on_written: Callable[[list[dict[str, Any]]], None] | None = None,
     on_unconfirmed: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
+    judged: bool = False,
 ) -> int:
     """Mark near-duplicate memories status='superseded' in BOTH loom.memory
     and loom.memory_embeddings via version re-emit (never an in-place ALTER,
@@ -175,8 +176,9 @@ async def supersede_duplicates(
     live in both tables and not counted. `strong` reads the rows read-your-writes
     (`write_versions_by_ids`). `on_written` hears the rows whose retirement the
     re-read confirmed, `on_unconfirmed` those it could not tell about
-    (`write_versions_by_ids`). Returns how many were written; with `on_written`,
-    how many were confirmed."""
+    (`write_versions_by_ids`). `judged` (a verdict reached after the write): each
+    row is superseded at its read version + 1, so a write drawn after that read stays
+    newer. Returns how many were written; with `on_written`, how many were confirmed."""
     if not victims:
         return 0
     ch = ch or _default_client()
@@ -196,13 +198,14 @@ async def supersede_duplicates(
             # record-axis retirement stamp: knowledge_time replay before this
             # instant still sees the row, after it does not
             "invalid_at": retired_at,
-            "version": version,
+            "version": int(row.version) + 1 if judged else version,
         },
         ch=ch,
         skip=skip,
         strong=strong,
         on_written=on_written,
         on_unconfirmed=on_unconfirmed,
+        judged=judged,
     )
 
 

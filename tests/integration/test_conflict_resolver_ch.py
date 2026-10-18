@@ -1129,3 +1129,54 @@ async def test_an_erasure_requested_during_the_call_stops_the_acting(
     assert out["judged"] == 1 and out["retired"] == 0
     assert (await _rows(ch, org))["office_city"]["status"] == "active"
     assert (await _marks(ch, org))["office_location"] == 1, "owed, left to after the saga"
+
+
+@pytest.mark.parametrize("write", ["set", "pin"])
+async def test_a_write_that_started_before_a_retirement_stays_the_head(
+    ch, wired, monkeypatch, write: str
+) -> None:
+    """A memory.set or memory.pin of the loser takes no key lock: its version is drawn
+    before the resolver writes, and it lands after. The supersede sits at the loser's
+    read + 1, below that write, so the user's value (or pin) is what FINAL serves, and
+    the overtaken retirement records nothing."""
+    import server.memory.store as M
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import lifecycle
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 84)
+    peer_id = (await _rows(ch, org))["office_city"]["id"]
+    peer = await M.get_by_id(peer_id, org=org, scope=WHOLE_NAMESPACE, strong=True)
+    drawn = M.next_version()  # the user's write, drawn before the resolver acts
+    if write == "set":
+        late = M.build_memory_version_row(
+            peer,
+            version=drawn,
+            value=json.dumps("The office is in Berlin"),
+            content_sha256="b" * 64,
+        )
+    else:
+        late = M.build_memory_version_row(peer, version=drawn, pinned=1)
+    real = lifecycle.insert_memory_versions
+
+    async def insert(rows: list[dict[str, Any]], **kw: Any) -> Any:
+        out = await real(rows, **kw)
+        if any(r.get("status") == "superseded" for r in rows):
+            await real([late], **kw)  # lands after the supersede, before its re-read
+        return out
+
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", insert)
+    out = await run_pass()
+    head = (await _rows(ch, org))["office_city"]
+    assert head["status"] == "active" and head["version"] == drawn
+    if write == "pin":
+        assert head["pinned"]
+    assert out["retired"] == 0
+    assert await _audit(ch, org, "memory.auto_supersede") == []
+    edges = await ch.query_all(
+        "SELECT count() AS n FROM loom.operator_edges FINAL WHERE org = {org:String}"
+        " AND relation = 'supersedes' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert edges[0]["n"] == 0, "no supersedes edge for a retirement that did not land"

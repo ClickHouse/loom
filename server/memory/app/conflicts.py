@@ -769,6 +769,7 @@ async def apply_refines(
         if current is None or str(current.content_sha256 or "") != expected_sha256:
             return 0
     n = 0
+    retired_ids: set[str] = set()
     if victims:
         from server.memory.app.auto_resolution import (
             NEWEST_WINS_CONTRADICTION,
@@ -790,11 +791,14 @@ async def apply_refines(
                 strong=True,
                 on_written=tracker.written,
                 on_unconfirmed=tracker.unconfirmed,
+                # A later verdict lands at the read + 1, below a write that started meanwhile.
+                judged=bool(expected_sha256),
             )
         except Exception as e:  # noqa: BLE001 — the row is in; retirement is best effort
             logging.getLogger(__name__).warning("refines: supersede failed (non-fatal): %s", e)
         # What reached loom.memory, even when the embeddings mirror then failed.
         retired = [{**v, "superseded_by_key": new_memory_key} for v in tracker.retired(victims)]
+        retired_ids = {str(v["memory_id"]) for v in retired}
         reason = reason or NEWEST_WINS_CONTRADICTION
         if record_into is not None:
             record_into.setdefault(reason, []).extend(retired)
@@ -805,6 +809,8 @@ async def apply_refines(
     for p in refined_peers:
         if p.memory_key == new_memory_key:
             continue
+        if expected_sha256 and p.memory_id not in retired_ids:
+            continue  # a later verdict links only what it retired
         try:
             from server.memory.api.models_graph import MemoryLinkInput
             from server.memory.app.ops import handle_memory_link
