@@ -2326,3 +2326,43 @@ async def test_a_namespaces_newest_owed_row_is_judged_first(ch, wired, monkeypat
     await insert_embedding_rows(history, ch=ch)
     await run_pass()
     assert llm.calls == ["office_location"], llm.calls
+
+
+async def test_an_undo_holds_only_while_the_winner_holds_its_value(ch, wired, monkeypatch) -> None:
+    """Rome retires Paris and a person undoes it. Rome's writer later revises it to
+    Berlin (the same row): Berlin is a new statement, judged against Paris, and retires it."""
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import after_write, conflicts
+    from server.memory.app.restore import handle_memory_restore
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 1400)
+    assert (await run_pass())["retired"] == 1
+    rows = await _rows(ch, org)
+    undone = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="office_city",
+            if_superseded_by=rows["office_location"]["id"],
+        )
+    )
+    assert undone.restored
+    await _later()
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s2", "office_location", "The office moved to Berlin")
+        await after_write.drain()
+    await _place(ch, org, "s2", "office_location", _vec((1400, 0.8), (1401, 0.6)), owed=True)
+    assert (await _rows(ch, org))["office_location"]["id"] == rows["office_location"]["id"]
+    assert (await run_pass())["retired"] == 1
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"

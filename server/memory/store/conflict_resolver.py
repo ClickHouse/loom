@@ -437,23 +437,41 @@ _ASSERTED_SQL = """
 
 
 # Whether the loser, holding the value it holds now, was retired behind this winner
-# before: memory_versions keeps every version, so an Undo since leaves that one in place.
+# while the winner held its current value (the retirement's `invalid_at`, its instant, at
+# or after `since`, when that value was asserted): memory_versions keeps every version,
+# so an Undo since leaves that one in place.
 _RETIRED_BEHIND_SQL = """
         SELECT 1 AS n FROM loom.memory_versions
         PREWHERE org = {org:String} AND namespace = {ns:String}
         WHERE memory_id = {loser:UUID} AND status = 'superseded'
           AND superseded_by = {winner:String} AND toString(content_sha256) = {sha:String}
+          AND invalid_at >= toDateTime(intDiv({since:UInt64}, 1000000000), 'UTC')
         LIMIT 1
         SETTINGS select_sequential_consistency = 1
         """
 
 
 async def retired_behind(
-    org: str, namespace: str, loser: str, sha: str, winner: str, *, ch: _CHClient | None = None
+    org: str,
+    namespace: str,
+    loser: str,
+    sha: str,
+    winner: str,
+    since: int,
+    *,
+    ch: _CHClient | None = None,
 ) -> bool:
-    """Whether `loser` holding `sha` was ever retired behind `winner`, read strongly."""
+    """Whether `loser` holding `sha` was retired behind `winner` after `since` (when the
+    winner's current value was asserted, in ns), read strongly."""
     ch = ch or _default_client()
-    params = {"org": org, "ns": namespace, "loser": loser, "sha": sha, "winner": winner}
+    params = {
+        "org": org,
+        "ns": namespace,
+        "loser": loser,
+        "sha": sha,
+        "winner": winner,
+        "since": int(since),
+    }
     return bool(await ch.query_all(_RETIRED_BEHIND_SQL, params))
 
 

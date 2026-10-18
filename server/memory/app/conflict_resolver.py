@@ -500,7 +500,12 @@ async def _settle_locked_pair(
         if not order[str(head.memory_id)] < order[str(row.memory_id)]:
             action = cr.FLAG  # the order does not show the judged row is newer: a person decides
         elif await queue.retired_behind(
-            org, namespace, str(head.memory_id), str(head.content_sha256 or ""), str(row.memory_id)
+            org,
+            namespace,
+            str(head.memory_id),
+            str(head.content_sha256 or ""),
+            str(row.memory_id),
+            since=order[str(row.memory_id)][1],
         ):
             counts.skipped_no_action += 1
             return None, None  # retired behind this row before and undone: a person decided
