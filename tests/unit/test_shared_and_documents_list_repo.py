@@ -15,12 +15,13 @@ from typing import Any
 
 import pytest
 
-from server.core.tag_sql import TagFilter
+from server.core.tag_sql import TagFilter, tag_where
 from server.knowledge.store import documents as documents_repo
 from server.memory.store import shared as shared_repo
 
-# Both sides of an any-case tag match, folded by ClickHouse.
-_FOLDED = "arrayMap(t -> lowerUTF8(t), tags), arrayMap(t -> lowerUTF8(t), {tags:Array(String)})"
+# The any-case tag matches, as the list reads render them.
+_FOLDED_ANY = tag_where(TagFilter(("x",), "folded_any"), {})
+_FOLDED_ALL = tag_where(TagFilter(("x",), "folded_all"), {})
 
 
 class StubCH:
@@ -333,7 +334,7 @@ async def test_list_with_chunk_counts_matches_tags_in_any_case() -> None:
         "clickhouse", "ns", tag_filter=TagFilter(("Specs",), "folded_any"), ch=ch
     )
     sql, params = ch.query_all_calls[0]
-    assert f"hasAny({_FOLDED})" in sql
+    assert _FOLDED_ANY in sql
     assert "hasAny(tags, {tags:Array(String)})" not in sql
     assert params["tags"] == ["Specs"]
 
@@ -348,5 +349,5 @@ async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
         "clickhouse", "ns", tag_filter=TagFilter(("Specs", "onboarding"), "folded_all"), ch=ch
     )
     sql, params = ch.query_all_calls[0]
-    assert f"hasAll({_FOLDED})" in sql
+    assert _FOLDED_ALL in sql
     assert params["tags"] == ["Specs", "onboarding"]

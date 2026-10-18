@@ -373,3 +373,31 @@ async def test_run_list_pages_every_run_once_and_totals_where_the_page_cannot(
     assert sorted(seen) == sorted(run_ids)
     assert [len(p["runs"]) for p in pages] == [2, 2, 1, 0]
     assert [p["total"] for p in pages] == [5, None, 5, 5]
+
+
+@pytest.mark.asyncio
+async def test_run_list_q_matches_goal_run_id_or_agent_in_any_case(control_plane_url: str) -> None:
+    """`q` keeps only the runs whose goal, run id or agent holds the text in any case, and
+    `total` counts those runs, not the namespace's."""
+    from loom import Agent
+
+    ns = f"run-q-{uuid.uuid4().hex[:6]}"
+    async with (
+        Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a,
+        Agent(
+            org="run-test", namespace=ns, agent="Nightly-Grader", base_url=control_plane_url
+        ) as b,
+    ):
+        migrate = (await a.run.begin(goal="Migrate the billing schema"))["run_id"]
+        plain = (await a.run.begin(goal="rotate keys"))["run_id"]
+        graded = (await b.run.begin(goal="grade yesterday"))["run_id"]
+
+        by_goal = await a.run.list(q="BILLING SCHEMA")
+        by_run_id = await a.run.list(q=plain[-8:].upper())
+        by_agent = await a.run.list(q="nightly-GRADER", order_by="relied_on_asc")
+        nothing = await a.run.list(q="no such text")
+
+    assert [r["run_id"] for r in by_goal["runs"]] == [migrate] and by_goal["total"] == 1
+    assert [r["run_id"] for r in by_run_id["runs"]] == [plain] and by_run_id["total"] == 1
+    assert [r["run_id"] for r in by_agent["runs"]] == [graded] and by_agent["total"] == 1
+    assert nothing["runs"] == [] and nothing["total"] == 0
