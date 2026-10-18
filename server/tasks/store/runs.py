@@ -246,9 +246,8 @@ async def list_runs(
 ) -> list[RunLedgerRow]:
     """One page of the namespace's runs matching the extra `where` fragments, in
     `order_by` order (a key of LIST_ORDERS), `offset` runs in."""
-    order = LIST_ORDERS.get(order_by)
-    if order is None:
-        raise ValueError(f"unknown run order {order_by!r}; use one of {sorted(LIST_ORDERS)}")
+    # The order is written into the statement: only a LIST_ORDERS key gets that far.
+    order = LIST_ORDERS[order_by]
     clauses = ["org = {org:String}", "namespace = {ns:String}", *where]
     rows: list[RunLedgerRow] = await ch.query_all(
         f"""

@@ -592,8 +592,7 @@ function MemoryList() {
   const [bulkValues, setBulkValues] = useState<Map<string, unknown>>(new Map());
   const fetchOnceRef = useRef<(isFirst: boolean) => Promise<void>>(async () => {});
 
-  // A filter covers the whole namespace, not the page on screen (which showed empty pages
-  // while matches sat on others). A tag or agent filter is asked of the server: it narrows
+  // A filter covers the whole namespace, not the page on screen. A tag or agent filter is asked of the server: it narrows
   // to rows with any of the tags (and the agent), and the list then requires every tag, in
   // any case. Pinned, Conflicted and Verified have no server filter: the list reads the
   // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends

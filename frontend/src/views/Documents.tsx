@@ -144,8 +144,7 @@ export function Documents() {
       })
       .catch((e) => {
         if (!live()) return;
-        // Said as a failure: an empty list that is really a failed read looked like an
-        // empty library.
+        // A failed read is said as a failure, never as an empty library.
         setLoadError(e);
         setRows([]);
         setRowsFor(serverTags);

@@ -770,15 +770,27 @@ describe("RepositoryCard while a write is out", () => {
     const user = userEvent.setup();
     mount(
       [
-        branch({ namespace: "a", branch: "master", my_role: "viewer" }),
+        branch({ namespace: "a", branch: "master", my_status: "member", my_role: "viewer" }),
         branch({ namespace: "b", branch: "25.8", my_role: "", join_policy: "open" }),
       ],
       [],
       "a",
     );
-    const menu = await openBranchMenu(user, "master");
-    const items = within(menu).getAllByRole("menuitem");
-    expect(items.length).toBeGreaterThan(0);
-    for (const item of items) expect(item).toHaveAttribute("aria-disabled", "true");
+    let menu = await openBranchMenu(user, "master");
+    const member = within(menu).getAllByRole("menuitem");
+    expect(member.map((m) => m.textContent)).toEqual(expect.arrayContaining(["Open", "Leave"]));
+    for (const item of member) expect(item).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
+    menu = await openBranchMenu(user, "25.8");
+    for (const item of within(menu).getAllByRole("menuitem")) expect(item).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("disables the Withdraw request item behind a pending badge", async () => {
+    const user = userEvent.setup();
+    mount([branch({ namespace: "a", branch: "master", my_status: "pending" })], [], "a", { open: false });
+    await user.click(screen.getByRole("button", { name: "Actions for ClickHouse/ClickHouse" }));
+    const menu = await screen.findByRole("menu");
+    const withdraw = within(menu).getByRole("menuitem", { name: "Withdraw request" });
+    expect(withdraw).toHaveAttribute("aria-disabled", "true");
   });
 });

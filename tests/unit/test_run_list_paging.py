@@ -145,7 +145,8 @@ def test_store_count_reads_zero_when_no_row_answers() -> None:
 
 
 def test_store_refuses_an_unknown_order() -> None:
-    with pytest.raises(ValueError):
+    """The order is written into the statement, so only a LIST_ORDERS key gets that far."""
+    with pytest.raises(KeyError):
         asyncio.run(
             runs_store.list_runs(
                 StubCH(), "o", "n", where=[], params={}, limit=1, order_by="goal_asc"

@@ -615,8 +615,8 @@ export function Tasks() {
   const emptyInbox = loaded && rows?.length === 0;
   const openCount = visible.length - groups.closed.length;
   // A phone always draws the list, whatever mode is saved.
-  const onlyClosed =
-    (mode === "list" || phone) && !filtering && openCount === 0 && visible.length > 0 && collapsed.closed;
+  const listed = mode === "list" || phone;
+  const onlyClosed = listed && !filtering && openCount === 0 && visible.length > 0 && collapsed.closed;
   const count =
     loaded && !emptyInbox
       ? filtering
@@ -832,7 +832,7 @@ export function Tasks() {
               {loaded &&
                 visible.length > 0 &&
                 !onlyClosed &&
-                (mode === "list" || phone ? (
+                (listed ? (
                   <TaskList
                     groups={groups}
                     ctx={ctx}

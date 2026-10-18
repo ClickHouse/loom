@@ -360,12 +360,9 @@ class RunListInput(BaseModel):
     # first page and names the key in `ignored_args`.
     offset: int = Field(default=0, ge=0, le=100_000)
     # Sort by start time, duration or memories relied on, ascending or descending; default
-    # `started_desc` (newest first). `started_*` by when the run began, `duration_*` by
-    # duration_ms (0 while a run is active), `relied_on_*` by how many memories
-    # the run relied on (memories_used). Each breaks ties on started_at and then
-    # run_id, so pages never repeat or skip a run. "started_desc" (default) is
-    # newest first; a replica a release behind serves that order and names the
-    # key in `ignored_args`.
+    # `started_desc` (newest first). Duration is 0 while a run is active. Each order breaks
+    # ties on started_at and then run_id, so pages never repeat or skip a run. A replica a
+    # release behind serves the default and names the key in `ignored_args`.
     order_by: Literal[
         "started_desc",
         "started_asc",

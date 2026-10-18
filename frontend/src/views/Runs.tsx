@@ -703,6 +703,9 @@ export function Runs() {
   const current = localRows !== null || shown?.key === readKey;
   const pagerPage = !localRows && shown?.key === readKey ? shown.page : page;
   const searching = q !== "" || filter !== "" || agent !== "";
+  // The read of what is asked now answered with no rows, on the first page shown.
+  const nothingShown =
+    error === null && shown !== null && !loading && rows.length === 0 && (localRows ? page : shown.page) === 0;
   const count =
     shown && !error
       ? countText(
@@ -889,33 +892,23 @@ export function Runs() {
           <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} loading />
         ))}
       {/* Said only of a read of what is asked now: a new filter's read in flight is not it. */}
-      {error === null &&
-        shown !== null &&
-        !loading &&
-        rows.length === 0 &&
-        (localRows ? page : shown.page) === 0 &&
-        searching && <ListState kind="filtered" things="runs" filter={what} onClear={clearFilters} />}
-      {error === null &&
-        shown !== null &&
-        !loading &&
-        rows.length === 0 &&
-        (localRows ? page : shown.page) === 0 &&
-        !searching && (
-          <ListState
-            kind="empty"
-            icon="list-numbered"
-            {...(hideConn
-              ? {
-                  title: "No runs with memory activity",
-                  description: `Runs that neither relied on nor wrote a memory under their run_id are folded. Use "Show runs with no memory activity"${phone ? " in the View menu" : ""} to see them. A run fills up when the caller passes run_id on memory.set and names what it relied on in run.complete(memories_used).`,
-                }
-              : {
-                  title: "No runs yet",
-                  description:
-                    "Agents open a run with run.begin (the Claude Code plugin does it on the first prompt of a session) and close it with run.complete, naming the memories they relied on.",
-                })}
-          />
-        )}
+      {nothingShown && searching && <ListState kind="filtered" things="runs" filter={what} onClear={clearFilters} />}
+      {nothingShown && !searching && (
+        <ListState
+          kind="empty"
+          icon="list-numbered"
+          {...(hideConn
+            ? {
+                title: "No runs with memory activity",
+                description: `Runs that neither relied on nor wrote a memory under their run_id are folded. Use "Show runs with no memory activity"${phone ? " in the View menu" : ""} to see them. A run fills up when the caller passes run_id on memory.set and names what it relied on in run.complete(memories_used).`,
+              }
+            : {
+                title: "No runs yet",
+                description:
+                  "Agents open a run with run.begin (the Claude Code plugin does it on the first prompt of a session) and close it with run.complete, naming the memories they relied on.",
+              })}
+        />
+      )}
 
       {error === null && capped && (
         <p className="mb-3 text-xs text-text-muted">

@@ -397,6 +397,7 @@ export function RecallLab() {
     setAbstain(false);
     setRankedError(null);
     setShowWeak(false);
+    setError(null);
   }
 
   useEffect(() => {

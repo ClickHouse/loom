@@ -34,8 +34,7 @@ async function open(page: Page, path: string) {
   await expect(page.locator("main .list-row").first()).toBeVisible();
 }
 
-// A phone is measured with a touch pointer, where every control is 44 px (review: the
-// budgets passed with a mouse and failed with a thumb).
+// A phone is measured with a touch pointer, where every control is 44 px.
 const BUDGET = [
   { width: 1400, height: 900, top: 300, touch: false },
   { width: 375, height: 812, top: 360, touch: true },
@@ -54,7 +53,7 @@ for (const { width, height, top, touch } of BUDGET) {
       });
     }
 
-    // On a phone the Memories and Repositories placeholders fit, not cut mid-word.
+    // Each list's search placeholder fits its field, at desktop and phone width.
     for (const path of ["/memories", "/library", "/conversations", "/profile", "/spaces", "/repositories"]) {
       test(`${path}: the search's placeholder fits its field`, async ({ page }) => {
         await open(page, path);

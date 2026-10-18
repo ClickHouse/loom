@@ -188,26 +188,6 @@ export function Policies() {
 
   // A reload after an add or a delete keeps the rules on screen, marked busy.
   const [refreshing, setRefreshing] = useState(false);
-  const load = (signal: AbortSignal, live: () => boolean) => {
-    setError(null);
-    setRefreshing(true);
-    listPolicies({ org: identity.org, namespace: identity.namespace }, { signal })
-      .then((r) => {
-        if (live()) {
-          setRules(r.rules || []);
-          setMode(r.mode || "off");
-        }
-      })
-      .catch((e) => {
-        if (live()) {
-          setError(humanizeError(e));
-          setRules([]);
-        }
-      })
-      .finally(() => {
-        if (live()) setRefreshing(false);
-      });
-  };
   // Another namespace's rules are not this one's: start from the skeleton. A reload after
   // a write runs through this effect too, so an answer for a namespace left is dropped.
   const [reads, setReads] = useState(0);
@@ -219,7 +199,24 @@ export function Policies() {
         rulesFor.current = scope;
         setRules(null);
       }
-      load(signal, live);
+      setError(null);
+      setRefreshing(true);
+      listPolicies({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((r) => {
+          if (live()) {
+            setRules(r.rules || []);
+            setMode(r.mode || "off");
+          }
+        })
+        .catch((e) => {
+          if (live()) {
+            setError(humanizeError(e));
+            setRules([]);
+          }
+        })
+        .finally(() => {
+          if (live()) setRefreshing(false);
+        });
     },
     [scope, reads],
   );

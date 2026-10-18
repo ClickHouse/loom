@@ -357,6 +357,24 @@ describe("Tasks page", () => {
     expect(groupRows(/^Closed/)).toEqual(["Task closed", "Task failed"]);
   });
 
+  it("on a phone with Board saved, an inbox of closed tasks still says nothing is open", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: /max-width: (639|767|1279)px/.test(query),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    localStorage.setItem("loom_tasks_mode", "board");
+    try {
+      vi.mocked(listTasks).mockResolvedValue({ tasks: [ROWS[4], ROWS[5]], truncated: false });
+      seed(admin, [row("admin")]);
+      render(<Tasks />);
+      expect(await screen.findByRole("heading", { name: "No open tasks" })).toBeInTheDocument();
+    } finally {
+      localStorage.removeItem("loom_tasks_mode");
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("a lane shows 20 rows, then Show all N opens the rest and focuses the first new one", async () => {
     const many = Array.from({ length: 25 }, (_, i) =>
       task(`t${String(i).padStart(2, "0")}`, { created_at: iso(100 - i) }),
