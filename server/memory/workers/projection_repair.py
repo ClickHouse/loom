@@ -65,7 +65,9 @@ async def run_pass(
                 batch = await scan_active_projection_failures(
                     limit=STATUS_MIRROR_BATCH, status_mirror=True, after=after
                 )
-                await retry_each(batch, mirrored, until=until)
+                # The first mirror of a pass always runs: a zero budget still moves the queue.
+                async for retried in retry_each(batch, until=until, first=not mirrored):
+                    mirrored.append(retried)
                 if len(batch) < STATUS_MIRROR_BATCH or time.monotonic() >= until:
                     break
                 # Past the batch's last row: a row left pending, or retried and not marked

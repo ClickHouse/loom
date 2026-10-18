@@ -321,7 +321,8 @@ async def retry_failures(
     ch = ch or get_client()
     done: list[Retried] = []
     try:
-        await retry_each(failures, done, ch=ch)
+        async for retried in retry_each(failures, ch=ch):
+            done.append(retried)
     finally:
         await mark_retried(done, ch=ch)
     return [r for _, r in done]
@@ -329,20 +330,20 @@ async def retry_failures(
 
 async def retry_each(
     failures: list[ProjectionFailureRow],
-    done: list[Retried],
     *,
     ch: Any | None = None,
     until: float | None = None,
-) -> None:
-    """Retry each failure and append it with its result to `done`, unmarked: the caller
-    marks `done` with `mark_retried` once it has retried all it will. Once `until` (a
-    `time.monotonic()` deadline) has passed, the failures not yet retried stay active;
-    the first one is always retried, so a zero budget still moves the queue."""
+    first: bool = False,
+) -> AsyncIterator[Retried]:
+    """Retry each failure and yield it with its result, unmarked: the caller marks what
+    it collected with `mark_retried`. Once `until` (a `time.monotonic()` deadline) has
+    passed, the failures not yet retried stay active; with `first`, the first one is
+    retried even then."""
     ch = ch or get_client()
-    for failure in failures:
-        if until is not None and done and time.monotonic() >= until:
+    for i, failure in enumerate(failures):
+        if until is not None and not (first and i == 0) and time.monotonic() >= until:
             return
-        done.append((failure, await _retry(failure, ch=ch)))
+        yield failure, await _retry(failure, ch=ch)
 
 
 async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:

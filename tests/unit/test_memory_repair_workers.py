@@ -196,6 +196,21 @@ async def test_a_pass_reads_the_erasure_per_failure_and_marks_its_failures_once(
     assert reads == ["acme"] * 30, "the erasure is read right before each failure's write"
 
 
+@pytest.mark.parametrize(("first", "want"), [(True, ["f0"]), (False, [])])
+async def test_past_the_deadline_only_a_first_failure_is_retried(
+    monkeypatch: pytest.MonkeyPatch, first: bool, want: list[str]
+) -> None:
+    import time
+
+    from server.memory.app import projection_failures as pf
+
+    _fake_retry(monkeypatch, _resolved)
+    failures = [_failure(i, pf.STATUS_MIRROR) for i in range(3)]
+    past = time.monotonic() - 1
+    got = [f.failure_id async for f, _ in pf.retry_each(failures, until=past, first=first)]
+    assert got == want
+
+
 async def test_a_young_status_mirror_waits_without_reading_the_erasure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
