@@ -344,13 +344,19 @@ async def _restore_embedding_mirror(
 
 
 async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutput:
-    """Undo a tombstone within the 14-day grace window: copy the
-    tombstoned row forward with a higher version and tombstoned_at=NULL so
-    RMT collapses the pair live. Mirrors the delete inverse on both
-    loom.memory and loom.memory_embeddings.
+    """Undo a delete, or an automatic retirement.
 
-    Idempotent — an already-live row returns restored=False; a tombstone
-    past the 14-day TTL returns expired=True.
+    A delete within the 14-day grace window: copy the tombstoned row forward with a
+    higher version and tombstoned_at=NULL so RMT collapses the pair live, on both
+    loom.memory and loom.memory_embeddings. A tombstone past the 14-day TTL returns
+    expired=True.
+
+    A retired (`superseded`) row is served again by `_restore_superseded`, whose two
+    preconditions hold it to the retirement on screen: `if_superseded_by` (still
+    retired behind that memory) and `only_if_superseded` (still retired, never a delete
+    since). Either one routes here.
+
+    Idempotent: an already-live row returns restored=False.
     """
     import server.memory.store as memory_repo
 
