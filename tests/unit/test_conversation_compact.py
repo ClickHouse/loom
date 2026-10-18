@@ -25,6 +25,9 @@ class _FakeCH:
         self.sql.append(sql)
         # ClickHouse answers FINAL on a plain MergeTree with code 181.
         assert "loom.conversations FINAL" not in sql, "FINAL on plain MergeTree"
+        if "FROM loom.conversation_embeddings" in sql:
+            # Every compacted turn's embedding is live and held by no other agent.
+            return [{"msg_id": m} for m in (params or {}).get("ids", [])]
         return self.rows
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
@@ -117,7 +120,7 @@ def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> N
     # The compacted turns leave conversation.search too: their embeddings are
     # tombstoned with the messages, by the same ids.
     tombstoned = {
-        table: params["ids"]
+        table: params.get("ids") or params.get("due")
         for sql, params in fake.executed
         for table in ("loom.conversations", "loom.conversation_embeddings")
         if f"ALTER TABLE {table}\n" in sql
@@ -126,14 +129,30 @@ def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> N
         "loom.conversations": ["m0", "m1"],
         "loom.conversation_embeddings": ["m0", "m1"],
     }
-    # Embeddings first, so a retry after a failed second mutation repeats both; a
-    # turn another agent of the thread still holds live keeps the row they share.
+    # Embeddings first, so a retry after a failed second mutation repeats both.
     first = next(sql for sql, _ in fake.executed if "ALTER TABLE" in sql)
     assert "loom.conversation_embeddings" in first
-    assert "agent != {agent:String}" in first and "tombstoned_at IS NULL" in first
 
 
 def test_fitting_prefix_keeps_at_least_one_line() -> None:
     assert ch_mod._fitting_prefix(["a" * 10, "b" * 10], 21) == 2
     assert ch_mod._fitting_prefix(["a" * 10, "b" * 10], 20) == 1
     assert ch_mod._fitting_prefix(["a" * 50], 20) == 1
+
+
+def test_a_long_thread_is_tombstoned_in_chunks() -> None:
+    """Each mutation names at most one chunk of turns, so a long thread's delete stays
+    within one HTTP parameter per statement."""
+    from server.knowledge.store import conversations as repo
+
+    due = [f"m{i}" for i in range(2 * repo._TOMBSTONE_CHUNK + 5)]
+
+    class _CH(_FakeCH):
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            return [{"msg_id": m} for m in due]
+
+    fake = _CH([])
+    asyncio.run(repo._tombstone_embeddings("o", "n", "a", "t", None, when=T0, ch=fake))
+    chunks = [p["due"] for sql, p in fake.executed if "conversation_embeddings" in sql]
+    assert [len(c) for c in chunks] == [repo._TOMBSTONE_CHUNK, repo._TOMBSTONE_CHUNK, 5]
+    assert sum(chunks, []) == due

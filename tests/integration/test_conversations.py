@@ -293,8 +293,7 @@ async def test_a_deleted_thread_leaves_search_but_another_agents_turn_stays(
     for i, mid in enumerate(ids):
         role = "user" if i % 2 == 0 else "assistant"
         await agent.conversations.append(tid, mid, role, f"ibex {nonce} {i}")
-    # A turn compacted with its embedding left live, as a compaction did before
-    # embeddings were tombstoned with their turns.
+    # A turn tombstoned while its embedding stays live.
     ch_client.command(
         "ALTER TABLE loom.conversations UPDATE tombstoned_at = now() "
         "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "

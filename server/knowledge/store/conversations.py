@@ -310,7 +310,7 @@ async def tombstone_thread(
         "ns": namespace,
         "agent": agent,
         "tid": thread_id,
-        "ts": when.isoformat(),
+        "now": when,
     }
     counts: dict[str, int] = {}
 
@@ -323,7 +323,7 @@ async def tombstone_thread(
     await ch.execute(
         """
         ALTER TABLE loom.conversations
-        UPDATE tombstoned_at = parseDateTimeBestEffort({ts:String})
+        UPDATE tombstoned_at = {now:DateTime}
         WHERE org = {org:String} AND namespace = {ns:String}
           AND agent = {agent:String}
           AND thread_id = {tid:String} AND tombstoned_at IS NULL
@@ -346,7 +346,7 @@ async def tombstone_thread(
     await ch.execute(
         """
         ALTER TABLE loom.conversation_threads
-        UPDATE tombstoned_at = parseDateTimeBestEffort({ts:String})
+        UPDATE tombstoned_at = {now:DateTime}
         WHERE org = {org:String} AND namespace = {ns:String}
           AND agent = {agent:String}
           AND thread_id = {tid:String} AND tombstoned_at IS NULL
@@ -722,6 +722,11 @@ async def tombstone_messages(
     )
 
 
+# Ids per tombstone mutation: each chunk is one HTTP parameter.
+# ponytail: one synchronous mutation per chunk; a thread of 10k turns is ten.
+_TOMBSTONE_CHUNK = 1000
+
+
 async def _tombstone_embeddings(
     org: str,
     namespace: str,
@@ -733,23 +738,23 @@ async def _tombstone_embeddings(
     ch: _CHClient,
 ) -> int:
     """Tombstone the embeddings of `agent`'s turns in one thread (`msg_ids`, or every
-    turn it logged there, live or tombstoned) and return how many of them are
-    tombstoned. The embeddings key has no agent: a turn several agents logged is
-    one row, so it goes by turn, and only once no other agent's copy is live."""
-    own = "AND msg_id IN {ids:Array(String)}" if msg_ids is not None else ""
-    turns = f"""
-        msg_id IN (
+    turn it logged there, live or tombstoned) and return how many of those turns have
+    a tombstoned embedding. The embeddings key has no agent: a turn several agents
+    logged is one row, so it goes by turn, and only once no other agent's copy is
+    live. The turns are read first and the mutation names them, so it evaluates no
+    subquery (a replicated table refuses one)."""
+    within = "AND msg_id IN {ids:Array(String)}" if msg_ids is not None else ""
+    turns = f"""msg_id IN (
             SELECT msg_id FROM loom.conversations
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND agent = {{agent:String}} AND thread_id = {{tid:String}} {own}
+              AND agent = {{agent:String}} AND thread_id = {{tid:String}} {within}
         )"""
-    params = {"org": org, "ns": namespace, "agent": agent, "tid": thread_id, "now": when}
+    params: dict[str, Any] = {"org": org, "ns": namespace, "agent": agent, "tid": thread_id}
     if msg_ids is not None:
         params["ids"] = msg_ids
-    await ch.execute(
+    rows = await ch.query_all(
         f"""
-        ALTER TABLE loom.conversation_embeddings
-        UPDATE tombstoned_at = {{now:DateTime}}
+        SELECT DISTINCT msg_id FROM loom.conversation_embeddings
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND thread_id = {{tid:String}} AND tombstoned_at IS NULL
           AND {turns}
@@ -759,13 +764,31 @@ async def _tombstone_embeddings(
               AND thread_id = {{tid:String}} AND agent != {{agent:String}}
               AND tombstoned_at IS NULL
           )
-        SETTINGS mutations_sync = 2
         """,
         params=params,
     )
+    due = [str(r["msg_id"]) for r in rows]
+    for i in range(0, len(due), _TOMBSTONE_CHUNK):
+        await ch.execute(
+            """
+            ALTER TABLE loom.conversation_embeddings
+            UPDATE tombstoned_at = {now:DateTime}
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND thread_id = {tid:String} AND tombstoned_at IS NULL
+              AND msg_id IN {due:Array(String)}
+            SETTINGS mutations_sync = 2
+            """,
+            params={
+                "now": when,
+                "org": org,
+                "ns": namespace,
+                "tid": thread_id,
+                "due": due[i : i + _TOMBSTONE_CHUNK],
+            },
+        )
     n = await ch.query_one(
         f"""
-        SELECT count() AS n FROM loom.conversation_embeddings
+        SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
           AND {turns}

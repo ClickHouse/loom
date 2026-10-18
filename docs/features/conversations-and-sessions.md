@@ -69,8 +69,9 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
 - **`conversation.compact`** (writer, needs an LLM provider) summarises the turns older
   than the last `keep_recent` (default 10), writes the summary as one `system` turn
   whose `metadata.compacted_from` lists the summarised `msg_id`s, and tombstones the
-  originals and their embeddings (with the same exception for a turn another agent
-  still holds), so `conversation.search` stops returning them. A window smaller than `min_to_compact` (default 4) is left alone.
+  originals and their embeddings, so `conversation.search` stops returning them (a
+  turn another agent of the thread still holds keeps its embedding). A window smaller
+  than `min_to_compact` (default 4) is left alone.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent's copy is live, since the
