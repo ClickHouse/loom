@@ -668,6 +668,7 @@ class MemoryClient:
         valid_at: datetime | None = None,
         valid_to: datetime | None = None,
         char_limit: int | None = None,
+        relations: list[tuple[str, str, str]] | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         """Write a memory entry.
@@ -695,6 +696,10 @@ class MemoryClient:
 
         `char_limit`: server-enforced cap on the stringified value length.
         Server returns 422 if exceeded.
+
+        `relations`: the (subject, relation, object) facts the value states,
+        written to the fact graph and linked to the row. A set carrying them
+        is sent on its own, never coalesced into a bulk write.
 
         `source_resource_id`: provenance pointer to the primary source this
         fact was cited from — a file path, document id, or URL. Bloom-indexed
@@ -750,6 +755,7 @@ class MemoryClient:
             valid_at=valid_at,
             valid_to=valid_to,
             char_limit=char_limit,
+            relations=[list(f) for f in relations or []],
             dry_run=dry_run,
         )
         coalescer = self._set_coalescer()
@@ -864,6 +870,7 @@ class MemoryClient:
         valid_at: datetime | None = None,
         valid_to: datetime | None = None,
         char_limit: int | None = None,
+        relations: list[tuple[str, str, str]] | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         """Reinforce: `set` with `pinned=True`, taking the same arguments. A
@@ -894,6 +901,7 @@ class MemoryClient:
             valid_at=valid_at,
             valid_to=valid_to,
             char_limit=char_limit,
+            relations=[list(f) for f in relations or []],
             dry_run=dry_run,
         )
         return await self._agent.transport.post("/v1/memory.pin", payload)
@@ -1661,6 +1669,7 @@ class MemoryClient:
         char_limit: int | None = None,
         tags: Sequence[str] | None = None,
         concepts: Sequence[str] | None = None,
+        relations: Sequence[tuple[str, str, str]] | None = None,
         revive: bool = False,
     ) -> dict[str, Any]:
         """Update a memory's `value` by opaque memory_id. Preserves
@@ -1678,6 +1687,7 @@ class MemoryClient:
         `value=None` keeps the stored value: pass `tags` / `concepts` alone
         to rewrite the row's facets (the whole row is re-emitted and the
         embedding refreshed, so a key-facet vector follows the tags).
+        `relations`: the facts the new value states, as `set()` takes them.
         """
         payload: dict[str, Any] = {
             "org": self._agent.org,
@@ -1695,6 +1705,8 @@ class MemoryClient:
             payload["tags"] = list(tags)
         if concepts is not None:
             payload["concepts"] = list(concepts)
+        if relations:
+            payload["relations"] = [list(f) for f in relations]
         return await self._agent.transport.post(
             "/v1/memory.update_by_id",
             payload,
@@ -1715,6 +1727,7 @@ class MemoryClient:
         concepts: Sequence[str] | None = None,
         confidence: float | None = None,
         reason: str = "",
+        relations: Sequence[tuple[str, str, str]] | None = None,
         revive: bool = False,
     ) -> dict[str, Any]:
         """Update a memory by key — the fact changed or got more specific.
@@ -1752,6 +1765,8 @@ class MemoryClient:
             payload["confidence"] = confidence
         if reason:
             payload["reason"] = reason
+        if relations:
+            payload["relations"] = [list(f) for f in relations]
         return await self._agent.transport.post("/v1/memory.update", payload)
 
     async def share(
