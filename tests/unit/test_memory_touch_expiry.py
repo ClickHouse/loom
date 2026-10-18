@@ -170,8 +170,7 @@ async def test_the_heads_a_touch_writes_from_are_whole_rows() -> None:
     """The strong bulk read feeds build_memory_version_row, so
     its fetch selects every column the builder carries forward. A bulk_get-style
     subset without last_reinforced_at would fail the insert on the None
-    DateTime. Locate
-    under FINAL, fetch without it."""
+    DateTime. Locate under FINAL, fetch without it."""
     import re
 
     from server.memory import store as mr

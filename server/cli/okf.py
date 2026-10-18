@@ -620,7 +620,7 @@ async def _live_rows(
         for r in entries:
             expires = _when(r.get("expires_at"))
             if isinstance(expires, datetime) and expires <= now:
-                continue  # every read hides it until the sweep runs: write it again
+                continue  # memory.get and search already hide it, so write it again
             rows[(str(r.get("session_id") or "-"), str(r["memory_key"]))] = r
         if not page.get("truncated") or not entries:
             break
