@@ -429,7 +429,7 @@ def test_a_dry_run_never_previews_a_high_value(monkeypatch: pytest.MonkeyPatch) 
     # A high value is readable by key only, through an audited read.
     _Harness(monkeypatch, source=_source(sensitivity="high"))
     out = _move(_inp(dry_run=True))
-    assert out.dry_run is True and out.value_preview == ""
+    assert out.dry_run is True and out.value_preview == "" and out.sensitivity == "high"
 
 
 # ------------------------------------------------ every column carried forward

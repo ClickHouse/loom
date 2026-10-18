@@ -1127,7 +1127,8 @@ Rename `from_key` to `to_key`, leaving the old key answering.
 | `advisories` | `list[str]` | memory.set's advisories on the destination write, passed through. |
 | `dry_run` | `bool` | Echo of the request's `dry_run`. |
 | `memory_type` | `str` | Dry-run preview of the destination: its type and the first 200 chars. |
-| `value_preview` | `str` | Dry run only: the first 200 chars of the destination value. |
+| `value_preview` | `str` | Dry run only: the first 200 chars of the destination value; "" for a high source, whose value is read by key (memory.get). |
+| `sensitivity` | `str` | Dry run only: the source's sensitivity tier ('' \| low \| medium \| high). |
 
 ## `memory.outcome`
 

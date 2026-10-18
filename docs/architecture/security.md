@@ -527,8 +527,8 @@ leg returns it. The other reads that could serve its value follow three rules:
   (a row written as `high` projects only the entities its writer declared, and the entity
   extractor never reads it), the entities of a `high` row in `memory.list`, `memory.related`
   and the graph walk's recency seeds, and the existing memories an extraction prompt shows the
-  LLM. A row labelled `high` only after the extractor ran, by the sensitivity sweep or a new
-  `memory.set`, keeps the entities mined from its value on the row (not served by those reads)
+  LLM. A row labelled `high` only after the extractor ran, by the sensitivity sweep, a new
+  `memory.set`, or a `memory.copy_to` or import that arrived unlabelled, keeps the entities mined from its value on the row (not served by those reads)
   and the graph edges its earlier version projected, which `facts.traverse` and `facts.path`
   still walk.
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and

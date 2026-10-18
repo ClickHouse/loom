@@ -26,7 +26,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { relativeTime, formatValue, truncate, humanizeError } from "../../lib/format";
+import { relativeTime, formatValue, truncate, humanizeError, SENSITIVE_READ_BY_KEY } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 
@@ -485,7 +485,7 @@ function Side({
       <div className="font-mono text-xs text-text mb-2 truncate">{memKey}</div>
       <div className="text-sm text-text mb-2 leading-snug min-h-10">
         {sensitive ? (
-          <span className="text-text-muted">Sensitive: read it by key in Memories</span>
+          <span className="text-text-muted">{SENSITIVE_READ_BY_KEY}</span>
         ) : value == null ? (
           <span className="text-text-muted">
             Peer: <span className="font-mono">{peerId?.slice(0, 12)}…</span>

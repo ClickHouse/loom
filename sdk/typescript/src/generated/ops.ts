@@ -4714,6 +4714,7 @@ export interface MemoryMoveOutput {
   dry_run?: boolean;
   memory_type?: string;
   value_preview?: string;
+  sensitivity?: string;
 }
 
 export interface MemoryOutcomeInput {

@@ -11303,6 +11303,7 @@ class MemoryMoveOutput(TypedDict, total=False):
     dry_run: NotRequired[bool]
     memory_type: NotRequired[str]
     value_preview: NotRequired[str]
+    sensitivity: NotRequired[str]
 
 
 class MemoryOutcomeInput(TypedDict, total=False):

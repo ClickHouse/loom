@@ -226,6 +226,7 @@ async def handle_memory_move(input: MemoryMoveInput) -> MemoryMoveOutput:
             value_preview=""
             if source.sensitivity == "high"
             else _value_text(set_input.value)[:_PREVIEW_CHARS],
+            sensitivity=source.sensitivity,
         )
     set_out = await write_mod.handle_memory_set(set_input)
     dest_id = await _destination_id(set_out, set_input)
