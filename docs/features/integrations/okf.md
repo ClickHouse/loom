@@ -155,8 +155,10 @@ uv run --project .okf-lint-loom --frozen --python 3.12 loom okf-lint <OKF_ROOT> 
   import. Use `memory.delete` for that.
 - **High-sensitivity rows stay home** unless you pass `--include-high`: a row is high by
   its `sensitivity` field or its `sensitivity:high` tag. A row whose sensitivity the export
-  could not read, or read as a level it does not know, stays home too. The lint warns when a
-  high row travelled.
+  could not read, or read as a level it does not know, stays home too. So do the raw chunks
+  and session digests linked to such a row, and any whose text holds a credential shape (raw
+  text has no sensitivity column, so the detector `memory.set` runs decides). The lint warns
+  when a high row travelled.
 
 ## Related
 

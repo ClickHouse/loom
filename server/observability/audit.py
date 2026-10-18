@@ -86,7 +86,16 @@ async def emit(
     request produces carries it without per-call plumbing. Outside the hash
     payload, like the build/instance stamps."""
     try:
-        row = _audit_row(event_type, org, namespace, actor, subject, request_id, ts, consumer)
+        row = _audit_row(
+            event_type,
+            org,
+            namespace,
+            actor,
+            subject,
+            request_id=request_id,
+            ts=ts,
+            consumer=consumer,
+        )
         await get_client().insert("loom.audit_log", [row])
         return str(row["row_hash"])
     except Exception as e:  # fail open: an audit write never fails the op it records
@@ -106,7 +115,7 @@ async def emit_many(
     if not subjects:
         return
     try:
-        rows = [_audit_row(event_type, org, namespace, actor, s, "", None, None) for s in subjects]
+        rows = [_audit_row(event_type, org, namespace, actor, s) for s in subjects]
         await get_client().insert("loom.audit_log", rows)
     except Exception as e:  # fail open: an audit write never fails the op it records
         log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
@@ -118,9 +127,10 @@ def _audit_row(
     namespace: str,
     actor: str,
     subject: dict[str, Any] | list[Any] | str | None,
-    request_id: str,
-    ts: datetime | None,
-    consumer: str | None,
+    *,
+    request_id: str = "",
+    ts: datetime | None = None,
+    consumer: str | None = None,
 ) -> dict[str, Any]:
     # A subject whose keys sort_keys cannot order (mixed str/int) raises TypeError;
     # the callers catch it so it never reaches the write path.

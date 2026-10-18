@@ -128,6 +128,8 @@ class _MixedClient:
             return {
                 "entries": [
                     entry("plain", sensitivity=""),
+                    # The list reached a build that reads it as high, bulk_get one that does not.
+                    entry("split", sensitivity="high"),
                     entry("secret", sensitivity="high"),
                     entry("gone-short", status="tombstoned", sensitivity=""),
                     entry("gone-long", status="tombstoned", sensitivity="", value_truncated=True),
@@ -139,6 +141,7 @@ class _MixedClient:
             return {
                 "results": {
                     "plain": {"value": "plain text", "sensitivity": ""},
+                    "split": {"value": "split text", "sensitivity": ""},
                     "secret": {"value": "secret text", "sensitivity": "high"},
                 }
             }
@@ -158,6 +161,6 @@ async def test_export_keeps_high_and_unreadable_rows_home() -> None:
         rows, [], [], [], namespace="ns", title=None, include_high=False
     )
     text = "\n".join(files.values())
-    assert skipped == 2  # secret and gone-high
+    assert skipped == 3  # secret, split and gone-high
     assert "plain text" in text and "gone-short text" in text
-    assert "secret text" not in text and "gone-high text" not in text
+    assert "secret text" not in text and "gone-high text" not in text and "split text" not in text

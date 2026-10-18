@@ -28,6 +28,7 @@ import yaml
 
 from server.core.hashing import sha256_text
 from server.memory.domain.okf_bundle import slugify, split_frontmatter
+from server.memory.domain.sensitivity import HIGH, detect_sensitivity
 
 EVIDENCE_DIR = "evidence"
 DIGEST_DIR = "digests"
@@ -69,6 +70,27 @@ class DigestRecord:
     @property
     def path(self) -> str:
         return f"{DIGEST_DIR}/{slugify(self.session_id)}.md"
+
+
+def without_high(
+    chunks: list[ChunkRecord], digests: list[DigestRecord], held_keys: set[str]
+) -> tuple[list[ChunkRecord], list[DigestRecord], int]:
+    """The evidence that may leave with the bundle, and how much stays home: a chunk
+    linked to a row kept home, and a chunk or digest whose text reads as a credential.
+    Raw text carries no sensitivity column, so the detector memory.set runs decides."""
+    keep_c = [
+        c
+        for c in chunks
+        if not ({c.parent_memory_key, *c.memory_keys} & held_keys)
+        and detect_sensitivity(c.content) != HIGH
+    ]
+    keep_d = [
+        d
+        for d in digests
+        if not (set(d.derived_from) & held_keys)
+        and detect_sensitivity("\n".join([d.summary_text, *d.key_facts])) != HIGH
+    ]
+    return keep_c, keep_d, len(chunks) + len(digests) - len(keep_c) - len(keep_d)
 
 
 def _one_line(text: str, limit: int = 140) -> str:

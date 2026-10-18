@@ -59,6 +59,12 @@ def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _none(*_a: Any, **_k: Any) -> dict[str, Any]:
         return {}
 
+    async def _version(*_a: Any, **_k: Any) -> int:
+        return 1
+
+    async def _count(*_a: Any, **_k: Any) -> int:
+        return 2
+
     async def _emit_many(event: str, **kw: Any) -> None:
         seen["audits"].append((event, [s["memory_key"] for s in kw["subjects"]]))
 
@@ -68,6 +74,8 @@ def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(query, "_canonical_keys_for_rows", _none)
     monkeypatch.setattr(query, "shown_successors", _none)
     monkeypatch.setattr(audit, "emit_many", _emit_many)
+    monkeypatch.setattr(memory_repo, "namespace_version", _version)
+    monkeypatch.setattr(memory_repo, "count_by_namespace", _count)
     return seen
 
 
@@ -93,16 +101,7 @@ async def test_bulk_get_reads_usage_only_when_the_projection_serves_it(served) -
 
 
 @pytest.mark.asyncio
-async def test_list_serves_the_usage_counters(served, monkeypatch) -> None:
-    async def _version(*_a: Any, **_k: Any) -> int:
-        return 1
-
-    async def _count(*_a: Any, **_k: Any) -> int:
-        return 2
-
-    monkeypatch.setattr(memory_repo, "namespace_version", _version)
-    monkeypatch.setattr(memory_repo, "count_by_namespace", _count)
-    monkeypatch.setattr(query, "_record_read_exposure", lambda *a, **k: None)
+async def test_list_serves_the_usage_counters(served) -> None:
     out = await query._handle_memory_list(
         MemoryListInput(org="o", namespace="n", agent="a", fields=["recall_count"])
     )
@@ -110,18 +109,29 @@ async def test_list_serves_the_usage_counters(served, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_reads_usage_only_when_the_projection_serves_it(served, monkeypatch) -> None:
-    async def _version(*_a: Any, **_k: Any) -> int:
-        return 1
-
-    async def _count(*_a: Any, **_k: Any) -> int:
-        return 2
-
-    monkeypatch.setattr(memory_repo, "namespace_version", _version)
-    monkeypatch.setattr(memory_repo, "count_by_namespace", _count)
-    monkeypatch.setattr(query, "_record_read_exposure", lambda *a, **k: None)
+async def test_list_reads_usage_only_when_the_projection_serves_it(served) -> None:
     out = await query._handle_memory_list(
         MemoryListInput(org="o", namespace="n", agent="a", fields=["sensitivity"])
     )
     assert served["overlaid"] == 0
     assert [e.sensitivity for e in out.entries] == ["", "high"]
+
+
+@pytest.mark.asyncio
+async def test_emit_many_writes_rows_that_verify_like_emit_rows(monkeypatch) -> None:
+    inserts: list[list[dict[str, Any]]] = []
+
+    class _CH:
+        async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
+            inserts.append(rows)
+
+    monkeypatch.setattr(audit, "get_client", lambda: _CH())
+    subjects = [{"memory_key": "a", "memory_id": "1"}, {"memory_key": "b", "memory_id": "2"}]
+    await audit.emit_many(
+        "memory.sensitive_read", org="o", namespace="n", actor="x", subjects=subjects
+    )
+    await audit.emit(
+        "memory.sensitive_read", org="o", namespace="n", actor="x", subject=subjects[0]
+    )
+    many, one = inserts
+    assert len(many) == 2 and all(audit.row_matches_hash(r) for r in many + one)

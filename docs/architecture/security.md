@@ -518,7 +518,7 @@ A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`.
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search leg
 returns it: the `anchor_first` and `recent_first` tiers, the bodies a search returns and
 `memory.related`'s excerpts leave it out too. A key read
-of one, through `memory.get` or `memory.bulk_get`, writes a `memory.sensitive_read` audit row. Search
+of one, through `memory.get`, `memory.get_by_id` or `memory.bulk_get`, writes a `memory.sensitive_read` audit row. Search
 demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 

@@ -48,6 +48,7 @@ from server.cli._client import (
 )
 from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
+from server.memory.domain.sensitivity import is_high
 
 _PAGE = 1000
 _BULK = 500
@@ -187,8 +188,10 @@ async def _fetch_namespace(
                 continue
             merged = {**r, **{k: v for k, v in (g or {}).items() if v not in (None, "", [], {})}}
             if g is not None:
-                # Kept even when empty: the list's own value is not the one to trust.
-                merged["sensitivity"] = g.get("sensitivity")
+                # bulk_get's answer, kept even when empty, unless the list says high: during
+                # a rolling upgrade the two reads can reach builds that disagree.
+                high = is_high(r.get("sensitivity"), r.get("tags"))
+                merged["sensitivity"] = "high" if high else g.get("sensitivity")
             merged.setdefault("namespace", namespace)
             merged["agent"] = agent if agent != "*" else (r.get("agent") or "")
             out.append(merged)
@@ -367,6 +370,10 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
                 edges = await _fetch_edges(client, org, args.namespace)
         finally:
             await client.close()
+        held_evidence = 0
+        if not args.include_high:
+            held = {e["memory_key"] for e in entries if not okf.is_exportable(e)}
+            chunks, digests, held_evidence = okf_ev.without_high(chunks, digests, held)
         files, orphans, skipped_high = _plan_export(
             entries,
             edges,
@@ -402,6 +409,12 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             print(
                 f"  {skipped_high} row(s) with sensitivity=high, or no known sensitivity, "
                 f"stayed in the database (--include-high exports them)"
+            )
+        if held_evidence:
+            print(
+                f"  {held_evidence} raw chunk(s) or session digest(s) stayed in the database: "
+                "linked to a row kept home, or holding a credential shape "
+                "(--include-high exports them)"
             )
         if unreadable:
             print(

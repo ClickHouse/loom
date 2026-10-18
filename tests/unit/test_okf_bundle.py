@@ -526,3 +526,23 @@ def test_corpus_digest_covers_concepts_only_and_moves_with_them() -> None:
     b = okf.plan_bundle([_entry(), _entry(memory_key="other")], namespace="ns", exported_at=_NOW)
     assert okf.corpus_digest(b) != okf.corpus_digest(a)
     assert _root_pointer('---\nokf_version: "0.2"\n---\n# old bundle\n') == {}
+
+
+def test_evidence_of_a_row_kept_home_or_holding_a_credential_stays_home() -> None:
+    from server.memory.domain import okf_evidence as okf_ev
+
+    key = "sk-proj-" + "a" * 40
+    chunks = [
+        okf_ev.ChunkRecord(session_id="s", chunk_index=0, content="plain talk", memory_keys=["k"]),
+        okf_ev.ChunkRecord(session_id="s", chunk_index=1, content="plain", memory_keys=["vault"]),
+        okf_ev.ChunkRecord(session_id="s", chunk_index=2, content=f"the key is {key}"),
+    ]
+    digests = [
+        okf_ev.DigestRecord(session_id="s", summary_text="a summary"),
+        okf_ev.DigestRecord(session_id="t", summary_text="ok", key_facts=[f"token {key}"]),
+        okf_ev.DigestRecord(session_id="u", summary_text="ok", derived_from=["vault"]),
+    ]
+    keep_c, keep_d, held = okf_ev.without_high(chunks, digests, {"vault"})
+    assert [c.chunk_index for c in keep_c] == [0]
+    assert [d.session_id for d in keep_d] == ["s"]
+    assert held == 4
