@@ -264,7 +264,6 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
         after = await _stored(ch, org)
         assert {t: after[t] - stored[t] for t in _WRITTEN} == {t: set() for t in _WRITTEN}
 
-    await writer.run(0)
     heads = await _heads(ch, org)
     for (key, session), (kind, value, pinned) in want.items():
         head = heads[(key, session)]
