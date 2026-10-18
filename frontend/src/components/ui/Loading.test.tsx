@@ -35,7 +35,10 @@ describe("LoadingSkeleton", () => {
     expect(status).toHaveAttribute("aria-busy", "true");
     const shapes = status.querySelector("[aria-hidden='true']");
     expect(shapes).toHaveClass("opacity-0");
+    expect(status).toHaveTextContent(/^$/);
     act(() => vi.advanceTimersByTime(300));
     expect(shapes).not.toHaveClass("opacity-0");
+    // The live region's text, not its label, is what a screen reader announces.
+    expect(status).toHaveTextContent("Loading runs");
   });
 });

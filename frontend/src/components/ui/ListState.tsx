@@ -80,23 +80,26 @@ export function ListState(props: ListStateProps) {
   if (props.kind === "error") {
     const message = typeof props.error === "string" ? props.error : humanizeError(props.error);
     const rid = props.requestId ?? errorRequestId(props.error);
+    // An alert, so a failure that replaces a skeleton or answers a Retry is announced.
     return (
-      <EmptyState
-        icon="warning"
-        title={`Couldn't load ${props.things}`}
-        description={message}
-        action={{
-          label: "Retry",
-          type: "secondary",
-          // Retry leaves with this state: focus goes to the page's heading, not the page.
-          onClick: () => {
-            focusInMain(null);
-            props.onRetry();
-          },
-        }}
-      >
-        {rid && <p className="mt-2 font-mono text-xs text-text-muted">request id {rid}</p>}
-      </EmptyState>
+      <div role="alert">
+        <EmptyState
+          icon="warning"
+          title={`Couldn't load ${props.things}`}
+          description={message}
+          action={{
+            label: "Retry",
+            type: "secondary",
+            // Retry leaves with this state: focus goes to the page's heading, not the page.
+            onClick: () => {
+              focusInMain(null);
+              props.onRetry();
+            },
+          }}
+        >
+          {rid && <p className="mt-2 font-mono text-xs text-text-muted">request id {rid}</p>}
+        </EmptyState>
+      </div>
     );
   }
   const { icon, title, description, action, details } = props;

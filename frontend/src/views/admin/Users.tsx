@@ -163,42 +163,40 @@ export function Users() {
         </p>
       </div>
 
-      {/* The toolbar stays through a failed read: its checkbox is how the reader got there. */}
-      {data && (
-        <>
-          <ListToolbar label="Filters and count" search={false} count={count}>
-            {/* Three filters with their counts are wider than a phone: there they are a select. */}
-            {phone ? (
-              <Select
-                value={filter}
-                onSelect={pick}
-                triggerProps={{ "aria-label": "Filter users" }}
-                className="min-w-0 flex-1"
-              >
-                {options.map((o) => (
-                  <Select.Item key={o.value} value={o.value}>
-                    {dataCurrent ? `${o.label} ${o.count.toLocaleString()}` : o.label}
-                  </Select.Item>
-                ))}
-              </Select>
-            ) : (
-              <>
-                <ButtonGroup
-                  aria-label="Filter users"
-                  selected={filter}
-                  onClick={pick}
-                  options={options.map((o) => ({
-                    value: o.value,
-                    label: <FilterLabel label={o.label} count={dataCurrent ? o.count : null} icon={o.icon} />,
-                  }))}
-                />
-                {serviceAccounts}
-              </>
-            )}
-          </ListToolbar>
-          {phone && <div className="-mt-1 mb-3">{serviceAccounts}</div>}
-        </>
-      )}
+      {/* Mounted before the first read answers, so its count is announced when it lands; it
+          stays through a failed read, as its checkbox is how the reader got there. */}
+      <ListToolbar label="Filters and count" search={false} count={count}>
+        {/* Three filters with their counts are wider than a phone: there they are a select. */}
+        {data &&
+          (phone ? (
+            <Select
+              value={filter}
+              onSelect={pick}
+              triggerProps={{ "aria-label": "Filter users" }}
+              className="min-w-0 flex-1"
+            >
+              {options.map((o) => (
+                <Select.Item key={o.value} value={o.value}>
+                  {dataCurrent ? `${o.label} ${o.count.toLocaleString()}` : o.label}
+                </Select.Item>
+              ))}
+            </Select>
+          ) : (
+            <>
+              <ButtonGroup
+                aria-label="Filter users"
+                selected={filter}
+                onClick={pick}
+                options={options.map((o) => ({
+                  value: o.value,
+                  label: <FilterLabel label={o.label} count={dataCurrent ? o.count : null} icon={o.icon} />,
+                }))}
+              />
+              {serviceAccounts}
+            </>
+          ))}
+      </ListToolbar>
+      {data && phone && <div className="mb-3">{serviceAccounts}</div>}
 
       {!!error && <ListState kind="error" things="users" error={error} onRetry={() => setReads((n) => n + 1)} />}
       {!error && (data === null || !dataCurrent) && (

@@ -35,6 +35,11 @@ describe("Policies mode badge", () => {
     expect(screen.getByText(/Rules are stored but never evaluated/)).toBeTruthy();
   });
 
+  it("announces how many rules it holds", async () => {
+    render(<Policies />);
+    expect(await screen.findByText("0 rules")).toHaveAttribute("aria-live", "polite");
+  });
+
   it("uses the known mode's blurb", async () => {
     vi.mocked(api.listPolicies).mockResolvedValueOnce({ rules: [], mode: "enforce" });
     render(<Policies />);

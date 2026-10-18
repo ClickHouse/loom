@@ -107,6 +107,20 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(document.getElementById("runs-list")).toHaveFocus();
   });
 
+  // The rows on screen while a search reads are the unfiltered page: never counted as matches.
+  it("counts no matches until the search's own read answers", async () => {
+    server(25);
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    let answer: (v: never) => void = () => {};
+    listRunsPage.mockImplementationOnce(() => new Promise((r) => (answer = r as (v: never) => void)));
+    fireEvent.change(screen.getByLabelText("Search runs"), { target: { value: "goal 2" } });
+    await waitFor(() => expect(lastOpts()).toMatchObject({ q: "goal 2" }));
+    expect(toolbar()).not.toHaveTextContent("matches");
+    await act(async () => answer({ runs: [run(2)], total: 1, paged: true } as never));
+    await waitFor(() => expect(toolbar()).toHaveTextContent("1 match"));
+  });
+
   it("asks for the page size picked", async () => {
     localStorage.setItem("loom_page_size_runs_v1", "25");
     server(100);

@@ -35,6 +35,7 @@ describe("ListState", () => {
     const onRetry = vi.fn();
     const err = new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "ch down", requestId: "req-123" });
     render(<ListState kind="error" things="documents" error={err} onRetry={onRetry} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load documents");
     expect(screen.getByRole("heading", { name: "Couldn't load documents" })).toBeInTheDocument();
     expect(screen.getByText(/Loom's database is unreachable/)).toBeInTheDocument();
     expect(screen.getByText("request id req-123")).toHaveClass("font-mono");

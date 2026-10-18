@@ -1004,7 +1004,9 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-row:hover {
     background: var(--click-card-horizontal-default-color-background-hover);
   }
+  /* The tint alone is 1.03:1 against the other rows: a bar marks the row whose panel is open. */
   .tq-row[aria-selected="true"] {
+    box-shadow: inset 3px 0 0 var(--color-text);
     background: var(--click-table-row-color-background-active);
   }
   /* Inset: a lane (.tq-group) and the rail clip their overflow, which would cut an outset
@@ -1447,6 +1449,18 @@ button.pane-card:hover {
   .toast-detail {
     color: var(--click-toast-color-description-default);
   }
+}
+
+/* Click UI's unchecked checkbox stroke is 2:1 against the page, under WCAG's 3:1 for a
+   control's boundary: the muted text colour (5:1) draws it. */
+button[role="checkbox"][data-state="unchecked"]:not(:disabled) {
+  border-color: var(--color-text-muted);
+}
+
+/* A table row being acted on (the review queue's current conflict) carries aria-current on
+   its key; Table's active tint alone is 1.03:1, so a bar marks it. */
+tbody tr:has([aria-current="true"]) > td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-text);
 }
 
 /* Kbd (ui/Kbd.tsx): a key or a short chord on Click UI's tokens: Inter 12 px/500, muted

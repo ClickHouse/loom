@@ -79,6 +79,17 @@ describe("privacy filters across a namespace switch", () => {
     useStore.setState({ identity: null, whoami: null });
   });
 
+  // The count's live region is mounted before the read, so the count is announced.
+  it("announces how many patterns it holds", async () => {
+    useStore.setState({
+      identity: { org: "dev", namespace: "ns", agent: "loom-ui" },
+      whoami: { authenticated: true, subject: "a@x", org: "dev", roles: ["ADMIN"], namespaces: ["ns"] },
+    });
+    listBlacklist.mockResolvedValueOnce({ rows: [row({}), row({ pattern_id: "p2", pattern: "pk-" })] });
+    render(<PrivacyFilters />);
+    await waitFor(() => expect(screen.getByText("2 patterns")).toHaveAttribute("aria-live", "polite"));
+  });
+
   it("never draws the old namespace's patterns under the new one", async () => {
     useStore.setState({
       identity: { org: "dev", namespace: "ns", agent: "loom-ui" },

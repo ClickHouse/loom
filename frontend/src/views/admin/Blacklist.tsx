@@ -224,6 +224,12 @@ export function PrivacyFilters({
         </div>
       )}
 
+      {/* Mounted before the read answers, so the count is announced when it lands. */}
+      {!compact && (
+        <p className="mb-2 text-xs text-text-muted tabular" aria-live="polite">
+          {rows !== null && loadError === null ? `${rows.length} ${rows.length === 1 ? "pattern" : "patterns"}` : ""}
+        </p>
+      )}
       {rows === null && loadError === null && (
         <LoadingSkeleton label="Loading privacy filters">
           <Skeleton className={compact ? "h-10 w-full" : "h-40 w-full"} />

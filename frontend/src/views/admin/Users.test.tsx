@@ -58,6 +58,16 @@ afterEach(() => {
 });
 
 describe("Users table", () => {
+  // The count's live region is there before the first read answers, so the count is said.
+  it("mounts its count region before the read answers", async () => {
+    adminListUsers.mockImplementation(() => new Promise((r) => setTimeout(() => r(result([user(1), user(2)])), 50)));
+    render(<Users />);
+    const bar = document.querySelector<HTMLElement>('[role="group"][aria-label="Filters and count"]');
+    const live = bar?.querySelector('[aria-live="polite"]');
+    expect(live).toBeEmptyDOMElement();
+    await waitFor(() => expect(live).toHaveTextContent("1–2 of 2"));
+  });
+
   it("reads up to 1,000 accounts and shows them 50 to a page", async () => {
     adminListUsers.mockResolvedValue(result(Array.from({ length: 120 }, (_, i) => user(i + 1))));
     render(<Users />);

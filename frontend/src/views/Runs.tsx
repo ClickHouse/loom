@@ -715,8 +715,9 @@ export function Runs() {
   // The read of what is asked now answered with no rows, on the first page shown.
   const nothingShown =
     error === null && shown !== null && !loading && rows.length === 0 && (localRows ? page : shown.page) === 0;
+  // Rows read for another search or filter are not counted as this one's matches.
   const count =
-    shown && !error
+    shown && !error && (localRows !== null || shown.filterKey === filterKey)
       ? countText(
           localRows ? page : shown.page,
           localRows ? pageSize : shown.pageSize,

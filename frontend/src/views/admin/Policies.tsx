@@ -293,6 +293,10 @@ export function Policies() {
             </Button>
           }
         >
+          {/* Mounted before the read answers, so the count is announced when it lands. */}
+          <p className="mb-2 text-xs text-text-muted tabular" aria-live="polite">
+            {rules !== null && !error ? `${rules.length} ${rules.length === 1 ? "rule" : "rules"}` : ""}
+          </p>
           {rules === null && !error && (
             <LoadingSkeleton label="Loading rules">
               <Skeleton className="h-24 w-full" />
