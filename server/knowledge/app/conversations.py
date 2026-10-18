@@ -205,7 +205,7 @@ async def handle_conversation_append(
         "thread_id": input.thread_id,
         "msg_id": msg_id,
         "role": input.role,
-        # The text the vector was built from, so a re-embed rebuilds the same vector;
+        # The text the vector was built from, which a re-embed starts from again;
         # search hits show its first HIT_EXCERPT_CHARS characters.
         "content_excerpt": excerpt,
         "embedding_model": embedder.model_name,

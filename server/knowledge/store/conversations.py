@@ -314,20 +314,9 @@ async def tombstone_thread(
     }
     counts: dict[str, int] = {}
 
-    # 1. Embeddings, first: a retry after a failure below still finds the thread's
-    # turns live and tombstones them again.
-    own = await ch.query_all(
-        """
-        SELECT DISTINCT msg_id FROM loom.conversations
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String} AND tombstoned_at IS NULL
-        """,
-        params=params,
-    )
-    ids = [str(r["msg_id"]) for r in own]
+    # 1. Embeddings: every turn the agent logged in the thread, a compacted one too.
     counts["loom.conversation_embeddings"] = await _tombstone_embeddings(
-        org, namespace, agent, thread_id, ids, when=when, ch=ch
+        org, namespace, agent, thread_id, None, when=when, ch=ch
     )
 
     # 2. Messages.
@@ -738,50 +727,50 @@ async def _tombstone_embeddings(
     namespace: str,
     agent: str,
     thread_id: str,
-    msg_ids: list[str],
+    msg_ids: list[str] | None,
     *,
     when: datetime,
     ch: _CHClient,
 ) -> int:
-    """Tombstone the embeddings of `agent`'s turns `msg_ids`, and return how many
-    are tombstoned. The embeddings key has no agent: a turn several agents logged
-    is one row, so it is tombstoned by turn, and only once no other agent's copy
-    of the turn is live."""
-    params = {"org": org, "ns": namespace, "agent": agent, "tid": thread_id, "ids": msg_ids}
-    shared = await ch.query_all(
-        """
-        SELECT DISTINCT msg_id FROM loom.conversations
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND thread_id = {tid:String} AND agent != {agent:String}
-          AND msg_id IN {ids:Array(String)} AND tombstoned_at IS NULL
+    """Tombstone the embeddings of `agent`'s turns in one thread (`msg_ids`, or every
+    turn it logged there, live or tombstoned) and return how many of them are
+    tombstoned. The embeddings key has no agent: a turn several agents logged is
+    one row, so it goes by turn, and only once no other agent's copy is live."""
+    own = "AND msg_id IN {ids:Array(String)}" if msg_ids is not None else ""
+    turns = f"""
+        msg_id IN (
+            SELECT msg_id FROM loom.conversations
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND agent = {{agent:String}} AND thread_id = {{tid:String}} {own}
+        )"""
+    params = {"org": org, "ns": namespace, "agent": agent, "tid": thread_id, "now": when}
+    if msg_ids is not None:
+        params["ids"] = msg_ids
+    await ch.execute(
+        f"""
+        ALTER TABLE loom.conversation_embeddings
+        UPDATE tombstoned_at = {{now:DateTime}}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND thread_id = {{tid:String}} AND tombstoned_at IS NULL
+          AND {turns}
+          AND msg_id NOT IN (
+            SELECT msg_id FROM loom.conversations
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND thread_id = {{tid:String}} AND agent != {{agent:String}}
+              AND tombstoned_at IS NULL
+          )
+        SETTINGS mutations_sync = 2
         """,
         params=params,
     )
-    held = {str(r["msg_id"]) for r in shared}
-    ids = [i for i in msg_ids if i not in held]
-    if not ids:
-        return 0
-    await ch.execute(
-        """
-        ALTER TABLE loom.conversation_embeddings
-        UPDATE tombstoned_at = {now:DateTime}
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND thread_id = {tid:String}
-          AND msg_id IN {ids:Array(String)}
-          AND tombstoned_at IS NULL
-        SETTINGS mutations_sync = 2
-        """,
-        params={**params, "now": when, "ids": ids},
-    )
     n = await ch.query_one(
-        """
+        f"""
         SELECT count() AS n FROM loom.conversation_embeddings
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND thread_id = {tid:String}
-          AND msg_id IN {ids:Array(String)} AND tombstoned_at IS NOT NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
+          AND {turns}
         """,
-        params={**params, "ids": ids},
+        params=params,
     )
     return int(n["n"]) if n else 0
 

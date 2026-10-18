@@ -38,8 +38,8 @@ up front.
   a hash of the thread, role and content, so a client that re-logs a turn does not
   double the transcript.
 - **Only user and assistant turns are embedded**, up to their first 2,048 characters,
-  which the embedding row keeps so a re-embed builds the same vector. `system` and `tool`
-  turns stay in the transcript unindexed.
+  which the embedding row keeps: a re-embed starts from the text the vector was built
+  from. `system` and `tool` turns stay in the transcript unindexed.
 - **The embed is fail-open.** A failed embed still stores the turn, with the error
   recorded on its embedding row.
 
@@ -69,10 +69,12 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
 - **`conversation.compact`** (writer, needs an LLM provider) summarises the turns older
   than the last `keep_recent` (default 10), writes the summary as one `system` turn
   whose `metadata.compacted_from` lists the summarised `msg_id`s, and tombstones the
-  originals and their embeddings, so `conversation.search` stops returning them. A
-  window smaller than `min_to_compact` (default 4) is left alone.
+  originals and their embeddings (with the same exception for a turn another agent
+  still holds), so `conversation.search` stops returning them. A window smaller than `min_to_compact` (default 4) is left alone.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
-  embeddings; `confirm_thread_id` must equal `thread_id`. For a person's or a
+  embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
+  logged in the thread keeps its embedding while that agent's copy is live, since the
+  two copies share one embedding row. For a person's or a
   namespace's data everywhere, use [`erasure.request`](./memory/retention-and-erasure.md).
 
 Tombstoned turns are filtered from every read. They are removed from disk only if the

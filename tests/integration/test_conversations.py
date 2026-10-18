@@ -266,3 +266,65 @@ async def test_a_turn_another_agent_logged_survives_compaction(agent) -> None:
     # Across agents ("*"): the shared row carries whichever agent wrote it last.
     every = await agent.conversations.search(f"okapi rollout {nonce}", thread_id=tid, agent_id="*")
     assert shared in {h["msg_id"] for h in every["hits"]}, every["hits"]
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_thread_leaves_search_but_another_agents_turn_stays(
+    agent, control_plane_url: str, ch_client
+) -> None:
+    """conversation.delete tombstones the embeddings of every turn the agent logged in
+    the thread, one compacted earlier included, and keeps the row of a turn another
+    agent still holds."""
+    import httpx
+
+    from server.auth.jwt import mint_token
+
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    ids = [uuid.uuid4().hex for _ in range(4)]
+    compacted, shared = ids[0], ids[1]
+    # The peer logs the shared turn first, so this agent's copy is the row FINAL keeps.
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": shared, "role": "user", "content": f"ibex {nonce} 1"},
+        agent_id=f"{agent.agent}-peer",
+        idempotency_key=uuid.uuid4().hex,
+    )
+    for i, mid in enumerate(ids):
+        role = "user" if i % 2 == 0 else "assistant"
+        await agent.conversations.append(tid, mid, role, f"ibex {nonce} {i}")
+    # A turn compacted with its embedding left live, as a compaction did before
+    # embeddings were tombstoned with their turns.
+    ch_client.command(
+        "ALTER TABLE loom.conversations UPDATE tombstoned_at = now() "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND msg_id = {mid:String} SETTINGS mutations_sync = 2",
+        parameters={"org": agent.org, "ns": agent.namespace, "tid": tid, "mid": compacted},
+    )
+
+    tok = mint_token(
+        subject="test-suite-admin",
+        org=agent.org,
+        namespaces=["*"],
+        roles=["admin"],
+        ttl_seconds=600,
+    )
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30.0) as c:
+        r = await c.post(
+            "/v1/conversation.delete",
+            json={
+                "org": agent.org,
+                "namespace": agent.namespace,
+                "agent": agent.agent,
+                "thread_id": tid,
+                "confirm_thread_id": tid,
+            },
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        r.raise_for_status()
+        out = r.json()
+    assert out["rows_affected"]["loom.conversations"] == 4
+    assert out["rows_affected"]["loom.conversation_embeddings"] == 3  # all but the shared
+
+    hits = await agent.conversations.search(f"ibex {nonce}", thread_id=tid, agent_id="*")
+    assert {h["msg_id"] for h in hits["hits"]} == {shared}, hits["hits"]

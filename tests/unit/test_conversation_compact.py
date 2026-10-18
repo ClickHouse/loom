@@ -7,8 +7,6 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
-import pytest
-
 from server.knowledge.api.models_conversations import ConversationCompactInput
 from server.knowledge.app import conversations as ch_mod
 from server.llm.client import LLMResult
@@ -17,9 +15,8 @@ T0 = datetime(2026, 9, 1, 12, 0, 0)
 
 
 class _FakeCH:
-    def __init__(self, rows: list[dict[str, Any]], *, shared: tuple[str, ...] = ()) -> None:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
-        self.shared = shared  # turns another agent of the thread still holds live
         self.inserted: list[dict[str, Any]] = []
         self.sql: list[str] = []
         self.executed: list[tuple[str, dict[str, Any]]] = []
@@ -28,8 +25,6 @@ class _FakeCH:
         self.sql.append(sql)
         # ClickHouse answers FINAL on a plain MergeTree with code 181.
         assert "loom.conversations FINAL" not in sql, "FINAL on plain MergeTree"
-        if "agent != {agent:String}" in sql:
-            return [{"msg_id": m} for m in self.shared]
         return self.rows
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
@@ -85,13 +80,9 @@ def test_compact_reads_without_final_and_carries_the_threads_user(monkeypatch) -
     assert summary["ts"] == T0
 
 
-@pytest.mark.parametrize(("shared", "embeddings"), [((), ["m0", "m1"]), (("m1",), ["m0"])])
-def test_compact_tombstones_only_the_messages_the_summary_read(
-    monkeypatch, shared: tuple[str, ...], embeddings: list[str]
-) -> None:
+def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> None:
     """The window is cut where the prompt budget ends: a message the summarizer never
-    saw stays verbatim for the next run instead of being tombstoned. A turn another
-    agent also logged keeps its embedding, which the two copies share."""
+    saw stays verbatim for the next run instead of being tombstoned."""
     import server.core.ch
     import server.llm.client
 
@@ -108,7 +99,7 @@ def test_compact_tombstones_only_the_messages_the_summary_read(
         }
         for i in range(6)
     ]
-    fake = _FakeCH(rows, shared=shared)
+    fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
 
@@ -133,11 +124,13 @@ def test_compact_tombstones_only_the_messages_the_summary_read(
     }
     assert tombstoned == {
         "loom.conversations": ["m0", "m1"],
-        "loom.conversation_embeddings": embeddings,
+        "loom.conversation_embeddings": ["m0", "m1"],
     }
-    # Embeddings first, so a retry after a failed second mutation repeats both.
+    # Embeddings first, so a retry after a failed second mutation repeats both; a
+    # turn another agent of the thread still holds live keeps the row they share.
     first = next(sql for sql, _ in fake.executed if "ALTER TABLE" in sql)
     assert "loom.conversation_embeddings" in first
+    assert "agent != {agent:String}" in first and "tombstoned_at IS NULL" in first
 
 
 def test_fitting_prefix_keeps_at_least_one_line() -> None:
