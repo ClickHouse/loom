@@ -46,17 +46,14 @@ whose container or worker restarts in place; two containers that share a host na
 process is gone retires it with `loom participant retire --participant <id> --yes`,
 which refuses one whose heartbeat is fresh or whose queries still run. The workers
 leader's `/v1/health` lists every participant a transition would wait on as
-`provider_participants_stale` (`heartbeat_expired`, `queries_running`, or
-`no_heartbeat` for a row from a build without heartbeats).
+`provider_participants_stale` (`heartbeat_expired` or `queries_running`).
 `system.processes` is read over `clusterAllReplicas(LOOM_CH_CLUSTER)`; a server
 without that cluster answers for itself, and any other failure of the read
 counts the participant as running.
 
 Each bounded rebuild step holds the shared configuration Keeper key, renewed every
 20 s (TTL 60 s). A contender takes over an expired key only when its holder's
-participant counts as stopped; an elapsed TTL alone is no proof. `loom
-provider-lock clear --holder <holder>` frees a key whose holder never expires, and
-refuses while the holder renews, heartbeats or has a query running. Boot migrations
+participant counts as stopped; an elapsed TTL alone is no proof. Boot migrations
 never run under this key: a boot holds it only to check that no rebuild is
 unfinished, after enrolling, so a reconfiguration started while it migrates waits
 for it. A participant frozen for over 60 s may count as stopped; it re-enrolls with

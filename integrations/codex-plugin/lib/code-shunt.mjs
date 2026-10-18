@@ -397,17 +397,17 @@ export function otherSearchRepo(search, checkoutRepo) {
 }
 
 /** One line per tracker item: `#123 title (state, 0.71)`; items are the
- *  duplicate-check output's `items[]` (number|issue_number, title, state,
- *  score|similarity, url). Up to `max` lines. */
+ *  duplicate-check output's `items[]` (number, title, state, score, url).
+ *  Up to `max` lines. */
 function trackerItemLines(items, max = 5) {
   const out = [];
   for (const it of (Array.isArray(items) ? items : []).slice(0, max)) {
     if (!it || typeof it !== "object") continue;
-    const n = it.number ?? it.issue_number ?? it.id;
+    const n = it.number;
     const title = String(it.title || "").trim();
     if (!n && !title) continue;
     const state = it.state ? String(it.state) : "";
-    const score = Number(it.score ?? it.similarity);
+    const score = Number(it.score);
     const tail = [state, Number.isFinite(score) ? score.toFixed(2) : ""].filter(Boolean).join(", ");
     // A check spans every tracker record the caller may read, so
     // an item names its record — #35677 of the public repo is not #35677 of

@@ -102,8 +102,8 @@ NON_SETTINGS_ENV = frozenset(
 
 def unknown_env_keys(fields: Iterable[str], env_file: str | None) -> list[str]:
     """LOOM_* names in the environment or the dotenv file that match no
-    settings field and no known non-settings variable: a typo or a retired
-    setting, which `extra="ignore"` would drop silently. Names only."""
+    settings field and no known non-settings variable: a typo or a name this
+    build does not read, which `extra="ignore"` would drop silently. Names only."""
     names = {k for k in os.environ if k.startswith("LOOM_")}
     if env_file and os.path.isfile(env_file):
         from dotenv import dotenv_values

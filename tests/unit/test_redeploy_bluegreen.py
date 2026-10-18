@@ -73,9 +73,7 @@ def test_colour_compose_shares_the_table_and_binds_loopback() -> None:
     assert 'container_name: "loom-${LOOM_COLOUR}"' in text
     assert "stop_grace_period: 75s" in text
     # volumes are named, not project-scoped, so both projects share them
-    assert (
-        "name: loom-shared" in text and "name: loom-blob-data" in text and "name: loom-net" in text
-    )
+    assert "name: loom-shared" in text and "name: loom-net" in text
 
 
 def test_proxy_compose_holds_7777_and_mounts_the_upstream_directory() -> None:
@@ -149,50 +147,11 @@ swap_to green || echo stopped
     assert sorted(p.name for p in tmp_path.iterdir()) == ["upstream.conf"]
 
 
-def test_an_older_colours_workers_stop_after_the_build_and_before_the_new_colour_boots() -> None:
-    """A colour that elects by file lock would run its workers beside the new
-    one's. They stop once the image is built (a failed build leaves them
-    running), just before `up`, and the trap starts them again on a failure."""
-    text = SCRIPT.read_text(encoding="utf-8")
-    deploy = text.split("# ---- build + boot the idle colour", 1)[1]
-    build = deploy.index("colour_compose build")
-    guard = deploy.index('elects_by_file_lock "$active"')
-    up = deploy.index("colour_compose up -d --no-build --force-recreate")
-    assert build < guard < up
-    assert 'RESTORE_WORKERS="$active $idle"' in deploy[guard:up]
-    # cleared only once the new colour serves
-    assert deploy.index('RESTORE_WORKERS=""') > deploy.index('swap_to "$idle" || exit 1')
-    assert "trap 'rc=$?; ((rc == 0)) || restore_workers' EXIT" in text
-
-
 def _bash_fn(name: str) -> str:
     text = SCRIPT.read_text(encoding="utf-8")
     m = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", text, re.S | re.M)
     assert m, name
     return m.group(0)
-
-
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
-@pytest.mark.parametrize(
-    ("env", "old"),
-    [
-        ("LOOM_SUPERVISOR_LOCK_PATH=/app/var/shared/supervisor.lock\nPORT=7777", True),
-        ("PORT=7777\nLOOM_SUPERVISOR_LOCK_PATH=/app/var/run/supervisor.lock", True),
-        ("PORT=7777\nLOOM_BACKGROUND_WORKERS=auto", False),
-        ("PORT=7777\nX_LOOM_SUPERVISOR_LOCK_PATH=/x", False),
-        ("", False),  # no such container
-    ],
-)
-def test_an_old_build_is_known_by_its_config_not_its_health(env: str, old: bool) -> None:
-    """The decision reads `docker inspect`, never the health endpoint: an old
-    workers container too busy to answer is still stopped."""
-    script = (
-        f"docker() {{ [ -n {env!r} ] && printf '%b\\n' {env!r}; }}\n"
-        "workers_lease() { echo unreadable; }\n"
-        f"{_bash_fn('elects_by_file_lock')}"
-    )
-    rc = subprocess.run(["bash", "-c", script + "elects_by_file_lock blue"], check=False).returncode
-    assert (rc == 0) is old
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
@@ -212,8 +171,8 @@ def test_the_trap_restores_the_stopped_workers_and_stops_the_new_ones(tmp_path: 
 
 
 def test_a_rollback_stops_the_current_colours_workers_first() -> None:
-    """The previous colour may be a build that elects by file lock; its
-    workers would start beside the current colour's, which hold the lease."""
+    """The current colour's workers hold the lease; they stop before the
+    previous colour's start, so the lease moves to them."""
     text = SCRIPT.read_text(encoding="utf-8")
     rollback = text[text.index("rollback() {") : text.index("# ---- arguments")]
     stop = rollback.index('docker stop -t 75 "loom-$active-workers"')

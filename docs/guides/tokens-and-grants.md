@@ -82,9 +82,8 @@ seals every stored credential and every other signing key ([Security](../archite
 The other keys live in `loom.signing_keys`, added by `loom signing-key rotate`
 ([rotate](#revoke-and-rotate)). Every process re-reads them every
 `LOOM_JWT_KEYRING_REFRESH_SECONDS` and records that interval in `loom.keyring_readers`;
-the newest active key signs. A PEM `LOOM_JWT_SECRET` (an RS256 deployment of an earlier
-build) seals, and signs RS256 as kid `default` as that build did
-([upgrades](../operations/upgrades.md#from-a-build-that-kept-state-on-the-host)).
+the newest active key signs. A PEM `LOOM_JWT_SECRET` seals, and signs RS256 as kid
+`default`.
 
 | Setting                            | Meaning                                                                                                                             |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |

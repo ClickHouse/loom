@@ -1095,7 +1095,7 @@ test("the tracker record's answer text and the gh-search denial", () => {
       verdict: "related",
       items: [
         { number: 35677, title: "commitPart covers", state: "closed", score: 0.31, url: "https://g/35677" },
-        { issue_number: 12, title: "other", similarity: 0.2 },
+        { number: 12, title: "other", score: 0.2 },
       ],
     },
     { query: "q" },

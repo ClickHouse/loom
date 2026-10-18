@@ -155,23 +155,6 @@ def test_favicon_is_an_svg(client) -> None:
     assert r.headers["content-type"].startswith("image/svg+xml")
 
 
-@pytest.mark.parametrize(
-    "old,new",
-    [
-        ("/me", "/"),
-        ("/me/", "/"),
-        ("/me/memories", "/memories"),
-        ("/me/admin/review_queue?ns=a%2Fb&x=1", "/admin/review_queue?ns=a%2Fb&x=1"),
-        ("/me//evil.example/x", "/evil.example/x"),
-        ("/me/%5Cevil.example", "/evil.example"),
-    ],
-)
-def test_old_page_urls_redirect_to_the_root(client, old: str, new: str) -> None:
-    r = client.get(old, follow_redirects=False)
-    assert r.status_code == 302
-    assert r.headers["location"] == new
-
-
 def test_a_missing_build_answers_503_on_pages(client, tmp_path, monkeypatch) -> None:
     from server.identity.app import dashboard_routes
     from server.main import app

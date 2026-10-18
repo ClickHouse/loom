@@ -1134,16 +1134,10 @@ Source: `server/settings/_runtime.py`
 
 ## Storage
 
-Storage: the legacy blob directory, per-table retention and warm-tier moves.
+Storage: document originals, per-table retention and warm-tier moves.
 
 Source: `server/settings/_storage.py`
 
-
-### Host directory
-
-| Variable | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `LOOM_BLOB_DIR` | `str` | `'var/blobs'` | Where an earlier build kept uploaded document originals on this host. Nothing writes here now (originals live in loom.document_blobs); the repository-job sandbox still hides it until `loom blobs import` has moved what it holds. A relative path resolves from the server's working directory. |
 
 ### Document originals (loom.document_blobs)
 

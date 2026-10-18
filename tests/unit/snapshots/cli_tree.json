@@ -2179,7 +2179,7 @@
            "choices": null,
            "nargs": "...",
            "type": null,
-           "required": false,
+           "required": true,
            "help": "-- <command> [args…]",
            "metavar": null
           }
@@ -4955,116 +4955,6 @@
           }
          ]
         },
-        "import": {
-         "prog": "loom signing-key import",
-         "usage": null,
-         "description": null,
-         "epilog": null,
-         "formatter_class": "argparse:HelpFormatter",
-         "add_help": true,
-         "allow_abbrev": true,
-         "defaults": {},
-         "groups": [
-          {
-           "title": "positional arguments",
-           "description": null,
-           "dests": []
-          },
-          {
-           "title": "options",
-           "description": null,
-           "dests": [
-            "help",
-            "map_env",
-            "active",
-            "algorithm",
-            "activate_in"
-           ]
-          }
-         ],
-         "mutually_exclusive": [],
-         "arguments": [
-          {
-           "option_strings": [
-            "-h",
-            "--help"
-           ],
-           "dest": "help",
-           "action": "_HelpAction",
-           "default": "==SUPPRESS==",
-           "const": null,
-           "choices": null,
-           "nargs": 0,
-           "type": null,
-           "required": false,
-           "help": "show this help message and exit",
-           "metavar": null
-          },
-          {
-           "option_strings": [
-            "--map-env"
-           ],
-           "dest": "map_env",
-           "action": "_StoreAction",
-           "default": "LOOM_JWT_SECRETS_JSON",
-           "const": null,
-           "choices": null,
-           "nargs": null,
-           "type": null,
-           "required": false,
-           "help": "env var with the map",
-           "metavar": null
-          },
-          {
-           "option_strings": [
-            "--active"
-           ],
-           "dest": "active",
-           "action": "_StoreAction",
-           "default": null,
-           "const": null,
-           "choices": null,
-           "nargs": null,
-           "type": null,
-           "required": true,
-           "help": "the kid that signs new tokens",
-           "metavar": null
-          },
-          {
-           "option_strings": [
-            "--algorithm"
-           ],
-           "dest": "algorithm",
-           "action": "_StoreAction",
-           "default": "HS256",
-           "const": null,
-           "choices": [
-            "HS256",
-            "RS256"
-           ],
-           "nargs": null,
-           "type": null,
-           "required": false,
-           "help": null,
-           "metavar": null
-          },
-          {
-           "option_strings": [
-            "--activate-in"
-           ],
-           "dest": "activate_in",
-           "action": "_StoreAction",
-           "default": 0.0,
-           "const": null,
-           "choices": null,
-           "nargs": null,
-           "type": "builtins:float",
-           "required": false,
-           "help": "seconds until --active signs (default 0: run before the new build serves, while every old process already holds the key). Once new-build processes serve, at least twice their LOOM_JWT_KEYRING_REFRESH_SECONDS (refused otherwise)",
-           "metavar": null
-          }
-         ]
-        },
         "retire": {
          "prog": "loom signing-key retire",
          "usage": null,
@@ -5212,7 +5102,6 @@
        },
        "aliases_of": {
         "rotate": "loom signing-key rotate",
-        "import": "loom signing-key import",
         "retire": "loom signing-key retire",
         "record-root": "loom signing-key record-root",
         "list": "loom signing-key list"
@@ -5222,11 +5111,6 @@
          "dest": "rotate",
          "help": "Add a key; it signs once every process has loaded it.",
          "metavar": "rotate"
-        },
-        {
-         "dest": "import",
-         "help": "Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. Under RS256 the map's 'default' is stored as 'default-rs256', which verifies and signs as the old 'default'.",
-         "metavar": "import"
         },
         {
          "dest": "retire",
@@ -5242,194 +5126,6 @@
          "dest": "list",
          "help": "List the keys.",
          "metavar": "list"
-        }
-       ]
-      }
-     ]
-    },
-    "blobs": {
-     "prog": "loom blobs",
-     "usage": null,
-     "description": null,
-     "epilog": null,
-     "formatter_class": "argparse:HelpFormatter",
-     "add_help": true,
-     "allow_abbrev": true,
-     "defaults": {},
-     "groups": [
-      {
-       "title": "positional arguments",
-       "description": null,
-       "dests": [
-        "blobs_cmd"
-       ]
-      },
-      {
-       "title": "options",
-       "description": null,
-       "dests": [
-        "help"
-       ]
-      }
-     ],
-     "mutually_exclusive": [],
-     "arguments": [
-      {
-       "option_strings": [
-        "-h",
-        "--help"
-       ],
-       "dest": "help",
-       "action": "_HelpAction",
-       "default": "==SUPPRESS==",
-       "const": null,
-       "choices": null,
-       "nargs": 0,
-       "type": null,
-       "required": false,
-       "help": "show this help message and exit",
-       "metavar": null
-      },
-      {
-       "option_strings": [],
-       "dest": "blobs_cmd",
-       "action": "_SubParsersAction",
-       "default": null,
-       "const": null,
-       "choices": null,
-       "nargs": "A...",
-       "type": null,
-       "required": true,
-       "help": null,
-       "metavar": null,
-       "subcommands": {
-        "import": {
-         "prog": "loom blobs import",
-         "usage": null,
-         "description": null,
-         "epilog": null,
-         "formatter_class": "argparse:HelpFormatter",
-         "add_help": true,
-         "allow_abbrev": true,
-         "defaults": {
-          "dry_run": true,
-          "apply_gated": true,
-          "func": "server.cli.portability:_cmd_blobs_import"
-         },
-         "groups": [
-          {
-           "title": "positional arguments",
-           "description": null,
-           "dests": [
-            "blob_dir"
-           ]
-          },
-          {
-           "title": "options",
-           "description": null,
-           "dests": [
-            "help",
-            "dry_run",
-            "dry_run",
-            "accept_missing"
-           ]
-          }
-         ],
-         "mutually_exclusive": [
-          {
-           "required": false,
-           "dests": [
-            "dry_run",
-            "dry_run"
-           ]
-          }
-         ],
-         "arguments": [
-          {
-           "option_strings": [
-            "-h",
-            "--help"
-           ],
-           "dest": "help",
-           "action": "_HelpAction",
-           "default": "==SUPPRESS==",
-           "const": null,
-           "choices": null,
-           "nargs": 0,
-           "type": null,
-           "required": false,
-           "help": "show this help message and exit",
-           "metavar": null
-          },
-          {
-           "option_strings": [],
-           "dest": "blob_dir",
-           "action": "_StoreAction",
-           "default": null,
-           "const": null,
-           "choices": null,
-           "nargs": null,
-           "type": null,
-           "required": true,
-           "help": "The old blob directory, e.g. var/blobs",
-           "metavar": null
-          },
-          {
-           "option_strings": [
-            "--apply"
-           ],
-           "dest": "dry_run",
-           "action": "_StoreFalseAction",
-           "default": true,
-           "const": false,
-           "choices": null,
-           "nargs": 0,
-           "type": null,
-           "required": false,
-           "help": "store the originals and repoint the documents (default: dry run)",
-           "metavar": null
-          },
-          {
-           "option_strings": [
-            "--dry-run"
-           ],
-           "dest": "dry_run",
-           "action": "_StoreTrueAction",
-           "default": true,
-           "const": true,
-           "choices": null,
-           "nargs": 0,
-           "type": null,
-           "required": false,
-           "help": "report what --apply would write, write nothing (the default)",
-           "metavar": null
-          },
-          {
-           "option_strings": [
-            "--accept-missing"
-           ],
-           "dest": "accept_missing",
-           "action": "_StoreTrueAction",
-           "default": false,
-           "const": true,
-           "choices": null,
-           "nargs": 0,
-           "type": null,
-           "required": false,
-           "help": "give up the live documents whose file is missing or corrupt: stamp them like the rest instead of exiting 1. Run the import on every host that held a blob directory first; a file a live document names is kept either way",
-           "metavar": null
-          }
-         ]
-        }
-       },
-       "aliases_of": {
-        "import": "loom blobs import"
-       },
-       "choices_help": [
-        {
-         "dest": "import",
-         "help": "Move the originals of a filesystem blob directory (the old LOOM_BLOB_DIR) into ClickHouse.",
-         "metavar": "import"
         }
        ]
       }
@@ -11432,7 +11128,6 @@
     "deployment": "loom deployment",
     "secrets": "loom secrets",
     "signing-key": "loom signing-key",
-    "blobs": "loom blobs",
     "provider-lock": "loom provider-lock",
     "reembed": "loom reembed",
     "reextract": "loom reextract",
@@ -11531,11 +11226,6 @@
      "dest": "signing-key",
      "help": "The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse.",
      "metavar": "signing-key"
-    },
-    {
-     "dest": "blobs",
-     "help": "Uploaded document originals.",
-     "metavar": "blobs"
     },
     {
      "dest": "provider-lock",

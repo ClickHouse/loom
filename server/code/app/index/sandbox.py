@@ -301,10 +301,10 @@ def tool_mounts(path: Path) -> list[Path]:
 
 def _data_paths() -> list[Path]:
     """Where Loom keeps what no job may read: repository mirrors and
-    checkouts, blobs and the env file."""
+    checkouts and the env file."""
     from server.core.env_file import env_file_path
 
-    named = [settings.code_repos_root, settings.blob_dir, settings.code_scip_checkout_dir]
+    named = [settings.code_repos_root, settings.code_scip_checkout_dir]
     return [Path(p).absolute() for p in [*named, env_file_path() or ""] if p]
 
 

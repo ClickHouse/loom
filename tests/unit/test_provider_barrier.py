@@ -163,24 +163,17 @@ async def test_retirement_refuses_pending_writers(setup, monkeypatch):
 
 
 class _SyncCH:
-    """The heartbeat's sync client; `old_schema` is main's table, before 028."""
+    """The heartbeat's sync client."""
 
-    def __init__(self, *, seen=0, old_schema=False):
+    def __init__(self, *, seen=0):
         self.seen = seen
-        self.old_schema = old_schema
         self.inserts: list[tuple[list, list]] = []
 
     def query(self, sql, parameters=None, settings=None):
-        if sql == barrier.EXPIRY_COLUMN_SQL:
-            return SimpleNamespace(result_rows=[(0 if self.old_schema else 1,)])
         assert sql == pp.OWN_VERSION_SQL and settings["select_sequential_consistency"] == 1
         return SimpleNamespace(result_rows=[(self.seen,)])
 
     def insert(self, table, data, column_names, settings=None):
-        if self.old_schema and "stale_after_s" in column_names:
-            raise RuntimeError(
-                "Unrecognized column 'stale_after_s' in table _provider_participants"
-            )
         self.inserts.append((column_names, data[0]))
 
 
@@ -202,21 +195,6 @@ def test_a_heartbeat_carries_the_latest_state_above_any_version_seen(setup):
     }
     # An acknowledgement stamped after the beat outranks it.
     assert barrier._OWN.stamp(transition, "drained")[2] > row[3]
-
-
-@pytest.mark.asyncio
-async def test_enrolling_before_migrations_works_on_the_old_schema(setup, monkeypatch):
-    ch = _SyncCH(old_schema=True)
-    beat = barrier._Heartbeat(lambda: ch)
-    monkeypatch.setattr(barrier, "_HEARTBEAT", beat)
-    monkeypatch.setattr(barrier, "_registered", False)
-    await barrier.register_process()
-    beat.stop()
-    assert ch.inserts[-1][0] == ["participant_id", "transition_id", "state", "version"]
-    ch.old_schema = False  # the boot migration ran: the next beat carries the expiry
-    beat.ch = ch
-    beat.beat()
-    assert ch.inserts[-1][0][-2:] == ["stale_after_s", "host_proof"]
 
 
 @pytest.mark.asyncio
@@ -313,12 +291,11 @@ def test_loom_participant_retire_refuses_a_live_one(setup, monkeypatch, capsys):
 @pytest.mark.asyncio
 async def test_sweep_retires_nobody_and_lists_what_blocks(setup, monkeypatch):
     identity, _, _, record = setup
-    expired, busy, legacy, live = uuid4(), uuid4(), uuid4(), uuid4()
+    expired, busy, live = uuid4(), uuid4(), uuid4()
     rows = [
         _row(identity),
         _row(expired, expired=True, version=7),
         _row(busy, expired=True),
-        _row(legacy, stale=0),
         _row(live),
     ]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
@@ -331,7 +308,6 @@ async def test_sweep_retires_nobody_and_lists_what_blocks(setup, monkeypatch):
     assert [(p["participant_id"], p["reason"]) for p in barrier.stale_participants()] == [
         (str(expired), "heartbeat_expired"),
         (str(busy), "queries_running"),
-        (str(legacy), "no_heartbeat"),
     ]
     barrier.running_queries.reset_mock()
     await barrier.sweep_stopped(now=1000.0 + barrier.SWEEP_S / 2)

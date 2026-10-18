@@ -114,20 +114,3 @@ reconfiguration waits on a dead process's row from elsewhere, retire it with the
 ```bash
 loom participant retire --participant <participant_id> --yes
 ```
-
-## Moving from read-replica mode
-
-Read-replica mode is retired: every Loom is a full replica. Before upgrading a
-deployment that ran read-replicas:
-
-- Give each former replica the main Loom's env, including its provider keys
-  and `LOOM_DEPLOYMENT=1`: it now embeds, completes and reads git history
-  itself, and the `embedding.embed` and `llm.complete` ops it used to call on the
-  main Loom are gone.
-- Remove `LOOM_READ_REPLICA`, `LOOM_READ_REPLICA_MAIN_URL`,
-  `LOOM_READ_REPLICA_CONFIG_REFRESH_SECONDS`,
-  `LOOM_READ_REPLICA_FORWARD_TIMEOUT_SECONDS`,
-  `LOOM_READ_REPLICA_LLM_TIMEOUT_SECONDS` and
-  `LOOM_READ_REPLICA_MAIN_PROBE_SECONDS`. A process that still has them ignores
-  them and names them in its boot warning.
-- `loom read-replica retire` is now `loom participant retire`.

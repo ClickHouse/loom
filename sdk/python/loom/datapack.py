@@ -18,8 +18,8 @@ Usage::
         await detector.knowledge.add(text=..., source_uri="github://pr/100")
         await validator.working_memory.set(block_key="review/pr-100", value=...)
 
-This is naming sugar over `Agent(org=..., namespace=..., agent=...)`. The
-wire shape is unchanged; existing code keeps working.
+This is naming sugar over `Agent(org=..., namespace=..., agent=...)`; the
+wire shape is the same.
 """
 
 from __future__ import annotations

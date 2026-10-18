@@ -243,12 +243,9 @@ python scripts/codegen/docs_reference.py
 | `loom secrets reseal` | Seal again under LOOM_JWT_SECRET what only LOOM_JWT_SECRET_PREVIOUS opens. | `--dry-run`, `--check` |
 | `loom signing-key` | The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse. |  |
 | `loom signing-key rotate` | Add a key; it signs once every process has loaded it. | `--algorithm`, `--activate-in` |
-| `loom signing-key import` | Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. | `--map-env`, `--active`, `--algorithm`, `--activate-in` |
 | `loom signing-key retire` | Stop a key (or 'default') verifying tokens. | `<kid>` |
 | `loom signing-key record-root` | Record this LOOM_JWT_SECRET as the deployment's root secret, after replacing it on purpose (keys sealed under the old one stay unusable). |  |
 | `loom signing-key list` | List the keys. |  |
-| `loom blobs` | Uploaded document originals. |  |
-| `loom blobs import` | Move the originals of a filesystem blob directory (the old LOOM_BLOB_DIR) into ClickHouse. | `<blob_dir>`, `--apply`, `--dry-run`, `--accept-missing` |
 | `loom provider-lock` | The provider configuration lock. |  |
 | `loom provider-lock clear` | Free the provider configuration lock of a holder whose process stopped (refused while it renews, heartbeats or has a query running). | `--holder` |
 | `loom reembed` | Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). | `--org`, `--namespace`, `--batch-size`, `--in-database`, `--dry-run`, `--delete-old`, `--key-only`, `--resume` |

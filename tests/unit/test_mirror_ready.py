@@ -410,13 +410,13 @@ async def test_a_head_no_fetch_brings_backs_off_instead_of_fetching_every_read(
 
 
 @pytest.mark.asyncio
-async def test_an_older_builds_partial_clone_is_removed_too(monkeypatch, tmp_path) -> None:
+async def test_a_partial_clone_without_a_suffix_is_removed_too(monkeypatch, tmp_path) -> None:
     from types import SimpleNamespace
 
     from server.code.app.index import sandbox
 
     cfg = _Cfg(str(tmp_path / "r.git"))
-    os.makedirs(cfg.git_dir + ".partial")  # no suffix: an older build's temp dir
+    os.makedirs(cfg.git_dir + ".partial")  # a temp dir without the pid suffix
 
     async def _job(argv: list[str], **_kw: Any) -> Any:
         os.makedirs(os.path.join(argv[-1], "objects"))

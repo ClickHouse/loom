@@ -69,14 +69,6 @@ workers_health() { docker inspect -f '{{.State.Health.Status}}' "loom-$1-workers
 workers_lease() {
   docker exec "loom-$1-workers" python -c "import os, json, urllib.request; print(json.load(urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/v1/health?include=workers', timeout=5))['workers_leader']['reason'])" 2>/dev/null || echo unreadable
 }
-# A build from before the lease moved to ClickHouse elects by a file lock.
-# Every compose file of those builds set LOOM_SUPERVISOR_LOCK_PATH and none
-# since does. Read from the container's config, not its health: a busy old
-# container that answers slowly still counts.
-elects_by_file_lock() {
-  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "loom-$1-workers" 2>/dev/null \
-    | grep -q '^LOOM_SUPERVISOR_LOCK_PATH='
-}
 # Workers this script stopped and must start again if it exits before the new
 # colour's took over: "<colour to restart> <colour whose workers to stop>".
 RESTORE_WORKERS=""
@@ -238,9 +230,8 @@ rollback() {
       exit 1
       ;;
   esac
-  # The current colour's workers stop first: a previous colour built before
-  # the lease moved to ClickHouse elects by a file lock and would run its
-  # workers beside them. Any colour's take the lease when it is released.
+  # The current colour's workers stop first, so the lease they hold moves to
+  # the previous colour's when it is released.
   case "$(container_state "$prev-workers")" in
     running | exited | created)
       if [[ "$(container_state "$active-workers")" == "running" ]]; then
@@ -399,17 +390,6 @@ colour_compose() {
 echo "==> building loom-$idle (the old colour keeps serving)"
 colour_compose build
 
-# A colour built before the supervisor lease moved to ClickHouse elects its
-# workers by a file lock the new build does not see: both would run them. Its
-# workers stop just before the new colour boots, and start again if this
-# script exits before the swap (the trap above).
-if [[ -n "$active" && "$(container_state "$active-workers")" == "running" ]] \
-  && elects_by_file_lock "$active"; then
-  echo "==> loom-$active-workers elects by file lock (an older build): stopping it first"
-  docker stop -t 75 "loom-$active-workers" >/dev/null
-  RESTORE_WORKERS="$active $idle"
-fi
-
 echo "==> starting loom-$idle (CH untouched, data preserved; the old colour keeps serving)"
 colour_compose up -d --no-build --force-recreate
 
@@ -431,8 +411,6 @@ dev/sandbox_probe.sh "$idle" || {
 
 ensure_proxy "$idle"
 swap_to "$idle" || exit 1
-# The new colour serves and its workers run: nothing to restore from here on.
-RESTORE_WORKERS=""
 
 # ---- retire the old colour ------------------------------------------------------
 

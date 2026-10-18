@@ -178,8 +178,7 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
         lock = await lock_file(f"{git_dir}.clone-lock")
         if await asyncio.to_thread(os.path.isdir, git_dir):
             return ""
-        # Under the lock no clone is running: what is left was a killed one's
-        # (`.partial` without a suffix: an older build's).
+        # Under the lock no clone is running: what is left was a killed one's.
         for stale in await asyncio.to_thread(glob.glob, f"{glob.escape(git_dir)}.partial*"):
             await asyncio.to_thread(shutil.rmtree, stale, True)
         await asyncio.to_thread(os.makedirs, tmp)

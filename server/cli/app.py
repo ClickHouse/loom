@@ -138,8 +138,8 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 
 
 def _add_code_okf_up_parsers(sub: Any) -> None:
-    """The `code`, `okf`, `up`, `participant`, `deployment`, `signing-key`,
-    `blobs` and `provider-lock` subcommands, registered by their own modules."""
+    """The `code`, `okf`, `up`, `participant`, `deployment`, `signing-key` and
+    `provider-lock` subcommands, registered by their own modules."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)

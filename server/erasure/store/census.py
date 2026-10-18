@@ -426,8 +426,8 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "label, fence, lease_until) — identifiers only, deleted on the terminal transition."
     ),
     "loom.task_claims": (
-        "The claim arbitration log a build before 033 wrote without a Keeper "
-        "(task id, fence, claimant label, timestamp) — identifiers only, no task text."
+        "A task claim arbitration log that no code path writes (task id, fence, "
+        "claimant label, timestamp) — identifiers only, no task text."
     ),
     "loom.task_webhook_cursor": (
         "The signed-webhook delivery cursor per inbox (last acknowledged "

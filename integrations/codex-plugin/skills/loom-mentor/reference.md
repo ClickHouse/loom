@@ -101,7 +101,7 @@ HTTP: `POST /v1/mentor.brief`; from the CLI: `loom mentor --org <org>
   unlisted `loom_*` name directly. An op hidden from MCP (`conflicts.*`)
   answers "not available" through `loom_op` too: use the dashboard's Review
   queue or HTTP/SDK for those.
-- A code in no table here is newer than this skill, or retired. Follow the
+- A code in no table here is newer than this skill. Follow the
   hint's own sentence and the ops it names; `mentor.brief` lists the codes
   that fire today with their evidence.
 - The mentor never rewrites or refuses a call. What it names as a data

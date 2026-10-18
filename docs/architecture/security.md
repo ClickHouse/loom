@@ -38,8 +38,8 @@ are in [tokens and grants](../guides/tokens-and-grants.md).
 - The key is picked by the header's `kid` and `alg` (`server/auth/keyring.py`): a key in
   `loom.signing_keys`, the root secret (kid `default`, HS256), or a gateway's RS256 public
   key in `LOOM_JWT_PUBLIC_KEYS_JSON`. A missing `kid` means `default`; an RS256 token of
-  `default` verifies with the `default-rs256` key (imported, else a PEM RSA root secret,
-  which signs as `default`) and with the gateway map's `default`. A `kid`
+  `default` verifies with a PEM RSA root secret (which signs as `default`) and with the
+  gateway map's `default`. A `kid`
   with no key under the token's algorithm is refused, and so is a retired one, unless
   the gateway map still lists it with a key this deployment never retired: a retire stops
   Loom's keys under every kid, and a gateway kid verifies until it leaves the map.

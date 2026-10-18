@@ -26,8 +26,8 @@ LOCK_CLEAR = (
 
 async def holder_stopped(holder: str) -> bool:
     """The holder's participant retired, or its heartbeat expired, and no query
-    tagged with its id still runs. A holder with no participant row (or one from
-    a build without heartbeats) never counts as stopped: `loom provider-lock clear`.
+    tagged with its id still runs. A holder with no participant row never counts
+    as stopped: `loom provider-lock clear`.
     An expired lease alone is no proof: a paused holder may resume and write."""
     participant = holder.split("/", 1)[0]
     with sequential_reads():
@@ -47,7 +47,7 @@ def clear_holder(ch: Any, holder: str) -> str:
         return "live"
     participant = holder.split("/", 1)[0]
     row = participant_sync(ch, participant)
-    if row is not None and row["stale_after_s"] > 0 and not row["expired"]:
+    if row is not None and not row["expired"]:
         return "live"
     if running_queries_sync(ch, participant) != 0:
         return "running"

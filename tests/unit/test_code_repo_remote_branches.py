@@ -157,7 +157,7 @@ async def test_remote_branches_names_default_suggested_indexed_and_cap(monkeypat
     )
     out = await admin.handle_code_repo_remote_branches(
         CodeRepoRemoteBranchesInput(
-            org=ORG, repo="https://github.com/ClickHouse/ClickHouse.git", github_token="ghp_x"
+            org=ORG, repo="https://github.com/ClickHouse/ClickHouse.git", access_token="ghp_x"
         )
     )
     assert seen == {"repo": "ClickHouse/ClickHouse", "token": "ghp_x"}
@@ -325,7 +325,7 @@ async def test_add_registers_every_chosen_branch_and_skips_per_branch(monkeypatc
             branch="master",
             join_policy="open",
             classification="standard",
-            github_token="ghp_t",
+            access_token="ghp_t",
             branches=["26.8", "master", "26.6", "ghost", "..bad", "26.7"],
         )
     )

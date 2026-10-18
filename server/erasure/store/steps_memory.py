@@ -703,11 +703,6 @@ async def delete_memory_reinforcement_by_user(
     )
 
 
-# A document whose original is a file of a pre-033 blob directory, not deleted
-# and stamped by `loom blobs import` yet.
-_LEGACY_UNERASED = "position(blob_path, '/') > 0 AND blob_erased_at IS NULL"
-
-
 async def tombstone_documents_by_namespace(
     org: str,
     namespace: str | Sequence[str],
@@ -715,24 +710,18 @@ async def tombstone_documents_by_namespace(
     ch: _CHClient | None = None,
 ) -> int:
     """Supersede the namespace's whole-document rows through the read-filtered
-    `superseded_at` column; a purge deletes them instead, except a row whose
-    pre-033 file is still on disk: it is only superseded, so the census keeps
-    counting it until `loom blobs import` has deleted the file. The `IS NULL`
-    guard makes a re-run a no-op."""
-    live = ORG_NS + " AND superseded_at IS NULL"
+    `superseded_at` column; a purge deletes them instead. The `IS NULL` guard
+    makes a re-run a no-op."""
     if not purge_mode():
-        return await _supersede_documents(live, org, namespace, ch)
-    deletable = f"{ORG_NS} AND NOT ({_LEGACY_UNERASED})"
-    deleted = await count_then_mutate(
+        return await _supersede_documents(ORG_NS + " AND superseded_at IS NULL", org, namespace, ch)
+    return await count_then_mutate(
         "loom.documents",
-        count_where=deletable,
+        count_where=ORG_NS,
         mutation="DELETE",
-        mutation_where=deletable,
+        mutation_where=ORG_NS,
         params={"org": org, "ns": namespace},
         ch=ch,
     )
-    kept = f"{live} AND {_LEGACY_UNERASED}"
-    return deleted + await _supersede_documents(kept, org, namespace, ch)
 
 
 async def _supersede_documents(
@@ -751,13 +740,10 @@ async def _supersede_documents(
 # The documents of the scope whose original has not been erased yet. One
 # predicate for the stamp; a list scope binds as an Array, as
 # `count_then_mutate` rewrites it — a list bound to `{ns:String}` is the
-# literal "['a', 'b']" and matches nothing. A `blob_path` with a `/` names a
-# file on a pre-033 blob directory, which this step cannot delete: it stays
-# unstamped, so the census counts it and the saga fails closed until
-# `loom blobs import` has deleted the file and stamped the row.
+# literal "['a', 'b']" and matches nothing.
 _UNERASED_BLOBS = (
     "org = {org:String} AND namespace IN {ns:Array(String)}"
-    " AND blob_path != '' AND blob_erased_at IS NULL AND position(blob_path, '/') = 0"
+    " AND blob_path != '' AND blob_erased_at IS NULL"
 )
 
 

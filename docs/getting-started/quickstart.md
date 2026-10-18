@@ -69,8 +69,7 @@ LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
 
 `LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY` and `LOOM_CLICKHOUSE_IMAGE` given
 to the installer are written to the install directory's `.env`, so later `docker compose`
-commands there and later installer runs use the same port and images. An install made by an earlier release
-kept only the template's port in `.env`: pass `LOOM_PORT` once more on its upgrade. A
+commands there and later installer runs use the same port and images. A
 `LOOM_BIND_HOST` other than loopback publishes Loom beyond this host, and the server
 refuses to start that way without `LOOM_PUBLIC_BASE_URL` and sign-in: install with
 `LOOM_SKIP_START=1`, set them in `.env` (below), then run the installer again.

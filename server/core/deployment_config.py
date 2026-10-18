@@ -3,13 +3,13 @@
 Every Loom process of a deployment is a full replica on one ClickHouse, run
 from one env. What must agree between them is checked rather than trusted: the
 workers leader publishes, as one `loom.deployment_config` row named `settings`
-(a JSON object), every setting its env sets explicitly plus the MUST_MATCH
-settings, and an HMAC fingerprint of its root secret (never the secret) under
-`_keys`. Every process compares itself with that snapshot at boot and on each
-instance heartbeat (`server.core.instances`): a different root secret (its
-tokens and stored credentials do not open elsewhere) or a different MUST_MATCH
-value (its vectors are in another space) is drift, `drift()` lists it, the
-process is not ready and `/v1/health` reports it.
+(a JSON object), the MUST_MATCH settings and an HMAC fingerprint of its root
+secret (never the secret) under `_keys`. Every process compares itself with
+that snapshot at boot and on each instance heartbeat (`server.core.instances`):
+a different root secret (its tokens and stored credentials do not open
+elsewhere) or a different MUST_MATCH value (its vectors are in another space)
+is drift, `drift()` lists it, the process is not ready and `/v1/health`
+reports it.
 
 The leader rewrites the snapshot only when it agrees with the stored one on
 what must match and no other live instance still runs the stored one, so a
@@ -17,12 +17,6 @@ drifted leader never publishes itself over the deployment and a mixed env
 during a rollout never flips the published configuration back and forth. A
 new root secret or MUST_MATCH value is published by the operator, with
 `loom deployment publish`.
-
-What is never published: secrets (`is_secret_field`; credentials inside
-`code_repos_json` entries and inside URLs are stripped), and the areas that
-describe one process rather than the deployment's data — its ClickHouse
-connection, its auth and tokens, its process shape, rate limits, telemetry
-export and blob storage.
 """
 
 from __future__ import annotations
@@ -31,7 +25,6 @@ import hashlib
 import hmac
 import json
 import logging
-import re
 from collections.abc import Callable
 from typing import Annotated, Any
 
@@ -39,33 +32,10 @@ from pydantic import TypeAdapter
 
 from server.core import embedding_space, readiness
 from server.settings import Settings, settings
-from server.settings._auth import AuthSettings
-from server.settings._clickhouse import ClickHouseSettings
-from server.settings._env import is_secret_field
-from server.settings._observability import ObservabilitySettings
-from server.settings._ratelimit import RateLimitSettings
-from server.settings._runtime import RuntimeSettings
-from server.settings._storage import StorageSettings
 
 log = logging.getLogger(__name__)
 
 ROW_NAME = "settings"
-
-# Areas that describe this process, not the deployment's data. Only the
-# pre-033 window needs this (see `snapshot`).
-_PROCESS_AREAS = (
-    ClickHouseSettings,
-    AuthSettings,
-    RuntimeSettings,
-    RateLimitSettings,
-    ObservabilitySettings,
-    StorageSettings,
-)
-_PROCESS_FIELDS = frozenset(name for area in _PROCESS_AREAS for name in area.model_fields)
-
-# Secret by name only because entries may carry a token; published with the
-# credentials taken out. Only the pre-033 window needs this (see `snapshot`).
-_SANITISED_SECRET_FIELDS = frozenset({"code_repos_json"})
 
 # Settings whose value fixes how stored data was made: a process that holds a
 # different value reads and writes the shared rows wrongly, so it is not ready.
@@ -103,39 +73,6 @@ def _identity(values: dict[str, Any]) -> dict[str, Any]:
     return dict(zip(MUST_MATCH, embedding_space.public_identity(values), strict=True))
 
 
-_URL_USERINFO = re.compile(r"(?P<scheme>[a-z][a-z0-9+.-]*://)[^/@\s]+@", re.IGNORECASE)
-
-
-def publishable(name: str) -> bool:
-    """Whether the leader publishes setting `name` (when its env sets it)."""
-    if name not in Settings.model_fields or name in _PROCESS_FIELDS:
-        return False
-    return name in _SANITISED_SECRET_FIELDS or not is_secret_field(name)
-
-
-def _strip(value: Any) -> Any:
-    """`value` without credentials: secret-named keys dropped at any depth,
-    userinfo removed from URLs. Only the pre-033 window needs it (see `snapshot`)."""
-    if isinstance(value, dict):
-        return {k: _strip(v) for k, v in value.items() if not is_secret_field(str(k))}
-    if isinstance(value, list):
-        return [_strip(v) for v in value]
-    if isinstance(value, str):
-        return _URL_USERINFO.sub(r"\g<scheme>", value)
-    return value
-
-
-def _published_value(name: str, value: Any) -> Any:
-    if name in _SANITISED_SECRET_FIELDS and isinstance(value, str) and value.strip():
-        try:
-            return json.dumps(_strip(json.loads(value)))
-        except json.JSONDecodeError:
-            # The process parses it the same way and logs the error itself;
-            # an unreadable value is not published rather than published raw.
-            return None
-    return _strip(value)
-
-
 # The key of the snapshot entry that holds key fingerprints, not a setting.
 KEYS_ENTRY = "_keys"
 _FINGERPRINT_INPUT = b"loom.deployment-config.key-check"
@@ -147,19 +84,14 @@ def _fingerprint(secret: str) -> str:
 
 def key_fingerprints(s: Settings) -> dict[str, Any]:
     """The fingerprint of `s`'s root secret, which signs as kid `default` and
-    seals every stored credential and every other signing key. For one
-    release it is also published in the fields a read-replica of the build
-    before 033 checks (one key map holding `default`), so such a replica
-    restarting mid-upgrade still boots."""
-    root = _fingerprint(str(s.jwt_secret))
-    return {"root": root, "signing": {"default": root}, "active_kid": "default", "sealing": root}
+    seals every stored credential and every other signing key."""
+    return {"root": _fingerprint(str(s.jwt_secret))}
 
 
 def check_keys(s: Settings, published: dict[str, Any]) -> None:
     """Raise ValueError unless `s` holds the deployment's root secret. A snapshot
     without its fingerprint is not checked."""
     theirs = published.get(KEYS_ENTRY)
-    # A build before 033 publishes no `root` fingerprint.
     if not isinstance(theirs, dict) or "root" not in theirs:
         return
     if theirs["root"] != key_fingerprints(s)["root"]:
@@ -172,22 +104,9 @@ def check_keys(s: Settings, published: dict[str, Any]) -> None:
 
 
 def snapshot(s: Settings) -> dict[str, Any]:
-    """The settings `s` publishes: each one its env set explicitly and every
-    MUST_MATCH one, sanitised, plus its key fingerprints under KEYS_ENTRY.
-
-    This build reads only KEYS_ENTRY and MUST_MATCH. The other settings are for
-    the pre-033 window: a read-replica of that build applies each published
-    setting its env leaves unset. Next release the snapshot is KEYS_ENTRY and
-    MUST_MATCH only, and `_PROCESS_AREAS`, `_strip`, `_SANITISED_SECRET_FIELDS`,
-    `config_fp` and `_may_replace`'s live-digest rule go with the rest."""
-    out: dict[str, Any] = {KEYS_ENTRY: key_fingerprints(s)}
-    for name in sorted(set(s.model_fields_set) - set(MUST_MATCH)):
-        if not publishable(name):
-            continue
-        value = _published_value(name, s.model_dump(mode="json", include={name})[name])
-        if value is not None:
-            out[name] = value
-    return out | _must_match(s)
+    """What `s` publishes: its key fingerprints under KEYS_ENTRY and its
+    MUST_MATCH values."""
+    return {KEYS_ENTRY: key_fingerprints(s)} | _must_match(s)
 
 
 def _digest(value: Any) -> str:
@@ -197,8 +116,7 @@ def _digest(value: Any) -> str:
 def fingerprints(s: Settings) -> dict[str, str]:
     """What an instance row carries: hashes of `s`'s MUST_MATCH values, of its
     key fingerprints and of its whole snapshot (`config_fp`, equal to the
-    published row's digest when `s` is what is published; only the pre-033
-    window needs it, see `snapshot`)."""
+    published row's digest when `s` is what is published)."""
     return {
         "settings_fp": _digest(_must_match(s)),
         "keys_fp": _digest(key_fingerprints(s)),
@@ -223,8 +141,8 @@ def compare(s: Settings, published: dict[str, Any]) -> list[str]:
     except ValueError as e:
         problems.append(str(e))
     mine = _must_match(s)
-    # The published row normalised as this process's own (an older build's keeps a
-    # trailing slash, an empty provider, userinfo); a field it lacks is not judged.
+    # The published row normalised as this process's own (a trailing slash, an
+    # empty provider or userinfo is the same space); a field it lacks is not judged.
     given = {}
     for name in MUST_MATCH:
         if name in published:
@@ -346,9 +264,7 @@ def _may_replace(stored: dict[str, Any], live: list[dict[str, Any]]) -> bool:
     when it drifts from it (its root secret or a MUST_MATCH value differs):
     that takes `loom deployment publish`. Otherwise only once no other live
     instance (`live`, from `server.core.instances.read_live`) runs the stored
-    one, so a mixed env during a rollout does not flip it back and forth. That
-    live-digest rule matters only while the snapshot carries more than must
-    match (the pre-033 window, see `snapshot`)."""
+    one, so a mixed env during a rollout does not flip it back and forth."""
     from server.core.instances import instance_id
 
     if compare(settings, stored):
@@ -370,7 +286,6 @@ __all__ = [
     "fingerprints",
     "key_fingerprints",
     "publish",
-    "publishable",
     "read_published",
     "snapshot",
     "write",

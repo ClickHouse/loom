@@ -21,10 +21,9 @@ The `default` row records an HMAC of the root secret: a process whose
 commands and `loom mint-token` refuse to run there and `/v1/health` and
 `loom doctor` say so. The workers leader (or a keyring command) writes it.
 
-A PEM RSA `LOOM_JWT_SECRET` (an RS256 deployment of an earlier build) seals,
-and signs and verifies RS256 as kid `default`, as that build did: it stands in
-for `ROOT_RS256_KID` until a row of that kid (`loom signing-key import
---algorithm RS256`) or a retired `default` says otherwise. A gateway key of
+A PEM RSA `LOOM_JWT_SECRET` seals, and signs and verifies RS256 as kid
+`default`: it is held as `ROOT_RS256_KID` unless a row of that kid or a
+retired `default` says otherwise. A gateway key of
 kid `default` (`jwt_public_keys_json`) verifies beside it.
 """
 
@@ -57,7 +56,7 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 ROOT_KID = "default"
-# The kid an RS256 deployment's former `default` key is imported under.
+# The kid a PEM RSA root secret is held under; it signs and verifies as `default`.
 ROOT_RS256_KID = "default-rs256"
 ALGORITHMS = ("HS256", "RS256")
 _PURPOSE = "signing_key"
@@ -125,10 +124,6 @@ class _View:
 
 _view = _View()
 _warned: set[str] = set()
-
-
-# The `activate_at` of a key that verifies and never signs (an imported old kid).
-VERIFY_ONLY = datetime(2200, 1, 1)
 
 
 def loaded() -> bool:
@@ -236,8 +231,8 @@ def root_is_hmac_key() -> bool:
 
 @functools.lru_cache(maxsize=4)
 def _pem_root(secret: str) -> SigningKey | None:
-    """A PEM RSA LOOM_JWT_SECRET as the RS256 key of kid `default`, which the
-    earlier RS256 build signed with; None for any other secret."""
+    """A PEM RSA LOOM_JWT_SECRET as the RS256 key of kid `default`; None for
+    any other secret."""
     if "PRIVATE KEY" not in secret:
         return None
     from cryptography.hazmat.primitives import serialization
@@ -259,8 +254,8 @@ def _pem_root(secret: str) -> SigningKey | None:
 
 def _keys(view: _View) -> dict[str, SigningKey]:
     """The view's keys, plus a PEM root as `ROOT_RS256_KID` unless a row of that
-    kid exists (imported, retired, or sealed under another root) or `default`
-    is retired."""
+    kid exists (retired, or sealed under another root) or `default` is
+    retired."""
     rows = view.keys.keys() | view.retired | view.unsealable
     if ROOT_RS256_KID in rows or ROOT_KID in view.retired:
         return view.keys
@@ -285,7 +280,7 @@ def _root_signs(retired: frozenset[str]) -> bool:
 
 def _signer(view: _View) -> SigningKey | None:
     now = server_now(view)
-    active = [k for k in _keys(view).values() if k.activate_at <= now]  # never VERIFY_ONLY
+    active = [k for k in _keys(view).values() if k.activate_at <= now]
     if active:
         return max(active, key=lambda k: (k.activate_at, k.kid))
     return _root() if _root_signs(view.retired) else None
@@ -306,7 +301,7 @@ def signing_key() -> SigningKey:
             "signing key is active here: run `loom signing-key rotate`"
         )
     if key.kid == ROOT_RS256_KID and ROOT_KID not in _view.retired:
-        # The kid the earlier RS256 build signed and verifies with.
+        # A PEM root signs as `default`.
         return dataclasses.replace(key, kid=ROOT_KID)
     return key
 
@@ -330,9 +325,9 @@ def status(rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
 def verification_keys(kid: str, algorithm: str) -> list[str]:
     """The keys that may verify a token of `kid` signed with `algorithm`, in
     order: a keyring key or the root secret, then a gateway's public key of
-    that kid (`jwt_public_keys_json`). An RS256 token of kid `default` (an
-    earlier RS256 build's, or a gateway's without a kid) tries `ROOT_RS256_KID`
-    (imported, or the PEM root) and the gateway's `default` both. A retire
+    that kid (`jwt_public_keys_json`). An RS256 token of kid `default` (the PEM
+    root's, or a gateway's without a kid) tries `ROOT_RS256_KID` and the
+    gateway's `default` both. A retire
     stops this deployment's keys only: the gateway's are its operator's."""
     keys = _keys(_view)  # never a retired kid
     key = keys.get(kid)
@@ -618,7 +613,7 @@ async def _announce_refresh() -> None:
 
 async def slowest_refresh_s(*, ch: _CHClient) -> float | None:
     """The longest refresh interval a process recorded within two announce
-    periods; None when none did (an older build, a read-only user)."""
+    periods; None when none did (no process serves yet, or a read-only user)."""
     row = await ch.query_one(
         f"SELECT max(refresh_seconds) AS s FROM {READERS_TABLE} "
         "WHERE seen_at > now64(3) - toIntervalSecond({age:UInt32})",
@@ -693,67 +688,6 @@ async def rotate(algorithm: str, *, activate_in_s: float, ch: _CHClient) -> Sign
         settings={"async_insert": 0},
     )
     return key
-
-
-async def import_keys(
-    keys: dict[str, str],
-    active: str,
-    algorithm: str,
-    *,
-    ch: _CHClient,
-    activate_in_s: float = 0.0,
-) -> list[str]:
-    """Copy a deployment's existing kid → key map in (the former
-    LOOM_JWT_SECRETS_JSON): `active` signs from `activate_in_s` from now, the
-    others only verify (`VERIFY_ONLY`). A kid the keyring already has is left
-    as it is (a re-run must not bring back a retired key). Kid `default` is
-    the root secret: an HS256 map's must be it, and an RS256 map's is stored
-    as `ROOT_RS256_KID`, which verifies the RS256 tokens of `default`.
-    Returns the kids imported."""
-    if active not in keys:
-        raise ValueError(f"the active kid {active!r} is not in the map")
-    if algorithm not in ALGORITHMS:
-        raise ValueError(f"algorithm must be one of {ALGORITHMS}")
-    if algorithm == "HS256" and any(len(k.encode()) < 32 for k in keys.values()):
-        raise ValueError("an HS256 key shorter than 32 bytes is too weak to import")
-    if algorithm == "RS256" and ROOT_KID in keys:
-        if ROOT_RS256_KID in keys:
-            raise ValueError(f"the map holds both {ROOT_KID!r} and {ROOT_RS256_KID!r}")
-        keys = {ROOT_RS256_KID if k == ROOT_KID else k: v for k, v in keys.items()}
-        active = ROOT_RS256_KID if active == ROOT_KID else active
-    if ROOT_KID in keys and keys[ROOT_KID] != str(settings.jwt_secret):
-        raise ValueError(
-            f"kid {ROOT_KID!r} in the map is not LOOM_JWT_SECRET, and this build signs "
-            f"{ROOT_KID!r} with LOOM_JWT_SECRET only. Drop it from the map (its tokens stop "
-            "verifying), or set LOOM_JWT_SECRET to it everywhere (which re-keys every "
-            "sealed credential)"
-        )
-    await _same_root(ch)
-    existing = {str(r["kid"]) for r in await listing(ch=ch)}
-    now = await _ch_now(ch)
-    rows = []
-    for kid, secret in keys.items():
-        if kid in existing or kid == ROOT_KID:
-            continue
-        public = ""
-        if algorithm == "RS256":
-            from cryptography.hazmat.primitives import serialization
-
-            private = serialization.load_pem_private_key(secret.encode(), password=None)
-            public = (
-                private.public_key()
-                .public_bytes(
-                    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
-                )
-                .decode()
-            )
-        at = now + timedelta(seconds=activate_in_s) if kid == active else VERIFY_ONLY
-        rows.append(
-            _row(SigningKey(kid, algorithm, secret, public, at), created_at=now, retired_at=None)
-        )
-    if rows:
-        await ch.insert("loom.signing_keys", rows, settings={"async_insert": 0})
-    return [str(r["kid"]) for r in rows]
 
 
 # The deployment-wide claim a retire holds from its check to its write.

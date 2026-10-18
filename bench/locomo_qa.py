@@ -201,7 +201,7 @@ def turn_to_message(turn: dict[str, Any]) -> dict[str, str]:
     if caption:
         text = f"{text} [shared a photo: {caption}]".strip()
     # `name` carries the speaker to the extractor; the
-    # content keeps the prefix too so older servers see the same text.
+    # content keeps the prefix too, so the stored text names the speaker.
     return {"role": "user", "content": f"{speaker}: {text}", "name": speaker}
 
 
@@ -360,7 +360,7 @@ def _session_number(session_id: str) -> int | None:
 def hit_session_numbers(hits: list[dict[str, Any]], namespace: str) -> list[int]:
     """Session numbers of the hits, in rank order, from the `session_id` a
     hit carries (`<namespace>:session_N`, the id the ingest wrote). Hits
-    without one (older servers, summary/chunk/derived rows) contribute
+    without one (summary/chunk/derived rows) contribute
     nothing; the caller reports coverage so a missing field is visible."""
     out: list[int] = []
     for h in hits:
@@ -706,7 +706,7 @@ async def namespace_footprint(
     """One memory.health call per namespace (it aggregates across agents,
     users and sessions; memory.list is scoped to one identity tuple and would
     see only the rows written under the bench's own session id). Errors (a
-    namespace already erased, an older server) return zeros with `error` = 1
+    namespace already erased) return zeros with `error` = 1
     rather than failing the run: the footprint is a report column, not the
     result."""
     try:
@@ -1301,7 +1301,7 @@ async def answer_question(
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
         label, reply = "ERROR", f"error: {e}"
     # Source recall needs hits that carry `session_id`; without any, the
-    # field stays -1 so an older server reads as "not measured", never as 0.
+    # field stays -1 so a run without them reads as "not measured", never as 0.
     hit_sessions = hit_session_numbers(results, identity.get("namespace", ""))
     gold_sessions = evidence_sessions_cited(q)
     recall_5 = source_recall_at(hit_sessions, gold_sessions, 5) if hit_sessions else None

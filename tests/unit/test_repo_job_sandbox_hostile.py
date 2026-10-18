@@ -296,11 +296,11 @@ async def test_the_ssh_relay_is_refused_a_private_host(monkeypatch) -> None:
 
 async def test_a_toolchain_mount_shows_no_loom_data(tmp_path: Path, monkeypatch) -> None:
     """The C++ tier with the default paths: scip-clang at var/bin/scip-clang, the
-    blobs and other entries' mirrors and checkouts beside it in var/."""
+    other entries' mirrors and checkouts beside it in var/."""
     from server.settings import settings
 
     monkeypatch.chdir(tmp_path)
-    for field in ("code_repos_root", "blob_dir", "code_scip_checkout_dir"):
+    for field in ("code_repos_root", "code_scip_checkout_dir"):
         monkeypatch.setattr(settings, field, type(settings).model_fields[field].default)
     canaries = [
         tmp_path / "var/blobs/blob",
@@ -375,7 +375,7 @@ async def test_loom_data_inside_the_python_prefix_is_unreadable(
     (prefix / "blobs" / "blob").write_text(CANARY)
     (prefix / "lib.txt").write_text("runtime")
     monkeypatch.setattr(sys, "prefix", str(prefix))
-    monkeypatch.setattr(settings, "blob_dir", str(prefix / "blobs"))
+    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(prefix / "blobs"))
     done = await sandbox.run_sandboxed(
         ["sh", "-c", f"cat {prefix}/lib.txt; cat {prefix}/blobs/blob; ls -a {prefix}/blobs"],
         env=ENV,

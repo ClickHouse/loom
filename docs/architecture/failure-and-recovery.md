@@ -174,8 +174,7 @@ node. Nothing else counts: an unreachable process is not a stopped one.
   what is left.
 - **Killed holding the provider lock** (a rebuild step, a saved configuration). The key's
   TTL is 60 s, renewed every 20 s; a contender takes it over once it expired and the
-  holder's participant counts as stopped. `loom provider-lock clear --holder <holder>`
-  frees one whose holder never expires (an older build without heartbeats).
+  holder's participant counts as stopped.
 - **Killed mid-reconfiguration.** The transition waits on a participant whose heartbeat
   expired, since a paused process may resume with admitted work, until a process on
   its host proves it gone (its container restarted, or its pid exited) and retires it.

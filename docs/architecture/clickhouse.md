@@ -410,8 +410,7 @@ with `purge=true` and runner state.
   conditional `UPDATE` under strict mode, once the key expired and the previous
   owner's participant counts as stopped (retired, or no heartbeat for its
   `stale_after_s` and no query tagged with its id in `system.processes`).
-  `loom provider-lock clear` deletes the key the same way. Both are Keeper
-  operations, not MergeTree content mutations; an elapsed TTL alone never permits
+  It is a Keeper operation, not a MergeTree content mutation; an elapsed TTL alone never permits
   provider-lock takeover.
 - **Run id claims** (`loom.agent_run_claims`, KeeperMap) live only inside one
   `run.begin`: claim, read the run row, write it, drop the claim. A later begin that
@@ -429,8 +428,7 @@ with `purge=true` and runner state.
   one claim per (repository, subject), `repo:<owner/name>`, then its branches' claims in
   namespace order, and writes the branches in one insert inside that bound. A change that
   may remove an admin first holds the namespace's admins claim (the key with no subject)
-  and counts the admins under it. `loom.oauth_claims` and `loom.grant_claims`, the
-  KeeperMap tables builds before 033 claimed in, are no longer written.
+  and counts the admins under it.
 - **Graph projections and graph writes** (`loom.graph_projections`, KeeperMap where the
   server has a Keeper): a projection holds one of 32 slot keys of its namespace and its
   end drops it (a begin whose insert failed uncertainly leaves its slot to go stale); a

@@ -80,17 +80,6 @@ async def favicon(request: Request) -> Response:
     return FileResponse(path, media_type="image/svg+xml")
 
 
-async def legacy_page_redirect(request: Request) -> Response:
-    """An old /me/<page> link lands on /<page>, query kept. 302, so a rollback to
-    a build that redirects the other way cannot leave a cached loop."""
-    from starlette.responses import RedirectResponse
-
-    # Leading slashes or backslashes would make a protocol-relative (off-site) URL.
-    rest = str(request.path_params.get("rest", "")).lstrip("/\\")
-    query = request.url.query
-    return RedirectResponse(url="/" + rest + (f"?{query}" if query else ""), status_code=302)
-
-
 async def dashboard_page(request: Request) -> Response:
     """index.html for every page path; the app reads window.location itself.
 
@@ -200,8 +189,6 @@ def attach(app: Any) -> None:
     app.router.routes.extend(
         [
             _get("/favicon.svg", favicon),
-            _get("/me", legacy_page_redirect),
-            _get("/me/{rest:path}", legacy_page_redirect),
             *pages,
         ]
     )

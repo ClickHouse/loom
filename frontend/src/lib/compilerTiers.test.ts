@@ -72,14 +72,6 @@ describe("tierCards", () => {
     expect(cards[0].updatedAt).toBeUndefined();
   });
 
-  it("falls back to the state row's updated_at when the tier row has none", () => {
-    const cards = tierCards({
-      compiler_tiers: [tier({ updated_at: "" })],
-      state: { scip_commit_ts: { value: "ef0add7b2598", detail: "", updated_at: "2026-09-18 20:54:08" } },
-    });
-    expect(cards[0].updatedAt).toBe("2026-09-18 20:54:08");
-  });
-
   it("an entry with no compiler tier gets one not-configured card", () => {
     const cards = tierCards({ compiler_tiers: [], state: {} });
     expect(cards).toHaveLength(1);

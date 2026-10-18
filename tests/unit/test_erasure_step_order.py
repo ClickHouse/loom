@@ -12,7 +12,6 @@ a resume break too. CH-free.
 
 from __future__ import annotations
 
-import contextlib
 import contextvars
 import json
 import re
@@ -24,7 +23,6 @@ from server.erasure.api.erasure import ErasureRequestInput
 from server.erasure.app import saga
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
-from server.knowledge.app import originals
 
 _STEP: contextvars.ContextVar[str] = contextvars.ContextVar("step", default="")
 _ALTER = re.compile(r"ALTER TABLE\s+(\S+)\s+(UPDATE|DELETE)\b")
@@ -79,8 +77,6 @@ def run(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr("server.observability.audit.emit", _noop)
     monkeypatch.setattr("server.core.namespace_write_marks.bump", _noop)
     monkeypatch.setattr(erasure_census, "residue_census", _clean)
-    # the documents step's claim: pinned in test_erasure_documents
-    monkeypatch.setattr(originals, "hold_originals", lambda *a, **kw: contextlib.nullcontext())
 
     real_do_step = saga._do_step
 
@@ -323,13 +319,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("chunks.supersede", ((L, "loom.chunks"),)),
     (
         "documents.tombstone",
-        # A purge supersedes, not deletes, a row whose pre-033 file is still on disk.
-        (
-            (D, "loom.document_blobs"),
-            (U, "loom.documents"),
-            (D, "loom.documents"),
-            (U, "loom.documents"),
-        ),
+        ((D, "loom.document_blobs"), (U, "loom.documents"), (D, "loom.documents")),
     ),
     (
         "conversations.tombstone",

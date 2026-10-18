@@ -231,8 +231,7 @@ revision's env, and refuses a rollback whose root secret or embedding settings a
 published ones: its pods would never be ready, and the Secret it re-applies would drift
 every pod that restarts. Helm then leaves the release `pending-rollback`; a
 `helm rollback loom <current revision>` passes the check and clears it. To go back past a
-publish, upgrade with the old values and a new token instead. The check needs an image with `--check` (the release that ships this
-chart); for an older target, `helm rollback --no-hooks` skips it.
+publish, upgrade with the old values and a new token instead.
 
 Installing onto a ClickHouse whose deployment already published another root secret or
 embedding space (a move from another install, a restore) brings up only drifted pods, as
