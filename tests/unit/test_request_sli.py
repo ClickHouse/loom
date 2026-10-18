@@ -180,6 +180,24 @@ def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None
         {"reason": "invalid", "loom.transport": "http"},
     ]
 
+    # A token that cannot be checked yet is a 503, counted once, also on the
+    # auth-off service-account routes.
+    from server.auth import revocation
+    from server.identity.app.me_service_accounts import dev_bearer
+
+    counter.calls.clear()
+    monkeypatch.setattr(revocation, "_loaded", False)
+    token = mint_token("sa:bot", "acme", ["shop"], ["viewer"])
+
+    class _Unchecked:
+        headers = {"Authorization": f"Bearer {token}"}
+
+    for check in (lambda: bearer.verify_bearer(token), lambda: dev_bearer(_Unchecked())):
+        with pytest.raises(HTTPException) as e:
+            check()
+        assert e.value.status_code == 503
+    assert counter.calls == [{"reason": "unavailable", "loom.transport": "http"}] * 2
+
     counter.calls.clear()
 
     class _Resp:
