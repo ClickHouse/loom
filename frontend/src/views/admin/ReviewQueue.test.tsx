@@ -219,6 +219,58 @@ describe("ReviewQueue", () => {
     expect(within(table).getByRole("button", { name: "a/y" })).toBeInTheDocument();
   });
 
+  it("a decision from an earlier visit leaves the conflict open now where it is", async () => {
+    vi.mocked(listConflicts).mockImplementation(async (id) =>
+      id.namespace === "ns-b"
+        ? { rows: [conflict("b/key")], next_before_version: null }
+        : { rows: [conflict("a/x"), conflict("a/y"), conflict("a/z")], next_before_version: null },
+    );
+    let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/x", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    seed("ns-a");
+    await screen.findByText("value of a/x", {}, WAIT);
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    await userEvent.click(within(table).getByRole("button", { name: "a/y" }));
+    expect(screen.getByText("value of a/y")).toBeInTheDocument();
+    await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
+    await waitFor(() => expect(within(table).queryByRole("button", { name: "a/x" })).toBeNull(), WAIT);
+    expect(within(table).getByRole("button", { name: "a/y" })).toHaveAttribute("aria-current", "true");
+    expect(screen.getByText("value of a/y")).toBeInTheDocument();
+  });
+
+  it("a conflict decided while the queue is read again stays out of the read's answer", async () => {
+    let reread: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
+    let aReads = 0;
+    vi.mocked(listConflicts).mockImplementation(async (id) => {
+      if (id.namespace === "ns-b") return { rows: [conflict("b/key")], next_before_version: null };
+      aReads += 1;
+      if (aReads === 1) return { rows: [conflict("a/x"), conflict("a/y")], next_before_version: null };
+      return new Promise((r) => (reread = r));
+    });
+    let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/x", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    seed("ns-a");
+    await waitFor(() => expect(aReads).toBe(2), WAIT);
+    await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
+    // The server read its queue before the decision was visible: it still lists a/x.
+    await act(async () => reread({ rows: [conflict("a/x"), conflict("a/y")], next_before_version: null }));
+    const table = await screen.findByRole("table", { name: "Conflicts" });
+    await waitFor(() => expect(within(table).getByRole("button", { name: "a/y" })).toBeInTheDocument(), WAIT);
+    expect(within(table).queryByRole("button", { name: "a/x" })).toBeNull();
+  });
+
   it("a Load more answered after a namespace switch adds nothing to the new namespace's queue", async () => {
     let older: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
     vi.mocked(listConflicts).mockImplementation(async (id, opts) => {

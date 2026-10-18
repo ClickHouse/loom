@@ -195,6 +195,12 @@ function ConflictsPanel() {
   // that page added, else the last one in the queue.
   const queueBox = useRef<HTMLDivElement>(null);
   const focusAdded = useRef<number | null>(null);
+  // Conflicts decided here, whichever visit: no read (a re-read on a return, a Load more)
+  // offers one again, even one the server answered before the decision was visible.
+  const decidedIds = useRef(new Set<string>());
+  // The rows on screen as of the latest render, for an answer from another visit.
+  const rowsNow = useRef(rows);
+  rowsNow.current = rows;
 
   useAbortableEffect(
     (signal, live) => {
@@ -203,7 +209,7 @@ function ConflictsPanel() {
       listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: CONFLICT_PAGE, signal })
         .then((r) => {
           if (live()) {
-            setRows(r.rows);
+            setRows(r.rows.filter((c) => !decidedIds.current.has(c.memory_id)));
             setNext(r.next_before_version);
             setIndex(0);
             setReason("");
@@ -256,7 +262,7 @@ function ConflictsPanel() {
       setRows((prev) => {
         if (!prev) return prev;
         const have = new Set(prev.map((c) => c.memory_id));
-        return [...prev, ...r.rows.filter((c) => !have.has(c.memory_id))];
+        return [...prev, ...r.rows.filter((c) => !have.has(c.memory_id) && !decidedIds.current.has(c.memory_id))];
       });
       setNext(r.next_before_version);
     } catch (e) {
@@ -302,12 +308,18 @@ function ConflictsPanel() {
         reason.trim() ? { reason: reason.trim() } : {},
       );
       toast("Resolved", "ok");
-      // The decided conflict is gone wherever it is listed: an id is org-wide, so dropping
-      // it can touch no other namespace's queue, and a queue read again on a return to this
-      // namespace must not offer it a second time.
-      setRows((prev) => prev && prev.filter((c) => c.memory_id !== current.memory_id));
-      // Another visit: the rest (its place, count and reason) is not this queue's.
-      if (visit.current !== myVisit) return;
+      // Gone from every list, on any visit (ids are org-wide, so no other queue loses a row).
+      const id = current.memory_id;
+      decidedIds.current.add(id);
+      if (visit.current !== myVisit) {
+        // Another visit: the conflict open now stays open (a row before it moves it up one);
+        // its place, count and reason are not this decision's.
+        const pos = rowsNow.current?.findIndex((c) => c.memory_id === id) ?? -1;
+        setRows((prev) => prev && prev.filter((c) => c.memory_id !== id));
+        if (pos >= 0) setIndex((i) => (pos < i ? i - 1 : i));
+        return;
+      }
+      setRows((prev) => prev && prev.filter((c) => c.memory_id !== id));
       setReason("");
       // The decided conflict leaves the queue as it is now (a page Load more added meanwhile
       // stays); the next one takes its place.
