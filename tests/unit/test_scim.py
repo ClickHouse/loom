@@ -219,7 +219,7 @@ class _Table:
             return revocation_read(self.revocations, sql, params)
         if "count()" in sql:
             return {"n": len(self.live())}
-        if "lower(user_name) =" in sql:
+        if "lowerUTF8(user_name) =" in sql:
             return next((r for r in self.live() if r["user_name"].lower() == params["n"]), None)
         if "max(version)" in sql:
             newest = self.newest(params["k"])
@@ -421,6 +421,15 @@ async def test_a_subject_someone_else_has_elsewhere_is_revoked_and_flagged(world
     assert revoked == {"alice": None}  # audited once the revocation landed
 
 
+async def test_a_username_other_than_the_email_is_logged_once(world, caplog) -> None:
+    uid = await _create("lee@example.com")
+    with caplog.at_level("WARNING", logger="server.auth.scim"):
+        await scim.update(uid, user_name="Lee.UPN@corp.example")  # renamed away
+        await scim.update(uid, user_name="Lee.UPN@corp.example")  # the next sync's repeat
+    assert caplog.text.count("a userName other than its email") == 1
+    assert "lee@example.com" not in caplog.text and uid in caplog.text
+
+
 async def test_an_account_moved_to_another_email_is_not_revoked_again(world) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
@@ -429,9 +438,16 @@ async def test_an_account_moved_to_another_email_is_not_revoked_again(world) -> 
     narrowed = world.ours["lee"]
     assert narrowed is not None
     world.person("lee@example.com")  # an operator gave the account to another address
+    world.person("bob@example.com", "lee")
     await scim.update(uid, active=False)
     assert world.ours == {"lee": narrowed}  # still narrowed: it's someone else's now
     assert "auth.scim_collateral" not in [e for e, _ in world.audits]
+    # Its new owner comes and goes; the first user, still inactive, holds nothing back.
+    bob = await _create("bob@example.com")
+    await scim.update(bob, active=False)
+    assert world.ours == {"lee": None}
+    await scim.update(bob, active=True)
+    assert world.ours["lee"] is not None
 
 
 async def test_another_subjects_org_does_not_hide_collateral(world) -> None:

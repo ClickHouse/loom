@@ -112,7 +112,7 @@ async def find(user_name: str) -> dict[str, Any] | None:
     """The live SCIM user whose userName is `user_name`, in any case (RFC 7643 §4.1.1)."""
     row = await get_client().query_one(
         f"SELECT * FROM {TABLE} FINAL "
-        "WHERE lower(user_name) = {n:String} AND deleted = 0 LIMIT 1",
+        "WHERE lowerUTF8(user_name) = {n:String} AND deleted = 0 LIMIT 1",
         params={"n": normalized(user_name)},
     )
     return None if row is None else dict(row)
@@ -179,6 +179,7 @@ async def create(
                 row, cutoff = await _set_active(row, active)
         else:
             await _refuse_taken(user_name, uid)
+            _note_another_name(uid, user_name, email)
             changes = {"user_name": user_name.strip(), "deleted": 0, **_entry(email_entry)}
             row, cutoff = await _set_active(row, active, **changes)
     if not row["active"]:  # a retry too: it finishes what a failed try left
@@ -209,11 +210,20 @@ async def update(
             async with _held(_name_lease(user_name)):
                 await _refuse_taken(user_name, uid)
                 renamed = user_name.strip()  # kept as sent, matched in any case
+                _note_another_name(uid, renamed, row["email"])
                 new, cutoff = await _set_active(row, active, user_name=renamed, **changes)
     if not new["active"]:  # a retry too: it finishes what a failed try left
         await _revoke_tokens(new)
     await _wait_out(cutoff)
     return new
+
+
+def _note_another_name(uid: str, user_name: str, email: str) -> None:
+    if normalized(user_name) != normalized(email):
+        # Deactivations follow the email: say so where an operator will look.
+        log.warning(
+            "scim: user %s has a userName other than its email; Loom keys on the email", uid
+        )
 
 
 def _entry(email_entry: dict[str, Any] | None) -> dict[str, Any]:
@@ -327,14 +337,15 @@ async def _set_active(
     found = await _subjects(row["email"])
     known = set(row["subjects"])
     async with subject_leases([*known, *found]):
-        new["subjects"] = sorted(known | set(found))
-        # Going inactive revokes what the email reaches now: an account an
-        # operator has since moved to another email is that person's. Once
-        # inactive, a repeat revokes the accounts found since: one an operator
-        # narrowed (someone else's subject, given back) stays narrowed.
+        # Going inactive revokes, and records, what the email reaches now: an
+        # account an operator has since moved to another email is that
+        # person's. Once inactive, a repeat revokes the accounts found since:
+        # one an operator narrowed (someone else's subject, given back) stays
+        # narrowed, and stays recorded.
         if row["active"]:
-            subjects = sorted(found)
+            new["subjects"] = subjects = sorted(found)
         else:
+            new["subjects"] = sorted(known | set(found))
             subjects = sorted(set(found) - known)
         for subject in subjects:
             await revocation.scim_revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)

@@ -87,7 +87,8 @@ def test_okta_spec_test(scim_server) -> None:
 
 def test_entra_provisioning_and_validator(scim_server) -> None:
     base, _, email, _, _ = scim_server
-    upn = f"Lee.UPN-{uuid.uuid4().hex[:6]}@Tenant.example"  # the UPN, another address
+    # The UPN, another address, in mixed case and not only ASCII.
+    upn = f"Øyvind.UPN-{uuid.uuid4().hex[:6]}@Tenant.example"
     entra = {
         "schemas": [
             "urn:ietf:params:scim:schemas:core:2.0:User",
@@ -109,7 +110,8 @@ def test_entra_provisioning_and_validator(scim_server) -> None:
     assert created.status_code == 201, created.text
     uid = created.json()["id"]
     assert created.json()["userName"] == upn
-    for match in (f'userName eq "{upn}"', f'emails[type eq "work"].value eq "{email}"'):
+    matches = (f'userName eq "{upn}"', f'userName eq "{upn.lower()}"')
+    for match in (*matches, f'emails[type eq "work"].value eq "{email}"'):
         found = _scim(base, "GET", "/Users", params={"filter": match}).json()
         assert [u["id"] for u in found["Resources"]] == [uid], match
     _is_error(_scim(base, "POST", "/Users", json=entra), 409)

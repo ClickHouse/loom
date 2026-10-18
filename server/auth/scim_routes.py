@@ -216,26 +216,24 @@ def _keyed_written(kind: str, attr: str, value: Any, row: dict[str, Any]) -> dic
         if best is None:
             raise _no_change("the email cannot be removed")
         return best
+    filt: str | None = None  # no filter: `emails.value` writes every entry (RFC 7644 §3.5.2.3)
     if "[" not in attr and "]" not in attr:
-        # No filter: `emails.value` writes every entry (RFC 7644 §3.5.2.3), the keyed one too.
-        filt, sub = "", attr.removeprefix("emails")
-        if sub not in (".value", ".type", ".primary"):
-            return None  # `emails.display` and the like
+        sub = attr.removeprefix("emails")
     else:
         opening, closing = attr.find("["), attr.find("]")
         if attr.count("[") != 1 or attr.count("]") != 1 or closing < opening:
             raise ScimError(400, "an emails path is malformed", "invalidPath")
         filt, sub = attr[opening + 1 : closing], attr[closing + 1 :]
     if sub not in ("", ".value", ".type", ".primary"):
-        return None
+        return None  # `emails.display` and the like
     if sub == "":
         if kind != "remove" and not isinstance(value, dict):
             raise ScimError(400, "an emails entry must be an object", "invalidValue")
         written = dict(value) if isinstance(value, dict) else {}
     else:
         written = {sub[1:]: value}
-    selected = _selected(filt, stored)
-    if selected is not False:  # the keyed entry, or a filter we cannot read
+    # Every entry (no filter), the keyed one, or a filter we cannot read.
+    if filt is None or _selected(filt, stored) is not False:
         if kind == "remove":
             raise _no_change("the email cannot be removed")
         entry = {**stored, **written}
@@ -361,7 +359,8 @@ def _resource(request: Request, row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _email(row: dict[str, Any]) -> dict[str, Any]:
-    """The keyed entry as the provider sent it, so a provider comparing it finds no change."""
+    """The keyed entry as stored (address and type lower-cased), with its type
+    and primary flag, so a provider comparing it finds no change."""
     entry: dict[str, Any] = {"value": row["email"], "primary": bool(row["email_primary"])}
     if row["email_type"]:
         entry["type"] = row["email_type"]
@@ -457,11 +456,6 @@ async def create_user(request: Request) -> JSONResponse:
         row = await scim.create(name, email, active=active, email_entry=entry)
     except scim.Exists:
         raise ScimError(409, "a user with this email or userName exists", "uniqueness") from None
-    if email != scim.normalized(name):
-        # Deactivations follow the email: say so once, where an operator will look.
-        log.warning(
-            "scim: user %s has a userName other than its email; Loom keys on the email", row["id"]
-        )
     resource = _resource(request, row)
     return _answer(resource, 201, Location=resource["meta"]["location"])
 
