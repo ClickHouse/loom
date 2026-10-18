@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Pagination } from "@clickhouse/click-ui/Pagination";
+import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
 
 const SIZES = [25, 50, 100];
 
@@ -54,7 +55,7 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
   // The page being typed into the field: Click UI reports every keystroke as a page, so the
   // pager goes there only on Enter or when the field loses focus.
   const [draft, setDraft] = useState<number | null>(null);
-  const phone = usePhone();
+  const phone = useMedia(PHONE_QUERY);
   // Click UI calls `onChange` for a typed number and, just before its own click handler,
   // for an arrow; the arrows go at once and take the reader to the list's top.
   const pending = useRef(page + 1);
@@ -138,18 +139,4 @@ export function ListPager({ label, page, pageSize, shown, total, onPage, onPageS
       </p>
     </nav>
   );
-}
-
-/** True under 640 px, where the pager has no room for the page size. */
-function usePhone(): boolean {
-  const query = "(max-width: 639px)";
-  const [phone, setPhone] = useState(() => typeof matchMedia === "function" && matchMedia(query).matches);
-  useEffect(() => {
-    if (typeof matchMedia !== "function") return;
-    const m = matchMedia(query);
-    const on = () => setPhone(m.matches);
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, []);
-  return phone;
 }

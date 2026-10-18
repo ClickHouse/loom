@@ -16,7 +16,7 @@ import { humanizeError, parseChTime } from "../../lib/format";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
-import { usePhone } from "./usePhone";
+import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
 import { useAbortableEffect } from "../../lib/hooks";
 import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
@@ -38,7 +38,7 @@ type Filter = "all" | "pending" | "active7d";
 export function Users() {
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
-  const phone = usePhone();
+  const phone = useMedia(PHONE_QUERY);
   const [data, setData] = useState<AdminUsersResult | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [includeServiceAccounts, setIncludeServiceAccounts] = useState(false);

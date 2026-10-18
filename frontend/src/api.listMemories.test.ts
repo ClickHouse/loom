@@ -60,4 +60,15 @@ describe("listMemories", () => {
     expect(out.entries).toEqual([]);
     expect(out.unchanged).toBe(true);
   });
+
+  // A tag filter matches in any case; stacked tags must all match (a build that predates
+  // the flags matches exactly, any one, and the page then requires every tag itself).
+  it("asks for tags in any case, every one when there are several", async () => {
+    const bodies = stub({ entries: [], truncated: false, total: 0, today: 0 });
+    await listMemories(id, 50, { tags: ["API"] });
+    await listMemories(id, 50, { tags: ["API", "beta"] });
+    expect(bodies[0]).toMatchObject({ tags: ["API"], tags_any_case: true });
+    expect(bodies[0]).not.toHaveProperty("tags_all");
+    expect(bodies[1]).toMatchObject({ tags: ["API", "beta"], tags_any_case: true, tags_all: true });
+  });
 });

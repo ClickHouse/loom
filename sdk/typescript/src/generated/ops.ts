@@ -4604,6 +4604,7 @@ export interface MemoryListInput {
   as_of?: string | null;
   tags?: string[];
   tags_any_case?: boolean;
+  tags_all?: boolean;
   contains?: string | null;
   fields?: string[];
   known_version?: number | string | null;

@@ -32,6 +32,7 @@ import { Modal } from "../components/ui/Modal";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 
 // The nine fields a run row reads of the twenty a run carries; run.get carries the rest
 // for the opened run.
@@ -60,8 +61,8 @@ export const RUNS_FIELDS = [
  *
  * run.list pages, sorts and searches on the server: the page asks for one page (offset,
  * limit, order_by, q and the filters) and shows the server's total. A server a release
- * behind sends no total and ignores the paging inputs; the pager then stops on a short
- * page.
+ * behind ignores offset, order_by and q and sends no total: the page then reads its newest
+ * 200 runs once and pages, searches and sorts those here (`local`).
  *
  * The run is the primary object; a SESSION is not a separate tab but a
  * grouping of the runs that shared one connection (1 session → N runs).
@@ -243,6 +244,34 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <Panel tone="surface-2" header={<SectionHeading label={title} />}>
       {children}
     </Panel>
+  );
+}
+
+// The most runs a server that does not page answers (its run.list cap).
+const LOCAL_LIMIT = 200;
+
+/** A server that does not page: runs whose goal, id or agent holds `q`, any case. */
+function searchRuns(runs: RunRow[], q: string): RunRow[] {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return runs;
+  return runs.filter((r) => [r.goal, r.run_id, r.agent].some((v) => (v || "").toLowerCase().includes(needle)));
+}
+
+/** A server that does not page: the runs in `order`, ties by start then id, as run.list does. */
+function sortRuns(runs: RunRow[], order: RunOrder): RunRow[] {
+  const [key, dir] = splitOrder(order);
+  const value = (r: RunRow) =>
+    key === "duration"
+      ? (r.duration_ms ?? 0)
+      : key === "relied_on"
+        ? (r.memories_used ?? []).length
+        : Date.parse(r.started_at);
+  const sign = dir === "asc" ? 1 : -1;
+  return [...runs].sort(
+    (a, b) =>
+      sign * (value(a) - value(b)) ||
+      sign * (Date.parse(a.started_at) - Date.parse(b.started_at)) ||
+      a.run_id.localeCompare(b.run_id),
   );
 }
 
@@ -469,19 +498,6 @@ function countText(page: number, pageSize: number, shown: number, total: number 
   return total !== null ? `${range} of ${total.toLocaleString()}` : range;
 }
 
-function useMedia(query: string): boolean {
-  const [on, setOn] = useState(() => typeof window.matchMedia === "function" && window.matchMedia(query).matches);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia(query);
-    const sync = () => setOn(mq.matches);
-    sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, [query]);
-  return on;
-}
-
 /** One page of runs, as the server answered it: `page` is the page it is, so the count
  *  keeps saying what is on screen while the next one loads. */
 interface Shown {
@@ -494,7 +510,7 @@ export function Runs() {
   const identity = useIdentity();
   // Below Tailwind's sm breakpoint the toolbar holds the search alone; below Click UI's
   // table breakpoint the runs are list rows.
-  const phone = useMedia("(max-width: 639px)");
+  const phone = useMedia(PHONE_QUERY);
   const narrow = useMedia("(max-width: 768px)");
   const [shown, setShown] = useState<Shown | null>(null);
   const [loading, setLoading] = useState(true);
@@ -511,6 +527,8 @@ export function Runs() {
   const [query, setQuery] = useState("");
   const [q, setQ] = useState("");
   const [order, setOrder] = useState<RunOrder>("started_desc");
+  // The server answered without a total: it does not page, search or sort (a release behind).
+  const [local, setLocal] = useState(false);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = usePageSize("runs");
   const openRecallForRun = useStore((s) => s.openRecallForRun);
@@ -569,19 +587,26 @@ export function Runs() {
     // newest runs all hollow while hundreds of filled runs sit further back.
     listRunsPage(
       { org: identity.org, namespace: identity.namespace },
-      {
-        status: filter,
-        agent,
-        q,
-        orderBy: order,
-        limit: pageSize,
-        offset: page * pageSize,
-        fields: RUNS_FIELDS,
-        memoryActivity: hideConn ? "with" : "",
-      },
+      local
+        ? { status: filter, agent, limit: LOCAL_LIMIT, fields: RUNS_FIELDS, memoryActivity: hideConn ? "with" : "" }
+        : {
+            status: filter,
+            agent,
+            q,
+            orderBy: order,
+            limit: pageSize,
+            offset: page * pageSize,
+            fields: RUNS_FIELDS,
+            memoryActivity: hideConn ? "with" : "",
+          },
     )
       .then((p) => {
         if (!live) return;
+        // No total: a server that does not page. Read its newest runs once and page here.
+        if (p.total === null && !local) {
+          setLocal(true);
+          return;
+        }
         setShown({ runs: p.runs, total: p.total, page });
         const seen = p.runs.map((r) => r.agent).filter(Boolean);
         setAgents((prev) => (seen.every((a) => prev.includes(a)) ? prev : [...new Set([...prev, ...seen])].sort()));
@@ -595,7 +620,21 @@ export function Runs() {
     return () => {
       live = false;
     };
-  }, [scope, identity.org, identity.namespace, filter, agent, hideConn, q, order, page, pageSize, retry]);
+    // With `local`, the page, the search and the order are applied here: they read nothing.
+  }, [
+    scope,
+    identity.org,
+    identity.namespace,
+    filter,
+    agent,
+    hideConn,
+    local ? "" : q,
+    local ? "" : order,
+    local ? 0 : page,
+    local ? 0 : pageSize,
+    local,
+    retry,
+  ]);
 
   // Opening run Y after X drops X's run.get answer instead of showing it in Y's drawer.
   useEffect(() => {
@@ -618,11 +657,21 @@ export function Runs() {
     };
   }, [open, identity.org, identity.namespace]);
 
-  const rows = shown?.runs ?? [];
+  // Against a server that does not page: its newest runs, searched, sorted and paged here.
+  const localRows = local && shown ? sortRuns(searchRuns(shown.runs, q), order) : null;
+  const rows = localRows ? localRows.slice(page * pageSize, (page + 1) * pageSize) : (shown?.runs ?? []);
   const busy = loading && shown !== null;
   const searching = q !== "" || filter !== "" || agent !== "";
   const count =
-    shown && !error ? countText(shown.page, pageSize, rows.length, shown.total, q !== "") || undefined : undefined;
+    shown && !error
+      ? countText(
+          localRows ? page : shown.page,
+          pageSize,
+          rows.length,
+          localRows ? localRows.length : shown.total,
+          q !== "",
+        ) || undefined
+      : undefined;
   const groups = groupBy ? bySession(rows) : [];
   const clearFilters = () => {
     setQuery("");
@@ -801,7 +850,7 @@ export function Runs() {
           page={page}
           pageSize={pageSize}
           shown={rows.length}
-          total={shown.total ?? undefined}
+          total={localRows ? localRows.length : (shown.total ?? undefined)}
           onPage={setPage}
           onPageSize={refilter(setPageSize)}
           topId="runs-list"

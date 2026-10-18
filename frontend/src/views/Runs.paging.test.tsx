@@ -103,17 +103,29 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(bodyRows()).toHaveLength(25);
   });
 
-  it("without a total, stops on a short page and counts only the range", async () => {
-    server(60, { total: false });
+  // Review finding: a server a release behind ignores offset, order_by and q and answers its
+  // newest runs (at most 200) with no total. Then the page reads those once and pages,
+  // searches and sorts them here, instead of showing page 1 again on every Next.
+  it("against a server that does not page, pages, searches and sorts its newest runs here", async () => {
+    listRunsPage.mockImplementation(async (_id, opts = {}) => ({
+      runs: Array.from({ length: Math.min(opts.limit ?? 50, 200) }, (_, i) =>
+        run(i + 1, { duration_ms: i * 10 }),
+      ).slice(0, 120),
+      total: null,
+    }));
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
+    await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
+    expect(lastOpts().offset ?? 0).toBe(0);
+    expect(toolbar()).toHaveTextContent("1–50 of 120");
     const pager = screen.getByRole("navigation", { name: "Runs pages" });
-    expect(toolbar()).toHaveTextContent("1–50");
-    expect(toolbar()).not.toHaveTextContent(" of ");
     fireEvent.click(within(pager).getByRole("button", { name: "Next page" }));
-    await screen.findByRole("button", { name: "goal 51" });
-    expect(bodyRows()).toHaveLength(10);
-    expect(within(pager).getByRole("button", { name: "Next page" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "goal 51" })).toBeInTheDocument();
+    expect(lastOpts().offset ?? 0).toBe(0);
+    fireEvent.change(screen.getByLabelText("Search runs"), { target: { value: "goal 11" } });
+    await screen.findByRole("button", { name: "goal 110" });
+    expect(bodyRows().length).toBeLessThan(15);
+    expect(screen.queryByRole("button", { name: "goal 2" })).toBeNull();
   });
 
   it("sends the search to the server after 250 ms and starts again from page 1", async () => {

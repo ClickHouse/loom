@@ -608,14 +608,17 @@ CONTAINS_PREDICATE = (
 )
 
 
-def tag_filter(tags: Sequence[str], *, any_case: bool = False) -> tuple[str, list[str]]:
-    """The hard OR tag predicate and its values: exact, or with `any_case` the row's tags
-    and the asked ones compared lowercased."""
+def tag_filter(
+    tags: Sequence[str], *, any_case: bool = False, every: bool = False
+) -> tuple[str, list[str]]:
+    """The hard tag predicate and its values: any one of `tags` (OR), or with `every` all
+    of them; exact, or with `any_case` the row's tags and the asked ones compared
+    lowercased."""
+    fn = "hasAll" if every else "hasAny"
     if any_case:
-        return "hasAny(arrayMap(t -> lower(t), tags), {tags:Array(String)})", [
-            str(t).lower() for t in tags
-        ]
-    return "hasAny(tags, {tags:Array(String)})", [str(t) for t in tags]
+        values = [str(t).lower() for t in tags]
+        return f"{fn}(arrayMap(t -> lower(t), tags), {{tags:Array(String)}})", values
+    return f"{fn}(tags, {{tags:Array(String)}})", [str(t) for t in tags]
 
 
 async def list_by_namespace(
@@ -628,6 +631,7 @@ async def list_by_namespace(
     source_trace: str | None = None,
     tags: Sequence[str] | None = None,
     tags_any_case: bool = False,
+    tags_all: bool = False,
     contains: str | None = None,
     order_by: str = "created_at_desc",
     limit: int = 200,
@@ -710,7 +714,7 @@ async def list_by_namespace(
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
     if tags:
-        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case)
+        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case, every=tags_all)
         where.append(clause)
     if contains:
         where.append(CONTAINS_PREDICATE)
@@ -837,6 +841,7 @@ async def count_by_namespace(
     source_trace: str | None = None,
     tags: Sequence[str] | None = None,
     tags_any_case: bool = False,
+    tags_all: bool = False,
     contains: str | None = None,
     include_tombstoned: bool = False,
     as_of: datetime | None = None,
@@ -890,7 +895,7 @@ async def count_by_namespace(
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
     if tags:
-        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case)
+        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case, every=tags_all)
         where.append(clause)
     if contains:
         where.append(CONTAINS_PREDICATE)

@@ -1042,6 +1042,7 @@ List memory keys under this identity, optionally filtered.
 | `as_of` | `datetime \| None` | `None` | see MemoryGetInput.as_of |
 | `tags` | `list[str]` | *(computed)* | Hard OR-filter on the row's tags — the same `hasAny(tags, …)` predicate memory.search applies — so a tagged subset (`kind:false_positive`, `subsystem:Storages`) is one list call, not a recency page followed by a get per key. |
 | `tags_any_case` | `bool` | `False` | Match `tags` in any case (a browse page's `tag:api` finds rows tagged `API`); off, exactly, as agents rely on. |
+| `tags_all` | `bool` | `False` | Require every one of `tags` (a browse page's stacked `tag:a tag:b`); off, any one, as agents rely on. |
 | `contains` | `str \| None` | `None` | Only rows whose value or key holds this text, any case — the keyword filter of a browse page's search box, which must find every row that names a word (a ranked search returns its top k and misses the rest). |
 | `fields` | `list[str]` | *(computed)* | Whitelist of entry field names; every entry carries only those plus `memory_key`. |
 | `known_version` | `int \| str \| None` | `None` | The `namespace_version` a previous answer carried. |

@@ -564,6 +564,10 @@ class MemoryListInput(_Identity):
     # exactly, as agents rely on. Hidden from the MCP listing. A build that predates it
     # ignores it and matches exactly.
     tags_any_case: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
+    # Require every one of `tags` (a browse page's stacked `tag:a tag:b`); off, any one, as
+    # agents rely on. Hidden from the MCP listing. A build that predates it ignores it and
+    # matches any one.
+    tags_all: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Only rows whose value or key holds this text, any case — the keyword
     # filter of a browse page's search box, which must find every row that
     # names a word (a ranked search returns its top k and misses the rest).

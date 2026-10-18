@@ -255,12 +255,6 @@ export function Conversations() {
       : `${hits?.length} match${hits?.length === 1 ? "" : "es"} in ${groupedHits.length} thread${groupedHits.length === 1 ? "" : "s"}`;
   const searchStatus = busy ? "Searching…" : groupedHits?.length === 0 ? "No matches" : matchCount;
 
-  // Distinct agents for the filter; the displayed thread list is the
-  // namespace-wide set narrowed to the selected agent.
-  // The agents seen on any page so far; the filter itself is the server's.
-  const agentOptions = seenAgents;
-  const visibleThreads = threads;
-
   // The open thread is the page's URL (`?thread=`): a reload or Back reopens it.
   const openThreadDialog = useCallback(
     (
@@ -315,22 +309,22 @@ export function Conversations() {
   const countText =
     hits !== null
       ? matchCount
-      : threadsError || !visibleThreads || visibleThreads.length === 0
+      : threadsError || !threads || threads.length === 0
         ? ""
         : threadsTotal !== undefined
-          ? `${(pageStart + 1).toLocaleString()}–${(pageStart + visibleThreads.length).toLocaleString()} of ${threadsTotal.toLocaleString()}`
-          : `${visibleThreads.length.toLocaleString()} shown`;
+          ? `${(pageStart + 1).toLocaleString()}–${(pageStart + threads.length).toLocaleString()} of ${threadsTotal.toLocaleString()}`
+          : `${threads.length.toLocaleString()} shown`;
   const loadingThreads = threads === null;
   const lastCount = useRef("");
   if (countText && !busy && !loadingThreads) lastCount.current = countText;
   const countShown = busy || (loadingThreads && hits === null) ? lastCount.current : countText;
 
   // One tab stop over each list's rows: arrows and j/k move, Enter opens.
-  const threadsNav = useRowNav({ enabled: openThread === null && !!visibleThreads?.length });
+  const threadsNav = useRowNav({ enabled: openThread === null && !!threads?.length });
   const hitsNav = useRowNav({ enabled: openThread === null && !!groupedHits?.length });
 
   const agentSelect = (className: string) =>
-    agentOptions.length > 1 && (
+    seenAgents.length > 1 && (
       <Select
         value={agentFilter}
         onSelect={(value) => {
@@ -342,7 +336,7 @@ export function Conversations() {
         className={className}
       >
         <Select.Item value="*">Every agent</Select.Item>
-        {agentOptions.map((a) => (
+        {seenAgents.map((a) => (
           <Select.Item key={a} value={a}>
             {displayAgent(a)}
           </Select.Item>
@@ -351,14 +345,14 @@ export function Conversations() {
     );
 
   const renderRecentThreads = (label = "Recent threads") => {
-    if (!visibleThreads || visibleThreads.length === 0) return null;
+    if (!threads || threads.length === 0) return null;
     return (
       <div className="space-y-2">
         <div id="threads-list" tabIndex={-1} className="outline-none">
           <SectionHeading level={2} label={label} caption="active in the last year" />
         </div>
         <div ref={threadsNav} className="space-y-2">
-          {visibleThreads.map((t) => {
+          {threads.map((t) => {
             const title = listedTitle(t);
             return (
               <ListRow key={t.thread_id} data-thread-row="">
@@ -407,7 +401,7 @@ export function Conversations() {
             label="Thread pages"
             page={threadPage}
             pageSize={THREADS_PAGE}
-            shown={visibleThreads.length}
+            shown={threads.length}
             total={threadsTotal}
             onPage={setThreadPage}
             topId="threads-list"
@@ -480,7 +474,7 @@ export function Conversations() {
         {agentSelect("hidden w-48 shrink-0 sm:block")}
       </ListToolbar>
       {/* A phone's bar has room for the search and the count only; the agent filter sits under it. */}
-      {agentOptions.length > 1 && <div className="-mt-1 mb-3 sm:hidden">{agentSelect("w-48")}</div>}
+      {seenAgents.length > 1 && <div className="-mt-1 mb-3 sm:hidden">{agentSelect("w-48")}</div>}
 
       {/* Always mounted, so a screen reader announces each change of its text. */}
       <p role="status" className="sr-only">

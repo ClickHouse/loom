@@ -229,4 +229,14 @@ describe("Memories: filtering by tags", () => {
     answer({ entries: [entry("storage_only", ["storage"])], total: 1, today: 1, truncated: false } as never);
     expect(await screen.findByText("storage_only")).toBeInTheDocument();
   });
+
+  // Review finding: the server matches an agent exactly, so a typed agent in another case
+  // found nothing; it is sent as the list has seen it written.
+  it("sends a typed agent the way the list has seen it written", async () => {
+    await openMemories();
+    await userEvent.type(screen.getByLabelText("Search memories"), "agent:Claude-Desktop");
+    await waitFor(() =>
+      expect(vi.mocked(listMemories).mock.calls.at(-1)?.[2]).toMatchObject({ agent: "claude-desktop" }),
+    );
+  });
 });

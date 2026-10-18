@@ -22,7 +22,7 @@ import { invalidateShared, sharedBudgetStatus } from "../../lib/sharedReads";
 import { Skeleton } from "../../components/Skeleton";
 import { ListState } from "../../components/ui/ListState";
 import { ListToolbar } from "../../components/ui/ListToolbar";
-import { usePhone } from "./usePhone";
+import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
@@ -70,7 +70,7 @@ export function Spending() {
   const [error, setError] = useState<unknown>(null);
   // Bumped by Retry after a failed read.
   const [reload, setReload] = useState(0);
-  const phone = usePhone();
+  const phone = useMedia(PHONE_QUERY);
 
   // Org-wide breakdown is meaningful only for ORG_ADMIN+ (the operator); for
   // anyone below, resolve_org_scope narrows it to their own namespaces, so we

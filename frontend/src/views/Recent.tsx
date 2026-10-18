@@ -46,9 +46,6 @@ import { shortcutOff } from "../lib/shortcuts";
 import { useRowNav } from "../lib/useRowNav";
 import { useRowSelection } from "../lib/useRowSelection";
 
-// Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
-// The browse feed pages up to this; past it, search covers the whole namespace.
-// Page size for the paginated browse feed (server caps memory.list at 1000/call).
 // The twelve fields the page and its cards read, and the preview length a card shows (140
 // characters; the base64 envelope check needs 64). Unprojected, a page of a hundred is
 // 166 kB of JSON — 2 KB previews, entities, timestamps nothing reads; twelve fields at
@@ -243,8 +240,8 @@ function MemoryList() {
   //   `tag:work coffee`       — semantic search for "coffee" within tag work
   //   `agent:foo bar`         — same shape for agent filter
   //
-  // tag/agent filters apply client-side over the semantic-search result
-  // set OR the raw entries list, and intersect with the chip selections.
+  // A tag or agent filter narrows the read on the server (every tag, in any case); the
+  // list applies the same filters to a search's hits, which the server ranks unfiltered.
   const { rawQuery, queryTags, queryAgent } = useMemo(() => {
     const parsed = parseSearchQuery(query);
     return { rawQuery: parsed.text, queryTags: parsed.tags, queryAgent: parsed.agent };
@@ -267,8 +264,7 @@ function MemoryList() {
   }, [memoryTagFilter, setMemoryTagFilter]);
 
   useEffect(() => {
-    // Only the natural-language portion goes to the server; structured
-    // filters are applied locally.
+    // Only the natural-language portion is the search; `tag:` and `agent:` filter the list.
     // One character is not a query — the box waits for two, and a search a newer
     // keystroke made stale is aborted rather than raced (two answers would compete for
     // the same state).
@@ -582,10 +578,21 @@ function MemoryList() {
     return () => clearTimeout(t);
   }, [typedKey]);
   const filterPending = typedKey !== typedFilter;
-  const listFilter = useMemo(() => {
-    const typed = JSON.parse(typedFilter) as { tags: string[]; agent: string };
-    return { tags: typed.tags, agent: typed.agent || agentFilter || "", status: showDeleted ? "live" : status };
-  }, [typedFilter, agentFilter, status, showDeleted]);
+  // The server matches an agent exactly: a typed one is sent as the list has seen it written.
+  const typed = JSON.parse(typedFilter) as { tags: string[]; agent: string };
+  const typedAgent = typed.agent
+    ? (seenAgents.find((a) => a.toLowerCase() === typed.agent.toLowerCase()) ?? typed.agent)
+    : "";
+  // Keyed by its text, so a new render with the same filter reads nothing again.
+  const filterJson = JSON.stringify({
+    tags: typed.tags,
+    agent: typedAgent || agentFilter || "",
+    status: showDeleted ? "live" : status,
+  });
+  const listFilter = useMemo(
+    () => JSON.parse(filterJson) as { tags: string[]; agent: string; status: string },
+    [filterJson],
+  );
   const listFiltered = listFilter.tags.length > 0 || listFilter.agent !== "" || listFilter.status !== "live";
 
   // A filtered list is one read of its newest 1,000 matches, paged here.

@@ -62,6 +62,7 @@ import { TaskBoard } from "./tasks/TaskBoard";
 import { TaskPanel } from "./tasks/TaskPanel";
 import type { ReasonAction } from "../flows/TaskActionDialog";
 import { shortcutOff } from "../lib/shortcuts";
+import { useMedia } from "../lib/useMedia";
 
 // Dialogs load on the click that opens them.
 const TaskEditDialog = lazy(() => import("../flows/TaskEditDialog").then((m) => ({ default: m.TaskEditDialog })));
@@ -117,24 +118,6 @@ function readQuery(key: string): string | null {
 const SHEET_QUERY = "(max-width: 1279px)";
 // Below md the inbox rail is a Select and the toolbar's filters sit on a row under it.
 const PHONE_QUERY = "(max-width: 767px)";
-
-function matches(query: string): boolean {
-  return typeof window.matchMedia === "function" && window.matchMedia(query).matches;
-}
-
-/** True while the viewport matches the media query. */
-function useMedia(query: string): boolean {
-  const [on, setOn] = useState(() => matches(query));
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia(query);
-    const sync = () => setOn(mq.matches);
-    sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, [query]);
-  return on;
-}
 
 // A row's menu, in this order: the move forward, the other ways out, then the hand-offs.
 // Accept is the triage row's inline button; Edit brief needs the full task (the panel).

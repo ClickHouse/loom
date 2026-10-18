@@ -96,3 +96,34 @@ async def test_the_store_compares_lowercased_tags_only_when_asked() -> None:
     any_sql, any_case = ch.calls[-1]
     assert "hasAny(arrayMap(t -> lower(t), tags), {tags:Array(String)})" in any_sql
     assert any_case["tags"] == ["api"]
+
+
+@pytest.mark.asyncio
+async def test_the_store_requires_every_tag_when_asked() -> None:
+    """`tags_all`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
+    of them are found past the newest rows that hold any one."""
+    identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
+    ch = StubCH()
+    await memory_repo.count_by_namespace(
+        identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tags_any_case=True, tags_all=True, ch=ch
+    )
+    sql, params = ch.calls[-1]
+    assert "hasAll(arrayMap(t -> lower(t), tags), {tags:Array(String)})" in sql
+    assert params["tags"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
+    calls: dict[str, list[dict[str, Any]]],
+) -> None:
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app.query import _handle_memory_list
+
+    for all_tags in (False, True):
+        await _handle_memory_list(
+            MemoryListInput(
+                org="acme", namespace="team", agent="*", tags=["a", "b"], tags_all=all_tags
+            )
+        )
+    assert [c["tags_all"] for c in calls["list"]] == [False, True]
+    assert [c["tags_all"] for c in calls["count"]] == [False, False, True, True]

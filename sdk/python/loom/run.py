@@ -334,8 +334,9 @@ class RunClient:
         order_by: str = "",
         q: str = "",
     ) -> dict[str, Any]:
-        """Newest runs first. `memory_activity="with"` keeps only runs that
-        relied on or wrote a memory, `"without"` only the hollow ones;
+        """Runs in `order_by` order (newest first by default).
+        `memory_activity="with"` keeps only runs that relied on or wrote a memory,
+        `"without"` only the hollow ones;
         `grade="ungraded"` the closed runs still owed a verdict (`"graded"`,
         `"pass"`, `"fail"` also work). Filters apply before `limit`.
 
