@@ -1701,3 +1701,44 @@ async def test_a_pin_whose_vector_landed_first_keeps_its_vector_served(
     assert head["pinned"] and head["status"] == "active" and head["version"] == drawn
     (served,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
     assert served["status"] == "active", "the pin's vector, not the retirement's copy"
+
+
+async def test_the_status_mirror_repair_never_serves_a_row_retired_during_it(ch, wired) -> None:
+    """A retirement of the row, holding its key's lock, lands while the repair mirrors
+    the head it read: the row stays hidden."""
+    import server.memory.store as M
+    from server.memory.app import projection_failures
+    from server.memory.store.embeddings import live_embedding_rows_for_key
+    from server.memory.store.key_write_lock import key_write_locks
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 210)
+    rows = await _rows(ch, org)
+    loser = rows["office_city"]
+    ident = {"agent": "bot", "user_id": USER, "session_id": "s1", "memory_key": "office_city"}
+    victim = {"memory_id": loser["id"], "namespace": NS, **ident}
+    await projection_failures.queue_status_mirror([{**victim, "org": org}])
+    real = M.mirror_status_to_embeddings
+    retiring: list[asyncio.Task[Any]] = []
+
+    async def retire() -> None:
+        async with key_write_locks.hold(org, NS, *ident.values()):
+            await M.supersede_duplicates(
+                org, [victim | {"superseded_by": rows["office_location"]["id"]}], ch=ch
+            )
+
+    async def mirror(heads: Any, **kw: Any) -> Any:
+        retiring.append(asyncio.create_task(retire()))
+        await asyncio.sleep(1.0)  # the retirement lands now, unless it waits for the lock
+        return await real(heads, **kw)
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(projection_failures, "STATUS_MIRROR_GRACE_S", 0)
+        m.setattr(M, "mirror_status_to_embeddings", mirror)
+        await projection_failures.retry_projection_failures(
+            org=org, projection=projection_failures.STATUS_MIRROR
+        )
+    await retiring[0]
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    (served,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
+    assert served["status"] == "superseded", "a retired row is never served again"

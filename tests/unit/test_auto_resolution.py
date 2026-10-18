@@ -908,19 +908,21 @@ async def test_unconfirmed_rows_are_queued_one_failure_per_namespace(monkeypatch
     ]
 
 
-async def test_the_reconcile_mirrors_each_rows_head(monkeypatch) -> None:
-    from types import SimpleNamespace
+def _stored(dump: dict[str, Any]) -> Any:
+    """A memory row as the reconcile reads it: its identity and its dump."""
+    ident = {"namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
+    return SimpleNamespace(model_dump=lambda: dump, memory_key=dump["memory_id"], **ident)
 
+
+async def test_the_reconcile_mirrors_each_rows_head(monkeypatch) -> None:
     import server.memory.store as memory_repo
     from server.memory.app import projection_failures
+    from tests.unit.claims_fake import fake_key_locks
 
+    fake_key_locks(monkeypatch)  # each head is read again and mirrored under its key's lock
     heads = {
-        "kept": SimpleNamespace(
-            model_dump=lambda: {"memory_id": "kept", "status": "active", "version": 7}
-        ),
-        "deleted": SimpleNamespace(
-            model_dump=lambda: {"memory_id": "deleted", "tombstoned_at": "2026-10-14", "version": 9}
-        ),
+        "kept": _stored({"memory_id": "kept", "status": "active", "version": 7}),
+        "deleted": _stored({"memory_id": "deleted", "tombstoned_at": "2026-10-14", "version": 9}),
     }
     mirrored: list = []
 
@@ -963,9 +965,12 @@ async def test_a_failed_reconcile_mirror_leaves_the_failure_open(monkeypatch) ->
 
     import server.memory.store as memory_repo
     from server.memory.app import projection_failures
+    from tests.unit.claims_fake import fake_key_locks
+
+    fake_key_locks(monkeypatch)
 
     async def get_by_id(mid, **kw):
-        return SimpleNamespace(model_dump=lambda: {"memory_id": mid})
+        return _stored({"memory_id": mid})
 
     async def mirror(rows, *, ch=None, strict=False):
         raise TimeoutError("embeddings insert")

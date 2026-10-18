@@ -502,9 +502,10 @@ async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
             raise ValueError("no memory_ids")
     except (KeyError, TypeError, ValueError):
         return "malformed_payload"
-    heads = []
-    for mid in ids:
-        row = await memory_repo.get_by_id(
+    from server.memory.store.key_write_lock import key_write_locks
+
+    async def head_of(mid: str) -> Any:
+        return await memory_repo.get_by_id(
             mid,
             org=failure.org,
             ch=ch,
@@ -513,15 +514,25 @@ async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
             strong=True,
             include_tombstoned=True,
         )
-        if row is not None:
+
+    for mid in ids:
+        row = await head_of(mid)
+        if row is None:
+            continue
+        ident = (row.namespace, row.agent, row.user_id, row.session_id, row.memory_key)
+        # Read again and mirrored under the key's lock, which a retirement holds: one
+        # landing meanwhile is never served again.
+        async with key_write_locks.hold(failure.org, *ident):
+            row = await head_of(mid)
+            if row is None:
+                continue
             head = row.model_dump()
             # As reconcile-status: a hiding status at the head's version; a served one
             # at read + 1, above a judged copy that sits over the head's version.
             if head.get("status") in SERVED_STATUSES and head.get("tombstoned_at") is None:
                 head.pop("version", None)
-            heads.append(head)
-    # Strict: a mirror that failed must leave the failure open for the next pass.
-    await memory_repo.mirror_status_to_embeddings(heads, ch=ch, strict=True)
+            # Strict: a mirror that failed must leave the failure open for the next pass.
+            await memory_repo.mirror_status_to_embeddings([head], ch=ch, strict=True)
     return ""
 
 
