@@ -56,12 +56,15 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
   older bundle.
 - Before each delete it reads the row under its own identity again, and goes on only if
   that row is under its `--agent` and was written by its own token, since the agent name
-  alone is the caller's choice. The delete passes `memory.delete`'s `if_version`, so the
-  server deletes exactly that version under that identity: a row rewritten in between is
-  kept, and the delete never falls back to another agent's row.
+  alone is the caller's choice. The delete passes `memory.delete`'s `if_version`, which
+  the server checks against a strong read under that exact identity just before the
+  tombstone: a row rewritten since prune's read is kept, and the delete does not fall
+  back to another agent's row. A write landing between that read and the tombstone is
+  the same window `memory.set`'s `if_match_sha256` has.
 - The target server must have `memory.delete`'s `if_version`. An older one ignores it
-  (and names it in `ignored_args`); the import then reports the delete as failed and exits
-  1. Upgrade the target before scheduling `--prune`.
+  and names it in `ignored_args`; prune stops at the first such answer, reports it as
+  failed and the import exits 1, so at most one row per run is deleted without the check.
+  Upgrade the target before scheduling `--prune`.
 - The import runs only when the export exited 0 (`sh -e`), and each run writes its bundle
   to a fresh `emptyDir`, so a bundle left by an earlier run is never imported.
 - `--dry-run` lists what would be written and deleted, after the same checks, and writes

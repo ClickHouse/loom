@@ -362,12 +362,12 @@ class MemorySetOutput(BaseModel):
 
 class MemoryDeleteInput(_Identity):
     # The key to delete: tried under this identity, then the same user's row under
-    # any agent.
+    # any agent (only this identity with `if_version`).
     memory_key: str
-    # Version precondition: the `version` memory.get returned. The delete then
-    # looks only under this identity, and keeps a row replaced since that read
-    # (`tombstoned: false`, `reason: "version_changed"`). None = no check.
-    if_version: int | None = None
+    # Delete only if the row under this exact identity still has this version
+    # (from memory.get); otherwise nothing is deleted and `reason` is
+    # "version_changed". None = no check. Hidden from MCP: import-okf --prune sends it.
+    if_version: int | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
 
 
 class MemoryUnpinInput(_Identity):

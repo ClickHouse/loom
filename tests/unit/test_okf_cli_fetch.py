@@ -101,6 +101,7 @@ async def test_export_keeps_superseded_rows_and_pages_edges() -> None:
         namespace="ns",
         title=None,
         include_high=False,
+        complete=True,
     )
     newer = okf.parse_concept("semantic/new.md", files["semantic/new.md"])
     assert newer.relates_to == [{"path": "semantic/old.md", "kind": "supersedes"}]

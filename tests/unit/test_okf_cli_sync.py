@@ -612,14 +612,25 @@ def test_prune_keeps_a_row_replaced_between_its_read_and_the_delete(
     assert "0 pruned (1 kept:" in capsys.readouterr().out
 
 
-def test_prune_against_a_server_without_the_version_check_fails_the_run(
+def test_prune_stops_at_the_first_delete_a_server_ran_without_the_version_check(
     tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    entries = [_entry("a"), _entry("gone-1"), _entry("gone-2")]
+    assert _run(_bundle(tmp_path / "1" / "b", entries)) == 0
     loom.older_server = True
     capsys.readouterr()
     assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
-    assert "deleted without the version check" in capsys.readouterr().err
+    out = capsys.readouterr()
+    assert "ignored if_version and deleted" in out.err
+    assert "1 pruned (1 failed)" in out.out
+    assert ("okf-sync", "-", "gone-2") in loom.rows
+
+
+def test_prune_never_deletes_without_a_version_to_check(tmp_path: Path, loom: _FakeLoom) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    del loom.rows[("okf-sync", "-", "gone")]["version"]
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 1
+    assert "memory.delete" not in loom.writes()
 
 
 def test_only_an_export_that_read_every_row_is_marked_complete(

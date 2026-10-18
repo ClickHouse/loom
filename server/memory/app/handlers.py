@@ -628,7 +628,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     if existing is None:
         # Idempotent: deleting a non-existent row is a no-op — and says so.
         return MemoryDeleteOutput(tombstoned=False, found=False, version=next_version())
-    if input.if_version is not None and int(existing.version or 0) != input.if_version:
+    if input.if_version is not None and existing.version != input.if_version:
         return MemoryDeleteOutput(
             tombstoned=False, version=next_version(), reason="version_changed"
         )

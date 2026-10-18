@@ -335,7 +335,7 @@ def _plan_export(
     title: str | None,
     include_high: bool,
     server_url: str = "",
-    complete: bool = False,
+    complete: bool,
 ) -> tuple[dict[str, str], list[str], int]:
     """The bundle's files, its orphan concepts, and how many `high` rows stayed
     home. Digests link to the concepts they compressed."""
@@ -916,23 +916,28 @@ async def _prune(
                 print(f"  would delete {key}{where}")
                 n["pruned"] += 1
                 continue
+            if got.get("version") is None:
+                raise RuntimeError("memory.get answered without a version")
             # The server deletes only the version read above, under this exact identity.
             res = await client.post("memory.delete", {**ident, "if_version": got["version"]})
         except RuntimeError as e:
             n["prune_failed"] += 1
             print(f"  ✗ prune {key}: {e}", file=sys.stderr)
             continue
+        if res.get("reason") == "version_changed":
+            n["prune_kept"] += 1
+            continue
+        n["pruned"] += int(bool(res.get("tombstoned")))
         if "if_version" in res.get("ignored_args", []):
-            n["prune_failed"] += 1
+            # An older server deleted without the check; stop before it does that again.
+            done = "deleted" if res.get("tombstoned") else "found nothing to delete"
             print(
-                f"  ✗ prune {key}: deleted without the version check, the server is older "
-                "than this CLI; upgrade it before pruning",
+                f"  ✗ prune {key}: the server ignored if_version and {done}; it is older "
+                "than this CLI, so prune stops here. Upgrade it before pruning.",
                 file=sys.stderr,
             )
-        elif res.get("reason") == "version_changed":
-            n["prune_kept"] += 1
-        else:
-            n["pruned"] += int(bool(res.get("tombstoned")))
+            n["prune_failed"] += 1
+            break
     return n
 
 
