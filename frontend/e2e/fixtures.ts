@@ -1004,7 +1004,7 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
             body: JSON.stringify({ detail: "Not Found" }),
           });
         }
-        return json({ sources: trackerSources });
+        return json({ sources: trackerSources, self_service: true });
       case "/v1/namespace.join": {
         calls.join.push({ op: "join", ...body });
         const code = codeRow(ns);
@@ -1156,9 +1156,16 @@ function runRowsFixture(n: number, namespace: string): Record<string, unknown>[]
     duration_ms: 1200 + i * 37,
     final_response: "done",
     confidence: 0.8,
+    grade: "",
+    grade_source: "",
+    grade_reason: "",
+    grade_ref: "",
+    graded_at: "",
     memories_used: [`alerts/2026-09-19/${String(i).padStart(4, "0")}`],
     memories_written: i % 2 ? [`alerts/2026-09-20/${String(i).padStart(4, "0")}`] : [],
     metadata: { lane: i % 5 },
+    budget_usd: 0,
+    budget_seconds: 0,
     namespace,
     org: "acme",
   }));

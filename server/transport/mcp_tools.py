@@ -524,8 +524,8 @@ def _memory_section_lines(
     order memory.ask would read them, whole excerpts. On the deep-memory bench
     an external reader scored 83.3% over this block against 70.8% over key +
     200-char lines, level with memory.ask at a fifth of the latency. The
-    reading rule rides once, ahead of the block. Without a block (an older
-    server, an error) the agent reads the plain hit lines.
+    reading rule rides once, ahead of the block. Without a block (an error)
+    the agent reads the plain hit lines.
     """
     block = str(memory.get("reader_block") or "").strip()
     out: list[str] = []

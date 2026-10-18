@@ -224,7 +224,7 @@ class ProviderSettings(ModelSettings):
         raw = self.rerank_endpoints_json.strip()
         if not raw:
             return {}
-        return dict(json_map_items(raw, "rerank_endpoints_json", non_empty=False))
+        return dict(json_map_items(raw, "rerank_endpoints_json"))
 
     @model_validator(mode="after")
     def _check_gateway_is_in_front(self) -> ProviderSettings:

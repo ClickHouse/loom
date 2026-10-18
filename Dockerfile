@@ -201,7 +201,7 @@ COPY --from=frontend-builder /frontend/dist ./frontend/dist
 # Non-root runtime. uid/gid 999: the compose files mount /run/loom (the
 # per-server runtime files) as a tmpfs owned by it.
 RUN groupadd -r -g 999 loom && useradd -r -u 999 -g loom -d /app loom \
-    && mkdir -p /app/var/code_repos /app/var/blobs /app/var/gomodcache /app/var/gocache /app/var/cron/locks \
+    && mkdir -p /app/var/code_repos /app/var/gomodcache /app/var/gocache /app/var/cron/locks \
     && chown -R loom:loom /app \
     && install -d -o loom -g loom -m 0700 /run/loom
 USER loom

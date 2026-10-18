@@ -35,7 +35,8 @@ Commands fall into two kinds:
   then `~/.loom/token` (moved by `LOOM_API_KEY_FILE`). `LOOM_CONFIG_FILE` moves the config file.
   For an agent (`LOOM_CLIENT_ID` with a workload token) they use only `--token` or
   `LOOM_API_KEY`, never a saved token, and refuse (exit 2) without one; `loom install` refuses
-  whatever `--token` says; `loom call` exchanges the workload token itself.
+  whatever `--token` says, `loom init` refuses before it signs anything up, and `loom call`
+  exchanges the workload token itself.
 
 `loom mint-token` needs only `LOOM_JWT_SECRET`: it signs a token locally.
 
@@ -227,11 +228,11 @@ python scripts/codegen/docs_reference.py
 | `loom code repack` | Regenerate context packs for recently merged PRs in the current pack shape. | `--org`, `--namespace`, `--days`, `--limit`, `--dry-run` |
 | `loom code describe` | LLM contextual one-liners for top-PageRank chunks. | `--org`, `--namespace`, `--top-pct`, `--limit`, `--suffix`, `--concurrency` |
 | `loom code answers-purge` | Tombstone cached code.ask answers (after a synthesis-model upgrade, stale weaker-model answers would otherwise be served forever — the cache only self-invalidates on cited-file change). | `--llm-model`, `--all`, `--apply`, `--dry-run`, `--org`, `--namespace` |
-| `loom code scip-full` | Full compiler-tier re-index (the weekly backstop: heals the TU-cap degrades of per-merge deltas and any drift). | `--checkout`, `--jobs`, `--keep-delta`, `--apply-delta`, `--org`, `--namespace` |
-| `loom code scip-lock-path` | Print the entry's compiler-tier lock file (for `flock` in a host script: a full pass and a delta never work on one entry at once). | `--org`, `--namespace` |
+| `loom code scip-full` | Full compiler-tier re-index by hand (the code_scip_full worker runs it weekly by default: heals the TU-cap degrades of per-merge deltas and any drift). | `--checkout`, `--jobs`, `--keep-delta`, `--apply-delta`, `--org`, `--namespace` |
+| `loom code scip-lock-path` | Print the entry's compiler-tier lock file on this host. | `--org`, `--namespace` |
 | `loom code entry-lock` | Run a command under the entry's compiler-tier lock (this host's file and the deployment's lease): exit 75 when another pass holds it, 3 when the lease is lost mid-run (the command is stopped). | `--org`, `--namespace`, `<command>` |
 | `loom code scip-delta` | One compiler-tier delta pass (same code as the code_scip_delta worker), by hand: git_head vs scip_commit per configured repo, scip-clang over the changed TUs, apply. |  |
-| `loom code entries` | One line per configured repository, for scripts: org namespace checkout lock-file (the lock path resolved). |  |
+| `loom code entries` | One line per configured repository: org namespace checkout lock-file (the lock path resolved; a manual run takes it through `loom code entry-lock`). |  |
 | `loom code warm` | Pre-seed the code.ask answer cache from a question list (one question per line, or JSONL with a 'question' field). | `<file>`, `--org`, `--namespace` |
 | `loom code scip-retry` | Reset a failed SCIP batch to pending. | `--org`, `--namespace`, `<batch_id>` |
 | `loom code backfill-reviews` | Inline review comments for merged PRs already in code_pr_history that have none stored yet (newest first, one GitHub request per PR). | `--org`, `--namespace`, `--prs` |
@@ -254,12 +255,9 @@ python scripts/codegen/docs_reference.py
 | `loom secrets reseal` | Seal again under LOOM_JWT_SECRET what only LOOM_JWT_SECRET_PREVIOUS opens. | `--dry-run`, `--check` |
 | `loom signing-key` | The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse. |  |
 | `loom signing-key rotate` | Add a key; it signs once every process has loaded it. | `--algorithm`, `--activate-in` |
-| `loom signing-key import` | Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. | `--map-env`, `--active`, `--algorithm`, `--activate-in` |
 | `loom signing-key retire` | Stop a key (or 'default') verifying tokens. | `<kid>` |
 | `loom signing-key record-root` | Record this LOOM_JWT_SECRET as the deployment's root secret, after replacing it on purpose (keys sealed under the old one stay unusable). |  |
 | `loom signing-key list` | List the keys. |  |
-| `loom blobs` | Uploaded document originals. |  |
-| `loom blobs import` | Move the originals of a filesystem blob directory (the old LOOM_BLOB_DIR) into ClickHouse. | `<blob_dir>`, `--apply`, `--dry-run`, `--accept-missing` |
 | `loom provider-lock` | The provider configuration lock. |  |
 | `loom provider-lock clear` | Free the provider configuration lock of a holder whose process stopped (refused while it renews, heartbeats or has a query running). | `--holder` |
 | `loom reembed` | Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). | `--org`, `--namespace`, `--batch-size`, `--in-database`, `--dry-run`, `--delete-old`, `--key-only`, `--resume` |
@@ -274,7 +272,6 @@ python scripts/codegen/docs_reference.py
 | `loom period-digest` | Write period digests — one derived episodic memory over K consecutive session digests of each identity in one namespace. | `--org`, `--namespace`, `--sessions`, `--max-identities`, `--max-periods`, `--apply`, `--dry-run`, `--rewrite` |
 | `loom demote-activity-narration` | Find a namespace's extracted facts that narrate tool activity ('User read lines 1-1000 of X', 'Claude ran a command on …') with no durable outcome and demote (confidence x0.25) or label them through… | `--org`, `--namespace`, `--action`, `--classifier`, `--days`, `--limit`, `--apply`, `--dry-run` |
 | `loom recalibrate` | Re-probe the embedder + run per-NS calibration immediately (otherwise this runs weekly via the recalibration worker). |  |
-| `loom backfill-chunks` | Backfill loom.memory_chunks from existing memory rows in one namespace. | `--org`, `--namespace`, `--dry-run` |
 | `loom import-clickgap` | Import a ClickGap (Detector→Validator→Reviewer) SQLite export into Loom (lessons + typed entities + categories). | `--sqlite`, `--org`, `--namespace`, `--agent`, `--dry-run`, `--batch-size`, `--seed-recall-events` |
 | `loom import-recall` | Import an external vector-recall agent-memory SQLite export into Loom. | `--sqlite`, `--org`, `--namespace`, `--agent`, `--base-url`, `--token`, `--dry-run` |
 | `loom import-brain` | Import a markdown agent 'brain' directory into Loom: MEMORY.md (always-injected HOT layer) → profile.set sections; memory/contexts/*.md (read-on-demand WARM layer) → knowledge.add docs. | `--dir`, `--org`, `--namespace`, `--agent`, `--base-url`, `--token`, `--dry-run` |

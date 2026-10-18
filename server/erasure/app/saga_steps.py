@@ -16,8 +16,6 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
-from server.erasure.store.mutations import namespaces_of
-from server.knowledge.app import originals
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
 
@@ -95,21 +93,13 @@ async def _step_delete_code_links_by_ns(org: str, namespace: _NS) -> int:
         return await memory_steps.delete_code_links_by_namespace(org, namespace)
 
 
-# how long the documents step waits for `loom blobs import` to give up a namespace's
-# originals claim, which it holds for one document at a time
-_ORIGINALS_WAIT_S = 60.0
-
-
 async def _step_tombstone_documents_by_ns(org: str, namespace: _NS) -> int:
     """Erase the namespace's uploaded originals, then supersede its
     whole-document rows (a purge deletes them). The originals go first, while
     the rows their erasure is stamped on still exist. One step owns both, so
-    the census rows for loom.documents and loom.document_blobs re-open it.
-    Under the originals claim, so `loom blobs import` cannot store an original
-    of a document this step is erasing."""
-    async with originals.hold_originals(org, namespaces_of(namespace), wait_s=_ORIGINALS_WAIT_S):
-        await _step_erase_blobs_by_ns(org, namespace)
-        return await memory_steps.tombstone_documents_by_namespace(org, namespace)
+    the census rows for loom.documents and loom.document_blobs re-open it."""
+    await _step_erase_blobs_by_ns(org, namespace)
+    return await memory_steps.tombstone_documents_by_namespace(org, namespace)
 
 
 async def _step_erase_blobs_by_ns(org: str, namespace: _NS) -> int:

@@ -126,25 +126,3 @@ def test_unreferenced_is_one_namespace_after_a_cursor() -> None:
 
     assert LIVE_ORIGINAL_SQL in sql
     assert seen["params"] == {"org": "o", "ns": "ns", "after": "0" * 64, "age": 60, "lim": 10}
-
-
-def test_doctor_warns_while_documents_or_files_still_use_the_old_blob_directory(
-    monkeypatch, tmp_path
-) -> None:
-    from types import SimpleNamespace
-
-    from server.cli import doctor
-
-    cfg = SimpleNamespace(blob_dir=str(tmp_path))
-    monkeypatch.setattr(doctor, "_doctor_ch_query", lambda *_: [{"n": "3"}])
-    name, grade, detail = doctor._doctor_legacy_blobs_check(cfg)
-    assert (name, grade) == ("legacy_blobs", doctor.WARN) and "loom blobs import" in detail
-    monkeypatch.setattr(doctor, "_doctor_ch_query", lambda *_: [{"n": "0"}])
-    assert doctor._doctor_legacy_blobs_check(cfg)[1] == doctor.PASS
-    # No row names it any more (an older purge, another host's import), but the
-    # file is still on this host's disk: not a PASS.
-    sha = hashlib.sha256(b"x").hexdigest()
-    (tmp_path / "o" / "ns" / sha[:2]).mkdir(parents=True)
-    (tmp_path / "o" / "ns" / sha[:2] / sha).write_bytes(b"x")
-    grade, detail = doctor._doctor_legacy_blobs_check(cfg)[1:]
-    assert grade == doctor.WARN and "1 old-layout file(s)" in detail

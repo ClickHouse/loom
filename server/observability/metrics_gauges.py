@@ -306,9 +306,9 @@ def _register_process_gauges(meter: Any) -> None:
         unit="1",
     )
 
-    # The disk under the data directory (var/: the code mirrors, cron logs,
-    # the blob store). A repository repack can fill it, and then every
-    # write on the host fails; free bytes against total is the alarm's input.
+    # The disk under the data directory (var/: the code mirrors and checkouts).
+    # A repository repack can fill it, and then every write on the host fails;
+    # free bytes against total is the alarm's input.
     def _disk_cb(which: str) -> Callable[[Any], Any]:
         def _cb(_options: Any) -> Any:
             from opentelemetry.metrics import Observation

@@ -223,7 +223,7 @@ test("repo identity: the shared cache's fork_of match names the upstream without
     );
     const id = repoIdentity(resolveRemote(fork, { tmp }));
     assert.equal(id.id, repoIdentity("git@github.com:ClickHouse/ClickHouse.git").id);
-    // an origin match (or an older cache entry) keeps the origin identity
+    // an origin match (no matchedVia) keeps the origin identity
     fs.writeFileSync(
       cachePathFor(fork, tmp),
       JSON.stringify({

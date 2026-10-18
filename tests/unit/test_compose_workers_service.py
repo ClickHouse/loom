@@ -83,15 +83,13 @@ def test_a_workers_container_runs_the_stdlib_loop(path: Path, service: str) -> N
     assert "--loop $${LOOM_UVICORN_LOOP:-asyncio} " in workers["command"][-1]
 
 
-def test_both_services_share_the_data_mounts_and_take_no_lock_path() -> None:
+def test_both_services_share_the_data_mounts() -> None:
     d = _load(CLOUD)
     web, workers = d["services"]["loom"], d["services"]["loom-workers"]
     assert set(web["volumes"]) == set(workers["volumes"])
-    assert "loom-blob-data:/app/var/blobs" in web["volumes"]
     assert "../var/code_repos:/app/var/code_repos" in web["volumes"]
-    assert set(d["volumes"]) == {"loom-blob-data"}
+    assert "volumes" not in d
     for svc in (web, workers):
-        assert "LOOM_SUPERVISOR_LOCK_PATH" not in _env(svc)  # the lease is in ClickHouse
         assert svc["stop_grace_period"] == "75s"
         assert svc["ulimits"]["nofile"] == {"soft": 65536, "hard": 65536}
         assert svc["env_file"] == ["../.env"]

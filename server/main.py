@@ -106,10 +106,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _instance_mod.require_instance_label(
         _instance_mod.instance_label(), deployment=bool(settings.deployment)
     )
-    from server.auth.jwt import require_no_key_map_env, require_real_signing_secret
-    from server.core.env_file import env_file_path
-
-    require_no_key_map_env(env_file_path())
+    from server.auth.jwt import require_real_signing_secret
 
     require_real_signing_secret(
         deployment=bool(settings.deployment),

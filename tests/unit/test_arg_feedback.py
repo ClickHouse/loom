@@ -65,16 +65,6 @@ def test_client_traffic_keys_get_no_guess_so_writes_keep_serving(op: str, keys: 
     assert arg_check.did_you_mean(_model(op), keys) == {}
 
 
-def test_a_retired_namespace_flag_is_served_and_named() -> None:
-    # A dashboard or SDK a release behind still sends the two retired register flags.
-    op = OPERATIONS_BY_NAME["namespace.register"]
-    retired = ["conversation_seeder_enabled", "learnings_review_enabled"]
-    args = {"org": "o", "namespace": "n", "owner_email": "a@x", **dict.fromkeys(retired, True)}
-    op.input_model.model_validate(args)
-    assert arg_check.named_argument_error(op, args) is None
-    assert arg_check.ignored_block(op, args) == {"ignored_args": retired}
-
-
 def test_a_synonym_counts_only_where_the_op_has_the_field() -> None:
     assert arg_check.did_you_mean(_model("memory.list"), ["query"]) == {}
     assert arg_check.closest_field("query", ["issue_number", "frames"]) is None

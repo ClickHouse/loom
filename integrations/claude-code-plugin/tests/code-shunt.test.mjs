@@ -1095,7 +1095,7 @@ test("the tracker record's answer text and the gh-search denial", () => {
       verdict: "related",
       items: [
         { number: 35677, title: "commitPart covers", state: "closed", score: 0.31, url: "https://g/35677" },
-        { issue_number: 12, title: "other", similarity: 0.2 },
+        { number: 12, title: "other", score: 0.2 },
       ],
     },
     { query: "q" },
@@ -1130,14 +1130,14 @@ test("the tracker record's answer text and the gh-search denial", () => {
       items: [],
       nearest: [
         { number: 121114, title: "toStartOfInterval WEEK bucket", state: "open", url: "https://g/121114" },
-        { number: 55784, title: "tumble and toStartOfInterval", state: "open" },
+        { number: 55784, title: "tumble and toStartOfInterval", state: "open", confidence: 0.42 },
       ],
     },
     { query: "q" },
   );
   assert.equal(
     near,
-    'tracker record: "q" has no likely duplicate (verdict none, calibrated); nearest reported issues, below the related line (NOT duplicates — check by eye):\n- #121114 toStartOfInterval WEEK bucket (open) https://g/121114\n- #55784 tumble and toStartOfInterval (open)',
+    'tracker record: "q" has no likely duplicate (verdict none, calibrated); nearest reported issues, below the related line (NOT duplicates — check by eye):\n- #121114 toStartOfInterval WEEK bucket (open) https://g/121114\n- #55784 tumble and toStartOfInterval (open, 0.42)',
   );
   const relNear = trackerAnswerText(
     { verdict: "related", items: [{ number: 7, title: "a" }], nearest: [{ number: 8, title: "b" }] },

@@ -232,7 +232,7 @@ def test_a_personal_provision_slower_than_its_claim_allows_publishes_nothing(
 
 # ---- OAuth: a client registered on one replica is known on the next ---------
 # (codes and refresh tokens are spent by Keeper compare-and-set:
-# tests/integration/test_oauth_claims.py)
+# tests/integration/test_oauth_signin_state.py)
 
 
 def test_a_client_registered_on_one_replica_is_read_on_the_next(cluster: FakeCluster) -> None:

@@ -28,7 +28,7 @@ bootstrap:
 # --env-file: compose reads the .env beside the first -f file, the root one
 # here; the flag says so explicitly, and the cloud stack below (first file
 # under dev/) needs it. --profile bundled starts the ClickHouse
-# container whatever COMPOSE_PROFILES an older .env says.
+# container whatever COMPOSE_PROFILES the .env names.
 dev: bootstrap
 	LOOM_BUILD_COMMIT="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
 		docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build

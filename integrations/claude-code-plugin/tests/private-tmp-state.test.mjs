@@ -29,7 +29,7 @@ test("the turn journal is created 0600, whatever the umask", { skip: !posix }, (
   assert.equal(readJournal("s1", { dir })[0].content, "my secret plan");
 });
 
-test("a state file left world-readable by an older version is tightened", { skip: !posix }, () => {
+test("an existing world-readable state file is tightened", { skip: !posix }, () => {
   const file = path.join(tmp(), "loom-x.json");
   fs.writeFileSync(file, "{}", { mode: 0o644 });
   fs.chmodSync(file, 0o644);

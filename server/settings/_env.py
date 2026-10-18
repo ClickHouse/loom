@@ -29,14 +29,13 @@ def _decode_json_or_b64(raw: str, field: str) -> object:
 
 
 @functools.lru_cache(maxsize=16)
-def json_map_items(raw: str, field: str, *, non_empty: bool) -> tuple[tuple[str, str], ...]:
+def json_map_items(raw: str, field: str) -> tuple[tuple[str, str], ...]:
     """A string → string map setting (JWT kid → key, rerank name → URL), decoded once
     per raw value: signing and verification read it on every token. Keyed on the raw
     string, so a changed value (a test override) is decoded afresh."""
     parsed = _decode_json_or_b64(raw, field)
-    if not isinstance(parsed, dict) or (non_empty and not parsed):
-        shape = "a non-empty JSON object" if non_empty else "a JSON object"
-        raise ValueError(f"{field} must be {shape}")
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{field} must be a JSON object")
     return tuple((str(k), str(v)) for k, v in parsed.items())
 
 
@@ -102,8 +101,8 @@ NON_SETTINGS_ENV = frozenset(
 
 def unknown_env_keys(fields: Iterable[str], env_file: str | None) -> list[str]:
     """LOOM_* names in the environment or the dotenv file that match no
-    settings field and no known non-settings variable: a typo or a retired
-    setting, which `extra="ignore"` would drop silently. Names only."""
+    settings field and no known non-settings variable: a typo or a name this
+    build does not read, which `extra="ignore"` would drop silently. Names only."""
     names = {k for k in os.environ if k.startswith("LOOM_")}
     if env_file and os.path.isfile(env_file):
         from dotenv import dotenv_values
@@ -121,7 +120,7 @@ def unknown_env_keys(fields: Iterable[str], env_file: str | None) -> list[str]:
 _SECRET_FIELD = re.compile(
     "|".join(
         (
-            r"(?:^|_)secret(?:s_json)?$",
+            r"(?:^|_)secret$",
             r"(?:^|_)password$",
             r"(?:^|_)(?:admin|github|scim)_token$",
             r"(?:^|_)key$",

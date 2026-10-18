@@ -122,8 +122,16 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
     return (name, PASS, f"{base_url} (from {source}) — build {build}, status {health}"), body
 
 
+def _agent_token_fix(base_url: str) -> str:
+    # An agent's token came from --token or LOOM_API_KEY, and `loom init` refuses in agent mode.
+    return (
+        "drop --token and LOOM_API_KEY; the hooks and "
+        f"`loom call --server {base_url} namespace.list_mine` exchange the workload token"
+    )
+
+
 def token_check(
-    token: str, source: str, claims: dict[str, Any], now: float, base_url: str
+    token: str, source: str, claims: dict[str, Any], now: float, base_url: str, *, agent: bool
 ) -> Check:
     name = "client:token"
     if not token and source == AGENT_SOURCE:
@@ -147,7 +155,8 @@ def token_check(
         return (
             name,
             FAIL,
-            f"the token from {source} is not a JWT (three dot-separated parts). Fix: re-copy it.",
+            f"the token from {source} is not a JWT (three dot-separated parts). "
+            f"Fix: {_agent_token_fix(base_url) if agent else 're-copy it'}.",
         )
     exp = claims.get("exp")
     if isinstance(exp, (int, float)):
@@ -156,14 +165,14 @@ def token_check(
                 name,
                 FAIL,
                 f"the token from {source} expired {int((now - exp) // 3600)} h ago. "
-                "Fix: mint a new one.",
+                f"Fix: {_agent_token_fix(base_url) if agent else 'mint a new one'}.",
             )
         if exp - now < EXPIRING_SOON_S:
             return (
                 name,
                 WARN,
                 f"the token from {source} expires in {int((exp - now) // 3600)} h. "
-                "Fix: mint a new one soon.",
+                f"Fix: {_agent_token_fix(base_url) if agent else 'mint a new one soon'}.",
             )
     who = f"{claims.get('sub', '?')} @ {claims.get('org', '?')}"
     kind = "service account" if claims.get("sa") else "user"
@@ -216,7 +225,7 @@ def token_shadow_check(token: str, source: str, home: Path, env: dict[str, str])
 
 
 def auth_check(
-    base_url: str, token: str, claims: dict[str, Any], post_json: PostJson
+    base_url: str, token: str, claims: dict[str, Any], post_json: PostJson, *, agent: bool
 ) -> tuple[Check, list[dict[str, Any]]]:
     name = "client:auth"
     if not token:
@@ -227,14 +236,23 @@ def auth_check(
         return (name, WARN, "skipped: the server was not reachable"), []
     if status == 401:
         msg = _detail(body)
+        if agent:
+            fix = _agent_token_fix(base_url)
+            why = (
+                "the hooks send LOOM_API_KEY, when set, before the workload token, "
+                "so a rejected one makes captures vanish"
+            )
+        else:
+            fix = (
+                "mint a new token (`loom mint-token --save`, Settings → Tokens in the "
+                "dashboard, or `loom init --agent`)"
+            )
+            why = "the hooks fail open, so this is why captures vanish"
         return (
             (
                 name,
                 FAIL,
-                f"the server rejected the token: {msg}. Fix: mint a new token "
-                "(`loom mint-token --save`, Settings → Tokens in the dashboard, or "
-                "`loom init --agent`) — "
-                "the hooks fail open, so this is why captures vanish.",
+                f"the server rejected the token: {msg}. Fix: {fix} — {why}.",
             ),
             [],
         )
@@ -784,8 +802,8 @@ def _toml_str(text: str, key: str) -> str:
     return m.group(1) if m else ""
 
 
-# The hook bounds derive from a measured round trip; these
-# env values override them (typically left over from a hand-tuned setup).
+# The hook bounds derive from a measured round trip; these env values
+# override them.
 _HOOK_BOUND_DEFAULT_MS = 3000
 _HOOK_OVERRIDES = ("LOOM_HOOK_TIMEOUT_MS", "LOOM_HOOK_EXIT_MS", "LOOM_SHUNT_READ_CAP")
 
@@ -793,7 +811,7 @@ _HOOK_OVERRIDES = ("LOOM_HOOK_TIMEOUT_MS", "LOOM_HOOK_EXIT_MS", "LOOM_SHUNT_READ
 def hook_override_check(home: Path, env: dict[str, str]) -> list[Check]:
     """One WARN per hook override found in the environment or in
     ~/.claude/settings.json `env` (which Claude Code applies to its hooks),
-    saying what it does now that the bounds are derived."""
+    saying what each one does."""
     try:
         raw_settings = _read(home / ".claude" / "settings.json") or "{}"
         settings_env = json.loads(raw_settings).get("env") or {}
@@ -825,7 +843,7 @@ def hook_override_check(home: Path, env: dict[str, str]) -> list[Check]:
         elif value > _HOOK_BOUND_DEFAULT_MS:
             why = (
                 f"{name}={raw} in {source}: every blocking hook (session primer, code shunt, file "
-                f"context, blast radius) may now hold a tool call for {value / 1000:.0f} s. The "
+                f"context, blast radius) may hold a tool call for {value / 1000:.0f} s. The "
                 "bound derives from the round trip measured at session start "
                 "(5× rtt, 3–8 s) — remove the override."
             )
@@ -896,11 +914,12 @@ def client_checks(
     checks: list[Check] = []
     server, _ = server_check(base_url, url_src, get_json)
     checks.append(server)
-    checks.append(token_check(token, tok_src, claims, now, base_url))
+    agent = agent_mode(env)
+    checks.append(token_check(token, tok_src, claims, now, base_url, agent=agent))
     checks.extend(token_shadow_check(token, tok_src, home, env))
     checks.extend(hook_override_check(home, env))
     auth, rows = (
-        auth_check(base_url, token, claims, post_json)
+        auth_check(base_url, token, claims, post_json, agent=agent)
         if server[1] != FAIL
         else (
             ("client:auth", WARN, "skipped: the server was not reachable"),

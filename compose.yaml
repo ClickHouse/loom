@@ -88,13 +88,11 @@ services:
       LOOM_INSTANCE_LABEL: "deploy:standalone"
       # The address the port is published on; see docs/operations/deployment.md.
       LOOM_BIND_HOST: "${LOOM_BIND_HOST:-127.0.0.1}"
-      LOOM_BLOB_DIR: /app/var/blobs
       # Two processes unless .env names a count. The bundled ClickHouse may share
       # this host and the container has no limits, so the image's own default
       # (one per host CPU and GiB) could leave it no room.
       LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-2}"
     volumes:
-      - loom-blob-data:/app/var/blobs
       - loom-code-repos:/app/var/code_repos
     healthcheck:
       test:
@@ -113,5 +111,4 @@ services:
 
 volumes:
   loom-ch-data:
-  loom-blob-data:
   loom-code-repos:
