@@ -302,21 +302,6 @@ async def test_list_with_chunk_counts_include_superseded_drops_filter() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_with_chunk_counts_tag_filter_uses_hasany() -> None:
-    ch = StubCH()
-    ch.query_all_returns.append([])
-    await documents_repo.list_with_chunk_counts(
-        "clickhouse",
-        "ns",
-        tags=["policy", "internal"],
-        ch=ch,
-    )
-    sql, params = ch.query_all_calls[0]
-    assert "hasAny(tags, {tags:Array(String)})" in sql
-    assert params["tags"] == ["policy", "internal"]
-
-
-@pytest.mark.asyncio
 async def test_list_with_chunk_counts_cursor_strips_tz_for_ch() -> None:
     """ClickHouse params expect naive datetimes (the column is
     DateTime, not DateTime64-tz). A tz-aware cursor must be converted
@@ -338,19 +323,15 @@ async def test_list_with_chunk_counts_cursor_strips_tz_for_ch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_with_chunk_counts_matches_tags_in_any_case_when_asked() -> None:
-    """The Library's `tag:specs` finds a document tagged `Specs`: with `tags_any_case` the
-    tags compare lowercased; without it, exactly, as agents rely on."""
+async def test_list_with_chunk_counts_matches_tags_in_any_case() -> None:
+    """`tag:specs` finds a document tagged `Specs`: the tags always compare lowercased on
+    both sides, with the asked tags bound as typed."""
     ch = StubCH()
-    ch.query_all_returns.extend([[], []])
+    ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts("clickhouse", "ns", tags=["Specs"], ch=ch)
     sql, params = ch.query_all_calls[0]
-    assert "hasAny(tags, {tags:Array(String)})" in sql and params["tags"] == ["Specs"]
-    await documents_repo.list_with_chunk_counts(
-        "clickhouse", "ns", tags=["Specs"], tags_any_case=True, ch=ch
-    )
-    sql, params = ch.query_all_calls[1]
     assert f"hasAny({_FOLDED})" in sql
+    assert "hasAny(tags, {tags:Array(String)})" not in sql
     assert params["tags"] == ["Specs"]
 
 
@@ -361,7 +342,7 @@ async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
-        "clickhouse", "ns", tags=["Specs", "onboarding"], tags_any_case=True, tags_all=True, ch=ch
+        "clickhouse", "ns", tags=["Specs", "onboarding"], tags_all=True, ch=ch
     )
     sql, params = ch.query_all_calls[0]
     assert f"hasAll({_FOLDED})" in sql

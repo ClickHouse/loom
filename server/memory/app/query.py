@@ -215,7 +215,6 @@ async def _hidden_under_prefix(
         source_trace=input.source_trace or None,
         # The same tag match as `total`, so only the status filter makes the difference.
         tags=tags,
-        tags_any_case=input.tags_any_case,
         tags_all=input.tags_all,
         contains=input.contains or None,
         include_tombstoned=input.include_tombstoned,
@@ -298,7 +297,6 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
-            tags_any_case=input.tags_any_case,
             tags_all=input.tags_all,
             contains=input.contains or None,
             order_by="created_at_desc",
@@ -328,7 +326,6 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         input.prefix or "",
         input.source_trace or "",
         tuple(tags or ()),
-        bool(input.tags_any_case),
         bool(input.tags_all),
         input.contains or "",
         bool(input.include_tombstoned),
@@ -347,7 +344,6 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
-            tags_any_case=input.tags_any_case,
             tags_all=input.tags_all,
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
@@ -363,7 +359,6 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
-            tags_any_case=input.tags_any_case,
             tags_all=input.tags_all,
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
@@ -469,9 +464,7 @@ async def _list_by_score(
         where.append("startsWith(memory_key, {p:String})")
         params["p"] = input.prefix
     if tags:
-        clause, params["tags"] = tag_filter(
-            tags, any_case=input.tags_any_case, every=input.tags_all
-        )
+        clause, params["tags"] = tag_filter(tags, every=input.tags_all)
         where.append(clause)
     if input.contains:
         where.append(memory_repo.CONTAINS_PREDICATE)

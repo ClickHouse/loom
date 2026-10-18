@@ -309,8 +309,14 @@ class _CH:
         return {"n": 1}
 
 
+# memory.list's tag predicate: both sides lowercased.
+_ANY_CASE_TAGS = (
+    "hasAny(arrayMap(t -> lowerUTF8(t), tags), arrayMap(t -> lowerUTF8(t), {tags:Array(String)}))"
+)
+
+
 @pytest.mark.asyncio
-async def test_list_tags_filter_is_searchs_predicate_on_both_paths(monkeypatch) -> None:
+async def test_list_tags_filter_is_the_any_case_predicate_on_both_paths(monkeypatch) -> None:
     from server.memory.app import query as Q
     from server.memory.store import reads
 
@@ -335,7 +341,7 @@ async def test_list_tags_filter_is_searchs_predicate_on_both_paths(monkeypatch) 
     recency = [(s, p) for s, p in ch.calls if "FROM loom.memory FINAL" in s]
     assert len(recency) == 3
     for sql, params in recency:
-        assert "hasAny(tags, {tags:Array(String)})" in sql
+        assert _ANY_CASE_TAGS in sql
         assert params["tags"] == ["kind:false_positive", "kind:maintainer_preference"]
         assert "PREWHERE" not in sql
 
@@ -353,7 +359,7 @@ async def test_list_tags_filter_is_searchs_predicate_on_both_paths(monkeypatch) 
         )
     )
     score = [(s, p) for s, p in ch.calls if "FROM loom.memory FINAL" in s]
-    assert len(score) == 2 and all("hasAny(tags, {tags:Array(String)})" in s for s, _ in score)
+    assert len(score) == 2 and all(_ANY_CASE_TAGS in s for s, _ in score)
     dumped = out.model_dump(mode="json")
     assert dumped["entries"] == [{"memory_key": "lesson_1", "value": "never flag X"}]
 

@@ -526,8 +526,9 @@ class MemoryListInput(_Identity):
     source_trace: str | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
     # At most this many entries; `truncated` says when more exist.
     limit: int = Field(default=100, ge=1, le=1000)
-    # Page offset for paginated browsing (recency sort). Rows [offset, offset+limit).
-    offset: int = Field(default=0, ge=0)
+    # Page offset for paginated browsing (recency sort), at most 100,000.
+    # Rows [offset, offset+limit).
+    offset: int = Field(default=0, ge=0, le=100_000)
     # The two counts (`total`, `today`) and the
     # namespace version, no rows — for a caller that shows a number (the
     # Setup page's namespace total). Hidden from the MCP listing.
@@ -555,15 +556,11 @@ class MemoryListInput(_Identity):
     # unless asked for; `memory.proposals` lists them with their graded counts.
     include_proposed: bool = False
     as_of: datetime | None = None  # see MemoryGetInput.as_of
-    # Hard filter on the row's tags: any one of them by default (the `hasAny` predicate
-    # memory.search applies), every one with `tags_all`, exact unless `tags_any_case`. A
-    # tagged subset (`kind:false_positive`, `subsystem:Storages`) is one list call, not a
-    # recency page followed by a get per key. Empty = no tag filter.
+    # Hard filter on the row's tags, in any case (`api` matches a row tagged `API`): any one
+    # of them by default, every one with `tags_all`. A tagged subset (`kind:false_positive`,
+    # `subsystem:Storages`) is one list call, not a recency page followed by a get per key.
+    # Empty = no tag filter.
     tags: list[str] = Field(default_factory=list, max_length=64)
-    # Match `tags` in any case (a browse page's `tag:api` finds rows tagged `API`); off,
-    # exactly, as agents rely on. A dashboard flag: hidden from the MCP listing and not a
-    # parameter of the SDK's list(). A build that predates it ignores it and matches exactly.
-    tags_any_case: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Require every one of `tags` (a browse page's stacked `tag:a tag:b`); off, any one, as
     # agents rely on. A dashboard flag: hidden from the MCP listing and not a parameter of
     # the SDK's list(). A build that predates it ignores it and matches any one.

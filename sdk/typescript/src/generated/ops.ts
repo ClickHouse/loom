@@ -3083,7 +3083,6 @@ export interface KnowledgeListInput {
   org: string;
   namespace: string;
   tags?: string[];
-  tags_any_case?: boolean;
   tags_all?: boolean;
   uri_prefix?: string[];
   include_superseded?: boolean;
@@ -4602,7 +4601,6 @@ export interface MemoryListInput {
   include_proposed?: boolean;
   as_of?: string | null;
   tags?: string[];
-  tags_any_case?: boolean;
   tags_all?: boolean;
   contains?: string | null;
   fields?: string[];
@@ -7302,7 +7300,7 @@ export interface RunListInput {
 
 export interface RunListOutput {
   runs: RunRow[];
-  total?: number;
+  total?: number | null;
 }
 
 export interface SearchQueryInput {

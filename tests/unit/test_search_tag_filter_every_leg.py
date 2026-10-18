@@ -320,11 +320,34 @@ async def test_tiers_pass_the_hard_filter_only_when_set(monkeypatch: pytest.Monk
     monkeypatch.setattr(repo, "list_by_namespace", fake_list)
     base = dict(org="o", namespace="ns", agent="*", user_id="-", session_id="-", run_id="", top_k=3)
     await _prepend_recent([], SimpleNamespace(recent_first=1, **base))
-    assert "tags" not in calls[-1]
+    assert "search_tags" not in calls[-1] and "tags" not in calls[-1]
     await _prepend_recent([], SimpleNamespace(recent_first=1, tags=["x"], tags_soft=False, **base))
-    assert calls[-1]["tags"] == ["x"]
+    # memory.search's exact match, not memory.list's any-case `tags`.
+    assert calls[-1]["search_tags"] == ["x"] and "tags" not in calls[-1]
     await _prepend_anchor([], SimpleNamespace(anchor_first=1, tags=["x"], tags_soft=True, **base))
-    assert "tags" not in calls[-1]
+    assert "search_tags" not in calls[-1] and "tags" not in calls[-1]
+
+
+@pytest.mark.asyncio
+async def test_the_tier_read_matches_search_tags_exactly() -> None:
+    """The tiers are memory.search rows: their store read carries the exact predicate every
+    search leg carries, not memory.list's lowercased one."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as repo
+
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+            seen.append((sql, params or {}))
+            return []
+
+    ident = repo.Identity(org="o", namespace="ns", agent="*")
+    await repo.list_by_namespace(ident, scope=WHOLE_NAMESPACE, search_tags=["API"], ch=_CH())
+    sql, params = seen[-1]
+    assert "hasAny(tags, {tags:Array(String)})" in sql
+    assert "lowerUTF8" not in sql
+    assert params["tags"] == ["API"]
 
 
 # ------------------------------------------ the two paths the replay found

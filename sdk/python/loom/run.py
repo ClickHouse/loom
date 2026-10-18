@@ -344,8 +344,10 @@ class RunClient:
         (the default), `started_asc`, `duration_desc` / `_asc` or
         `relied_on_desc` / `_asc`; `q` keeps runs whose goal, run id or agent
         holds the text, any case. The answer's `total` counts every run the
-        filters match; a server a release behind sends none and ignores these
-        three, so each is sent only when set."""
+        filters match on the first page, the last page and a page past the end,
+        and is None on a full page after the first (keep the first page's); a
+        server a release behind sends none and ignores these three, so each is
+        sent only when set."""
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,
