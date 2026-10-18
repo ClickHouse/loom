@@ -117,16 +117,18 @@ def test_a_hidden_op_is_refused_as_a_direct_call_is(monkeypatch: pytest.MonkeyPa
 
 
 def test_an_unknown_op_names_the_nearest_ones() -> None:
-    _, early = mcp_op.route(_call("tracker.flakey"), toolset="coding")
+    _, early = mcp_op.route(_call("tracker.flakey"), toolset="coding", auth=None)
     assert early is not None
     sc = early["result"]["structuredContent"]
     assert sc["code"] == "UNKNOWN_OP" and "tracker.flaky" in sc["did_you_mean"]
 
 
 def test_a_readonly_connection_routes_reads_only() -> None:
-    _, early = mcp_op.route(_call("task.create", {"title": "x"}), toolset="readonly")
+    _, early = mcp_op.route(_call("task.create", {"title": "x"}), toolset="readonly", auth=None)
     assert early is not None and "read-only" in early["result"]["structuredContent"]["error"]
-    rewritten, early = mcp_op.route(_call("tracker.flaky", {"test_name": "t"}), toolset="readonly")
+    rewritten, early = mcp_op.route(
+        _call("tracker.flaky", {"test_name": "t"}), toolset="readonly", auth=None
+    )
     assert early is None and rewritten["params"]["name"] == "loom_tracker_flaky"
 
 

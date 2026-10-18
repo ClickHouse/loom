@@ -189,7 +189,7 @@ def _result(req_id: Any, body: dict[str, Any], *, error: bool = False) -> dict[s
     )
 
 
-def route(req: Any, *, toolset: str | None, auth: Any = None) -> tuple[Any, dict[str, Any] | None]:
+def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, Any] | None]:
     """`(req, None)` unchanged unless it is a `loom_op` call; the rewritten
     `tools/call` for a real op; or `(req, response)` for help / unknown ops.
     `auth` is the verified token (None in open mode) a refusal is ledgered as."""

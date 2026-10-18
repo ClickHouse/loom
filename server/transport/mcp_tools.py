@@ -455,6 +455,7 @@ def emit_refusal(op_name: str, code: str, auth: Any) -> None:
     import uuid
 
     from server.core.naming import SENTINEL
+    from server.observability.consumer import bind_current_consumer
     from server.observability.ledger import emit_agent_event
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport._common import sli_columns
@@ -463,6 +464,7 @@ def emit_refusal(op_name: str, code: str, auth: Any) -> None:
     if op_name not in OPERATIONS_BY_NAME:
         return
     _begin_call()
+    bind_current_consumer(None, auth)
     org = str(getattr(auth, "org", "") or SENTINEL)
     emit_agent_event(
         op_name=op_name,

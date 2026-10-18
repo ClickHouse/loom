@@ -8,8 +8,6 @@ the rows up per minute for SLO dashboards and alert rules to read.
 
 from __future__ import annotations
 
-from functools import cache
-
 SLO_CLASSES = ("write", "search", "read", "code", "admin")
 STATUS_CLASSES = ("ok", "client", "server")
 
@@ -66,9 +64,9 @@ def slo_class(name: str, *, writes: bool, admin: bool) -> str:
     return "write" if writes else "read"
 
 
-@cache
 def _coded_statuses() -> dict[str, int]:
-    """Every LoomServerError code and its HTTP status."""
+    """Every LoomServerError code and its HTTP status. Walked on each failure,
+    not cached: a subclass imported later must not read as the server's."""
     from server.core.errors import LoomServerError
 
     out: dict[str, int] = {}

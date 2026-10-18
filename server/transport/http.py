@@ -207,7 +207,9 @@ def _begin_request(op: Operation, request: Request, response: Response) -> str:
     return request_id
 
 
-async def _read_body(op: Operation, request: Request, request_id: str) -> dict[str, Any]:
+async def _read_body(
+    op: Operation, request: Request, request_id: str, auth: AuthInfo | None
+) -> dict[str, Any]:
     """The JSON object body, or a 400 (not JSON); JSON that is not an object
     is the op's validation 422, and a field removed from the wire is a named
     422."""
@@ -232,7 +234,7 @@ async def _read_body(op: Operation, request: Request, request_id: str) -> dict[s
         _emit_event(
             op,
             request_id,
-            raw_body,
+            _refused_body(raw_body, auth),
             0,
             success=False,
             error_code=refused.error_detail()["code"],
@@ -313,6 +315,18 @@ def _validate_payload(op: Operation, request_id: str, raw_body: Any) -> Any:
     return payload
 
 
+def _refused_body(raw_body: dict[str, Any], auth: AuthInfo | None) -> dict[str, Any]:
+    """The body a refusal before authorization is ledgered with: one naming an
+    org the token may not act in is recorded in the token's org, never the
+    named one, as MCP records its refusals."""
+    from server.auth.authz import may_act_in_org
+
+    named = str(raw_body.get("org") or "")
+    if auth is not None and named and not may_act_in_org(auth, named):
+        return {**raw_body, "org": auth.org, "namespace": SENTINEL}
+    return raw_body
+
+
 def _refuse(
     op: Operation,
     call: _HttpCall,
@@ -322,7 +336,8 @@ def _refuse(
     **extra: Any,
 ) -> HTTPException:
     """Record a gate's refusal on the ledger and build its HTTP error."""
-    _emit_event(op, call.request_id, call.raw_body, 0, success=False, error_code=code, error=e)
+    body = _refused_body(call.raw_body, call.auth)
+    _emit_event(op, call.request_id, body, 0, success=False, error_code=code, error=e)
     detail: dict[str, Any] = {"code": code, "message": str(e) if e is not None else ""}
     detail.update(extra.pop("detail", {}))
     return HTTPException(status_code=status, detail=detail, **extra)
@@ -681,7 +696,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # learns no field errors, and never touches a tenant's rate-limit
         # bucket by naming its namespace.
         call.auth = auth = _extract_auth(request)
-        call.raw_body = raw_body = await _read_body(op, request, request_id)
+        call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
 
         payload = _validate_payload(op, request_id, raw_body)
 

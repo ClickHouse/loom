@@ -209,67 +209,108 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
 
 
 def test_mcp_refusals_before_dispatch_are_ledgered_as_the_token_alone(monkeypatch) -> None:
-    """Refused before the caller is bound: each row is the token's org and
-    subject with `-` for the rest and no arguments, whatever the call named,
-    and starts from a clean request state (a batch's previous entry)."""
+    """Refused before the caller is bound: each row is the token's org,
+    subject and consumer with `-` for the rest and no arguments, whatever the
+    call named, and carries nothing a batch's previous entry left behind."""
     import asyncio
 
     from server.auth.jwt import AuthInfo
-    from server.observability import ledger
+    from server.observability import consumer, cost_accumulator, events
+    from server.observability.run_context import set_ledger_run
     from server.operations.base import Role
     from server.transport import mcp_auth, mcp_call, mcp_op
 
-    rows: list[dict] = []
-    resets: list[int] = []
-    monkeypatch.setattr(ledger, "emit_agent_event", lambda **kw: rows.append(kw))
-    monkeypatch.setattr(mcp_call, "_begin_call", lambda: resets.append(1))
+    emitted: list = []
+
+    class _Emitter:
+        def emit(self, event) -> None:
+            emitted.append(event)
+
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
     eve = AuthInfo(
         subject="eve", org="eve-org", namespaces=(), roles=(Role.WRITER,), is_service_account=False
     )
     named = {"org": "acme", "namespace": "n", "user_id": "bob", "value": "secret text"}
 
+    def _previous_entry() -> None:
+        # What an earlier entry of the batch left: spend, a run, a consumer.
+        cost_accumulator.begin_op()
+        cost_accumulator.report_embed("text-embedding-3-small", 10_000)
+        set_ledger_run("run-of-the-previous-entry")
+        consumer.set_current_consumer("someone-else", "self-reported")
+
     def _call(name: str, arguments: dict) -> dict:
         return {"id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
-
-    # Another org; a namespace the token may not read.
-    assert asyncio.run(mcp_auth._screen_tool_call(_call("loom_memory_set", dict(named)), eve))
 
     async def _no(*_a) -> bool:
         return False
 
-    monkeypatch.setattr(mcp_auth, "_may_read", _no)
-    mine = {**named, "org": "eve-org"}
-    assert asyncio.run(mcp_auth._screen_tool_call(_call("loom_memory_set", mine), eve))
-    # Kept off MCP, by tool name and through loom_op naming another org; a
-    # write on a read-only connection.
     hidden = next(op for op in mcp_call.ALL_OPERATIONS if op.name == "blacklist.remove")
-    assert isinstance(asyncio.run(mcp_call._resolve_tool(2, hidden.mcp_tool_name, eve, None)), dict)
-    via_op = _call("loom_op", {"op": "blacklist.remove", "arguments": dict(named)})
-    assert mcp_op.route(via_op, toolset=None, auth=eve)[1] is not None
-    write = _call("loom_op", {"op": "memory.set", "arguments": dict(named)})
-    assert mcp_op.route(write, toolset="readonly", auth=eve)[1] is not None
+    refusals = [
+        lambda: asyncio.run(mcp_auth._screen_tool_call(_call("loom_memory_set", dict(named)), eve)),
+        lambda: asyncio.run(
+            mcp_auth._screen_tool_call(_call("loom_memory_set", {**named, "org": "eve-org"}), eve)
+        ),
+        lambda: asyncio.run(mcp_call._resolve_tool(2, hidden.mcp_tool_name, eve, None)),
+        lambda: mcp_op.route(
+            _call("loom_op", {"op": "blacklist.remove", "arguments": dict(named)}),
+            toolset=None,
+            auth=eve,
+        )[1],
+        lambda: mcp_op.route(
+            _call("loom_op", {"op": "memory.set", "arguments": dict(named)}),
+            toolset="readonly",
+            auth=eve,
+        )[1],
+    ]
+    monkeypatch.setattr(mcp_auth, "_may_read", _no)
+    for refuse in refusals:
+        _previous_entry()
+        assert refuse()
     # A name no op answers to writes no row.
     assert mcp_op.route(_call("loom_op", {"op": "no.such"}), toolset=None, auth=eve)[1]
 
-    assert [(r["op_name"], r["error_code"]) for r in rows] == [
+    assert [(e.operation, e.error_code) for e in emitted] == [
         ("memory.set", "ORG_MISMATCH"),
         ("memory.set", "NAMESPACE_NOT_ACCESSIBLE"),
         ("blacklist.remove", "OP_NOT_ON_MCP"),
         ("blacklist.remove", "OP_NOT_ON_MCP"),
         ("memory.set", "UNKNOWN_OP"),
     ]
-    token_only = {
-        "org": "eve-org",
-        "namespace": "-",
-        "agent": "-",
-        "user_id": "-",
-        "session_id": "-",
-    }
-    for row in rows:
-        assert row["identity"] == token_only and row["subject"] == "eve"
-        assert "raw_args" not in row and row["transport"] == "mcp" and not row["success"]
-        assert sli.status_class(False, row["error_code"], None) == "client"
-    assert len(resets) == len(rows)
+    for e in emitted:
+        assert (e.org, e.namespace, e.agent, e.user_id, e.session_id) == (
+            "eve-org",
+            "-",
+            "-",
+            "-",
+            "-",
+        )
+        assert e.subject == "eve" and e.consumer != "someone-else"
+        assert e.upstream_cost_usd == 0.0 and e.run_id in ("", "-")
+        assert "secret text" not in repr(e.args) and e.transport == "mcp"
+        assert e.status_class == "client"
+
+
+def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypatch) -> None:
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import http
+
+    bodies: list[dict] = []
+    monkeypatch.setattr(http, "_emit_event", lambda op, rid, body, *a, **k: bodies.append(body))
+    eve = AuthInfo(
+        subject="eve", org="eve-org", namespaces=(), roles=(Role.WRITER,), is_service_account=False
+    )
+    op = OPERATIONS_BY_NAME["memory.get"]
+    for org in ("acme", "eve-org"):
+        call = http._HttpCall("r", raw_body={"org": org, "namespace": "n"}, auth=eve)
+        http._refuse(op, call, 403, "AUTH_INSUFFICIENT")
+    assert [(b["org"], b["namespace"]) for b in bodies] == [("eve-org", "-"), ("eve-org", "n")]
+    # The unknown-argument refusal before authorization shares it; open mode keeps the body.
+    assert http._refused_body({"org": "acme", "namespace": "n"}, eve)["org"] == "eve-org"
+    assert http._refused_body({"org": "acme", "namespace": "n"}, None)["org"] == "acme"
 
 
 def test_health_problems_need_no_clickhouse() -> None:

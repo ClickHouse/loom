@@ -27,9 +27,13 @@ for a 4xx refusal or a retried idempotency key still running; `server` otherwise
 including a write refused because its history policy could not be evaluated) and
 `budget_ms`, the latency budget the request was held to. MCP writes a row for a call it
 refuses before dispatch (an org or namespace the token may not use, an op kept off MCP,
-a write on a read-only connection), as HTTP does for its refusals. The caller is not bound
-yet, so that row carries the token's org and subject, `-` for the rest and no arguments. A refreshable materialized view folds rows older than 10 seconds
-into `loom_telemetry.sli_minute` once a minute (requests, server and client errors,
+a write on a read-only connection), as HTTP does for its refusals. The caller is not
+bound yet, so that row carries the token's org, subject and consumer, `-` for the rest
+and no arguments. On either transport, a refusal naming an org the token may not act in
+is recorded in the token's org, never the named one.
+
+A refreshable materialized view folds rows older than 10 seconds into
+`loom_telemetry.sli_minute` once a minute (requests, server and client errors,
 rate-limited requests, which are among the client errors, over-budget successes, latency
 quantiles, kept 400 days), for SLO dashboards and alert rules to read without scanning
 the ledger. Requests from a build without these columns, and calls that name no
