@@ -545,11 +545,11 @@ def test_summaries_past_the_allowance_are_clipped_and_the_turns_compact(monkeypa
             [True, True, False],
             (3, ("system: " + "s" * 4_000)[:4_000] + "\nuser: a"),
         ),
-        # Nothing but summaries: no new turn to compact.
-        (["system: s"], [True], None),
+        # Nothing but summaries (the handler answers already-compacted before this).
+        (["system: s"], [True], (1, "system: s")),
     ],
 )
 def test_the_compaction_window(
-    lines: list[str], folded: list[bool], expected: tuple[int, str] | None
+    lines: list[str], folded: list[bool], expected: tuple[int, str]
 ) -> None:
     assert ch_mod._compaction_window(lines, folded) == expected

@@ -680,9 +680,9 @@ def _fitting_prefix(lines: list[str], cap: int) -> int:
     return len(lines)
 
 
-def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str] | None:
+def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str]:
     """`(fit, transcript)`: how many leading candidate lines the summary replaces, and
-    the prompt transcript. None for a window of summaries alone."""
+    the prompt transcript."""
     lines = list(lines)
     # Leading summaries fold in free, together clipped to the allowance: past it one
     # shrinks to nothing (and is left out of the prompt), so however many there are,
@@ -692,11 +692,9 @@ def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str] 
         lines[k] = lines[k][:allowance]
         allowance -= len(lines[k])
         k += 1
-    if k == len(lines):
-        return None
     fit = k + _fitting_prefix(lines[k:], _COMPACT_TRANSCRIPT_CHARS)
     turns = "\n".join(lines[k:fit])[:_COMPACT_TRANSCRIPT_CHARS]
-    return fit, "\n".join([*(line for line in lines[:k] if line), turns])
+    return fit, "\n".join(part for part in (*lines[:k], turns) if part)
 
 
 def _is_compaction_summary(row: Mapping[str, Any]) -> bool:
@@ -759,10 +757,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
 
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
-    # Never None here: a window of summaries alone returned already-compacted above.
-    window = _compaction_window(lines, folded)
-    assert window is not None
-    fit, transcript = window
+    fit, transcript = _compaction_window(lines, folded)
     candidates = candidates[:fit]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
 
