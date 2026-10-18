@@ -2308,3 +2308,31 @@ async def test_a_flagged_peer_the_model_keeps_leaving_out_stops_costing_calls(
         calls.append(len(llm.calls) - before)
     assert calls[-1] == 0 and sum(calls) <= 2 * worker.MAX_ATTEMPTS + 2, calls
     assert (await _marks(ch, org))["office_location"] == 2
+
+
+async def test_a_request_refused_for_every_row_stamps_nothing_pass_after_pass(
+    ch, wired, monkeypatch
+) -> None:
+    import httpx
+
+    from server.memory.workers.conflict_resolver import run_pass
+    from server.settings import settings
+
+    org, llm = wired
+    monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
+    for i in range(6):
+        await _pair(ch, org, f"old{i}", f"new{i}", 600 + 4 * i, gap=False)
+
+    async def refused(system: str, user: str, **kw: Any) -> Any:
+        llm.calls.append("x")
+        req = httpx.Request("POST", "https://llm.example/v1")
+        raise httpx.HTTPStatusError(
+            "400 Bad Request", request=req, response=httpx.Response(400, request=req)
+        )
+
+    monkeypatch.setattr(llm, "complete", refused)
+    for _ in range(3):
+        await run_pass()
+    marks = await _marks(ch, org)
+    assert sum(1 for v in marks.values() if v == 2) == 0, marks
+    assert sum(1 for v in marks.values() if v == 1) == 6

@@ -321,9 +321,11 @@ actions, verdicts and confidences, never the text.
   `length` or `max_tokens`, or malformed), or with no verdict for some peer, is asked once
   more with twice the room, and the answer that covers more peers is kept; nothing usable
   again, the row is stamped judged and counted `errored`. A row flagged against a peer
-  neither answer judged stays owed, so the flag is judged later. The same refusal three
-  rows in a row is the request's fault, not the rows': it stops the pass like a refused
-  model, and the rest stay owed. The keys' write locks unavailable (Keeper down) stop the
+  neither answer judged stays owed, so the flag is judged later, three times at most
+  before it is stamped `errored`. A refused row is stamped when its pass ends. The same
+  refusal (its kind and HTTP status) three rows in a row with nothing judged between is the
+  request's fault, not the rows': it stops the pass like a refused model, and every row,
+  the refused ones too, stays owed. The keys' write locks unavailable (Keeper down) stop the
   pass after that call; the rows stay owed.
 
 **Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written

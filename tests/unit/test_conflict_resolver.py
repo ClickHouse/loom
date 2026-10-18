@@ -1246,8 +1246,8 @@ async def test_the_same_refusal_row_after_row_stops_the_pass_and_leaves_the_rest
     pass_env: NS, monkeypatch
 ) -> None:
     """A request the provider refuses for every row (a bad model id, a prompt it rejects):
-    three in a row stop the pass, instead of stamping the whole backlog judged. One
-    slot, so the rows run in order (with more, the calls already in flight finish)."""
+    three in a row stop the pass, and none of them is stamped, so the backlog is judged
+    once the request is fixed. One slot, so the rows run in order."""
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
@@ -1255,7 +1255,7 @@ async def test_the_same_refusal_row_after_row_stops_the_pass_and_leaves_the_rest
     pass_env.owed = [_q(memory_key=k) for k in keys]
     pass_env.raise_for = {k: resolver.Unjudgeable("400 Bad Request") for k in keys}
     out = await pass_env.run()
-    assert pass_env.stamped == ["k0", "k1", "k2"]
+    assert pass_env.stamped == [], "the request was at fault: every row stays owed"
     assert out["errored"] == 3
 
 
@@ -1275,6 +1275,23 @@ async def test_a_row_judged_and_left_owed_is_stamped_on_its_third_attempt(
     outs = [await pass_env.run() for _ in range(3)]
     assert pass_env.stamped == ["k1"], "a transient failure pays nothing and is not counted"
     assert [o["errored"] for o in outs] == [1, 1, 2]
+
+
+async def test_answers_cut_for_every_row_stop_the_pass_whatever_their_cap(
+    pass_env: NS, monkeypatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
+    keys = [f"k{i}" for i in range(5)]
+    pass_env.owed = [_q(memory_key=k) for k in keys]
+    caps = [600, 900, 1200, 600, 900]
+    pass_env.raise_for = {
+        k: resolver.Unanswered(f"nothing usable in two answers (output cap {c} tokens)")
+        for k, c in zip(keys, caps, strict=True)
+    }
+    out = await pass_env.run()
+    assert out["errored"] == 3 and pass_env.stamped == []
 
 
 async def test_a_judged_row_between_refusals_keeps_the_pass_going(pass_env: NS) -> None:

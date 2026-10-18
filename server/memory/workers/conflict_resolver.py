@@ -59,9 +59,13 @@ class _Pass:
         self.slots = asyncio.Semaphore(int(settings.memory_conflict_resolver_concurrency))
         # Why the pass stopped: the model, or the keys' locks, is unavailable.
         self.unavailable: Exception | None = None
-        # The last refusal and how many rows in a row got it.
+        # The last refusal (its kind), how many rows in a row got it, and `judged` then.
         self.refusal = ""
         self.refusals_in_a_row = 0
+        self.judged_at_refusal = 0
+        # Rows refused for a reason of their own: stamped once the pass ends, unless the
+        # refusals stopped it (then the request, not the rows, was at fault).
+        self.refused: list[dict[str, Any]] = []
 
 
 def _cap_share() -> dict[str, Any]:
@@ -128,18 +132,15 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             ):
                 p.counts.errored += 1
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
-            p.refusals_in_a_row = 0
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
             # The same answer for every row: stop before paying for more calls.
             p.unavailable = p.unavailable or e
         except (resolver.Unjudgeable, resolver.Unanswered) as e:
-            # Asking again gets the same answer: stamp it, so it holds no place.
+            # Asking again gets the same answer: stamped at the pass's end, so it holds no
+            # place, unless the same refusal for row after row stops the pass.
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {e}")
-            try:
-                await queue.stamp_judged(r)
-            except Exception as stamp_error:  # noqa: BLE001 — stamped again next pass
-                p.errors.append(f"{namespace}/{r.get('memory_key')}: stamp: {stamp_error}")
+            p.refused.append(r)
             _count_refusal(p, e)
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             p.counts.errored += 1
@@ -187,11 +188,27 @@ SAME_REFUSAL_STOP = 3
 
 
 def _count_refusal(p: _Pass, e: Exception) -> None:
-    reason = f"{type(e).__name__}: {e}"
-    p.refusals_in_a_row = p.refusals_in_a_row + 1 if reason == p.refusal else 1
-    p.refusal = reason
+    # Its kind, not its message: an Unanswered names the cluster's output cap.
+    cause = e.__cause__
+    status = getattr(getattr(cause, "response", None), "status_code", "")
+    kind = f"{type(e).__name__}:{status}"
+    if kind != p.refusal or p.counts.judged > p.judged_at_refusal:
+        p.refusals_in_a_row = 0
+    p.refusal, p.judged_at_refusal = kind, p.counts.judged
+    p.refusals_in_a_row += 1
     if p.refusals_in_a_row >= SAME_REFUSAL_STOP:
         p.unavailable = p.unavailable or e
+
+
+async def _stamp_refused(p: _Pass) -> None:
+    """The rows refused for a reason of their own, once the pass ran to its end."""
+    if p.unavailable is not None:
+        return
+    for r in p.refused:
+        try:
+            await queue.stamp_judged(r)
+        except Exception as e:  # noqa: BLE001 — stamped again next pass
+            p.errors.append(f"{r['namespace']}/{r.get('memory_key')}: stamp: {e}")
 
 
 async def _resolve_all(p: _Pass, groups: dict[tuple[str, str], list[dict[str, Any]]]) -> None:
@@ -254,6 +271,7 @@ async def run_pass() -> dict[str, Any]:
                 and time.monotonic() - started < BURST_S
             ):
                 break
+        await _stamp_refused(p)
         if not found:
             pass_context.mark_idle()
         if isinstance(p.unavailable, LeaseUnavailable):
