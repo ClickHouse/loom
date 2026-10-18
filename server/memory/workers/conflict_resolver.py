@@ -59,9 +59,7 @@ _state = _State()
 
 
 def _identity(r: Mapping[str, Any]) -> tuple[str, ...]:
-    return tuple(
-        str(r[c]) for c in ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
-    )
+    return (str(r["org"]), str(r["namespace"]), *queue.key_identity(r))
 
 
 class _Pass:

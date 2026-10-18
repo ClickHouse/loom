@@ -306,8 +306,13 @@ _ANCHORED_SQL = (
 )
 
 
-def _ident(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
-    return (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"]))
+def key_identity(r: Any) -> tuple[str, str, str, str]:
+    """A row's (agent, user_id, session_id, memory_key), from a dict or a row object: its
+    key within (org, namespace)."""
+    cols = ("agent", "user_id", "session_id", "memory_key")
+    if isinstance(r, Mapping):
+        return tuple(str(r[c]) for c in cols)  # type: ignore[return-value]
+    return tuple(str(getattr(r, c)) for c in cols)  # type: ignore[return-value]
 
 
 class Cluster(NamedTuple):
@@ -353,15 +358,15 @@ async def cluster_peers(
     half = max(int(limit) // 2, 1)
     near = [c for c in await ch.query_all(_nearest_sql(), params=params) if 1 - c["dist"] >= floor]
     anchored = await ch.query_all(_ANCHORED_SQL, params={**params, "same_lim": half})
-    above_floor = {_ident(c) for c in near}
-    found = {_ident(c): c for c in [*anchored, *near]}
+    above_floor = {key_identity(c) for c in near}
+    found = {key_identity(c): c for c in [*anchored, *near]}
     if not found:
         return Cluster([], frozenset())
     rows = await ch.query_all(_PEER_ROWS_SQL, params={**params, "ids": list(found)})
     peers = [
-        {**dict(r), "similarity": 1.0 - float(found[_ident(r)]["dist"])}
+        {**dict(r), "similarity": 1.0 - float(found[key_identity(r)]["dist"])}
         for r in rows
-        if _ident(r) in found
+        if key_identity(r) in found
     ]
     peers.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
     key = str(row["memory_key"])
@@ -371,7 +376,7 @@ async def cluster_peers(
     same_key = [p for p in peers if str(p["memory_id"]) not in taken and p["memory_key"] == key]
     same_key = same_key[:half]
     taken |= {str(p["memory_id"]) for p in same_key}
-    rest = [p for p in peers if str(p["memory_id"]) not in taken and _ident(p) in above_floor]
+    rest = [p for p in peers if str(p["memory_id"]) not in taken and key_identity(p) in above_floor]
     kept = (flagged + same_key + rest)[: max(int(limit), 0)]
     kept.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
     left = {str(p["memory_id"]) for p in flagged} - {str(p["memory_id"]) for p in kept}
@@ -524,6 +529,7 @@ __all__ = [
     "asserted_versions",
     "cluster_peers",
     "dead_flags",
+    "key_identity",
     "owed_rows",
     "protected_ids",
     "retired_behind",

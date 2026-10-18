@@ -422,7 +422,7 @@ async def clear_retired_flag(org: str, namespace: str, winner_id: str, loser_id:
 
     winner = await _head(org, winner_id)
     if winner is not None and loser_id in winner.conflict_with:
-        async with key_write_locks.hold(org, namespace, *_identity(winner)):
+        async with key_write_locks.hold(org, namespace, *queue.key_identity(winner)):
             await _unlink(org, winner, loser_id)
 
 
@@ -432,22 +432,16 @@ async def _clear(org: str, row: Any, peer: Any) -> bool:
     return a or b
 
 
-def _identity(r: Any) -> tuple[str, str, str, str]:
-    return (
-        str(_field(r, "agent")),
-        str(_field(r, "user_id")),
-        str(_field(r, "session_id")),
-        str(_field(r, "memory_key")),
-    )
-
-
 @asynccontextmanager
 async def _pair_locks(org: str, namespace: str, row: Any, peer: Any) -> AsyncIterator[None]:
     """Both rows' key write locks, in lock-name order, so two settles of one pair never
     wait on each other."""
     from server.memory.store.key_write_lock import key_write_locks, lock_name
 
-    keys = sorted({_identity(row), _identity(peer)}, key=lambda k: lock_name(org, namespace, *k))
+    keys = sorted(
+        {queue.key_identity(row), queue.key_identity(peer)},
+        key=lambda k: lock_name(org, namespace, *k),
+    )
     async with AsyncExitStack() as stack:
         for k in keys:
             await stack.enter_async_context(key_write_locks.hold(org, namespace, *k))
@@ -666,10 +660,10 @@ async def _release_dead_flags(org: str, namespace: str, row: Any, counts: Counts
     row a clear writes."""
     from server.memory.store.key_write_lock import key_write_locks
 
-    dead = await queue.dead_flags(org, namespace, _identity(row))
+    dead = await queue.dead_flags(org, namespace, queue.key_identity(row))
     if not dead:
         return
-    async with key_write_locks.hold(org, namespace, *_identity(row)):
+    async with key_write_locks.hold(org, namespace, *queue.key_identity(row)):
         head = await _head(org, str(row.memory_id))
         if not _holds(head, namespace, str(row.content_sha256 or "")) or head.pinned:
             return
