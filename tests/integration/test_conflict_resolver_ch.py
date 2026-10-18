@@ -1662,11 +1662,13 @@ async def test_a_pin_whose_vector_landed_first_keeps_its_vector_served(
     ch, wired, monkeypatch
 ) -> None:
     """A memory.pin of the loser takes no key lock: its vector lands before the
-    retirement's mirror reads, its memory row after the supersede's head re-read. The
-    pin is the memory head, so recall must serve its vector, not a superseded copy."""
+    retirement's mirror reads, its memory row after the retirement. The pin is the
+    memory head, so once the repair has run, recall serves its vector, not a
+    superseded copy."""
     import server.memory.store as M
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
-    from server.memory.store import embeddings, lifecycle
+    from server.memory.app import projection_failures
+    from server.memory.store import lifecycle
     from server.memory.store.embeddings import live_embedding_rows_for_key
     from server.memory.workers.conflict_resolver import run_pass
 
@@ -1680,16 +1682,12 @@ async def test_a_pin_whose_vector_landed_first_keeps_its_vector_served(
     (vector,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
     cols = {c: v for c, v in vector.items() if c in M.EMBEDDING_PERSISTED_COLS}
     await M.insert_embedding_rows([M.build_embedding_row(**(cols | {"version": drawn}))], ch=ch)
-    real = embeddings.insert_embedding_rows
-
-    async def insert(rows: list[dict[str, Any]], **kw: Any) -> Any:
-        out = await real(rows, **kw)
-        if any(r.get("status") == "superseded" for r in rows):
-            await lifecycle.insert_memory_versions([pinned], ch=ch)  # the pin lands now
-        return out
-
-    monkeypatch.setattr(embeddings, "insert_embedding_rows", insert)
-    await run_pass()
+    assert (await run_pass())["retired"] == 1
+    await lifecycle.insert_memory_versions([pinned], ch=ch)  # the pin lands now
+    monkeypatch.setattr(projection_failures, "STATUS_MIRROR_GRACE_S", 0)
+    await projection_failures.retry_projection_failures(
+        org=org, projection=projection_failures.STATUS_MIRROR
+    )
     head = (await _rows(ch, org))["office_city"]
     assert head["pinned"] and head["status"] == "active" and head["version"] == drawn
     (served,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)

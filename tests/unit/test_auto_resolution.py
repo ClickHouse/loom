@@ -904,9 +904,11 @@ async def test_the_reconcile_mirrors_each_rows_head(monkeypatch) -> None:
     from server.memory.app import projection_failures
 
     heads = {
-        "kept": SimpleNamespace(model_dump=lambda: {"memory_id": "kept", "status": "active"}),
+        "kept": SimpleNamespace(
+            model_dump=lambda: {"memory_id": "kept", "status": "active", "version": 7}
+        ),
         "deleted": SimpleNamespace(
-            model_dump=lambda: {"memory_id": "deleted", "tombstoned_at": "2026-10-14"}
+            model_dump=lambda: {"memory_id": "deleted", "tombstoned_at": "2026-10-14", "version": 9}
         ),
     }
     mirrored: list = []
@@ -926,6 +928,7 @@ async def test_the_reconcile_mirrors_each_rows_head(monkeypatch) -> None:
         org="o",
         payload={"memory_ids": ["kept", "deleted", "erased"]},
         projection=projection_failures.STATUS_MIRROR,
+        created_at=None,
     )
     resolved: list = []
 
@@ -934,11 +937,12 @@ async def test_the_reconcile_mirrors_each_rows_head(monkeypatch) -> None:
 
     monkeypatch.setattr(projection_failures, "mark_projection_failures_resolved", mark)
     out = await projection_failures.retry_projection_failure(failure, ch=object())
-    # Live: mirrored as live. Deleted since: its tombstone is mirrored. Erased: the
-    # erasure took its embeddings, nothing to mirror.
+    # Live: mirrored as live, at read + 1 (above a judged copy over the head's
+    # version). Deleted since: its tombstone is mirrored at the head's version. Erased:
+    # the erasure took its embeddings, nothing to mirror.
     assert mirrored == [
         {"memory_id": "kept", "status": "active"},
-        {"memory_id": "deleted", "tombstoned_at": "2026-10-14"},
+        {"memory_id": "deleted", "tombstoned_at": "2026-10-14", "version": 9},
     ]
     assert out.resolved and resolved == ["f1"]
 
@@ -958,10 +962,31 @@ async def test_a_failed_reconcile_mirror_leaves_the_failure_open(monkeypatch) ->
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
     monkeypatch.setattr(memory_repo, "mirror_status_to_embeddings", mirror)
     failure = SimpleNamespace(
-        failure_id="f1", org="o", payload={"memory_ids": ["m"]}, projection="memory_status_mirror"
+        failure_id="f1",
+        org="o",
+        payload={"memory_ids": ["m"]},
+        projection="memory_status_mirror",
+        created_at=None,
     )
     out = await projection_failures.retry_projection_failure(failure, ch=object())
     assert out.retried and not out.resolved and "embeddings insert" in out.error
+
+
+async def test_a_fresh_status_mirror_waits_for_a_write_in_flight() -> None:
+    from types import SimpleNamespace
+
+    from server.core.datetimes import naive_utc_now
+    from server.memory.app import projection_failures
+
+    failure = SimpleNamespace(
+        failure_id="f1",
+        org="o",
+        payload={"memory_ids": ["m"]},
+        projection="memory_status_mirror",
+        created_at=naive_utc_now(),
+    )
+    out = await projection_failures.retry_projection_failure(failure, ch=object())
+    assert not out.retried and out.reason == "pending"
 
 
 async def test_an_unconfirmed_value_update_is_followed_but_not_counted(

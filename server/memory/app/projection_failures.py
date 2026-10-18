@@ -35,7 +35,7 @@ from server.memory.app.projection_errors import (
     restated_repair_payload,
 )
 from server.memory.domain.graph_quality import IntervalRepair
-from server.memory.domain.temporal_sql import HOLDS_VALUE_SQL
+from server.memory.domain.temporal_sql import HOLDS_VALUE_SQL, SERVED_STATUSES
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +82,9 @@ FOLLOW_OWED = "triples_follow_owed"
 # retired, or this long has passed, the retirement may still land and the intent waits.
 FOLLOW_OWED_GRACE_S = 600
 STATUS_MIRROR = "memory_status_mirror"
+# A STATUS_MIRROR intent waits this long: a same-content write in flight when it was
+# queued (an unlocked pin) has landed its memory row by then.
+STATUS_MIRROR_GRACE_S = 60
 # Triples a follow closed but could not re-check for a live row holding them.
 TRIPLES_REOPEN = "triples_reopen"
 # The facts of rows a revision or an Undo changed, not yet reconciled with them.
@@ -92,10 +95,13 @@ TRIPLES_RECONCILE = "triples_reconcile"
 EDGES_CLOSE = "entity_edges_close"
 
 
-async def queue_status_mirror(rows: list[dict[str, Any]]) -> None:
-    """Queue the reconcile of retirements the re-read could not confirm: recall was
-    left as it was, and the repair mirrors each row's head once it can read it. If
-    even this insert fails, `loom reconcile-status` finds the divergence."""
+async def queue_status_mirror(
+    rows: list[dict[str, Any]], *, reason: str = "retirement unconfirmed by the re-read"
+) -> None:
+    """Queue the mirror of each row's head onto recall, for the repair to make once it
+    can read it: a retirement the re-read could not confirm, or one a same-content write
+    may have landed under. If even this insert fails, `loom reconcile-status` finds the
+    divergence."""
     by_ns: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for r in rows:
         by_ns.setdefault((str(r["org"]), str(r["namespace"])), []).append(r)
@@ -106,7 +112,7 @@ async def queue_status_mirror(rows: list[dict[str, Any]]) -> None:
                 namespace=namespace,
                 projection=STATUS_MIRROR,
                 memory_keys=sorted({str(r.get("memory_key") or "") for r in group}),
-                error="retirement unconfirmed by the re-read",
+                error=reason,
                 payload={"memory_ids": sorted({str(r["memory_id"]) for r in group})},
             )
         except Exception as e:  # noqa: BLE001 — the write stands; reconcile-status backs it
@@ -315,7 +321,9 @@ async def retry_projection_failure(
             TRIPLES_REPAIR,
         }:
             reason = await _retry_graph_projection(failure, ch=ch)
-        elif failure.projection == FOLLOW_OWED and await _retirement_pending(failure, ch=ch):
+        elif (failure.projection == FOLLOW_OWED and await _retirement_pending(failure, ch=ch)) or (
+            failure.projection == STATUS_MIRROR and _younger_than(failure, STATUS_MIRROR_GRACE_S)
+        ):
             return ProjectionFailureRetryResult(
                 failure_id=failure.failure_id,
                 projection=failure.projection,
@@ -495,7 +503,12 @@ async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
             include_tombstoned=True,
         )
         if row is not None:
-            heads.append(row.model_dump())
+            head = row.model_dump()
+            # As reconcile-status: a hiding status at the head's version; a served one
+            # at read + 1, above a judged copy that sits over the head's version.
+            if head.get("status") in SERVED_STATUSES and head.get("tombstoned_at") is None:
+                head.pop("version", None)
+            heads.append(head)
     # Strict: a mirror that failed must leave the failure open for the next pass.
     await memory_repo.mirror_status_to_embeddings(heads, ch=ch, strict=True)
     return ""
@@ -533,16 +546,20 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
     return f"unfollowable_chain: {len(outcome.unfollowed)} pair(s)"
 
 
+def _younger_than(failure: ProjectionFailureRow, seconds: float) -> bool:
+    created = failure.created_at
+    return created is not None and (
+        (naive_utc_now() - to_naive_utc(created)).total_seconds() <= seconds
+    )
+
+
 async def _retirement_pending(failure: ProjectionFailureRow, *, ch: Any) -> bool:
     """Whether a fresh FOLLOW_OWED intent still has a loser that is live: its supersede
     may not have committed yet, so following (nothing) and resolving now would lose it."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import get_by_id
 
-    created = failure.created_at
-    if created is None or (naive_utc_now() - to_naive_utc(created)).total_seconds() > (
-        FOLLOW_OWED_GRACE_S
-    ):
+    if not _younger_than(failure, FOLLOW_OWED_GRACE_S):
         return False
     for loser, _winner in failure.payload.get("pairs") or []:
         head = await get_by_id(
