@@ -243,7 +243,7 @@ class ConversationSearchInput(BaseModel):
 
     `thread_id`, `run_id` and `role` each narrow the hits, and they combine. Only user
     and assistant turns are embedded; when the embedder is unavailable a substring
-    match stands in, and it reads every role."""
+    match stands in, newest first, and it reads every role."""
 
     org: str
     namespace: str
@@ -254,7 +254,9 @@ class ConversationSearchInput(BaseModel):
     query: str
     thread_id: str | None = None  # optional: scope to one thread
     run_id: str | None = None  # optional: filter by run_id
-    role: ConversationRole | None = None  # optional: filter by speaker
+    # Filter by speaker; system and tool turns are not embedded, so they match only on
+    # the substring fallback.
+    role: ConversationRole | None = None
     # At most this many hits (1-200). Across agents ("*" or "-") a turn several agents
     # logged is one hit: the embeddings hold one row per turn, and the substring path
     # collapses its copies before the limit.
@@ -274,7 +276,8 @@ class _ConversationHit(BaseModel):
 
 
 class ConversationSearchOutput(BaseModel):
-    # Matching messages, most similar first; empty when none clears the similarity floor.
+    # Matching messages, most similar first and empty when none clears the similarity
+    # floor; newest first, with no floor, on the substring fallback.
     hits: list[_ConversationHit]
     # Namespaces of the caller an all_mine search did not read because it stops
     # at `memory_search_fanout_max_namespaces`; address one by name to search it.
