@@ -1,0 +1,93 @@
+# Copying a namespace to another Loom
+
+A job inside the private network copies one namespace from a private Loom to a public
+one on a schedule: `loom export-okf` reads it from the private Loom, and
+`loom import-okf --prune` writes it to the public Loom. The public side never gets a
+route or a token into the private Loom. `deploy/okf-sync/cronjob.yaml` is the
+Kubernetes example: a CronJob every 15 minutes, its ServiceAccount and a
+NetworkPolicy.
+
+```bash
+LOOM_API_KEY="$PRIVATE_VIEWER" loom export-okf --server-url "$PRIVATE_URL" \
+  --namespace shared-lessons --no-evidence --out /tmp/bundle
+LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_URL" \
+  --namespace shared-lessons --agent okf-sync --prune
+```
+
+## What a run writes
+
+- **Nothing, when nothing changed.** The import reads the live rows under its identity
+  first and skips a concept whose row already holds the same value, type, tags,
+  confidence, entities, `valid_at`, `valid_to`, `source_trace` and `source_class`. It
+  skips an edge that is already live. Re-sending an identical row would count as a
+  reinforcement: a version row, an audit row and a higher ranking boost on every run.
+- **One `memory.set` per new or changed concept**, through the conflict, blacklist and
+  audit checks of any other write, as `source_class: imported`.
+- **One `memory.delete` per pruned row.** `--prune` deletes only rows under the import's
+  `--agent` whose `source_trace` starts with `okf:`, and whose key is no longer in the
+  bundle. Rows anyone else wrote in the namespace stay. A delete is a tombstone:
+  `memory.restore` brings the row back within its 14-day window.
+
+The last line reports the counts:
+`imported 500 concepts into acme/shared-lessons: 0 written, 500 unchanged, 0 failed …, 0 pruned`.
+A non-zero exit means a write, link or delete failed.
+
+## Guards
+
+- `--prune` refuses a bundle with no concepts, and one whose concept files do not hash
+  to the `loom.corpus_digest` the export wrote into `index.md`. A partial or edited bundle
+  never drives deletes.
+- The import runs only when the export exited 0 (`sh -e`), and each run writes its bundle
+  to a fresh `emptyDir`, so a bundle left by an earlier run is never imported.
+- `--dry-run` lists what would be written and deleted, and writes nothing.
+- `concurrencyPolicy: Forbid` keeps two runs from interleaving.
+
+There is no cap on how many rows one run may prune. A source namespace that loses most of
+its rows on purpose propagates on the next run without an operator. A key pruned by
+mistake is written again by the next run whose bundle holds it.
+
+## Tokens
+
+The job holds two tokens, each scoped to the one namespace:
+
+```bash
+# On the private Loom: read the namespace, nothing else.
+loom mint-token --subject okf-sync --org <org> --namespace-role shared-lessons=viewer --ttl-days 90
+# On the public Loom: write the namespace, nothing else.
+loom mint-token --subject okf-sync --org <org> --namespace-role shared-lessons=writer --ttl-days 90
+```
+
+Store them in the Secret the CronJob reads:
+
+```bash
+kubectl create secret generic okf-sync \
+  --from-file=private-viewer=./private-viewer.jwt \
+  --from-file=public-writer=./public-writer.jwt
+```
+
+Re-mint before the TTL runs out and replace the Secret; `loom revoke-token` retires a
+leaked one.
+
+Readers on the public side (a bot in public CI) get `viewer` tokens on the public Loom.
+On the private Loom, every principal other than the job's token holds at most `viewer` on
+the copied namespace, so nothing is written there that is not meant to be published.
+
+## The copied namespace is published
+
+Everything in the namespace reaches the public Loom within one schedule interval. Treat a
+write to it on the private side as publishing: keep anything confidential in another
+namespace. Rows marked `sensitivity: high` stay on the private side (the export leaves
+them out unless `--include-high`), and a row that becomes `high` is pruned from the
+public side on the next run.
+
+## Network
+
+The NetworkPolicy allows no ingress. Egress is limited to DNS, the private Loom's web pods
+on port 7777, and the public Loom's addresses on 443. A NetworkPolicy matches addresses,
+not host names: list the public Loom's addresses in the `ipBlock`, or use your CNI's
+host-name policy or an egress proxy when they change.
+
+## Related
+
+- [OKF bundles](../features/integrations/okf.md): the bundle format and the import.
+- [Kubernetes](kubernetes.md): the chart whose pod security the CronJob copies.

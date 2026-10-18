@@ -3631,7 +3631,8 @@
         "no_evidence",
         "no_lint",
         "force_import",
-        "no_links"
+        "no_links",
+        "prune"
        ]
       }
      ],
@@ -3874,6 +3875,21 @@
        "type": null,
        "required": false,
        "help": "Do not re-create the bundle's relates_to edges with memory.link.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--prune"
+       ],
+       "dest": "prune",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "Delete the rows an earlier import wrote (this --agent, an okf: source_trace) whose key is no longer in the bundle. Refuses a bundle whose concept files do not match its loom.corpus_digest; with --dry-run, lists them.",
        "metavar": null
       }
      ]

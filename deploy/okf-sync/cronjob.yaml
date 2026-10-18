@@ -1,0 +1,139 @@
+# Copies one namespace from a private Loom to a public one every 15 minutes:
+# `loom export-okf` against the private Loom, then `loom import-okf --prune`
+# against the public Loom. It runs inside the private network, so the public
+# side never gets a route or a token into the private Loom. Runbook:
+# docs/operations/okf-sync.md.
+#
+# Before applying, replace:
+#   shared-lessons                      the namespace to copy (both sides)
+#   loom-private.loom.svc:7777          the private Loom's in-cluster Service
+#   https://loom.example.com            the public Loom
+#   203.0.113.10/32                     the public Loom's address(es), for egress
+#   app.kubernetes.io/instance: loom    the private Loom's Helm release name
+#   kubernetes.io/metadata.name: loom   the namespace the private Loom runs in
+#   ghcr.io/clickhouse/loom:1.0.0       the Loom image (pin a digest)
+#
+# The Secret `okf-sync` holds the two tokens (see the runbook):
+#   kubectl create secret generic okf-sync \
+#     --from-file=private-viewer=./private-viewer.jwt \
+#     --from-file=public-writer=./public-writer.jwt
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: okf-sync
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: okf-sync
+spec:
+  schedule: "*/15 * * * *"
+  # A run still going when the next is due is left to finish; the next is skipped.
+  concurrencyPolicy: Forbid
+  # A run that could not start within 10 minutes is dropped: the next one copies the same rows.
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 840
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: okf-sync
+        spec:
+          serviceAccountName: okf-sync
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: okf-sync
+              image: ghcr.io/clickhouse/loom:1.0.0
+              imagePullPolicy: IfNotPresent
+              # Each command reads its token from LOOM_API_KEY, so neither token is on a
+              # command line. The import runs only when the export exited 0.
+              command:
+                - sh
+                - -euc
+                - |
+                  LOOM_API_KEY="$PRIVATE_VIEWER" loom export-okf --server-url "$PRIVATE_URL" \
+                    --namespace "$NAMESPACE" --no-evidence --out /tmp/bundle
+                  LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_URL" \
+                    --namespace "$NAMESPACE" --agent okf-sync --prune
+              env:
+                - name: NAMESPACE
+                  value: shared-lessons
+                - name: PRIVATE_URL
+                  value: http://loom-private.loom.svc:7777
+                - name: PUBLIC_URL
+                  value: https://loom.example.com
+                - name: HOME
+                  value: /tmp
+                - name: LOOM_ENV_FILE
+                  value: ""
+                - name: PRIVATE_VIEWER
+                  valueFrom:
+                    secretKeyRef: { name: okf-sync, key: private-viewer }
+                - name: PUBLIC_WRITER
+                  valueFrom:
+                    secretKeyRef: { name: okf-sync, key: public-writer }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests: { cpu: 100m, memory: 256Mi }
+                limits: { cpu: "1", memory: 1Gi }
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            # A fresh bundle directory per run: a bundle left by an earlier run is never imported.
+            - name: tmp
+              emptyDir:
+                sizeLimit: 512Mi
+---
+# No ingress. Egress: DNS, the private Loom's web pods, and the public Loom on 443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: okf-sync
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: okf-sync
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: loom
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loom
+              app.kubernetes.io/instance: loom
+              app.kubernetes.io/component: web
+      ports:
+        - { port: 7777, protocol: TCP }
+    - to:
+        - ipBlock: { cidr: 203.0.113.10/32 }
+      ports:
+        - { port: 443, protocol: TCP }

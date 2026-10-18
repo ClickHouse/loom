@@ -1,0 +1,248 @@
+"""`loom import-okf` on a schedule: an unchanged concept or edge is skipped (re-sending
+it would count as a reinforcement), a changed or new one is written, and `--prune`
+deletes only the rows an earlier import wrote, from a bundle that is a complete export."""
+
+from __future__ import annotations
+
+import argparse
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from server.cli import okf as cli_okf
+from server.core.hashing import sha256_value
+from server.memory.domain import okf_bundle as okf
+from server.memory.domain.graph_quality import canonical_entities
+
+_NOW = datetime(2026, 9, 1, tzinfo=UTC)
+
+
+def _entry(key: str, **over: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "memory_key": key,
+        "memory_type": "semantic",
+        "value": f"{key} fails when the part count passes 300.",
+        "tags": ["lesson"],
+        "agent": "clickgap",
+        "namespace": "src",
+        "created_at": "2026-09-01T10:00:00",
+        "valid_at": "2026-08-30T08:00:00",
+        "status": "active",
+        "confidence": 1.0,
+        "entities": ["MergeTree"],
+    }
+    base.update(over)
+    return base
+
+
+def _bundle(root: Path, entries: list[dict[str, Any]], edges: list[dict[str, Any]] | None = None):
+    files = okf.plan_bundle(entries, namespace="src", exported_at=_NOW, edges=edges)
+    cli_okf._write_bundle(root, files)
+    return root
+
+
+class _FakeLoom:
+    """The ops the import calls, storing rows the way memory.set does."""
+
+    def __init__(self) -> None:
+        self.rows: dict[tuple[str, str, str], dict[str, Any]] = {}  # (agent, session, key)
+        self.edges: list[dict[str, Any]] = []
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def put(self, agent: str, key: str, **row: Any) -> None:
+        self.rows[(agent, "-", key)] = {"memory_key": key, "session_id": "-", **row}
+
+    async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((op, body))
+        if op == "memory.list":
+            mine = sorted(
+                (r for (a, _s, _k), r in self.rows.items() if a == body["agent"]),
+                key=lambda r: r["memory_key"],
+            )
+            page = mine[body["offset"] : body["offset"] + body["limit"]]
+            return {"entries": page, "truncated": body["offset"] + len(page) < len(mine)}
+        if op == "memory.bulk_get":
+            got = {
+                k: self.rows[(body["agent"], body["session_id"], k)]
+                for k in body["memory_keys"]
+                if (body["agent"], body["session_id"], k) in self.rows
+            }
+            return {"results": got}
+        if op == "memory.export_evidence":
+            return {"edges": self.edges, "has_more": False}
+        if op == "memory.set":
+            self.put(
+                body["agent"],
+                body["memory_key"],
+                memory_type=body["memory_type"],
+                confidence=body["confidence"],
+                source_trace=body["source_trace"],
+                valid_at=body.get("valid_at"),
+                valid_to=body.get("valid_to"),
+                tags=body["tags"],
+                entities=canonical_entities(body.get("entities") or []),
+                content_sha256=sha256_value(body["value"]),
+                source_class=body.get("source_class", "asserted"),
+                verification="none",
+            )
+            return {"status": "active"}
+        if op == "memory.link":
+            self.edges.append(
+                {
+                    "from_key": body["from_key"],
+                    "to_key": body["to_key"],
+                    "relation": body["relation"],
+                }
+            )
+            return {"linked": True}
+        if op == "memory.delete":
+            gone = self.rows.pop((body["agent"], body["session_id"], body["memory_key"]), None)
+            return {"tombstoned": gone is not None}
+        raise AssertionError(op)
+
+    async def close(self) -> None:
+        pass
+
+    def writes(self) -> list[str]:
+        return [op for op, _ in self.calls if op in ("memory.set", "memory.link", "memory.delete")]
+
+
+@pytest.fixture
+def loom(monkeypatch: pytest.MonkeyPatch) -> _FakeLoom:
+    fake = _FakeLoom()
+    monkeypatch.setattr(cli_okf, "_Client", lambda *_a: fake)
+    return fake
+
+
+def _run(root: Path, *flags: str) -> int:
+    parser = argparse.ArgumentParser()
+    cli_okf.register_okf_cli(parser.add_subparsers())
+    args = parser.parse_args(
+        ["import-okf", str(root), "--token", "t", "--org", "acme", "--namespace", "dst"]
+        + ["--agent", "okf-sync", *flags]
+    )
+    return int(args.func(args))
+
+
+def test_a_second_import_of_the_same_bundle_writes_nothing(tmp_path: Path, loom: _FakeLoom):
+    edge = {"from_key": "a", "to_key": "b", "relation": "supports", "author": "x"}
+    root = _bundle(tmp_path, [_entry("a"), _entry("b")], edges=[edge])
+    assert _run(root) == 0
+    assert loom.writes() == ["memory.set", "memory.set", "memory.link"]
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"value": "a fails when the part count passes 500."},
+        {"tags": ["lesson", "flaky"]},
+        {"memory_type": "procedural"},
+        {"confidence": 0.5},
+        {"valid_at": "2026-08-31T08:00:00"},
+        {"valid_to": "2026-12-01T00:00:00"},
+        {"entities": ["MergeTree", "S3"]},
+        {"source_class": "derived"},
+    ],
+    ids=lambda c: next(iter(c)),
+)
+def test_a_changed_value_or_field_is_written(
+    tmp_path: Path, loom: _FakeLoom, change: dict[str, Any]
+) -> None:
+    assert _run(_bundle(tmp_path / "v1", [_entry("a")])) == 0
+    loom.calls.clear()
+    assert _run(_bundle(tmp_path / "v2", [_entry("a", **change)])) == 0
+    sets = [b for op, b in loom.calls if op == "memory.set"]
+    assert [b["memory_key"] for b in sets] == ["a"]
+
+
+def test_the_bundle_directory_name_is_part_of_what_is_written(tmp_path: Path, loom: _FakeLoom):
+    assert _run(_bundle(tmp_path / "v1", [_entry("a")])) == 0
+    loom.calls.clear()
+    # source_trace names the bundle directory, so a renamed directory rewrites the row once.
+    assert _run(_bundle(tmp_path / "v2", [_entry("a")])) == 0
+    assert loom.writes() == ["memory.set"]
+
+
+def test_only_the_new_key_is_written(tmp_path: Path, loom: _FakeLoom) -> None:
+    root = tmp_path / "b"
+    assert _run(_bundle(root, [_entry("a")])) == 0
+    loom.calls.clear()
+    assert _run(_bundle(root, [_entry("a"), _entry("c")])) == 0
+    assert [b["memory_key"] for op, b in loom.calls if op == "memory.set"] == ["c"]
+
+
+def test_live_rows_are_read_past_one_page(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli_okf, "_PAGE", 2)
+    monkeypatch.setattr(cli_okf, "_BULK", 2)
+    root = _bundle(tmp_path / "b", [_entry(f"k{i}") for i in range(5)])
+    assert _run(root) == 0
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == []
+    offsets = [b["offset"] for op, b in loom.calls if op == "memory.list"]
+    assert offsets == [0, 2, 4]
+    assert [len(b["memory_keys"]) for op, b in loom.calls if op == "memory.bulk_get"] == [2, 2, 1]
+
+
+def test_prune_deletes_only_rows_the_import_wrote(tmp_path: Path, loom: _FakeLoom) -> None:
+    # Each run exports to a fresh directory of the same name, as the CronJob does.
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    # Same agent, not stamped by an import: someone else's row under that agent.
+    loom.put("okf-sync", "hand-written", source_trace="cli:manual", tags=[])
+    # Another writer's row with an import-looking trace.
+    loom.put("clickhouse-gh", "bot-note", source_trace="okf:b/x.md", tags=[])
+    loom.calls.clear()
+
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
+
+    deleted = [b["memory_key"] for op, b in loom.calls if op == "memory.delete"]
+    assert deleted == ["gone"]
+    assert ("okf-sync", "-", "hand-written") in loom.rows
+    assert ("clickhouse-gh", "-", "bot-note") in loom.rows
+
+
+def test_prune_dry_run_lists_and_writes_nothing(
+    tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    loom.calls.clear()
+    root = _bundle(tmp_path / "2" / "b", [_entry("a", tags=["changed"])])
+    assert _run(root, "--prune", "--dry-run") == 0
+    assert loom.writes() == []
+    out = capsys.readouterr().out
+    assert "would delete gone" in out
+    assert "dry run: 1 of 1 concepts" in out
+    assert "1 would be pruned" in out
+
+
+def test_prune_refuses_an_empty_bundle(tmp_path: Path, loom: _FakeLoom) -> None:
+    assert _run(tmp_path, "--prune", "--no-lint") == 2
+    assert loom.calls == []
+
+
+def test_prune_refuses_a_partial_or_edited_bundle(tmp_path: Path, loom: _FakeLoom) -> None:
+    root = _bundle(tmp_path / "b", [_entry("a"), _entry("b")])
+    (root / "semantic" / "b.md").unlink()  # the export stopped before this file
+    assert _run(root, "--prune", "--no-lint") == 2
+    assert loom.calls == []
+
+
+def test_prune_refuses_a_bundle_without_a_corpus_digest(tmp_path: Path, loom: _FakeLoom):
+    root = _bundle(tmp_path / "b", [_entry("a")])
+    index = root / "index.md"
+    index.write_text(index.read_text().replace("corpus_digest:", "digest_was:"))
+    assert _run(root, "--prune", "--no-lint") == 2
+    assert loom.calls == []
+
+
+def test_unreadable_timestamps_are_never_equal() -> None:
+    assert cli_okf._when("2026-08-30T08:00:00.123456Z") == datetime(2026, 8, 30, 8)
+    assert cli_okf._when("2026-08-30T10:00:00+02:00") == datetime(2026, 8, 30, 8)
+    assert cli_okf._when("next tuesday") != cli_okf._when(None)

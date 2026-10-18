@@ -97,9 +97,15 @@ file's SHA-256 hex digest with no separator, and SHA-256 that string. A mismatch
 `loom import-okf DIR --namespace NS` lints first and refuses a bundle with critical
 findings unless `--force-import` (`--no-lint` skips the gate). It then writes each concept
 through `memory.set`, with identity from the token or the `--agent`, `--user-id` and
-`--session-id` flags, so an import is idempotent by content hash and subject to conflict
-detection, the blacklist and the audit log. Afterwards it re-creates `relates_to` edges
-with `memory.link` (`--no-links` skips this). The bundle's `evidence/` and `digests/` are
+`--session-id` flags, subject to conflict detection, the blacklist and the audit log.
+Afterwards it re-creates `relates_to` edges with `memory.link` (`--no-links` skips this).
+
+Before writing, the import reads the live rows under its identity and skips every concept
+whose row already holds what the write would send: the value (`content_sha256`), type,
+tags, confidence, entities, `valid_at`, `valid_to`, `source_trace` and `source_class`. It
+skips edges that are already live. Re-sending an identical row would count as a
+reinforcement, so importing the same bundle twice writes nothing the second time. The
+last line counts concepts written, unchanged and failed. The bundle's `evidence/` and `digests/` are
 written back through `memory.import_evidence` (`--no-evidence` skips them) and re-embedded
 by the importing server.
 
@@ -108,6 +114,12 @@ by the importing server.
 | `--verify`        | re-attest concepts whose frontmatter carries a `human:` verification, through `memory.verify`, **as the importing caller**                                   |
 | `--keep-sessions` | write each concept under the session in its `loom.session_id`, so a key that lived under several sessions stays several rows; `--session-id` is the fallback |
 | `--dry-run`       | plan the writes without sending them                                                                                                                         |
+| `--prune`         | delete the rows an earlier import wrote (this `--agent`, an `okf:` `source_trace`) whose key is no longer in the bundle, through `memory.delete`             |
+
+`--prune` refuses a bundle with no concepts and one whose concept files do not hash to the
+root index's `loom.corpus_digest`, so a partial or hand-edited bundle never drives deletes.
+[Copying a namespace to another Loom](../../operations/okf-sync.md) runs export and
+import on a schedule.
 
 `--verify` never forges an attestation. The server decides the actor from the token; the
 bundle's original verifier is recorded in the memory's tags for provenance.
@@ -151,8 +163,8 @@ uv run --project .okf-lint-loom --frozen --python 3.12 loom okf-lint <OKF_ROOT> 
 
 - **A bundle is a snapshot.** Changes made in Loom after the export are not in it until
   the next export; re-export before editing a stale bundle.
-- **Deletions do not travel.** Removing a concept file does not delete the memory on
-  import. Use `memory.delete` for that.
+- **Deletions travel only with `--prune`,** and only for rows the import wrote. Edges
+  removed from the bundle are not deleted.
 - **High-sensitivity rows stay home** unless you pass `--include-high`, and the lint warns
   when one travelled.
 

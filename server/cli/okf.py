@@ -22,8 +22,12 @@ as `relates_to` frontmatter; import re-creates them with `memory.link`
 `loom:` block carries `source_class`, `sensitivity`, `superseded_by` and
 `valid_to`; `sensitivity: high` rows stay home unless `--include-high`.
 
-Import is `memory.set` per concept (identity from the token or flags), so
-it is idempotent by content hash and subject to conflict detection. With
+Import is `memory.set` per concept (identity from the token or flags), subject
+to conflict detection. A concept whose live row already holds everything the
+set would write is skipped, as is an edge that is already live: re-sending
+them would count as reinforcement and write version and audit rows, so a
+scheduled sync stays a no-op until the source changes. `--prune` deletes the
+rows an earlier import wrote whose key has left the bundle. With
 `--verify`, concepts whose frontmatter carries a `human:` verification are
 re-attested through `memory.verify` AS THE IMPORTING CALLER — the server
 decides the actor from the token; the bundle's actor is recorded in the
@@ -34,17 +38,26 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from server.cli._client import default_base_url, error_line, jwt_claims, resolve_token
+from server.core.hashing import sha256_value
 from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
+from server.memory.domain.edge_relations import canonical_link_relation
+from server.memory.domain.graph_quality import canonical_entities
 
 _PAGE = 1000
 _BULK = 500
+# Every concept row the import writes carries this source_trace prefix; --prune deletes
+# nothing else.
+_TRACE_PREFIX = "okf:"
 
 
 def _resolve_token(args: argparse.Namespace) -> str:
@@ -528,34 +541,150 @@ def _lint_before_import(root: Path, args: argparse.Namespace) -> int | None:
     return None
 
 
+def _concept_payload(
+    c: okf.Concept, org: str, args: argparse.Namespace, root: Path
+) -> dict[str, Any]:
+    """The memory.set body for one concept, identity included."""
+    payload = okf.concept_to_memory(c, target_org=org, target_namespace=args.namespace)
+    bundle_actor = okf.human_verified_actor(c)
+    if bundle_actor:
+        payload["tags"] = [*payload["tags"], f"okf:verified_by:{bundle_actor}"]
+    session_id = args.session_id
+    if args.keep_sessions:
+        session_id = okf.concept_session_id(c) or args.session_id
+    payload.update(
+        {
+            "org": org,
+            "namespace": args.namespace,
+            "agent": args.agent,
+            "user_id": args.user_id,
+            "session_id": session_id,
+            "source_trace": f"{_TRACE_PREFIX}{root.name}/{c.path}",
+        }
+    )
+    return payload
+
+
+_LIVE_FIELDS = [
+    "session_id",
+    "memory_type",
+    "confidence",
+    "source_trace",
+    "valid_at",
+    "tags",
+    "entities",
+    "content_sha256",
+    "verification",
+]
+
+
+async def _live_rows(
+    client: _Client, org: str, args: argparse.Namespace
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """The live rows under the import's identity in the target namespace, by
+    (session_id, memory_key), with every field memory.set writes that a read returns."""
+    ident = {"org": org, "namespace": args.namespace, "agent": args.agent, "user_id": args.user_id}
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    offset = 0
+    while True:
+        page = await client.post(
+            "memory.list",
+            {
+                **ident,
+                "session_id": "*" if args.keep_sessions else args.session_id,
+                "limit": _PAGE,
+                "offset": offset,
+                "sort_by": "recency",
+                # memory.set overwrites these rows too, so they count as live.
+                "include_duplicates": True,
+                "include_superseded": True,
+                "fields": _LIVE_FIELDS,
+            },
+        )
+        entries = page.get("entries") or []
+        for r in entries:
+            rows[(str(r.get("session_id") or "-"), str(r["memory_key"]))] = r
+        if not page.get("truncated") or not entries:
+            break
+        offset += len(entries)
+
+    # valid_to and source_class come only from memory.get.
+    by_session: dict[str, list[str]] = {}
+    for sid, key in rows:
+        by_session.setdefault(sid, []).append(key)
+    for sid, keys in by_session.items():
+        for i in range(0, len(keys), _BULK):
+            got = await client.post(
+                "memory.bulk_get",
+                {
+                    **ident,
+                    "session_id": sid,
+                    "memory_keys": keys[i : i + _BULK],
+                    "fields": ["valid_to", "source_class"],
+                },
+            )
+            for key, g in (got.get("results") or {}).items():
+                if (sid, key) in rows:
+                    rows[(sid, key)].update(
+                        valid_to=g.get("valid_to"), source_class=g.get("source_class")
+                    )
+    return rows
+
+
+def _when(v: Any) -> datetime | str | None:
+    """A bundle or wire timestamp as naive UTC whole seconds (the column's precision)."""
+    if not v:
+        return None
+    try:
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except ValueError:
+        return str(v)  # never equal to a parsed time, so the server sees and judges it
+    if d.tzinfo:
+        d = d.astimezone(UTC).replace(tzinfo=None)
+    return d.replace(microsecond=0)
+
+
+def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
+    """True when the live row already holds everything memory.set would write.
+    `content_sha256` covers the value only, so the metadata is compared too."""
+    if payload.get("source_resource_id"):
+        return False  # no read returns source_resource_id, so it cannot be compared
+    return (
+        row.get("content_sha256") == sha256_value(payload["value"])
+        and row.get("memory_type") == payload["memory_type"]
+        and row.get("source_trace") == payload["source_trace"]
+        and set(row.get("tags") or []) == set(payload["tags"])
+        and math.isclose(float(row.get("confidence") or 0), payload["confidence"], abs_tol=1e-6)
+        and (row.get("entities") or []) == canonical_entities(payload.get("entities") or [])
+        and _when(row.get("valid_at")) == _when(payload.get("valid_at"))
+        and _when(row.get("valid_to")) == _when(payload.get("valid_to"))
+        # Without a declared class the server derives one from the op and source_trace.
+        and ("source_class" not in payload or row.get("source_class") == payload["source_class"])
+    )
+
+
 async def _import_concepts(
     client: _Client,
     org: str,
     args: argparse.Namespace,
     concepts: list[okf.Concept],
     root: Path,
+    live: dict[tuple[str, str], dict[str, Any]],
 ) -> dict[str, int]:
-    """memory.set per concept (conflict detection, blacklist and audit apply);
-    `--verify` re-attests human-verified concepts as the caller."""
-    n = {"written": 0, "conflicted": 0, "verified": 0, "failed": 0}
+    """memory.set per changed or new concept (conflict detection, blacklist and audit
+    apply); `--verify` re-attests human-verified concepts as the caller."""
+    n = {"written": 0, "unchanged": 0, "conflicted": 0, "verified": 0, "failed": 0}
     for c in concepts:
-        payload = okf.concept_to_memory(c, target_org=org, target_namespace=args.namespace)
+        payload = _concept_payload(c, org, args, root)
         bundle_actor = okf.human_verified_actor(c)
-        if bundle_actor:
-            payload["tags"] = [*payload["tags"], f"okf:verified_by:{bundle_actor}"]
-        session_id = args.session_id
-        if args.keep_sessions:
-            session_id = okf.concept_session_id(c) or args.session_id
-        payload.update(
-            {
-                "org": org,
-                "namespace": args.namespace,
-                "agent": args.agent,
-                "user_id": args.user_id,
-                "session_id": session_id,
-                "source_trace": payload.get("source_trace") or f"okf:{root.name}/{c.path}",
-            }
-        )
+        row = live.get((payload["session_id"], payload["memory_key"]))
+        if row is not None and _unchanged(payload, row):
+            n["unchanged"] += 1
+            # The row keeps the attestation it got when it was written.
+            if args.verify and bundle_actor and not args.dry_run:
+                if row.get("verification") in ("none", "stale"):
+                    n["verified"] += await _verify(client, org, args, payload, c)
+            continue
         if args.dry_run:
             note = (
                 f" verify-as-caller (bundle: {bundle_actor})"
@@ -567,6 +696,7 @@ async def _import_concepts(
                 f"  {c.path} → {payload['memory_type']}:{payload['memory_key']} "
                 f"tags={payload['tags']}{cls}{note}"
             )
+            n["written"] += 1
             continue
         try:
             res = await client.post("memory.set", payload)
@@ -578,22 +708,30 @@ async def _import_concepts(
         if res.get("conflict") or res.get("status") == "conflicted":
             n["conflicted"] += 1
         if args.verify and bundle_actor:
-            try:
-                v = await client.post(
-                    "memory.verify",
-                    {
-                        "org": org,
-                        "namespace": args.namespace,
-                        "agent": args.agent,
-                        "user_id": args.user_id,
-                        "session_id": args.session_id,
-                        "memory_key": payload["memory_key"],
-                    },
-                )
-                n["verified"] += int(bool(v.get("found")))
-            except RuntimeError as e:
-                print(f"  ! {c.path}: verify failed: {e}", file=sys.stderr)
+            n["verified"] += await _verify(client, org, args, payload, c)
     return n
+
+
+async def _verify(
+    client: _Client, org: str, args: argparse.Namespace, payload: dict[str, Any], c: okf.Concept
+) -> int:
+    """memory.verify as the caller; 1 when the row was found."""
+    try:
+        v = await client.post(
+            "memory.verify",
+            {
+                "org": org,
+                "namespace": args.namespace,
+                "agent": args.agent,
+                "user_id": args.user_id,
+                "session_id": args.session_id,
+                "memory_key": payload["memory_key"],
+            },
+        )
+    except RuntimeError as e:
+        print(f"  ! {c.path}: verify failed: {e}", file=sys.stderr)
+        return 0
+    return int(bool(v.get("found")))
 
 
 async def _import_links(
@@ -602,10 +740,11 @@ async def _import_links(
     args: argparse.Namespace,
     concepts: list[okf.Concept],
     root: Path,
+    live_edges: set[tuple[str, str, str]],
 ) -> dict[str, int]:
-    """Re-create the bundle's `relates_to` edges with memory.link; the author is whoever the
-    token names. Entries that name no concept in the bundle (a `loom://` pointer, a file
-    that did not travel) are reported, never written."""
+    """Re-create the bundle's `relates_to` edges that are not live yet with memory.link; the
+    author is whoever the token names. Entries that name no concept in the bundle (a
+    `loom://` pointer, a file that did not travel) are reported, never written."""
     links, unresolved = okf.resolve_relates_to(concepts)
     for u in unresolved[:10]:
         print(
@@ -615,11 +754,13 @@ async def _import_links(
         )
     if len(unresolved) > 10:
         print(f"  ! … {len(unresolved) - 10} more unresolved relates_to entries", file=sys.stderr)
-    n = {"links": 0, "links_failed": 0, "links_unresolved": len(unresolved)}
+    n = {"links": 0, "links_unchanged": 0, "links_failed": 0, "links_unresolved": len(unresolved)}
+    new = [e for e in links if _edge_key(e) not in live_edges]
+    n["links_unchanged"] = len(links) - len(new)
     if args.dry_run:
-        n["links"] = len(links)
+        n["links"] = len(new)
         return n
-    for e in links:
+    for e in new:
         try:
             await client.post(
                 "memory.link",
@@ -639,6 +780,77 @@ async def _import_links(
     return n
 
 
+def _edge_key(e: dict[str, str]) -> tuple[str, str, str]:
+    """(from_key, to_key, relation) as memory.link stores the edge."""
+    relation, flip = canonical_link_relation(e["relation"])
+    relation = relation or "related_to"
+    from_key, to_key = (e["to_key"], e["from_key"]) if flip else (e["from_key"], e["to_key"])
+    return from_key, to_key, relation
+
+
+def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
+    """Why this bundle must not drive deletes, or '' for a complete export: the concept
+    files still hash to the `loom.corpus_digest` the export wrote into index.md."""
+    if not concepts:
+        return "the bundle has no concepts"
+    from server.memory.domain import okf_lint
+
+    files = okf_lint.read_bundle(root)
+    try:
+        fm = yaml.safe_load(okf.split_frontmatter(files.get("index.md", ""))[0])
+    except yaml.YAMLError:
+        fm = None
+    pointer = fm.get("loom") if isinstance(fm, dict) else None
+    declared = str(pointer.get("corpus_digest") or "") if isinstance(pointer, dict) else ""
+    if not declared:
+        return "index.md carries no loom.corpus_digest, so this is not a complete export"
+    if declared != okf_lint.bundle_digest(files):
+        return "the concept files do not match index.md's loom.corpus_digest (partial or edited)"
+    return ""
+
+
+async def _prune(
+    client: _Client,
+    org: str,
+    args: argparse.Namespace,
+    live: dict[tuple[str, str], dict[str, Any]],
+    keep: set[tuple[str, str]],
+) -> dict[str, int]:
+    """memory.delete each row an earlier import wrote whose key has left the bundle. Only
+    rows under the import's identity with its source_trace stamp qualify, so rows anyone
+    else wrote in the namespace are never touched."""
+    gone = sorted(
+        k
+        for k, r in live.items()
+        if k not in keep and str(r.get("source_trace") or "").startswith(_TRACE_PREFIX)
+    )
+    n = {"pruned": 0, "prune_failed": 0}
+    for session_id, key in gone:
+        if args.dry_run:
+            where = f" (session {session_id})" if session_id != "-" else ""
+            print(f"  would delete {key}{where}")
+            n["pruned"] += 1
+            continue
+        try:
+            res = await client.post(
+                "memory.delete",
+                {
+                    "org": org,
+                    "namespace": args.namespace,
+                    "agent": args.agent,
+                    "user_id": args.user_id,
+                    "session_id": session_id,
+                    "memory_key": key,
+                },
+            )
+        except RuntimeError as e:
+            n["prune_failed"] += 1
+            print(f"  ✗ delete {key}: {e}", file=sys.stderr)
+            continue
+        n["pruned"] += int(bool(res.get("tombstoned")))
+    return n
+
+
 def _cmd_import_okf(args: argparse.Namespace) -> int:
     root = Path(args.path)
     if not root.is_dir():
@@ -647,9 +859,14 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
     refused = _lint_before_import(root, args)
     if refused is not None:
         return refused
+    concepts = _walk_bundle(root)
+    if args.prune:
+        reason = _prune_refusal(root, concepts)
+        if reason:
+            print(f"refusing to prune: {reason}", file=sys.stderr)
+            return 2
     token = _resolve_token(args)
     org = _resolve_org(args, token)
-    concepts = _walk_bundle(root)
     ev_chunks, ev_digests = ([], []) if args.no_evidence else _walk_evidence(root)
     if not concepts and not ev_chunks and not ev_digests:
         print("no concepts found")
@@ -659,17 +876,30 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         client = _Client(args.server_url, token)
         n = {
             "written": 0,
+            "unchanged": 0,
             "conflicted": 0,
             "verified": 0,
             "failed": 0,
             "links": 0,
+            "links_unchanged": 0,
             "links_failed": 0,
             "links_unresolved": 0,
+            "pruned": 0,
+            "prune_failed": 0,
         }
         try:
-            n.update(await _import_concepts(client, org, args, concepts, root))
+            try:
+                live = await _live_rows(client, org, args)
+                live_edges: set[tuple[str, str, str]] = set()
+                if not args.no_links:
+                    edges = await _fetch_edges(client, org, args.namespace)
+                    live_edges = {(e["from_key"], e["to_key"], e["relation"]) for e in edges}
+            except RuntimeError as e:
+                print(f"cannot read {org}/{args.namespace}: {e}", file=sys.stderr)
+                return 1
+            n.update(await _import_concepts(client, org, args, concepts, root, live))
             if not args.no_links:
-                n.update(await _import_links(client, org, args, concepts, root))
+                n.update(await _import_links(client, org, args, concepts, root, live_edges))
             if (ev_chunks or ev_digests) and not args.dry_run:
                 ev = await _import_evidence(client, org, args, ev_chunks, ev_digests)
                 print(
@@ -681,28 +911,43 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                     + (f", {ev['failed']} FAILED" if ev["failed"] else "")
                 )
                 n["failed"] += ev["failed"]
+            if args.prune:
+                keep = {
+                    (p["session_id"], p["memory_key"])
+                    for p in (_concept_payload(c, org, args, root) for c in concepts)
+                }
+                n.update(await _prune(client, org, args, live, keep))
         finally:
             await client.close()
+        would = " would be" if args.dry_run else ""
         link_note = (
             ""
             if args.no_links
-            else f", {n['links']} typed edges{' would be' if args.dry_run else ''} linked"
+            else f", {n['links']} typed edges{would} linked ({n['links_unchanged']} unchanged)"
             + (f" ({n['links_unresolved']} unresolved)" if n["links_unresolved"] else "")
             + (f" ({n['links_failed']} link failures)" if n["links_failed"] else "")
         )
+        prune_note = (
+            f", {n['pruned']}{would} pruned"
+            + (f" ({n['prune_failed']} delete failures)" if n["prune_failed"] else "")
+            if args.prune
+            else ""
+        )
         if args.dry_run:
             print(
-                f"dry run: {len(concepts)} concepts, {len(ev_chunks)} raw chunks and "
-                f"{len(ev_digests)} session digests would be written to {org}/{args.namespace}"
-                f"{link_note}"
+                f"dry run: {n['written']} of {len(concepts)} concepts "
+                f"({n['unchanged']} unchanged), "
+                f"{len(ev_chunks)} raw chunks and {len(ev_digests)} session digests would be "
+                f"written to {org}/{args.namespace}{link_note}{prune_note}"
             )
         else:
             print(
-                f"imported {n['written']}/{len(concepts)} concepts into {org}/{args.namespace} "
-                f"({n['conflicted']} flagged conflicted, {n['verified']} re-attested as caller, "
-                f"{n['failed']} failed){link_note}"
+                f"imported {len(concepts)} concepts into {org}/{args.namespace}: "
+                f"{n['written']} written, {n['unchanged']} unchanged, {n['failed']} failed "
+                f"({n['conflicted']} flagged conflicted, {n['verified']} re-attested as caller)"
+                f"{link_note}{prune_note}"
             )
-        return 1 if n["failed"] or n["links_failed"] else 0
+        return 1 if n["failed"] or n["links_failed"] or n["prune_failed"] else 0
 
     return asyncio.run(_go())
 
@@ -816,6 +1061,14 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--no-links",
         action="store_true",
         help="Do not re-create the bundle's relates_to edges with memory.link.",
+    )
+    p_imp.add_argument(
+        "--prune",
+        action="store_true",
+        help="Delete the rows an earlier import wrote (this --agent, an okf: "
+        "source_trace) whose key is no longer in the bundle. Refuses a bundle "
+        "whose concept files do not match its loom.corpus_digest; with --dry-run, "
+        "lists them.",
     )
     p_imp.set_defaults(func=_cmd_import_okf)
 
