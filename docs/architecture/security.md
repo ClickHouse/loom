@@ -277,7 +277,7 @@ own key (`revocation.SCIM_PREFIX`), beside the subject's own row, and every read
 as it takes that row: the subject is revoked while either says so. SCIM writes only its own
 key and an operator's `revoke-token` only the subject's, so neither undoes the other: an
 operator's time-box or lift does not let a deactivated person in, and a reactivation does not
-lift an operator's revocation. Sharing the subject's key made SCIM read, merge and repair the
+lift an operator's revocation. One shared key would make SCIM read, merge and repair the
 operator's row around each write, and an operator's write landing in between could still
 replace SCIM's or be replaced by it; the operator cutoffs (`CUTOFF_PREFIX`) are kept apart
 for the same reason.

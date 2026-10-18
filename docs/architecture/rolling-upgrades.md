@@ -87,9 +87,8 @@ schema. These rules keep that safe. The operator procedure is in
 9. **No state outside ClickHouse.** Anything a replica must agree on (leases, runs,
    conflict judgements, the similarity calibration, the frontend bundle of every live
    build) is in a table, so a request can land on any replica of either build.
-10. **A new revocation key** (the cutoffs `CUTOFF_PREFIX` names, SCIM's
-    `SCIM_PREFIX`): N-1 does not read it, so a token it revokes still works on an
-    N-1 replica. The feature that writes it is turned on only once no N-1 replica
+10. **A new revocation key** (such as SCIM's `SCIM_PREFIX`): N-1 does not read
+    it, so a token it revokes still works on an N-1 replica. The feature that writes it is turned on only once no N-1 replica
     serves: SCIM provisioning (`LOOM_SCIM_TOKEN`) after the whole rollout.
 
 ## What checks them
