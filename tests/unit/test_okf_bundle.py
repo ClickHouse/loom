@@ -496,6 +496,8 @@ def test_high_sensitivity_rows_are_not_exportable_by_default() -> None:
     assert okf.is_exportable(_entry(sensitivity="high")) is False
     assert okf.is_exportable(_entry(sensitivity="high"), include_high=True) is True
     assert okf.is_exportable(_entry(sensitivity="medium")) and okf.is_exportable(_entry())
+    # A read that leaves the column empty: the tag memory.set adds still keeps it home.
+    assert not okf.is_exportable(_entry(sensitivity="", tags=["sensitivity:high"]))
 
 
 def test_corpus_digest_covers_concepts_only_and_moves_with_them() -> None:

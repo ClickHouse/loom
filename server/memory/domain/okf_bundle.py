@@ -51,6 +51,8 @@ from typing import Any
 
 import yaml  # stubs: types-PyYAML (dev extra)
 
+from server.memory.domain.sensitivity import HIGH, SENSITIVITY_TAG_PREFIX
+
 OKF_VERSION = "0.2"
 RESERVED_FILES = frozenset({"index.md", "log.md", "AGENTS.md", "README.md"})
 
@@ -584,8 +586,13 @@ def is_exportable(entry: dict[str, Any], *, include_high: bool = False) -> bool:
     """A `sensitivity = high` row has no embedding row
     and does not leave the database as clear text unless the
     exporter asks; a mirror repository has a wider audience than the
-    namespace's grants."""
-    return include_high or str(entry.get("sensitivity") or "").lower() != "high"
+    namespace's grants. The `sensitivity:high` tag memory.set adds counts too, so a read
+    that leaves the column empty still keeps the row home."""
+    if include_high:
+        return True
+    tags = {str(t).strip().lower() for t in entry.get("tags") or []}
+    high = str(entry.get("sensitivity") or "").lower() == HIGH
+    return not (high or SENSITIVITY_TAG_PREFIX + HIGH in tags)
 
 
 # ------------------------------------------------------------------

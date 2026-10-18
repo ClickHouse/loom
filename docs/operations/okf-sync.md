@@ -114,7 +114,10 @@ Everything in the namespace reaches the public Loom within one schedule interval
 write to it on the private side as publishing: keep anything confidential in another
 namespace. Rows marked `sensitivity: high` stay on the private side (the export leaves
 them out unless `--include-high`), and a row that becomes `high` is pruned from the
-public side on the next run. A prune is a tombstone: the value stays restorable for 14
+public side on the next run. The export knows a `high` row by its `sensitivity` or by the
+`sensitivity:high` tag `memory.set` adds; a private Loom on an earlier release answers
+`sensitivity` empty, so there only the tag keeps a row home. Run the export against this
+release or later. A prune is a tombstone: the value stays restorable for 14
 days and in the public Loom's version history. Content that must leave the public Loom
 goes through [erasure](../features/memory/retention-and-erasure.md).
 

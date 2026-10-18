@@ -124,7 +124,7 @@ changed or not: a scheduled import passes `--no-evidence`.
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--verify`        | re-attest concepts whose frontmatter carries a `human:` verification, through `memory.verify`, **as the importing caller**                                                      |
 | `--keep-sessions` | write each concept under the session in its `loom.session_id`, so a key that lived under several sessions stays several rows; `--session-id` is the fallback                    |
-| `--dry-run`       | plan the writes without sending them                                                                                                                                            |
+| `--dry-run`       | plan the writes against the target's live rows (it reads them) without sending any write                                                                                        |
 | `--prune`         | delete the rows an earlier import with this `--agent` and token wrote (an `okf:` `source_trace`) whose key is no longer in the bundle, through `memory.delete`; needs `--agent` |
 
 Each bundle imported into a namespace with `--prune` needs an `--agent` of its own: prune

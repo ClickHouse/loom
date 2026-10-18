@@ -752,7 +752,7 @@ async def _import_concepts(
             n["merged"] += 1
             continue
         n["written"] += 1
-        if res.get("conflict") or res.get("status") == "conflicted":
+        if res.get("conflict_verdict") == "conflict":
             n["conflicted"] += 1
         if args.verify and bundle_actor:
             n["verified"] += await _verify(client, org, args, payload, c)
