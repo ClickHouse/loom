@@ -448,21 +448,25 @@ def _emit_mcp_event(
     )
 
 
-def emit_refusal(op_name: str, code: str, auth: Any, org: str = "") -> None:
+def emit_refusal(
+    op_name: str, auth: Any, *, error_code: str, org: str = "", server_fault: bool = False
+) -> None:
     """Emit a token-attributed refusal row in an isolated request context.
     The copy is reset so earlier batch entries cannot contaminate the row."""
-    contextvars.copy_context().run(_emit_refusal, op_name, code, auth, org)
+    contextvars.copy_context().run(_emit_refusal, op_name, auth, error_code, org, server_fault)
 
 
-def _emit_refusal(op_name: str, code: str, auth: Any, org: str) -> None:
+def _emit_refusal(op_name: str, auth: Any, code: str, org: str, server_fault: bool) -> None:
     from server.core.naming import SENTINEL
     from server.observability.consumer import bind_current_consumer
     from server.observability.ledger import emit_agent_event
+    from server.observability.traffic_class import bind_claimed_class
     from server.transport._common import sli_columns
     from server.transport.mcp_call import begin_call
 
     begin_call()
     bind_current_consumer(None, auth)
+    bind_claimed_class(auth)
     org = org or str(getattr(auth, "org", "") or "")
     if org in ("", "*"):
         org = SENTINEL
@@ -480,6 +484,7 @@ def _emit_refusal(op_name: str, code: str, auth: Any, org: str) -> None:
         success=False,
         error_code=code,
         subject=str(getattr(auth, "subject", "") or "") or None,
+        server_fault=server_fault,
         **sli_columns(op_name, "mcp"),
     )
 

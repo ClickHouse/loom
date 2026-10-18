@@ -85,7 +85,7 @@ def sli_columns(op_name: str, transport: str) -> dict[str, Any]:
         "transport": transport,
         "slo_class": sli.slo_class(
             op.name,
-            writes=op.required_role == Role.WRITER,
+            writes=not op.read_only,
             admin=op.required_role >= Role.ADMIN,
         ),
         "budget_ms": effective_budget_ms(op.name, op.budget_p99_ms),

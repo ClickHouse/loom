@@ -4,6 +4,7 @@ class and budget, and `loom_telemetry.sli_minute` rolls the rows up per minute."
 from __future__ import annotations
 
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -162,28 +163,63 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
     assert _rolled(ch_client, org)[:5] == (4, 1, 1, 1, 1)
 
 
-@pytest.mark.asyncio
-async def test_a_row_flushed_late_is_still_rolled_up(ch_client) -> None:
-    """A server error whose flush was delayed reaches ClickHouse after a newer
-    success was folded: it still counts, in its own minute, and only once."""
+def _private_rollup(ch_client, db: str) -> None:
+    """The migration's rollup view over private copies of its two tables, so a
+    test can stamp `ingested_at` itself without moving the shared mark. Its
+    refreshes run only when the test asks."""
+    view = (ROOT / "schemas/migrations/043_request_sli.sql").read_text()
+    view = view[view.index("CREATE MATERIALIZED VIEW") :].rstrip().rstrip(";")
+    view = view.replace("REFRESH EVERY 1 MINUTE", "REFRESH EVERY 1 YEAR")
+    view = view.replace("loom.agent_events", f"{db}.agent_events")
+    view = view.replace("loom_telemetry.sli_minute", f"{db}.sli_minute")
+    view = view.replace("DEFINER = CURRENT_USER", "EMPTY DEFINER = CURRENT_USER")
+    ch_client.command(f"CREATE DATABASE {db}")
+    ch_client.command(f"CREATE TABLE {db}.agent_events AS loom.agent_events")
+    ch_client.command(f"CREATE TABLE {db}.sli_minute AS loom_telemetry.sli_minute")
+    ch_client.command(view)
+
+
+def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client) -> None:
+    """Rows stamped as ClickHouse would have taken them: a refresh folds at
+    most six hours past the first row not folded yet, a row that arrives
+    after newer ones were folded still counts in the minute of its `ts`, and
+    nothing is folded twice."""
     from datetime import UTC, datetime, timedelta
 
-    org = unique_org("sli-late")
+    db = f"sli_probe_{uuid.uuid4().hex[:8]}"
     now = datetime.now(UTC)
-    ok = ("memory.get", "http", "read", True, "", "ok", 20, 100)
-    _insert_requests(ch_client, org, now, [ok])
-    assert (await _rolled_once(ch_client, org, 1))[:2] == (1, 0)
 
-    late = ("memory.get", "http", "read", False, "INTERNAL_ERROR", "server", 20, 100)
-    _insert_requests(ch_client, org, now - timedelta(minutes=5), [late])
-    _insert_requests(ch_client, org, now + timedelta(seconds=1), [ok])
-    assert (await _rolled_once(ch_client, org, 3))[:2] == (3, 1)
+    def insert(ts: datetime, ingested_at: datetime, status: str) -> None:
+        ch_client.insert(
+            f"{db}.agent_events",
+            [[ts, ingested_at, "o", "n", "a", "memory.get", uuid.uuid4().hex, "http", "read",
+              status, status == "ok", "" if status == "ok" else "INTERNAL_ERROR", 20, 100,
+              "request"]],
+            column_names=["ts", "ingested_at", "org", "namespace", "agent", "operation",
+                          "request_id", "transport", "slo_class", "status_class", "success",
+                          "error_code", "latency_ms", "budget_ms", "kind"],
+        )  # fmt: skip
 
-    ch_client.command("SYSTEM REFRESH VIEW loom_telemetry.sli_minute_refresh")
-    ch_client.command("SYSTEM WAIT VIEW loom_telemetry.sli_minute_refresh")
-    assert _rolled(ch_client, org)[:2] == (3, 1)
-    minutes = ch_client.query(
-        "SELECT count(DISTINCT minute) FROM loom_telemetry.sli_minute WHERE org = {org:String}",
-        parameters={"org": org},
-    ).result_rows[0][0]
-    assert minutes >= 2  # the late row is in the minute of its ts
+    def refresh() -> tuple:
+        ch_client.command(f"SYSTEM REFRESH VIEW {db}.sli_minute_refresh")
+        ch_client.command(f"SYSTEM WAIT VIEW {db}.sli_minute_refresh")
+        return ch_client.query(
+            f"SELECT sum(requests), sum(server_errors), uniqExactIf(minute, slo_class != '') "
+            f"FROM {db}.sli_minute"
+        ).result_rows[0]
+
+    try:
+        _private_rollup(ch_client, db)
+        insert(now - timedelta(hours=20), now - timedelta(hours=20), "server")
+        insert(now - timedelta(hours=10), now - timedelta(hours=10), "ok")
+        assert refresh() == (1, 1, 1)  # six hours past the first: the second waits
+        assert refresh() == (2, 1, 2)
+        assert refresh() == (2, 1, 2)  # an idle refresh moves the mark, folds nothing
+
+        # Arrives now, but its request ended 20 hours ago, in the first row's minute.
+        time.sleep(1.5)  # taken after the mark the idle refresh just set
+        insert(now - timedelta(hours=20), datetime.now(UTC) - timedelta(seconds=71), "server")
+        assert refresh() == (3, 2, 2)
+        assert refresh() == (3, 2, 2)
+    finally:
+        ch_client.command(f"DROP DATABASE IF EXISTS {db} SYNC")

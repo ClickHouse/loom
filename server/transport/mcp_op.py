@@ -209,11 +209,11 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
     hidden = hidden_refusal(name)
     if op is None and hidden is not None:
-        emit_refusal(name, "OP_NOT_ON_MCP", auth)
+        emit_refusal(name, auth, error_code="OP_NOT_ON_MCP")
         return req, _result(req.get("id"), hidden, error=True)
     if op is None or (readonly and not _is_read(op)):
         if op is not None:  # a write on a read-only connection
-            emit_refusal(op.name, UNKNOWN_OP, auth)
+            emit_refusal(op.name, auth, error_code=UNKNOWN_OP)
         near = difflib.get_close_matches(name, list(by_name), n=5, cutoff=0.6)
         body = {
             "error": f"no op {name!r} reachable here"

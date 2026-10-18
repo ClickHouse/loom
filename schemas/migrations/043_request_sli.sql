@@ -48,8 +48,10 @@ SETTINGS ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000;
 -- ClickHouse took it (`ingested_at`), into the minute of its `ts`, so a row
 -- whose flush was delayed still counts.
 --  * `folded` is where the last refresh stopped, kept in a sentinel row: every
---    key '' but the refresh's minute and every count 0, so reading it is a
---    range read on the sort key and a reader's sums are unchanged by it.
+--    key '' but the day and every count 0, so a day's sentinels merge into one
+--    row, reading them is a range read on the sort key, and a reader's sums
+--    are unchanged by them. (`HAVING`: an aggregate with no GROUP BY returns
+--    a row even when WHERE keeps none.)
 --  * A refresh folds up to `fold_to`: at most six hours past the first row not
 --    folded yet, so catching up after a stall is many small inserts rather
 --    than one large one, and no later than 70 s ago, longer than a ledger
@@ -92,7 +94,7 @@ WHERE kind = 'request' AND slo_class != '' AND ts >= now64(3) - toIntervalDay(31
 GROUP BY minute, slo_class, operation, transport, traffic_class, org
 UNION ALL
 SELECT
-    toStartOfMinute(now()) AS minute,
+    toStartOfDay(now()) AS minute,
     '' AS slo_class,
     '' AS operation,
     '' AS transport,
@@ -105,4 +107,4 @@ SELECT
     0 AS slow,
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(toUInt32(0), false) AS latency,
     fold_to AS ingested_hwm
-WHERE fold_to > folded;
+HAVING fold_to > folded;

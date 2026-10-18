@@ -4340,7 +4340,7 @@ WITH
     ) AS first_unfolded,
     least(greatest(first_unfolded, folded) + toIntervalHour(6), now64(3) - toIntervalSecond(70)) AS fold_to
 SELECT
-    toStartOfMinute(now()) AS minute,
+    toStartOfDay(now()) AS minute,
     '' AS slo_class,
     '' AS operation,
     '' AS transport,
@@ -4353,4 +4353,4 @@ SELECT
     0 AS slow,
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(toUInt32(0), false) AS latency,
     fold_to AS ingested_hwm
-WHERE fold_to > folded;
+HAVING fold_to > folded;

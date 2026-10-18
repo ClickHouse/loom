@@ -531,7 +531,7 @@ HTTP 503, raised as `server.auth.keyring.NoSigningKey`. Kid `default` is retired
 
 #### `OP_NOT_ON_MCP`
 
-Raised in `server/transport/mcp_op.py`.
+Raised in `server/transport/mcp_call.py`, `server/transport/mcp_op.py`.
 
 #### `ORG_MISMATCH`
 

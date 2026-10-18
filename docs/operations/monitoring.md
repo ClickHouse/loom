@@ -78,6 +78,7 @@ curl -s 'http://localhost:7777/v1/health?include=workers' | jq '.workers_leader'
 | `workers_lease_unreachable`               | warn                                                 | this process could not ask ClickHouse for the workers lease; if every process says so, nothing runs the workers                                             |
 | `workers_lease_given_up`                  | warn                                                 | this process released the workers lease and stopped contending (it is draining, or its workers child kept failing to start); another process takes them     |
 | `otel_erasure_index`                      | warn                                                 | ClickStack metrics tables lack the index erasure needs ([maintenance](./maintenance.md#clickstack-erasure-index))                                           |
+| `sli_write_deadline`                      | warn                                                 | `LOOM_CH_TIMEOUT_WRITE_S` is 0 or at least 70 s: a ledger insert that slow commits after the SLI rollup passed it, and its rows never count                 |
 
 Other body fields: `providers` (per-provider call state), `fake_embedding`, `fake_llm`,
 `providers_degraded`, `embedding_dim_mismatch`, `adaptive_thresholds` (the similarity

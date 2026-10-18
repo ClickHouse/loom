@@ -140,6 +140,7 @@ def emit_agent_event(
     transport: str = "",
     slo_class: str = "",
     budget_ms: int = 0,
+    server_fault: bool = False,
 ) -> None:
     """Drain the op-scoped cost accumulator and emit one AgentEvent.
 
@@ -159,6 +160,8 @@ def emit_agent_event(
 
     `transport`, `slo_class`, `budget_ms`: the SLI columns a transport fills
     (`server.observability.sli`); the row's `status_class` is derived here.
+    `server_fault`: the failure is the server's whatever its code says, for a
+    refusal recorded without its exception.
 
     Absent accumulator → zero cost/token attribution. `raw_args` is the
     request's argument object; only its allow-listed projection reaches the
@@ -256,7 +259,7 @@ def emit_agent_event(
         traffic_class=attribution["traffic_class"],
         transport=transport,
         slo_class=slo_class,
-        status_class=sli.status_class(success, error_code, error),
+        status_class="server" if server_fault else sli.status_class(success, error_code, error),
         budget_ms=budget_ms,
     )
     if _event_hold is None or not _event_hold(event):

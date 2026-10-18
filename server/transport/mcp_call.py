@@ -420,7 +420,7 @@ async def _resolve_tool(
             from server.transport.mcp_op import hidden_refusal
 
             body = {**(hidden_refusal(op.name) or {}), "tool": name}
-            emit_refusal(op.name, "OP_NOT_ON_MCP", auth)
+            emit_refusal(op.name, auth, error_code="OP_NOT_ON_MCP")
             msg = f"{body.get('error', msg)}; instead: {body.get('instead', '')}"
         return _ok(
             req_id,
@@ -452,8 +452,10 @@ async def _bind_caller_identity(
     # the token's subject class — published for the event, audit and budget
     # writers of this call.
     from server.observability.consumer import bind_current_consumer
+    from server.observability.traffic_class import bind_claimed_class
 
     bind_current_consumer(arguments, auth)
+    bind_claimed_class(auth)
 
     request_id = str(uuid.uuid4())
     bind_request(op.name, request_id)
@@ -645,6 +647,7 @@ async def _authorize_call(
             success=False,
             error_code=gates.ROLE_REFUSAL_CODE,
             request_id=request_id,
+            error=e,
         )
         return _ok(req_id, _forbidden_result(op, e, auth, target.org, target.namespace))
     except IdentityIncompleteError as e:

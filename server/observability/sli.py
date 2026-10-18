@@ -28,6 +28,12 @@ _SEARCH_OPS = frozenset(
     }
 )
 
+# How long the SLI rollup leaves a ledger row before folding it, seconds:
+# longer than a ledger insert may run (LOOM_CH_TIMEOUT_WRITE_S), so a slow
+# insert commits before the rollup's mark passes it. Migration 043 holds the
+# same number.
+FOLD_MARGIN_S = 70
+
 # Refusals a transport records by code alone, counted as the caller's: MCP's
 # refusals before dispatch (server.transport.mcp_tools.emit_refusal) and the
 # transports' other literal codes. Each answers a 4xx but
@@ -51,7 +57,8 @@ CLIENT_CODES = frozenset(
 
 def slo_class(name: str, *, writes: bool, admin: bool) -> str:
     """`code`, `search`, `admin`, `write` or `read`, first match wins.
-    `writes` and `admin` come from the op's required role."""
+    `writes` is any op that is not read-only (some write at the viewer floor,
+    such as `namespace.restore`); `admin` comes from the op's required role."""
     if name.startswith("code."):
         return "code"
     if name in _SEARCH_OPS:
@@ -85,6 +92,13 @@ def status_class(success: bool, error_code: str, error: BaseException | str | No
     decision = getattr(error, "decision", None)
     if decision is not None and not decision.enforcing_rules:
         return "server"
+    # So is an access refusal made because a grant or a classification could
+    # not be read (server.auth.authz), whatever error it was raised as.
+    cause = error if isinstance(error, BaseException) else None
+    while cause is not None:
+        if getattr(cause, "unverified", False):
+            return "server"
+        cause = cause.__cause__ or cause.__context__
     status = getattr(error, "status_code", None) if isinstance(error, BaseException) else None
     if not isinstance(status, int):
         status = _coded_statuses().get(error_code)

@@ -37,6 +37,7 @@ from server.observability.consumer import (
 )
 from server.observability.ledger import current_trace_id, emit_agent_event, set_hint_context
 from server.observability.traffic_class import (
+    bind_claimed_class,
     current_traffic_class,
     header_value,
     set_current_traffic_class,
@@ -698,6 +699,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # learns no field errors, and never touches a tenant's rate-limit
         # bucket by naming its namespace.
         call.auth = auth = _extract_auth(request)
+        bind_claimed_class(auth)
         call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
 
         payload = _validate_payload(op, request_id, raw_body, auth)

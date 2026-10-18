@@ -594,6 +594,26 @@ def _otel_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _sli_problems(settings: Any) -> list[Problem]:
+    """A ledger insert allowed to run as long as the SLI rollup waits, or
+    longer, can commit after the rollup has passed it: its rows never count."""
+    from server.observability.sli import FOLD_MARGIN_S
+
+    deadline = float(settings.ch_timeout_write_s)
+    if 0 < deadline < FOLD_MARGIN_S:
+        return []
+    return [
+        Problem(
+            "sli_write_deadline",
+            "warn",
+            f"LOOM_CH_TIMEOUT_WRITE_S is {deadline:g} (0 = no bound); the SLI rollup waits "
+            f"{FOLD_MARGIN_S} s for a ledger insert, so a slower one is left out of "
+            "loom_telemetry.sli_minute.",
+            f"Set LOOM_CH_TIMEOUT_WRITE_S below {FOLD_MARGIN_S}.",
+        )
+    ]
+
+
 def _drift_problems(state: HealthState) -> list[Problem]:
     """A process whose token keys or MUST_MATCH settings differ from the
     deployment's: it is not ready, so the load balancer sends it nothing."""
@@ -782,6 +802,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _keyring_problems(st)
         + _deployment_problems(settings, st)
         + _otel_problems(settings, st)
+        + _sli_problems(settings)
         + _drift_problems(st)
         + _sandbox_problems(settings, st)
         + _reader_user_problems(settings, st)

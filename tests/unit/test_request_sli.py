@@ -65,6 +65,22 @@ def test_status_class_comes_from_the_raised_status_then_the_code() -> None:
     assert sli.status_class(False, "INTERNAL_ERROR", RuntimeError("x")) == "server"
 
 
+def test_every_op_that_changes_state_is_in_the_write_slo() -> None:
+    """Not only the writer-role ops: one a viewer may call that still writes
+    (`namespace.restore`, `tracker.source.add`) must not burn the read SLO."""
+    from server.operations.registry import ALL_OPERATIONS
+
+    for op in ALL_OPERATIONS:
+        got = sli_columns(op.name, "http")["slo_class"]
+        if op.name.startswith("code.") or op.name in sli._SEARCH_OPS:
+            continue
+        if op.required_role >= Role.ADMIN:
+            assert got == "admin", op.name
+        else:
+            assert got == ("read" if op.read_only else "write"), op.name
+    assert sli_columns("namespace.restore", "http")["slo_class"] == "write"
+
+
 def test_sli_columns_resolve_the_effective_budget() -> None:
     cols = sli_columns("memory.get", "mcp")
     assert cols["transport"] == "mcp" and cols["slo_class"] == "read"
@@ -560,10 +576,103 @@ def test_otlp_metrics_reach_a_collector() -> None:
 def test_the_rollup_waits_longer_than_a_ledger_insert_may_run() -> None:
     """A refresh passes over rows ClickHouse took more recently than its
     margin; an insert still running past it would be skipped for good."""
-    from pathlib import Path
+    from types import SimpleNamespace
 
+    from server.core.paths import REPO_ROOT
+    from server.observability.problems import _sli_problems
     from server.settings._clickhouse import ClickHouseSettings
 
-    sql = Path("schemas/migrations/043_request_sli.sql").read_text()
+    sql = (REPO_ROOT / "schemas" / "migrations" / "043_request_sli.sql").read_text()
     margin = int(re.search(r"now64\(3\) - toIntervalSecond\((\d+)\)\) AS fold_to", sql).group(1))
-    assert margin > ClickHouseSettings.model_fields["ch_timeout_write_s"].default
+    assert margin == sli.FOLD_MARGIN_S
+    default = ClickHouseSettings.model_fields["ch_timeout_write_s"].default
+    assert default < margin and _sli_problems(SimpleNamespace(ch_timeout_write_s=default)) == []
+    for deadline in (0, margin, 300):
+        (problem,) = _sli_problems(SimpleNamespace(ch_timeout_write_s=deadline))
+        assert problem.code == "sli_write_deadline"
+
+
+def test_a_refusal_made_without_readable_grants_is_the_server_s(monkeypatch) -> None:
+    """A grants or classification read that fails still refuses (fail closed),
+    but the refusal must not read as the caller's, or an outage of either
+    leaves the SLO green."""
+    from server.auth import authz
+    from server.auth.directory import ClassificationUnavailable
+    from server.auth.jwt import AuthInfo
+
+    class _Down:
+        async def query_one(self, *a: Any, **k: Any) -> None:
+            raise ConnectionError("ClickHouse is down")
+
+    class _Directory:
+        down = False
+
+        async def is_restricted(self, org: str, namespace: str) -> bool:
+            if self.down:
+                raise ClassificationUnavailable(org)
+            return False
+
+        def code_entry(self, org: str, namespace: str) -> None:
+            return None
+
+    async def _none(*a: Any, **k: Any) -> None:
+        return None
+
+    async def _alone(org: str, subject: str, **k: Any) -> list[str]:
+        return [subject]
+
+    directory = _Directory()
+    monkeypatch.setattr(authz, "directory", lambda: directory)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Down())
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _alone)
+    monkeypatch.setattr("server.auth.service_accounts.inheriting_creator", _none)
+    auth = AuthInfo(
+        subject="u", org="o", namespaces=["mine"], roles=[Role.VIEWER], is_service_account=False
+    )
+
+    def refusal() -> PermissionError:
+        with pytest.raises(PermissionError) as e:
+            asyncio.run(authz.check_authorized(auth, Role.VIEWER, org="o", namespace="theirs"))
+        return e.value
+
+    # The grants read fails.
+    assert sli.status_class(False, "AUTH_INSUFFICIENT", refusal()) == "server"
+
+    # No grant: the caller's, and the mark does not leak from the call before.
+    monkeypatch.setattr(authz, "grant_role_for", _none)
+    assert sli.status_class(False, "AUTH_INSUFFICIENT", refusal()) == "client"
+
+    # The classification read fails.
+    directory.down = True
+    assert sli.status_class(False, "AUTH_INSUFFICIENT", refusal()) == "server"
+
+
+def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatch) -> None:
+    from server.auth.jwt import AuthInfo
+    from server.observability import events
+    from server.transport import mcp_auth
+
+    emitted: list = []
+
+    class _Emitter:
+        def emit(self, event) -> None:
+            emitted.append(event)
+
+    async def _unreadable(*_a) -> None:
+        return None
+
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
+    monkeypatch.setattr(mcp_auth, "_may_read", _unreadable)
+    eve = AuthInfo(
+        subject="eve", org="eve-org", namespaces=(), roles=(Role.WRITER,), is_service_account=False
+    )
+    call = {"name": "loom_memory_set", "arguments": {"org": "eve-org", "namespace": "n"}}
+    result = asyncio.run(
+        mcp_auth._screen_tool_call({"id": 1, "method": "tools/call", "params": call}, eve)
+    )
+    # The caller is told the same; only the ledger knows it was the server.
+    assert result["result"]["structuredContent"]["code"] == "NAMESPACE_NOT_ACCESSIBLE"
+    assert [(e.error_code, e.status_class) for e in emitted] == [
+        ("NAMESPACE_NOT_ACCESSIBLE", "server")
+    ]

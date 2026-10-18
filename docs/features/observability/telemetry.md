@@ -22,15 +22,18 @@ passes write rows with `kind='worker'`. [Cost and usage](./cost-and-usage.md) is
 this table.
 
 Each request row also carries its service-level columns: `transport` (`http` or `mcp`),
-`slo_class` (`write`, `search`, `read`, `code`, `admin`), `status_class` (`ok`; `client`
-for a 4xx refusal or a retried idempotency key still running; `server` otherwise,
-including a write refused because its history policy could not be evaluated) and
-`budget_ms`, the latency budget the request was held to. MCP writes a row for a call it
-refuses before dispatch (an org or namespace the token may not use, an op kept off MCP,
-a write on a read-only connection), as HTTP does for its refusals. The caller is not
-bound yet, so that row carries the token's org, subject and consumer, `-` for the rest
-and no arguments. On either transport, a refusal naming an org the token may not act in
-is recorded in the token's org, never the named one.
+`slo_class` (`code`, `search`, `admin`, then `write` for any other op that is not
+read-only, else `read`), `status_class` (`ok`; `client` for a 4xx refusal or a retried
+idempotency key still running; `server` otherwise, including a write refused because its
+history policy could not be evaluated and an access refusal made because a grant or a
+namespace classification could not be read) and `budget_ms`, the latency budget the
+request was held to. MCP writes a row for a call it refuses before dispatch (an org or
+namespace the token may not use, an op kept off MCP, a write on a read-only connection),
+as HTTP does for its refusals. The caller is not bound yet, so that row carries the
+token's org, subject and consumer, `-` for the rest and no arguments. On either transport,
+a refusal naming an org the token may not act in is recorded in the token's org, never the
+named one. A refusal recorded before the call is classified carries the token's
+`traffic_class` claim, or '' without one.
 
 A refreshable materialized view folds the ledger into `loom_telemetry.sli_minute` once a
 minute (requests, server and client errors, rate-limited requests, which are among the

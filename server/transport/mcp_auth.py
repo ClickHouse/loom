@@ -24,18 +24,21 @@ if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
 
 
-async def _may_read(auth: AuthInfo, org: str, ns: str) -> bool:
+async def _may_read(auth: AuthInfo, org: str, ns: str) -> bool | None:
     """Whether the gate admits `auth` to read (org, ns): the claim, a grant
     (or an inheriting service account's creator's), the org-readable code
     rule and the restricted two-factor check, decided by `check_authorized`
-    alone."""
+    alone. None is a refusal made because a grant or a classification could
+    not be read: still refused, but the server's failure."""
     from server.auth.authz import check_authorized
     from server.core.errors import IdentityIncompleteError
     from server.operations.base import Role
 
     try:
         await check_authorized(auth, Role.VIEWER, org=org, namespace=ns)
-    except (PermissionError, IdentityIncompleteError):
+    except PermissionError as e:
+        return None if getattr(e, "unverified", False) else False
+    except IdentityIncompleteError:
         return False
     return True
 
@@ -57,13 +60,15 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
-def _ledger_refusal(tool_name: Any, code: str, auth: AuthInfo, org: str = "") -> None:
+def _ledger_refusal(
+    tool_name: Any, auth: AuthInfo, *, error_code: str, org: str = "", server_fault: bool = False
+) -> None:
     from server.transport.mcp_call import op_for_tool
     from server.transport.mcp_tools import emit_refusal
 
     op = op_for_tool(str(tool_name or ""))
     if op is not None:
-        emit_refusal(op.name, code, auth, org)
+        emit_refusal(op.name, auth, error_code=error_code, org=org, server_fault=server_fault)
 
 
 async def _plane_namespace(tool_name: Any, auth: Any, ns: str) -> str | dict[str, Any] | None:
@@ -279,7 +284,7 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
         # drop conversation state on those) — so the agent reads
         # the message and can recover. Ledgered in the token's org, never
         # the one the call named.
-        _ledger_refusal(tool_name, "ORG_MISMATCH", auth)
+        _ledger_refusal(tool_name, auth, error_code="ORG_MISMATCH")
         msg = f"token org {auth.org!r} != request org {req_org!r}"
         return _ok(
             req.get("id"),
@@ -290,7 +295,8 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
             },
         )
     target_org = str(req_org or auth.org)
-    if req_ns and not await _may_read(auth, target_org, str(req_ns)):
+    readable = await _may_read(auth, target_org, str(req_ns)) if req_ns else True
+    if req_ns and not readable:
         # A code/tracker tool's `namespace` that is not a namespace resolves
         # to one or says so — never the claim text meant for a real refusal.
         fixed = await _plane_namespace(tool_name, auth, req_ns)
@@ -300,7 +306,9 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
         if refusal is not None:
             # The org the token may act in, as HTTP records the same refusal.
             code = str(refusal["structuredContent"]["code"])
-            _ledger_refusal(tool_name, code, auth, target_org)
+            _ledger_refusal(
+                tool_name, auth, error_code=code, org=target_org, server_fault=readable is None
+            )
             return _ok(req.get("id"), refusal)
         args["namespace"] = fixed
     # Readable: the op's own gate enforces the role it requires.

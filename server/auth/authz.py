@@ -16,8 +16,10 @@ BOTH a token that names the namespace AND a live direct grant.
 
 from __future__ import annotations
 
+import functools
 import logging
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -33,6 +35,31 @@ if TYPE_CHECKING:
     from server.operations.base import Operation
 
 log = logging.getLogger(__name__)
+
+# Set while a check could not read a grant or a classification it needed.
+_unreadable: ContextVar[bool] = ContextVar("authz_unreadable", default=False)
+
+
+def _marks_unverified(
+    check: Callable[..., Awaitable[None]],
+) -> Callable[..., Awaitable[None]]:
+    """A refusal raised while a grant or a classification could not be read
+    gets `unverified = True`: still refused (fail closed), but the ledger
+    counts it as the server's failure, not the caller's."""
+
+    @functools.wraps(check)
+    async def checked(*args: object, **kwargs: object) -> None:
+        token = _unreadable.set(False)
+        try:
+            await check(*args, **kwargs)
+        except PermissionError as e:
+            if _unreadable.get():
+                setattr(e, "unverified", True)  # noqa: B010 — PermissionError declares no field
+            raise
+        finally:
+            _unreadable.reset(token)
+
+    return checked
 
 
 # The roles a namespace grant can hold. Org- and platform-wide roles are never
@@ -66,6 +93,7 @@ def may_act_in_org(auth: AuthInfo, org: str) -> bool:
     return auth.org in ("*", org) or auth.has_role(Role.PLATFORM_ADMIN)
 
 
+@_marks_unverified
 async def check_authorized(
     auth: AuthInfo | None,
     required_role: Role,
@@ -453,6 +481,7 @@ async def _check_restricted(
     try:
         await directory().is_restricted(org, namespace)
     except ClassificationUnavailable as e:
+        _unreadable.set(True)
         raise refusal from e
     if auth.org != org:
         raise refusal
@@ -514,6 +543,7 @@ async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
     except Exception as e:  # noqa: BLE001 — CH glitch treated as no grant (closed)
         # Don't fail auth open on a CH glitch — treat as no grant.
         log.warning("namespace_grants lookup failed for %s/%s/%s: %s", org, namespace, subject, e)
+        _unreadable.set(True)
         return None
     if row is None:
         return None
