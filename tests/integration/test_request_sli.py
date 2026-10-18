@@ -4,7 +4,6 @@ class and budget, and `loom_telemetry.sli_minute` rolls the rows up per minute."
 from __future__ import annotations
 
 import sys
-import time
 import uuid
 from pathlib import Path
 
@@ -214,10 +213,9 @@ def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client
         insert(now - timedelta(hours=10), now - timedelta(hours=10), "ok")
         assert refresh() == (1, 1, 1)  # an hour past the first: the second waits
         assert refresh() == (2, 1, 2)
-        assert refresh() == (2, 1, 2)  # an idle refresh moves the mark, folds nothing
+        assert refresh() == (2, 1, 2)  # an idle refresh moves the mark an hour, folds nothing
 
         # Arrives now, but its request ended 20 hours ago, in the first row's minute.
-        time.sleep(1.5)  # taken after the mark the idle refresh just set
         insert(now - timedelta(hours=20), datetime.now(UTC) - timedelta(seconds=71), "server")
         assert refresh() == (3, 2, 2)
         assert refresh() == (3, 2, 2)

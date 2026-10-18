@@ -780,3 +780,64 @@ def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatc
         ("AUTH_INSUFFICIENT", "server"),
         ("AUTH_INSUFFICIENT", "client"),
     ]
+
+
+def test_a_5xx_from_the_gate_is_ledgered_on_both_transports(monkeypatch) -> None:
+    """A grants read past its stale window raises a 503 from inside the gate;
+    it is answered as raised, and its row counts against the server."""
+    from types import SimpleNamespace
+
+    from fastapi import Response
+
+    from server.auth.jwt import AuthInfo
+    from server.core.errors import BackendUnavailableError
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates, http, mcp_auth, mcp_call
+
+    async def _unreadable(*a: Any, **k: Any) -> Any:
+        raise BackendUnavailableError("grants unreadable")
+
+    rows: list[tuple[str, str]] = []
+    monkeypatch.setattr(gates, "authorize", _unreadable)
+    monkeypatch.setattr(mcp_auth, "_may_read", _unreadable)
+    monkeypatch.setattr(
+        http,
+        "_emit_event",
+        lambda op, rid, body, ms, **k: rows.append(
+            (k["error_code"], sli.status_class(False, k["error_code"], k.get("error")))
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_call,
+        "_emit_mcp_event",
+        lambda name, args, ms, **k: rows.append(
+            (k["error_code"], sli.status_class(False, k["error_code"], k.get("error")))
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_auth,
+        "_ledger_refusal",
+        lambda tool, auth, **k: rows.append(
+            (k["error_code"], sli.status_class(False, k["error_code"], None))
+        ),
+    )
+    eve = AuthInfo(
+        subject="eve",
+        org="eve-org",
+        namespaces=("n",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+    )
+    op = OPERATIONS_BY_NAME["memory.get"]
+    target = SimpleNamespace(org="eve-org", namespace="n")
+    call = http._HttpCall(request_id="r", auth=eve)
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(http._authorize(op, Response(), call, target))
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(mcp_call._authorize_call(1, op, target, {}, eve, "r"))
+    screened = {"name": "loom_memory_get", "arguments": {"org": "eve-org", "namespace": "n"}}
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(
+            mcp_auth._screen_tool_call({"id": 2, "method": "tools/call", "params": screened}, eve)
+        )
+    assert rows == [("BACKEND_UNAVAILABLE", "server")] * 3

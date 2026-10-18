@@ -633,8 +633,9 @@ async def _authorize_call(
     (server/transport/gates.py) — role / namespace check, restricted-access
     audit, first-write registration. Returns the target, or the refusal
     response: AUTH_INSUFFICIENT (a code/tracker index says how to get in) or
-    IDENTITY_INCOMPLETE. Any other error propagates."""
-    from server.core.errors import IdentityIncompleteError
+    IDENTITY_INCOMPLETE. Any other error propagates, a LoomServerError
+    ledgered first."""
+    from server.core.errors import IdentityIncompleteError, LoomServerError
 
     try:
         target = gates.authz_target(
@@ -667,6 +668,13 @@ async def _authorize_call(
             request_id=request_id,
         )
         return _ok(req_id, _refusal_result(e))
+    except LoomServerError as e:
+        # A read the gate could not make past its cache (a 503): counted
+        # against the server, then answered as raised.
+        _emit_mcp_event(
+            op.name, arguments, 0, success=False, error_code=e.code, request_id=request_id, error=e
+        )
+        raise
     return target
 
 

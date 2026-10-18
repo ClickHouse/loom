@@ -8,21 +8,26 @@ the rows up per minute for SLO dashboards and alert rules to read.
 
 from __future__ import annotations
 
-# Retrieval ops that are reads by role but carry the search SLO.
+# Ops that rank results against a query (most embed it), or build a recall
+# bundle from such a ranking, carry the search SLO: an embedder outage burns
+# it, not the read SLO of the point reads. A read by key is not one.
 _SEARCH_OPS = frozenset(
     {
         "memory.search",
         "memory.search_trace",
         "memory.ask",
         "memory.brief",
+        "memory.stack",
+        "memory.demonstrate",
         "knowledge.search",
         "knowledge.synthesize",
         "search.query",
         "conversation.search",
         "context.pack",
-        "context.fetch",
         "memory.recall",
         "procedure.match",
+        "decision.precedents",
+        "namespace.search_categories",
         "tracker.similar",
         "tracker.duplicate_check",
     }

@@ -299,7 +299,31 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
             },
         )
     target_org = str(req_org or auth.org)
-    if req_ns and not (readable := await _may_read(auth, target_org, str(req_ns))):
+    if not req_ns:
+        return None
+    from server.core.errors import LoomServerError
+
+    try:
+        return await _screen_namespace(req, tool_name, args, auth, target_org, str(req_ns))
+    except LoomServerError as e:
+        # A read the check could not make past its cache (a 503): counted
+        # against the server, then answered as before.
+        _ledger_refusal(tool_name, auth, error_code=e.code, org=target_org)
+        raise
+
+
+async def _screen_namespace(
+    req: dict[str, Any],
+    tool_name: Any,
+    args: dict[str, Any],
+    auth: AuthInfo,
+    target_org: str,
+    req_ns: str,
+) -> dict[str, Any] | None:
+    """The screen's namespace check: None when the caller may read `req_ns`
+    (or the code/tracker index it resolves to, written into `args`), else
+    the refusal, ledgered."""
+    if not (readable := await _may_read(auth, target_org, req_ns)):
         # A code/tracker tool's `namespace` that is not a namespace resolves
         # to one or says so — never the claim text meant for a real refusal.
         resolved, resolved_unverified = await _plane_namespace(tool_name, auth, req_ns)

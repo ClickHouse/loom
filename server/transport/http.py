@@ -379,6 +379,12 @@ async def _authorize(
         ns = target.namespace
         why: dict[str, object] = ar.reason_fields(ns) if ns and ar.is_plane_op(op.name) else {}
         raise _refuse(op, call, 403, error_code=gates.ROLE_REFUSAL_CODE, e=e, detail=why) from e
+    except LoomServerError as e:
+        # A read the gate could not make past its cache (a 503): counted
+        # against the server, then answered as raised.
+        body = _refused_body(call.raw_body, auth)
+        _emit_event(op, call.request_id, body, 0, success=False, error_code=e.code, error=e)
+        raise
     await gates.traffic_class(op, auth, target, call.raw_body)
     response.headers["X-Loom-Traffic-Class"] = header_value()
     return target
