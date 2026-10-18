@@ -359,7 +359,8 @@ What Loom does with each request:
   revoked until the last of them is reactivated, and Loom logs a warning for
   each one it leaves. A reactivation answers after about 6 s, once every
   replica's clock is past its cutoff; a retry sent meanwhile waits out the
-  rest.
+  rest. A sign-in in the few seconds right after a reactivation may need
+  repeating.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
   reactivates them, answering after the same wait; a retry of that create

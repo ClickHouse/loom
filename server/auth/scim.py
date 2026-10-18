@@ -14,6 +14,8 @@ changes is `active`:
   it lasts, even when it reaches no account yet.
 - Reactivating lifts the refusal and narrows those revocations to the tokens
   issued before now, so the person signs in again and the old tokens stay dead.
+  Every request that leaves a user active does it (`_converge_active`), so a
+  repeat of one finishes what a failed request left.
 
 SCIM's revocations are its own: each is stored under the subject's SCIM key
 (`revocation.SCIM_PREFIX`), and SCIM never reads or writes the row an
@@ -22,8 +24,8 @@ keeps a person out; a reactivation lifts only SCIM's. A subject another
 deactivated user still reaches stays revoked through a reactivation. The
 accounts and their data stay: this is not erasure.
 Leases, always taken in this order: the user's, then a userName's it takes
-(create, rename), then, around a deactivation's or reactivation's revocations
-and the row they belong with, one per subject the user reaches, in sorted
+(create, rename), then, around a deactivation's revocations or a reactivation's
+lifts and the row they belong with, one per subject the user reaches, in sorted
 order: only users sharing a subject wait on each other. Each step is
 idempotent, so a provider's retry of a half-done one finishes it. With
 `LOOM_SCIM_TOKEN` empty nothing here is read.
@@ -146,34 +148,34 @@ async def create(
     uid = user_id(email)
     async with _held(_user_lease(uid)), _held(_name_lease(user_name)):
         row = await _row(uid)
-        if row is not None and not row["deleted"]:
-            # A provider retrying a re-create that timed out waits out what is
-            # left of the first try's cutoff, then gets its 409.
-            retried = active and row["active"] and row["subjects"]
-            cutoff = await _lifted_before(row["subjects"]) if retried else None
-            new = None
+        exists = row is not None and not row["deleted"]
+        if row is None:
+            row = {
+                "id": uid,
+                "email": normalized(email),
+                "email_type": "",
+                "email_primary": 0,
+                "active": 1,
+                "deleted": 0,
+                "subjects": [],
+                "created_at": datetime.now(UTC),
+            }
+        cutoff = None
+        if exists:
+            # A provider retrying a create that failed or timed out finishes it,
+            # waits out what is left of its cutoff, then gets its 409.
+            if bool(row["active"]) == active:
+                row, cutoff = await _set_active(row, active)
         else:
             await _refuse_taken(user_name, uid)
-            if row is None:
-                row = {
-                    "id": uid,
-                    "email": normalized(email),
-                    "email_type": "",
-                    "email_primary": 0,
-                    "active": 1,
-                    "deleted": 0,
-                    "subjects": [],
-                    "created_at": datetime.now(UTC),
-                }
             changes = {"user_name": normalized(user_name), "deleted": 0, **_entry(email_entry)}
-            new, cutoff = await _set_active(row, active, **changes)
-    stored = new or row
-    if not stored["active"]:  # a retry too: it finishes what a failed try left
-        await _revoke_tokens(stored)
+            row, cutoff = await _set_active(row, active, **changes)
+    if not row["active"]:  # a retry too: it finishes what a failed try left
+        await _revoke_tokens(row)
     await _wait_out(cutoff)
-    if new is None:
+    if exists:
         raise Exists
-    return new
+    return row
 
 
 async def set_active(uid: str, active: bool) -> dict[str, Any] | None:
@@ -194,18 +196,14 @@ async def update(
         row = await get(uid)
         if row is None:
             return None
-        keep = bool(row["active"]) if active is None else active
         changes = _entry(email_entry)
-        asked = active is True
         if not user_name or normalized(user_name) == row["user_name"]:
-            new, cutoff = await _set_active(row, keep, asked=asked, **changes)
+            new, cutoff = await _set_active(row, active, **changes)
         else:
             async with _held(_name_lease(user_name)):
                 await _refuse_taken(user_name, uid)
                 renamed = normalized(user_name)
-                new, cutoff = await _set_active(
-                    row, keep, asked=asked, user_name=renamed, **changes
-                )
+                new, cutoff = await _set_active(row, active, user_name=renamed, **changes)
     if active is False:  # a retry too: it finishes what a failed try left
         await _revoke_tokens(new)
     await _wait_out(cutoff)
@@ -236,8 +234,7 @@ async def delete(uid: str) -> bool:
         if row is None:
             return False
         deleted = bool(row["deleted"])
-        if not deleted:
-            row, _ = await _set_active(row, False, deleted=1)
+        row, _ = await _set_active(row, False, deleted=1)  # a retry finishes a failed try
     await _revoke_tokens(row)
     return not deleted
 
@@ -305,52 +302,71 @@ async def _wait_out(cutoff: datetime | None) -> None:
 
 
 async def _set_active(
-    row: dict[str, Any], active: bool, *, asked: bool = False, **changes: Any
+    row: dict[str, Any], active: bool | None, **changes: Any
 ) -> tuple[dict[str, Any], datetime | None]:
     """The row as written, and a reactivation's cutoff for the caller to wait
-    out once it lets its leases go. `asked`: the request set `active: true`."""
-    was_active = bool(row["active"])
-    new = {**row, **changes, "active": int(active)}
-    unwritten = "version" not in row
-    if active and was_active and not asked:  # nothing to revoke or lift: no subject lease
-        if new != row or unwritten:
-            await _write(new)
+    out once it lets its leases go. `active` None leaves it as it is."""
+    if active is None and row["active"]:  # nothing asked of an active user: no subject
+        new = {**row, **changes}
+        await _write_changed(row, new)
         return new, None
-    # `active: true` on an active row also lifts what a deactivation revoked
-    # before its row's write failed, and a retry waits out the first try's cutoff.
-    found = await _subjects(row["email"]) if was_active or not active else {}
+    if active:
+        return await _converge_active(row, **changes)
+    new = {**row, **changes, "active": 0}
+    found = await _subjects(row["email"])
     known = set(row["subjects"])
-    cutoff = None
     async with _subject_leases([*known, *found]):
-        if active:
-            cutoff = await _lift(row["id"], sorted(known | set(found)))
+        new["subjects"] = sorted(known | set(found))
+        # Going inactive, or a try that stopped short of writing the row, revokes
+        # them all. Once inactive, a repeat revokes the accounts found since: one
+        # an operator narrowed (someone else's subject, given back) stays narrowed.
+        if row["active"] or "version" not in row:
+            subjects = new["subjects"]
         else:
-            new["subjects"] = sorted(known | set(found))
-            # Going inactive, or retrying a try that stopped short of writing the
-            # row, revokes them all. Once inactive, a repeat revokes the accounts
-            # found since and those a failed reactivation narrowed: one an
-            # operator narrowed (someone else's subject, given back) stays narrowed.
-            if was_active or unwritten:
-                subjects = new["subjects"]
-            else:
-                subjects = sorted((set(found) - known) | await _not_held(sorted(known)))
-            for subject in subjects:
-                await revocation.scim_revoke(
-                    subject, reason=DEACTIVATED, revoked_by=_BY, reread=False
-                )
-                await _flag_collateral(new["id"], subject, set(found.values()))
-        if new != row or unwritten:  # a change, or a user not yet written
-            await _write(new)
+            subjects = sorted(set(found) - known)
+        for subject in subjects:
+            await revocation.scim_revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)
+            await _flag_collateral(new["id"], subject, set(found.values()))
+        await _write_changed(row, new)
         # Audited as the row lands: a retry after a later failure finds the row
         # already changed and would never audit the transition.
         await _audit_transition(row, new)
     # The snapshot re-read each revocation would make, once and past the leases.
     await revocation.refresh()
-    if not active and set(await _subjects(row["email"])) - set(new["subjects"]):
+    if set(await _subjects(row["email"])) - set(new["subjects"]):
         # An account made before the row said inactive (a first sign-in's JIT):
         # revoke it too, with the sessions and tokens it made meanwhile.
         new, _ = await _set_active(new, False)
+    return new, None
+
+
+async def _converge_active(
+    row: dict[str, Any], **changes: Any
+) -> tuple[dict[str, Any], datetime | None]:
+    """The only way a user ends active: write the row, then lift what SCIM still
+    revokes outright of every subject the email reaches, whatever a failed
+    request left. The cutoff is the newest SCIM narrowed them to, for the
+    caller to wait out (a retry waits out the rest)."""
+    new = {**row, **changes, "active": 1}
+    subjects = sorted(set(row["subjects"]) | set(await _subjects(row["email"])))
+    rows = await revocation.scim_revocations(subjects)
+    if not _outright(rows):  # nothing to lift, as on most pushes: no subject lease
+        await _write_changed(row, new)
+        await _audit_transition(row, new)
+        return new, _newest_cutoff(rows)
+    async with _subject_leases(subjects):
+        # The row first: a lift that fails leaves the user active and still
+        # revoked, never inactive with a subject let go. A retry lifts the rest.
+        await _write_changed(row, new)
+        await _audit_transition(row, new)
+        cutoff = await _lift(row, subjects)
+    await revocation.refresh()
     return new, cutoff
+
+
+async def _write_changed(row: dict[str, Any], new: dict[str, Any]) -> None:
+    if new != row or "version" not in row:  # a change, or a user not yet written
+        await _write(new)
 
 
 async def _audit_transition(row: dict[str, Any], new: dict[str, Any]) -> None:
@@ -421,37 +437,39 @@ async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
     return [r["org"] for r in rows]
 
 
-async def _lift(uid: str, subjects: list[str]) -> datetime | None:
+async def _lift(row: dict[str, Any], subjects: list[str]) -> datetime | None:
     """Narrow SCIM's outright revocations of `subjects` to the tokens issued so
-    far; the newest cutoff of its narrowed ones, for the caller to wait out, also
-    when a try this one retries narrowed them. A subject another deactivated (or
-    deleted) user also reaches stays revoked: lifting it would let that one back in."""
+    far; the newest cutoff of its narrowed ones, also when a try this one
+    retries narrowed them. A subject another deactivated (or deleted) user also
+    reaches stays revoked: lifting it would let that one back in."""
     # No skew ahead: sign-in is refused while deactivated, so only a replica behind matters.
     cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
-    rows = await revocation.scim_revocations(subjects)
-    outright = {s for s, r in rows.items() if r["issued_before"] is None and r["revoked_by"] == _BY}
+    rows = await revocation.scim_revocations(subjects)  # again, under the leases
     lifted = False
-    for subject in subjects:
-        if subject not in outright:
-            continue  # narrowed already: by the try this one retries, or by an operator
-        if await _held_by_another_inactive(uid, subject):
-            log.warning(
-                "scim: reactivating %s leaves a subject revoked that another deactivated "
-                "user still reaches",
-                uid,
-            )
+    for subject in sorted(_outright(rows)):
+        if await _held_by_another_inactive(row["id"], subject):
+            if not row["active"]:  # said as the user comes back, not on every push
+                log.warning(
+                    "scim: reactivating %s leaves a subject revoked that another "
+                    "deactivated user still reaches",
+                    row["id"],
+                )
             continue
         await revocation.scim_revoke(
             subject, issued_before=cutoff, reason=REACTIVATED, revoked_by=_BY, reread=False
         )
         lifted = True
-    return cutoff if lifted else await _lifted_before(subjects)
+    return cutoff if lifted else _newest_cutoff(rows)
 
 
-async def _lifted_before(subjects: list[str]) -> datetime | None:
-    """The newest cutoff a reactivation narrowed SCIM's revocation of one of
-    `subjects` to; an operator's (`--scim`) is never waited out."""
-    rows = await revocation.scim_revocations(subjects)
+def _outright(rows: dict[str, dict[str, Any]]) -> set[str]:
+    """The subjects SCIM revokes outright: an operator's `--scim` row is not its own."""
+    return {s for s, r in rows.items() if r["issued_before"] is None and r["revoked_by"] == _BY}
+
+
+def _newest_cutoff(rows: dict[str, dict[str, Any]]) -> datetime | None:
+    """The newest cutoff a reactivation narrowed SCIM's revocations to; an
+    operator's (`--scim`) is never waited out."""
     cutoffs: list[datetime] = [
         r["issued_before"] for r in rows.values() if r["issued_before"] and r["revoked_by"] == _BY
     ]
@@ -459,14 +477,6 @@ async def _lifted_before(subjects: list[str]) -> datetime | None:
         return None
     cutoff = max(cutoffs)
     return cutoff if cutoff.tzinfo is not None else cutoff.replace(tzinfo=UTC)
-
-
-async def _not_held(subjects: list[str]) -> set[str]:
-    """Those of `subjects` SCIM's revocation does not hold out: none written, or
-    narrowed by a reactivation (one that failed short of writing the row)."""
-    rows = await revocation.scim_revocations(subjects)
-    held = {s for s, r in rows.items() if r["issued_before"] is None or r["revoked_by"] != _BY}
-    return set(subjects) - held
 
 
 async def _held_by_another_inactive(uid: str, subject: str) -> bool:

@@ -710,10 +710,15 @@ async def test_a_retried_reactivation_still_waits_out_the_first_ones_cutoff(
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
-    world.table.fail_insert = True
-    with pytest.raises(RuntimeError):  # narrowed, then the row's write failed
+    refresh = revocation.refresh
+
+    async def away() -> None:
+        raise RuntimeError("ClickHouse is away")
+
+    monkeypatch.setattr(revocation, "refresh", away)
+    with pytest.raises(RuntimeError):  # written and narrowed, then the re-read failed
         await scim.set_active(uid, True)
-    world.table.fail_insert = False
+    monkeypatch.setattr(revocation, "refresh", refresh)
     waited: list[datetime] = []
 
     async def wait(cutoff: datetime) -> None:
@@ -882,15 +887,15 @@ async def test_scim_never_writes_the_subjects_own_row(world) -> None:
     ]
 
 
-async def test_a_deactivation_after_a_failed_reactivation_revokes_outright_again(world) -> None:
+async def test_a_reactivation_whose_row_write_failed_lifts_nothing(world) -> None:
     world.person("lee@example.com", "lee", "lee-ops")
     uid = await _create("lee@example.com")
     await scim.set_active(uid, False)
     world.table.fail_insert = True
-    with pytest.raises(RuntimeError):  # narrowed, then the row's write failed
+    with pytest.raises(RuntimeError):  # the row goes first, so nothing was narrowed
         await scim.set_active(uid, True)
     world.table.fail_insert = False
-    assert None not in world.ours.values()
+    assert world.ours == {"lee": None, "lee-ops": None}
     cutoff = await _given_back("lee-ops")  # an operator gave this one back meanwhile
     await scim.set_active(uid, False)  # the row still says inactive
     assert world.ours == {"lee": None, "lee-ops": cutoff}
@@ -1247,6 +1252,72 @@ async def test_reactivating_one_user_keeps_a_subject_another_inactive_user_reach
     assert list(world.ours) == ["alice"] and world.ours["alice"] is not None
 
 
+async def test_active_true_on_an_active_user_keeps_a_subject_another_inactive_user_reaches(
+    world,
+) -> None:
+    world.person("a@example.com", "alice", "a-own")
+    world.person("b@example.com", "alice")
+    a, b = await _create("a@example.com"), await _create("b@example.com")
+    await scim.set_active(b, False)
+    await scim.set_active(a, True)  # a provider's PATCH of A, still active
+    await scim.update(a, active=True, user_name="a@example.com")  # and its PUT
+    with pytest.raises(scim.Exists):
+        await _create("a@example.com")  # and a retried create
+    assert world.ours == {"alice": None}
+    assert not await world.keeps_out("a-own", issued_at=_issued(60))
+
+
+async def test_a_create_lifts_what_a_failed_inactive_create_revoked(world) -> None:
+    world.person("lee@example.com", "lee")
+    world.table.fail_insert = True
+    with pytest.raises(RuntimeError):  # the revocation landed, the row did not
+        await _create("lee@example.com", active=False)
+    world.table.fail_insert = False
+    assert world.ours == {"lee": None}
+    await _create("lee@example.com")  # the provider creates the person active
+    assert not await world.keeps_out("lee", issued_at=_issued(60))
+
+
+async def test_a_retried_create_lifts_what_a_failed_deactivation_revoked(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    world.table.fail_insert = True
+    with pytest.raises(RuntimeError):
+        await scim.set_active(uid, False)
+    world.table.fail_insert = False
+    with pytest.raises(scim.Exists):  # the provider re-sends the create it timed out on
+        await _create("lee@example.com")
+    assert not await world.keeps_out("lee", issued_at=_issued(60))
+
+
+async def test_a_reactivation_lifts_an_account_a_failed_second_pass_revoked(
+    world, monkeypatch
+) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    write = scim._write
+    writes = 0
+
+    async def sign_in_meanwhile(row: dict[str, Any]) -> None:
+        nonlocal writes
+        writes += 1
+        if writes == 1:  # a first sign-in's JIT lands as the row says inactive
+            world.person("lee@example.com", "lee", "u-lee")
+        else:
+            world.table.fail_insert = True  # and the pass that revokes it fails at the row
+        await write(row)
+
+    monkeypatch.setattr(scim, "_write", sign_in_meanwhile)
+    with pytest.raises(RuntimeError):
+        await scim.set_active(uid, False)
+    monkeypatch.setattr(scim, "_write", write)
+    world.table.fail_insert = False
+    assert world.ours == {"lee": None, "u-lee": None}
+    assert world.table.newest(uid)["subjects"] == ["lee"]  # type: ignore[index]
+    await scim.set_active(uid, True)
+    assert not await world.keeps_out("u-lee", issued_at=_issued(60))
+
+
 def test_a_patch_refused_for_an_email_still_deactivates(client: TestClient, world) -> None:
     world.person("lee@example.com", "lee")
     uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
@@ -1387,6 +1458,9 @@ async def test_leases_go_user_then_username_then_each_subject_sorted(world) -> N
     world.leases.clear()
     await scim.set_active(uid, True)
     assert world.leases == [f"scim-user:{uid}", *by_subject]
+    world.leases.clear()
+    await scim.set_active(uid, True)  # a provider's push: nothing left to lift
+    assert world.leases == [f"scim-user:{uid}"]
 
 
 async def test_a_rename_of_an_active_user_waits_on_no_subject(world) -> None:
@@ -1438,6 +1512,10 @@ async def test_a_shared_subject_left_revoked_is_logged_and_nothing_waits(world, 
         await scim.set_active(a, True)
     assert "another deactivated user still reaches" in caplog.text
     assert world.waits == []  # nothing narrowed, so no cutoff to wait out
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="server.auth.scim"):
+        await scim.set_active(a, True)  # a provider's push of A, already active
+    assert "another deactivated user" not in caplog.text
 
 
 _PRIMARY_ROW = {"email": "lee@example.com", "email_type": "work", "email_primary": 1}
@@ -1641,3 +1719,184 @@ def test_a_driver_error_is_not_deactivated_twice(client: TestClient, world, monk
 def test_a_deeply_nested_body_is_a_400(client: TestClient) -> None:
     r = client.post("/scim/v2/Users", content=b"[" * 100_000 + b"]" * 100_000)
     assert r.status_code == 400 and r.json()["scimType"] == "invalidSyntax"
+
+
+# ── the invariants, over many sequences with failures ─────────────────────
+
+_PEOPLE = {"a": "a@example.com", "b": "b@example.com"}
+_REACHES = {"a": ["inv-a", "inv-shared"], "b": ["inv-b", "inv-shared"]}  # one subject shared
+_OPS: list[tuple[str, str, bool]] = [
+    *[(op, p, on) for p in _PEOPLE for op in ("create", "patch") for on in (True, False)],
+    *[(op, p, True) for p in _PEOPLE for op in ("put", "delete", "jit")],
+    *[(op, s, True) for s in ("inv-a", "inv-shared") for op in ("operator", "restore")],
+]
+# The write that fails: the user row's, a deactivation's revocation or a
+# reactivation's lift, the first or the second of the request's. "jit": a first
+# sign-in's account lands as the first row is written, and the second row fails.
+_FAULTS = [
+    *[(kind, n) for kind in ("row", "revoke", "lift") for n in (0, 1)],
+    ("jit", 1),
+]
+_Unit = tuple[tuple[str, str, bool], tuple[str, int] | None, bool]
+
+
+class _Run:
+    """A world taken through a sequence of requests, its writes failing where told."""
+
+    def __init__(self, world: _World) -> None:
+        self.world = world
+        self.fault: tuple[str, int] | None = None
+        self.who = ""
+        self.seen: dict[str, int] = {}
+        self.dirty: set[str] = set()  # people whose last SCIM request failed
+        self.operator: set[str] = set()  # subjects an operator revoked outright
+        insert = world.table.insert
+
+        async def insert_or_fail(table: str, rows: list[dict[str, Any]]) -> None:
+            kind = "row" if table == scim.TABLE else "other"
+            if table == "loom.revoked_tokens" and rows[0]["revoked_by"] == "scim":
+                kind = "lift" if rows[0]["issued_before"] else "revoke"
+            n = self.seen.get(kind, 0)
+            self.seen[kind] = n + 1
+            if self.fault and kind == ("row" if self.fault[0] == "jit" else self.fault[0]):
+                if self.fault[0] == "jit" and n == 0:
+                    self.jit(self.who)
+                if n == self.fault[1]:
+                    raise RuntimeError("injected")
+            await insert(table, rows)
+
+        world.table.insert = insert_or_fail  # type: ignore[method-assign]
+
+    def jit(self, person: str) -> None:
+        if person in _PEOPLE and f"inv-{person}-jit" not in self.world.accounts[_PEOPLE[person]]:
+            self.world.accounts[_PEOPLE[person]].append(f"inv-{person}-jit")
+
+    async def step(self, op: tuple[str, str, bool], fault: tuple[str, int] | None) -> bool:
+        """Send `op`; whether the injected failure fired."""
+        self.fault, self.who, self.seen = fault, op[1], {}
+        try:
+            settled = await self._send(*op)
+        except RuntimeError:
+            self.dirty.add(op[1])
+            return True
+        if settled:
+            self.dirty.discard(op[1])
+        return False
+
+    async def _send(self, kind: str, arg: str, on: bool) -> bool:
+        """Whether the request settles the person: finishes what a failed one left."""
+        email = _PEOPLE.get(arg, "")
+        if kind == "create":
+            before = self.world.table.newest(scim.user_id(email))
+            try:
+                await scim.create(email, email, active=on)
+            except scim.Exists:
+                return before is not None and bool(before["active"]) == on
+        elif kind == "patch":
+            return await scim.set_active(scim.user_id(email), on) is not None
+        elif kind == "put":
+            entry = {"type": "work", "primary": True}
+            return (
+                await scim.update(scim.user_id(email), active=True, email_entry=entry) is not None
+            )
+        elif kind == "delete":
+            await scim.delete(scim.user_id(email))
+            return self.world.table.newest(scim.user_id(email)) is not None
+        elif kind == "jit":
+            self.jit(arg)
+            return False
+        elif kind == "operator":
+            await _operator(arg)
+            self.operator.add(arg)
+            return False
+        else:
+            await _given_back(arg)
+            return False
+        return True
+
+    async def check(self) -> None:
+        w = self.world
+        rows = {p: w.table.newest(scim.user_id(e)) for p, e in _PEOPLE.items()}
+        keys = w.table.revoked()
+        later = _issued(60)  # a fresh sign-in's token, past any cutoff so far
+        # (b) An operator's revocation stands, and SCIM never narrows one it did not write.
+        assert w.operators == dict.fromkeys(self.operator)
+        for s in self.operator:
+            assert await w.keeps_out(s, issued_at=later), s
+        history = sorted(w.table.revocations, key=lambda r: r["version"])
+        for key in {r["jti"] for r in history}:
+            mine = [r for r in history if r["jti"] == key]
+            for before, r in zip(mine, mine[1:], strict=False):
+                if r["revoked_by"] == "scim" and r["issued_before"] is not None:
+                    assert before["revoked_by"] == "scim" and before["issued_before"] is None
+        # (a) An inactive user's subjects stay revoked, unless an operator gave one back.
+        for row in rows.values():
+            for s in row["subjects"] if row and not row["active"] else []:
+                given_back = keys.get(revocation.SCIM_PREFIX + s, {}).get("revoked_by") == "cli:ops"
+                assert given_back or await w.keeps_out(s, issued_at=later), (s, row)
+        # (c) A subject only active, settled users reach lets a fresh token in.
+        for s in sorted({s for subjects in w.accounts.values() for s in subjects}):
+            reachers = [p for p, e in _PEOPLE.items() if s in w.accounts[e]]
+            held = [p for p in reachers if p in self.dirty or (rows[p] and not rows[p]["active"])]
+            if not held and s not in self.operator:
+                assert not await w.keeps_out(s, issued_at=later), s
+
+    def state(self) -> tuple[Any, ...]:
+        """The users and the revocations, a cutoff's time aside."""
+        w = self.world
+        rows = [w.table.newest(scim.user_id(e)) for e in _PEOPLE.values()]
+        users = tuple(
+            (r["active"], r["deleted"], tuple(r["subjects"])) if r else None for r in rows
+        )
+        keys = [
+            (k, r["revoked_by"], r["issued_before"] is None) for k, r in w.table.revoked().items()
+        ]
+        return users, tuple(sorted(keys))
+
+
+async def _run(units: list[_Unit], fired: list[bool] | None = None) -> tuple[list[Any], list[bool]]:
+    """The state after each unit and whether its failure fired. With `fired` (a
+    run before), a unit whose failure fired and was retried is sent once, clean."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(revocation, "_revoked_jtis", frozenset())
+        mp.setattr(revocation, "_revoked_before", {})
+        mp.setattr(revocation, "_recent", [])
+        world = _World(mp)
+        for p, subjects in _REACHES.items():
+            world.person(_PEOPLE[p], *subjects)
+        run = _Run(world)
+        states, fires = [], []
+        for i, (op, fault, retried) in enumerate(units):
+            if fired is not None and fired[i] and retried:
+                if fault and fault[0] == "jit":
+                    run.jit(op[1])  # what the race left, there before this time
+                fires.append(await run.step(op, None))
+            else:
+                fires.append(await run.step(op, fault))
+                await run.check()
+                if retried:
+                    await run.step(op, None)
+            await run.check()
+            states.append(run.state())
+        return states, fires
+
+
+async def test_every_sequence_keeps_the_invariants_and_a_retry_converges() -> None:
+    # Two people sharing a subject, each with one of their own, through random
+    # requests with a write failing in about half; most failures are retried.
+    rng = random.Random(26)
+    runs = 0
+    for _ in range(10_000):
+        units: list[_Unit] = []
+        for _ in range(rng.randint(2, 7)):
+            fault = rng.choice(_FAULTS) if rng.random() < 0.5 else None
+            units.append((rng.choice(_OPS), fault, fault is not None and rng.random() < 0.7))
+        try:
+            states, fired = await _run(units)
+            if any(fired):  # (d) a retry ends where a clean request does
+                clean, _ = await _run(units, fired)
+                assert states == clean
+                runs += 1
+        except AssertionError as e:
+            raise AssertionError(f"{units}: {e}") from e
+    assert runs > 1500  # failures fired and were compared, not just drawn
