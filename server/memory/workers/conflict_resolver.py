@@ -81,6 +81,8 @@ class _Pass:
         # Rows refused for a reason of their own: stamped once the pass ends, unless the
         # refusals stopped it (then the request, not the rows, was at fault).
         self.refused: list[dict[str, Any]] = []
+        # The identities the pass took, judged once a pass whatever the burst reads again.
+        self.tried: set[tuple[str, ...]] = set()
 
 
 def _cap_share() -> dict[str, Any]:
@@ -115,10 +117,10 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
             _state.recheck_after = time.monotonic() + RECHECK_IDLE_S
         rows += found
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    seen: set[tuple[str, ...]] = set()
     for r in rows:
-        if _identity(r) not in seen:
-            seen.add(_identity(r))
+        # Each identity once a pass: a row left owed comes back in the burst's next read.
+        if _identity(r) not in p.tried:
+            p.tried.add(_identity(r))
             groups.setdefault((str(r["org"]), str(r["namespace"])), []).append(dict(r))
     return groups, full
 

@@ -2419,3 +2419,63 @@ async def test_an_undo_is_not_flagged_from_the_other_side(ch, wired, monkeypatch
     assert out["flagged"] == 0, out
     after = await _rows(ch, org)
     assert after["office_city"]["status"] == after["office_location"]["status"] == "active"
+
+
+async def test_a_row_left_owed_is_judged_once_a_pass_whatever_the_burst_reads(
+    ch, wired, monkeypatch
+) -> None:
+    """Batches of two over a backlog, and one row whose flagged peer the model always
+    leaves out: the row stays owed, and the burst's next read takes it again; it is
+    judged, and paid for, once in the pass."""
+    from types import SimpleNamespace
+
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers import conflict_resolver as worker
+    from server.settings import settings
+
+    org, llm = wired
+    monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 2)
+    calls: list[str] = []
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        new = re.search(r"NEW note \(key ([^,)]+)", user).group(1)  # type: ignore[union-attr]
+        calls.append(new)
+        entries = [
+            {
+                "peer_id": pid,
+                "reason": "scripted",
+                "same_entity": True,
+                "same_attribute": True,
+                "verdict": "related",
+                "confidence": 0.5,
+            }
+            for pid, key in re.findall(r"^\[(p\d+)\] \(key ([^,]+),", user, re.M)
+            if not (new == "leftout_row" and key == "leftout_flag")
+        ]
+        return SimpleNamespace(text=json.dumps({"peers": entries}))
+
+    monkeypatch.setattr(llm, "complete", complete)
+    for i in range(6):
+        await _pair(ch, org, f"old{i}", f"new{i}", 920 + 4 * i, gap=False)
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "leftout_flag", "The team lead is Ana")
+        await _set(org, "s1", "leftout_near", "Ana joined in May")
+        await _later()
+        await _set(org, "s2", "leftout_row", "Ana leads the team now")
+        await after_write.drain()
+    await _place(ch, org, "s1", "leftout_flag", _vec((990, 1.0)), owed=False)
+    await _place(ch, org, "s1", "leftout_near", _vec((990, 0.9), (992, 0.43)), owed=False)
+    await _place(ch, org, "s2", "leftout_row", _vec((990, 0.9), (991, 0.43)), owed=True)
+    rows = await _rows(ch, org)
+    await conflicts.mark_peers_conflicted(
+        org=org, new_memory_id=rows["leftout_row"]["id"], peer_ids=[rows["leftout_flag"]["id"]]
+    )
+    await worker.run_pass()
+    # One judgement: the answer leaves a peer out, so it is asked once more with room.
+    assert calls.count("leftout_row") == 2, calls
