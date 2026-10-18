@@ -429,7 +429,8 @@ async def test_a_long_run_of_sessions_ends_with_one_live_value_per_attribute(ch,
     t = run.totals
     assert t["retired"] == len(OLDER) and t["flagged"] == 0, t
     assert t["cleared"] == len(FLAGGED_AT_WRITE), t
-    assert t["errored"] == 1 and t["skipped_pinned"] >= 1, t
+    # A pinned row is no peer: its pair is never judged, so nothing is skipped for it.
+    assert t["errored"] == 1 and t["skipped_pinned"] == 0, t
     assert t["skipped_no_action"] >= len(LOW_CONFIDENCE) // 2, t
     assert not set(run.judge.calls) & SOLO
 
