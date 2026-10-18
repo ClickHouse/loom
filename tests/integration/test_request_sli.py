@@ -112,7 +112,8 @@ async def test_the_rollup_counts_slow_and_rate_limited_rows_and_skips_unclassifi
         ("memory.get", "mcp", "read", False, "RATE_LIMITED", "client", 0, 100),
         # a server error, not in the quantiles
         ("memory.get", "http", "read", False, "INTERNAL_ERROR", "server", 5000, 100),
-        ("me.whoami", "", "", False, "HTTP_500", "server", 20, 0),  # no transport or SLO class
+        # no transport or SLO class, as a /v1/me/* route writes it
+        ("me.sharing-summary", "", "", False, "HTTP_500", "server", 20, 0),
         ("mcp.initialize", "mcp", "", True, "", "ok", 5, 0),  # no registered op
     ]
     ch_client.insert(
