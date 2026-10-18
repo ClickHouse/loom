@@ -215,6 +215,18 @@ describe("MachineLogin with a key", () => {
   });
 });
 
+describe("server metadata", () => {
+  it.each([
+    [404, AuthError],
+    [503, BackendUnavailable],
+  ] as const)("reads a %s as the Python SDK does", async (status, error) => {
+    vi.stubEnv("LOOM_WORKLOAD_TOKEN", "wl");
+    const fetch = async () => new Response("{}", { status });
+    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", fetch });
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+  });
+});
+
 describe("key sources", () => {
   it("names the source of a key that is not a PEM", async () => {
     // As `docker --env-file` leaves it: the newlines written as `\n`.

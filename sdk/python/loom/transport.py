@@ -590,8 +590,8 @@ class Transport:
                 continue
             except BackendUnavailable as e:
                 # The token provider (the auth flow) could not get a token: the
-                # op was never sent, so it is retried as a connection failure,
-                # under the same send count.
+                # op did not run (at most a 401 came back before a fresh token
+                # was asked for), so it is retried as a connection failure.
                 call.sent -= 1
                 delay = self._retry_delay(
                     op_path, policy, attempt, slept_s, allowed=policy.retry_connection_errors

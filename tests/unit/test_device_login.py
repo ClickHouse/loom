@@ -1195,6 +1195,19 @@ def test_only_loom_logins_own_sessions_are_first_party(_world) -> None:
     assert first_party("some-mcp-client") is False
 
 
+def test_a_refreshed_loom_login_and_the_dashboards_sso_stay_first_party(_world) -> None:
+    from server.auth.jwt import verify_token
+
+    c = _client()
+    tokens = _signed_in_tokens(c)
+    assert verify_token(tokens["access_token"]).first_party
+    rotated = _refresh(c, tokens["refresh_token"]).json()
+    assert verify_token(rotated["access_token"]).first_party
+    signed_in = asyncio.run(oauth._dashboard_signed_in(("ann", "acme", ["ann"], ["writer"])))
+    token = signed_in.headers["location"].split("#token=", 1)[1]
+    assert verify_token(token).first_party and verify_token(token).session_id
+
+
 def test_two_people_on_one_code_end_the_grant_for_both(_world, monkeypatch) -> None:
     mallory = ("mallory@example.com", "acme", ["mallory"], ["writer"])
 

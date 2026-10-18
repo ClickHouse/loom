@@ -278,8 +278,9 @@ what was asked for, cut to what the caller's token allows and to the caller's li
   dashboard SSO), whose children last what was asked;
 - a name: unique in its org while its token lives (`409
 TOKEN_NAME_TAKEN`, which does not say whose it is), free again once the token is revoked
-  or has expired; names starting `agent · ` are agents' own;
-- `parents` (every ancestor's token id), `parent_subjects` (every ancestor's `sub`),
+  or has expired; names starting `agent · ` are agents' own, and a name holds no `:`;
+- `parents` (every ancestor's token id, and the sign-in session of a third-party MCP
+  client that minted it), `parent_subjects` (every ancestor's `sub`),
   `parent_iats` (every ancestor's `iat`) and `creator` (the person at the root).
 
 On every request the gate rechecks a delegated token: the person's live grant must still
@@ -289,8 +290,9 @@ them active any more, or who held grants and has none live, as after a claim rel
 stops every token they delegated). An op with no namespace that writes needs the person to
 hold that role on some namespace of the org. Revoking any ancestor's `jti` or `sub` (the
 dashboard revokes a service account by its `sub`) or the person's `sub` kills the token,
-its children and theirs. Tokens minted from a sign-in session outlive its logout and the
-end of the session for any other reason; they are revoked by subject or one by one. A revoke with an issued-before cutoff judges each ancestor by its
+its children and theirs. Tokens minted from a `loom login` or dashboard SSO session outlive
+its logout and the end of the session for any other reason; they are revoked by subject or
+one by one. Tokens a third-party MCP client's session minted end with that session. A revoke with an issued-before cutoff judges each ancestor by its
 own `iat` and the person by the root's, so a child minted after the cutoff from an older
 token dies with it; a delegated token without aligned `parent_iats` is refused. `loom mint-token` signs with
 the key and is not a delegation.

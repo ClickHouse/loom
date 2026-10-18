@@ -37,12 +37,13 @@ Commands fall into two kinds:
 
 `loom mint-token` needs only `LOOM_JWT_SECRET`: it signs a token locally.
 
-**Session commands** (`login`, `logout`, `whoami`, `call`) are the Python SDK's
+**Session commands** (`login`, `logout`, `whoami`, `call`, `token`) are the Python SDK's
 own (`loom.cli`; `python -m loom …` with only the SDK installed), so `loom`
 needs `pip install clickhouse-loom` for them. `loom login [--server URL]
 [--profile NAME] [--no-browser]` signs in with a one-time code;
 `loom call <op|/path> [key=text|key:=json …] [--data JSON] [--org] [--namespace]` reaches
-any operation or route with that session. See
+any operation or route with that session, and `loom token create|list|revoke`
+makes, lists and revokes your own tokens for CI and agents. See
 [use Loom without the dashboard](../guides/without-the-dashboard.md).
 
 ## Conventions

@@ -129,6 +129,10 @@ async def delegate(
     if parent.is_service_account and not is_service_account:
         raise _refuse("a service-account token can only mint service-account tokens")
     parents = [*parent.parents, parent.token_id] if parent.token_id else list(parent.parents)
+    if parent.session_id and not parent.first_party:
+        # A third-party client's session: what it mints ends when the session
+        # is revoked, not when the parent's access token runs out.
+        parents.append(parent.session_id)
     if len(parents) > MAX_CHAIN_DEPTH:
         raise _refuse(f"delegation chain is limited to {MAX_CHAIN_DEPTH} tokens")
     if scoped and "*" in requested:
@@ -186,8 +190,8 @@ def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int | None:
         raise _refuse("the parent token has expired")
     if never:
         raise _refuse(
-            "a token that expires cannot make one that never does; only a sign-in "
-            "session (SSO or `loom login`) can"
+            "a token that expires cannot make one that never does; only a `loom login` "
+            "or dashboard SSO session can"
         )
     return min(ttl, left)
 

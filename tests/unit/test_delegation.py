@@ -269,6 +269,30 @@ async def test_revoking_the_parent_kills_the_child_and_the_grandchild(
 
 
 @pytest.mark.asyncio
+async def test_ending_a_third_party_clients_session_kills_what_it_minted(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exp = int(time.time()) + 3600
+    third_party = await _child(_login(session_id="fam-mcp", expires_at=exp), {"a": None})
+    assert third_party.parents == ("login-1", "fam-mcp")
+    own = await _child(_login(session_id="fam-cli", first_party=True, expires_at=exp), {"a": None})
+    assert own.parents == ("login-1",)  # outlives the session it came from
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"fam-mcp", "fam-cli"}))
+    raw = (
+        await delegate(
+            _login(session_id="fam-mcp", expires_at=exp),
+            org=ORG,
+            requested={"a": None},
+            scoped=False,
+            ttl_seconds=None,
+            is_service_account=True,
+        )
+    ).mint("sa:mcp")
+    with pytest.raises(TokenError, match="parent"):
+        verify_token(raw)
+
+
+@pytest.mark.asyncio
 async def test_revoking_the_creator_kills_the_child(world, monkeypatch: pytest.MonkeyPatch) -> None:
     d = await delegate(
         _login(),

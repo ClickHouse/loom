@@ -168,7 +168,7 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         grants = await get_client().query_all(
             "SELECT * FROM loom.namespace_grants FINAL WHERE org = {org:String} "
             "AND lower(subject) = {was:String}",
-            params={"org": org, "was": was},
+            params={"org": org, "was": was.lower()},  # grants match in any case, as at the gate
         )
     pending = [g for g in grants if g["revoked_at"] is None and g["status"] == "pending"]
     if was and pending:

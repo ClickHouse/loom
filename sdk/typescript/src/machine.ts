@@ -193,7 +193,7 @@ export class MachineLogin implements TokenProvider {
       const res = await this.#get(`${this.baseUrl}/.well-known/oauth-authorization-server`, {
         headers: { Accept: "application/json" },
       });
-      if (!res.ok) throw new BackendUnavailable(`bot ${this.clientId}: server metadata ${res.status}`);
+      if (!res.ok) throw answerError(`bot ${this.clientId}: server metadata`, res.status);
       const meta = (await res.json()) as { token_endpoint?: unknown };
       if (typeof meta.token_endpoint !== "string") throw new AuthError("server metadata names no token_endpoint");
       this.#tokenEndpoint = meta.token_endpoint;
@@ -279,7 +279,7 @@ export class MachineLogin implements TokenProvider {
     const res = await this.#get(asked.toString(), {
       headers: { Authorization: `Bearer ${bearer}`, Accept: "application/json" },
     });
-    if (!res.ok) throw new BackendUnavailable(`GitHub Actions OIDC token: ${res.status}`, { status: res.status });
+    if (!res.ok) throw answerError("GitHub Actions OIDC token", res.status);
     const out = (await res.json()) as { value?: unknown };
     if (typeof out.value !== "string") throw new AuthError("GitHub Actions answered no OIDC token");
     return out.value;
@@ -325,4 +325,11 @@ function loadModule(name: string): Promise<unknown> {
 
 function b64url(s: string): string {
   return Buffer.from(s).toString("base64url");
+}
+
+/** Busy or away (429, 5xx) is retryable; any other answer is a refusal, as
+ *  the Python SDK reads it. */
+function answerError(what: string, status: number): LoomError {
+  if (status === 429 || status >= 500) return new BackendUnavailable(`${what}: ${status}; retry shortly`, { status });
+  return new AuthError(`${what}: ${status}`, { status });
 }
