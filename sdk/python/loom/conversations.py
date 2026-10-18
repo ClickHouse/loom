@@ -172,8 +172,8 @@ class ConversationsClient:
 
         Tombstones the thread row, its messages, and the embeddings no other
         agent of the thread still holds with the same text (its first 240
-        characters); retention TTL
-        eventually hard-deletes, and read paths filter tombstoned rows out.
+        characters). Read paths filter tombstoned rows out, and the retention
+        TTL on the messages table eventually hard-deletes the messages.
 
         `confirm_thread_id` must equal `thread_id`, guarding against
         accidental deletes. This is the bounded "remove this one chat"

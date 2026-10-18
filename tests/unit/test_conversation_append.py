@@ -20,8 +20,8 @@ def _patch_append(monkeypatch, *, append, embed):
     async def fake_insert_embedding(row, **k):
         rows.append(row)
 
-    async def recheck(org, ns, agent, tid, msg_id, **k):
-        rows.append({"rechecked": msg_id})
+    async def recheck(*a, **k):
+        return None
 
     class _Embedder:
         model_name = "fake"
@@ -69,7 +69,7 @@ async def test_the_embedding_row_keeps_the_text_its_vector_was_built_from(monkey
     h, rows = _patch_append(monkeypatch, append=ok_append, embed=embed)
     content = "a" * 300 + " the deploy moved to friday " + "b" * 3000
     await h.handle_conversation_append(_turn(content))
-    row, _ = rows
+    [row] = rows
     assert embedded == [content[:2048]]
     assert row["content_excerpt"] == content[:2048]
 
@@ -101,24 +101,8 @@ async def test_a_failed_embed_stores_the_row_with_its_error(monkeypatch) -> None
 
     h, rows = _patch_append(monkeypatch, append=ok_append, embed=embed)
     await h.handle_conversation_append(_turn())
-    row, _ = rows
+    [row] = rows
     assert (row["embedding"], row["embedding_dim"], row["embed_attempts"]) == ([], 0, 0)
     assert row["embed_last_error"] == "RuntimeError: embedder down"
     assert row["embed_failed_at"] is not None
     assert (row["content_excerpt"], row["embedding_model"]) == ("hi", "fake")
-
-
-@pytest.mark.asyncio
-async def test_append_rechecks_its_message_after_storing_the_embedding(monkeypatch) -> None:
-    """A delete that tombstoned the message after its last embeddings read is caught by
-    append's own read, which runs after the embedding row is stored."""
-
-    async def ok_append(*a, **k):
-        return None
-
-    async def embed(text):
-        return [0.1, 0.2, 0.3]
-
-    h, rows = _patch_append(monkeypatch, append=ok_append, embed=embed)
-    await h.handle_conversation_append(_turn())
-    assert [r.get("rechecked") for r in rows] == [None, "m4"]

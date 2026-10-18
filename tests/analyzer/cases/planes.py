@@ -469,16 +469,8 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
     await R.tombstone_embedding_if_message_gone(ORG, NS, AGENT, "t1", "m1", ch=ch)
 
 
-# One turn whose embedding a tombstone finds live, so the mutation that names it runs,
-# and a tombstoned message, so append's re-check tombstones its embedding.
-_CONVERSATION_ROWS = rows_by_substring(
-    {
-        "max(tombstoned_at) AS gone": [{"gone": _DT}],
-        "toUnixTimestamp64Milli(ts) AS ts_ms": [
-            {"embedding_model": "m", "msg_id": "m1", "agent": "a", "ts_ms": 0}
-        ],
-    }
-)
+# A tombstoned message, so the writer's re-check tombstones its embedding.
+_CONVERSATION_ROWS = rows_by_substring({"max(tombstoned_at) AS gone": [{"gone": _DT}]})
 
 
 async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:

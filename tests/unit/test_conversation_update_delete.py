@@ -258,36 +258,30 @@ async def test_delete_op_registered_with_admin_role_and_audit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_long_thread_is_tombstoned_in_byte_bounded_slices() -> None:
-    """conversation.delete binds its row versions a byte-bounded slice at a time
-    (`param_slices`), so long msg_ids cannot push one statement past the server's
-    form-field cap, and every row is still named."""
+async def test_named_turns_are_tombstoned_in_byte_bounded_slices() -> None:
+    """Compaction binds its msg_ids a byte-bounded slice at a time (`param_slices`), so
+    long ids cannot push one statement past the server's form-field cap, and every id
+    is still named."""
     from server.knowledge.store import conversations as repo
 
     ids = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
+    executed: list[tuple[str, dict[str, Any]]] = []
 
     class _CH:
-        def __init__(self) -> None:
-            self.executed: list[tuple[str, dict[str, Any]]] = []
-
-        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
-            return [{"embedding_model": "m", "msg_id": i, "agent": "a", "ts_ms": 1} for i in ids]
-
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
-            self.executed.append((sql, params or {}))
+            executed.append((sql, params or {}))
 
-    ch = _CH()
     await repo._tombstone_embeddings(
-        "o", "n", "a", "t", msg_ids=None, when=datetime(2026, 9, 1, 12, 0, 0), ch=ch
+        "o", "n", "a", "t", msg_ids=ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
     )
-    slices = [p["due"] for sql, p in ch.executed if "conversation_embeddings" in sql]
+    slices = [p["ids"] for sql, p in executed if "INSERT INTO loom.conversation_embeddings" in sql]
     assert len(slices) > 1
-    assert [d[1] for d in sum(slices, [])] == ids
+    assert sum(slices, []) == ids
 
 
 @pytest.mark.asyncio
 async def test_the_tombstone_reads_with_sequential_consistency() -> None:
-    """The rows a tombstone names come from a sequential read: a lagging replica must
+    """The rows a tombstone copies come from a sequential read: a lagging replica must
     not miss a turn appended just before the delete."""
     from server.core.ch import sequential_reads_active
     from server.knowledge.store import conversations as repo
@@ -295,12 +289,8 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
     seen: list[bool] = []
 
     class _CH:
-        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
-            seen.append(sequential_reads_active())
-            return []
-
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
-            return None
+            seen.append(sequential_reads_active())
 
     for msg_ids in (None, ["m1"]):
         await repo._tombstone_embeddings(

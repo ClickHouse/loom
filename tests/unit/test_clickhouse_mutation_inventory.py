@@ -25,9 +25,6 @@ _EXPECTED_MUTATIONS = Counter(
         ("server/memory/app/projections.py", "entity_triples", "UPDATE"): 1,
         ("server/memory/store/blacklist.py", "blacklist", "UPDATE"): 1,
         ("server/memory/store/conflicts.py", "conflict_allowlist", "UPDATE"): 1,
-        # The embeddings are tombstoned by one helper, for tombstone_thread and
-        # conversation.compact's tombstone_messages alike.
-        ("server/knowledge/store/conversations.py", "conversation_embeddings", "UPDATE"): 1,
         ("server/knowledge/store/conversations.py", "conversation_threads", "UPDATE"): 1,
         # tombstone_thread and conversation.compact's tombstone_messages.
         ("server/knowledge/store/conversations.py", "conversations", "UPDATE"): 2,

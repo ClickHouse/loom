@@ -137,9 +137,10 @@ class ConversationUpdateOutput(BaseModel):
 class ConversationDeleteInput(BaseModel):
     """Soft-delete one thread: its messages, thread row and embeddings no other agent holds.
 
-    Sets `tombstoned_at`: read paths filter tombstoned rows, and a retention TTL
-    hard-deletes them. A turn another agent of the thread holds live with the same
-    text keeps its embedding, which the two copies share.
+    Sets `tombstoned_at`: read paths filter tombstoned rows, and the retention TTL
+    on `loom.conversations` hard-deletes the messages. A turn another agent of the
+    thread holds live with the same text (its first 240 characters) keeps its
+    embedding, which the two copies share.
 
     `confirm_thread_id` must equal `thread_id` — guards against UI-dropdown
     accidents. Single-thread scope; for user/namespace-wide erasure use

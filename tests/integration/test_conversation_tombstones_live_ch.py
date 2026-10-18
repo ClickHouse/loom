@@ -83,41 +83,42 @@ async def _rows(ch: Any, s: dict[str, str]) -> list[tuple[str, str, bool]]:
     return [(r["msg_id"], r["content_excerpt"], bool(r["live"])) for r in rows]
 
 
+class _AfterFirstTombstone:
+    """Passes through to ClickHouse, and runs `then` once the first embeddings
+    tombstone has landed."""
+
+    def __init__(self, ch: Any, then: Any) -> None:
+        self.ch, self.then = ch, then
+
+    async def query_all(self, sql: str, params: Any = None) -> Any:
+        return await self.ch.query_all(sql, params=params)
+
+    async def query_one(self, sql: str, params: Any = None) -> Any:
+        return await self.ch.query_one(sql, params=params)
+
+    async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
+        out = await self.ch.execute(sql, params, **kw)
+        if self.then and "INSERT INTO loom.conversation_embeddings" in sql:
+            then, self.then = self.then, None
+            await then()
+        return out
+
+
 @pytest.mark.asyncio
-async def test_a_peer_row_written_after_the_read_is_not_tombstoned(ch, scope) -> None:
-    """The mutation names the row version the read chose: a peer's newer row under the
-    same msg_id, written between the read and the mutation, stays live."""
+async def test_a_peer_row_written_after_the_tombstone_stays_live(ch, scope) -> None:
+    """The tombstone is a version row at the old row's `ts`: a peer's row under the
+    same msg_id, written after it with a newer `ts`, wins and stays live."""
     await _message(ch, scope, "a", "1", "mine", T0)
     await _embedding(ch, scope, "a", "1", "mine", T0)
 
-    class _Interleaving:
-        """Passes through, and lands a peer's turn right after the read."""
+    async def peer() -> None:
+        later = T0 + timedelta(seconds=5)
+        await _message(ch, scope, "b", "1", "theirs", later)
+        await _embedding(ch, scope, "b", "1", "theirs", later)
 
-        def __init__(self) -> None:
-            self.done = False
-
-        async def query_all(self, sql: str, params: Any = None) -> Any:
-            rows = await ch.query_all(sql, params=params)
-            if not self.done and "FROM loom.conversation_embeddings FINAL" in sql:
-                self.done = True
-                later = T0 + timedelta(seconds=5)
-                await _message(ch, scope, "b", "1", "theirs", later)
-                await _embedding(ch, scope, "b", "1", "theirs", later)
-            return rows
-
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            return await ch.query_one(sql, params=params)
-
-        async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
-            return await ch.execute(sql, params, **kw)
-
+    when = datetime.now(UTC).replace(tzinfo=None)
     await repo.tombstone_thread(
-        scope["org"],
-        scope["ns"],
-        "a",
-        scope["tid"],
-        when=datetime.now(UTC).replace(tzinfo=None),
-        ch=_Interleaving(),
+        scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_AfterFirstTombstone(ch, peer)
     )
     assert await _rows(ch, scope) == [("1", "theirs", True)]
 
@@ -125,38 +126,18 @@ async def test_a_peer_row_written_after_the_read_is_not_tombstoned(ch, scope) ->
 @pytest.mark.asyncio
 async def test_a_turn_appended_during_the_delete_leaves_search(ch, scope) -> None:
     """The agent's own turn whose message lands before the messages mutation and whose
-    embedding lands after the first embeddings read is tombstoned by the second pass."""
+    embedding lands after the first embeddings pass is tombstoned by the second."""
     await _message(ch, scope, "a", "1", "first", T0)
     await _embedding(ch, scope, "a", "1", "first", T0)
 
-    class _AppendDuring:
-        """Passes through, and lands this agent's next turn after the first read."""
+    async def append() -> None:
+        later = T0 + timedelta(seconds=5)
+        await _message(ch, scope, "a", "2", "second", later)
+        await _embedding(ch, scope, "a", "2", "second", later)
 
-        def __init__(self) -> None:
-            self.done = False
-
-        async def query_all(self, sql: str, params: Any = None) -> Any:
-            rows = await ch.query_all(sql, params=params)
-            if not self.done and "toUnixTimestamp64Milli(ts) AS ts_ms" in sql:
-                self.done = True
-                later = T0 + timedelta(seconds=5)
-                await _message(ch, scope, "a", "2", "second", later)
-                await _embedding(ch, scope, "a", "2", "second", later)
-            return rows
-
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            return await ch.query_one(sql, params=params)
-
-        async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
-            return await ch.execute(sql, params, **kw)
-
+    when = datetime.now(UTC).replace(tzinfo=None)
     out = await repo.tombstone_thread(
-        scope["org"],
-        scope["ns"],
-        "a",
-        scope["tid"],
-        when=datetime.now(UTC).replace(tzinfo=None),
-        ch=_AppendDuring(),
+        scope["org"], scope["ns"], "a", scope["tid"], when=when, ch=_AfterFirstTombstone(ch, append)
     )
     assert out["loom.conversations"] == 2  # the mid-delete turn's message was caught too
     assert out["loom.conversation_embeddings"] == 2
@@ -165,37 +146,22 @@ async def test_a_turn_appended_during_the_delete_leaves_search(ch, scope) -> Non
 
 @pytest.mark.asyncio
 async def test_a_turn_embedded_during_compaction_leaves_search(ch, scope) -> None:
-    """A compacted turn whose embedding lands after compaction's first embeddings read
+    """A compacted turn whose embedding lands after compaction's first embeddings pass
     is tombstoned by the pass after the messages mutation."""
     await _message(ch, scope, "a", "1", "slow embed", T0)
 
-    class _EmbedDuring:
-        """Passes through, and lands the turn's embedding after the first read."""
+    async def embed() -> None:
+        await _embedding(ch, scope, "a", "1", "slow embed", T0)
 
-        def __init__(self) -> None:
-            self.done = False
-
-        async def query_all(self, sql: str, params: Any = None) -> Any:
-            rows = await ch.query_all(sql, params=params)
-            if not self.done and "toUnixTimestamp64Milli(ts) AS ts_ms" in sql:
-                self.done = True
-                await _embedding(ch, scope, "a", "1", "slow embed", T0)
-            return rows
-
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            return await ch.query_one(sql, params=params)
-
-        async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
-            return await ch.execute(sql, params, **kw)
-
+    when = datetime.now(UTC).replace(tzinfo=None)
     await repo.tombstone_messages(
         scope["org"],
         scope["ns"],
         "a",
         scope["tid"],
         ["1"],
-        when=datetime.now(UTC).replace(tzinfo=None),
-        ch=_EmbedDuring(),
+        when=when,
+        ch=_AfterFirstTombstone(ch, embed),
     )
     assert await _rows(ch, scope) == [("1", "slow embed", False)]
 
@@ -218,27 +184,45 @@ async def test_an_orphan_embedding_goes_although_a_peer_reused_its_id(ch, scope)
     assert await _rows(ch, scope) == [("1", "mine", False)]
 
 
+def _stored(s: dict[str, str], mid: str, text: str) -> tuple[Any, Any]:
+    """A message and its embed result, as append and compact hand them to
+    `_store_embedding`."""
+    from server.knowledge.app.conversations import EmbeddedTurn
+
+    msg = repo.MessageInsert(
+        org=s["org"],
+        namespace=s["ns"],
+        agent="a",
+        thread_id=s["tid"],
+        msg_id=mid,
+        role="user",
+        content=text,
+        ts=T0,
+    )
+    return msg, EmbeddedTurn(text, [], 0, MODEL, "")
+
+
 @pytest.mark.asyncio
-async def test_an_embedding_stored_after_the_delete_is_tombstoned_by_append(ch, scope) -> None:
+async def test_an_embedding_stored_after_the_delete_is_tombstoned_by_its_writer(ch, scope) -> None:
     """The message lands before the delete and its embedding after the delete's last
-    read: append's re-check tombstones the embedding."""
+    pass: the writer's re-check in `_store_embedding` tombstones the embedding."""
+    from server.knowledge.app.conversations import _store_embedding
+
     await _message(ch, scope, "a", "1", "late", T0)
     now = datetime.now(UTC).replace(tzinfo=None)
     await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=now, ch=ch)
-    await _embedding(ch, scope, "a", "1", "late", T0)
-    await repo.tombstone_embedding_if_message_gone(
-        scope["org"], scope["ns"], "a", scope["tid"], "1", ch=ch
-    )
+    msg, embedded = _stored(scope, "1", "late")
+    await _store_embedding(msg, embedded, ts=T0)
     assert await _rows(ch, scope) == [("1", "late", False)]
 
 
 @pytest.mark.asyncio
 async def test_a_live_turn_keeps_its_embedding_after_the_recheck(ch, scope) -> None:
+    from server.knowledge.app.conversations import _store_embedding
+
     await _message(ch, scope, "a", "1", "kept", T0)
-    await _embedding(ch, scope, "a", "1", "kept", T0)
-    await repo.tombstone_embedding_if_message_gone(
-        scope["org"], scope["ns"], "a", scope["tid"], "1", ch=ch
-    )
+    msg, embedded = _stored(scope, "1", "kept")
+    await _store_embedding(msg, embedded, ts=T0)
     assert await _rows(ch, scope) == [("1", "kept", True)]
 
 

@@ -13,7 +13,7 @@ from typing import Any, NotRequired, TypedDict, cast
 from pydantic import BaseModel, ConfigDict
 
 from server.core.ch import sequential_reads
-from server.core.repo_base import _CHClient, _default_client, param_slices, query_all_sliced
+from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.knowledge.domain.conversations import ConversationRole
 
 
@@ -346,7 +346,7 @@ async def tombstone_thread(
 
     # 3. Embeddings again: a turn appended during the delete has its message tombstoned
     # above, and its embedding, written after the message, can land after step 1. One
-    # that lands after this read is caught by append's own re-check
+    # that lands after this read is caught by its writer's re-check
     # (`tombstone_embedding_if_message_gone`).
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
     # One per turn (FINAL, however many embedding models hold it), earlier calls'
@@ -719,7 +719,7 @@ async def tombstone_messages(
     next read sees a coherent thread. The embeddings go first: a retry after a
     failure still finds the messages live and repeats both. They go again after the
     messages: a turn whose embedding lands after the first read is caught there, or by
-    append's re-check (`tombstone_embedding_if_message_gone`)."""
+    its writer's re-check (`tombstone_embedding_if_message_gone`)."""
     ch = ch or _default_client()
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
     for part in param_slices(msg_ids):
@@ -784,8 +784,9 @@ _THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
           ))"""
 
 
-# The text two copies of a turn are compared on: the shortest excerpt any build stored,
-# so a row embedded before excerpts held the embedded text still matches.
+# The text two copies of a turn are compared on: the shortest excerpt a row holds (build
+# N-1 stores 240 characters), so every row matches. It is not HIT_EXCERPT_CHARS, the
+# cut a search hit shows, and does not follow it.
 _SAME_TEXT_CHARS = 240
 
 
@@ -804,59 +805,46 @@ async def _tombstone_embeddings(
 
     The embeddings key has no agent, so a turn several agents logged is one row; it
     stays while another agent holds a live copy with the row's text (a msg_id is unique
-    per agent only). The rows are read with FINAL, and the mutation names each one by
-    its version (model, msg_id, agent, ts): it evaluates no subquery (a replicated
-    table refuses one), and a row another agent writes after the read is left alone.
-    Every id list is bound in byte-bounded slices (`param_slices`)."""
+    per agent only). The tombstone is a version row: the live row again, with the same
+    `ts` (so the same partition) and `tombstoned_at` set. On a `ts` tie the later
+    insert wins, and a peer's row written since carries a newer `ts` and stays live.
+    Named ids are bound in byte-bounded slices (`param_slices`)."""
     params: dict[str, Any] = {
+        "now": when,
         "org": org,
         "ns": namespace,
         "agent": agent,
         "tid": thread_id,
         "same": _SAME_TEXT_CHARS,
     }
-    select = """
-        SELECT embedding_model, msg_id, agent, toUnixTimestamp64Milli(ts) AS ts_ms
-        FROM loom.conversation_embeddings FINAL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND thread_id = {{tid:String}} AND tombstoned_at IS NULL
-          AND {turns}
-          AND (msg_id, substringUTF8(content_excerpt, 1, {{same:UInt32}})) NOT IN (
-            SELECT msg_id, substringUTF8(content, 1, {{same:UInt32}})
-            FROM loom.conversations
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND thread_id = {{tid:String}} AND agent != {{agent:String}}
-              AND tombstoned_at IS NULL
-          )
+    # The live rows are filtered in the inner query: in the outer one the REPLACE alias
+    # would shadow `tombstoned_at`.
+    insert = """
+        INSERT INTO loom.conversation_embeddings
+        SELECT * REPLACE ({{now:DateTime}} AS tombstoned_at) FROM (
+          SELECT * FROM loom.conversation_embeddings FINAL
+          WHERE org = {{org:String}} AND namespace = {{ns:String}}
+            AND thread_id = {{tid:String}} AND tombstoned_at IS NULL
+            AND {turns}
+            AND (msg_id, substringUTF8(content_excerpt, 1, {{same:UInt32}})) NOT IN (
+              SELECT msg_id, substringUTF8(content, 1, {{same:UInt32}})
+              FROM loom.conversations
+              WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                AND thread_id = {{tid:String}} AND agent != {{agent:String}}
+                AND tombstoned_at IS NULL
+            )
+        )
         """
     # Sequential reads: on a multi-replica service a lagging replica could miss a turn
     # appended just before, leaving its embedding live once its message is tombstoned.
     with sequential_reads():
         if msg_ids is None:
-            rows = await ch.query_all(select.format(turns=_THREAD_TURNS), params=params)
-        else:
-            # Named turns are the agent's own (compaction reads them from its live turns).
-            named = select.format(turns="msg_id IN {ids:Array(String)}")
-            rows = await query_all_sliced(ch, named, {**params, "ids": msg_ids}, "ids")
-    # One row version at a time: during a re-embed a turn has a row per model, each
-    # judged on its own text, and a peer's row written since the read is not this one.
-    due = [
-        (str(r["embedding_model"]), str(r["msg_id"]), str(r["agent"]), int(r["ts_ms"]))
-        for r in rows
-    ]
-    for part in param_slices(due):
-        await ch.execute(
-            """
-            ALTER TABLE loom.conversation_embeddings
-            UPDATE tombstoned_at = {now:DateTime}
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND thread_id = {tid:String} AND tombstoned_at IS NULL
-              AND (embedding_model, msg_id, agent, toUnixTimestamp64Milli(ts))
-                  IN {due:Array(Tuple(String, String, String, Int64))}
-            SETTINGS mutations_sync = 2
-            """,
-            params={"now": when, "org": org, "ns": namespace, "tid": thread_id, "due": part},
-        )
+            await ch.execute(insert.format(turns=_THREAD_TURNS), params)
+            return
+        # Named turns are the agent's own (compaction reads them from its live turns).
+        named = insert.format(turns="msg_id IN {ids:Array(String)}")
+        for part in param_slices(msg_ids):
+            await ch.execute(named, {**params, "ids": part})
 
 
 async def titler_candidates(

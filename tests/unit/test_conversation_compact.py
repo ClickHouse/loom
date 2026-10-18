@@ -29,12 +29,6 @@ class _FakeCH:
         self.sql.append(sql)
         # ClickHouse answers FINAL on a plain MergeTree with code 181.
         assert "loom.conversations FINAL" not in sql, "FINAL on plain MergeTree"
-        if "FROM loom.conversation_embeddings" in sql:
-            # Every compacted turn's embedding is live and held by no other agent.
-            return [
-                {"embedding_model": "fake", "msg_id": m, "agent": "a", "ts_ms": 0}
-                for m in (params or {}).get("ids", [])
-            ]
         return self.rows
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
@@ -161,20 +155,22 @@ def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> N
     [summary] = fake.inserted
     assert '"compacted_from": ["m0", "m1"]' in summary["metadata"]
     # The compacted turns leave conversation.search too: their embeddings are
-    # tombstoned with the messages, by the same ids.
-    tombstoned = {
-        table: params.get("ids") or [d[1] for d in params.get("due", [])]
-        for sql, params in fake.executed
-        for table in ("loom.conversations", "loom.conversation_embeddings")
-        if f"ALTER TABLE {table}\n" in sql
-    }
-    assert tombstoned == {
-        "loom.conversations": ["m0", "m1"],
-        "loom.conversation_embeddings": ["m0", "m1"],
-    }
-    # Embeddings first, so a retry after a failed second mutation repeats both.
-    first = next(sql for sql, _ in fake.executed if "ALTER TABLE" in sql)
-    assert "loom.conversation_embeddings" in first
+    # tombstoned with the messages, by the same ids, before and after them.
+    steps = [
+        (
+            "embeddings" if "INSERT INTO loom.conversation_embeddings" in sql else "messages",
+            p["ids"],
+        )
+        for sql, p in fake.executed
+        if "INSERT INTO loom.conversation_embeddings" in sql
+        or "ALTER TABLE loom.conversations\n" in sql
+    ]
+    # Embeddings first, so a retry after a failed messages mutation repeats both.
+    assert steps == [
+        ("embeddings", ["m0", "m1"]),
+        ("messages", ["m0", "m1"]),
+        ("embeddings", ["m0", "m1"]),
+    ]
 
 
 def test_fitting_prefix_keeps_at_least_one_line() -> None:
