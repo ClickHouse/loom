@@ -203,6 +203,15 @@ async def _drop_vectors(ch: Any, org: str, namespace: str, key_prefix: str) -> N
     )
 
 
+def _policy(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    from server.memory.app import conflicts
+
+    async def policy(org: str, namespace: str, ch: Any = None) -> str:
+        return name
+
+    monkeypatch.setattr(conflicts, "namespace_conflict_policy", policy)
+
+
 async def _later() -> None:
     """Rows are stated to the second; the next write is a second later than the last."""
     await asyncio.sleep(1.1)
@@ -652,15 +661,11 @@ async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, m
     judgement under auto_reinforce, though no peer sits near them."""
     from server.embedding import get_embedder
     from server.memory.api.models_crud import MemoryUpdateByIdInput
-    from server.memory.app import after_write, conflicts, set_commit, update
+    from server.memory.app import after_write, set_commit, update
     from server.memory.workers.conflict_resolver import run_pass
 
     org, llm = wired
-
-    async def auto(org: str, namespace: str, ch: Any = None) -> str:
-        return "auto_reinforce"
-
-    monkeypatch.setattr(conflicts, "namespace_conflict_policy", auto)
+    _policy(monkeypatch, "auto_reinforce")
     real = get_embedder()
 
     class Apart:
@@ -907,15 +912,10 @@ async def test_a_retirement_owes_its_follow_until_the_follow_lands(
 
 
 async def test_a_flagged_pair_is_judged_once_from_both_sides(ch, wired, monkeypatch) -> None:
-    from server.memory.app import conflicts
     from server.memory.workers.conflict_resolver import run_pass
 
     org, llm = wired
-
-    async def review(org: str, namespace: str, ch: Any = None) -> str:
-        return "manual_review"  # the update is flagged, not retired
-
-    monkeypatch.setattr(conflicts, "namespace_conflict_policy", review)
+    _policy(monkeypatch, "manual_review")  # the update is flagged, not retired
     await _pair(ch, org, "office_city", "office_location", 68)
     out = await run_pass()
     rows = await _rows(ch, org)
@@ -1539,15 +1539,6 @@ async def test_dead_rows_of_the_key_do_not_take_the_live_rows_place(ch, wired, m
         assert llm.calls == ["office"] and "Paris" in prompts[0]
     finally:
         await _drop_vectors(ch, org, NS, "office")
-
-
-def _policy(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
-    from server.memory.app import conflicts
-
-    async def policy(org: str, namespace: str, ch: Any = None) -> str:
-        return name
-
-    monkeypatch.setattr(conflicts, "namespace_conflict_policy", policy)
 
 
 @pytest.mark.parametrize(
