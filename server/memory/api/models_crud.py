@@ -561,12 +561,12 @@ class MemoryListInput(_Identity):
     # recency page followed by a get per key. Empty = no tag filter.
     tags: list[str] = Field(default_factory=list, max_length=64)
     # Match `tags` in any case (a browse page's `tag:api` finds rows tagged `API`); off,
-    # exactly, as agents rely on. Hidden from the MCP listing. A build that predates it
-    # ignores it and matches exactly.
+    # exactly, as agents rely on. A dashboard flag: hidden from the MCP listing and not a
+    # parameter of the SDK's list(). A build that predates it ignores it and matches exactly.
     tags_any_case: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Require every one of `tags` (a browse page's stacked `tag:a tag:b`); off, any one, as
-    # agents rely on. Hidden from the MCP listing. A build that predates it ignores it and
-    # matches any one.
+    # agents rely on. A dashboard flag: hidden from the MCP listing and not a parameter of
+    # the SDK's list(). A build that predates it ignores it and matches any one.
     tags_all: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Only rows whose value or key holds this text, any case — the keyword
     # filter of a browse page's search box, which must find every row that

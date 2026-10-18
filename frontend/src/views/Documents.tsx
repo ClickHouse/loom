@@ -95,12 +95,14 @@ export function Documents() {
   const [loadingMore, setLoadingMore] = useState(false);
   const scopeRef = useRef(0);
 
-  // A tag filter is asked of the server (rows with any of the tags; the list then needs
-  // every one), so it covers documents past the pages loaded so far. Debounced, so typing
+  // A tag filter is asked of the server, which returns the documents carrying every tag
+  // (a server a release behind matches any one, and the list then requires every tag
+  // itself), so it covers documents past the pages loaded so far. Debounced, so typing
   // `tag:…` sends one read.
   const queryTags = useMemo(() => parseSearchQuery(query).tags, [query]);
   const activeTags = useMemo(() => new Set(queryTags.map((t) => t.toLowerCase())), [queryTags]);
-  const tagKey = JSON.stringify(queryTags);
+  // Each tag once: the first page and Load more send the same list.
+  const tagKey = JSON.stringify([...new Set(queryTags)]);
   const [serverTags, setServerTags] = useState(tagKey);
   useEffect(() => {
     const t = setTimeout(() => setServerTags(tagKey), 250);
@@ -131,7 +133,7 @@ export function Documents() {
         signal,
         fields: LIBRARY_LIST_FIELDS,
         limit: LIBRARY_PAGE,
-        ...(tags.length ? { tags: [...new Set(tags)] } : {}),
+        ...(tags.length ? { tags } : {}),
       },
     )
       .then((r) => {

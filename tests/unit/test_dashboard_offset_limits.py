@@ -1,5 +1,6 @@
-"""The dashboard's pagers offer no page that starts past the largest `offset` an op serves,
-so each constant in frontend/src/api must equal that op's `le`, or a page is a 422."""
+"""The dashboard keeps within each op's input bounds: its pagers offer no page that starts
+past the largest `offset` an op serves, and its Runs search is cut to the longest `q`. Each
+constant in frontend/src/api must equal the model's bound, or the request is a 422."""
 
 from __future__ import annotations
 
@@ -37,3 +38,12 @@ def _constant(file: str, name: str) -> int:
 )
 def test_the_pager_limit_is_the_ops_offset_bound(model: type, file: str, name: str) -> None:
     assert _constant(file, name) == _offset_le(model)
+
+
+def test_the_runs_search_limit_is_run_list_q_max_length() -> None:
+    bound = next(
+        int(m.max_length)
+        for m in RunListInput.model_fields["q"].metadata
+        if hasattr(m, "max_length")
+    )
+    assert _constant("runs.ts", "RUN_LIST_MAX_Q") == bound

@@ -170,3 +170,54 @@ async def test_a_non_ascii_tag_folds_the_same_on_both_sides() -> None:
     sql, params = ch.calls[-1]
     assert f"hasAny({_FOLDED})" in sql
     assert params["tags"] == ["ΟΔΟΣ"]
+
+
+@pytest.mark.asyncio
+async def test_the_score_sorted_list_matches_tags_as_the_recency_list_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`sort_by="score"` builds its own statement: both flags reach it as they reach the rest."""
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app import query as mq
+
+    ch = StubCH()
+    monkeypatch.setattr(mq, "get_client", lambda: ch)
+    monkeypatch.setattr(mq, "_record_read_exposure", lambda *a, **k: None)
+    await mq._handle_memory_list(
+        MemoryListInput(
+            org="acme",
+            namespace="team",
+            agent="*",
+            sort_by="score",
+            tags=["A", "b"],
+            tags_any_case=True,
+            tags_all=True,
+        )
+    )
+    sql, params = ch.calls[0]
+    assert f"hasAll({_FOLDED})" in sql
+    assert params["tags"] == ["A", "b"]
+
+
+@pytest.mark.asyncio
+async def test_knowledge_list_hands_both_flags_to_the_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeListInput
+    from server.knowledge.app.document_reads import handle_knowledge_list
+    from server.knowledge.store import documents as documents_repo
+
+    seen: dict[str, Any] = {}
+
+    async def list_with_chunk_counts(org: str, namespace: str, **kw: Any) -> list[Any]:
+        seen.update(kw)
+        return []
+
+    monkeypatch.setattr(documents_repo, "list_with_chunk_counts", list_with_chunk_counts)
+    await handle_knowledge_list(
+        KnowledgeListInput(
+            org="acme", namespace="team", tags=["Specs"], tags_any_case=True, tags_all=True
+        )
+    )
+    assert seen["tags"] == ["Specs"]
+    assert seen["tags_any_case"] is True and seen["tags_all"] is True

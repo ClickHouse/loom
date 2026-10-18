@@ -171,6 +171,26 @@ describe("Memories list chrome", () => {
     expect(within(pager()).getByRole("status")).toBeEmptyDOMElement();
   });
 
+  it("counts a tag filter's matches from the server and says how many rows it read", async () => {
+    // A viewer's read is cut to 100 rows; the server still counts every match.
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, limit = 50): Promise<MemoryListResponse> =>
+        limit === 1000
+          ? {
+              entries: Array.from({ length: 100 }, (_, i) => entry(`t${i}`, { tags: ["api"] })),
+              total: 340,
+              today: 0,
+              truncated: true,
+            }
+          : { entries: ROWS, total: 1234, today: 0, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
+    await waitFor(() => expect(toolbar()).toHaveTextContent("340 matches"));
+    expect(screen.getByText(/Showing the newest 100 matches/)).toBeInTheDocument();
+  });
+
   // Next waits for the page's read, and the pager pages from the rows on screen.
   it("asks for the next page once when Next is pressed twice while it loads", async () => {
     const offsets: number[] = [];

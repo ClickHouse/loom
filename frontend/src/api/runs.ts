@@ -78,6 +78,8 @@ export interface RunListPage {
 
 // The largest `offset` run.list serves (its `le`); a larger one is a 422.
 export const RUN_LIST_MAX_OFFSET = 100_000;
+// The longest search run.list takes (its `q` max_length): a longer one is cut, not a 422.
+export const RUN_LIST_MAX_Q = 200;
 
 // A server a release behind ignores offset / order_by / q (named in its ignored_args)
 // and answers the newest first page without a total.
@@ -85,7 +87,7 @@ export async function listRunsPage(
   id: { org: string; namespace: string },
   opts: RunListOptions = {},
 ): Promise<RunListPage> {
-  const q = opts.q?.trim();
+  const q = opts.q?.trim().slice(0, RUN_LIST_MAX_Q);
   const out = await post<{ runs: RunRow[]; total?: number }>("/v1/run.list", {
     org: id.org,
     namespace: id.namespace,

@@ -125,6 +125,43 @@ describe("Recent search why-line", () => {
   });
 });
 
+describe("Recent search under a tag filter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: admin,
+      myNamespaces: [row("alice", "admin")],
+      identity: { org: "dev", namespace: "alice", agent: "loom-ui" },
+      view: "memories",
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("asks the keyword half for the rows that pass the tag filter too", async () => {
+    vi.mocked(listMemories).mockImplementation(async () => ({
+      entries: [entry("coffee_pref")],
+      total: 1,
+      today: 0,
+      truncated: false,
+    }));
+    render(<Recent />);
+    await screen.findByText("coffee_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:work coffee");
+    await waitFor(
+      () =>
+        expect(
+          vi.mocked(listMemories).mock.calls.some(([, , o]) => o?.contains === "coffee" && o.tags?.[0] === "work"),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
+  });
+});
+
 describe("Recent across a namespace switch", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -173,6 +173,9 @@ function MemoryList() {
   const [loadError, setLoadError] = useState<{ text: string; requestId: string } | null>(null);
   // A filtered read that hit its 1,000-row cap: the list says it shows the newest matches.
   const [truncated, setTruncated] = useState(false);
+  // A filtered read: how many rows it returned, and how many match on the server. A viewer
+  // token's read is cut to fewer rows than asked, so neither is a fixed 1,000.
+  const [filteredRead, setFilteredRead] = useState({ rows: 0, total: 0 });
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Status>("live");
@@ -213,6 +216,11 @@ function MemoryList() {
   const [searching, setSearching] = useState(false);
   // The keyword rows are on screen and the ranked search is still answering.
   const [ranking, setRanking] = useState(false);
+  // The list's tag and agent filter, for the keyword half of a search: it reads the rows
+  // holding the word that also pass the filter. The filter is built further down; a change
+  // to it bumps `searchFilterGen`, which runs the search again.
+  const searchFilterRef = useRef<{ tags: string[]; agent: string }>({ tags: [], agent: "" });
+  const [searchFilterGen, setSearchFilterGen] = useState(0);
   // Another namespace's search results, conflict keys and agent are not this one's: they
   // go during render, before the new namespace's first read or paint can use them.
   const namespaceKey = `${identity.org}/${identity.namespace}`;
@@ -324,6 +332,8 @@ function MemoryList() {
         ranked.catch(() => {}); // awaited below; a rejection before then is not unhandled
         const kw = await listMemories(identity, KEYWORD_PAGE, {
           contains: rawQuery.trim(),
+          tags: searchFilterRef.current.tags,
+          agent: searchFilterRef.current.agent || undefined,
           fields: MEMORIES_LIST_FIELDS,
           previewChars: MEMORIES_PREVIEW_CHARS,
           signal: ac.signal,
@@ -409,7 +419,7 @@ function MemoryList() {
       clearTimeout(t);
       ac.abort();
     };
-  }, [rawQuery, identity]);
+  }, [rawQuery, identity, searchFilterGen]);
 
   // Keep entriesRef current for the search effect (which reads it without
   // subscribing, to avoid re-running on every poll refresh).
@@ -625,6 +635,12 @@ function MemoryList() {
     [filterJson],
   );
   const listFiltered = listFilter.tags.length > 0 || listFilter.agent !== "" || listFilter.status !== "live";
+  const searchFilterKey = JSON.stringify([listFilter.tags, listFilter.agent]);
+  useEffect(() => {
+    const next = JSON.parse(searchFilterKey) as [string[], string];
+    searchFilterRef.current = { tags: next[0], agent: next[1] };
+    setSearchFilterGen((n) => n + 1);
+  }, [searchFilterKey]);
 
   // A filtered list is one read of its newest 1,000 matches, paged here.
   const searchActive = searchHits != null;
@@ -732,6 +748,7 @@ function MemoryList() {
           if (r.unchanged) return;
           knownVersion = r.namespace_version ?? "";
           setTruncated(listFiltered && r.truncated);
+          if (listFiltered) setFilteredRead({ rows: r.entries.length, total: r.total });
           // The namespace's total follows every browsed answer, the 8 s refresh included.
           if (!listFiltered && !showDeleted) setBrowsedTotal(r.total);
           // Fill before painting so a list without values never sends 100 cards to
@@ -846,7 +863,13 @@ function MemoryList() {
         ? // What a search covers: the newest rows holding the word, when there are more.
           `${matches(flatList.length)}${keywordTotal > keywordKeys.size ? ` · the newest ${keywordKeys.size.toLocaleString()} of ${keywordTotal.toLocaleString()} holding "${rawQuery.trim()}"` : ""}${ranking ? " · finding related…" : ""}`
         : showDeleted || listFiltered
-          ? matches(flatList.length)
+          ? // A tag or agent filter is matched on the server, whose total is exact; a status
+            // is kept here among the rows read.
+            matches(
+              !showDeleted && listFilter.status === "live" && filteredRead.total > flatList.length
+                ? filteredRead.total
+                : flatList.length,
+            )
           : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()}`;
   const lastCount = useRef("");
   if (countText && !(searching || refreshing)) lastCount.current = countText;
@@ -1079,8 +1102,8 @@ function MemoryList() {
       {truncated && (
         <p className="mb-3 text-xs text-text-muted">
           {listFilter.tags.length > 0 || listFilter.agent
-            ? "Showing the newest 1,000 matches. Add a tag or a search word to narrow them."
-            : `Showing the ${filterNames.toLowerCase()} memories among the newest 1,000.`}
+            ? `Showing the newest ${filteredRead.rows.toLocaleString()} matches. Add a tag or a search word to narrow them.`
+            : `Showing the ${filterNames.toLowerCase()} memories among the newest ${filteredRead.rows.toLocaleString()}.`}
         </p>
       )}
       {/* Where a page change takes the reader: a heading a screen reader announces. */}
