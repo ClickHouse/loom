@@ -26,7 +26,7 @@ from typing import Any
 
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport.mcp_config import _ok
-from server.transport.mcp_tools import emit_refusal
+from server.transport.mcp_ledger import emit_refusal
 
 LOOM_OP_TOOL_NAME = "loom_op"
 # The code for a name no op (or tool) answers to, direct or through loom_op.

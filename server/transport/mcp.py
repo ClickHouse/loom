@@ -30,6 +30,7 @@ one-directional modules (none import back into this one):
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
@@ -270,6 +271,31 @@ def _accepted(response: Response) -> Response:
     return Response(status_code=202, headers=dict(response.headers))
 
 
+async def _dispatch_batch(
+    payload: list[Any], dispatch: Callable[[Any], Awaitable[dict[str, Any] | None]]
+) -> list[dict[str, Any]]:
+    """Each entry of a JSON-RPC batch in turn, its answers in order.
+
+    One span per entry: all entries share a single FastAPI server span, and
+    the per-call telemetry stamps loom.* / loom.search.* onto the *active*
+    span, so without a child span each call would overwrite the previous
+    one's attributes and only the last would survive (a batch whose first
+    search abstains would be recorded as not abstaining). A refusal the
+    entries repeat is ledgered once (`mcp_ledger.one_refusal_row_each`)."""
+    from server.observability.otel import traced
+    from server.transport.mcp_ledger import one_refusal_row_each
+
+    responses: list[dict[str, Any]] = []
+    with one_refusal_row_each():
+        for i, req in enumerate(payload):
+            method = str(req.get("method", "") or "") if isinstance(req, dict) else ""
+            with traced("mcp.batch.entry", rpc_method=method, batch_index=i):
+                resp = await dispatch(req)
+            if resp is not None:
+                responses.append(resp)
+    return responses
+
+
 def attach(app: FastAPI) -> None:
     router = APIRouter()
 
@@ -368,23 +394,7 @@ def attach(app: FastAPI) -> None:
             )
 
         if isinstance(payload, list):
-            responses: list[dict[str, Any]] = []
-            # One span per batch entry. All entries share a single FastAPI
-            # server span, and the per-call telemetry stamps loom.* /
-            # loom.search.* onto the *active* span — so without a child span here
-            # each call would overwrite the previous one's attributes and only the
-            # last would survive: a batch whose first search abstains would be
-            # recorded as not abstaining.
-            from server.observability.otel import traced
-
-            for i, req in enumerate(payload):
-                method = ""
-                if isinstance(req, dict):
-                    method = str(req.get("method", "") or "")
-                with traced("mcp.batch.entry", rpc_method=method, batch_index=i):
-                    resp = await _dispatch(req)
-                if resp is not None:
-                    responses.append(resp)
+            responses = await _dispatch_batch(payload, _dispatch)
             return responses if responses else _accepted(response)
 
         resp = await _dispatch(payload)

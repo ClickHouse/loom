@@ -37,6 +37,7 @@ from server.transport.mcp_config import (
 )
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
+from server.transport.mcp_ledger import emit_refusal
 from server.transport.mcp_op import UNKNOWN_OP
 from server.transport.mcp_outcome import (
     _emit_success,
@@ -46,7 +47,7 @@ from server.transport.mcp_outcome import (
     _success_response,
 )
 from server.transport.mcp_primer import _render_primer_and_emit
-from server.transport.mcp_tools import _emit_mcp_event, emit_refusal
+from server.transport.mcp_tools import _emit_mcp_event
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope

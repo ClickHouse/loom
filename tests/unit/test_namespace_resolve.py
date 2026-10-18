@@ -108,8 +108,8 @@ def _known(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(nr, "default_branches", lambda org: {"code-clickhouse", "code-loom"})
     monkeypatch.setattr(nr, "suggestable", lambda org, can: ["code-clickhouse", "qa-clickhouse"])
 
-    async def may_read(auth: Any, org: str, ns: str) -> bool:
-        return bool(auth.can_access(org, ns))  # the gate, reduced to the claim
+    async def may_read(auth: Any, org: str, ns: str) -> tuple[bool, bool]:
+        return bool(auth.can_access(org, ns)), False  # the gate, reduced to the claim
 
     monkeypatch.setattr("server.transport.mcp_auth._may_read", may_read)
 

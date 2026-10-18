@@ -4,16 +4,12 @@ per-call ledger rows.
 Builds the `tools/list` descriptors (registry-derived + synthetic), renders
 the `search.query` op's result as the `loom_search` tool answers it (a text
 summary plus the lean sections), and writes a call's ledger row
-(`_emit_mcp_event`) or a refusal's before dispatch (`emit_refusal`, built in
-a copy of the request context from a reset state, so the caller's is left
-as it was). Never imports ``mcp_call`` or ``server.transport.mcp``.
+(`_emit_mcp_event`). Never imports ``mcp_call`` or ``server.transport.mcp``.
 """
 
 from __future__ import annotations
 
-import contextvars
 import logging
-import uuid
 from typing import Any, get_args
 
 from server.memory.api.models_loom_search import SearchInput
@@ -443,46 +439,6 @@ def _emit_mcp_event(
         raw_args=raw_args,
         result=result,
         error=error,
-        **sli_columns(op_name, "mcp"),
-    )
-
-
-def emit_refusal(
-    op_name: str, auth: Any, *, error_code: str, org: str = "", server_fault: bool = False
-) -> None:
-    """Emit a token-attributed refusal row in an isolated request context.
-    The copy is reset so earlier batch entries cannot contaminate the row."""
-    contextvars.copy_context().run(_emit_refusal, op_name, auth, error_code, org, server_fault)
-
-
-def _emit_refusal(op_name: str, auth: Any, code: str, org: str, server_fault: bool) -> None:
-    from server.core.naming import SENTINEL
-    from server.observability.consumer import bind_current_consumer
-    from server.observability.ledger import emit_agent_event
-    from server.observability.traffic_class import bind_claimed_class
-    from server.transport._common import begin_call, sli_columns
-
-    begin_call()
-    bind_current_consumer(None, auth)
-    bind_claimed_class(auth)
-    org = org or str(getattr(auth, "org", "") or "")
-    if org in ("", "*"):
-        org = SENTINEL
-    emit_agent_event(
-        op_name=op_name,
-        identity={
-            "org": org,
-            "namespace": SENTINEL,
-            "agent": SENTINEL,
-            "user_id": SENTINEL,
-            "session_id": SENTINEL,
-        },
-        request_id=str(uuid.uuid4()),
-        latency_ms=0,
-        success=False,
-        error_code=code,
-        subject=str(getattr(auth, "subject", "") or "") or None,
-        server_fault=server_fault,
         **sli_columns(op_name, "mcp"),
     )
 

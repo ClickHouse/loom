@@ -42,7 +42,7 @@ _SEARCH_OPS = frozenset(
 FOLD_MARGIN_S = 70
 
 # Refusals a transport records by code alone, counted as the caller's: MCP's
-# refusals before dispatch (server.transport.mcp_tools.emit_refusal) and the
+# refusals before dispatch (server.transport.mcp_ledger.emit_refusal) and the
 # transports' other literal codes. Each is a refusal the caller caused: a 4xx
 # on HTTP (IDEMPOTENT_IN_PROGRESS a 503 with Retry-After, for a retried key
 # still running), an `isError` result on MCP. HANDLER_HTTP_ERROR is not one:

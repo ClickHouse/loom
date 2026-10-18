@@ -322,8 +322,8 @@ def _mcp_refusals_before_dispatch(monkeypatch) -> None:
     def _call(name: str, arguments: dict) -> dict:
         return {"id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
 
-    async def _no(*_a) -> bool:
-        return False
+    async def _no(*_a) -> tuple[bool, bool]:
+        return False, False
 
     hidden = next(op for op in mcp_call.ALL_OPERATIONS if op.name == "blacklist.remove")
     refusals = [
@@ -421,8 +421,8 @@ def test_a_wildcard_token_s_mcp_refusal_names_no_org_but_the_one_it_was_authoriz
     monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
     monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
 
-    async def _no(*_a) -> bool:
-        return False
+    async def _no(*_a) -> tuple[bool, bool]:
+        return False, False
 
     monkeypatch.setattr(mcp_auth, "_may_read", _no)
     ops = AuthInfo(
@@ -733,8 +733,8 @@ def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatc
         def emit(self, event) -> None:
             emitted.append(event)
 
-    async def _unreadable(*_a) -> None:
-        return None
+    async def _unreadable(*_a) -> tuple[bool, bool]:
+        return False, True
 
     monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
     monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
@@ -761,9 +761,9 @@ def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatc
     monkeypatch.setattr(access_refusal, "reason_fields", lambda ns: {})
     seen: list[str] = []
 
-    async def _first_unreadable(auth: Any, org: str, ns: str) -> bool | None:
+    async def _first_unreadable(auth: Any, org: str, ns: str) -> tuple[bool, bool]:
         seen.append(ns)
-        return False if ns == "code-x" else None
+        return False, ns != "code-x"
 
     for ns in ("nope", "code-x-main"):
         call = {"name": "loom_code_search", "arguments": {"namespace": ns, "query": "q"}}
@@ -836,3 +836,35 @@ def test_a_5xx_from_the_gate_is_ledgered_on_both_transports(monkeypatch) -> None
         ("mcp", "BACKEND_UNAVAILABLE", "server"),
     ]
     assert "acme" not in {e.org for e in emitted}
+
+
+def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> None:
+    """A single POST can carry hundreds of thousands of refused entries;
+    each (op, code, org) is ledgered once, so they cannot fill the ledger
+    queue for every tenant."""
+    from server.auth.jwt import AuthInfo
+    from server.observability import events
+    from server.transport.mcp_ledger import emit_refusal, one_refusal_row_each
+
+    emitted: list = []
+
+    class _Emitter:
+        def emit(self, event) -> None:
+            emitted.append(event)
+
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
+    eve = AuthInfo(
+        subject="eve", org="eve-org", namespaces=(), roles=(Role.WRITER,), is_service_account=False
+    )
+    with one_refusal_row_each():
+        for _ in range(10_000):
+            emit_refusal("blacklist.remove", eve, error_code="OP_NOT_ON_MCP")
+            emit_refusal("memory.set", eve, error_code="ORG_MISMATCH")
+    assert [(e.operation, e.error_code) for e in emitted] == [
+        ("blacklist.remove", "OP_NOT_ON_MCP"),
+        ("memory.set", "ORG_MISMATCH"),
+    ]
+    # Outside a batch, each call is its own request.
+    emit_refusal("memory.set", eve, error_code="ORG_MISMATCH")
+    assert len(emitted) == 3

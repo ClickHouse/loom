@@ -24,12 +24,13 @@ if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
 
 
-async def _may_read(auth: AuthInfo, org: str, ns: str) -> bool | None:
-    """Whether the gate admits `auth` to read (org, ns): the claim, a grant
-    (or an inheriting service account's creator's), the org-readable code
-    rule and the restricted two-factor check, decided by `check_authorized`
-    alone. None is a refusal made because a read it needed failed
-    (server.auth.fail_closed): still refused, but the server's failure."""
+async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
+    """(allowed, unverified): whether the gate admits `auth` to read (org, ns)
+    — the claim, a grant (or an inheriting service account's creator's), the
+    org-readable code rule and the restricted two-factor check, decided by
+    `check_authorized` alone — and, for a refusal, whether it was made
+    because a read it needed failed (server.auth.fail_closed): still
+    refused, but the server's failure."""
     from server.auth.authz import check_authorized
     from server.core.errors import IdentityIncompleteError
     from server.operations.base import Role
@@ -37,10 +38,10 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> bool | None:
     try:
         await check_authorized(auth, Role.VIEWER, org=org, namespace=ns)
     except PermissionError as e:
-        return None if getattr(e, "unverified", False) else False
+        return False, bool(getattr(e, "unverified", False))
     except IdentityIncompleteError:
-        return False
-    return True
+        return False, False
+    return True, False
 
 
 def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]:
@@ -64,7 +65,7 @@ def _ledger_refusal(
     tool_name: Any, auth: AuthInfo, *, error_code: str, org: str = "", server_fault: bool = False
 ) -> None:
     from server.transport.mcp_call import op_for_tool
-    from server.transport.mcp_tools import emit_refusal
+    from server.transport.mcp_ledger import emit_refusal
 
     op = op_for_tool(str(tool_name or ""))
     if op is not None:
@@ -91,9 +92,9 @@ async def _plane_namespace(
         return None, False
     to = nr.match(ns, known, default_branch=nr.default_branches(org))
     if to and to != ns:
-        readable = await _may_read(auth, org, to)
-        if not readable:
-            return _not_accessible_result(tool_name, auth, to), readable is None
+        allowed, unverified = await _may_read(auth, org, to)
+        if not allowed:
+            return _not_accessible_result(tool_name, auth, to), unverified
         nr.RESOLVED.set({"from": ns, "to": to})
         return to, False
     return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access))), False
@@ -323,7 +324,8 @@ async def _screen_namespace(
     """The screen's namespace check: None when the caller may read `req_ns`
     (or the code/tracker index it resolves to, written into `args`), else
     the refusal, ledgered."""
-    if not (readable := await _may_read(auth, target_org, req_ns)):
+    allowed, given_unverified = await _may_read(auth, target_org, req_ns)
+    if not allowed:
         # A code/tracker tool's `namespace` that is not a namespace resolves
         # to one or says so — never the claim text meant for a real refusal.
         resolved, resolved_unverified = await _plane_namespace(tool_name, auth, req_ns)
@@ -334,7 +336,7 @@ async def _screen_namespace(
         if isinstance(resolved, dict):  # on the name it resolved to, or an unknown name
             refusal, unverified = resolved, resolved_unverified
         else:  # on the name given
-            refusal, unverified = _not_accessible_result(tool_name, auth, req_ns), readable is None
+            refusal, unverified = _not_accessible_result(tool_name, auth, req_ns), given_unverified
         # The org the token may act in, as HTTP records the same refusal.
         code = str(refusal["structuredContent"]["code"])
         _ledger_refusal(tool_name, auth, error_code=code, org=target_org, server_fault=unverified)
