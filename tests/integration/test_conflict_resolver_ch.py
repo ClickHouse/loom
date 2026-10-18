@@ -1393,3 +1393,39 @@ async def test_a_repair_before_the_supersede_commits_leaves_the_follow_owed(
     (retry,) = await retry_projection_failures(org=org, projection=FOLLOW_OWED)
     assert retry.resolved, retry
     assert not await _paris_open(ch, org, want=False)
+
+
+async def test_a_key_held_in_thousands_of_sessions_is_read_within_bounds(ch, wired) -> None:
+    """4,000 other sessions hold the row's key: the same-key read is bounded in SQL, so
+    the peer-rows read stays small and the row is judged."""
+    from server.memory.store.embeddings import (
+        _copy_row,
+        insert_embedding_rows,
+        live_embedding_rows_for_key,
+    )
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 96)
+    (row,) = await live_embedding_rows_for_key(
+        ch,
+        org=org,
+        namespace=NS,
+        agent="bot",
+        user_id=USER,
+        session_id="s2",
+        memory_key="office_location",
+    )
+    sessions = [
+        _copy_row(
+            row,
+            {"session_id": f"many{i}", "embedding": _vec((97, 1.0)), "conflict_checked_at": None},
+        )
+        for i in range(4000)
+    ]
+    await insert_embedding_rows(sessions, ch=ch)
+    try:
+        out = await run_pass()
+        assert out["errored"] == 0 and llm.calls == ["office_location"], out
+    finally:
+        await _drop_vectors(ch, org, NS, "office_location")
