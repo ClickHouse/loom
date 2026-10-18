@@ -243,3 +243,8 @@ def test_exact_any_renders_the_tags_as_typed() -> None:
     params: dict[str, Any] = {}
     assert tag_where(TagFilter(("API",), "exact_any"), params) == _EXACT
     assert params["tags"] == ["API"]
+
+
+def test_every_tag_empty_asks_for_no_tag_filter() -> None:
+    """An empty `hasAll` would match every row: empty tags never become a filter."""
+    assert list_tag_filter(["", ""], every=True) is None

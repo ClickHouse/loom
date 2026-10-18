@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Any
 
-from server.core.ch import own_write_reads
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _sha256
 from server.identity.app.request_scope import request_scope
@@ -348,7 +348,7 @@ async def handle_conflicts_resolve(
         _count_cache.pop(key, None)
     total: int | None = None
     try:
-        with own_write_reads():  # the count must see the writes above
+        with sequential_reads():  # the count must see the writes above
             total = await _conflicted_count_cached(
                 conflicts_repo, input.org, input.namespace, request_scope(), fresh=True
             )

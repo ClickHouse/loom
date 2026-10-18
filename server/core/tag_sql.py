@@ -20,7 +20,7 @@ class TagFilter:
     match: TagMatch
 
     def __post_init__(self) -> None:
-        # An absent filter is None; an empty tuple would match no row.
+        # An absent filter is None; an empty tuple would match no row (any) or every row (all).
         if not self.tags:
             raise ValueError("a TagFilter needs at least one tag")
 

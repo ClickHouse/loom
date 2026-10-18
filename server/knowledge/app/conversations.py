@@ -612,7 +612,7 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
         input.org,
         input.namespace,
         window_days=int(input.window_days),
-        limit=int(input.limit),
+        limit=input.limit,
         offset=input.offset,
         agent=_thread_reader(input.agent) if input.agent else None,
         count_turns=not input.fields or "msg_count" in input.fields,
