@@ -45,7 +45,7 @@ from server.transport.mcp_outcome import (
     _success_response,
 )
 from server.transport.mcp_primer import _render_primer_and_emit
-from server.transport.mcp_tools import _emit_mcp_event
+from server.transport.mcp_tools import _emit_mcp_event, emit_refusal
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
@@ -403,7 +403,6 @@ async def _resolve_tool(
         body: dict[str, Any] = {"error": msg, "code": UNKNOWN_OP, "tool": name}
         if op is not None:  # A hidden op says why and what instead
             from server.transport.mcp_op import hidden_refusal
-            from server.transport.mcp_tools import emit_refusal
 
             body = {**(hidden_refusal(op.name) or {}), "tool": name}
             emit_refusal(op.name, "OP_NOT_ON_MCP", auth)

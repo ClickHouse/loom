@@ -13,7 +13,9 @@ and the operations registry at module level, ``mcp_call`` only inside
 
 from __future__ import annotations
 
+import contextvars
 import logging
+import uuid
 from typing import Any, get_args
 
 from server.memory.api.models_loom_search import SearchInput
@@ -456,9 +458,13 @@ def emit_refusal(op_name: str, code: str, auth: Any, org: str = "") -> None:
     The caller is not bound yet, so the row is the token's: `org` when the
     screen has authorized the one the call named, else the token's own (`-`
     for a wildcard token), its subject and consumer, `-` for the rest, no
-    arguments. The previous call of a batch leaves nothing on it."""
-    import uuid
+    arguments. It is built in a copy of the request context, from a reset
+    state: the previous call of a batch leaves nothing on it, and it leaves
+    nothing on the caller's context."""
+    contextvars.copy_context().run(_emit_refusal, op_name, code, auth, org)
 
+
+def _emit_refusal(op_name: str, code: str, auth: Any, org: str) -> None:
     from server.core.naming import SENTINEL
     from server.observability.consumer import bind_current_consumer
     from server.observability.ledger import emit_agent_event

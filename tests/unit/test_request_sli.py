@@ -3,6 +3,8 @@ op and status classes, the auth refusal reasons, the health-problem series."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import HTTPException
 
 from server.auth.jwt import AuthUnavailable, TokenError
@@ -207,15 +209,7 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
 def test_mcp_refusals_before_dispatch_are_ledgered_as_the_token_alone(monkeypatch) -> None:
     """Refused before the caller is bound: each row is the token's org,
     subject and consumer with `-` for the rest and no arguments, whatever the
-    call named, and carries nothing a batch's previous entry left behind.
-    Run in a copied context: the request state it binds must not reach the
-    next test."""
-    import contextvars
-
-    contextvars.copy_context().run(_mcp_refusals_before_dispatch, monkeypatch)
-
-
-def _mcp_refusals_before_dispatch(monkeypatch) -> None:
+    call named, and carries nothing a batch's previous entry left behind."""
     import asyncio
 
     from server.auth.jwt import AuthInfo
@@ -304,6 +298,8 @@ def _mcp_refusals_before_dispatch(monkeypatch) -> None:
     # A name no op answers to writes no row.
     assert mcp_op.route(_call("loom_op", {"op": "no.such"}), toolset=None, auth=eve)[1]
 
+    # The caller's context keeps what it had: the refusal reset only its own copy.
+    assert consumer.current_consumer() == "someone-else"
     assert [(e.operation, e.error_code) for e in emitted] == [
         ("memory.set", "ORG_MISMATCH"),
         ("memory.set", "NAMESPACE_NOT_ACCESSIBLE"),
@@ -331,12 +327,6 @@ def _mcp_refusals_before_dispatch(monkeypatch) -> None:
 def test_a_wildcard_token_s_mcp_refusal_names_no_org_but_the_one_it_was_authorized_in(
     monkeypatch,
 ) -> None:
-    import contextvars
-
-    contextvars.copy_context().run(_wildcard_refusals, monkeypatch)
-
-
-def _wildcard_refusals(monkeypatch) -> None:
     import asyncio
 
     from server.auth.jwt import AuthInfo
@@ -411,6 +401,32 @@ def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypat
     assert (traced[-1]["org"], traced[-1]["namespace"]) == ("eve-org", "-")
     # Open mode keeps the body.
     assert http._refused_body({"org": "acme", "namespace": "n"}, None)["org"] == "acme"
+
+
+def test_lost_ledger_rows_are_counted_by_reason(monkeypatch) -> None:
+    from server.observability import events, metrics_gauges
+
+    class _Meter:
+        def __init__(self) -> None:
+            self.callbacks: dict[str, Any] = {}
+
+        def _register(self, name: str, callbacks: list, **_: Any) -> None:
+            self.callbacks[name] = callbacks[0]
+
+        create_observable_gauge = create_observable_counter = _register
+
+    class _Emitter:
+        def stats(self) -> dict[str, int]:
+            return {"dropped_queue_full": 3, "dropped_flush_failed": 5}
+
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    meter = _Meter()
+    metrics_gauges._register_health_gauges(meter)
+    points = meter.callbacks["loom.ledger.dropped"](None)
+    assert {(p.attributes["reason"], p.value) for p in points} == {
+        ("queue_full", 3),
+        ("flush_failed", 5),
+    }
 
 
 def test_health_problems_need_no_clickhouse() -> None:

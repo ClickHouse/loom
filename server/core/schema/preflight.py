@@ -264,9 +264,15 @@ def oldest_version(
 
 def _require(ch: Client, user: str, grants: str) -> None:
     """Raise, naming only the missing ones, unless `user` holds all of `grants`."""
-    if not _granted(ch, grants):
-        missing = [g for g in grants.split(", ") if not _granted(ch, g)]
-        raise _lacks(user, ", ".join(missing))
+    if missing := _missing(ch, grants):
+        raise _lacks(user, missing)
+
+
+def _missing(ch: Client, grants: str, database: str = DATABASE) -> str:
+    """The ones of `grants` this user lacks on `database`.*, '' when it holds all."""
+    if _granted(ch, grants, database):
+        return ""
+    return ", ".join(g for g in grants.split(", ") if not _granted(ch, g, database))
 
 
 def _granted(ch: Client, grants: str, database: str = DATABASE) -> bool:
@@ -356,11 +362,8 @@ def check(
             if migrating:
                 raise error
             later.append(error)
-        if not _granted(ch, TELEMETRY_GRANTS, TELEMETRY_DATABASE):
-            missing = [
-                g for g in TELEMETRY_GRANTS.split(", ") if not _granted(ch, g, TELEMETRY_DATABASE)
-            ]
-            error = _lacks(user, ", ".join(missing), TELEMETRY_DATABASE)
+        if missing := _missing(ch, TELEMETRY_GRANTS, TELEMETRY_DATABASE):
+            error = _lacks(user, missing, TELEMETRY_DATABASE)
             if migrating:
                 raise error
             later.append(error)
