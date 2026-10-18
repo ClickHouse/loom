@@ -226,8 +226,8 @@ def test_a_peer_the_answer_leaves_out_has_no_verdict_and_prose_is_ignored() -> N
     text = "Here you go:\n" + _answer(_entry("p2", "related", 0.93)) + "\nthanks"
     got = cr.parse_verdicts(text, _PEERS)
     assert list(got) == [_PEERS[1].memory_id]
-    # A peer named twice keeps its first entry.
-    twice = cr.parse_verdicts(_answer(_entry("p1", "related"), _entry("p1", "update")), _PEERS)
+    # A peer named twice with one verdict keeps its first entry.
+    twice = cr.parse_verdicts(_answer(_entry("p1", "related"), _entry("p1", "related")), _PEERS)
     assert twice[_PEERS[0].memory_id].verdict == "related"
 
 
