@@ -1508,7 +1508,9 @@ button.pane-card:hover {
     color: var(--click-field-color-text-disabled);
   }
   /* target="overlay": a 44 px target under a coarse pointer that does not change the chip's
-     size, so a row of tags keeps its measured height. */
+     height, so a row of tags keeps its measured height. The hit area adds height only: the
+     chip is at least 44 px wide (Chip's pointer-coarse:min-w-11), so short tags side by
+     side do not reach over each other. */
   @media (pointer: coarse) {
     .chip-hit {
       position: relative;
@@ -1517,9 +1519,27 @@ button.pane-card:hover {
       content: "";
       position: absolute;
       top: 50%;
-      left: 50%;
-      width: max(100%, var(--spacing-hit));
+      left: 0;
+      width: 100%;
       height: max(100%, var(--spacing-hit));
+      transform: translateY(-50%);
+    }
+  }
+  /* ui/ListRow's `.list-row-leading` slot owns this: a row's checkbox under a coarse pointer
+     is a 44 px target (WCAG 2.5.8), so a tap beside it selects the row instead of opening
+     it. It reaches into Click UI's checkbox markup (`[role="checkbox"]`): recheck it when
+     Click UI is upgraded. */
+  @media (pointer: coarse) {
+    .list-row-leading [role="checkbox"] {
+      position: relative;
+    }
+    .list-row-leading [role="checkbox"]::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: var(--spacing-hit);
+      height: var(--spacing-hit);
       transform: translate(-50%, -50%);
     }
   }
@@ -1625,23 +1645,6 @@ tbody tr:has([aria-current="true"]) > td:first-child {
 .graph-svg .graph-relation svg {
   width: 1em;
   height: 1em;
-}
-
-/* A row's checkbox under a coarse pointer: a 44 px target (WCAG 2.5.8), so a tap beside it
-   selects the row instead of opening it. */
-@media (pointer: coarse) {
-  .list-row-leading [role="checkbox"] {
-    position: relative;
-  }
-  .list-row-leading [role="checkbox"]::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: var(--spacing-hit);
-    height: var(--spacing-hit);
-    transform: translate(-50%, -50%);
-  }
 }
 
 /* Recall Lab: a score cell's bar is Click UI's table bar chart, its width the score

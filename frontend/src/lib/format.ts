@@ -134,7 +134,7 @@ export function truncate(s: string, max: number): string {
 
 /** A bounded preview of a value for a card: the first `max` characters of the string, or
  *  of a compact serialisation of the object — never a pretty-print of the whole value,
- *  which a list of a hundred cards paid for to show 140 characters each. */
+ *  which a list of a hundred cards paid for to show two lines each. */
 export function previewValue(v: unknown, max = 320): string {
   if (v == null) return "";
   if (typeof v === "string") return v.length > max ? v.slice(0, max) : v;

@@ -6,11 +6,12 @@ import { codeReposFixture, installApi, trackerSourcesFixture } from "./fixtures"
 // The list pages (Memories, Library, Conversations, Profile, Spaces, Repositories) against
 // the list rules, in the browser: the chrome over the first row stays inside its budget and
 // the search's placeholder fits, the selection takes a range and clears on Escape, a row
-// list is one tab stop whose ring is drawn on the row, a row's "+N" tags show on a hover
-// and a tap on them opens the row, a Library row's More menu shows without a hover, a row's
-// placeholder size is its drawn height, the Profile's sections take a selection, Insights
-// holds the usage audit and the mentor, and styles.css draws the Kbd and the score bar on
-// radius tokens.
+// list is one tab stop whose ring is drawn on the row, a long memory value fills two lines,
+// a row's "+N" tags show on a hover and a tap on them opens the row, under a coarse pointer
+// a row's tags stay on one line and each takes a 44 px tap that reaches no other tag, a
+// Library row's More menu shows without a hover, a row's placeholder size is its drawn
+// height, the Profile's sections take a selection, Insights holds the usage audit and the
+// mentor, and styles.css draws the Kbd and the score bar on radius tokens.
 
 const now = new Date().toISOString();
 const THREADS = Array.from({ length: 6 }, (_, i) => ({
@@ -202,6 +203,20 @@ test("a row list is one tab stop, the arrows move through it, and the ring is dr
   await expect(page.getByRole("dialog")).toBeVisible();
 });
 
+// The list asks for as many characters as two lines of the value hold at 1400 px, so a long
+// value fills both lines rather than ending one line in.
+test("a long memory value fills the card's two lines at 1400 px", async ({ page }) => {
+  await installApi(page, { memoryRows: 12 });
+  await page.goto("/memories");
+  const value = page.locator('main .list-row [id$="-value"]').first();
+  await expect(value).toBeVisible();
+  const { height, line } = await value.evaluate((el) => ({
+    height: el.getBoundingClientRect().height,
+    line: Number.parseFloat(getComputedStyle(el).lineHeight),
+  }));
+  expect(Math.round(height)).toBe(Math.round(2 * line));
+});
+
 test("a row's +N tag chip shows the folded tags on hover, above the row's open button", async ({ page }) => {
   // Five tags on the first row: three chips, then +2.
   await installApi(page, { memoryRows: 12, firstMemoryTags: ["alerts", "storage", "lane-0", "gateway", "edge"] });
@@ -236,8 +251,10 @@ test.describe("a touch pointer at 375 px", () => {
   });
 
   // A tag chip keeps its 24 px box, so the row keeps its height, and takes a 44 px tap: a
-  // tap 8 px above the box filters by the tag instead of opening the row.
-  test("a row's tag chip is a 44 px target that does not grow the row", async ({ page }) => {
+  // tap 8 px above the box filters by the tag instead of opening the row, and one 8 px below
+  // takes the filter off (the row paints only its own box, content-visibility, and the hit
+  // area below the chip still lies inside it).
+  test("a row's tag chip is a 44 px target above and below that does not grow the row", async ({ page }) => {
     await installApi(page, { memoryRows: 12, firstMemoryTags: ["alerts", "storage"] });
     await page.goto("/memories");
     const tag = page.locator("main .list-row").first().getByRole("button", { name: "Filter by tag alerts" });
@@ -246,8 +263,32 @@ test.describe("a touch pointer at 375 px", () => {
     expect(Math.round(box.height)).toBeLessThan(44);
     await page.touchscreen.tap(box.x + box.width / 2, box.y - 8);
     await expect(tag).toHaveAttribute("aria-pressed", "true");
+    const after = await tag.boundingBox();
+    if (!after) throw new Error("the tag chip has no box");
+    await page.touchscreen.tap(after.x + after.width / 2, after.y + after.height + 8);
+    await expect(tag).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
+
+  type Box = { x: number; y: number; width: number; height: number };
+  // Press a row's tag by a tap at the point `at` gives for the chip's box, then take the
+  // filter off by the same tap.
+  async function tapTwice(page: Page, tag: string, at: (box: Box) => [number, number]) {
+    const chip = page
+      .locator("main .list-row")
+      .first()
+      .getByRole("button", { name: `Filter by tag ${tag}` });
+    for (const pressed of ["true", "false"]) {
+      const box = await chip.boundingBox();
+      if (!box) throw new Error(`the ${tag} chip has no box`);
+      const [x, y] = at(box);
+      await page.touchscreen.tap(x, y);
+      await expect(chip, `${tag} at ${Math.round(x - box.x)}, ${Math.round(y - box.y)}`).toHaveAttribute(
+        "aria-pressed",
+        pressed,
+      );
+    }
+  }
 
   // Tags that would wrap at 375 px stay on one line under a finger, so no tag's 44 px hit
   // area lies over another tag: a tap just inside a chip's bottom edge presses that chip.
@@ -263,37 +304,19 @@ test.describe("a touch pointer at 375 px", () => {
     // Near each end and in the middle, so a hit area from a tag on another line shows wherever
     // it lies over the chip.
     for (const tag of WRAPPING.slice(0, 3)) {
-      for (const at of [0.1, 0.5, 0.9]) {
-        await page.goto("/memories");
-        const chip = page
-          .locator("main .list-row")
-          .first()
-          .getByRole("button", { name: `Filter by tag ${tag}` });
-        const box = await chip.boundingBox();
-        if (!box) throw new Error(`the ${tag} chip has no box`);
-        await page.touchscreen.tap(box.x + box.width * at, box.y + box.height - 2);
-        await expect(chip, `${tag} at ${at}`).toHaveAttribute("aria-pressed", "true");
-      }
+      for (const at of [0.1, 0.5, 0.9]) await tapTwice(page, tag, (b) => [b.x + b.width * at, b.y + b.height - 2]);
     }
-    await page.goto("/memories");
-    const more = page.locator("main .list-row").first().getByRole("note").filter({ hasText: "2 more tags: x, y" });
-    const box = await more.boundingBox();
-    if (!box) throw new Error("the +N chip has no box");
-    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
-    await expect(page.getByRole("dialog")).toBeVisible();
   });
 
-  // The row paints only its own box (content-visibility), and a tag's hit area below the
-  // chip still lies inside it: a tap 8 px below the tag filters by it.
-  test("a tap below a row's tag chip presses the tag", async ({ page }) => {
-    await installApi(page, { memoryRows: 12, firstMemoryTags: ["alerts", "storage"] });
+  // A one-letter tag is 44 px wide and its hit area adds height only, so a tap at either
+  // outer edge of its 44 px target presses that tag, not the neighbour whose hit area would
+  // otherwise reach over the gap.
+  test("a tap at a short tag's outer edge presses that tag", async ({ page }) => {
+    await installApi(page, { memoryRows: 12, firstMemoryTags: ["x", "y", "z"] });
     await page.goto("/memories");
-    const tag = page.locator("main .list-row").first().getByRole("button", { name: "Filter by tag alerts" });
-    const box = await tag.boundingBox();
-    if (!box) throw new Error("the tag chip has no box");
-    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height + 8);
-    await expect(tag).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    for (const tag of ["x", "y", "z"]) {
+      for (const dx of [-21, 21]) await tapTwice(page, tag, (b) => [b.x + b.width / 2 + dx, b.y + b.height / 2]);
+    }
   });
 });
 

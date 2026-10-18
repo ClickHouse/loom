@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { previewValue } from "./format";
 import { detectEncodedRecord, detectEncodedValue } from "./encoded";
-import { MemoryCard } from "../components/MemoryCard";
+import { CARD_VALUE_CHARS, MemoryCard } from "../components/MemoryCard";
 import type { MemoryListEntry } from "../api";
 import { must } from "../test/must";
 
@@ -72,7 +72,7 @@ describe("MemoryCard preview", () => {
     // An object reads as its pairs, still cut to two lines' worth.
     const shown = await screen.findByText(/^alert: zzz/);
     // two lines' worth, cut before the clamp
-    expect(must(shown.textContent, "preview text").length).toBeLessThanOrEqual(281);
+    expect(must(shown.textContent, "preview text").length).toBeLessThanOrEqual(CARD_VALUE_CHARS);
     // no `JSON.stringify(v, null, 2)` anywhere on the card's path
     expect(stringify.mock.calls.some((c) => c.length >= 3 && c[2] === 2)).toBe(false);
   });

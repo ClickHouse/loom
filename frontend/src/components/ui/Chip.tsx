@@ -39,9 +39,10 @@ export interface ChipProps {
   /** A small glyph before the label (a lock on a restricted namespace); decorative — the
    *  accessible name carries the meaning. */
   icon?: ReactNode;
-  /** Its 44 px target under a coarse pointer: `box` grows the chip; `overlay` keeps its size
-   *  and reaches 44 px through a hit area drawn around it (a row's tag, which must not grow
-   *  the row); `none` has no target, for a chip a tap passes through. */
+  /** Its 44 px target under a coarse pointer: `box` grows the chip; `overlay` keeps its
+   *  height, is at least 44 px wide and reaches 44 px tall through a hit area drawn above and
+   *  below it (a row's tag, which must not grow the row); `none` has no target, for a chip a
+   *  tap passes through. */
   target?: "box" | "overlay" | "none";
   className?: string;
 }
@@ -49,7 +50,7 @@ export interface ChipProps {
 const SHAPE = "chip inline-flex items-center justify-center max-w-full min-h-6 border";
 /** A chip that takes a press or a focus: a 44 px target under a coarse pointer. */
 const BASE = `${SHAPE} pointer-coarse:min-h-11 pointer-coarse:min-w-11`;
-const TARGET_CLASS = { box: BASE, overlay: `${SHAPE} chip-hit`, none: SHAPE };
+const TARGET_CLASS = { box: BASE, overlay: `${SHAPE} chip-hit pointer-coarse:min-w-11`, none: SHAPE };
 /** An outlined chip's look, for a chip-shaped control this component cannot draw (a link
  *  that anchors a popover). */
 export const CHIP_OUTLINE_CLASS = `${BASE} chip-outline`;

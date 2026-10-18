@@ -10,6 +10,11 @@ import { truncate, previewValue } from "../lib/format";
 import { detectEncodedValue, detectEncodedRecord } from "../lib/encoded";
 import { useAbortableEffect } from "../lib/hooks";
 
+/** The characters of a value a card shows: two lines of the 14 px body hold ~325 at a
+ *  1400 px window, so the Memories list asks memory.list for this many and the card cuts a
+ *  longer value here before the clamp. */
+export const CARD_VALUE_CHARS = 320;
+
 /** The bounded preview a card shows for a value; whether it was an agent-encoded (base64)
  *  envelope whose decoded text is shown instead; and whether it is a JSON object, shown as
  *  its `k: v` pairs. */
@@ -216,12 +221,12 @@ export const MemoryCard = memo(function MemoryCard({
           {/* Line 2: the value, two lines at most; a JSON object as one line of its pairs. */}
           {pairs && value !== null ? (
             <code id={`${id}-value`} className="mt-1 block truncate font-mono text-xs text-text-muted">
-              {truncate(value, 280)}
+              {truncate(value, CARD_VALUE_CHARS)}
             </code>
           ) : (
             <span id={`${id}-value`} className="mt-1 text-sm text-text leading-normal line-clamp-2 break-words">
-              {/* Cut before the clamp, so a 2 KB preview never lands in the DOM: two lines hold ~280. */}
-              {value === null ? <span className="text-text-muted">…</span> : truncate(value, 280)}
+              {/* Cut before the clamp, so a 2 KB preview never lands in the DOM. */}
+              {value === null ? <span className="text-text-muted">…</span> : truncate(value, CARD_VALUE_CHARS)}
             </span>
           )}
         </button>
