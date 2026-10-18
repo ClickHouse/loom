@@ -552,6 +552,38 @@ async def test_a_pair_that_fails_leaves_the_audit_row_of_the_pairs_done_before_i
     assert [p["peer_id"] for p in row_env.audits[0]] == ["m2"]
 
 
+async def test_a_failed_audit_read_after_a_failed_pair_raises_the_pairs_error(
+    row_env: NS, monkeypatch
+) -> None:
+    # The erasure read before the audit fails too: the error raised is still the pair's.
+    row_env.peers.append(
+        _peer_row("m3", "s3", "office_town", '"Office is in Lyon"') | {"similarity": 0.7}
+    )
+    row_env.heads["m3"] = _mem("m3", session_id="s3", content_sha256="sha-m3")
+    row_env.asserted["m3"] = 1_000
+    row_env.answer = _answer(
+        _entry("p1", "contradiction", 0.95), _entry("p2", "contradiction", 0.95)
+    )
+    failed = False
+
+    async def flag(org: str, row: Any, peer: Any) -> bool:
+        nonlocal failed
+        if peer.memory_id == "m3":
+            failed = True
+            raise RuntimeError("ClickHouse went away")
+        return True
+
+    async def under_erasure(org: str, **kw: Any) -> bool:
+        if failed:
+            raise ConnectionError("erasure read failed")
+        return False
+
+    monkeypatch.setattr(resolver, "_flag", flag)
+    monkeypatch.setattr(queue, "under_erasure", under_erasure)
+    with pytest.raises(RuntimeError, match="ClickHouse went away"):
+        await _resolve()
+
+
 @pytest.mark.parametrize("peer_at", [2_000, 3_000])
 async def test_an_update_whose_peer_was_not_asserted_first_is_flagged(
     row_env: NS, peer_at: int

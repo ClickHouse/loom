@@ -698,6 +698,19 @@ async def _act_on_verdicts(
                     {"peer_id": str(peer["memory_id"]), **taken}
                     | {"verdict": v.verdict, "confidence": v.confidence}
                 )
-    finally:
-        if acted and not await queue.under_erasure(org):
-            await _audit(org, namespace, row, acted, model)
+    except BaseException:
+        # The pairs done still get their audit row, and the error raised is the one that
+        # stopped them, not one from the audit.
+        try:
+            await _audit_unless_erasing(org, namespace, row, acted, model)
+        except Exception as e:  # noqa: BLE001 — the pairs' own failure is raised below
+            log.warning("conflict_resolver: audit after a failed pair not written: %s", e)
+        raise
+    await _audit_unless_erasing(org, namespace, row, acted, model)
+
+
+async def _audit_unless_erasing(
+    org: str, namespace: str, row: Any, acted: list[dict[str, Any]], model: str
+) -> None:
+    if acted and not await queue.under_erasure(org):
+        await _audit(org, namespace, row, acted, model)
