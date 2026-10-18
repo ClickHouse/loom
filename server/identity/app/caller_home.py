@@ -194,14 +194,6 @@ async def _restricted_off_limits(auth: Any, org: str) -> frozenset[str]:
         return frozenset()
 
 
-async def readable_claims(auth: Any, org: str) -> list[str]:
-    """The namespaces a token names that the gate lets it read, in claim
-    order (`readable_named_claims`)."""
-    if auth is None:
-        return []
-    return await readable_named_claims(auth, org)
-
-
 async def claimed_home_default(
     auth_info: Any,
     org: str,
@@ -254,7 +246,14 @@ def caller_org(auth: Any) -> str | None:
 
 
 async def default_namespace(auth: Any, org: str) -> str:
-    """The namespace a call from `auth` that names none lands in.
+    """The namespace a call from `auth` that names none lands in
+    (`default_and_readable`)."""
+    return (await default_and_readable(auth, org))[0]
+
+
+async def default_and_readable(auth: Any, org: str) -> tuple[str, list[str]]:
+    """The namespace a call from `auth` that names none lands in, and the
+    claims it can read (`readable_named_claims`) the default was picked from.
 
     Single-user mode serves exactly ONE namespace (LOOM_DEFAULT_NAMESPACE): the
     SPA pins its identity to it and the boot-time bootstrap provisions only it,
@@ -266,16 +265,17 @@ async def default_namespace(auth: Any, org: str) -> str:
     from server.settings import settings
 
     try:
-        claimed = await readable_claims(auth, org)
+        claimed = await readable_named_claims(auth, org)
     except Exception:  # noqa: BLE001 — defaults fail open; the gate still decides access
         claimed = [n for n in (getattr(auth, "namespaces", None) or ()) if n and n != "*"]
     if settings.effective_identity_provider() == "single-user":
-        return claimed[0] if claimed else settings.default_namespace
+        return (claimed[0] if claimed else settings.default_namespace), claimed
     home = home_subject(auth) or "you"
     try:
-        return await _multi_user_default(auth, org, claimed, home)
+        return await _multi_user_default(auth, org, claimed, home), claimed
     except Exception:  # noqa: BLE001 — default namespace falls back to claim or personal slug
-        return _reachable(auth, claimed, claimed[0] if claimed else derive_personal_slug(home))
+        fallback = claimed[0] if claimed else derive_personal_slug(home)
+        return _reachable(auth, claimed, fallback), claimed
 
 
 def _reachable(auth: Any, claimed: list[str], namespace: str) -> str:

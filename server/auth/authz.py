@@ -28,6 +28,7 @@ from server.operations.base import GRANT_ROLES, Role, grant_rank
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
+    from server.core.grant_cache import GrantMap
     from server.operations.base import Operation
 
 log = logging.getLogger(__name__)
@@ -409,7 +410,13 @@ async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> li
     return [ns for ns in namespaces if ns and ns != "*" and await claim_cap(auth, org, ns) != 0]
 
 
-async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:
+async def _check_restricted(
+    auth: AuthInfo,
+    required_role: Role,
+    org: str,
+    namespace: str,
+    grants: GrantMap | None = None,
+) -> None:
     """The two-factor gate for restricted namespaces. Raises PermissionError unless:
 
     1. the token belongs to `org` (no cross-org wildcard);
@@ -423,7 +430,8 @@ async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, names
     The refusal text is the generic "cannot access" line so a caller learns
     nothing about whether the namespace exists or why it was refused.
     `LOOM_RESTRICTED_SERVE=false` refuses everyone (kill switch: the plane
-    keeps ingesting, nobody reads).
+    keeps ingesting, nobody reads). `grants`: the subject's cached grant map,
+    when the caller already holds it, in place of a read of its own.
     """
     from server.settings import settings
 
@@ -445,16 +453,26 @@ async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, names
         own = max(auth.roles, default=None)
     if own is None or own.value < required_role.value:
         raise refusal
-    grant = await grant_role_for(org, namespace, auth.subject)
+    if grants is not None:
+        grant = _rank_role(grants.rank(namespace) or 0)
+    else:
+        grant = await grant_role_for(org, namespace, auth.subject)
     if grant is None or grant.value < required_role.value:
         raise refusal
 
 
-async def restricted_allows(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> bool:
+async def restricted_allows(
+    auth: AuthInfo,
+    required_role: Role,
+    org: str,
+    namespace: str,
+    *,
+    grants: GrantMap | None = None,
+) -> bool:
     """`_check_restricted` as a predicate, for the resolvers that build a
     caller's namespace list (server/auth/context.py)."""
     try:
-        await _check_restricted(auth, required_role, org, namespace)
+        await _check_restricted(auth, required_role, org, namespace, grants)
     except PermissionError:
         return False
     return True

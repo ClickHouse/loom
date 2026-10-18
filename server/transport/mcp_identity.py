@@ -15,9 +15,8 @@ from typing import Any
 from server.core.naming import slugify
 from server.identity.app.caller_home import (
     caller_org,
-    default_namespace,
+    default_and_readable,
     home_subject,
-    readable_claims,
 )
 from server.transport.mcp_config import _DEFAULT_MCP_AGENT, _MCP_SESSION_AGENT_CAP
 
@@ -120,8 +119,9 @@ def default_namespace_note() -> dict[str, str]:
 async def _caller_defaults(
     auth: Any,
     client_name: str | None = None,
-) -> dict[str, str] | None:
-    """Resolve the caller's default (org, namespace, agent).
+) -> dict[str, Any] | None:
+    """Resolve the caller's default (org, namespace, agent), plus `readable`
+    (the namespaces the token can name) when it has no default namespace.
 
     Used both to embed defaults in tool descriptions and to fill missing
     args on incoming tool calls. The namespace is `caller_home.default_namespace`,
@@ -132,18 +132,15 @@ async def _caller_defaults(
     org = caller_org(auth)
     if org is None:
         return None
-    return {
+    namespace, readable = await default_and_readable(auth, org)
+    defaults: dict[str, Any] = {
         "org": org,
-        "namespace": await default_namespace(auth, org),
+        "namespace": namespace,
         "agent": _client_name_to_agent(client_name),
     }
-
-
-async def with_readable_claims(auth: Any, defaults: dict[str, str] | None) -> dict[str, Any] | None:
-    """`defaults` for the session instructions: plus `readable` (the namespaces
-    the token can name) when it has no default namespace."""
-    if defaults and not defaults["namespace"]:
-        return {**defaults, "readable": await readable_claims(auth, defaults["org"])}
+    if not namespace:
+        # What a token with no default names on its calls, and searches.
+        defaults["readable"] = readable
     return defaults
 
 
@@ -167,7 +164,7 @@ async def _caller_default_context(auth: Any, defaults: dict[str, Any] | None = N
     automatically, so it'd be noise in the LLM's context. ``defaults`` are
     resolved here when not passed.
     """
-    defaults = defaults or await with_readable_claims(auth, await _caller_defaults(auth))
+    defaults = defaults or await _caller_defaults(auth)
     if not defaults:
         return ""
     if not defaults["namespace"]:

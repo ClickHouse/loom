@@ -1100,7 +1100,7 @@ function TokensSection({
               </>
             )}
             {mcpResult?.readScope === "named_namespaces" ? (
-              <>; {namedReads(mcpResult)}.</>
+              <>{namedTail(mcpResult)}.</>
             ) : (
               <>
                 ; reads every namespace and repository you belong to, including ones you join later
@@ -1447,6 +1447,13 @@ function namedReadList(r: MintedScope): string[] {
 function namedReads(r: MintedScope): string {
   const reads = namedReadList(r);
   return reads.length ? `reads only ${reads.join(", ")}` : "reads no namespace";
+}
+
+/** The reads half of a named-claim token's line: nothing more when `mustName`
+ *  already listed the claim. */
+function namedTail(r: MintedScope): string {
+  if (r.namespace === "" && namedReadList(r).length) return "";
+  return `; ${namedReads(r)}`;
 }
 
 /** What a token with no default namespace names on its calls: one of its claim

@@ -32,7 +32,6 @@ from server.transport.mcp_identity import (
     _caller_default_context,
     _caller_defaults,
     no_default_namespace_line,
-    with_readable_claims,
 )
 from server.transport.mcp_op import reachable as loom_op_reachable
 from server.transport.mcp_tools import _emit_mcp_event, listed_ops
@@ -250,10 +249,10 @@ async def _loom_primer_text(
     surfaces reachable without a verified bearer (initialize in
     discovery_only/open modes), which must not carry profile content.
     ``toolset`` is the connection's ``?toolset=``: the primer names the tools
-    that listing carries. ``defaults`` (`_workspace_defaults`) are resolved
+    that listing carries. ``defaults`` (`_caller_defaults`) are resolved
     here when not passed."""
     tool = _tool_refs(toolset)
-    defaults = defaults or await _workspace_defaults(auth)
+    defaults = defaults or await _caller_defaults(auth)
 
     # Inline authored profile sections into the primer — "call profile.render
     # at conversation start" nudges don't fire reliably, so bundling the
@@ -331,11 +330,6 @@ def _defaults_clause(defaults: dict[str, Any] | None) -> str:
     )
 
 
-async def _workspace_defaults(auth: Any) -> dict[str, Any] | None:
-    """The caller's defaults for the session instructions (`with_readable_claims`)."""
-    return await with_readable_claims(auth, await _caller_defaults(auth))
-
-
 INITIALIZE_OP = "mcp.initialize"
 
 
@@ -367,7 +361,7 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
     inline only with a verified bearer — an anonymous probe (discovery_only /
     open modes) must not read profile content.
     """
-    defaults = await _workspace_defaults(auth)
+    defaults = await _caller_defaults(auth)
     coding = _is_coding_toolset(toolset)
     render = _coding_instructions if coding else _loom_primer_text
     primer = await render(

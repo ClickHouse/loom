@@ -139,7 +139,10 @@ describe("Setup's MCP home namespace", () => {
     await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
     await mintedNamespace();
     const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
-    expect(scope).toHaveTextContent(/memory and tracker calls must name one of qa-a, qa-b;/);
+    // The list is said once: the claim it must name is the claim it reads.
+    expect(scope).toHaveTextContent(
+      /^Has no default namespace: memory and tracker calls must name one of qa-a, qa-b\.$/,
+    );
   });
 
   it("says a token minted for a named namespace reads only that one", async () => {

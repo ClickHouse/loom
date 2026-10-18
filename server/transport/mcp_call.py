@@ -19,7 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
-from server.identity.app.caller_home import home_namespace, readable_claims
+from server.identity.app.caller_home import home_namespace
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import _MCP_HIDDEN_OPS
@@ -152,11 +152,10 @@ async def _address_home(arguments: dict[str, Any], auth: Any) -> None:
         )
 
 
-async def _address_first_claim(arguments: dict[str, Any], auth: Any, org: str) -> bool:
+def _address_first_claim(arguments: dict[str, Any], readable: list[str]) -> bool:
     """A `loom_search` naming no namespace from a token with no default one
-    searches the token's first readable claim; the gate still checks it.
-    True when it filled one in."""
-    readable = await readable_claims(auth, org)
+    searches the token's first readable claim (`readable`, from its
+    defaults); the gate still checks it. True when it filled one in."""
     if readable:
         arguments["namespace"] = readable[0]
     return bool(readable)
@@ -484,7 +483,7 @@ async def _bind_caller_identity(
         # a code read's lessons include the caller's own memories, from its memory home
         arguments.setdefault("lesson_namespaces", [defaults["namespace"]])
     if op.name == SEARCH_OP and defaults and not defaults["namespace"] and unnamed:
-        filled_ns = await _address_first_claim(arguments, auth, defaults["org"])
+        filled_ns = _address_first_claim(arguments, defaults.get("readable") or [])
     note_default_namespace(filled_ns, str(arguments.get("namespace") or ""), auth)
     _scope_arguments(op.name, arguments, defaults, explicit_agent)
     if op.name == SEARCH_OP and filled_ns:

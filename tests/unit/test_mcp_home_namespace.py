@@ -15,6 +15,7 @@ import pytest
 
 import server.identity.app.caller_home as home
 import server.transport.mcp_identity as mi
+from server.auth.context import readable_named_claims
 
 KINDS = {
     "alice": "memory",
@@ -53,6 +54,7 @@ class _Auth:
 class _CH:
     def __init__(self, saved: str | None, grants: list[str]) -> None:
         self.saved, self.grants = saved, grants
+        self.sql: list[str] = []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         if "user_state" in sql:
@@ -66,12 +68,17 @@ class _CH:
     ) -> list[dict[str, Any]]:
         return [{"namespace": n, "role": "admin"} for n in self.grants]
 
+    def grant_ranks(self, subject: str) -> dict[str, int]:
+        """What the grant cache reads for `subject`: no rows, so claims stand."""
+        return {}
+
 
 @pytest.fixture()
 def _wired(monkeypatch: pytest.MonkeyPatch):
     def _wire(ch: _CH) -> None:
         import server.auth.aliases as aliases
         import server.core.ch as chmod
+        import server.core.grant_cache as grant_cache
         import server.identity.app.namespace_classification as nc
         import server.identity.app.namespace_kinds as nk
 
@@ -84,7 +91,12 @@ def _wired(monkeypatch: pytest.MonkeyPatch):
         async def _restricted_set(org: str) -> frozenset[str]:
             return RESTRICTED
 
+        async def _grant_rows(org: str, subject: str) -> Any:
+            ch.sql.append(f"grant_map:{subject}")
+            return grant_cache.GrantMap(ranks=ch.grant_ranks(subject))
+
         monkeypatch.setattr(chmod, "get_client", lambda: ch)
+        monkeypatch.setattr(grant_cache, "_read", _grant_rows)
         monkeypatch.setattr(aliases, "subject_aliases", _aliases)
         monkeypatch.setattr(nk, "kind_map", _kind_map)
         monkeypatch.setattr(nc, "restricted_set", _restricted_set)
@@ -164,7 +176,6 @@ class _SetupTokenCH(_CH):
     ) -> None:
         super().__init__(saved, grants)
         self.owner, self.row_creator = owner, row_creator
-        self.sql: list[str] = []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         self.sql.append(sql)
@@ -182,9 +193,13 @@ class _SetupTokenCH(_CH):
     async def query_all(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
+        self.sql.append(sql)
         if self.owner not in (params or {}).get("subs", []):
             return []
         return [{"namespace": n, "role": "writer"} for n in self.grants]
+
+    def grant_ranks(self, subject: str) -> dict[str, int]:
+        return {n: 2 for n in self.grants} if subject == self.owner else {}
 
 
 def _setup_token(creator: str = "alice") -> _Auth:
@@ -287,7 +302,7 @@ def _primer_text(token: Any) -> str:
 def _coding_line(token: Any) -> str:
     from server.transport import mcp_primer
 
-    return mcp_primer._coding_workspace_line(asyncio.run(mcp_primer._workspace_defaults(token)))
+    return mcp_primer._coding_workspace_line(asyncio.run(mcp_primer._caller_defaults(token)))
 
 
 @pytest.mark.parametrize(
@@ -457,32 +472,47 @@ def test_a_creator_without_grants_is_refused_in_the_unprovisioned_default(
     assert ns in body["structuredContent"]["error"]
 
 
-def _revoke_subject_grant(monkeypatch: pytest.MonkeyPatch, namespace: str) -> None:
-    """The token's own subject held a grant on `namespace`, now revoked: its
-    claim there is capped at nothing (`authz.claim_cap` 0)."""
+def _revoke_subject_grant(
+    monkeypatch: pytest.MonkeyPatch, namespace: str, subject: str = "sa:cursor-ab12cd"
+) -> None:
+    """The token's own `subject` held a grant on `namespace`, now revoked: its
+    claim there is capped at nothing (`authz.claim_cap` 0). Other subjects'
+    grants are read as before."""
     import server.core.grant_cache as grant_cache
 
-    async def _grant_map(org: str, subject: str) -> Any:
-        return grant_cache.GrantMap(ranks={namespace: 0})
+    real = grant_cache.grant_map
+
+    async def _grant_map(org: str, who: str) -> Any:
+        if who == subject:
+            return grant_cache.GrantMap(ranks={namespace: 0})
+        return await real(org, who)
 
     monkeypatch.setattr(grant_cache, "grant_map", _grant_map)
 
 
-def test_a_revoked_first_claim_is_neither_named_nor_the_default(
+def test_a_delegated_claim_its_creator_holds_stays_named_after_its_own_grant_goes(
     _wired, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The gate decides a delegated token on its claim and its creator's grant,
+    # never on its own subject's: the revoked grant takes nothing away.
+    from server.auth import authz
+    from server.operations.base import Role
+
     _revoke_subject_grant(monkeypatch, "agent-box-claude-code")
     _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse", "alice"]))
     token = _token(("agent-box-claude-code", "alice"))
-    assert _defaults(token)["namespace"] == "alice"
-    assert asyncio.run(home.readable_claims(token, "clickhouse")) == ["alice"]
+    readable = asyncio.run(readable_named_claims(token, "clickhouse"))
+    assert readable == ["agent-box-claude-code", "alice"]
+    default = _defaults(token)["namespace"]
+    assert default in readable
+    asyncio.run(authz.check_authorized(token, Role.WRITER, "clickhouse", default))
 
 
 def test_a_claim_the_creator_no_longer_holds_is_not_named(_wired) -> None:
     # alice left the team behind `gone-team`; the token still claims it first.
     _wired(_SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"]))
     token = _token(("gone-team", "qa-clickhouse"))
-    assert asyncio.run(home.readable_claims(token, "clickhouse")) == ["qa-clickhouse"]
+    assert asyncio.run(readable_named_claims(token, "clickhouse")) == ["qa-clickhouse"]
     text = _initialize_text(token, "coding")
     assert "name one of `qa-clickhouse` on" in text
     assert "`gone-team`" not in text
@@ -525,3 +555,29 @@ def test_a_blank_or_dash_namespace_gets_the_default(
         op = OPERATIONS_BY_NAME[op_name]
         asyncio.run(mcp_call._bind_caller_identity(op, args, token, "claude-code"))
         assert args["namespace"] == "agent-box-claude-code", op_name
+
+
+def test_a_steady_state_unaddressed_write_reads_no_grants(_wired) -> None:
+    """Once the caches are warm, binding a delegated token's `memory.set`
+    reads only its saved default: the claims it can name come from the
+    cached grant map, not a scan of the grants table."""
+    from server.auth import delegation
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    delegation._account_active.clear()
+    ch = _SetupTokenCH(saved=None, grants=["agent-box-claude-code", "qa-clickhouse"])
+    _wired(ch)
+    token = _token(("agent-box-claude-code", "qa-clickhouse"))
+    op = OPERATIONS_BY_NAME["memory.set"]
+
+    def _bind() -> list[str]:
+        ch.sql.clear()
+        args: dict[str, Any] = {"memory_key": "a/b/c", "value": "v"}
+        asyncio.run(mcp_call._bind_caller_identity(op, args, token, "claude-code"))
+        assert args["namespace"] == "agent-box-claude-code"
+        return list(ch.sql)
+
+    _bind()
+    steady = _bind()
+    assert len(steady) == 1 and "user_state" in steady[0], steady

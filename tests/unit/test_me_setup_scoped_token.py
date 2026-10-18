@@ -16,8 +16,9 @@ from fastapi import HTTPException
 
 from server.auth import authz, delegation
 from server.auth.jwt import AuthInfo, verify_token
+from server.core import grant_cache
 from server.identity.app import me_setup as me
-from server.operations.base import Role
+from server.operations.base import Role, grant_rank
 from server.settings import settings
 
 saved: list[dict[str, Any]] = []
@@ -39,15 +40,18 @@ def grants(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str, str], Role]:
     async def grant_role_for(org: str, ns: str, subject: str) -> Role | None:
         return held.get((org, ns, subject))
 
-    async def granted_namespaces(org: str, subjects: list[str]) -> set[str]:
-        return {ns for (o, ns, sub) in held if o == org and sub in subjects}
+    async def grant_rows(org: str, subject: str) -> grant_cache.GrantMap:
+        mine = {ns: role for (o, ns, sub), role in held.items() if (o, sub) == (org, subject)}
+        return grant_cache.GrantMap(
+            ranks={ns: grant_rank(r.name.lower()) for ns, r in mine.items()}
+        )
 
     async def account_active(org: str, creator: str) -> bool:
         return True
 
     monkeypatch.setattr(authz, "grant_role_for", grant_role_for)
     # What the minted token's default reads: its creator's account and live grants.
-    monkeypatch.setattr("server.auth.context._granted_namespaces", granted_namespaces)
+    monkeypatch.setattr(grant_cache, "_read", grant_rows)
     monkeypatch.setattr("server.auth.delegation.creator_account_active", account_active)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
