@@ -6,7 +6,7 @@ and an erasure request hit the same keys. After each seed:
 - every retired row has a `memory.auto_supersede` record and can be undone;
 - no flag, clear or retirement below 0.90;
 - no text of another user or another tenant reaches a prompt;
-- nothing is written in an org under erasure;
+- nothing is written in an org whose erasure was requested while a call was in flight;
 - once the writes stop and a pass drains, the next pass makes no call.
 """
 
@@ -40,7 +40,7 @@ _PAIRS = [
 _SECRET = "the vault code of u2 is 4471"
 
 
-def _judge(seed: int, calls: list[str], writer: _Writer) -> Any:
+def _judge(seed: int, calls: list[str], writer: _Writer, in_call: Any) -> Any:
     rng = random.Random(seed)
 
     async def complete(system: str, user: str, **kw: Any) -> Any:
@@ -48,9 +48,6 @@ def _judge(seed: int, calls: list[str], writer: _Writer) -> Any:
 
         calls.append(user)
         await asyncio.sleep(rng.uniform(0.0, 0.3))
-        # A user write starts as the answer comes back: its version is drawn before the
-        # resolver acts, and it lands while or after it acts.
-        writer.spawn(re.findall(r"^\[p\d+\] \(key ([^,]+),", user, re.M))
         entries = [
             {
                 "peer_id": p,
@@ -62,6 +59,10 @@ def _judge(seed: int, calls: list[str], writer: _Writer) -> Any:
             }
             for p in re.findall(r"^\[(p\d+)\]", user, re.M)
         ]
+        await in_call(entries)
+        # A user write starts as the answer comes back: its version is drawn before the
+        # resolver acts, and it lands while or after it acts.
+        writer.spawn(re.findall(r"^\[p\d+\] \(key ([^,]+),", user, re.M))
         return SimpleNamespace(text=json.dumps({"peers": entries}))
 
     return complete
@@ -187,32 +188,63 @@ async def _erase(ch: Any, org: str) -> None:
     )
 
 
-async def _versions_after(ch: Any, org: str, version: int) -> int:
-    n = 0
-    for table in ("memory_versions", "memory_embeddings"):
+# Every table a resolver write lands in.
+_WRITTEN = (
+    "memory",
+    "memory_versions",
+    "memory_embeddings",
+    "operator_edges",
+    "audit_log",
+    "memory_projection_failures",
+)
+
+
+async def _stored(ch: Any, org: str) -> dict[str, set[int]]:
+    """A hash of every stored row of the org, per table. A merge only drops rows, so a
+    row the snapshot lacks is a write made after it."""
+    out: dict[str, set[int]] = {}
+    for table in _WRITTEN:
         rows = await ch.query_all(
-            f"SELECT count() AS n FROM loom.{table} WHERE org = {{org:String}}"
-            " AND version > {v:UInt64} SETTINGS select_sequential_consistency = 1",
-            params={"org": org, "v": version},
+            f"SELECT cityHash64(formatRow('TSV', *)) AS h FROM loom.{table} WHERE org = {{org:String}}"
+            " SETTINGS select_sequential_consistency = 1",
+            params={"org": org},
         )
-        n += int(rows[0]["n"])
-    return n
+        out[table] = {int(r["h"]) for r in rows}
+    return out
 
 
 @pytest.mark.parametrize("seed", [1, 2, 3, 4, 5, 6])
 async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     ch, wired, monkeypatch, seed: int
 ) -> None:
-    import server.memory.store as M
     from server.memory.api.models_crud import MemoryRestoreInput
-    from server.memory.app import write
+    from server.memory.app import after_write, write
     from server.memory.app.restore import handle_memory_restore
     from server.memory.workers.conflict_resolver import run_pass
+    from server.settings import settings
 
     org, llm = wired
     calls: list[str] = []
     writer = _Writer(ch, org, seed)
-    monkeypatch.setattr(llm, "complete", _judge(seed, calls, writer))
+    erasing = seed % 3 == 0
+    stored: dict[str, set[int]] = {}
+
+    async def in_call(entries: list[dict[str, Any]]) -> None:
+        acts = any(e["confidence"] >= 0.9 and e["same_entity"] for e in entries)
+        if erasing and acts and not stored:
+            # The erasure is requested while a call whose answer acts is in flight:
+            # from here on, nothing the resolver does may write in the org. The user's
+            # writes stop first, so none changes the pairs this answer acts on.
+            writer.open = False
+            await writer.run(0)
+            await after_write.drain()
+            stored.update(await _stored(ch, org))
+            await _erase(ch, org)
+
+    if erasing:
+        # One row at a time: no other row's write is in flight beside the call.
+        monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
+    monkeypatch.setattr(llm, "complete", _judge(seed, calls, writer, in_call))
     # A point write draws its version first and inserts after its embedding: a slow
     # embedding is the window in which the resolver can act on the old row.
     embed, slow = write._set_embed, random.Random(seed * 31)
@@ -237,16 +269,14 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     await writer.run(0)
     writer.open = False
     want = writer.want
-    if seed % 3 == 0:
-        # An erasure requested now: nothing the resolver does may write in the org.
-        await _erase(ch, org)
-        before = M.next_version()
-        await run_pass()
-        assert await _versions_after(ch, org, before) == 0
     await run_pass()  # what the writes marked
     drained = len(calls)
     await run_pass()
     assert len(calls) == drained, "a pass after the queue drained makes no call"
+    if erasing:
+        assert stored, "the erasure was requested during a call"
+        after = await _stored(ch, org)
+        assert {t: after[t] - stored[t] for t in _WRITTEN} == {t: set() for t in _WRITTEN}
 
     await writer.run(0)
     heads = await _heads(ch, org)
@@ -270,7 +300,7 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
         if head["status"] != "superseded" or head["tombstoned_at"] is not None:
             continue
         assert head["id"] in recorded, (key, "retired without a record")
-        if seed % 3 == 0:
+        if erasing:
             continue  # the org is under erasure
         undone = await handle_memory_restore(
             MemoryRestoreInput(

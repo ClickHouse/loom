@@ -163,7 +163,8 @@ memory.set, memory.pin, memory.delete, Undo and erasure requests):
 - Every retirement has a `memory.auto_supersede` record and can be undone.
 - Nothing changes below confidence 0.90.
 - No other user's or tenant's text reaches a prompt.
-- Nothing is written in an org under erasure: it is read right before each write.
+- Nothing is written in an org under erasure, even one requested while a row's call is in
+  flight: the erasure is read again right before each write.
 - A row is judged once per written version: after a paid call the row is stamped judged,
   or the pass stops (a provider or lock outage) with the row owed.
 
