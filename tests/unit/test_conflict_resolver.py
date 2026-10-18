@@ -361,9 +361,16 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def head(org: str, mid: str) -> Any:
         return e.heads.get(mid)
 
-    async def act(action: str, org: str, namespace: str, row: Any, peer: Any) -> Any:
-        e.acted.append((action, row.memory_id, peer.memory_id))
-        return resolver.Retired("f1", [], "a") if action == cr.RETIRE else True
+    async def retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
+        e.acted.append((cr.RETIRE, row.memory_id, peer.memory_id))
+        return resolver.Retired("f1", [], "a")
+
+    def acts(action: str) -> Any:
+        async def act(org: str, row: Any, peer: Any) -> bool:
+            e.acted.append((action, row.memory_id, peer.memory_id))
+            return True
+
+        return act
 
     async def audit(org: str, namespace: str, row: Any, acted: list[Any], model: str) -> None:
         e.audits.append(acted)
@@ -391,7 +398,9 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def after_retire(org: str, namespace: str, done: Any) -> None:
         e.after_retire = done
 
-    monkeypatch.setattr(resolver, "_act", act)
+    monkeypatch.setattr(resolver, "_retire", retire)
+    monkeypatch.setattr(resolver, "_flag", acts(cr.FLAG))
+    monkeypatch.setattr(resolver, "_clear", acts(cr.CLEAR))
     monkeypatch.setattr(resolver, "_after_retire", after_retire)
     monkeypatch.setattr(resolver, "_audit", audit)
     return e
@@ -493,13 +502,13 @@ async def test_a_pair_that_fails_leaves_the_audit_row_of_the_pairs_done_before_i
         _entry("p1", "contradiction", 0.95), _entry("p2", "contradiction", 0.95)
     )
 
-    async def act(action: str, org: str, namespace: str, row: Any, peer: Any) -> bool:
+    async def flag(org: str, row: Any, peer: Any) -> bool:
         if peer.memory_id == "m3":
             raise RuntimeError("ClickHouse went away")
-        row_env.acted.append((action, row.memory_id, peer.memory_id))
+        row_env.acted.append((cr.FLAG, row.memory_id, peer.memory_id))
         return True
 
-    monkeypatch.setattr(resolver, "_act", act)
+    monkeypatch.setattr(resolver, "_flag", flag)
     with pytest.raises(RuntimeError):
         await _resolve()
     assert [p["peer_id"] for p in row_env.audits[0]] == ["m2"]
@@ -676,12 +685,12 @@ async def test_a_row_or_peer_labelled_high_before_the_prompt_is_never_sent(row_e
 async def test_a_cancellation_while_acting_lets_the_act_and_its_audit_finish(
     row_env: NS, monkeypatch
 ) -> None:
-    async def slow_act(action: str, org: str, namespace: str, row: Any, peer: Any) -> bool:
+    async def slow_retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
         await asyncio.sleep(0.05)
-        row_env.acted.append((action, row.memory_id, peer.memory_id))
-        return True
+        row_env.acted.append((cr.RETIRE, row.memory_id, peer.memory_id))
+        return resolver.Retired("f1", [], "a")
 
-    monkeypatch.setattr(resolver, "_act", slow_act)
+    monkeypatch.setattr(resolver, "_retire", slow_retire)
     task = asyncio.ensure_future(
         resolver.resolve_row(_q(), policy="newest_wins", counts=resolver.Counts())
     )

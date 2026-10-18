@@ -229,14 +229,10 @@ class Retired:
 
 
 async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | None:
-    """Supersede `peer` behind the judged row `row`; the caller has checked that `peer`
-    was stated first. Returns what `_after_retire` records and follows, or None.
-
-    The record and the follow are queued for the projection repair before the
-    supersede commits (FOLLOW_OWED, with the record's entry; the repair acts on a pair
-    only while its loser is retired behind its winner, so an intent whose retirement
-    never landed changes nothing), and resolved once both land: a crash or a failed
-    emit in between leaves them for the repair. No intent, no retirement."""
+    """Supersede `peer` (stated first) behind the judged row `row`; what `_after_retire`
+    records and follows, or None. The record and the follow are owed to the repair
+    before the supersede commits (FOLLOW_OWED, acted on only while the loser is retired
+    behind the winner) and resolved once both land. No intent, no retirement."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, retired_entry
     from server.memory.app.conflicts import apply_refines
     from server.memory.app.projection_failures import FOLLOW_OWED, record_projection_failure
@@ -418,14 +414,6 @@ async def _clear(org: str, row: Any, peer: Any) -> bool:
     return a or b
 
 
-async def _act(action: str, org: str, namespace: str, row: Any, peer: Any) -> Retired | bool:
-    if action == cr.RETIRE:
-        return await _retire(org, namespace, row, peer) or False
-    if action == cr.FLAG:
-        return await _flag(org, row, peer)
-    return await _clear(org, row, peer)
-
-
 _COUNTED = {cr.RETIRE: "retired", cr.FLAG: "flagged", cr.CLEAR: "cleared"}
 
 
@@ -501,7 +489,14 @@ async def _settle_locked_pair(
     if action == cr.RETIRE and not order[str(head.memory_id)] < order[str(row.memory_id)]:
         # "update" says the judged row is newer; the order does not: a person decides.
         action = cr.FLAG
-    done = await _act(action, org, namespace, row, head)
+    retired = None
+    if action == cr.RETIRE:
+        retired = await _retire(org, namespace, row, head)
+        done = retired is not None
+    elif action == cr.FLAG:
+        done = await _flag(org, row, head)
+    else:
+        done = await _clear(org, row, head)
     if not done:
         return None, None
     setattr(counts, _COUNTED[action], getattr(counts, _COUNTED[action]) + 1)
@@ -510,7 +505,7 @@ async def _settle_locked_pair(
         # The pair is settled: the winner's flag against the row it retired goes too,
         # or it stays on the review queue, stamped and never re-checked.
         taken["flag_cleared"] = await _unlink(org, row, str(head.memory_id))
-    return taken, (done if isinstance(done, Retired) else None)
+    return taken, retired
 
 
 async def _audit(

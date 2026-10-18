@@ -35,7 +35,8 @@ BURST_S = 300.0
 # Why the model was unavailable at the last pass that knew (None: available). The
 # warning is logged when this changes, not on every pass.
 _unavailable: str | None = None
-_no_key = False  # the last pass found no key for the model
+# The last pass found no key: unlike an outage, its end is known without a call.
+_no_key = False
 
 
 def _identity(r: Mapping[str, Any]) -> tuple[str, ...]:
