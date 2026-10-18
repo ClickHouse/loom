@@ -588,10 +588,10 @@ class CachedGate:
     with an admin grant, before the gate runs (`caller_home`); counted as
     that grant."""
 
-    def __init__(self, auth: AuthInfo, org: str) -> None:
+    def __init__(self, auth: AuthInfo, org: str, provisioned: str = "") -> None:
         self.auth = auth
         self.org = org
-        self.provisioned = ""
+        self.provisioned = provisioned
         self._maps: dict[str, GrantMap] = {}
         self._inherited: str | None | _Unknown = _UNKNOWN_GRANT
 

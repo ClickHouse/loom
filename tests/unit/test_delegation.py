@@ -361,17 +361,17 @@ class _TablesCH:
     async def query_one(self, sql: str, params: Any = None, **k: Any) -> dict[str, Any] | None:
         if "SELECT *" in sql:
             return self.namespaces.get((params["org"], params["ns"]))
-        owners = params["subs"] if "owner_email IN {subs:" in sql else [params.get("sub")]
+        owners = params["subs"] if "lower(owner_email) IN {subs:" in sql else [params.get("sub")]
         owned = [
             n
             for (org, _), n in self.namespaces.items()
-            if org == params["org"] and n["owner_email"] in owners
+            if org == params["org"] and n["owner_email"].lower() in owners
         ]
         held = [
             g
             for (org, _, sub), g in self.grants.items()
             if org == params["org"]
-            and sub in params["subs"]
+            and sub.lower() in params["subs"]
             and g.get("status", "active") == "active"
         ]
         rank = {"admin": 3, "writer": 2, "viewer": 1}

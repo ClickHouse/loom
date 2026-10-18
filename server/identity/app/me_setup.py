@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import BackendUnavailableError
 from server.identity.app import me_callers, token_grants
 from server.identity.app.caller_home import caller_org, default_namespace
 from server.identity.app.me_service_accounts import (
@@ -343,7 +344,12 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     # The page names where this token's unaddressed MCP calls land: the MCP
     # transport's own resolver, asked about the token just minted.
     token = delegated.as_auth(sa_subject)
-    displayed_namespace = await default_namespace(token, caller_org(token) or org)
+    try:
+        displayed_namespace = await default_namespace(token, caller_org(token) or org)
+    except BackendUnavailableError:
+        # The token is already minted and listed: hand it over without a name
+        # rather than fail, or a retry would mint a second one.
+        displayed_namespace = ""
 
     # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.
     from server.auth.public_url import public_base_url

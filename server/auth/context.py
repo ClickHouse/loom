@@ -109,13 +109,13 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     # Scoped token: the ordered namespace claim is authoritative. Preserve
     # order (= read priority); do not union other grants (= subset restrict).
     if auth is not None and auth.has_ns_roles():
-        return await _gate_readable(auth, org, _named(auth))
+        return await _gate_readable(auth, org, named_claims(auth))
 
     jwt_namespaces: set[str] = set()
     resolved_subject: str | None = None
     if auth is not None and auth.subject:
         resolved_subject = auth.subject
-        jwt_namespaces = set(_named(auth))
+        jwt_namespaces = set(named_claims(auth))
     if not resolved_subject:
         resolved_subject = subject
 
@@ -135,7 +135,7 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     return await _gate_readable(auth, org, sorted(jwt_namespaces | grant_namespaces))
 
 
-def _named(auth: AuthInfo) -> list[str]:
+def named_claims(auth: AuthInfo) -> list[str]:
     """The namespaces the token's claim names, in order, without `*`."""
     return list(dict.fromkeys(ns for ns in auth.namespaces if ns and ns != "*"))
 
@@ -197,8 +197,7 @@ async def readable_named_claims(
     if auth is None or not may_act_in_org(auth, org):
         return []
     gate = gate or CachedGate(auth, org)
-    named = dict.fromkeys(ns for ns in auth.namespaces if ns and ns != "*")
-    return [ns for ns in named if await gate.admits(ns, Role.VIEWER)]
+    return [ns for ns in named_claims(auth) if await gate.admits(ns, Role.VIEWER)]
 
 
 async def delegated_reach(
@@ -213,7 +212,7 @@ async def delegated_reach(
     from server.operations.base import Role
 
     gate = gate or CachedGate(auth, org)
-    candidates = list(dict.fromkeys(ns for ns in auth.namespaces if ns and ns != "*"))
+    candidates = named_claims(auth)
     if "*" in auth.namespaces:
         ranks = (await gate.grants(auth.creator)).ranks
         candidates += sorted(ns for ns, rank in ranks.items() if rank and ns not in candidates)
@@ -303,6 +302,7 @@ __all__ = [
     "current_auth",
     "current_auth_var",
     "delegated_reach",
+    "named_claims",
     "readable_named_claims",
     "resolve_my_namespaces",
     "resolve_org_scope",

@@ -158,6 +158,18 @@ def test_a_person_without_grants_defaults_to_the_personal_namespace_the_gate_pro
     assert ns == "personal-viewer" and home.is_memory_home(KINDS, ns)
 
 
+def test_a_person_this_process_already_resolved_is_not_provisioned_again(
+    _wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The gate provisions a person once per process; a person resolved while
+    # still holding grants is skipped after losing them, so it is no default.
+    import server.auth.personal_namespace as pn
+
+    _wired(_CH(saved=None, grants=[]))
+    monkeypatch.setattr(pn, "_seen", {("clickhouse", "viewer@example.com")})
+    assert _defaults(_Auth("viewer@example.com", ("code-loom",)))["namespace"] == ""
+
+
 def test_memory_home_helpers() -> None:
     assert home.home_namespace(_OWNER_GRANTS, "alice") == "alice"
     assert home.home_namespace(_OWNER_GRANTS[:4], "alice", "code-loom") == "code-loom"

@@ -14,7 +14,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from server.auth.context import delegated_reach, readable_named_claims
+from server.auth.context import delegated_reach, named_claims, readable_named_claims
 from server.auth.personal_namespace import derive_personal_slug
 from server.core.errors import BackendUnavailableError
 from server.identity.app import caller_defaults
@@ -120,20 +120,22 @@ async def default_and_readable(auth: Any, org: str) -> tuple[str, list[str]]:
     at the home subject's saved switcher pick, then the token's claims, then
     the home's grants, ranked (`_pick_default`).
 
-    Fails closed: a grant read ClickHouse cannot answer reaches the transport as
-    BackendUnavailableError (a retryable 503); any other failure is logged and
-    answers no default and nothing readable."""
+    Fails closed: a cached grant map ClickHouse cannot read reaches the
+    transport as BackendUnavailableError (a retryable 503); any other failure
+    is logged and answers no default and nothing readable."""
     from server.auth.authz import CachedGate
     from server.settings import settings
 
-    gate = None if auth is None else CachedGate(auth, org)
     home = home_subject(auth) or "you"
     try:
         if settings.effective_identity_provider() == "single-user":
-            claimed = await readable_named_claims(auth, org, gate)
+            claimed = await readable_named_claims(auth, org)
             return (claimed[0] if claimed else settings.default_namespace), claimed
+        gate = None
+        if auth is not None:
+            gate = CachedGate(auth, org, provisioned=await _provisioned(auth, org))
         admits, extra = await _gate_view(auth, org, home, gate)
-        named = [ns for ns in (getattr(auth, "namespaces", None) or ()) if ns != "*"]
+        named = [] if auth is None else named_claims(auth)
         default = await _pick_default(auth, org, home, named, admits, extra)
         return default, [] if default else await readable_named_claims(auth, org, gate)
     except BackendUnavailableError:
@@ -202,7 +204,6 @@ async def _gate_view(
             return True
 
         return _anything, [derive_personal_slug(home)]
-    gate.provisioned = await _provisioned(auth, org, gate)
     if not auth.creator:
         return gate.admits, [derive_personal_slug(auth.subject)]
     writable, readable = await delegated_reach(auth, org, gate)
@@ -213,23 +214,27 @@ async def _gate_view(
     return _reached, readable
 
 
-async def _provisioned(auth: Any, org: str, gate: CachedGate) -> str:
+async def _provisioned(auth: Any, org: str) -> str:
     """The personal namespace `gates.authorize` gives this person, with an
     admin grant, before the gate runs (`ensure_personal_namespace_cached`):
     a person of this org with no live grant, while nobody owns the name (a
-    person whose own grant there was revoked owns it, and is given nothing);
-    "" otherwise. A delegated token counts it only when its creator is that
-    person, whose grants the gate reads."""
+    person whose own grant there was revoked owns it, and is given nothing),
+    and only while this process has not already resolved the person, which it
+    does once (`provisioning_pending`); "" otherwise. A delegated token counts
+    it only when its creator is that person, whose grants the gate reads."""
     if auth.is_service_account or auth.org != org:
         return ""
     if auth.creator and auth.creator.lower() != auth.subject.lower():
         return ""
-    if any((await gate.grants()).ranks.values()):
+    from server.auth.personal_namespace import namespace_owner, provisioning_pending
+    from server.core.ch import get_client
+    from server.core.grant_cache import grant_map
+
+    if not provisioning_pending(auth.org, auth.subject):
+        return ""
+    if any((await grant_map(org, auth.subject)).ranks.values()):
         return ""
     slug = derive_personal_slug(auth.subject)
-    from server.auth.personal_namespace import namespace_owner
-    from server.core.ch import get_client
-
     return "" if await namespace_owner(get_client(), org, slug) is not None else slug
 
 

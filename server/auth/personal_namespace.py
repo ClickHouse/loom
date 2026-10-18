@@ -118,6 +118,12 @@ async def namespace_owner(ch: Any, org: str, namespace: str) -> str | None:
     return None if row is None else str(row.get("owner") or "")
 
 
+def provisioning_pending(org: str, subject: str) -> bool:
+    """Whether the next `ensure_personal_namespace_cached` call for this pair
+    reads and may provision; False once this process has resolved it."""
+    return (org, subject) not in _seen
+
+
 async def ensure_personal_namespace_cached(
     *,
     org: str,

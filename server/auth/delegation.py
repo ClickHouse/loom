@@ -326,16 +326,16 @@ async def _creator_account(org: str, creator: str) -> _Account:
             FROM (
                 SELECT count() AS owned, countIf(active = 1) AS owned_live
                 FROM loom.namespaces FINAL
-                WHERE org = {{org:String}} AND owner_email IN {{subs:Array(String)}}
+                WHERE org = {{org:String}} AND lower(owner_email) IN {{subs:Array(String)}}
             ) AS o
             CROSS JOIN (
                 SELECT countIf(status = 'active') AS granted,
                        maxIf({GRANT_RANK_SQL}, {LIVE_GRANT}) AS best_rank
                 FROM loom.namespace_grants FINAL
-                WHERE org = {{org:String}} AND subject IN {{subs:Array(String)}}
+                WHERE org = {{org:String}} AND lower(subject) IN {{subs:Array(String)}}
             ) AS g
             """,
-            params={"org": org, "subs": subjects},
+            params={"org": org, "subs": [s.lower() for s in subjects]},
         )
     except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
         log.warning("account lookup failed for %s/%s: %s", org, creator, e)

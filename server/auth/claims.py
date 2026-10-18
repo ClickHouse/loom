@@ -29,7 +29,6 @@ from server.auth import shielded
 
 log = logging.getLogger(__name__)
 
-_TABLE = "loom.oauth_signin_state"
 SWEEP_INTERVAL_SECONDS = 300
 _FULL_FOR_S = 900  # how long hitting the key limit stays a health problem
 UNDO_S = 5  # an undo Keeper does not finish by then is left to the key's expiry
@@ -71,7 +70,8 @@ def _lost_race(e: BaseException) -> bool:
 async def get(ch: Any, key: str) -> str | None:
     try:
         row = await ch.query_one(
-            f"SELECT value FROM {_TABLE} WHERE claim_key = {{k:String}}", params={"k": key}
+            "SELECT value FROM loom.oauth_signin_state WHERE claim_key = {k:String}",
+            params={"k": key},
         )
     except Exception as e:  # Keeper unreadable: the request retries
         raise Busy(key) from e
@@ -137,14 +137,15 @@ async def _swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -
         try:
             if old is None:
                 await ch.execute(
-                    f"INSERT INTO {_TABLE} (claim_key, value, expires_at) "
+                    f"INSERT INTO loom.oauth_signin_state (claim_key, value, expires_at) "
                     f"SETTINGS keeper_map_strict_mode = 1, {_BOUNDED} "
                     "VALUES ({k:String}, {v:String}, {e:UInt32})",
                     params=params,
                 )
             else:
                 await ch.execute(
-                    f"ALTER TABLE {_TABLE} UPDATE value = {{v:String}}, expires_at = {{e:UInt32}} "
+                    "ALTER TABLE loom.oauth_signin_state UPDATE value = {v:String}, "
+                    "expires_at = {e:UInt32} "
                     "WHERE claim_key = {k:String} AND value = {old:String} "
                     f"SETTINGS keeper_map_strict_mode = 1, {_BOUNDED}",
                     params=params,
@@ -172,7 +173,8 @@ def _note_full(e: BaseException) -> None:
 async def _drop(ch: Any, key: str, value: str) -> None:
     try:
         await ch.execute(
-            f"ALTER TABLE {_TABLE} DELETE WHERE claim_key = {{k:String}} AND value = {{v:String}} "
+            "ALTER TABLE loom.oauth_signin_state DELETE WHERE claim_key = {k:String} "
+            "AND value = {v:String} "
             f"SETTINGS keeper_map_strict_mode = 1, {_BOUNDED}",
             params={"k": key, "v": value},
         )
@@ -189,7 +191,7 @@ async def sweep() -> None:
     try:
         # Strict: a key renewed after this read it is not deleted.
         await ch.execute(
-            f"ALTER TABLE {_TABLE} DELETE WHERE expires_at < toUInt32(now()) "
+            "ALTER TABLE loom.oauth_signin_state DELETE WHERE expires_at < toUInt32(now()) "
             "SETTINGS keeper_map_strict_mode = 1"
         )
     # A key changed meanwhile: this sweep deletes nothing; the next one tries again.

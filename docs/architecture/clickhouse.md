@@ -420,8 +420,8 @@ with `purge=true` and runner state.
   died mid-begin left behind. All are Keeper key drops, not MergeTree mutations.
 - **Sign-in state** (`loom.oauth_signin_state`, KeeperMap) holds each code, device
   grant, finished IdP round trip and session's current refresh token. A value changes
-  only by a strict-mode compare-and-set: an `INSERT` for a new key, a versioned `ALTER …
-UPDATE` otherwise. Keys carry their credential's expiry, and a sweep every five
+  only by a strict-mode compare-and-set: an `INSERT` for a new key, otherwise an
+  `ALTER … UPDATE` conditioned on the value the writer read. Keys carry their credential's expiry, and a sweep every five
   minutes drops the expired ones with one `ALTER … DELETE`; all are Keeper key
   operations, not MergeTree mutations. `loom.oauth_claims` (migration 028) is used only by a
   previous build still serving during a rolling upgrade.
