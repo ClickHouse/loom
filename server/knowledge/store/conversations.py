@@ -784,10 +784,11 @@ _THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
           ))"""
 
 
-# The excerpt build N-1 stores. A row's excerpt is compared whole against a peer's
-# content cut at this length and at EMBEDDED_EXCERPT_CHARS, so rows of either build
-# match exactly. It is not HIT_EXCERPT_CHARS, the cut a search hit shows.
-_N1_EXCERPT_CHARS = 240
+# The excerpt that rows written before excerpts kept the embedded text, and build
+# N-1's rows, hold; those rows are never rewritten, so this stays. A row's excerpt is
+# compared whole against a peer's content cut at this length and at
+# EMBEDDED_EXCERPT_CHARS. It is not HIT_EXCERPT_CHARS, the cut a search hit shows.
+_SHORT_EXCERPT_CHARS = 240
 
 
 async def _tombstone_embeddings(
@@ -816,7 +817,7 @@ async def _tombstone_embeddings(
         "agent": agent,
         "tid": thread_id,
         "embedded": EMBEDDED_EXCERPT_CHARS,
-        "n1": _N1_EXCERPT_CHARS,
+        "short": _SHORT_EXCERPT_CHARS,
     }
     # The live rows are filtered in the inner query: in the outer one the REPLACE alias
     # would shadow `tombstoned_at`.
@@ -830,7 +831,7 @@ async def _tombstone_embeddings(
             AND (msg_id, content_excerpt) NOT IN (
               SELECT msg_id, arrayJoin([
                 substringUTF8(content, 1, {{embedded:UInt32}}),
-                substringUTF8(content, 1, {{n1:UInt32}})
+                substringUTF8(content, 1, {{short:UInt32}})
               ])
               FROM loom.conversations
               WHERE org = {{org:String}} AND namespace = {{ns:String}}

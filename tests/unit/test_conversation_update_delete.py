@@ -277,6 +277,8 @@ async def test_named_turns_are_tombstoned_in_byte_bounded_slices() -> None:
     slices = [p["ids"] for sql, p in executed if "INSERT INTO loom.conversation_embeddings" in sql]
     assert len(slices) > 1
     assert sum(slices, []) == ids
+    # Each one binds well under the server's 128 KiB form-field cap.
+    assert all(len(str(part).encode()) < 128 << 10 for part in slices)
 
 
 @pytest.mark.asyncio
