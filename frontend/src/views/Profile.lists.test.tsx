@@ -86,7 +86,7 @@ describe("Profile sections list", () => {
     render(<Profile />);
     expect(screen.getByLabelText("Search profile sections")).toBeInTheDocument();
     expect(await screen.findByText("Couldn't load profile sections")).toBeInTheDocument();
-    expect(screen.getByText("request id rid-3")).toBeInTheDocument();
+    expect(screen.getByText("rid-3").tagName).toBe("CODE");
     expect(toolbar()).not.toHaveTextContent(/\d/);
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("about-me")).toBeInTheDocument();

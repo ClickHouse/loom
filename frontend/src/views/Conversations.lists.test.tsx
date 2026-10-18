@@ -162,7 +162,7 @@ describe("Conversations list", () => {
       .mockResolvedValueOnce({ threads: THREADS });
     render(<Conversations />);
     expect(await screen.findByText("Couldn't load conversations")).toBeInTheDocument();
-    expect(screen.getByText("request id rid-9")).toBeInTheDocument();
+    expect(screen.getByText("rid-9").tagName).toBe("CODE");
     expect(toolbar()).not.toHaveTextContent(/\d/);
     expect(screen.queryByText(/No conversations yet/)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));

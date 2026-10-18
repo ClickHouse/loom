@@ -372,7 +372,7 @@ describe("Memories list chrome", () => {
     );
     render(<Recent />);
     expect(await screen.findByText("Couldn't load memories")).toBeInTheDocument();
-    expect(screen.getByText("request id req-42")).toBeInTheDocument();
+    expect(screen.getByText("req-42").tagName).toBe("CODE");
     expect(screen.queryByText("No memories yet")).toBeNull();
     expect(toolbar()).not.toHaveTextContent(/\d/);
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));

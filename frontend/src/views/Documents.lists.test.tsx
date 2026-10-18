@@ -118,7 +118,7 @@ describe("Library list", () => {
     );
     render(<Documents />);
     expect(await screen.findByText("Couldn't load documents")).toBeInTheDocument();
-    expect(screen.getByText("request id rid-7")).toBeInTheDocument();
+    expect(screen.getByText("rid-7").tagName).toBe("CODE");
     expect(screen.queryByText("Your library is empty")).toBeNull();
     expect(toolbar()).not.toHaveTextContent(/\d/);
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));

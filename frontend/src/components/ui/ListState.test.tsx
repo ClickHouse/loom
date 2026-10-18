@@ -49,7 +49,10 @@ describe("ListState", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load documents");
     expect(screen.getByRole("heading", { name: "Couldn't load documents" })).toBeInTheDocument();
     expect(screen.getByText(/Loom's database is unreachable/)).toBeInTheDocument();
-    expect(screen.getByText("request id req-123").tagName).toBe("CODE");
+    // The id is the identifier, in code; its caption is prose.
+    const rid = screen.getByText("req-123");
+    expect(rid.tagName).toBe("CODE");
+    expect(rid.parentElement).toHaveTextContent("request id req-123");
     expect(screen.queryByText(/empty/i)).toBeNull();
     const retry = screen.getByRole("button", { name: "Retry" });
     expect(retry.className).toMatch(/secondary/);
@@ -60,7 +63,7 @@ describe("ListState", () => {
   it("error: a message the page already humanized, and its request id", () => {
     render(<ListState kind="error" things="memories" error="Loom took too long." requestId="r-9" onRetry={() => {}} />);
     expect(screen.getByText("Loom took too long.")).toBeInTheDocument();
-    expect(screen.getByText("request id r-9")).toBeInTheDocument();
+    expect(screen.getByText("r-9").tagName).toBe("CODE");
   });
 
   // Retry leaves with the error state, so focus goes to the page's heading, not the page.
