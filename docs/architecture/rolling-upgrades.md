@@ -166,9 +166,8 @@ schema. These rules keep that safe. The operator procedure is in
     per-write judge (`LOOM_MEMORY_CONFLICT_JUDGE`, off by default) its settle of a row it
     wrote can stamp its settle time over N's mark on that row; N then reads an older
     build's verdict, owed again only while the row is `conflicted`, and that one row may
-    go unjudged. While
-    N-1 holds the worker lease (a code-only release keeps it until it stops) N's marks
-    wait, and the first N leader judges them.
+    go unjudged. While N-1 holds the worker lease (a code-only release keeps it until it
+    stops) N's marks wait, and the first N leader judges them.
 
 ## What checks them
 
