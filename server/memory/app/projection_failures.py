@@ -13,6 +13,7 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt, to_naive_utc
+from server.core.errors import PreconditionFailedError
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     WHOLE_NAMESPACE,
@@ -298,6 +299,10 @@ async def mark_projection_failures_abandoned(
     )
 
 
+class _KeyBusy(Exception):
+    """A row's key lock is held past the repair's short wait: retried next pass."""
+
+
 async def retry_projection_failure(
     failure: ProjectionFailureRow, *, ch: Any | None = None
 ) -> ProjectionFailureRetryResult:
@@ -402,6 +407,14 @@ async def _retry(
             resolved=not reason,
             reason=reason,
             abandoned=bool(reason),
+        )
+    except _KeyBusy:
+        return ProjectionFailureRetryResult(
+            failure_id=failure.failure_id,
+            projection=failure.projection,
+            retried=False,
+            resolved=False,
+            reason="key busy",
         )
     except Exception as e:  # noqa: BLE001 — reported on the result; the row stays open
         return ProjectionFailureRetryResult(
@@ -550,17 +563,21 @@ async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
         ident = (row.namespace, row.agent, row.user_id, row.session_id, row.memory_key)
         # Read again and mirrored under the key's lock, which a retirement holds: one
         # landing meanwhile is never served again.
-        async with key_write_locks.hold(failure.org, *ident):
-            row = await head_of(mid)
-            if row is None:
-                continue
-            head = row.model_dump()
-            # As reconcile-status: a hiding status at the head's version; a served one
-            # at read + 1, above a judged copy that sits over the head's version.
-            if head.get("status") in SERVED_STATUSES and head.get("tombstoned_at") is None:
-                head.pop("version", None)
-            # Strict: a mirror that failed must leave the failure open for the next pass.
-            await memory_repo.mirror_status_to_embeddings([head], ch=ch, strict=True)
+        try:
+            async with key_write_locks.hold(failure.org, *ident, wait_s=1.0):
+                row = await head_of(mid)
+                if row is None:
+                    continue
+                head = row.model_dump()
+                # As reconcile-status: a hiding status at the head's version; a served one
+                # at read + 1, above a judged copy that sits over the head's version.
+                if head.get("status") in SERVED_STATUSES and head.get("tombstoned_at") is None:
+                    head.pop("version", None)
+                # Strict: a mirror that failed must leave the failure open for the next pass.
+                await memory_repo.mirror_status_to_embeddings([head], ch=ch, strict=True)
+        except PreconditionFailedError as e:
+            raise _KeyBusy from e  # a settle or an Undo holds it: the next pass
+
     return ""
 
 

@@ -956,6 +956,30 @@ async def test_the_reconcile_mirrors_each_rows_head(monkeypatch) -> None:
     assert out.resolved and resolved == ["f1"]
 
 
+async def test_a_busy_key_leaves_the_reconcile_pending(monkeypatch) -> None:
+    import server.memory.store as memory_repo
+    from server.memory.app import projection_failures
+    from server.memory.store import key_write_lock as kl
+    from tests.unit.claims_fake import fake_key_locks
+
+    fake_key_locks(monkeypatch)
+
+    async def get_by_id(mid, **kw):
+        return _stored({"memory_id": mid, "status": "active"})
+
+    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
+    failure = SimpleNamespace(
+        failure_id="f1",
+        org="o",
+        payload={"memory_ids": ["m"]},
+        projection=projection_failures.STATUS_MIRROR,
+        created_at=None,
+    )
+    async with kl.key_write_locks.hold("o", "n", "a", "u", "s", "m"):  # a settle holds it
+        out = await projection_failures.retry_projection_failure(failure, ch=object())
+    assert (out.retried, out.resolved, out.reason, out.error) == (False, False, "key busy", "")
+
+
 async def test_a_failed_reconcile_mirror_leaves_the_failure_open(monkeypatch) -> None:
     from types import SimpleNamespace
 

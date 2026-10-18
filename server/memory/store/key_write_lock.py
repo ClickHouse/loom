@@ -61,9 +61,11 @@ class KeyWriteLocks:
         user_id: str,
         session_id: str,
         memory_key: str,
+        *,
+        wait_s: float | None = None,
     ) -> AsyncIterator[None]:
         name = lock_name(org, namespace, agent, user_id, session_id, memory_key)
-        until = time.monotonic() + self._wait_s
+        until = time.monotonic() + (self._wait_s if wait_s is None else wait_s)
         async with self._process_lock(name, until):
             lease = await self._take(name, until)
             try:
