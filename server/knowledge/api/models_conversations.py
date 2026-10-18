@@ -244,9 +244,10 @@ class ConversationListOutput(BaseModel):
 class ConversationSearchInput(BaseModel):
     """Rank conversation messages by embedding similarity to `query`.
 
-    `thread_id`, `run_id` and `role` each narrow the hits, and they combine. Only user
-    and assistant turns are embedded; when the embedder is unavailable a substring
-    match stands in, newest first, and it also matches system and tool turns."""
+    `thread_id`, `run_id` and `role` each narrow the hits, and they combine. User and
+    assistant turns and compaction summaries are embedded; when the embedder is
+    unavailable a substring match stands in, newest first, and it also matches the
+    other system turns and tool turns."""
 
     org: str
     namespace: str
@@ -257,8 +258,8 @@ class ConversationSearchInput(BaseModel):
     query: str
     thread_id: str | None = None  # optional: scope to one thread
     run_id: str | None = None  # optional: filter by run_id
-    # Filter by speaker; system and tool turns are not embedded, so they match only on
-    # the substring fallback.
+    # Filter by speaker; system turns other than compaction summaries, and tool turns,
+    # are not embedded, so they match only on the substring fallback.
     role: ConversationRole | None = None
     # At most this many hits (1-200). Across agents ("*" or "-") a turn several agents
     # logged is one hit: the embeddings hold one row per turn, and the substring path
@@ -322,7 +323,8 @@ class ConversationThreadsOutput(BaseModel):
 class ConversationCompactInput(BaseModel):
     """Summarize messages older than `keep_recent` (from the tail) via an LLM,
     write the summary as a synthetic role='system' message with
-    metadata.compacted_from=[msg_ids], then tombstone the originals.
+    metadata.compacted_from=[msg_ids], embedded so search finds it, then tombstone
+    the originals and their embeddings.
 
     Idempotent: re-running on an already-summarized window is a no-op.
     """

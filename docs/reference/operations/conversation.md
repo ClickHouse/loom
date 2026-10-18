@@ -38,7 +38,7 @@ Log one chat turn (role + content) to the active thread.
 
 ## `conversation.compact`
 
-Summarize messages older than `keep_recent` (from the tail) via an LLM, write the summary as a synthetic role='system' message with metadata.compacted_from=[msg_ids], then tombstone the originals.
+Summarize messages older than `keep_recent` (from the tail) via an LLM, write the summary as a synthetic role='system' message with metadata.compacted_from=[msg_ids], embedded so search finds it…
 
 `POST /v1/conversation.compact` · MCP `loom_conversation_compact` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -170,7 +170,7 @@ Rank conversation messages by embedding similarity to `query`.
 | `query` | `str` | required | Text matched against message content, by embedding similarity, or by substring when the embedder is unavailable. |
 | `thread_id` | `str \| None` | `None` | optional: scope to one thread |
 | `run_id` | `str \| None` | `None` | optional: filter by run_id |
-| `role` | `Literal['user', 'assistant', 'system', 'tool'] \| None` | `None` | Filter by speaker; system and tool turns are not embedded, so they match only on the substring fallback. |
+| `role` | `Literal['user', 'assistant', 'system', 'tool'] \| None` | `None` | Filter by speaker; system turns other than compaction summaries, and tool turns, are not embedded, so they match only on the substring fallback. |
 | `top_k` | `int` | `20` | At most this many hits (1-200). |
 | `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "all_mine" also reads the caller's own namespaces, up to `memory_search_fanout_max_namespaces`, as knowledge.search does. |
 

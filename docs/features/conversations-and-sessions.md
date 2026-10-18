@@ -37,9 +37,10 @@ up front.
   written again (`reason: "duplicate"`). Without a `msg_id` the server derives one from
   a hash of the thread, role and content, so a client that re-logs a turn does not
   double the transcript.
-- **Only user and assistant turns are embedded**, up to their first 2,048 characters,
+- **User and assistant turns are embedded**, up to their first 2,048 characters,
   which the embedding row keeps: a re-embed starts from the text the vector was built
-  from. `system` and `tool` turns stay in the transcript unindexed.
+  from. `system` and `tool` turns stay in the transcript unindexed, except a
+  compaction's summary.
 - **The embed is fail-open.** A failed embed still stores the turn, with the error
   recorded on its embedding row.
 
@@ -67,11 +68,11 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
 ### Compacting and deleting
 
 - **`conversation.compact`** (writer, needs an LLM provider) summarises the turns older
-  than the last `keep_recent` (default 10), writes the summary as one `system` turn
-  whose `metadata.compacted_from` lists the summarised `msg_id`s, and tombstones the
-  originals and their embeddings, so `conversation.search` stops returning them (a
-  turn another agent of the thread still holds keeps its embedding). A window smaller
-  than `min_to_compact` (default 4) is left alone.
+  than the last `keep_recent` (default 10), writes the summary as one embedded `system`
+  turn whose `metadata.compacted_from` lists the summarised `msg_id`s, and tombstones
+  the originals and their embeddings: `conversation.search` then finds the summary in
+  their place (a turn another agent of the thread still holds keeps its embedding). A
+  window smaller than `min_to_compact` (default 4) is left alone.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent's copy is live, since the

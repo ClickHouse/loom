@@ -279,8 +279,8 @@ async def insert_embedding(
     *,
     ch: _CHClient | None = None,
 ) -> None:
-    """Insert one loom.conversation_embeddings row. Used by
-    conversation.append after the canonical message row is written."""
+    """Insert one loom.conversation_embeddings row: a turn conversation.append
+    embeds, or the summary conversation.compact writes."""
     ch = ch or _default_client()
     await ch.insert(
         "loom.conversation_embeddings",
@@ -699,7 +699,9 @@ async def tombstone_messages(
     next read sees a coherent thread. The embeddings go first: a retry after a
     failure still finds the messages live and repeats both."""
     ch = ch or _default_client()
-    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids, when=when, ch=ch)
+    await _tombstone_embeddings(
+        org, namespace, agent, thread_id, msg_ids, when=when, ch=ch, count=False
+    )
     await ch.execute(
         """
         ALTER TABLE loom.conversations
@@ -736,10 +738,11 @@ async def _tombstone_embeddings(
     *,
     when: datetime,
     ch: _CHClient,
+    count: bool = True,
 ) -> int:
     """Tombstone the embeddings of `agent`'s turns in one thread (`msg_ids`, or every
-    turn it logged there, live or tombstoned) and return how many of those turns have
-    a tombstoned embedding. The embeddings key has no agent: a turn several agents
+    turn it logged there, live or tombstoned) and, with `count`, return how many of
+    those turns have a tombstoned embedding. The embeddings key has no agent: a turn several agents
     logged is one row, so it goes by turn, and only once no other agent's copy is
     live. The turns are read first and the mutation names them, so it evaluates no
     subquery (a replicated table refuses one)."""
@@ -786,6 +789,8 @@ async def _tombstone_embeddings(
                 "due": due[i : i + _TOMBSTONE_CHUNK],
             },
         )
+    if not count:
+        return 0
     n = await ch.query_one(
         f"""
         SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL

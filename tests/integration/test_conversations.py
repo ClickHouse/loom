@@ -13,20 +13,13 @@ sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
 
-async def _admin_post(agent, control_plane_url: str, op: str, body: dict) -> dict:
-    """POST `op` with an admin token for the agent's org: namespace settings and
-    conversation.delete need one, and the `agent` fixture is writer-scoped on purpose."""
+async def _admin_post(mint, agent, control_plane_url: str, op: str, body: dict) -> dict:
+    """POST `op` with an admin token for the agent's org (`mint` is the
+    `mint_test_token` fixture): namespace settings and conversation.delete need one,
+    and the `agent` fixture is writer-scoped on purpose."""
     import httpx
 
-    from server.auth.jwt import mint_token
-
-    tok = mint_token(
-        subject="test-suite-admin",
-        org=agent.org,
-        namespaces=["*"],
-        roles=["admin"],
-        ttl_seconds=600,
-    )
+    tok = mint(org=agent.org, roles=["admin"], subject="test-suite-admin")
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=30.0) as c:
         r = await c.post(f"/v1/{op}", json=body, headers={"Authorization": f"Bearer {tok}"})
         r.raise_for_status()
@@ -34,7 +27,7 @@ async def _admin_post(agent, control_plane_url: str, op: str, body: dict) -> dic
 
 
 @pytest.fixture(autouse=True)
-async def _recording_on(agent, control_plane_url: str):
+async def _recording_on(agent, control_plane_url: str, mint_test_token):
     """Opt the test namespace into transcript recording.
 
     Conversation recording is opt-in per namespace and the
@@ -51,6 +44,7 @@ async def _recording_on(agent, control_plane_url: str):
     setting, and `agent` is writer-scoped on purpose.
     """
     await _admin_post(
+        mint_test_token,
         agent,
         control_plane_url,
         "conversation.set_logging",
@@ -234,6 +228,8 @@ async def test_a_compacted_turn_leaves_search(agent) -> None:
     hit_ids = {h["msg_id"] for h in after["hits"]}
     assert not hit_ids & set(old), after["hits"]
     assert hit_ids <= listed
+    # The summary is embedded: the compacted content is still found through it.
+    assert out["summary_msg_id"] in hit_ids, after["hits"]
 
 
 @pytest.mark.asyncio
@@ -278,7 +274,7 @@ async def test_a_turn_another_agent_logged_survives_compaction(agent) -> None:
 
 @pytest.mark.asyncio
 async def test_a_deleted_thread_leaves_search_but_another_agents_turn_stays(
-    agent, control_plane_url: str, ch_client
+    agent, control_plane_url: str, ch_client, mint_test_token
 ) -> None:
     """conversation.delete tombstones the embeddings of every turn the agent logged in
     the thread, one compacted earlier included, and keeps the row of a turn another
@@ -306,6 +302,7 @@ async def test_a_deleted_thread_leaves_search_but_another_agents_turn_stays(
     )
 
     out = await _admin_post(
+        mint_test_token,
         agent,
         control_plane_url,
         "conversation.delete",
@@ -337,11 +334,12 @@ async def test_the_embedding_row_keeps_the_embedded_text_and_a_hit_shows_its_sta
     await agent.conversations.append(tid, mid, "user", content)
 
     stored = ch_client.query(
-        "SELECT content_excerpt FROM loom.conversation_embeddings FINAL "
+        "SELECT agent, thread_id, role, content_excerpt, embedding_dim > 0, tombstoned_at "
+        "FROM loom.conversation_embeddings FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND msg_id = {mid:String}",
         parameters={"org": agent.org, "ns": agent.namespace, "mid": mid},
     ).result_rows
-    assert [r[0] for r in stored] == [content[:2048]]
+    assert [tuple(r) for r in stored] == [(agent.agent, tid, "user", content[:2048], True, None)]
 
     hits = await agent.conversations.search(f"gazelle {nonce}", thread_id=tid)
     [hit] = [h for h in hits["hits"] if h["msg_id"] == mid]
@@ -350,7 +348,7 @@ async def test_the_embedding_row_keeps_the_embedded_text_and_a_hit_shows_its_sta
 
 @pytest.mark.asyncio
 async def test_a_turn_another_agent_relogged_after_compaction_is_not_counted_on_delete(
-    agent, control_plane_url: str, ch_client
+    agent, control_plane_url: str, ch_client, mint_test_token
 ) -> None:
     """This agent's copy of a turn was compacted (message and embedding tombstoned);
     a peer then logs the turn again, a newer live row before any merge. Deleting the
@@ -375,6 +373,7 @@ async def test_a_turn_another_agent_relogged_after_compaction_is_not_counted_on_
     )
 
     out = await _admin_post(
+        mint_test_token,
         agent,
         control_plane_url,
         "conversation.delete",

@@ -509,7 +509,6 @@
 57fc18cfd1a4	SELECT pr_number, any(title) AS title, any(files) AS files, any(author) AS author, any(merge_commit_sha) AS merge_sha, min(merged_at) AS merged_at FROM loom.code_pr_history FINAL WHERE org = {org:Stri
 5805dc626bcc	SELECT countIf(NOT startsWith(path, ?)) AS source_files, countIf(NOT startsWith(path, ?) AND path NOT IN ( SELECT src_path FROM loom.code_test_map FINAL WHERE org = {org:String} AND namespace = {ns:St
 580b700ab41c	SELECT name, kind, path FROM ( SELECT tier, qualified_name, symbol_id, name, kind, path, argMax(tombstoned_at IS NULL, version) AS is_live FROM loom.code_symbols WHERE org = {org:String} AND namespace
-582c0818bb2a	SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} AND tombstoned_at IS NOT NULL AND msg_id IN ( SE
 5835eff36a44	SELECT count() AS n FROM loom.memory_evidence FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 5837a3e90ebe	ALTER TABLE loom.context_blobs DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 584f5e75de87	SELECT day, partial, rolled_until FROM loom.qa_rollup_days FINAL WHERE org = {org:String} AND qa_namespace = {ns:String} AND day >= {d0:Date} AND day <= {d1:Date} ORDER BY day

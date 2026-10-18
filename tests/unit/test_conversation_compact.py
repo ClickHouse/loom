@@ -17,7 +17,8 @@ T0 = datetime(2026, 9, 1, 12, 0, 0)
 class _FakeCH:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
-        self.inserted: list[dict[str, Any]] = []
+        self.inserted: list[dict[str, Any]] = []  # loom.conversations rows
+        self.embedded: list[dict[str, Any]] = []  # loom.conversation_embeddings rows
         self.sql: list[str] = []
         self.executed: list[tuple[str, dict[str, Any]]] = []
 
@@ -34,7 +35,7 @@ class _FakeCH:
         return {"n": len((params or {}).get("ids", []))}
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **kw: Any) -> None:
-        self.inserted.extend(rows)
+        (self.embedded if table == "loom.conversation_embeddings" else self.inserted).extend(rows)
 
     async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any) -> None:
         self.sql.append(sql)
@@ -81,6 +82,13 @@ def test_compact_reads_without_final_and_carries_the_threads_user(monkeypatch) -
     assert summary["user_id"] == "alice"
     assert summary["run_id"] == "run-1"
     assert summary["ts"] == T0
+    # The summary is embedded, so search finds what it replaced.
+    [vec] = fake.embedded
+    assert (vec["msg_id"], vec["role"], vec["content_excerpt"]) == (
+        summary["msg_id"],
+        "system",
+        "a summary",
+    )
 
 
 def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> None:
