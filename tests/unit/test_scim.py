@@ -162,6 +162,7 @@ class _Table:
         self.outright: dict[str, str] = {}  # the world's, for `_held_for_good`
         self.lapsing: set[str] = set()
         self.revoked_by: dict[str, str] = {}
+        self.revocations: list[dict[str, Any]] = []  # each row `revocation.revoke` writes
 
     def token(self, org: str, name: str) -> dict[str, Any] | None:
         rows = [r for r in self.tokens if (r["org"], r["name"]) == (org, name)]
@@ -205,6 +206,14 @@ class _Table:
             return next((r for r in live if (r["org"], r["name"]) == (p["org"], p["name"])), None)
         if "AS holds_out" in sql:
             return self._live_revocation(params["j"])
+        if "version != {ours" in sql:  # a row landing between a read and our write
+            p = params or {}
+            landed = [
+                r
+                for r in self.revocations
+                if r["jti"] == p["j"] and p["v"] < r["version"] != p["ours"]
+            ]
+            return max(landed, key=lambda r: r["version"], default=None)
         if "loom.revoked_tokens" in sql:
             cutoffs = [c for s, c in self.narrowed if s in self._lifted_with(params)]
             return {"cutoff": max(cutoffs, default=None)}
@@ -225,15 +234,28 @@ class _Table:
         return row
 
     def _live_revocation(self, s: str) -> dict[str, Any] | None:
-        row = {"revoked_by": self.revoked_by.get(s, ""), "lasting": False}
+        versions = [r["version"] for r in self.revocations if r["jti"] == s]
+        row = {
+            "revoked_by": self.revoked_by.get(s, ""),
+            "lasting": False,
+            "version": max(versions, default=0),
+            "expires_at": revocation.LATEST_EXPIRY,
+            "issued_before": None,
+        }
         if s in self.outright:
             lasting = s not in self.lapsing
+            if not lasting:
+                row["expires_at"] = _now() + timedelta(days=14)
             return {**row, "reason": self.outright[s], "lasting": lasting, "holds_out": True}
         if s not in self.lifted:
             return None
-        cutoffs = [c.replace(tzinfo=None) for k, c in self.narrowed if k == s]
-        cutoff = max(cutoffs, default=_now())
+        cutoff = self.cutoff(s) or _now()
+        row["issued_before"] = cutoff
         return {**row, "reason": self.lifted[s], "holds_out": cutoff > _now()}
+
+    def cutoff(self, s: str) -> datetime | None:
+        cutoff = next((c for k, c in reversed(self.narrowed) if k == s), None)  # the newest row's
+        return None if cutoff is None else cutoff.replace(tzinfo=None)
 
     def _lifted_with(self, params: dict[str, Any]) -> list[str]:
         return [s for s in params["s"] if self.lifted.get(s) == params["r"]]
@@ -244,9 +266,12 @@ class _Table:
             if self.shuffle is not None:
                 self.shuffle.shuffle(rows)
             return rows
-        if "issued_before IS NOT NULL OR" in sql:  # held for good, or narrowed
+        if "issued_before <= now()" in sql:  # held for good, or narrowed as of now
             held = [s for s in params["s"] if s in self.outright and s not in self.lapsing]
-            return [{"jti": s} for s in params["s"] if s in held or s in self.lifted]
+            cut = [
+                s for s in params["s"] if s in self.lifted and (self.cutoff(s) or _now()) <= _now()
+            ]
+            return [{"jti": s} for s in params["s"] if s in held or s in cut]
         if "loom.revoked_tokens" in sql:
             return [{"jti": s} for s in self._lifted_with(params)]
         if "loom.namespace_grants" in sql:
@@ -294,15 +319,38 @@ class _World:
             raise AssertionError("SCIM reads the store, not this process's snapshot")
 
         async def revoke(
-            subject: str, *, reason: str, revoked_by: str, reread: bool = True
+            subject: str,
+            *,
+            reason: str,
+            revoked_by: str,
+            expires_at: datetime | None = None,
+            issued_before: datetime | None = None,
+            reread: bool = True,
         ) -> dict[str, Any]:
             if self.fail_revoke:
                 raise RuntimeError("ClickHouse is away")
-            self.outright[subject] = reason
+            newest = max((r["version"] for r in self.table.revocations), default=0)
+            row = {
+                "jti": subject,
+                "reason": reason,
+                "revoked_by": revoked_by,
+                "expires_at": expires_at,
+                "issued_before": issued_before,
+                "version": max(time.time_ns(), newest + 1),
+            }
+            self.table.revocations.append(row)
             self.table.revoked_by[subject] = revoked_by
             self.lapsing.discard(subject)  # replaced under FINAL
+            if issued_before is not None:
+                self.outright.pop(subject, None)
+                self.narrowed.append((subject, issued_before))
+                self.lifted[subject] = reason
+                return row
+            self.outright[subject] = reason
+            if revocation.revocation_expiry(expires_at) < revocation.LATEST_EXPIRY:
+                self.lapsing.add(subject)
             self.lifted.pop(subject, None)
-            return {}
+            return row
 
         async def narrow(
             key: str, *, reason: str, issued_before: datetime, revoked_by: str, reread: bool = True
@@ -863,6 +911,79 @@ async def test_an_operators_past_cutoff_is_replaced_and_lifted_as_before(world) 
     }
 
 
+def _operator_writes_meanwhile(monkeypatch: pytest.MonkeyPatch, **kw: Any) -> None:
+    """`loom revoke-token` (no lease) landing between `_revoke`'s read and its write."""
+    orgs_beyond = scim._orgs_beyond
+
+    async def racing(subject: str, orgs: set[str]) -> list[str]:
+        await revocation.revoke(subject, revoked_by="cli:ops", **kw)
+        return await orgs_beyond(subject, orgs)
+
+    monkeypatch.setattr(scim, "_orgs_beyond", racing)
+
+
+async def test_an_operator_revocation_landing_while_deactivating_survives(
+    world, monkeypatch
+) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    _operator_writes_meanwhile(monkeypatch, reason="leaked")
+    await scim.set_active(uid, False)
+    assert world.outright == {"lee": "leaked"} and world.table.revoked_by["lee"] == "cli:ops"
+    await scim.set_active(uid, True)
+    assert world.outright == {"lee": "leaked"} and world.narrowed == []
+
+
+async def test_an_operator_lift_landing_while_deactivating_survives(world, monkeypatch) -> None:
+    world.person("lee@example.com", "lee")
+    world.outright["lee"] = "suspended"
+    world.lapsing.add("lee")
+    uid = await _create("lee@example.com")
+    cutoff = _now()
+    _operator_writes_meanwhile(monkeypatch, reason="suspension over", issued_before=cutoff)
+    await scim.set_active(uid, False)
+    assert world.outright == {} and world.lifted == {"lee": "suspension over"}
+    assert world.table.cutoff("lee") == cutoff
+
+
+async def test_lifting_an_operators_revocation_is_suggested_at_reactivation_only(
+    world, caplog
+) -> None:
+    world.person("lee@example.com", "lee")
+    world.outright["lee"] = "suspended"
+    world.lapsing.add("lee")
+    uid = await _create("lee@example.com")
+    with caplog.at_level("WARNING", logger=scim.__name__):
+        await scim.set_active(uid, False)
+    assert "--issued-before" not in caplog.text
+    with caplog.at_level("WARNING", logger=scim.__name__):
+        await scim.set_active(uid, True)
+    assert "--subject lee --issued-before" in caplog.text
+
+
+async def test_an_operators_cutoff_ahead_written_while_inactive_is_made_lasting(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    ahead = _now() + timedelta(days=2)
+    await revocation.revoke("lee", issued_before=ahead, reason="suspended", revoked_by="cli:ops")
+    await scim.set_active(uid, False)  # the provider sends it again
+    assert world.outright == {"lee": "suspended"} and world.lapsing == set()
+    assert world.table.revoked_by["lee"] == "cli:ops"
+
+
+async def test_making_an_operators_revocation_lasting_is_audited(world) -> None:
+    world.person("lee@example.com", "lee")
+    world.outright["lee"] = "suspended"
+    world.lapsing.add("lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    [kept] = [kw for e, kw in world.audits if e == "auth.scim_made_lasting"]
+    assert kept["subject"]["id"] == uid and kept["subject"]["subject"] == scim._keyed("lee")
+    assert kept["subject"]["expires_at"] < revocation.LATEST_EXPIRY
+    assert kept["subject"]["issued_before"] is None
+
+
 async def test_a_repeated_deactivation_revokes_a_subject_whose_revocation_lapsed(world) -> None:
     world.person("lee@example.com", "lee", "lee-ops")
     uid = await _create("lee@example.com")
@@ -883,7 +1004,9 @@ async def test_a_deactivation_after_a_failed_reactivation_revokes_outright_again
     with pytest.raises(RuntimeError):  # narrowed, then the row's write failed
         await scim.set_active(uid, True)
     world.table.fail_insert = False
-    world.lifted["lee-ops"] = "offboarded"  # an operator narrowed this one their own way
+    # An operator narrowed this one their own way.
+    world.narrowed.append(("lee-ops", _now()))
+    world.lifted["lee-ops"] = "offboarded"
     await scim.set_active(uid, False)  # the row still says inactive
     assert world.outright == {"lee": scim.DEACTIVATED}
     assert world.lifted == {"lee-ops": "offboarded"}

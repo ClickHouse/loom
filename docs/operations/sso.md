@@ -264,7 +264,7 @@ they do not stop with someone's offboarding.
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
   `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`,
   `auth.session_revoked`, `auth.scim_deactivated`, `auth.scim_reactivated`,
-  `auth.scim_deleted`, `auth.scim_collateral`.
+  `auth.scim_deleted`, `auth.scim_collateral`, `auth.scim_made_lasting`.
 
 ## Deprovisioning with SCIM
 
@@ -360,10 +360,13 @@ What Loom does with each request:
   reaching one account): it is lifted with the last of them, and Loom logs a
   warning for each one it leaves. A time-boxed operator revocation
   (`--expires-at`, or an `--issued-before` still ahead) of a person SCIM
-  deactivates becomes lasting, with a warning in the log; an operator lifts it
-  with `--subject <it> --issued-before <now>`. A reactivation answers after
-  about 6 s, once every replica's clock is past its cutoff; a retry sent
-  meanwhile waits out the rest.
+  deactivates becomes lasting, with a warning in the log and an
+  `auth.scim_made_lasting` audit row keeping its previous expiry or cutoff. A
+  reactivation leaves it in place and logs its subject; lift it with
+  `--subject <it> --issued-before <now>` once the person is reactivated
+  (lifted while they are still deactivated, it lets them in). A reactivation
+  answers after about 6 s, once every replica's clock is past its cutoff; a
+  retry sent meanwhile waits out the rest.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
   reactivates them, answering after the same wait; a retry of that create

@@ -65,6 +65,8 @@ COLUMNS = (
 # only a revocation with this reason, never an operator's.
 DEACTIVATED = "scim: deactivated"
 _BY = "scim"
+# The reasons SCIM's own revocations carry; any other is an operator's.
+_OURS = (DEACTIVATED, revocation.lifted_reason(DEACTIVATED))
 # SCIM ids are uuid5 of the email under this namespace: one id per person,
 # whichever replica or retry computes it. The provider holds the email anyway.
 _ID_NAMESPACE = uuid.UUID("6f1c3e0a-5b7d-4c2e-9a41-2d8f0b6e7c13")
@@ -388,14 +390,24 @@ async def _revoke(uid: str, subject: str, orgs: set[str]) -> None:
     if live is not None and live["lasting"]:
         return
     reason, revoked_by = DEACTIVATED, _BY
-    ours = (DEACTIVATED, revocation.lifted_reason(DEACTIVATED))
-    if live is not None and live["holds_out"] and live["reason"] not in ours:
+    if live is not None and live["holds_out"] and live["reason"] not in _OURS:
         reason, revoked_by = live["reason"], live["revoked_by"]
         log.warning(
-            "scim: deactivating %s makes an operator's revocation of a subject it reaches "
-            "last until an operator narrows it (`loom revoke-token --subject <it> "
-            "--issued-before <now>`)",
+            "scim: deactivating %s makes an operator's revocation of a subject it reaches last",
             uid,
+        )
+        # The row is the operator's again; this keeps a record of what SCIM changed.
+        await audit.emit(
+            "auth.scim_made_lasting",
+            org="-",
+            namespace="-",
+            actor=_BY,
+            subject={
+                "id": uid,
+                "subject": _keyed(subject),
+                "expires_at": live["expires_at"],
+                "issued_before": live["issued_before"],
+            },
         )
     elsewhere = await _orgs_beyond(subject, orgs)
     if elsewhere:
@@ -413,20 +425,41 @@ async def _revoke(uid: str, subject: str, orgs: set[str]) -> None:
             actor=_BY,
             subject={"id": uid, "subject": _keyed(subject), "orgs": elsewhere},
         )
-    await revocation.revoke(subject, reason=reason, revoked_by=revoked_by, reread=False)
+    written = await revocation.revoke(subject, reason=reason, revoked_by=revoked_by, reread=False)
+    # An operator's `revoke-token` (it takes no lease) landing between the read
+    # above and this write was replaced under FINAL: write it again, on top.
+    with own_write_reads():
+        other = await get_client().query_one(
+            """
+            SELECT reason, revoked_by, issued_before, expires_at FROM loom.revoked_tokens
+            WHERE jti = {j:String} AND version > {v:UInt64} AND version != {ours:UInt64}
+            ORDER BY version DESC LIMIT 1
+            """,
+            params={"j": subject, "v": live["version"] if live else 0, "ours": written["version"]},
+        )
+    if other is not None:
+        await revocation.revoke(
+            subject,
+            expires_at=other["expires_at"],
+            reason=other["reason"],
+            revoked_by=other["revoked_by"],
+            issued_before=other["issued_before"],
+            reread=False,
+        )
 
 
 async def _live_revocation(subject: str) -> dict[str, Any] | None:
-    """The row revoking `subject` now: its reason and author, whether it is
-    outright and never lapses, and whether it still holds tokens issued now."""
+    """The newest row for `subject`, lapsed or not: its reason, author, expiry,
+    cutoff and version, whether it is outright and never lapses, and whether it
+    still holds tokens issued now."""
     with own_write_reads():
         return await get_client().query_one(
             """
-            SELECT reason, revoked_by,
+            SELECT reason, revoked_by, expires_at, issued_before, version,
                 issued_before IS NULL AND expires_at >= {latest:DateTime64(3, 'UTC')} AS lasting,
-                issued_before IS NULL OR issued_before > now() AS holds_out
+                expires_at > now() AND (issued_before IS NULL OR issued_before > now()) AS holds_out
             FROM loom.revoked_tokens FINAL
-            WHERE jti = {j:String} AND expires_at > now()
+            WHERE jti = {j:String}
             """,
             params={"j": subject, "latest": revocation.LATEST_EXPIRY},
         )
@@ -468,9 +501,22 @@ async def _lift(uid: str, subjects: list[str]) -> datetime | None:
                 uid,
             )
             continue
-        lifted |= await revocation.narrow(
+        if await revocation.narrow(
             subject, reason=DEACTIVATED, issued_before=cutoff, revoked_by=_BY, reread=False
-        )
+        ):
+            lifted = True
+            continue
+        live = await _live_revocation(subject)
+        if live is not None and live["holds_out"] and live["reason"] not in _OURS:
+            # Now, not at deactivation: lifting it then would let a deactivated person in.
+            log.warning(
+                "scim: reactivating %s leaves an operator's revocation of %s in place; "
+                "lift it with `loom revoke-token --subject %s --issued-before <now>` "
+                "if the person should have it back",
+                uid,
+                subject,
+                subject,
+            )
     return cutoff if lifted else await _lifted_before(subjects)
 
 
@@ -506,13 +552,15 @@ async def _lifted(subjects: list[str]) -> set[str]:
 
 async def _held_for_good(subjects: list[str]) -> set[str]:
     """Those of `subjects` revoked outright with no expiry, or narrowed (by an
-    operator or a reactivation): the rest a repeated deactivation revokes again."""
+    operator or a reactivation) to a cutoff already past: the rest a repeated
+    deactivation revokes again. A cutoff ahead still lapses."""
     with own_write_reads():
         rows = await get_client().query_all(
             """
             SELECT jti FROM loom.revoked_tokens FINAL
             WHERE jti IN {s:Array(String)} AND expires_at > now()
-              AND (issued_before IS NOT NULL OR expires_at >= {latest:DateTime64(3, 'UTC')})
+              AND (issued_before IS NULL AND expires_at >= {latest:DateTime64(3, 'UTC')}
+                   OR issued_before IS NOT NULL AND issued_before <= now())
             """,
             params={"s": subjects, "latest": revocation.LATEST_EXPIRY},
         )
