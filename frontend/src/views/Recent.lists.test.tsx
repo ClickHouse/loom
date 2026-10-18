@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
@@ -91,6 +91,32 @@ describe("Memories list chrome", () => {
   afterEach(() => {
     cleanup();
     useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  // Next waits for the page's read, and the pager pages from the rows on screen.
+  it("asks for the next page once when Next is pressed twice while it loads", async () => {
+    const offsets: number[] = [];
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) => {
+      const from = opts?.offset ?? 0;
+      offsets.push(from);
+      const answer = {
+        entries: Array.from({ length: 50 }, (_, i) => entry(`k${from + i}`)),
+        total: 200,
+        today: 0,
+        truncated: false,
+      };
+      return from === 0 ? answer : new Promise<typeof answer>(() => {});
+    });
+    render(<Recent />);
+    await screen.findByText("k0");
+    const pager = () => screen.getByRole("navigation", { name: "Memories pages" });
+    fireEvent.click(within(pager()).getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(offsets).toContain(50));
+    // The rows on screen are still page 1, and the pager says so.
+    expect(pager()).toHaveTextContent("1–50 of 200");
+    expect(within(pager()).getByRole("button", { name: "Next page" })).toBeDisabled();
+    fireEvent.click(within(pager()).getByRole("button", { name: "Next page" }));
+    expect(offsets.filter((o) => o > 50)).toEqual([]);
   });
 
   it("says where the list stands once, at the end of the toolbar", async () => {

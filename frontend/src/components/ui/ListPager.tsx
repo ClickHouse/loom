@@ -147,7 +147,16 @@ export function ListPager({
   const start = page * pageSize + 1;
   const end = page * pageSize + shown;
   const span = shown === 0 ? `${start.toLocaleString()}` : `${start.toLocaleString()}–${end.toLocaleString()}`;
-  const counts = total === undefined ? span : `${span} of ${capped ? "the newest " : ""}${total.toLocaleString()}`;
+  // No rows of this list on screen yet (a new page size, say): the page is being read.
+  const loading = shown === 0 && busy;
+  const totalText = total !== undefined ? `${capped ? "the newest " : ""}${total.toLocaleString()}` : null;
+  const counts = loading
+    ? totalText !== null
+      ? `Loading… · ${totalText} in all`
+      : "Loading…"
+    : totalText !== null
+      ? `${span} of ${totalText}`
+      : span;
   // Where the server's offset limit stops the pages: with a total, once it cuts them; without
   // one, on the last page it can serve.
   const stopped = cut || (total === undefined && reachable !== undefined && page >= reachable - 1);

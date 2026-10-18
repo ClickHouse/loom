@@ -212,6 +212,22 @@ describe("ListPager, typed and edge pages", () => {
     expect(onPage).toHaveBeenLastCalledWith(6);
   });
 
+  it("says it is loading, not a range, while a new page size is read", () => {
+    render(
+      <ListPager
+        label="Runs pages"
+        page={0}
+        pageSize={100}
+        total={120}
+        shown={0}
+        busy
+        onPage={() => {}}
+        onPageSize={() => {}}
+      />,
+    );
+    expect(screen.getByRole("navigation", { name: "Runs pages" })).toHaveTextContent("Loading… · 120 in all");
+  });
+
   it("without a total, says which pages can be opened on the last one the server serves", () => {
     render(
       <ListPager label="Thread pages" page={3333} pageSize={30} shown={30} maxOffset={100_000} onPage={() => {}} />,

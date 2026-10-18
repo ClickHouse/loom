@@ -636,6 +636,11 @@ function MemoryList() {
   // rows on screen (marked busy) until the next ones land, and the search keeps focus.
   const shownScope = useRef("");
   const [refreshing, setRefreshing] = useState(false);
+  // The page and page size the browsed rows on screen were read as: the pager pages from
+  // that page while it is still the size shown, so a second Next while a page reads asks
+  // for the same page and the range says the rows under it.
+  const [entriesAt, setEntriesAt] = useState({ page: 0, size: 0 });
+  const browsedCurrent = entriesAt.size === pageSize;
   // The filter the rows on screen were read for: until a read of the current one lands,
   // the old rows stay up and "nothing matches" is not said.
   const [readFor, setReadFor] = useState("");
@@ -709,6 +714,7 @@ function MemoryList() {
           if (isFirst) {
             knownKeysRef.current = new Set(r.entries.map((e) => e.memory_key));
             setEntries(r.entries);
+            setEntriesAt({ page: off / lim, size: lim });
           } else {
             // Any key we haven't seen before is "new".
             const fresh = new Set<string>();
@@ -1150,16 +1156,15 @@ function MemoryList() {
         ))}
       </div>
 
-      {/* The page asked for, not the rows' page as Runs and Conversations pass: Next waits
-          for the page's read (`busy`), so a second press does not skip a page, and a filter
-          here moves `page` itself, which clears the pager's status. */}
+      {/* A filtered list is paged here, so its page is the page asked for; a browsed one is
+          read a page at a time, so the pager pages from the rows' page. */}
       {!searchActive && !showDeleted && !failed && entries !== null && (
         <ListPager
           label="Memories pages"
-          page={page}
+          page={listFiltered ? page : browsedCurrent ? entriesAt.page : page}
           busy={refreshing}
           pageSize={pageSize}
-          shown={pageList.length}
+          shown={listFiltered || browsedCurrent ? pageList.length : 0}
           total={listTotal}
           onPage={setPage}
           onPageSize={(n) => {

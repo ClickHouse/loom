@@ -2646,7 +2646,9 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
   const [rows, setRows] = useState<CodeContextPackRow[] | null>(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  // Retry reads again through the effect.
+  const [reads, setReads] = useState(0);
   const [open, setOpen] = useState<number | null>(null);
   const [pack, setPack] = useState<{ pr: number; text: string; tokens: number; source: string } | null>(null);
   const [prFilter, setPrFilter] = useState("");
@@ -2671,6 +2673,8 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
   // from that offset while it is still what the list shows.
   const [rowsOffset, setRowsOffset] = useState(0);
   const [rowsKey, setRowsKey] = useState("");
+  // The PR filter alone: the total holds across a page-size change.
+  const [rowsPr, setRowsPr] = useState<string | null>(null);
   const rowsFor = useRef(`${id.org}/${id.namespace}`);
   useAbortableEffect(
     (signal, live) => {
@@ -2691,6 +2695,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
             setRows(r.rows);
             setRowsOffset(offset);
             setRowsKey(`${prSettled}\n${pageSize}`);
+            setRowsPr(prSettled);
             setTotal(r.total);
             setError(null);
             setRefreshing(false);
@@ -2698,12 +2703,12 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
         })
         .catch((e) => {
           if (live()) {
-            setError(humanizeError(e));
+            setError(e);
             setRefreshing(false);
           }
         });
     },
-    [id.org, id.namespace, offset, pageSize, prSettled],
+    [id.org, id.namespace, offset, pageSize, prSettled, reads],
   );
   const rowsCurrent = rowsKey === `${prSettled}\n${pageSize}`;
   const pagerOffset = rowsCurrent ? rowsOffset : offset;
@@ -2725,8 +2730,6 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
     }
   };
 
-  if (error) return <EmptyState icon="cards" title="Couldn't load PR packs" description={error} />;
-
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
@@ -2744,7 +2747,12 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
         </div>
       </div>
 
-      {rows === null && (
+      {/* A failed read keeps the filter in view and offers Retry, as every list does. */}
+      {error !== null && (
+        <ListState kind="error" things="PR packs" error={error} onRetry={() => setReads((n) => n + 1)} />
+      )}
+
+      {error === null && rows === null && (
         <LoadingSkeleton label="Loading PR packs">
           <div className="space-y-2">
             <Skeleton className="h-10 w-full" />
@@ -2757,7 +2765,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       {/* Rows expand inline into their pack, so this stays a list of disclosure rows
           rather than a table. The pager moves focus here, and the empty state sits inside,
           so focus stays when a page steps back to an empty first page. */}
-      {rows !== null && (
+      {error === null && rows !== null && (
         <div id="packs-list" tabIndex={-1} className="outline-none" aria-busy={refreshing || undefined}>
           {rows.length === 0 && pagerOffset === 0 && rowsCurrent && !refreshing && (
             <EmptyState
@@ -2825,7 +2833,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       )}
 
       {/* Kept on an empty later page (packs retired meanwhile), so it steps back to the last. */}
-      {rows !== null && (rows.length > 0 || pagerOffset > 0) && (
+      {error === null && rows !== null && (rows.length > 0 || pagerOffset > 0) && (
         <ListPager
           label="PR pack pages"
           page={Math.floor(pagerOffset / pageSize)}
@@ -2834,7 +2842,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           pageSize={pageSize}
           shown={rowsCurrent ? rows.length : 0}
           // Another filter's total is not this list's; a new page size keeps it.
-          total={rowsKey.startsWith(`${prSettled}\n`) ? total : undefined}
+          total={rowsPr === prSettled ? total : undefined}
           onPage={(n) => setOffset(n * pageSize)}
           onPageSize={(n) => {
             setPageSize(n);

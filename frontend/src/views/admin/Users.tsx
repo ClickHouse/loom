@@ -41,9 +41,9 @@ export function Users() {
   const whoami = useStore((s) => s.whoami);
   const phone = useMedia(PHONE_QUERY);
   const [data, setData] = useState<AdminUsersResult | null>(null);
-  // Whether those accounts were read with service accounts: under the other setting they
-  // are not the list's to page.
-  const [dataWithServiceAccounts, setDataWithServiceAccounts] = useState(false);
+  // Whether those accounts were read with service accounts (null before the first read):
+  // under the other setting they are not the list's to page.
+  const [dataWithServiceAccounts, setDataWithServiceAccounts] = useState<boolean | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [includeServiceAccounts, setIncludeServiceAccounts] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");

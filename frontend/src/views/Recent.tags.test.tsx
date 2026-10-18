@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
+import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
@@ -92,31 +92,6 @@ describe("Memories: filtering by tags", () => {
     await waitFor(() => expect(listMemories).toHaveBeenCalled());
     await screen.findByText("both");
   }
-
-  it("asks for the next page once when Next is pressed twice while it loads", async () => {
-    const offsets: number[] = [];
-    // The other cases read the module's default answer: put it back afterwards.
-    const original = vi.mocked(listMemories).getMockImplementation();
-    onTestFinished(() => {
-      if (original) vi.mocked(listMemories).mockImplementation(original);
-    });
-    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) => {
-      const from = opts?.offset ?? 0;
-      offsets.push(from);
-      const entries = Array.from({ length: 50 }, (_, i) => entry(`k${from + i}`, []));
-      const answer = { entries, total: 200, today: 0, truncated: false };
-      return from === 0 ? answer : new Promise<typeof answer>(() => {});
-    });
-    render(<Recent />);
-    await screen.findByText("k0");
-    const next = () =>
-      within(screen.getByRole("navigation", { name: "Memories pages" })).getByRole("button", { name: "Next page" });
-    fireEvent.click(next());
-    await waitFor(() => expect(offsets).toContain(50));
-    expect(next()).toBeDisabled();
-    fireEvent.click(next());
-    expect(offsets.filter((o) => o > 50)).toEqual([]);
-  });
 
   it("stacks a second tag onto the first, and shows each in the search field", async () => {
     await openMemories();

@@ -127,6 +127,16 @@ describe("PR packs pages", () => {
     expect(await screen.findByText(/No precomputed pack for PR #123/)).toBeInTheDocument();
   });
 
+  it("says a failed read failed, keeps the filter, and reads again on Retry", async () => {
+    listCodeContextPacks.mockRejectedValueOnce(new Error("boom"));
+    listCodeContextPacks.mockResolvedValue({ rows: [pack(7)], total: 1 });
+    render(<PacksTab id={ID} repo="acme/app" />);
+    expect(await screen.findByText("Couldn't load PR packs")).toBeInTheDocument();
+    expect(screen.getByLabelText("Filter by PR number")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("PR 7")).toBeInTheDocument();
+  });
+
   it("draws no pager when one page holds every pack", async () => {
     listCodeContextPacks.mockResolvedValue({ rows: [pack(7)], total: 1 });
     render(<PacksTab id={ID} repo="acme/app" />);
