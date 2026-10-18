@@ -1,7 +1,5 @@
-"""The tag predicates: the list matches memory.list and knowledge.list share, and the exact one.
-
-memory.proposals, namespace.list and every other tag filter match tags exactly.
-"""
+"""Tag predicates: the any-case matches memory.list and knowledge.list share, and the exact
+match every other tag filter uses."""
 
 from __future__ import annotations
 
@@ -28,11 +26,8 @@ class TagFilter:
 
 
 def tag_predicate(alias: str = "e") -> str:
-    """`hasAny(<alias>.tags, {tags:Array(String)})` — the hard tag predicate the
-    fact leg carries, spelled once so the lexical
-    union pool, the anchor pool, the key-match arm, the digest descent and the
-    query-neighbour leg read the same clause with the same parameter name.
-    `alias=""` renders the bare column for statements that alias nothing."""
+    """`hasAny(<alias>.tags, {tags:Array(String)})`: the exact tag predicate every memory.search
+    leg carries. `alias=""` renders the bare column."""
     col = f"{alias}.tags" if alias else "tags"
     return f"hasAny({col}, {{tags:Array(String)}})"
 
