@@ -440,8 +440,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             )
         if unreadable:
             print(
-                f"  {len(unreadable)} row(s) left out: bulk_get did not answer them (a "
-                "tombstoned row) and the list does not carry their full value: "
+                f"  {len(unreadable)} row(s) left out: bulk_get did not answer them (tombstoned, "
+                "or deleted since the list) and the list does not carry their full value: "
                 + ", ".join(unreadable[:5])
                 + (" …" if len(unreadable) > 5 else "")
             )

@@ -59,9 +59,10 @@ _IDENT_JOIN = (
 # `memory_key IN` is a secondary-key filter inside the namespace. Every check that reads
 # loom.memory or loom.memory_embeddings carries it.
 _KEYS = "(empty({keys:Array(String)}) OR memory_key IN {keys:Array(String)})"
+# A high row's text is readable by key only: no check quotes or matches it.
 _LIVE = (
     "FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
-    f"AND tombstoned_at IS NULL AND {_KEYS}"
+    f"AND tombstoned_at IS NULL AND sensitivity != 'high' AND {_KEYS}"
 )
 
 # Time cues a fact's text can carry without the extractor having resolved an

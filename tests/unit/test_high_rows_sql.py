@@ -30,6 +30,10 @@ class _LocalCH:
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         return run(self.setup, sql, params)
 
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        rows = run(self.setup, sql, params)
+        return rows[0] if rows else None
+
 
 def _version(mid: str, key: str, version: int, sensitivity: str) -> str:
     return (
@@ -99,3 +103,177 @@ async def test_the_usage_overlay_reads_the_epoch_as_no_recall() -> None:
     )
     [got] = await memory_repo.overlay_usage_totals_many([row], ch=ch)
     assert got.evidence_count == 2 and got.last_recalled_at is None
+
+
+@pytest.mark.asyncio
+async def test_aggregate_never_groups_or_filters_by_a_high_value(monkeypatch) -> None:
+    from server.memory.api.models_search import MemoryAggregateInput
+    from server.memory.app import query
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, memory_id, memory_key, value, "
+        "sensitivity) VALUES "
+        f"('o', 'n', 'a', '-', '{_A}', 'vault', '{{\"pw\": \"hunter2\"}}', 'high'), "
+        f"('o', 'n', 'a', '-', '{_B}', 'note', '{{\"pw\": \"public\"}}', '')",
+    )
+    monkeypatch.setattr(query, "get_client", lambda: ch)
+    grouped = await query.handle_memory_aggregate(
+        MemoryAggregateInput(org="o", namespace="n", agent="a", group_by=["pw"])
+    )
+    assert [r.group["pw"] for r in grouped.rows] == ["public"]
+    guessed = await query.handle_memory_aggregate(
+        MemoryAggregateInput(org="o", namespace="n", agent="a", filter={"pw": "hunter2"})
+    )
+    assert [r.metric for r in guessed.rows] == [0.0]
+
+
+def _memory(*rows: str) -> _LocalCH:
+    """loom.memory with `rows`, each the VALUES tuple for the columns below."""
+    cols = (
+        "org, namespace, agent, user_id, session_id, memory_id, memory_key, memory_type, "
+        "value, status, sensitivity, version, conflict_with"
+    )
+    return _LocalCH(ddl("memory"), f"INSERT INTO loom.memory ({cols}) VALUES " + ", ".join(rows))
+
+
+def _row(
+    mid: str,
+    key: str,
+    value: str,
+    *,
+    status: str = "active",
+    sensitivity: str = "",
+    kind: str = "semantic",
+    peers: str = "[]",
+) -> str:
+    return (
+        f"('o', 'n', 'a', '-', '-', '{mid}', '{key}', '{kind}', '{value}', '{status}', "
+        f"'{sensitivity}', 1, {peers})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_conflicts_queue_lists_a_high_row_without_its_value() -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import conflicts
+
+    ch = _memory(
+        _row(_A, "vault", "code 4412", status="conflicted", sensitivity="high"),
+        _row(_B, "note", "plain words", status="conflicted"),
+    )
+    rows = await conflicts.list_conflicted("o", "n", scope=WHOLE_NAMESPACE, ch=ch)
+    assert {r["memory_key"]: r["value"] for r in rows} == {"vault": None, "note": "plain words"}
+
+
+@pytest.mark.asyncio
+async def test_a_revision_proposal_never_shows_a_high_peer(monkeypatch) -> None:
+    from server.memory.api.models_conflicts import ConflictsProposeRevisionInput
+    from server.memory.app import conflicts_ops
+
+    ch = _memory(
+        _row(_A, "note", "plain words", status="conflicted", peers=f"['{_B}']"),
+        _row(_B, "vault", "code 4412", status="conflicted", sensitivity="high"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.conflicts._default_client", lambda: ch)
+    out = await conflicts_ops.handle_conflicts_propose_revision(
+        ConflictsProposeRevisionInput(org="o", namespace="n", memory_id=_A)
+    )
+    assert [m.memory_key for m in out.memories] == ["note"]
+
+
+@pytest.mark.asyncio
+async def test_profile_render_leaves_a_high_section_out(monkeypatch) -> None:
+    from server.memory.api.models_profile import ProfileRenderInput
+    from server.memory.app import profile
+
+    ch = _memory(
+        _row(_A, "persona", "likes tea", kind="profile"),
+        _row(_B, "door", "code 4412", kind="profile", sensitivity="high"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    out = await profile.handle_profile_render(ProfileRenderInput(org="o", namespace="n", agent="a"))
+    assert "likes tea" in out.rendered and "4412" not in out.rendered
+
+
+@pytest.mark.asyncio
+async def test_the_ask_bridge_hop_never_answers_from_a_high_row(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app.ask import completion
+
+    ch = _memory(
+        _row(_A, "acme_corp_founded", "1999"),
+        _row(_B, "acme_corp_vault_code", "4412", sensitivity="high"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    hits = await completion.bridge_rows_by_key(
+        SimpleNamespace(org="o", namespace="n", agent="*", user_id="-", session_id=None),
+        "Acme Corp",
+    )
+    assert [h.memory_key for h in hits] == ["acme_corp_founded"]
+
+
+@pytest.mark.asyncio
+async def test_a_proposal_lists_a_high_row_without_its_preview(monkeypatch) -> None:
+    from server.memory.api.models_proposals import MemoryProposalsInput
+    from server.memory.app import proposals, proposals_ops
+
+    ch = _memory(
+        _row(_A, "trial/tea", "likes tea", status="proposed"),
+        _row(_B, "trial/door", "code 4412", status="proposed", sensitivity="high"),
+    )
+
+    async def _policy(*_a: Any, **_k: Any) -> Any:
+        from server.memory.domain.proposal_policy import ProposalPolicy
+
+        return ProposalPolicy()
+
+    async def _empty(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr(proposals_ops, "get_client", lambda: ch)
+    monkeypatch.setattr(proposals, "policy_for", _policy)
+    monkeypatch.setattr(proposals, "graded_counts", _empty)
+    monkeypatch.setattr(proposals_ops, "_usage_counts", _empty)
+    out = await proposals_ops.handle_memory_proposals(MemoryProposalsInput(org="o", namespace="n"))
+    previews = {p.memory_key: p.value_preview for p in out.proposals}
+    assert previews == {"trial/tea": "likes tea", "trial/door": ""}
+
+
+@pytest.mark.asyncio
+async def test_ask_never_masks_with_a_high_rows_value(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app.ask import supersession
+
+    ch = _memory(
+        _row(_A, "door", "code 4412", status="superseded", sensitivity="high"),
+        _row(_B, "tea", "likes tea", status="superseded"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    rows = await supersession.superseded_rows_for_pool(
+        SimpleNamespace(org="o", namespace="n", agent="*", user_id="-", session_id=None),
+        [
+            SimpleNamespace(memory_key="door", source="fact"),
+            SimpleNamespace(memory_key="tea", source="fact"),
+            SimpleNamespace(memory_key="chunk:s:1", source="chunk"),  # a chunk asks for masks
+        ],
+    )
+    assert [r.memory_key for r in rows] == ["tea"]
+
+
+@pytest.mark.asyncio
+async def test_namespace_validate_never_quotes_a_high_row() -> None:
+    from server.identity.app import namespace_validate as nv
+
+    ch = _memory(
+        _row(_A, "trip", '"we flew there last week"'),
+        _row(_B, "door", '"the code changed last week: 4412"', sensitivity="high"),
+    )
+    _severity, _hint, sql = nv._CHECKS["unanchored_time_cue"]
+    rows = await ch.query_all(
+        sql, {"org": "o", "ns": "n", "keys": [], "cue": nv._TIME_CUE_RE, "lim": 10}
+    )
+    assert [r["memory_key"] for r in rows] == ["trip"]

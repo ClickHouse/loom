@@ -116,3 +116,25 @@ async def test_auth_disabled_exports_everything(exports) -> None:
         ErasureExportInput(org=ORG, scope_type="user_id", scope_value="u1", requester="ops@x")
     )
     assert out.counts["memory"] == 2
+
+
+@pytest.mark.asyncio
+async def test_the_export_audits_each_high_row_it_serves(monkeypatch) -> None:
+    def row(ns: str, key: str, sensitivity: str) -> dict:
+        return {"namespace": ns, "memory_key": key, "version": 1, "sensitivity": sensitivity}
+
+    async def _rows(*_a, **_k):
+        return [row(STD, "plain", ""), row(STD, "vault", "high"), row(PRIV, "key", "high")]
+
+    audited: list[tuple[str, list[str]]] = []
+
+    async def _emit_many(event, **kw):
+        audited.append((kw["namespace"], [s["memory_key"] for s in kw["subjects"]]))
+
+    monkeypatch.setattr(h.erasure_exports, "export_memory", _rows)
+    monkeypatch.setattr(h.audit, "emit_many", _emit_many)
+    rows, count, _ = await h._export_memory(
+        "o", "namespace", STD, include_tombstoned=False, limit=10
+    )
+    assert count == 3
+    assert sorted(audited) == sorted([(PRIV, ["key"]), (STD, ["vault"])])

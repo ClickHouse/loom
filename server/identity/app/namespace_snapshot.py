@@ -26,6 +26,7 @@ from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import snapshot_rows as memory_snapshot
 from server.memory.app.provenance import writer_actor
+from server.observability import audit
 
 
 def snapshot_memory_row(r: Mapping[str, Any]) -> _SnapshotMemoryRow:
@@ -50,6 +51,18 @@ async def handle_namespace_snapshot(
     # Memories — active, non-tombstoned.
     memory_rows = await memory_snapshot.read_namespace(ch, org=input.org, namespace=input.namespace)
     memories = [snapshot_memory_row(r) for r in memory_rows]
+    # The snapshot carries high rows on purpose, for a restore; each one is audited.
+    await audit.emit_many(
+        "memory.sensitive_read",
+        org=input.org,
+        namespace=input.namespace,
+        actor=writer_actor("-"),
+        subjects=[
+            {"memory_key": r["memory_key"], "memory_id": r["memory_id"]}
+            for r in memory_rows
+            if r["sensitivity"] == "high"
+        ],
+    )
 
     # Per-type configs.
     type_dicts = await list_type_configs(input.org, input.namespace)

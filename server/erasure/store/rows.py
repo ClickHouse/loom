@@ -108,6 +108,7 @@ class MemoryExportRow(TypedDict):
     tombstoned_at: datetime | None
     created_at: datetime
     expires_at: datetime | None
+    sensitivity: str
 
 
 class ChunkExportRow(TypedDict):

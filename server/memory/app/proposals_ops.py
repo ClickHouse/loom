@@ -46,7 +46,9 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
     rows = await ch.query_all(
         f"""
         SELECT memory_key, toString(memory_id) AS mid, agent, memory_type,
-               substring(value, 1, 400) AS preview, tags, toString(created_at) AS created,
+               -- a high value is readable by key only
+               if(sensitivity = 'high', '', substring(value, 1, 400)) AS preview,
+               tags, toString(created_at) AS created,
                conflict_with
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}

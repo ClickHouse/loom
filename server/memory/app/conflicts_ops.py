@@ -8,7 +8,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _sha256
 from server.identity.app.request_scope import request_scope
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
 from server.memory.api.models_conflicts import (
     ConflictsAllowlistListInput,
     ConflictsAllowlistListOutput,
@@ -115,27 +115,33 @@ async def handle_conflicts_propose_revision(
         return ConflictsProposeRevisionOutput(found=False)
 
     ch = get_client()
+    params: dict[str, Any] = {
+        "org": input.org,
+        "ns": input.namespace,
+        "ids": ids,
+        "target": input.memory_id,
+    }
+    # The request's read scope binds these rows as it binds conflicts.list.
+    in_scope = scope_and(request_scope(), params)
     rows = await ch.query_all(
-        """
+        f"""
         -- `AS mid`, not `AS memory_id`: a same-name alias SHADOWS the column,
-        -- so `memory_id IN {ids:Array(UUID)}` would compare the String alias
+        -- so `memory_id IN {{ids:Array(UUID)}}` would compare the String alias
         -- against UUIDs and match nothing (see live_edges_for_path in
         -- server/code/store/index/edges.py).
         SELECT toString(memory_id) AS mid, memory_key, value,
                pinned, created_at
         FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND memory_id IN {ids:Array(UUID)}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND memory_id IN {{ids:Array(UUID)}}
           AND tombstoned_at IS NULL
-        ORDER BY memory_id = {target:UUID} DESC, created_at DESC
+          -- A high value is readable by key only, not as a revision suggestion.
+          AND sensitivity != 'high'
+          {in_scope}
+        ORDER BY memory_id = {{target:UUID}} DESC, created_at DESC
         """,
-        params={
-            "org": input.org,
-            "ns": input.namespace,
-            "ids": ids,
-            "target": input.memory_id,
-        },
+        params=params,
     )
     if not rows:
         return ConflictsProposeRevisionOutput(found=False)

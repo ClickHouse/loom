@@ -72,7 +72,6 @@ class DigestRecord:
         return f"{DIGEST_DIR}/{slugify(self.session_id)}.md"
 
 
-@runtime_checkable
 class ChunkLike(Protocol):
     """A raw chunk: `ChunkRecord` here, or `EvidenceChunk` on the wire."""
 

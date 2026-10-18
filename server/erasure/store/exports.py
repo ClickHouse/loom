@@ -36,7 +36,7 @@ async def export_memory(
         f"""
         SELECT org, namespace, agent, user_id, session_id, memory_key, memory_type,
                value, confidence, source_trace, version, tombstoned_at, created_at,
-               expires_at
+               expires_at, sensitivity
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND {scope_clause}{tomb_clause}
         ORDER BY namespace, agent, memory_key

@@ -34,6 +34,7 @@ from server.erasure.app.saga import audit_namespace, begin_erasure, run_saga
 from server.erasure.store import exports as erasure_exports
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store.rows import RequestStatusRow
+from server.memory.app.provenance import writer_actor
 from server.observability import audit
 from server.operations.base import Role
 
@@ -96,6 +97,19 @@ async def _export_memory(
     rows = await erasure_exports.export_memory(
         org, scope_type, scope_value, include_tombstoned=include_tombstoned, limit=limit + 1
     )
+    # The export serves high rows on purpose; each one is audited as a key read is.
+    for ns in sorted({r["namespace"] for r in rows[:limit] if r["sensitivity"] == "high"}):
+        await audit.emit_many(
+            "memory.sensitive_read",
+            org=org,
+            namespace=ns,
+            actor=writer_actor("-"),
+            subjects=[
+                {"memory_key": r["memory_key"], "version": r["version"]}
+                for r in rows[:limit]
+                if r["namespace"] == ns and r["sensitivity"] == "high"
+            ],
+        )
     return _page(rows, limit)
 
 

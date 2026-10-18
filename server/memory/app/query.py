@@ -655,6 +655,9 @@ async def handle_memory_aggregate(
         "agent = {agent:String}",
         "user_id = {uid:String}",
         "tombstoned_at IS NULL",
+        # A high value is readable by key only: never a group key, and never a filter that
+        # would let a caller test guesses against it by count.
+        "sensitivity != 'high'",
     ]
     params: dict[str, object] = {
         "org": input.org,

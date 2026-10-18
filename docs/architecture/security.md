@@ -516,13 +516,19 @@ are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
 A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
-leg returns it. The reads that could still serve its value leave it out: the `anchor_first`
-and `recent_first` tiers, `bodies: "unit"`, `memory.related`'s excerpts and the existing
-memories an extraction prompt shows the LLM. A key read of one, through `memory.get`,
-`memory.get_by_id`, `memory.bulk_get` or `memory.history` (one row per `high` version),
-writes a `memory.sensitive_read` audit row. `memory.list` names a `high` row and its
-`sensitivity` but sends no value or hash (`value_truncated: true`), and its `contains` filter
-does not search that value.
+leg returns it. The other reads that could serve its value follow three rules:
+
+- Left out: the `anchor_first` and `recent_first` tiers, `bodies: "unit"`, `memory.related`'s
+  excerpts, `memory.aggregate` (no group key or filter match on a `high` value),
+  `profile.render` and the `memory.stack`, context pack and MCP primer built from it,
+  `memory.ask`'s bridge hop and stale-fact masks, `conflicts.propose_revision`,
+  `namespace.validate`'s checks, and the existing memories an extraction prompt shows the LLM.
+- Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
+  `contains` does not search it), `conflicts.list` and `memory.proposals`.
+- Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get`,
+  `memory.history` (one row per `high` version) and `memory.evidence` each write a
+  `memory.sensitive_read` row. The admin dumps `namespace.snapshot` and `erasure.export`
+  carry `high` rows on purpose and write one per row.
 
 Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
 has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked
@@ -536,8 +542,9 @@ and `memory.recall`'s raw turns.
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 
-The detector runs on `memory.set` and extraction, as the setting says. `memory.export_evidence` and
-`bodies: "source"` also run it on raw text, whatever the setting: raw text has no level to fall back on. The `sensitivity_sweep` worker (on,
+The detector runs on `memory.set` and extraction when `LOOM_MEMORY_SENSITIVITY_AUTODETECT` is
+on. `memory.export_evidence` and `bodies: "source"` also run it on raw text, whatever the
+setting: raw text has no level to fall back on. The `sensitivity_sweep` worker (on,
 daily) labels rows from paths that skip it: a new version per row and, for `high`,
 tombstoned embedding rows and entity vectors.
 

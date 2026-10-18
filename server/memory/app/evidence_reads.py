@@ -17,6 +17,8 @@ from server.memory.api.models_lifecycle import (
     MemoryProvenanceLink,
     MemoryProvenanceOutput,
 )
+from server.memory.app.provenance import writer_actor
+from server.observability import audit as _audit
 
 
 def _classify_source(source_trace: str) -> tuple[str, str, str]:
@@ -109,6 +111,7 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
     ch = _get_client()
     memory_id = str(getattr(row, "memory_id", "") or "") if row is not None else ""
     value: Any = row.value if row is not None else None
+    sensitivity = row.sensitivity if row is not None else ""
     if row is None and (input.agent == "*" or input.session_id == "*" or input.user_id == "*"):
         # Wildcard identity, as memory.list accepts: a key is unique within a
         # namespace, so resolve the live row by key alone. Extracted memories
@@ -116,7 +119,7 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
         # namespace does not know. Still inside the read scope.
         params: dict[str, Any] = {"o": input.org, "n": input.namespace, "k": input.memory_key}
         hit = await ch.query_all(
-            "SELECT toString(memory_id) AS mid, value FROM loom.memory FINAL "
+            "SELECT toString(memory_id) AS mid, value, sensitivity FROM loom.memory FINAL "
             "WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String} "
             "AND tombstoned_at IS NULL"
             + scope_and(scope, params)
@@ -126,8 +129,18 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
         if hit:
             memory_id = str(hit[0].get("mid") or "")
             value = hit[0].get("value")
+            sensitivity = str(hit[0].get("sensitivity") or "")
     if row is None and not memory_id:
         return MemoryEvidenceOutput(found=False)
+    if sensitivity == "high":
+        # A key read of a 'high' row is audited, as memory.get audits it.
+        await _audit.emit(
+            "memory.sensitive_read",
+            org=input.org,
+            namespace=input.namespace,
+            actor=writer_actor(input.agent),
+            subject={"memory_key": input.memory_key, "memory_id": memory_id},
+        )
     links = await _belief_links(ch, input, memory_id, scope)
     n_links = len(links)
     counts = {"cited": 0, "lexical": 0, "window": 0, "derived": 0}
@@ -170,8 +183,9 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
             "SELECT toString(memory_id) AS eid, memory_key, value, created_at AS observed_at "
             "FROM loom.memory FINAL "
             "WHERE org = {o:String} AND namespace = {n:String} "
-            "AND memory_id IN {ids:Array(UUID)} AND tombstoned_at IS NULL"
-            + scope_and(scope, src_params),
+            "AND memory_id IN {ids:Array(UUID)} AND tombstoned_at IS NULL "
+            # a cited memory that is high is readable by key only
+            "AND sensitivity != 'high'" + scope_and(scope, src_params),
             src_params,
         )
         for r in src_rows:

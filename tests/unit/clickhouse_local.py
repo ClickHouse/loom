@@ -22,16 +22,22 @@ def ddl(table: str) -> str:
     return f"CREATE TABLE loom.{table}\n" + body.split(";", 1)[0]
 
 
+def _literal(v: Any) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int | float):
+        return str(v)
+    if isinstance(v, list):
+        return "[" + ",".join(_literal(x) for x in v) + "]"
+    if isinstance(v, tuple):
+        return "(" + ",".join(_literal(x) for x in v) + ")"
+    text = str(v).replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{text}'"
+
+
 def render(sql: str, params: dict[str, Any]) -> str:
     """`sql` with each `{name:Type}` parameter written in as a literal."""
-
-    def lit(m: re.Match[str]) -> str:
-        v = params[m.group(1)]
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        return "[" + ",".join(f"'{x}'" for x in v) + "]" if isinstance(v, list) else f"'{v}'"
-
-    return re.sub(r"\{(\w+):[^}]+\}", lit, sql)
+    return re.sub(r"\{(\w+):[^}]+\}", lambda m: _literal(params[m.group(1)]), sql)
 
 
 def run(setup: list[str], sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
