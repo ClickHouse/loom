@@ -34,6 +34,7 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { formatValue, truncate, humanizeError } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
+import { useRowNav } from "../../lib/useRowNav";
 import { PageContainer } from "../../layout/PageContainer";
 
 /**
@@ -194,6 +195,8 @@ function ConflictsPanel() {
   // The last page removes Load more, which held the focus: it goes to the first conflict
   // that page added, else the last one in the queue.
   const queueBox = useRef<HTMLDivElement>(null);
+  // The queue's keys are one tab stop, as every row list (lib/useRowNav).
+  const queueNav = useRowNav({ enabled: (rows?.length ?? 0) > 0 });
   const focusAdded = useRef<number | null>(null);
   // Conflicts decided here, by id and the version decided, whichever visit: no read (a
   // re-read on a return, a Load more) offers that version again, even one the server
@@ -446,7 +449,9 @@ function ConflictsPanel() {
         caption={held === null ? `${rows.length} loaded` : `${rows.length} of ${held} loaded`}
       />
       <div ref={queueBox}>
-        <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} picking={!busy} />
+        <div ref={queueNav}>
+          <QueueTable rows={rows} current={current.memory_id} onPick={setIndex} busy={loadingMore} picking={!busy} />
+        </div>
       </div>
       {next !== null && (
         <BusyButton
@@ -503,6 +508,7 @@ function QueueTable({
               <Link
                 component="button"
                 type="button"
+                data-row-open=""
                 size="sm"
                 weight="mono"
                 className="min-w-0 max-w-full truncate text-left"

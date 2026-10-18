@@ -362,6 +362,7 @@ function GoalButton({ goal, dim, onClick }: { goal: string; dim: boolean; onClic
       <button
         ref={setEl}
         type="button"
+        data-row-open=""
         onClick={onClick}
         className={`min-w-0 max-w-full truncate text-left rounded ${dim ? "text-text-muted" : ""}`}
         aria-describedby={undefined}
@@ -431,7 +432,19 @@ interface RunListProps {
   loading?: boolean;
 }
 
-function RunTable({ label, rows, onOpen, order, onOrder, busy, hideHeader = false, loading = false }: RunListProps) {
+function RunTable({
+  label,
+  rows,
+  onOpen,
+  order,
+  onOrder,
+  busy,
+  keys,
+  hideHeader = false,
+  loading = false,
+}: RunListProps & { keys: boolean }) {
+  // One tab stop for the table's runs, as for every row list (lib/useRowNav).
+  const nav = useRowNav({ enabled: keys && rows.length > 0 });
   // Click UI's sort arrow is named after its icon, so the header would read "Started
   // arrow-down"; `aria-sort` already says it. Click UI draws a new arrow on every sort.
   const table = useRef<HTMLTableElement>(null);
@@ -439,22 +452,24 @@ function RunTable({ label, rows, onOpen, order, onOrder, busy, hideHeader = fals
     for (const svg of table.current?.querySelectorAll("thead svg") ?? []) svg.setAttribute("aria-hidden", "true");
   });
   return (
-    <Table
-      ref={table}
-      aria-label={label}
-      aria-busy={loading || busy || undefined}
-      noDataMessage={loading ? <TableSkeleton label="Loading runs" /> : undefined}
-      headers={runHeaders(order, !hideHeader)}
-      onSort={(dir, _header, index) => {
-        const key = SORT_AT[index];
-        if (!key) return;
-        // A column not sorted yet starts at its largest (newest, longest, most relied on).
-        onOrder(`${key}_${splitOrder(order)[0] === key ? dir : "desc"}` as RunOrder);
-      }}
-      rows={rows.map((r) => runRow(r, onOpen))}
-      size="sm"
-      className={hideHeader ? "table-header-sr-only" : undefined}
-    />
+    <div ref={nav}>
+      <Table
+        ref={table}
+        aria-label={label}
+        aria-busy={loading || busy || undefined}
+        noDataMessage={loading ? <TableSkeleton label="Loading runs" /> : undefined}
+        headers={runHeaders(order, !hideHeader)}
+        onSort={(dir, _header, index) => {
+          const key = SORT_AT[index];
+          if (!key) return;
+          // A column not sorted yet starts at its largest (newest, longest, most relied on).
+          onOrder(`${key}_${splitOrder(order)[0] === key ? dir : "desc"}` as RunOrder);
+        }}
+        rows={rows.map((r) => runRow(r, onOpen))}
+        size="sm"
+        className={hideHeader ? "table-header-sr-only" : undefined}
+      />
+    </div>
   );
 }
 
@@ -739,7 +754,7 @@ export function Runs() {
     narrow ? (
       <RunRows {...props} order={order} onOrder={refilter(setOrder)} onOpen={openRun} keys={open === null} />
     ) : (
-      <RunTable {...props} order={order} onOrder={refilter(setOrder)} onOpen={openRun} />
+      <RunTable {...props} order={order} onOrder={refilter(setOrder)} onOpen={openRun} keys={open === null} />
     );
 
   // Five statuses are wider than a phone: there the status is a select beside the agent's.
@@ -895,7 +910,7 @@ export function Runs() {
             <RowSkeleton />
           </LoadingSkeleton>
         ) : (
-          <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} loading />
+          <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} keys={false} loading />
         ))}
       {/* Said only of a read of what is asked now: a new filter's read in flight is not it. */}
       {nothingShown && searching && (

@@ -102,6 +102,18 @@ describe("Runs table", () => {
     expect(goal).toHaveAccessibleDescription("");
   });
 
+  // The table is one tab stop: the first run's goal, and the arrows move between runs.
+  it("is one tab stop, and the arrows move between runs", async () => {
+    listRuns.mockResolvedValue([run("r-1", "first", "s-1"), run("r-2", "second", "s-2"), run("r-3", "third", "s-3")]);
+    render(<Runs />);
+    const first = await screen.findByRole("button", { name: "first" });
+    const goals = ["first", "second", "third"].map((n) => screen.getByRole("button", { name: n }));
+    expect(goals.map((g) => g.tabIndex)).toEqual([0, -1, -1]);
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(goals[1]).toHaveFocus();
+  });
+
   it("draws the column header over the first session only, and keeps it for the rest", async () => {
     listRuns.mockResolvedValue([run("r-1", "first", "s-1"), run("r-2", "second", "s-2"), run("r-3", "third", "s-3")]);
     render(<Runs />);

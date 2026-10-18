@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useKeyboard } from "./hooks";
 
 const OPEN = "[data-row-open]";
+// A row: a ui/ListRow, or a table row whose open button carries data-row-open.
+const ROW = ".list-row, tr";
 const CHECK = '[role="checkbox"], input[type="checkbox"]';
 const CONTROL = 'a[href], button, input, select, textarea, [tabindex], [role="button"]';
 /** Marks a row control this hook took out of the tab order; its value is the tabindex
@@ -71,7 +73,7 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
     // Focus on a row's open button or one of its controls makes that row the current one.
     const onFocusIn = (e: FocusEvent) => {
       const at = e.target instanceof Element ? e.target : null;
-      const open = at?.closest<HTMLElement>(OPEN) ?? at?.closest(".list-row")?.querySelector<HTMLElement>(OPEN);
+      const open = at?.closest<HTMLElement>(OPEN) ?? at?.closest(ROW)?.querySelector<HTMLElement>(OPEN);
       if (open && open !== stop.current) roveTo(open);
     };
     // A button clicks on Space's keyup, so both halves are taken.
@@ -99,7 +101,7 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
     const here = (): HTMLElement | null => {
       const el = document.activeElement;
       return el && list?.contains(el)
-        ? (el.closest<HTMLElement>(".list-row")?.querySelector<HTMLElement>(OPEN) ?? null)
+        ? (el.closest<HTMLElement>(ROW)?.querySelector<HTMLElement>(OPEN) ?? null)
         : null;
     };
     const onList = () => {
@@ -134,5 +136,5 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
 
 /** The row an open button belongs to: its `ui/ListRow`, else the button's parent. */
 function rowOf(open: Element): Element {
-  return open.closest(".list-row") ?? open.parentElement ?? open;
+  return open.closest(ROW) ?? open.parentElement ?? open;
 }
