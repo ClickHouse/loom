@@ -178,6 +178,11 @@ async def handle_conversation_append(
         ),
     )
     await _store_embedding(msg_row, embedded, ts=now)
+    # A delete or compaction that tombstoned this message after its last embeddings
+    # read would leave the embedding searchable.
+    await conversation_repo.tombstone_embedding_if_message_gone(
+        input.org, input.namespace, input.agent, input.thread_id, msg_id
+    )
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
 

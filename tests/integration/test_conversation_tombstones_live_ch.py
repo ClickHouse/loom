@@ -181,6 +181,43 @@ async def test_an_orphan_embedding_goes_although_a_peer_reused_its_id(ch, scope)
     assert await _rows(ch, scope) == [("1", "mine", False)]
 
 
+@pytest.mark.asyncio
+async def test_an_embedding_stored_after_the_delete_is_tombstoned_by_append(ch, scope) -> None:
+    """The message lands before the delete and its embedding after the delete's last
+    read: append's re-check tombstones the embedding."""
+    await _message(ch, scope, "a", "1", "late", T0)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=now, ch=ch)
+    await _embedding(ch, scope, "a", "1", "late", T0)
+    await repo.tombstone_embedding_if_message_gone(
+        scope["org"], scope["ns"], "a", scope["tid"], "1", ch=ch
+    )
+    assert await _rows(ch, scope) == [("1", "late", False)]
+
+
+@pytest.mark.asyncio
+async def test_a_live_turn_keeps_its_embedding_after_the_recheck(ch, scope) -> None:
+    await _message(ch, scope, "a", "1", "kept", T0)
+    await _embedding(ch, scope, "a", "1", "kept", T0)
+    await repo.tombstone_embedding_if_message_gone(
+        scope["org"], scope["ns"], "a", scope["tid"], "1", ch=ch
+    )
+    assert await _rows(ch, scope) == [("1", "kept", True)]
+
+
+@pytest.mark.asyncio
+async def test_a_shared_row_with_a_short_excerpt_survives_the_delete(ch, scope) -> None:
+    """A row embedded when excerpts held 240 characters still matches a peer's live
+    copy of a longer turn: the shared row stays."""
+    text = "deploy " * 100
+    await _message(ch, scope, "a", "1", text, T0)
+    await _message(ch, scope, "b", "1", text, T0)
+    await _embedding(ch, scope, "b", "1", text[:240], T0)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=now, ch=ch)
+    assert await _rows(ch, scope) == [("1", text[:240], True)]
+
+
 _LONG_IDS = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
 
 

@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict
 
 from server.core.ch import sequential_reads
 from server.core.repo_base import _CHClient, _default_client, param_slices, query_all_sliced
-from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
+from server.knowledge.domain.conversations import ConversationRole
 
 
 class MessageRow(BaseModel):
@@ -345,7 +345,9 @@ async def tombstone_thread(
     counts["loom.conversations"] = int(msg_n["n"]) if msg_n else 0
 
     # 3. Embeddings again: a turn appended during the delete has its message tombstoned
-    # above, and its embedding, written after the message, can land after step 1.
+    # above, and its embedding, written after the message, can land after step 1. One
+    # that lands after this read is caught by append's own re-check
+    # (`tombstone_embedding_if_message_gone`).
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
     # One per turn (FINAL, however many embedding models hold it), earlier calls'
     # tombstones included, as the messages count is.
@@ -741,6 +743,34 @@ async def tombstone_messages(
         )
 
 
+async def tombstone_embedding_if_message_gone(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> None:
+    """Tombstone a just-stored embedding whose message a delete or compaction tombstoned
+    meanwhile. Those tombstone the messages before their last embeddings read, so either
+    that read sees this embedding or this read sees the message's tombstone."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        row = await ch.query_one(
+            """
+            SELECT max(tombstoned_at) AS gone FROM loom.conversations
+            WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
+              AND thread_id = {tid:String} AND msg_id = {mid:String}
+            """,
+            params={"org": org, "ns": namespace, "agent": agent, "tid": thread_id, "mid": msg_id},
+        )
+    if row and row["gone"] is not None:
+        await _tombstone_embeddings(
+            org, namespace, agent, thread_id, msg_ids=[msg_id], when=row["gone"], ch=ch
+        )
+
+
 # Every embedding row of an agent's turns in a thread: rows it wrote (one whose message
 # row is gone included: the conversation retention TTL expires message rows only), and
 # rows of a turn it logged that another agent wrote last.
@@ -749,6 +779,11 @@ _THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
             WHERE org = {org:String} AND namespace = {ns:String}
               AND agent = {agent:String} AND thread_id = {tid:String}
           ))"""
+
+
+# The text two copies of a turn are compared on: the shortest excerpt any build stored,
+# so a row embedded before excerpts held the embedded text still matches.
+_SAME_TEXT_CHARS = 240
 
 
 async def _tombstone_embeddings(
@@ -775,7 +810,7 @@ async def _tombstone_embeddings(
         "ns": namespace,
         "agent": agent,
         "tid": thread_id,
-        "embedded": EMBEDDED_EXCERPT_CHARS,
+        "same": _SAME_TEXT_CHARS,
     }
     select = """
         SELECT embedding_model, msg_id, agent, toUnixTimestamp64Milli(ts) AS ts_ms
@@ -783,8 +818,8 @@ async def _tombstone_embeddings(
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND thread_id = {{tid:String}} AND tombstoned_at IS NULL
           AND {turns}
-          AND (msg_id, content_excerpt) NOT IN (
-            SELECT msg_id, substringUTF8(content, 1, {{embedded:UInt32}})
+          AND (msg_id, substringUTF8(content_excerpt, 1, {{same:UInt32}})) NOT IN (
+            SELECT msg_id, substringUTF8(content, 1, {{same:UInt32}})
             FROM loom.conversations
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND thread_id = {{tid:String}} AND agent != {{agent:String}}
