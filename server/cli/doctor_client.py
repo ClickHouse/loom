@@ -216,7 +216,7 @@ def token_shadow_check(token: str, source: str, home: Path, env: dict[str, str])
 
 
 def auth_check(
-    base_url: str, token: str, claims: dict[str, Any], post_json: PostJson, agent: bool = False
+    base_url: str, token: str, claims: dict[str, Any], post_json: PostJson, agent: bool
 ) -> tuple[Check, list[dict[str, Any]]]:
     name = "client:auth"
     if not token:
@@ -227,7 +227,7 @@ def auth_check(
         return (name, WARN, "skipped: the server was not reachable"), []
     if status == 401:
         msg = _detail(body)
-        # An agent got this token from --token or LOOM_API_KEY; `loom init` refuses it.
+        # An agent's token came from --token or LOOM_API_KEY, and `loom init` refuses in agent mode.
         fix = (
             "drop --token and LOOM_API_KEY; the hooks and "
             f"`loom call --server {base_url} namespace.list_mine` exchange the workload token"
