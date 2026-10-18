@@ -462,7 +462,7 @@ def _sweep_root(root: str, named_mirrors: set[str], named_checkouts: set[str]) -
             if not name.endswith(_LOCK_SUFFIXES):
                 continue
             gone = _remove_lock(path, mirrors)
-        elif ".git.partial" in name:
+        elif ".git.partial-" in name:
             gone = _remove_partial(path)
         elif name.endswith(".git") and path not in mirrors:
             gone = _remove_under_lock(path, f"{path}.clone-lock")

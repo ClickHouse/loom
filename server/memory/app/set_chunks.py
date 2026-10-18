@@ -110,9 +110,8 @@ async def _live_chunks(
     """The key's live memory.set chunks that belong to `user_id`: a primary-key
     read under FINAL so a chunk already tombstoned by an earlier write is not
     tombstoned twice. Every user holding the key shares its chunk session, so
-    the read keeps to the writer's own chunks and the legacy ones stamped '-'
-    (written before chunks carried a user; they may be the writer's) — never
-    another user's."""
+    the read keeps to the writer's own chunks and those stamped '-' (no user;
+    they may be the writer's) — never another user's."""
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT {", ".join(_CHUNK_COLUMNS)}, created_at
@@ -149,8 +148,8 @@ async def tombstone_set_chunks(
     now: datetime | None = None,
     strong: bool = False,
 ) -> int:
-    """Tombstone `user_id`'s live memory.set chunks of the key (and the legacy
-    '-' ones) except those in `keep` (`(chunk_index, content_sha256)` pairs the
+    """Tombstone `user_id`'s live memory.set chunks of the key (and the '-'
+    ones) except those in `keep` (`(chunk_index, content_sha256)` pairs the
     caller is about to re-insert live), or only those in `only` when given. `strong`
     reads them with sequential consistency. Each tombstone is a replacing row
     (`_tombstone_row`). Returns the number of tombstones written."""
