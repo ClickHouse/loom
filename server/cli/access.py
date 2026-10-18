@@ -289,13 +289,13 @@ async def _scim_give_back(
                 return None, 1
             # Earlier would revive tokens SCIM has listed revoked and whose
             # names are free: a token made under one would hide a live one.
-            # An outright revocation's second may hold a token issued before it:
-            # the floor is the next whole second (revocation compares seconds).
+            # Past every token issued before an outright revocation, on any
+            # replica: its own second, and a clock ahead of the one that wrote it.
             outright_at = _naive_utc(current["revoked_at"]).replace(microsecond=0)
             floor = (
                 _naive_utc(current["issued_before"])
                 if current["issued_before"]
-                else outright_at + timedelta(seconds=1)
+                else outright_at + timedelta(seconds=1 + revocation.CLOCK_SKEW_S)
             )
             if issued_before < floor:
                 print(

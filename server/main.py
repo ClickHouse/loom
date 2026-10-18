@@ -114,9 +114,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         auth_required=settings.auth_actually_required(),
         dev_secret=settings.jwt_secret_is_dev_default(),
     )
-    from server.auth.scim_routes import require_scim_token_length
+    from server.auth.scim_routes import require_scim_settings
 
-    require_scim_token_length(settings.scim_token)
+    require_scim_settings(settings.scim_token, settings.oauth_login_provider)
     boot.require_safe_bind(
         bind_host=settings.bind_host,
         public_base_url=settings.public_base_url,

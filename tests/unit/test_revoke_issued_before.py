@@ -353,8 +353,10 @@ def test_cli_scim_gives_back_a_subject_a_deactivation_caught(
 
     monkeypatch.setattr(scim, "_held", held)
     assert revocation.is_revoked("alice", issued_at=int(time.time()) + 60)
-    # The second after the revocation's: the earliest a give-back may take.
-    cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+    # Past the revocation's second and the skew: the earliest a give-back may take.
+    cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(
+        seconds=1 + revocation.CLOCK_SKEW_S
+    )
     when = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
     rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"])
     assert rc == 0
@@ -408,12 +410,13 @@ def test_cli_and_servers_name_a_subjects_lease_alike_whatever_their_secret(
 
     asyncio.run(server_side())
     monkeypatch.setattr(settings, "jwt_secret", "")  # a CLI without the servers' secret
-    when = (datetime.now(UTC) + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    later = datetime.now(UTC) + timedelta(seconds=1 + revocation.CLOCK_SKEW_S)
+    when = later.strftime("%Y-%m-%dT%H:%M:%SZ")
     assert cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"]) == 0
     assert len(names) == 2 and names[0] == names[1]
 
 
-def test_a_scim_give_back_starts_the_second_after_the_revocation(
+def test_a_scim_give_back_starts_past_the_revocations_second_and_the_skew(
     fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A token issued in the deactivation's own second is from before it: it stays dead.
@@ -431,11 +434,12 @@ def test_a_scim_give_back_starts_the_second_after_the_revocation(
         stamp = when.strftime("%Y-%m-%dT%H:%M:%SZ")
         return cli.main(["revoke-token", "--subject", "alice", "--issued-before", stamp, "--scim"])
 
+    floor = at + timedelta(seconds=1 + revocation.CLOCK_SKEW_S)  # past a clock ahead too
     assert give_back(datetime(2000, 1, 1)) == 2
-    assert (
-        give_back(at) == 2 and "keeps the tokens issued before that dead" in capsys.readouterr().err
-    )
-    assert give_back(at + timedelta(seconds=1)) == 0
-    # Narrowed now, the floor is that cutoff: a later one may follow, an earlier one not.
     assert give_back(at) == 2
-    assert give_back(at + timedelta(seconds=5)) == 0
+    assert "keeps the tokens issued before that dead" in capsys.readouterr().err
+    assert give_back(floor - timedelta(seconds=1)) == 2
+    assert give_back(floor) == 0
+    # Narrowed now, the floor is that cutoff: a later one may follow, an earlier one not.
+    assert give_back(floor - timedelta(seconds=1)) == 2
+    assert give_back(floor + timedelta(seconds=5)) == 0

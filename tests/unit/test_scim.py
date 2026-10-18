@@ -1199,17 +1199,29 @@ def test_scim_is_not_mounted_without_a_token(monkeypatch: pytest.MonkeyPatch) ->
     assert TestClient(app).get("/scim/v2/ServiceProviderConfig").status_code == 404
 
 
-def test_a_short_token_refuses_to_start_and_doctor_says_so(monkeypatch) -> None:
+def test_scim_that_could_not_deactivate_refuses_to_start_and_doctor_says_so(monkeypatch) -> None:
     from server.cli import doctor
 
-    scim_routes.require_scim_token_length("")  # off is fine
-    scim_routes.require_scim_token_length("x" * 32)
+    def require(raw: str, provider: str = "oidc") -> None:
+        scim_routes.require_scim_settings(raw, provider)
+
+    require("")  # off is fine
+    require("", "password")
+    require("x" * 32)
     with pytest.raises(RuntimeError, match="at least 32"):
-        scim_routes.require_scim_token_length("x" * 31)
+        require("x" * 31)
     with pytest.raises(RuntimeError, match="at least 32"):  # each one listed counts
-        scim_routes.require_scim_token_length(f"{'x' * 32},{'y' * 31}")
-    scim_routes.require_scim_token_length(" , ")  # lists none: off
+        require(f"{'x' * 32},{'y' * 31}")
+    require(" , ")  # lists none: off
+    # Without SSO there is no sign-in to refuse: a deactivation would answer 200 and do nothing.
+    with pytest.raises(RuntimeError, match="not oidc"):
+        require("x" * 32, "password")
+    monkeypatch.setattr(settings, "oauth_login_provider", "oidc")
     monkeypatch.setattr(settings, "scim_token", "x" * 31)
+    assert doctor._doctor_scim_token_check(settings)[1] == doctor.FAIL
+    monkeypatch.setattr(settings, "scim_token", "x" * 32)
+    assert doctor._doctor_scim_token_check(settings)[1] == doctor.PASS
+    monkeypatch.setattr(settings, "oauth_login_provider", "password")
     assert doctor._doctor_scim_token_check(settings)[1] == doctor.FAIL
     monkeypatch.setattr(settings, "scim_token", "")
     assert doctor._doctor_scim_token_check(settings)[1] == doctor.PASS
@@ -1973,7 +1985,7 @@ async def test_a_sign_in_once_the_row_says_active_lives_after_the_lift(world, mo
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
     await scim.update(uid, active=False)
-    start = datetime.now(UTC)
+    start = datetime.now(UTC) + timedelta(minutes=1)  # reactivated a minute later
 
     class Clock(datetime):
         at = start
@@ -1997,6 +2009,18 @@ async def test_a_sign_in_once_the_row_says_active_lives_after_the_lift(world, mo
     assert await world.keeps_out("lee", issued_at=int(start.timestamp()))  # a token from before
 
 
+async def test_a_quick_reactivation_keeps_a_token_an_ahead_clock_issued_before_it_dead(
+    world,
+) -> None:
+    # A replica whose clock runs ahead issued a token just before the deactivation.
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.update(uid, active=False)
+    ahead = int(time.time()) + revocation.CLOCK_SKEW_S
+    await scim.update(uid, active=True)  # at once
+    assert await world.keeps_out("lee", issued_at=ahead)
+
+
 def test_a_write_racing_a_delete_answers_404(client: TestClient, world, monkeypatch) -> None:
     uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
 
@@ -2008,6 +2032,14 @@ def test_a_write_racing_a_delete_answers_404(client: TestClient, world, monkeypa
     assert client.patch(f"/scim/v2/Users/{uid}", json=on).status_code == 404
     put = client.put(f"/scim/v2/Users/{uid}", json={"userName": "lee@example.com", "active": True})
     assert put.status_code == 404
+
+
+@pytest.mark.parametrize("value", ["  ", "", 7, None])
+def test_a_patch_cannot_blank_the_username(value: Any) -> None:
+    op = {"op": "replace", "path": "userName", "value": value}
+    with pytest.raises(ScimError) as e:
+        patched_names({"Operations": [op]}, _WORK_ROW)
+    assert (e.value.status, e.value.scim_type) == (400, "invalidValue")
 
 
 def test_groups_is_an_empty_list(client: TestClient) -> None:

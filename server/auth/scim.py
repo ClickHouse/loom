@@ -387,9 +387,12 @@ async def _converge_active(
         return new, _newest_cutoff(rows) if reactivating else None
     async with subject_leases(subjects):
         # Taken before the row: a token a sign-in gets once the row says active
-        # is past it from the next second on. No skew ahead: sign-in is refused
-        # while deactivated, so only a replica behind matters.
-        lift_to = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+        # is past it from the next second on. And past every token issued before
+        # the revocations it lifts, by a replica whose clock runs ahead.
+        lift_to = max(
+            datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1),
+            *(_after_skew(r["revoked_at"]) for r in rows.values() if r["issued_before"] is None),
+        )
         # The row first: a lift that fails leaves the user active and still
         # revoked, never inactive with a subject let go. A retry lifts the rest.
         await _write_audited(row, new)
@@ -509,6 +512,12 @@ async def _lift(row: dict[str, Any], subjects: list[str], cutoff: datetime) -> b
         )
         lifted = True
     return lifted
+
+
+def _after_skew(revoked_at: datetime) -> datetime:
+    """The first second no replica's clock could have issued a token before `revoked_at`."""
+    at = revoked_at if revoked_at.tzinfo else revoked_at.replace(tzinfo=UTC)
+    return at.replace(microsecond=0) + timedelta(seconds=1 + revocation.CLOCK_SKEW_S)
 
 
 def _outright(rows: dict[str, dict[str, Any]]) -> set[str]:

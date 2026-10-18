@@ -110,8 +110,9 @@ async def _sent(rng: random.Random, *requests: Callable[[], Awaitable[Any]]) -> 
 
 
 async def _keeps_out(subject: str, *, issued_at: int | None = None) -> bool:
-    """Whether a token of `subject` issued at `issued_at` (a fresh one: past any cutoff) is dead."""
-    when = int(time.time()) + 2 if issued_at is None else issued_at
+    """Whether a token of `subject` issued at `issued_at` (a fresh one: past any cutoff,
+    which with the wait skipped may lie the skew past the revocation) is dead."""
+    when = int(time.time()) + 2 + revocation.CLOCK_SKEW_S if issued_at is None else issued_at
     return await revocation.subjects_revoked([subject], issued_at=when)
 
 

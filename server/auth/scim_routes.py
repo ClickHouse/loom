@@ -200,7 +200,9 @@ def patched_names(
             if attr == "username":
                 if kind == "remove":
                     raise ScimError(400, "the userName cannot be removed", "mutability")
-                user_name = value if isinstance(value, str) else None
+                if not isinstance(value, str) or not value.strip():
+                    raise ScimError(400, "userName must be a non-empty string", "invalidValue")
+                user_name = value
             elif attr.startswith("emails"):
                 entry = _keyed_written(kind, attr, value, row) or entry
     return user_name, entry
@@ -572,21 +574,28 @@ async def unknown(rest: str, request: Request) -> Response:
     )
 
 
-def short_token_problem(raw: str) -> str:
-    """Why a token the `LOOM_SCIM_TOKEN` value `raw` lists is no SCIM token to
-    start with, or '' (SCIM off is fine)."""
-    for token in scim.tokens(raw):
+def scim_settings_problem(raw: str, login_provider: str) -> str:
+    """Why SCIM, with the `LOOM_SCIM_TOKEN` value `raw`, cannot start, or ''
+    (SCIM off is fine): a guessable token, or sign-in that is not SSO, where a
+    deactivation would answer 200 and refuse nobody."""
+    tokens = scim.tokens(raw)
+    for token in tokens:
         if len(token) < MIN_TOKEN_LENGTH:
             return (
                 f"a LOOM_SCIM_TOKEN token is {len(token)} characters; "
                 f"each must be at least {MIN_TOKEN_LENGTH}"
             )
+    if tokens and login_provider != "oidc":
+        return (
+            "LOOM_SCIM_TOKEN is set but LOOM_OAUTH_LOGIN_PROVIDER is not oidc: SCIM "
+            "deactivates SSO sign-ins, and there are none"
+        )
     return ""
 
 
-def require_scim_token_length(raw: str) -> None:
-    """Refuse to start with a guessable SCIM token (run in the lifespan)."""
-    if problem := short_token_problem(raw):
+def require_scim_settings(raw: str, login_provider: str) -> None:
+    """Refuse to start with SCIM that could not deactivate anyone (run in the lifespan)."""
+    if problem := scim_settings_problem(raw, login_provider):
         raise RuntimeError(f"refusing to start: {problem}")
 
 

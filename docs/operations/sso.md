@@ -290,9 +290,11 @@ a long random token and restart:
 LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
 ```
 
-Empty (the default) leaves SCIM off and its routes unmounted; Loom refuses to
-start with a token shorter than 32 characters (`loom doctor` says so too). The
-token is the only credential `/scim/v2` takes; keep it with the client secret.
+Empty (the default) leaves SCIM off and its routes unmounted. Loom refuses to
+start with a token shorter than 32 characters, or with SCIM set while sign-in
+is not SSO (`LOOM_OAUTH_LOGIN_PROVIDER=oidc`): a deactivation would then refuse
+nobody. `loom doctor` says so too. The token is the only credential `/scim/v2`
+takes; keep it with the client secret.
 
 To rotate it without refusing the provider in between, list both tokens,
 comma-separated, and roll the replicas; set the new one at the provider; then
@@ -417,8 +419,9 @@ What Loom does with each request:
   change only with **Update User Attributes** on; Entra sends one when a mapped
   attribute changes. Otherwise, or at once,
   `loom revoke-token --subject <it> --issued-before <now> --scim` gives it
-  back as an operator. A reactivation answers after about 6 s, once every
-  replica's clock is past its cutoff, so a sign-in after it gets a token that
+  back as an operator. A reactivation answers after about 6 s (up to 11 s
+  when it comes right after the deactivation), once every replica's clock is
+  past its cutoff, so a sign-in after it gets a token that
   lives (one in that wait would get a token from before the cutoff, already
   dead); a retry sent meanwhile waits out the rest. Another replica still
   refuses the new session until its next revocation refresh, then takes it.

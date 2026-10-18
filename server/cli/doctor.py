@@ -256,9 +256,9 @@ _LOOPBACK = ("127.0.0.1", "::1")
 def _doctor_scim_token_check(settings: Any) -> tuple[str, str, str]:
     """The `scim_token` line: FAIL when the server would refuse to start with it."""
     from server.auth.scim import tokens
-    from server.auth.scim_routes import short_token_problem
+    from server.auth.scim_routes import scim_settings_problem
 
-    if problem := short_token_problem(settings.scim_token):
+    if problem := scim_settings_problem(settings.scim_token, settings.oauth_login_provider):
         return ("scim_token", FAIL, problem)
     count = len(tokens(settings.scim_token))
     return ("scim_token", PASS, f"{count} token(s) set" if count else "SCIM off")
