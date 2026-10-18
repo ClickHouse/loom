@@ -578,11 +578,9 @@ def execute(
         try:
             ddl, ddl_settings = staging_ddl(client, database, p.name, staging)
             client.command(ddl, settings=ddl_settings or None)
-            # A merge in staging would collapse rows before the attach; the
-            # rows are the same to a FINAL read, but the restored count would
-            # no longer match the manifest's. Needs the SYSTEM STOP MERGES
-            # grant; without it merges in staging may collapse rows and the
-            # restored count can differ from the manifest's.
+            # A merge in staging would collapse rows before the attach, so the
+            # restored count would not match the manifest's (a FINAL read sees
+            # the same rows). Best effort: it needs the SYSTEM STOP MERGES grant.
             with contextlib.suppress(Exception):
                 client.command(f"SYSTEM STOP MERGES {staging}")
             with p.path.open("rb") as f:

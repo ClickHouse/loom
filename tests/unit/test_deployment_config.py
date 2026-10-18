@@ -88,8 +88,19 @@ def test_compare_names_a_different_secret_and_a_different_embedding_space() -> N
     assert any("LOOM_JWT_SECRET" in p for p in problems)
     assert any("LOOM_EMBEDDING_MODEL" in p for p in problems)
     assert any("LOOM_EMBEDDING_PROVIDER='fake'" in p for p in problems)  # as the model implies
-    # A row without the root fingerprint proves nothing: `loom deployment publish` replaces it.
-    assert ["root-secret fingerprint" in p for p in dc.compare(other, {})] == [True]
+
+
+@pytest.mark.usefixtures("deployment")
+def test_a_row_without_the_root_fingerprint_is_drift_and_the_leader_keeps_it() -> None:
+    """It proves nothing about the root secret: no process is ready against it,
+    and only `loom deployment publish` replaces it."""
+    stored = {k: v for k, v in dc.snapshot(settings).items() if k != dc.KEYS_ENTRY}
+    ch = _Ch(stored)
+    asyncio.run(dc.check(ch))
+    assert any("root-secret fingerprint" in p for p in dc.drift())
+    assert not dc.readiness_check().ok
+    assert not asyncio.run(dc.publish(ch, live=[]))
+    assert ch.inserted == []
 
 
 @pytest.mark.usefixtures("deployment")
@@ -148,6 +159,15 @@ def test_the_leader_publishes_when_nothing_is_published() -> None:
     assert asyncio.run(dc.publish(ch, live=[]))
     assert ch.stored == dc.snapshot(settings)
     assert ch.inserted[0]["name"] == "settings"
+
+
+@pytest.mark.usefixtures("deployment")
+def test_an_empty_row_is_nothing_published() -> None:
+    ch = _Ch({})
+    asyncio.run(dc.check(ch))
+    assert dc.drift() == []
+    assert asyncio.run(dc.publish(ch, live=[]))
+    assert ch.stored == dc.snapshot(settings)
 
 
 @pytest.mark.usefixtures("deployment")

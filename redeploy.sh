@@ -5,8 +5,9 @@
 # :7777 and forwards to the colour named in var/proxy/upstream.conf —
 # `loom-blue:7781` or `loom-green:7782`, two compose projects built from
 # dev/docker-compose.colour.yml that share .env, the code mirrors and the
-# `loom-shared` volume (the rate-limit table). A redeploy builds and boots the IDLE colour while
-# the active one keeps serving, waits until its /v1/health says
+# `loom-shared` volume (the rate-limit table). A redeploy builds and boots
+# the IDLE colour while the active one keeps serving, waits until its
+# /v1/health says
 # status=ok, readiness.ready and schema.pending=[] (boot migrations done — every migration is
 # additive, so the old colour keeps serving through them), rewrites the
 # upstream, reloads nginx (new workers inherit the listening socket; nothing
