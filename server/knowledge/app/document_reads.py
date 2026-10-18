@@ -47,7 +47,7 @@ async def handle_knowledge_list(
             input.org,
             input.namespace,
             include_superseded=input.include_superseded,
-            tag_filter=list_tag_filter(input.tags, input.tags_every),
+            tag_filter=list_tag_filter(input.tags, every=input.tags_every),
             uri_prefixes=list(input.uri_prefix) if input.uri_prefix else None,
             cursor=cursor,
             limit=input.limit + 1,

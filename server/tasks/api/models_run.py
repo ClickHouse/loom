@@ -367,7 +367,7 @@ class RunListInput(BaseModel):
         "relied_on_asc",
     ] = "started_desc"
     # Only runs whose goal, run id or agent holds this text, in any case; unset, no filter.
-    q: str | None = Field(default=None, max_length=200)
+    q: str = Field(default="", max_length=200)
     # The Runs page folds runs that neither relied on nor wrote a memory.
     # Folding on the client, after `limit`, can leave a chatty consumer's page
     # empty: its newest runs are all hollow while filled runs sit further

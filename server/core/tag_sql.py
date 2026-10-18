@@ -32,7 +32,7 @@ def tag_predicate(alias: str = "e") -> str:
     return f"hasAny({col}, {{tags:Array(String)}})"
 
 
-def list_tag_filter(tags: Sequence[str], every: bool) -> TagFilter | None:
+def list_tag_filter(tags: Sequence[str], *, every: bool) -> TagFilter | None:
     """A list op's filter: every tag when `tags_every` is set, otherwise any one, in any case."""
     kept = tuple(t for t in tags if t)
     if not kept:

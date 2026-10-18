@@ -1024,7 +1024,7 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
         where.append("grade = {grade:String}")
         params["grade"] = input.grade
     # The Runs page's search box: goal, run id or agent, any case.
-    q = (input.q or "").strip()
+    q = input.q.strip()
     if q:
         where.append(runs_store.RUN_TEXT_MATCH)
         params["q"] = q
