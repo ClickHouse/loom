@@ -4,6 +4,7 @@
 import { post } from "../api";
 import type { Identity, RequestOpts } from "../api";
 import { listAuditLog, parseAuditSubject, type AutoResolveReason } from "./audit";
+import { parseIso } from "../lib/format";
 
 // ===== Namespace usage audit =====
 
@@ -701,6 +702,9 @@ export function autoResolveReasonText(reason: string): string | null {
   return Object.hasOwn(AUTO_RESOLVE_REASON_TEXT, reason) ? AUTO_RESOLVE_REASON_TEXT[reason as AutoResolveReason] : null;
 }
 
+/** An audit row's time in ms: one without an offset is UTC (`parseIso`); 0 if unreadable. */
+export const auditInstant = (ts: string): number => parseIso(ts)?.getTime() ?? 0;
+
 /** Pages of `memory.unsupersede` records `listUnsuperseded` reads at most. A restore is
  *  one record, made by a person clicking Undo or Restore, so 5 pages of 500 cover far more
  *  restores than a 30-day window holds; past that, an older retirement shows Undo, and
@@ -729,8 +733,9 @@ export async function listUnsuperseded(
       const mid = String(parseAuditSubject(r.subject)["memory_id"] ?? "");
       if (!mid) continue;
       const prev = out.get(mid);
-      // As instants: a whole second comes without a fraction, and "." sorts before "Z".
-      if (!prev || Date.parse(r.ts) > Date.parse(prev)) out.set(mid, r.ts);
+      // As instants (a whole second comes without a fraction, and "." sorts before "Z"),
+      // and a time without an offset as UTC, as ClickHouse sends it.
+      if (!prev || auditInstant(r.ts) > auditInstant(prev)) out.set(mid, r.ts);
     }
     if (!next_cursor) break;
     cursor = next_cursor;

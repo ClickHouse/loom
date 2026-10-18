@@ -14,6 +14,7 @@ import {
   reviewLearning,
   listAutoResolved,
   listUnsuperseded,
+  auditInstant,
   restoreMemory,
   getMemoryById,
   autoResolveReasonText,
@@ -449,7 +450,7 @@ const entryKey = (r: AutoResolvedRow) => `${r.memory_id}@${r.ts}>${r.superseded_
 
 // Audit times compared as instants: a whole second comes without a fraction
 // ("…12:00:00Z"), and as text "." sorts before "Z".
-const instant = (ts: string) => Date.parse(ts);
+const instant = auditInstant;
 
 /** Newest restore per id across two reads. */
 function mergeUndone(a: Map<string, string>, b: Map<string, string>): Map<string, string> {

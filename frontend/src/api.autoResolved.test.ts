@@ -157,6 +157,25 @@ describe("listUnsuperseded", () => {
     expect(bodies[0]).toMatchObject({ event_type: "memory.unsupersede", since: "2026-09-01T00:00:00Z" });
   });
 
+  it("reads a time without an offset as UTC, whatever the browser's zone", async () => {
+    const zone = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      stubAudit([
+        {
+          rows: [
+            { ts: "2026-10-03 00:00:00", subject: JSON.stringify({ memory_id: "m1" }) },
+            { ts: "2026-10-03T03:00:00Z", subject: JSON.stringify({ memory_id: "m1" }) },
+          ],
+        },
+      ]);
+      const out = await listUnsuperseded({ org: "o", namespace: "n" }, { since: "2026-09-01T00:00:00Z" });
+      expect(out.get("m1")).toBe("2026-10-03T03:00:00Z");
+    } finally {
+      process.env.TZ = zone;
+    }
+  });
+
   it("keeps the later restore of one second, written with and without a fraction", async () => {
     stubAudit([
       {
