@@ -583,6 +583,26 @@ async def test_a_row_changed_since_it_was_queued_or_judged_is_skipped(row_env: N
     assert counts.skipped_changed == 1 and row_env.acted == []
 
 
+async def test_a_key_held_past_the_locks_wait_leaves_the_row_owed(
+    row_env: NS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The holder may fail its own if_match or change only metadata: no new mark brings
+    # the pair back, so the row is judged again.
+    from contextlib import asynccontextmanager
+
+    from server.core.errors import PreconditionFailedError
+
+    @asynccontextmanager
+    async def busy(*a: Any) -> Any:
+        raise PreconditionFailedError("busy")
+        yield
+
+    monkeypatch.setattr(resolver, "_pair_locks", busy)
+    counts = await _resolve()
+    assert row_env.llm_calls == 1 and row_env.acted == [] and row_env.stamped == []
+    assert counts.skipped_changed == 1
+
+
 async def test_a_row_gone_or_under_append_only_is_stamped_without_a_call(row_env: NS) -> None:
     row_env.mem.status = "superseded"
     await _resolve()

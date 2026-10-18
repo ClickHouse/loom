@@ -286,7 +286,8 @@ actions, verdicts and confidences, never the text.
   conditional revision holds its key from its read to its insert: a resolver write never
   lands over a revision, and when two rows judged at once both call the same peer stale,
   the second re-reads it retired and leaves it. A writer takes one key, so nothing
-  deadlocks; a key held past the lock's wait leaves the pair to that write's own mark.
+  deadlocks; a key held past the lock's wait leaves the row's remaining pairs, and the
+  row stays owed: that write may change only metadata, or fail, and bring no new mark.
   The record and the follow of a retirement run after the locks are released.
 - The queue reads leave out a namespace over its daily LLM cost cap
   (`observability.budget`) and an org with an erasure queued, running or failed and due a

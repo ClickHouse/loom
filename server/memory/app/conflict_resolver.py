@@ -442,17 +442,9 @@ async def _settle_pair(
 ) -> dict[str, Any] | None:
     """Act on one pair after re-reading both rows; what was done ({"action": ...}, for
     the audit row) when something changed, else None. A key another write holds past
-    the lock's wait leaves the pair alone: that write's own mark brings it back."""
-    from server.core.errors import PreconditionFailedError
-
-    try:
-        async with _pair_locks(org, namespace, row, peer):
-            taken, retired = await _settle_locked_pair(
-                org, namespace, row, peer, action, order, counts
-            )
-    except PreconditionFailedError:
-        counts.skipped_changed += 1
-        return None
+    the lock's wait raises PreconditionFailedError."""
+    async with _pair_locks(org, namespace, row, peer):
+        taken, retired = await _settle_locked_pair(org, namespace, row, peer, action, order, counts)
     if retired is not None:
         await _after_retire(org, namespace, retired)
     return taken
@@ -539,6 +531,8 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> N
     """Judge one queue row and act on its pairs, then stamp it judged. A row whose
     head is no longer the queued write is skipped unstamped: its new write carries
     its own mark. A provider failure raises, and the row stays owed."""
+    from server.core.errors import PreconditionFailedError
+
     org, namespace, sha = str(q["org"]), str(q["namespace"]), str(q.get("content_sha256") or "")
     row = await _current(q)
     if row is not None and sha and str(row.content_sha256 or "") != sha:
@@ -560,7 +554,13 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> N
     if peers:
         row, peers = await _still_unprotected(org, row, peers)
     if row is not None and peers:
-        await _judge_and_act(org, namespace, row, peers, policy=policy, counts=counts)
+        try:
+            await _judge_and_act(org, namespace, row, peers, policy=policy, counts=counts)
+        except PreconditionFailedError:
+            # A key another write held past the lock's wait. That write may change only
+            # metadata or fail, leaving no new mark: the row stays owed.
+            counts.skipped_changed += 1
+            return
     await queue.stamp_judged(q)  # under erasure it writes nothing: the row stays owed
 
 
