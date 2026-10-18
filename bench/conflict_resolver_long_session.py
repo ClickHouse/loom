@@ -13,10 +13,13 @@ resolver to judge everything it owes, reads the end state, and asks
 `memory.search` one question per attribute.
 
 Run it against a server with the resolver on and one with it off (`--base-url
-on=... --base-url off=...`), both on the ClickHouse named by `--ch-*`: the
-harness reads the resolver's queue marks (`memory_embeddings.conflict_checked_at`)
-to know when it has drained, the rows' end state, the `memory.auto_supersede`
-audit records and the worker's spend in `agent_events`. Auth off; org `bench`.
+on=... --base-url off=...`), each on its own ClickHouse (`--ch on=HOST:PORT --ch
+off=HOST:PORT`; the others `--ch-*`): the resolver judges every namespace of its
+store, so on a shared one it would judge the control's rows too. The harness reads,
+from each arm's store, the resolver's queue marks
+(`memory_embeddings.conflict_checked_at`) to know when it has drained, the rows' end
+state, the `memory.auto_supersede` audit records and the worker's spend in
+`agent_events`. Auth off; org `bench`.
 
 Variants (`--variant`):
 
@@ -52,13 +55,15 @@ the next variant once the measured spend passes it.
 Server setup: the `on` server with LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=true and
 a short LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS (e.g. 5) so the drain
 is quick; the `off` server with LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=false;
-both with real embedder and LLM keys and LOOM_AUTH_REQUIRED=false.
+both with real embedder and LLM keys and LOOM_AUTH_REQUIRED=false, and each on its
+own migrated ClickHouse (LOOM_CH_HOST / LOOM_CH_PORT).
 
 Run (from the repository root):
 
     PYTHONPATH=$PWD .venv/bin/python bench/conflict_resolver_long_session.py \\
         --base-url on=http://localhost:7781 --base-url off=http://localhost:7782 \\
-        --ch-port 8123 --ch-user loom --ch-password "$LOOM_CH_PASSWORD" \\
+        --ch on=127.0.0.1:8123 --ch off=127.0.0.1:8124 \\
+        --ch-user loom --ch-password "$LOOM_CH_PASSWORD" \\
         --variant both --out /tmp/resolver_long_session.json
 
 `--dry-run` prints the scenario and the plan without touching a server.
@@ -211,12 +216,29 @@ WHERE org = {org:String} AND namespace = {ns:String}
 """
 
 
-def _ch(args: argparse.Namespace) -> Any:
+def _arm_clickhouses(
+    args: argparse.Namespace, servers: list[tuple[str, str]]
+) -> dict[str, tuple[str, int]]:
+    """Each arm's ClickHouse (host, port): its `--ch label=HOST:PORT`, else `--ch-host`
+    and `--ch-port`. Two arms on one store are refused: the resolver judges every
+    namespace of its store, the control's too."""
+    named = {}
+    for item in args.ch:
+        label, _, target = item.partition("=")
+        host, _, port = target.rpartition(":")
+        named[label] = (host, int(port))
+    out = {label: named.get(label, (args.ch_host, args.ch_port)) for label, _ in servers}
+    if len(out) > 1 and len(set(out.values())) < len(out):
+        raise SystemExit("each arm needs its own ClickHouse: --ch on=HOST:PORT --ch off=HOST:PORT")
+    return out
+
+
+def _ch(args: argparse.Namespace, target: tuple[str, int]) -> Any:
     import clickhouse_connect
 
     return clickhouse_connect.get_client(
-        host=args.ch_host,
-        port=args.ch_port,
+        host=target[0],
+        port=target[1],
         username=args.ch_user,
         password=args.ch_password,
         database=args.ch_database,
@@ -460,6 +482,12 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     )
     p.add_argument("--token", default=os.environ.get("LOOM_API_KEY", ""))
     p.add_argument("--variant", choices=("set", "messages", "both"), default="set")
+    p.add_argument(
+        "--ch",
+        action="append",
+        default=[],
+        help="on=HOST:PORT or off=HOST:PORT: the arm's own ClickHouse (repeatable)",
+    )
     p.add_argument("--ch-host", default=os.environ.get("LOOM_CH_HOST", "127.0.0.1"))
     p.add_argument("--ch-port", type=int, default=int(os.environ.get("LOOM_CH_PORT", "8123")))
     p.add_argument("--ch-user", default=os.environ.get("LOOM_CH_USER", "default"))
@@ -485,7 +513,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not servers:
         raise SystemExit("name at least one server: --base-url on=URL and/or off=URL")
-    ch = _ch(args)
+    stores = _arm_clickhouses(args, servers)
     results: list[dict[str, Any]] = []
     spent = 0.0
     with httpx.Client() as client:
@@ -501,7 +529,7 @@ def main(argv: list[str] | None = None) -> int:
                     if spent > args.budget_usd:
                         print(f"budget ${args.budget_usd} spent; skipping {label}/{v}")
                         continue
-                    r = run_arm(post, ch, label, v, args)
+                    r = run_arm(post, _ch(args, stores[label]), label, v, args)
                     spent += float(r["namespace_cost_usd"])
                     results.append(r)
                     print(json.dumps(r), file=sys.stderr)
