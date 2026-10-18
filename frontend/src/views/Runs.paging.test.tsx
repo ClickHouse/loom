@@ -443,12 +443,9 @@ describe("Runs paging, sorting and search on the server", () => {
     await screen.findByRole("button", { name: "goal 1" });
     fireEvent.click(within(screen.getByLabelText("Filter runs by status")).getByRole("button", { name: "Failed" }));
     await waitFor(() => expect(lastOpts()).toMatchObject({ status: "failed", offset: 0 }));
-    const next = within(screen.getByRole("navigation", { name: "Runs pages" })).getByRole("button", {
-      name: "Next page",
-    });
-    expect(next).toBeDisabled();
-    fireEvent.click(next);
-    expect(lastOpts()).toMatchObject({ status: "failed", offset: 0 });
+    // The rows on screen are the old filter's (the toolbar still counts them, marked busy):
+    // no pager pages from them.
+    expect(screen.queryByRole("navigation", { name: "Runs pages" })).toBeNull();
     act(() => answer({ runs: [run(777, { status: "failed" })], total: 1 }));
     expect(await screen.findByRole("button", { name: "goal 777" })).toBeInTheDocument();
   });

@@ -2759,13 +2759,13 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           so focus stays when a page steps back to an empty first page. */}
       {rows !== null && (
         <div id="packs-list" tabIndex={-1} className="outline-none" aria-busy={refreshing || undefined}>
-          {rows.length === 0 && pagerOffset === 0 && (
+          {rows.length === 0 && pagerOffset === 0 && rowsCurrent && !refreshing && (
             <EmptyState
               icon="cards"
               title="No packs yet"
               description={
-                prFilter
-                  ? `No precomputed pack for PR #${prFilter}. Unmerged PRs get an orientation pack on demand.`
+                prSettled
+                  ? `No precomputed pack for PR #${prSettled}. Unmerged PRs get an orientation pack on demand.`
                   : "Packs appear as merges are ingested."
               }
             />
@@ -2833,7 +2833,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           busy={refreshing}
           pageSize={pageSize}
           shown={rowsCurrent ? rows.length : 0}
-          total={total}
+          total={rowsCurrent ? total : undefined}
           onPage={(n) => setOffset(n * pageSize)}
           onPageSize={(n) => {
             setPageSize(n);

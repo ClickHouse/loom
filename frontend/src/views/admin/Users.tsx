@@ -221,6 +221,7 @@ export function Users() {
             pageSize={pageSize}
             shown={pageRows.length}
             total={rows.length}
+            busy={refreshing}
             onPage={setPage}
             onPageSize={(n) => {
               setPageSize(n);

@@ -200,15 +200,16 @@ describe("ListPager, typed and edge pages", () => {
     expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
-  it("moves nowhere while a read is in flight", () => {
+  it("holds Next while a read is in flight, and still goes back or to a typed page", () => {
     const onPage = vi.fn();
     render(<ListPager label="Runs pages" page={1} pageSize={50} total={500} shown={50} busy onPage={onPage} />);
     expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(onPage).toHaveBeenLastCalledWith(0);
     const field = screen.getByRole("spinbutton", { name: "Page" });
     fireEvent.change(field, { target: { value: "7" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    expect(onPage).not.toHaveBeenCalled();
+    expect(onPage).toHaveBeenLastCalledWith(6);
   });
 
   it("without a total, says which pages can be opened on the last one the server serves", () => {

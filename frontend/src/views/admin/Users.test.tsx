@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "../../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminUserRow, AdminUsersResult } from "../../api";
 import { useStore } from "../../lib/state";
@@ -133,6 +133,24 @@ describe("Users count, times and failure", () => {
 
 // A read started by Refresh or Retry is dropped when a newer read overtakes it, so an answer
 // for the set the page has left (service accounts in or out) never lands after the new one's.
+describe("Users paging while a read is in flight", () => {
+  it("holds Next while the service-accounts read is in flight, and starts its list from page 1", async () => {
+    adminListUsers.mockResolvedValueOnce(result(Array.from({ length: 120 }, (_, i) => user(i + 1))));
+    render(<Users />);
+    await screen.findByText("user-1@example.com");
+    let answer: (v: unknown) => void = () => {};
+    adminListUsers.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include service accounts" }));
+    await waitFor(() => expect(adminListUsers).toHaveBeenCalledTimes(2));
+    const next = screen.getByRole("button", { name: "Next page" });
+    expect(next).toBeDisabled();
+    fireEvent.click(next);
+    await act(async () => answer(result(Array.from({ length: 130 }, (_, i) => user(i + 1)))));
+    expect(await screen.findByText("user-1@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Users pages" })).toHaveTextContent("1–50 of 130");
+  });
+});
+
 describe("Users late answers", () => {
   it("drops a Refresh's answer that lands after the service-accounts toggle's", async () => {
     adminListUsers.mockResolvedValueOnce(result([user(1)]));

@@ -693,8 +693,8 @@ export function Runs() {
   // The page the rows on screen are: the pager pages from it while they are what the list
   // shows, so a second Next during a read asks for the same page; for another filter or
   // page size it pages from the page asked for.
-  const current = localRows !== null || (shown !== null && shown.key === readKey);
-  const pagerPage = current ? (localRows ? page : (shown?.page ?? page)) : page;
+  const current = localRows !== null || shown?.key === readKey;
+  const pagerPage = !localRows && shown?.key === readKey ? shown.page : page;
   const searching = q !== "" || filter !== "" || agent !== "";
   const count =
     shown && !error
@@ -938,9 +938,10 @@ export function Runs() {
           resetKey={filterKey}
           busy={loading}
           pageSize={pageSize}
-          // Rows read for another filter or page size are not this list's to count.
+          // Rows read for another filter or page size are not this list's to count or page:
+          // with neither rows nor a total the pager waits for the new list's first page.
           shown={current ? rows.length : 0}
-          total={localRows ? localRows.length : (shown.total ?? undefined)}
+          total={!current ? undefined : localRows ? localRows.length : (shown.total ?? undefined)}
           capped={capped}
           maxOffset={RUN_LIST_MAX_OFFSET}
           onPage={setPage}

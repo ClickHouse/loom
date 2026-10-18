@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CodeContextPackRow } from "../api";
@@ -107,6 +107,24 @@ describe("PR packs pages", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(await screen.findByText("No packs yet")).toBeInTheDocument();
     expect(document.getElementById("packs-list")).toHaveFocus();
+  });
+
+  it("says nothing of a PR number until it has settled and been read", async () => {
+    let answer: (v: unknown) => void = () => {};
+    listCodeContextPacks.mockImplementation(async (_id, opts: { pr_number: number }) =>
+      opts.pr_number === 123 ? new Promise((r) => (answer = r)) : { rows: [], total: 0 },
+    );
+    render(<PacksTab id={ID} repo="acme/app" />);
+    expect(await screen.findByText("Packs appear as merges are ingested.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Filter by PR number"), { target: { value: "123" } });
+    expect(screen.queryByText(/No precomputed pack for PR #123/)).toBeNull();
+    await waitFor(() =>
+      expect(listCodeContextPacks.mock.calls.at(-1)?.[1]).toMatchObject({ pr_number: 123, offset: 0 }),
+    );
+    // Read, not yet answered: the empty state says nothing of either filter.
+    expect(screen.queryByText("No packs yet")).toBeNull();
+    await act(async () => answer({ rows: [], total: 0 }));
+    expect(await screen.findByText(/No precomputed pack for PR #123/)).toBeInTheDocument();
   });
 
   it("draws no pager when one page holds every pack", async () => {
