@@ -560,10 +560,9 @@ class MemoryListInput(_Identity):
     # (`kind:false_positive`, `subsystem:Storages`) is one list call, not a
     # recency page followed by a get per key. Empty = no tag filter.
     tags: list[str] = Field(default_factory=list, max_length=64)
-    # Only rows whose value or key holds this text, any case — the keyword
-    # filter of a browse page's search box, which must find every row that
-    # names a word (a ranked search returns its top k and misses the rest).
-    # A high row matches by its key only: its value is readable by key.
+    # Only rows whose value or key holds this text, any case (a high row by its key
+    # only) — the keyword filter of a browse page's search box, which must find every
+    # row that names a word (a ranked search returns its top k and misses the rest).
     # A scan of the namespace's values; None or '' = no filter. Hidden from
     # the MCP listing: agents search with memory.search.
     contains: str | None = Field(default=None, max_length=200, json_schema_extra=MCP_HIDDEN)
