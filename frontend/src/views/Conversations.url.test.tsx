@@ -33,7 +33,7 @@ vi.mock("../api", async (importOriginal) => {
       msg_count: 1,
       created_at: null,
       updated_at: null,
-      messages: [{ msg_id: "m1", role: "user", content: "ship it", ts: "2026-09-18T09:00:00Z" }],
+      messages: [{ msg_id: "m1", agent: "claude-code", role: "user", content: "ship it", ts: "2026-09-18T09:00:00Z" }],
     })),
     listMemories: vi.fn(async () => ({ entries: [], truncated: false, total: 0, today: 0 })),
     getNamespace: vi.fn(async () => ({ conversation_logging_enabled: true })),

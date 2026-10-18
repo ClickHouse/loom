@@ -648,7 +648,9 @@ export function OpMixPanel() {
         .then((r) => {
           if (!live()) return;
           const check = r.checks.find((c) => c.name === "op_mix");
-          setOp(check ? { check, data: parseOpMix(check.data), scope: asked } : null);
+          // Every answer carries the op_mix check: one without it is a failed read.
+          if (check) setOp({ check, data: parseOpMix(check.data), scope: asked });
+          else setError(new Error("ops.health answered without its op_mix check"));
         })
         .catch((e) => {
           if (!live()) return;

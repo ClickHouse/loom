@@ -71,7 +71,7 @@ function linkify(text: string) {
 // A turn's element id: a msg_id is unique per agent only, and a thread read across
 // agents can hold two agents' turns under one id.
 function turnId(m: ConversationMessage): string {
-  return `msg-${m.agent ?? ""}-${m.msg_id}`;
+  return `msg-${m.agent}-${m.msg_id}`;
 }
 
 // A fenced block in a transcript turn: the text as recorded, with a Copy button. Not Click

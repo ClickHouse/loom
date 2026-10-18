@@ -23,7 +23,15 @@ const api = vi.hoisted(() => ({
     msg_count: 1,
     created_at: null,
     updated_at: null,
-    messages: [{ msg_id: "a2", role: "user", content: "Are refunds still failing?", ts: new Date().toISOString() }],
+    messages: [
+      {
+        msg_id: "a2",
+        agent: "claude-code",
+        role: "user",
+        content: "Are refunds still failing?",
+        ts: new Date().toISOString(),
+      },
+    ],
   })),
   listMemories: vi.fn(async () => ({ entries: [], total: 0, today: 0, truncated: false })),
 }));

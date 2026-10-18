@@ -70,7 +70,15 @@ vi.mock("../api", async (importOriginal) => {
       agent: "claude-code",
       msg_count: 1,
       updated_at: "2026-09-18T09:00:00Z",
-      messages: [{ msg_id: "m1", role: "user", content: "what is our rate limit?", ts: "2026-09-18T09:00:00Z" }],
+      messages: [
+        {
+          msg_id: "m1",
+          agent: "claude-code",
+          role: "user",
+          content: "what is our rate limit?",
+          ts: "2026-09-18T09:00:00Z",
+        },
+      ],
       next_cursor: null,
     })),
     listMemories: vi.fn(async () => ({ entries: [], total: 0 })),

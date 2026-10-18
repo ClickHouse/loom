@@ -429,11 +429,11 @@ describe("OpMixPanel", () => {
     expect(screen.queryByText(/org-admin/)).not.toBeInTheDocument();
   });
 
-  it("reads an absent check as unavailable", async () => {
+  it("says an answer without its op_mix check is a failed read", async () => {
     respond({ checks: [{ name: "clickhouse_parts", status: "ok", detail: "", data: {}, repair: "" }], overall: "ok" });
     render(<OpMixPanel />);
-    expect(await screen.findByText("Operation mix unavailable")).toBeInTheDocument();
-    expect(screen.getByText(/needs an org-admin token/)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the operation mix")).toBeInTheDocument();
+    expect(screen.queryByText("Operation mix unavailable")).toBeNull();
   });
 
   it("reads a refused request as unavailable", async () => {
