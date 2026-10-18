@@ -432,7 +432,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
               )}
             </span>
             <span className="shrink-0 text-xs text-text-muted tabular-nums">
-              {e.event_count}× · {relativeTime(e.last_activated_at)}
+              {e.event_count}× · <ListTime iso={e.last_activated_at} />
             </span>
           </div>
         ))}

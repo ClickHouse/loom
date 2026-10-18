@@ -575,9 +575,14 @@ export function Documents() {
         />
       )}
 
-      {rows !== null && !emptyLibrary && !failed && rowsFor === serverTags && visibleRows?.length === 0 && (
-        <ListState kind="filtered" things="documents" filter={query.trim()} onClear={() => setQuery("")} />
-      )}
+      {rows !== null &&
+        !emptyLibrary &&
+        !failed &&
+        rowsFor === serverTags &&
+        tagKey === serverTags &&
+        visibleRows?.length === 0 && (
+          <ListState kind="filtered" things="documents" filter={query.trim()} onClear={() => setQuery("")} />
+        )}
 
       {rows !== null && rows.length > 0 && shownRows && shownRows.length > 0 && (
         <div ref={listNav} className="space-y-2" aria-busy={reading || undefined}>

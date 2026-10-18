@@ -12,10 +12,10 @@ import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Chip, Loading, PageHeader, TabTrigger, TipTarget } from "../components/ui";
+import { Chip, ListTime, Loading, PageHeader, TabTrigger, TipTarget } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
-import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
+import { humanizeError, displayAgent, previewValue } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
 
@@ -62,7 +62,7 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
             <span className="italic text-text-muted">wording not recorded</span>
           )}
         </div>
-        <div className="text-xs text-text-muted whitespace-nowrap">{relativeTime(r.ts)}</div>
+        <ListTime iso={r.ts} className="text-xs text-text-muted" />
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
         <span>

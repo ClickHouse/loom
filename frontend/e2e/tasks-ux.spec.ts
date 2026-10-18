@@ -96,3 +96,12 @@ test("at 1400 px the open panel's actions are in view without scrolling", async 
   await expect(accept).toBeInViewport();
   await expect(panel.getByRole("button", { name: "Won't do…" })).toBeInViewport();
 });
+
+// Self-review: on a phone the first task starts within the list pages' chrome budget
+// (y ≤ 360 at 375 × 812): the scope badge and the List/Board switch give way, and the
+// filters share the inbox select's row.
+test("at 375 px the first task starts within the chrome budget", async ({ page }) => {
+  await open(page, 375);
+  const top = await page.getByRole("row", { name: TRIAGE }).evaluate((el) => el.getBoundingClientRect().top);
+  expect(top).toBeLessThanOrEqual(360);
+});

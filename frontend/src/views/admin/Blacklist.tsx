@@ -15,7 +15,7 @@ import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { oneOf } from "../../lib/oneOf";
 import { IconButton } from "../../components/IconButton";
-import { Chip, LoadingSkeleton, PageHeader } from "../../components/ui";
+import { Chip, ListTime, LoadingSkeleton, PageHeader } from "../../components/ui";
 
 /** What a visitor who cannot list the patterns reads instead of a request: the token's
  * role here is unknown, so the panel says who manages the
@@ -254,7 +254,9 @@ export function PrivacyFilters({
                     <span>·</span>
                     <span>{r.scope}</span>
                     <span>·</span>
-                    <span>added {relativeTime(r.created_at)}</span>
+                    <span>
+                      added <ListTime iso={r.created_at} />
+                    </span>
                     <span>·</span>
                     <PrivacyFilterHits row={r} />
                     {r.reason && (

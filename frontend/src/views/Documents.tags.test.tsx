@@ -1,7 +1,7 @@
 // A Library row's tag adds that tag to the filter, a second narrows it (every tag must
 // match), and pressing an applied tag takes it out. The filters in force show beside the
 // search, and a tag filter is asked of the server, not only of the pages already loaded.
-import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
@@ -116,5 +116,15 @@ describe("Library: filtering by tags", () => {
     expect(screen.queryByText("Your library is empty")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Both")).toBeInTheDocument();
+  });
+
+  // Self-review: a typed tag waits 250 ms before it is read; until that read lands the page
+  // does not say nothing matches it.
+  it("does not say a typed tag matches nothing before it is read", async () => {
+    render(<Documents />);
+    await settle();
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:onb" } });
+    expect(screen.queryByText(/No documents match/)).toBeNull();
+    await settle();
   });
 });

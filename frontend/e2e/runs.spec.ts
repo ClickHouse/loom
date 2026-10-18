@@ -157,3 +157,14 @@ test.describe("375 px", () => {
     expect(await violations(page)).toEqual([]);
   });
 });
+
+// Self-review: on a phone the first run starts within the list pages' chrome budget
+// (y ≤ 360 at 375 × 812); the description waits behind its info button.
+test("at 375 px the first run starts within the chrome budget", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await installApi(page, { runRows: 60 });
+  await page.goto("/runs");
+  const first = page.locator("main .list-row").first();
+  await expect(first).toBeVisible();
+  expect(await first.evaluate((el) => el.getBoundingClientRect().top)).toBeLessThanOrEqual(360);
+});

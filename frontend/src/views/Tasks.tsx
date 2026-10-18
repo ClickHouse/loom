@@ -678,15 +678,18 @@ export function Tasks() {
         title="Tasks"
         actions={
           <>
-            <ButtonGroup
-              aria-label="View"
-              selected={mode}
-              onClick={(v) => setModeAndRemember(v === "board" ? "board" : "list")}
-              options={[
-                { value: "list", label: <ViewLabel icon="list-bulleted" text="List" /> },
-                { value: "board", label: <ViewLabel icon="services" text="Board" /> },
-              ]}
-            />
+            {/* A phone shows the list: a board's columns do not fit it. */}
+            {!phone && (
+              <ButtonGroup
+                aria-label="View"
+                selected={mode}
+                onClick={(v) => setModeAndRemember(v === "board" ? "board" : "list")}
+                options={[
+                  { value: "list", label: <ViewLabel icon="list-bulleted" text="List" /> },
+                  { value: "board", label: <ViewLabel icon="services" text="Board" /> },
+                ]}
+              />
+            )}
             {/* The page's rarer controls; the keys are in the help dialog and each action's tooltip. */}
             <Dropdown modal={false}>
               <MenuTrigger>
@@ -708,7 +711,10 @@ export function Tasks() {
           </>
         }
       >
-        <ScopeBadge kind="namespace" value={identity.namespace} />
+        {/* The phone's top bar names the namespace; the title row keeps its actions beside it. */}
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
       </PageHeader>
 
       {inboxes === null && (
@@ -741,13 +747,17 @@ export function Tasks() {
       {inboxes && inboxes.length > 0 && picked && (
         <>
           {phone && (
-            <div className="mb-3">
-              <InboxSelect
-                inboxes={inboxes}
-                counts={counts ? railCounts(counts) : null}
-                picked={picked}
-                onPick={pick}
-              />
+            // The filters share the inbox's row, so the tasks start higher.
+            <div className="mb-3 flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <InboxSelect
+                  inboxes={inboxes}
+                  counts={counts ? railCounts(counts) : null}
+                  picked={picked}
+                  onPick={pick}
+                />
+              </div>
+              {filterSelects}
             </div>
           )}
           <AttentionTiles counts={attention} active={filters.attention} onToggle={toggleTile} />
@@ -767,7 +777,7 @@ export function Tasks() {
                 </div>
                 {!compact && filterSelects}
               </ListToolbar>
-              {compact && <div className="-mt-1 mb-3 flex items-center gap-2">{filterSelects}</div>}
+              {compact && !phone && <div className="-mt-1 mb-3 flex items-center gap-2">{filterSelects}</div>}
 
               {rows === null && (
                 <LoadingSkeleton label="Loading tasks">
@@ -805,7 +815,7 @@ export function Tasks() {
               {loaded &&
                 visible.length > 0 &&
                 !onlyClosed &&
-                (mode === "list" ? (
+                (mode === "list" || phone ? (
                   <TaskList
                     groups={groups}
                     ctx={ctx}

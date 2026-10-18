@@ -243,4 +243,24 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(screen.getByRole("button", { name: "About runs" })).toBeInTheDocument();
     expect(screen.queryByText(/group by it to see a whole working sitting/)).toBeNull();
   });
+
+  // Self-review: "no runs match" is said only of a read of the current filter, not of the
+  // previous filter's empty answer while the new one is in flight.
+  it("does not say a new search matches nothing before its answer lands", async () => {
+    let answer: (p: RunListPage) => void = () => {};
+    listRunsPage.mockImplementation(async (_id, opts = {}) =>
+      opts.q === "goal"
+        ? new Promise<RunListPage>((r) => (answer = r))
+        : { runs: opts.q ? [] : [run(1)], total: opts.q ? 0 : 1 },
+    );
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    fireEvent.change(screen.getByLabelText("Search runs"), { target: { value: "zzz" } });
+    await screen.findByText(/No runs match/);
+    fireEvent.change(screen.getByLabelText("Search runs"), { target: { value: "goal" } });
+    await waitFor(() => expect(lastOpts()).toMatchObject({ q: "goal" }));
+    expect(screen.queryByText(/No runs match/)).toBeNull();
+    answer({ runs: [run(1)], total: 1 });
+    await screen.findByRole("button", { name: "goal 1" });
+  });
 });

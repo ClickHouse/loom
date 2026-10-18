@@ -50,4 +50,19 @@ describe("ListState", () => {
     expect(screen.getByText("Loom took too long.")).toBeInTheDocument();
     expect(screen.getByText("request id r-9")).toBeInTheDocument();
   });
+
+  // Self-review: Retry leaves with the error state, so focus would fall to the page; it goes
+  // to the page's heading instead.
+  it("puts focus on the page heading when Retry is pressed", () => {
+    const onRetry = vi.fn();
+    render(
+      <main>
+        <h1>Library</h1>
+        <ListState kind="error" things="documents" error="boom" onRetry={onRetry} />
+      </main>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Library" })).toHaveFocus();
+  });
 });

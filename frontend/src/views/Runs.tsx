@@ -247,6 +247,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+const ABOUT = "One row per agent execution: the goal, how it ended, the memories it relied on and what it wrote.";
+const ABOUT_MORE =
+  "Open a run to replay what it recalled, observed and cost. A session is one connection's worth of runs: group by it to see a whole working sitting.";
+
 // The most runs a server that does not page answers (its run.list cap).
 const LOCAL_LIMIT = 200;
 
@@ -735,21 +739,25 @@ export function Runs() {
 
   return (
     <PageContainer>
-      <PageHeader title="Runs">
-        <ScopeBadge kind="namespace" value={identity.namespace} />
+      <PageHeader
+        title="Runs"
+        actions={
+          // On a phone the description waits behind the info button, so the runs start
+          // higher; the top bar already names the namespace.
+          phone && <IconButton icon="info-in-circle" size="xs" label="About runs" tooltip={`${ABOUT} ${ABOUT_MORE}`} />
+        }
+      >
+        <span className="hidden sm:contents">
+          <ScopeBadge kind="namespace" value={identity.namespace} />
+        </span>
       </PageHeader>
       {/* The icon sits beside the sentence's box, so a wrapped sentence never strands it. */}
-      <div className="mb-4 flex items-start gap-1">
-        <p className="max-w-[72ch] text-sm text-text-muted">
-          One row per agent execution: the goal, how it ended, the memories it relied on and what it wrote.
-        </p>
-        <IconButton
-          icon="info-in-circle"
-          size="xs"
-          label="About runs"
-          tooltip="Open a run to replay what it recalled, observed and cost. A session is one connection's worth of runs: group by it to see a whole working sitting."
-        />
-      </div>
+      {!phone && (
+        <div className="mb-4 flex items-start gap-1">
+          <p className="max-w-[72ch] text-sm text-text-muted">{ABOUT}</p>
+          <IconButton icon="info-in-circle" size="xs" label="About runs" tooltip={ABOUT_MORE} />
+        </div>
+      )}
 
       <ListToolbar label="Search and filters" count={count}>
         <div className="min-w-[10rem] flex-1">
@@ -802,10 +810,11 @@ export function Runs() {
         ) : (
           <RunTable label="Runs" rows={[]} onOpen={openRun} order={order} onOrder={() => {}} loading />
         ))}
-      {error === null && shown !== null && rows.length === 0 && shown.page === 0 && searching && (
+      {/* Said only of a read of what is asked now: a new filter's read in flight is not it. */}
+      {error === null && shown !== null && !loading && rows.length === 0 && shown.page === 0 && searching && (
         <ListState kind="filtered" things="runs" filter={what} onClear={clearFilters} />
       )}
-      {error === null && shown !== null && rows.length === 0 && shown.page === 0 && !searching && (
+      {error === null && shown !== null && !loading && rows.length === 0 && shown.page === 0 && !searching && (
         <ListState
           kind="empty"
           icon="list-numbered"

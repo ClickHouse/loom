@@ -35,7 +35,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
-import { Alert, LoadingSkeleton, PageHeader, TipTarget } from "../../components/ui";
+import { Alert, ListTime, LoadingSkeleton, PageHeader, TipTarget } from "../../components/ui";
 
 /**
  * Policies — history rules over what an agent may do next.
@@ -806,7 +806,7 @@ function DecisionsPanel({ version }: { version: number }) {
                   label: (
                     <TipTarget tip={r.ts} underline>
                       <time dateTime={r.ts} className="text-text-muted">
-                        {relativeTime(r.ts)}
+                        <ListTime iso={r.ts} />
                       </time>
                     </TipTarget>
                   ),

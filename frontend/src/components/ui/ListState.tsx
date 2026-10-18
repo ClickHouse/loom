@@ -68,7 +68,19 @@ export function ListState(props: ListStateProps) {
         icon="warning"
         title={`Couldn't load ${props.things}`}
         description={message}
-        action={{ label: "Retry", onClick: props.onRetry, type: "secondary" }}
+        action={{
+          label: "Retry",
+          type: "secondary",
+          // Retry leaves with this state: focus goes to the page's heading, not the page.
+          onClick: () => {
+            const heading = document.querySelector<HTMLElement>("main h1");
+            if (heading) {
+              if (!heading.hasAttribute("tabindex")) heading.tabIndex = -1;
+              heading.focus();
+            }
+            props.onRetry();
+          },
+        }}
       >
         {rid && <p className="mt-2 font-mono text-xs text-text-muted">request id {rid}</p>}
       </EmptyState>
