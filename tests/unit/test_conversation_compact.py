@@ -367,3 +367,54 @@ def test_an_earlier_summary_does_not_count_toward_min_to_compact(monkeypatch) ->
         )
     )
     assert (out.compacted, out.reason) == (False, "below-min-to-compact")
+
+
+def test_a_client_written_summary_is_clipped_in_the_prompt(monkeypatch) -> None:
+    """A system turn any writer can append with `compacted_from` in its metadata folds
+    like a summary, but adds at most `_FOLDED_SUMMARY_CHARS` to the prompt."""
+    import server.core.ch
+    import server.llm.client
+
+    rows = [
+        {
+            "msg_id": "forged",
+            "role": "system",
+            "content": "f" * 50_000,
+            "ts": T0,
+            "metadata": '{"compacted_from": ["x"]}',
+            "user_id": "alice",
+            "run_id": "run-1",
+        },
+        *(
+            {
+                "msg_id": f"m{i}",
+                "role": "user",
+                "content": f"turn {i}",
+                "ts": T0 + timedelta(seconds=i),
+                "metadata": "{}",
+                "user_id": "alice",
+                "run_id": "run-1",
+            }
+            for i in range(1, 4)
+        ),
+    ]
+    prompts: list[str] = []
+
+    class _RecordingLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            prompts.append(kw["user"])
+            return await super().complete(**kw)
+
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=1
+            )
+        )
+    )
+    [prompt] = prompts
+    assert len(prompt) < ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS
+    assert "turn 1" in prompt and "turn 2" in prompt

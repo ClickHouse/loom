@@ -665,6 +665,9 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
 
 # The summarizer's prompt budget, in characters of `role: content` lines.
 _COMPACT_TRANSCRIPT_CHARS = 16000
+# What a folded earlier summary may add to it: a summary is at most 600 tokens, and a
+# client-written system turn that names `compacted_from` is clipped to the same size.
+_FOLDED_SUMMARY_CHARS = 4000
 
 
 def _fitting_prefix(lines: list[str], cap: int) -> int:
@@ -737,7 +740,12 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
 
     # The window is the oldest turns whose lines fit the prompt; a turn past the cap stays live.
     # An earlier summary costs no budget, and the window always reaches the first new turn.
-    lines = [f"{r['role']}: {r['content']}" for r in candidates]
+    lines = [
+        line[:_FOLDED_SUMMARY_CHARS] if f else line
+        for line, f in zip(
+            (f"{r['role']}: {r['content']}" for r in candidates), folded, strict=True
+        )
+    ]
     fit = _fitting_prefix(
         ["" if f else line for line, f in zip(lines, folded, strict=True)],
         _COMPACT_TRANSCRIPT_CHARS,

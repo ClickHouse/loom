@@ -348,8 +348,8 @@ queue.
   `memory` and `memory_embeddings` (`_quarantine_by_identity`); the patch-parts probe then
   keeps codes-first reads off for that table until the patch merges. Another:
   `conversation.delete` and `conversation.compact` tombstone `conversation_embeddings`
-  rows with a synchronous `ALTER … UPDATE`, one per 1,000 turns
-  (`_tombstone_embeddings`).
+  rows with a synchronous `ALTER … UPDATE`, one per 1,000 embedding rows (a row per
+  turn per model, `_tombstone_embeddings`).
 - **One model per row.** `embedding_model` is in the sort key, so a search compares only
   its own model's vectors. `loom reembed` regenerates vectors after a model change
   (`--in-database` uses `aiEmbed` on 26.7+).

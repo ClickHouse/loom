@@ -738,9 +738,10 @@ async def tombstone_messages(
 # Characters of a turn its embedding is built from, which the embedding row keeps.
 EMBEDDED_EXCERPT_CHARS = 2048
 
-# Turns per embeddings tombstone mutation. A whole-thread delete has no cap on its
-# turns, so its list goes in chunks, one synchronous mutation each: a thread of
-# 10,000 turns runs ten. A compaction's window is bounded by its prompt.
+# Embedding rows (one per turn per model) per tombstone mutation. A whole-thread delete
+# has no cap on its rows, so its list goes in chunks, one synchronous mutation each: a
+# thread of 10,000 turns under one model runs ten. A compaction's window is bounded by
+# its prompt.
 _TOMBSTONE_CHUNK = 1000
 
 
