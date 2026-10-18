@@ -722,8 +722,8 @@ async def tombstone_messages(
     )
 
 
-# Ids per tombstone mutation: each chunk is one HTTP parameter.
-# ponytail: one synchronous mutation per chunk; a thread of 10k turns is ten.
+# Ids per tombstone mutation: each chunk is one HTTP parameter. One synchronous
+# mutation per chunk: a thread of 10,000 turns runs ten.
 _TOMBSTONE_CHUNK = 1000
 
 

@@ -327,3 +327,27 @@ async def test_a_deleted_thread_leaves_search_but_another_agents_turn_stays(
 
     hits = await agent.conversations.search(f"ibex {nonce}", thread_id=tid, agent_id="*")
     assert {h["msg_id"] for h in hits["hits"]} == {shared}, hits["hits"]
+
+
+@pytest.mark.asyncio
+async def test_the_embedding_row_keeps_the_embedded_text_and_a_hit_shows_its_start(
+    agent, ch_client
+) -> None:
+    """A long turn's embedding row keeps the 2,048 characters its vector was built
+    from, which a re-embed reads; a search hit shows the first 240."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    content = f"gazelle {nonce} " * 200  # about 3,800 characters, all on topic
+    mid = uuid.uuid4().hex
+    await agent.conversations.append(tid, mid, "user", content)
+
+    stored = ch_client.query(
+        "SELECT content_excerpt FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND msg_id = {mid:String}",
+        parameters={"org": agent.org, "ns": agent.namespace, "mid": mid},
+    ).result_rows
+    assert [r[0] for r in stored] == [content[:2048]]
+
+    hits = await agent.conversations.search(f"gazelle {nonce}", thread_id=tid)
+    [hit] = [h for h in hits["hits"] if h["msg_id"] == mid]
+    assert hit["content_excerpt"] == content[:240]
