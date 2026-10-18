@@ -797,8 +797,8 @@ async def _tombstone_embeddings(
         """,
         params={**params, "embedded": EMBEDDED_EXCERPT_CHARS},
     )
-    # One (model, turn) row at a time: during a re-embed a turn has a row per model,
-    # and each row's text decides on its own whether another agent still holds it.
+    # By (model, turn): during a re-embed a turn has a row per model, and each row's
+    # text decides on its own whether another agent still holds it.
     due = [(str(r["embedding_model"]), str(r["msg_id"])) for r in rows]
     for i in range(0, len(due), _TOMBSTONE_CHUNK):
         await ch.execute(
