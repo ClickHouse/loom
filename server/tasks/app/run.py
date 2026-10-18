@@ -1035,7 +1035,7 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
         )
         params["q"] = q
     ch = get_client()
-    limit, offset = int(input.limit), int(input.offset)
+    limit, offset = input.limit, input.offset
     page = runs_store.list_runs(
         ch,
         input.org,

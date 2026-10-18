@@ -343,10 +343,12 @@ class RunClient:
         q: str = "",
     ) -> dict[str, Any]:
         """Runs in `order_by` order (newest first by default).
-        `memory_activity="with"` keeps only runs that relied on or wrote a memory,
-        `"without"` only the hollow ones;
-        `grade="ungraded"` the closed runs still owed a verdict (`"graded"`,
-        `"pass"`, `"fail"` also work). Filters apply before `limit`.
+
+        `memory_activity="with"` keeps only runs that relied on or wrote a
+        memory, `"without"` only the hollow ones; `grade="ungraded"` the closed
+        runs still owed a verdict (`"graded"`, `"pass"`, `"fail"` also work).
+        `q` matches the goal, run id or agent, in any case; `offset` skips at
+        most 100,000 runs. Filters apply before `limit`.
 
         `total` is None on a full page after the first."""
         payload: dict[str, Any] = {

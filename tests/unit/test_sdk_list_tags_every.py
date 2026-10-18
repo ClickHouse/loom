@@ -1,5 +1,5 @@
-"""`memory.list` and `knowledge.list` send `tags_every` only when it is true, so a
-call that leaves it off sends what it sent before."""
+"""`memory.list` and `knowledge.list` send `tags_every` only when it is true: a call
+that leaves it off sends no `tags_every` key."""
 
 from __future__ import annotations
 

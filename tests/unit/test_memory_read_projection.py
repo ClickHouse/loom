@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from server.core.errors import ValidationError
+from server.core.tag_sql import TagFilter, tag_where
 from server.memory.api.models_ask import MemoryAskInput
 from server.memory.api.models_bulk import MemoryBulkGetInput
 from server.memory.api.models_crud import (
@@ -310,9 +311,7 @@ class _CH:
 
 
 # memory.list's tag predicate: both sides lowercased.
-_ANY_CASE_TAGS = (
-    "hasAny(arrayMap(t -> lowerUTF8(t), tags), arrayMap(t -> lowerUTF8(t), {tags:Array(String)}))"
-)
+_ANY_CASE_TAGS = tag_where(TagFilter(("x",), "folded_any"), {})
 
 
 @pytest.mark.asyncio

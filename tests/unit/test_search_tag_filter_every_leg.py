@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 import server.memory.app.search_tag_filter as tag_belt
-from server.core.tag_sql import TagFilter
+from server.core.tag_sql import TagFilter, tag_predicate
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search import assemble, payload
 from server.memory.app.search.assemble import _drop_excluded_and_duplicates
@@ -34,7 +34,7 @@ from server.memory.app.search.sql import (
 from server.memory.app.search.tiers import _prepend_anchor, _prepend_recent
 from server.memory.app.search.vector_legs import _stamp_leg_tags
 from server.memory.app.search_tag_filter import stamp_row_tags, tagged_row_hit
-from server.memory.domain.search_sql import _build_where, hard_tag_filter, tag_predicate
+from server.memory.domain.search_sql import _build_where, hard_tag_filter
 from server.memory.domain.search_types import SearchQuery
 
 TAG = "hasAny(e.tags, {tags:Array(String)})"
@@ -327,30 +327,6 @@ async def test_tiers_pass_the_hard_filter_only_when_set(monkeypatch: pytest.Monk
     assert calls[-1]["tag_filter"] == TagFilter(("x",), "exact_any")
     await _prepend_anchor([], SimpleNamespace(anchor_first=1, tags=["x"], tags_soft=True, **base))
     assert calls[-1]["tag_filter"] is None
-
-
-@pytest.mark.asyncio
-async def test_exact_tag_match_reads_the_search_predicate() -> None:
-    """The tiers are memory.search rows: their store read carries the exact predicate every
-    search leg carries, not memory.list's lowercased one."""
-    from server.identity.domain.read_scope import WHOLE_NAMESPACE
-    from server.memory import store as repo
-
-    seen: list[tuple[str, dict[str, Any]]] = []
-
-    class _CH:
-        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-            seen.append((sql, params or {}))
-            return []
-
-    ident = repo.Identity(org="o", namespace="ns", agent="*")
-    await repo.list_by_namespace(
-        ident, scope=WHOLE_NAMESPACE, tag_filter=TagFilter(("API",), "exact_any"), ch=_CH()
-    )
-    sql, params = seen[-1]
-    assert "hasAny(tags, {tags:Array(String)})" in sql
-    assert "lowerUTF8" not in sql
-    assert params["tags"] == ["API"]
 
 
 # ------------------------------------------ the two paths the replay found

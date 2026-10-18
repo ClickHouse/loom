@@ -35,12 +35,7 @@ async def test_a_preview_read_selects_the_stored_columns_and_never_the_value() -
         org="acme", namespace="team", agent="*", user_id="*", session_id="*"
     )
     await memory_repo.list_by_namespace(
-        ident,
-        limit=10,
-        offset=0,
-        preview=True,
-        ch=ch,
-        scope=WHOLE_NAMESPACE,
+        ident, limit=10, offset=0, preview=True, ch=ch, scope=WHOLE_NAMESPACE
     )
     # The preview page locates first (no preview, no
     # value) and reads the previews by pairs in a second statement; the fake

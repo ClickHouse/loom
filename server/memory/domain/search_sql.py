@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.core.tag_sql import tag_predicate
 from server.memory.domain.search_types import SearchQuery
 from server.memory.domain.temporal_sql import as_of_predicate, status_predicate, tombstone_predicate
 
@@ -25,16 +26,6 @@ def hard_tag_filter(tags: Any, tags_soft: Any) -> list[str]:
     if bool(tags_soft):
         return []
     return [str(t) for t in (tags or []) if t]
-
-
-def tag_predicate(alias: str = "e") -> str:
-    """`hasAny(<alias>.tags, {tags:Array(String)})` — the hard tag predicate the
-    fact leg carries, spelled once so the lexical
-    union pool, the anchor pool, the key-match arm, the digest descent and the
-    query-neighbour leg read the same clause with the same parameter name.
-    `alias=""` renders the bare column for statements that alias nothing."""
-    col = f"{alias}.tags" if alias else "tags"
-    return f"hasAny({col}, {{tags:Array(String)}})"
 
 
 def agent_filter(agent: Any) -> str:
