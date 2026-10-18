@@ -11,7 +11,8 @@ namespace's backlog does not hold the others back. The queue leaves out a namesp
 its daily LLM cost cap and an org with an erasure queued, running or due a retry; their
 rows stay owed. The cap is read again before each call, for a namespace that crosses it
 mid-pass. A transient provider error leaves the row owed; a refusal of the row's own
-request stamps it judged and counts it errored, so it does not come back every pass. A
+request, or an answer cut at the cap twice, stamps it judged and counts it errored, so it
+does not come back every pass. The keys' locks unavailable stop the pass, rows owed. A
 row is stamped judged only after its actions, so a pass cut short judges it again and
 acting twice changes nothing. With no key for the model the pass reads nothing; if the
 provider refuses the model or the key, the pass stops. Either logs one warning when it
@@ -28,6 +29,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from server.core.ch import set_query_tag
+from server.core.leases import LeaseUnavailable
 from server.memory.app import conflict_resolver as resolver
 from server.memory.store import conflict_resolver as queue
 from server.settings import settings
@@ -60,7 +62,8 @@ class _Pass:
         self.counts = resolver.Counts()
         self.errors: list[str] = []
         self.slots = asyncio.Semaphore(int(settings.memory_conflict_resolver_concurrency))
-        self.unavailable: resolver.ModelUnavailable | None = None
+        # Why the pass stopped: the model, or the keys' locks, is unavailable.
+        self.unavailable: Exception | None = None
 
 
 async def _queued(p: _Pass) -> dict[tuple[str, str], list[dict[str, Any]]]:
@@ -98,7 +101,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
     org, namespace = str(r["org"]), str(r["namespace"])
     async with p.slots:
         if p.unavailable is not None:
-            return  # the model is gone: the row stays owed
+            return  # the model or the locks are gone: the row stays owed
         # Read before every call: the rows in flight at once can cross the cap together.
         if await namespace_over_cap(org, namespace):
             p.counts.skipped_budget += 1
@@ -109,12 +112,13 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         cost_accumulator.begin_op()
         try:
             await resolver.resolve_row(r, policy=policy, counts=p.counts)
-        except resolver.ModelUnavailable as e:
+        except (resolver.ModelUnavailable, LeaseUnavailable) as e:
+            # The same answer for every row: stop before paying for more calls.
             p.unavailable = p.unavailable or e
-        except resolver.Unjudgeable as e:
-            # Asking again gets the same refusal: stamp it, so it holds no place.
+        except (resolver.Unjudgeable, resolver.CutOff) as e:
+            # Asking again gets the same answer: stamp it, so it holds no place.
             p.counts.errored += 1
-            p.errors.append(f"{namespace}/{r.get('memory_key')}: refused: {e}")
+            p.errors.append(f"{namespace}/{r.get('memory_key')}: {e}")
             await queue.stamp_judged(r)
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             p.counts.errored += 1
@@ -164,7 +168,9 @@ async def run_pass() -> dict[str, Any]:
         if not groups:
             pass_context.mark_idle()
         await _resolve_all(p, groups)
-        if p.unavailable is not None:
+        if isinstance(p.unavailable, LeaseUnavailable):
+            p.errors.append(f"stopped: {p.unavailable}")
+        elif p.unavailable is not None:
             _note_availability(str(p.unavailable))
         elif p.counts.judged:
             _note_availability(None)

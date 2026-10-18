@@ -272,7 +272,8 @@ actions, verdicts and confidences, never the text.
   a timeout) leaves the row owed. Any other 4xx refuses this row's request, and asking
   again gets the same answer: the row is stamped judged and counted `errored`. An
   answer cut at the output cap (`length`, `max_tokens`) is asked once more with twice
-  the room; cut again, the row stays owed and is counted `errored`.
+  the room; cut again, the row is stamped judged and counted `errored`. The keys' write
+  locks unavailable (Keeper down) stop the pass after that call; the rows stay owed.
 
 **Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written
 version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged.

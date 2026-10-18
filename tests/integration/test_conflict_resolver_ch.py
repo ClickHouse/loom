@@ -1027,7 +1027,8 @@ async def test_an_answer_cut_at_the_cap_is_asked_again_then_left_owed(
     ch, wired, monkeypatch, cut_times: int
 ) -> None:
     """The provider stops at the output cap: the call is made once more with twice
-    the room; cut again, the row stays owed and counts errored."""
+    the room; cut again, the row is stamped judged and counts errored, so the next
+    pass does not pay for it again."""
     from types import SimpleNamespace
 
     from server.memory.workers.conflict_resolver import run_pass
@@ -1051,7 +1052,9 @@ async def test_an_answer_cut_at_the_cap_is_asked_again_then_left_owed(
     if cut_times == 1:
         assert (status, mark, out["errored"]) == ("superseded", 2, 0)
     else:
-        assert (status, mark, out["errored"]) == ("active", 1, 1)
+        assert (status, mark, out["errored"]) == ("active", 2, 1)
+    await run_pass()
+    assert len(caps) == 2, "a third pass makes no call"
 
 
 async def test_the_by_id_reads_use_the_memory_id_skip_index(ch, wired) -> None:

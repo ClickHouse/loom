@@ -917,14 +917,29 @@ async def test_a_refused_request_is_stamped_and_a_transient_failure_stays_owed(
     pass_env: NS,
 ) -> None:
     pass_env.owed = [_q(memory_key="k1"), _q(memory_key="k2"), _q(memory_key="k3")]
+    pass_env.owed.append(_q(memory_key="k4"))
     pass_env.raise_for = {
         "k1": resolver.Unjudgeable("400 Bad Request"),
         "k2": RuntimeError("503 Service Unavailable"),
+        "k4": resolver.CutOff("cut twice"),
     }
     out = await pass_env.run()
-    assert pass_env.stamped == ["k1"], "a refusal holds no place; a 503 is asked again"
+    assert sorted(pass_env.stamped) == ["k1", "k4"], "a refusal or a cut answer holds no place"
     assert [k for _, _, k, _ in pass_env.resolved] == ["k3"]
-    assert out["errored"] == 2
+    assert out["errored"] == 3
+
+
+async def test_a_lease_outage_stops_the_pass_with_the_rows_owed(
+    pass_env: NS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.leases import LeaseUnavailable
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
+    pass_env.owed = [_q(memory_key="k1"), _q(memory_key="k2"), _q(memory_key="k3")]
+    pass_env.raise_for = {"k1": LeaseUnavailable("keeper down", operation="memory_key_lock")}
+    out = await pass_env.run()
+    assert pass_env.resolved == [] and pass_env.stamped == [], "no further call, rows owed"
+    assert out["errored"] == 0
 
 
 async def test_an_unknown_model_warns_once_and_stops_the_pass(

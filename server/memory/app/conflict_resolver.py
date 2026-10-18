@@ -58,7 +58,8 @@ class ModelUnavailable(RuntimeError):
 
 
 class CutOff(RuntimeError):
-    """The answer stopped at the output cap twice: no judgement, the row stays owed."""
+    """The answer stopped at the output cap twice: no judgement, and asking again gets
+    the same, so the row is stamped judged and counted errored."""
 
 
 # The stop reasons of an answer cut at the output cap (OpenAI, Anthropic).
