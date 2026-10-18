@@ -236,9 +236,10 @@ def _check_concept(
     if not has_fm or not str(fm.get("type") or "").strip():
         rep.add("frontmatter", rel, "missing frontmatter or empty `type`")
         return
-    if fm.get("tags") is not None and not isinstance(fm["tags"], list):
+    tags = fm.get("tags")
+    if tags is not None and not isinstance(tags, list):
         rep.add("frontmatter", rel, "`tags` is not a list")
-        return
+        tags = None  # the import reads such a file with no tags; check the rest as that
     raw_loom = fm.get("loom")
     loom: dict[str, Any] = raw_loom if isinstance(raw_loom, dict) else {}
     directory = rel.rsplit("/", 1)[0] if "/" in rel else ""
@@ -276,7 +277,7 @@ def _check_concept(
             "source_class derived at confidence 1.0: an inference written as a fact",
             WARNING,
         )
-    if okf.is_high(loom.get("sensitivity"), fm.get("tags")):
+    if okf.is_high(loom.get("sensitivity"), tags):
         rep.add(
             "high_sensitivity_present",
             rel,

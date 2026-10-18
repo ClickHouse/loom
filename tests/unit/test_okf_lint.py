@@ -260,16 +260,19 @@ def test_a_high_row_known_only_by_its_tag_is_reported() -> None:
 def test_tags_that_are_not_a_list_are_critical(tags: Any) -> None:
     files = _fresh_files()
     files["semantic/deploy_window.md"] = _with_frontmatter(
-        files["semantic/deploy_window.md"], tags=tags
+        files["semantic/deploy_window.md"], tags=tags, **{"loom.sensitivity": "high"}
     )
-    assert "frontmatter" in {f.id for f in lint.lint_files(files).criticals}
+    rep = lint.lint_files(files)
+    assert "frontmatter" in {f.id for f in rep.criticals}
+    # The other checks still run on the file.
+    assert "high_sensitivity_present" in {f.id for f in rep.warnings}
 
 
 def test_an_empty_tags_line_is_not_a_finding() -> None:
     files = _fresh_files()
-    files["semantic/deploy_window.md"] = _with_frontmatter(
-        files["semantic/deploy_window.md"], tags=[]
-    ).replace("tags: []", "tags:")
+    text = _with_frontmatter(files["semantic/deploy_window.md"], tags=[])
+    files["semantic/deploy_window.md"] = text.replace("tags: []", "tags:")
+    assert "\ntags:\n" in files["semantic/deploy_window.md"]
     assert "frontmatter" not in {f.id for f in lint.lint_files(files).criticals}
 
 

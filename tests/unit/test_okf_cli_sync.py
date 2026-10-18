@@ -732,7 +732,7 @@ def test_a_row_with_an_expiry_still_ahead_is_left_alone(
     assert loom.writes() == []
 
 
-def test_a_bundle_whose_tags_are_not_a_list_is_refused(
+def test_tags_that_are_not_a_list_refuse_the_import_and_force_import_drops_them(
     tmp_path: Path, loom: _FakeLoom, capsys: pytest.CaptureFixture[str]
 ) -> None:
     root = _bundle(tmp_path / "b", [_entry("a")])
@@ -744,4 +744,4 @@ def test_a_bundle_whose_tags_are_not_a_list_is_refused(
 
     assert _run(root, "--force-import") == 0  # read with no tags, not a traceback
     (written,) = [b for op, b in loom.calls if op == "memory.set"]
-    assert "5" not in written["tags"]
+    assert all(t.startswith(("okf:", "origin:")) for t in written["tags"])  # the import's own
