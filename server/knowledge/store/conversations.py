@@ -350,16 +350,18 @@ async def tombstone_thread(
     # (`tombstone_embedding_if_message_gone`).
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
     # One per turn (FINAL, however many embedding models hold it), earlier calls'
-    # tombstones included, as the messages count is.
-    emb_n = await ch.query_one(
-        f"""
-        SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
-          AND {_THREAD_TURNS}
-        """,
-        params=params,
-    )
+    # tombstones included, as the messages count is. Sequential: the tombstones are
+    # inserts, which another replica may not have yet.
+    with sequential_reads():
+        emb_n = await ch.query_one(
+            f"""
+            SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
+              AND {_THREAD_TURNS}
+            """,
+            params=params,
+        )
     counts["loom.conversation_embeddings"] = int(emb_n["n"]) if emb_n else 0
 
     # 4. Thread row.
@@ -715,8 +717,8 @@ async def tombstone_messages(
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone the named messages of one thread and their embeddings, so
-    conversation.search stops returning them too. Synchronous mutations, so the
-    next read sees a coherent thread. The embeddings go first: a retry after a
+    conversation.search stops returning them too. The messages mutation is
+    synchronous, so the next read sees a coherent thread. The embeddings go first: a retry after a
     failure still finds the messages live and repeats both. They go again after the
     messages: a turn whose embedding lands after the first read is caught there, or by
     its writer's re-check (`tombstone_embedding_if_message_gone`)."""
@@ -784,10 +786,10 @@ _THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
           ))"""
 
 
-# The excerpt that rows written before excerpts kept the embedded text, and build
-# N-1's rows, hold; those rows are never rewritten, so this stays. A row's excerpt is
-# compared whole against a peer's content cut at this length and at
-# EMBEDDED_EXCERPT_CHARS. It is not HIT_EXCERPT_CHARS, the cut a search hit shows.
+# Rows written by build N-1 and by earlier builds hold the first 240 characters of the
+# turn, and a re-embed keeps that excerpt. A row's excerpt is compared whole against a
+# peer's content cut at this length and at EMBEDDED_EXCERPT_CHARS. It is not
+# HIT_EXCERPT_CHARS, the cut a search hit shows.
 _SHORT_EXCERPT_CHARS = 240
 
 

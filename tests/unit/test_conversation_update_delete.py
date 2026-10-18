@@ -299,3 +299,25 @@ async def test_the_tombstone_reads_with_sequential_consistency() -> None:
             "o", "n", "a", "t", msg_ids=msg_ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
         )
     assert seen == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_the_delete_counts_embeddings_with_sequential_consistency() -> None:
+    """The embeddings tombstones are inserts, not a synchronous mutation, so the count
+    after them reads sequentially or a lagging replica undercounts."""
+    from server.core.ch import sequential_reads_active
+    from server.knowledge.store import conversations as repo
+
+    seen: dict[str, bool] = {}
+
+    class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None):
+            table = "embeddings" if "conversation_embeddings" in sql else "messages"
+            seen[table] = sequential_reads_active()
+            return {"n": 1}
+
+        async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
+            return None
+
+    await repo.tombstone_thread("o", "n", "a", "t", when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH())
+    assert seen["embeddings"] is True
