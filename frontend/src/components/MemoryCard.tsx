@@ -10,9 +10,10 @@ import { truncate, previewValue } from "../lib/format";
 import { detectEncodedValue, detectEncodedRecord } from "../lib/encoded";
 import { useAbortableEffect } from "../lib/hooks";
 
-/** The characters of a value a card shows: two lines of the 14 px body hold ~325 at a
- *  1400 px window, so the Memories list asks memory.list for this many and the card cuts a
- *  longer value here before the clamp. */
+/** The characters of a value a card shows: two lines of the 14 px body at a 1400 px window
+ *  (list-pages.spec.ts checks a value this long fills both). The Memories list asks
+ *  memory.list for one more, and the card cuts a longer value here, ending it in "…",
+ *  before the clamp. */
 export const CARD_VALUE_CHARS = 320;
 
 /** The bounded preview a card shows for a value; whether it was an agent-encoded (base64)
@@ -24,7 +25,7 @@ function describe(v: unknown): { value: string; encoded: boolean; pairs: boolean
   const pairs = valuePairs(v);
   return pairs
     ? { value: pairs, encoded: false, pairs: true }
-    : { value: previewValue(v), encoded: false, pairs: false };
+    : { value: previewValue(v, CARD_VALUE_CHARS + 1), encoded: false, pairs: false };
 }
 
 /** A JSON object value (an object, or a string holding one) as one line of its pairs:

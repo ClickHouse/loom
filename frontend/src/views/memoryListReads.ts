@@ -32,7 +32,8 @@ const MEMORIES_LIST_FIELDS = [
   "verified_by",
   "verification",
 ];
-const MEMORIES_PREVIEW_CHARS = CARD_VALUE_CHARS;
+// One more than a card shows: `truncate` then ends a value the row holds more of in "…".
+const MEMORIES_PREVIEW_CHARS = CARD_VALUE_CHARS + 1;
 
 /** A tag and agent filter: what a search's keyword half reads with. */
 export interface TagAgentFilter {

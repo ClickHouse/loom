@@ -945,14 +945,16 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         }
         if (!options.memoryRows) break;
         {
-          // One page of the rows, as the server answers `limit`, `offset` and `preview_chars`
-          // (a longer value is cut there and ends in "…").
+          // One page of the rows, as the server answers `limit`, `offset` and `preview_chars`:
+          // a longer value is cut to `preview_chars`, with no mark, and flagged `value_truncated`.
           const from = Number(body.offset ?? 0);
           const cut = typeof body.preview_chars === "number" ? body.preview_chars : Infinity;
           const rows = memoryRowsFixture(options.memoryRows, ns, options.firstMemoryTags)
             .slice(from, from + Number(body.limit ?? 100))
             .map((r) =>
-              typeof r.value === "string" && r.value.length > cut ? { ...r, value: `${r.value.slice(0, cut)}…` } : r,
+              typeof r.value === "string" && r.value.length > cut
+                ? { ...r, value: r.value.slice(0, cut), value_truncated: true }
+                : r,
             );
           return json({
             entries: projectRows(rows, body, "memory_key"),

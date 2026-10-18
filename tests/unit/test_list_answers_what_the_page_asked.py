@@ -117,7 +117,7 @@ def test_the_memories_page_asks_for_the_fields_it_renders() -> None:
     reads = (_ROOT / "frontend/src/views/memoryListReads.ts").read_text()
     card = (_ROOT / "frontend/src/components/MemoryCard.tsx").read_text()
     # The list asks for what the card shows: two lines at a 1400 px window.
-    assert "const MEMORIES_PREVIEW_CHARS = CARD_VALUE_CHARS;" in reads
+    assert "const MEMORIES_PREVIEW_CHARS = CARD_VALUE_CHARS + 1;" in reads
     assert "export const CARD_VALUE_CHARS = 320;" in card
     fields_src = reads[
         reads.index("MEMORIES_LIST_FIELDS = [") : reads.index(

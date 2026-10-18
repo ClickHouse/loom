@@ -77,6 +77,21 @@ describe("MemoryCard preview", () => {
     expect(stringify.mock.calls.some((c) => c.length >= 3 && c[2] === 2)).toBe(false);
   });
 
+  it("ends a value the list cut in a cut mark, and shows one that fits whole", async () => {
+    // The list sends one character more than a card shows, cut there with no mark.
+    const cut = "word ".repeat(100).slice(0, CARD_VALUE_CHARS + 1);
+    const { unmount } = render(
+      <MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={cut} />,
+    );
+    const shown = must((await screen.findByText(/^word word/)).textContent, "preview text");
+    expect(shown.endsWith("…")).toBe(true);
+    expect(shown.length).toBeLessThanOrEqual(CARD_VALUE_CHARS);
+    unmount();
+    const whole = "word ".repeat(100).slice(0, CARD_VALUE_CHARS);
+    render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={whole} />);
+    expect(must((await screen.findByText(/^word word/)).textContent, "preview text")).toBe(whole);
+  });
+
   it("flags an agent-encoded envelope from the parsed object", async () => {
     const payload = btoa("Decoded envelope text that is long enough to count as a payload.".repeat(2));
     render(

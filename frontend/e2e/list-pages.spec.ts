@@ -3,15 +3,7 @@ import * as fs from "node:fs";
 import { violations } from "./axe";
 import { codeReposFixture, installApi, trackerSourcesFixture } from "./fixtures";
 
-// The list pages (Memories, Library, Conversations, Profile, Spaces, Repositories) against
-// the list rules, in the browser: the chrome over the first row stays inside its budget and
-// the search's placeholder fits, the selection takes a range and clears on Escape, a row
-// list is one tab stop whose ring is drawn on the row, a long memory value fills two lines,
-// a row's "+N" tags show on a hover and a tap on them opens the row, under a coarse pointer
-// a row's tags stay on one line and each takes a 44 px tap that reaches no other tag, a
-// Library row's More menu shows without a hover, a row's placeholder size is its drawn
-// height, the Profile's sections take a selection, Insights holds the usage audit and the
-// mentor, and styles.css draws the Kbd and the score bar on radius tokens.
+// The list pages against the list rules in `dashboard-design.md`, in the browser.
 
 const now = new Date().toISOString();
 const THREADS = Array.from({ length: 6 }, (_, i) => ({
@@ -204,17 +196,20 @@ test("a row list is one tab stop, the arrows move through it, and the ring is dr
 });
 
 // The list asks for as many characters as two lines of the value hold at 1400 px, so a long
-// value fills both lines rather than ending one line in.
-test("a long memory value fills the card's two lines at 1400 px", async ({ page }) => {
+// value fills both lines rather than ending one line in (at 160 characters it ends one line
+// in), and ends in "…" where the row holds more than the card shows.
+test("a long memory value fills the card's two lines at 1400 px and ends in a cut mark", async ({ page }) => {
   await installApi(page, { memoryRows: 12 });
   await page.goto("/memories");
   const value = page.locator('main .list-row [id$="-value"]').first();
   await expect(value).toBeVisible();
-  const { height, line } = await value.evaluate((el) => ({
+  const { height, line, text } = await value.evaluate((el) => ({
     height: el.getBoundingClientRect().height,
     line: Number.parseFloat(getComputedStyle(el).lineHeight),
+    text: el.textContent ?? "",
   }));
   expect(Math.round(height)).toBe(Math.round(2 * line));
+  expect(text.endsWith("…"), "a cut value ends in a cut mark").toBe(true);
 });
 
 test("a row's +N tag chip shows the folded tags on hover, above the row's open button", async ({ page }) => {
