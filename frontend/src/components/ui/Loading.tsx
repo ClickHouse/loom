@@ -75,7 +75,7 @@ export function LoadingSkeleton({ label, children, className = "" }: LoadingSkel
       <div
         aria-hidden="true"
         data-shown={shown || undefined}
-        className={`transition-opacity duration-150 ${shown ? "" : "opacity-0"}`}
+        className="opacity-0 transition-opacity duration-150 data-[shown]:opacity-100"
       >
         {children}
       </div>
