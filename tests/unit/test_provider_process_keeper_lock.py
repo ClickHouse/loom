@@ -36,7 +36,6 @@ class FakeCH(FakeLockTable):
         return {
             "state": r["state"],
             "version": r["version"],
-            "stale_after_s": r["stale"],
             "expired": expired,
         }
 

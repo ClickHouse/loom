@@ -410,7 +410,8 @@ with `purge=true` and runner state.
   conditional `UPDATE` under strict mode, once the key expired and the previous
   owner's participant counts as stopped (retired, or no heartbeat for its
   `stale_after_s` and no query tagged with its id in `system.processes`).
-  It is a Keeper operation, not a MergeTree content mutation; an elapsed TTL alone never permits
+  `loom provider-lock clear` deletes the key the same way. Both are Keeper
+  operations, not MergeTree content mutations; an elapsed TTL alone never permits
   provider-lock takeover.
 - **Run id claims** (`loom.agent_run_claims`, KeeperMap) live only inside one
   `run.begin`: claim, read the run row, write it, drop the claim. A later begin that

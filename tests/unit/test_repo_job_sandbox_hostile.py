@@ -303,7 +303,7 @@ async def test_a_toolchain_mount_shows_no_loom_data(tmp_path: Path, monkeypatch)
     for field in ("code_repos_root", "code_scip_checkout_dir"):
         monkeypatch.setattr(settings, field, type(settings).model_fields[field].default)
     canaries = [
-        tmp_path / "var/blobs/blob",
+        tmp_path / "var/other-data/file",
         tmp_path / "var/code_repos/self/checkout-other/secret",
         tmp_path / "var/env-backup-1",
     ]
@@ -323,7 +323,7 @@ async def test_a_toolchain_mount_shows_no_loom_data(tmp_path: Path, monkeypatch)
             readonly=sandbox.tool_mounts(given),
         )
         assert CANARY.encode() not in done.stdout, done.stdout
-        assert b"blob" not in done.stdout and b"checkout-other" not in done.stdout
+        assert b"other-data" not in done.stdout and b"checkout-other" not in done.stdout
     assert (
         b"scip-clang-ran"
         in (
@@ -371,16 +371,20 @@ async def test_loom_data_inside_the_python_prefix_is_unreadable(
     from server.settings import settings
 
     prefix = tmp_path / "py"
-    (prefix / "blobs").mkdir(parents=True)
-    (prefix / "blobs" / "blob").write_text(CANARY)
+    (prefix / "checkouts").mkdir(parents=True)
+    (prefix / "checkouts" / "secret").write_text(CANARY)
     (prefix / "lib.txt").write_text("runtime")
     monkeypatch.setattr(sys, "prefix", str(prefix))
-    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(prefix / "blobs"))
+    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(prefix / "checkouts"))
     done = await sandbox.run_sandboxed(
-        ["sh", "-c", f"cat {prefix}/lib.txt; cat {prefix}/blobs/blob; ls -a {prefix}/blobs"],
+        [
+            "sh",
+            "-c",
+            f"cat {prefix}/lib.txt; cat {prefix}/checkouts/secret; ls -a {prefix}/checkouts",
+        ],
         env=ENV,
         timeout_s=30,
         merge_stderr=True,
     )
     assert b"runtime" in done.stdout
-    assert CANARY.encode() not in done.stdout and b"blob\n" not in done.stdout, done.stdout
+    assert CANARY.encode() not in done.stdout and b"secret\n" not in done.stdout, done.stdout

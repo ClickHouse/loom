@@ -25,6 +25,7 @@ from server.core.provider_process import host_proof, pod_gone, process_identity,
 from server.insights.store.provider_participants import (
     OWN_VERSION_SQL,
     SEQUENTIAL,
+    STALE_AFTER_S,
     TABLE,
     participants,
     prune_retired,
@@ -37,8 +38,6 @@ log = logging.getLogger(__name__)
 # Every participant writes its row this often, from a thread of its own, so a
 # boot migration or a blocked event loop does not stop it.
 HEARTBEAT_S = 10.0
-# A participant whose last heartbeat is older than this may count as stopped.
-STALE_AFTER_S = 60
 # How often the workers leader retires the stopped participants it finds,
 # and deletes the long-retired ones.
 SWEEP_S = 60.0

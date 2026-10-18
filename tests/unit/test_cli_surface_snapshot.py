@@ -108,7 +108,9 @@ def _action(action: argparse.Action) -> dict[str, Any]:
         else _name(list(action.choices)),
         "nargs": _name(action.nargs),
         "type": _name(action.type),
-        "required": action.required,
+        # argparse's answer for a `nargs="..."` positional differs between
+        # Python patch releases, so it is left out of the snapshot.
+        "required": None if action.nargs == argparse.REMAINDER else action.required,
         "help": action.help,
         "metavar": _name(action.metavar),
     }

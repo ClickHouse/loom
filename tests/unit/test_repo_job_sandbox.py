@@ -140,7 +140,14 @@ def loom_dirs(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setenv("LOOM_ENV_FILE", str(tmp_path / "srv" / ".env"))
     for field in ("code_repos_root", "code_scip_checkout_dir"):
         monkeypatch.setattr(settings, field, type(settings).model_fields[field].default)
-    for d in ("var/bin", "var/blobs", "var/code_repos/self", "home/bin", "srv/bin", "opt/x/bin"):
+    for d in (
+        "var/bin",
+        "var/other-data",
+        "var/code_repos/self",
+        "home/bin",
+        "srv/bin",
+        "opt/x/bin",
+    ):
         (tmp_path / d).mkdir(parents=True)
     (tmp_path / "var/bin/scip-clang").write_text("")
     (tmp_path / "srv/.env").write_text("")
@@ -435,16 +442,16 @@ def test_loom_data_inside_a_mounted_python_prefix_is_hidden(tmp_path: Path, monk
     from server.settings import settings
 
     prefix = tmp_path / "py"
-    for d in ("blobs/b", "var", "bin"):
+    for d in ("checkouts/b", "var", "bin"):
         (prefix / d).mkdir(parents=True)
     (prefix / ".env").write_text("SECRET=1")
     monkeypatch.chdir(prefix)
     monkeypatch.setattr(sys, "prefix", str(prefix))
     monkeypatch.setattr(sys, "base_prefix", str(prefix))
-    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(prefix / "blobs"))
+    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(prefix / "checkouts"))
     monkeypatch.setenv("LOOM_ENV_FILE", str(prefix / ".env"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    checkout = prefix / "blobs" / "b"
+    checkout = prefix / "checkouts" / "b"
     readonly = sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
     assert prefix in readonly
     argv = sandbox._binds([checkout], readonly, "")
@@ -453,7 +460,7 @@ def test_loom_data_inside_a_mounted_python_prefix_is_hidden(tmp_path: Path, monk
         return next(i for i in range(len(argv)) if argv[i : i + len(args)] == list(args))
 
     shown = at("--ro-bind", str(prefix), str(prefix))
-    assert shown < at("--tmpfs", str(prefix / "blobs")) < at("--bind", str(checkout))
+    assert shown < at("--tmpfs", str(prefix / "checkouts")) < at("--bind", str(checkout))
     assert shown < at("--tmpfs", str(prefix / "var"))
     assert shown < at("--ro-bind", "/dev/null", str(prefix / ".env"))
     assert str(prefix / "bin") not in argv
@@ -466,14 +473,14 @@ def test_a_path_holding_no_loom_data_gets_no_cover(tmp_path: Path, monkeypatch) 
     assert sandbox._hidden([str(tools), "/usr"]) == []
 
 
-@pytest.mark.parametrize("where", ["blobs", "blobs/py"])
+@pytest.mark.parametrize("where", ["checkouts", "checkouts/py"])
 def test_a_python_prefix_that_is_or_sits_in_loom_data_is_refused(
     where: str, tmp_path: Path, monkeypatch
 ) -> None:
     from server.settings import settings
 
-    (tmp_path / "blobs" / "py").mkdir(parents=True)
-    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "blobs"))
+    (tmp_path / "checkouts" / "py").mkdir(parents=True)
+    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "checkouts"))
     monkeypatch.setattr(sys, "prefix", str(tmp_path / where))
     with pytest.raises(PermissionError):
         sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
@@ -482,9 +489,9 @@ def test_a_python_prefix_that_is_or_sits_in_loom_data_is_refused(
 def test_a_system_path_inside_loom_data_is_refused(tmp_path: Path, monkeypatch) -> None:
     from server.settings import settings
 
-    (tmp_path / "blobs" / "usr").mkdir(parents=True)
-    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "blobs"))
-    monkeypatch.setattr(sandbox, "_SYSTEM_PATHS", (str(tmp_path / "blobs" / "usr"),))
+    (tmp_path / "checkouts" / "usr").mkdir(parents=True)
+    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "checkouts"))
+    monkeypatch.setattr(sandbox, "_SYSTEM_PATHS", (str(tmp_path / "checkouts" / "usr"),))
     with pytest.raises(PermissionError):
         sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
 
@@ -528,11 +535,11 @@ def test_a_refused_layout_is_a_health_problem(tmp_path: Path, monkeypatch) -> No
     from server.observability.problems import HealthState, collect_problems
     from server.settings import settings
 
-    (tmp_path / "blobs").mkdir()
-    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "blobs"))
+    (tmp_path / "checkouts").mkdir()
+    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "checkouts"))
     monkeypatch.setattr(settings, "code_ingest_enabled", True)
     assert sandbox.layout_refusal() == ""
-    monkeypatch.setattr(sys, "prefix", str(tmp_path / "blobs"))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "checkouts"))
     refusal = sandbox.layout_refusal()
     assert "inside Loom's data" in refusal
     problems = collect_problems(
@@ -569,9 +576,9 @@ def test_a_refused_layout_before_the_probe_is_an_error_only_with_bwrap(
 def test_the_layout_check_and_the_mount_refusal_read_one_list(tmp_path: Path, monkeypatch) -> None:
     from server.settings import settings
 
-    (tmp_path / "blobs").mkdir()
-    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "blobs"))
-    monkeypatch.setattr(sandbox, "_own_mounts", lambda: [tmp_path / "blobs"])
+    (tmp_path / "checkouts").mkdir()
+    monkeypatch.setattr(settings, "code_scip_checkout_dir", str(tmp_path / "checkouts"))
+    monkeypatch.setattr(sandbox, "_own_mounts", lambda: [tmp_path / "checkouts"])
     assert "inside Loom's data" in sandbox.layout_refusal()
     with pytest.raises(PermissionError):
         sandbox._readonly_paths({"PATH": "/usr/bin"}, [])

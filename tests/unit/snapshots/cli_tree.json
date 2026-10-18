@@ -2179,7 +2179,7 @@
            "choices": null,
            "nargs": "...",
            "type": null,
-           "required": true,
+           "required": null,
            "help": "-- <command> [args…]",
            "metavar": null
           }

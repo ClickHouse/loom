@@ -96,17 +96,16 @@ this build, which applies its migrations, then the base again on the newer schem
 a third process of this build with a changed dashboard bundle and one no-op migration
 more (N+1). It checks:
 
-- each build that has `/v1/health/ready` answers ready after the cross-boot;
-
+- each build answers ready after the cross-boot;
 - memories, a run begun on one build and completed on the other, and a conflict verdict
   through the other build's version write read back whole across builds;
-- a column added as N+1's migration would survives a version write by each build that
-  carries, made as soon as every carrying process has acknowledged the column (rule 2);
+- a column added as N+1's migration would survives a version write by each build, made
+  as soon as every process has acknowledged the column (rule 2);
 - a build on a ledger newer than itself logs the WARNING;
-- every asset each dashboard page names loads from a replica of the other build, between
-  builds (rule 9);
-- with every process on `LOOM_BACKGROUND_WORKERS=auto`, one process that elects through
-  ClickHouse runs the workers, and it is N+1: N, which took the lease first, hands it
+- every asset each dashboard page names loads from a replica of the other build
+  (rule 9);
+- with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one process runs the
+  workers, and it is N+1: N, which took the lease first, hands it
   over to the higher schema version (rule 6).
 
 It does not check new enum values (rule 3), wire formats (rule 4), signing keys other

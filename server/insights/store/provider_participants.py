@@ -11,6 +11,8 @@ from server.core.repo_base import _CHClient, _default_client
 from server.settings import settings
 
 TABLE = "loom._provider_participants"
+# A participant whose last heartbeat is older than this may count as stopped.
+STALE_AFTER_S = 60
 
 # `expired` is decided on the server's clock, like the leases.
 PARTICIPANTS_SQL = (
@@ -20,7 +22,7 @@ PARTICIPANTS_SQL = (
     f"FROM {TABLE} FINAL WHERE state != 'retired'"
 )
 ONE_SQL = (
-    "SELECT state, version, stale_after_s, "
+    "SELECT state, version, "
     "heartbeat_at + toIntervalSecond(stale_after_s) < now64(3) AS expired "
     f"FROM {TABLE} FINAL WHERE participant_id = {{id:UUID}}"
 )
@@ -74,7 +76,7 @@ async def record_participant(
     *,
     after: int = 0,
     version: int | None = None,
-    stale_after_s: int = 0,
+    stale_after_s: int = STALE_AFTER_S,
     ch: _CHClient | None = None,
 ) -> None:
     """`heartbeat_at` takes the server's clock (its column default); this process's
@@ -146,10 +148,9 @@ def participant_sync(ch: Any, identity: UUID | str) -> dict[str, Any] | None:
     rows = ch.query(ONE_SQL, parameters={"id": str(identity)}, settings=SEQUENTIAL).result_rows
     if not rows:
         return None
-    state, version, stale_after_s, expired = rows[0]
+    state, version, expired = rows[0]
     return {
         "state": str(state),
         "version": int(version),
-        "stale_after_s": int(stale_after_s),
         "expired": bool(expired),
     }

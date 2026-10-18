@@ -26,7 +26,10 @@ The journal, numbering, runner directives and the rules for writing a migration 
   The provider lock (TTL 60 s, renewed every 20 s) is taken over once it expired and its
   holder's participant row expired too: no heartbeat for 60 s (one every 10 s) and no
   query tagged with its id in `system.processes` on any node. Containers booting together
-  wait up to 120 s for the provider lock instead of failing.
+  wait up to 120 s for the provider lock instead of failing. A lock whose holder has
+  no participant row is freed with `loom provider-lock clear --holder <holder>` once
+  that process is confirmed stopped; the command refuses while the holder renews,
+  heartbeats or has a query running.
 - **Mutations.** A file is recorded only once its mutations are done. A failed mutation,
   or one running past `LOOM_MIGRATE_MUTATION_WAIT_S` (default 600), fails the file and
   stops the boot with the file named in the log.

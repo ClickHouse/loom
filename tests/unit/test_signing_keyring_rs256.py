@@ -89,7 +89,7 @@ def test_a_gateway_rs256_token_without_a_kid_verifies(
     monkeypatch: pytest.MonkeyPatch, rsa_pair: tuple[str, str]
 ) -> None:
     """A missing kid means `default`, which is the HS256 root: an RS256 token
-    used to be refused before the gateway map was read."""
+    is checked against the gateway map, not refused first."""
     private, public = rsa_pair
     monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps({"default": public}))
     token = pyjwt.encode(_claims(), private, algorithm="RS256")
@@ -102,9 +102,8 @@ def test_a_gateway_rs256_token_without_a_kid_verifies(
 def test_a_pem_root_signs_rs256_and_any_other_pem_answers_no_signing_key(
     monkeypatch: pytest.MonkeyPatch, rsa_pair: tuple[str, str]
 ) -> None:
-    """The build before 033 signed RS256 with a PEM LOOM_JWT_SECRET, and this
-    one does too, as kid `default`. Never HS256: PyJWT raised InvalidKeyError,
-    a 500 on every sign-in."""
+    """A PEM LOOM_JWT_SECRET signs RS256 as kid `default`. Never HS256: PyJWT
+    raises InvalidKeyError, a 500 on every sign-in."""
     monkeypatch.setattr(settings, "jwt_secret", rsa_pair[0])
     keyring._reset_for_tests()
     token = mint_token("s", "o", ["ns"], ["writer"])

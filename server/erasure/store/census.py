@@ -466,8 +466,8 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     "loom.revoked_tokens": "auth plane: revoked JWT ids.",
     "loom.oauth_state": "auth plane: OAuth client registrations and codes; no memory rows.",
-    "loom.oauth_claims": "auth plane: the OAuth exchange in flight per credential id.",
-    "loom.grant_claims": "auth plane: the grant change in flight per (org, namespace, subject).",
+    "loom.oauth_claims": "auth plane: no code path writes it; never holds memory content.",
+    "loom.grant_claims": "auth plane: no code path writes it; never holds memory content.",
     "loom.service_accounts": "auth plane: service-account definitions.",
     "loom.user_state": "per-subject UI state (default namespace).",
     "loom.subject_last_seen": (

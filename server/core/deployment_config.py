@@ -264,7 +264,8 @@ def _may_replace(stored: dict[str, Any], live: list[dict[str, Any]]) -> bool:
     when it drifts from it (its root secret or a MUST_MATCH value differs):
     that takes `loom deployment publish`. Otherwise only once no other live
     instance (`live`, from `server.core.instances.read_live`) runs the stored
-    one, so a mixed env during a rollout does not flip it back and forth."""
+    one, so builds whose snapshots differ in shape (N-1 and N during a rollout)
+    do not flip it back and forth."""
     from server.core.instances import instance_id
 
     if compare(settings, stored):

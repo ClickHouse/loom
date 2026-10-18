@@ -164,8 +164,8 @@ def test_the_same_snapshot_is_not_rewritten() -> None:
 
 
 @pytest.mark.usefixtures("deployment")
-def test_a_mixed_env_never_flaps_the_snapshot() -> None:
-    """Two leaders in turn, publishing different snapshots, while both run: the stored
+def test_two_snapshot_shapes_never_flap_the_snapshot() -> None:
+    """Two builds' leaders in turn, publishing different snapshot shapes, while both run: the stored
     snapshot is the first one's until no live instance runs it."""
     theirs = {**dc.snapshot(settings), "note": "another build's snapshot"}
     ch = _Ch(theirs)
