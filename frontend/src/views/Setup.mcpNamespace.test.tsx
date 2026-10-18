@@ -126,6 +126,18 @@ describe("Setup's MCP home namespace", () => {
     expect(scope).not.toHaveTextContent(/Writes to/);
   });
 
+  it("says the default could not be read, not that there is none, when the server says null", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({ ...minted, namespace: null });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/^Its default namespace could not be read now; each call resolves it/);
+    expect(scope).not.toHaveTextContent(/Has no default|Writes to/);
+  });
+
   it("names the claim a token with no default namespace must name one of", async () => {
     const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
     vi.mocked(generateMcpConfig).mockClear();
