@@ -246,8 +246,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
     import server.memory.store as memory_repo
     from server.operations import read_projection
 
-    # The entry field whitelist (None = every field) and the hard tag filter: any one tag (the
-    # predicate memory.search applies), or every one with `tags_all`.
+    # The entry field whitelist (None = every field) and the hard tag filter, in any case
+    # (memory.search matches tags exactly).
     keep = read_projection.resolve(
         _MemoryListEntry,
         list(input.fields or []),
@@ -424,7 +424,7 @@ async def _list_by_score(
     input: MemoryListInput, tags: list[str] | None, served: ServedFlags
 ) -> MemoryListOutput:
     """sort_by="score": `evidence_count + recall_count*0.5` DESC with the optional
-    per-memory_type `quotas` cap (the tags predicate is memory.search's)."""
+    per-memory_type `quotas` cap; tags match in any case."""
     import server.memory.store as memory_repo
 
     params: dict[str, Any] = {
@@ -464,8 +464,7 @@ async def _list_by_score(
         where.append("startsWith(memory_key, {p:String})")
         params["p"] = input.prefix
     if tags:
-        clause, params["tags"] = tag_filter(tags, every=input.tags_all)
-        where.append(clause)
+        where.append(tag_filter(tags, params, every=input.tags_all))
     if input.contains:
         where.append(memory_repo.CONTAINS_PREDICATE)
         params["contains"] = input.contains

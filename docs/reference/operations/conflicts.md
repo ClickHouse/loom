@@ -56,7 +56,7 @@ List unresolved conflicts where two memories contradict each other.
 | `limit` | `int` | `50` | At most this many rows, 1-500, newest version first. |
 | `before_version` | `int \| None` | `None` | Keyset cursor — pass previous response's earliest version to paginate. |
 | `count_only` | `bool` | `False` | A badge needs the number, not the rows. |
-| `fresh` | `bool` | `False` | With count_only, count now instead of answering from the replica's minute-long cache (the review queue, which must not show a count another replica's resolve made stale). |
+| `fresh` | `bool` | `False` | With count_only, count now instead of reading the minute-long cache; default off. |
 | `keys_only` | `bool` | `False` | The Memories view marks cards that have a conflict and needs only the keys. |
 | `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |
 
@@ -105,7 +105,7 @@ Pick the winner of a conflict (keep A, keep B, keep both, merge).
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `resolved` | `bool` | False when the memory or the named peer is unknown, the memory is no longer conflicted (an earlier decision resolved it), or the caller is not an admin of every row it names; nothing was written then. |
+| `resolved` | `bool` | False when the memory or the named peer is unknown, an earlier decision already resolved the pair, or the caller is not an admin of every row it names; nothing was written then. |
 | `decision` | `Literal['revise', 'contract', 'allow']` | The decision, echoed. |
 | `affected_memory_ids` | `list[str]` | Every memory id this call tombstoned or reactivated. |
 | `resolved_at` | `datetime \| None` | When the resolve ran (UTC); null when nothing was resolved. |

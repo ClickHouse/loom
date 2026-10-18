@@ -43,11 +43,10 @@ def _tier_window(tier_rows: list[Any], hits: list[Any], input: Any) -> list[Any]
 
 
 def _tier_tag_kwargs(input: Any) -> dict[str, Any]:
-    """`search_tags=` for the tier reads only when the request carries a hard filter, so an
-    untagged request issues an untagged call. The tiers match exactly, as every other
-    memory.search leg does (memory.list's `tags` match in any case)."""
+    """`tags=` for the tier reads only when the request carries a hard filter, so an untagged
+    request issues an untagged call; they match exactly, as every memory.search leg does."""
     hard_tags = _request_hard_tags(input)
-    return {"search_tags": hard_tags} if hard_tags else {}
+    return {"tags": hard_tags, "exact_tags": True} if hard_tags else {}
 
 
 # tier -> the order its rows are read in: the anchor is what a task set out to do (its oldest

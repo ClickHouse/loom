@@ -253,6 +253,19 @@ async def _peers_in_scope(input: ConflictsResolveInput, peers: list[str]) -> lis
     return live
 
 
+async def _peer_still_conflicted(input: ConflictsResolveInput, target: Any) -> bool:
+    """Whether the named peer is still conflicted with `target` (a resolve of another peer
+    marked the target active)."""
+    from server.memory.store import conflicts as conflicts_repo
+
+    if not input.peer_id:
+        return False
+    peer = await conflicts_repo.lookup_target(input.org, input.peer_id)
+    return (
+        peer is not None and peer.status == "conflicted" and target.memory_id in peer.conflict_with
+    )
+
+
 async def handle_conflicts_resolve(
     input: ConflictsResolveInput,
 ) -> ConflictsResolveOutput:
@@ -276,13 +289,14 @@ async def handle_conflicts_resolve(
         resolved=False, decision=input.decision, affected_memory_ids=[]
     )
     target = await conflicts_repo.lookup_target(input.org, input.memory_id)
-    # A row an earlier decision already resolved is not decided again: a second decision
-    # from a stale view would tombstone or reactivate rows nobody is looking at.
-    if target is None or target.status != "conflicted":
+    if target is None:
         return unresolved
     all_peers = list(target.conflict_with)
     if input.peer_id and input.peer_id not in all_peers:
         # A stale or foreign peer id must not widen the resolve to every peer.
+        return unresolved
+    if target.status != "conflicted" and not await _peer_still_conflicted(input, target):
+        # A pair an earlier decision already resolved is not decided again from a stale view.
         return unresolved
     peers = await _peers_in_scope(input, [input.peer_id] if input.peer_id else all_peers)
     if peers is None:
@@ -341,12 +355,12 @@ async def handle_conflicts_resolve(
                     )
                 await conflicts_repo.allowlist_insert(allowlist_rows)
 
-    # The badge's cached counts (one per read scope) are stale now; the caller's scope is
-    # counted afresh for the answer, which also refills its cache entry.
+    # The badge's cached counts (one per read scope) are stale now; the count below refills
+    # the caller's.
     for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:
         _count_cache.pop(key, None)
     total = await _conflicted_count_cached(
-        conflicts_repo, input.org, input.namespace, request_scope(), fresh=True
+        conflicts_repo, input.org, input.namespace, request_scope()
     )
     return ConflictsResolveOutput(
         resolved=True,

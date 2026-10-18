@@ -197,8 +197,7 @@ async def list_with_chunk_counts(
     if not include_superseded:
         extra_where += " AND superseded_at IS NULL"
     if tags:
-        clause, params["tags"] = tag_filter(tags, every=tags_all)
-        extra_where += f" AND {clause}"
+        extra_where += f" AND {tag_filter(tags, params, every=tags_all)}"
     live_prefixes = [p for p in (uri_prefixes or []) if p]
     if live_prefixes:
         # Directory scope: OR of startsWith over the (org, namespace,

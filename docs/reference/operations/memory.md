@@ -1030,7 +1030,7 @@ List memory keys under this identity, optionally filtered.
 | `memory_type` | `str \| None` | `None` | Only rows of this memory type; None = every type. |
 | `source_trace` | `str \| None` | `None` | Exact-match on source_trace — e.g. "conversation:<thread_id>" to list the memories a given conversation produced. |
 | `limit` | `int` | `100` | At most this many entries; `truncated` says when more exist. |
-| `offset` | `int` | `0` | Page offset for paginated browsing (recency sort), at most 100,000. |
+| `offset` | `int` | `0` | Page offset for paginated browsing (recency sort). |
 | `count_only` | `bool` | `False` | The two counts (`total`, `today`) and the namespace version, no rows — for a caller that shows a number (the Setup page's namespace total). |
 | `preview_chars` | `int` | `2048` | The preview length the caller shows. |
 | `sort_by` | `Literal['recency', 'score']` | `'recency'` | `recency` (newest first) or `score` (evidence_count + 0.5 × recall_count, highest first). |
@@ -1040,8 +1040,8 @@ List memory keys under this identity, optionally filtered.
 | `include_superseded` | `bool` | `False` | `status='superseded'` rows (a later write replaced them) are skipped unless asked for; a served entry carries its `status`. |
 | `include_proposed` | `bool` | `False` | `status='proposed'` rows (facts on trial) are skipped unless asked for; `memory.proposals` lists them with their graded counts. |
 | `as_of` | `datetime \| None` | `None` | see MemoryGetInput.as_of |
-| `tags` | `list[str]` | *(computed)* | Hard filter on the row's tags, in any case (`api` matches a row tagged `API`): any one of them by default, every one with `tags_all`. |
-| `tags_all` | `bool` | `False` | Require every one of `tags` (a browse page's stacked `tag:a tag:b`); off, any one, as agents rely on. |
+| `tags` | `list[str]` | *(computed)* | Only rows carrying any one of these tags (every one with `tags_all`), in any case; empty = no tag filter. |
+| `tags_all` | `bool` | `False` | Require every one of `tags` instead of any one; default off. |
 | `contains` | `str \| None` | `None` | Only rows whose value or key holds this text, any case — the keyword filter of a browse page's search box, which must find every row that names a word (a ranked search returns its top k and misses the rest). |
 | `fields` | `list[str]` | *(computed)* | Whitelist of entry field names; every entry carries only those plus `memory_key`. |
 | `known_version` | `int \| str \| None` | `None` | The `namespace_version` a previous answer carried. |

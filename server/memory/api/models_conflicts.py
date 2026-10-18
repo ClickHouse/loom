@@ -30,10 +30,7 @@ class ConflictsListInput(BaseModel):
     # A badge needs the number, not the rows. With
     # count_only the answer is `total` and no row (no value column read).
     count_only: bool = False
-    # With count_only, count now instead of answering from the replica's minute-long cache
-    # (the review queue, which must not show a count another replica's resolve made stale).
-    # A dashboard flag: hidden from the MCP listing. A build without it answers from its
-    # cache and names it in `ignored_args`.
+    # With count_only, count now instead of reading the minute-long cache; default off.
     fresh: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # The Memories view marks cards that have a
     # conflict and needs only the keys. With keys_only the answer is `keys`
@@ -91,9 +88,8 @@ class ConflictsResolveInput(BaseModel):
 
 
 class ConflictsResolveOutput(BaseModel):
-    # False when the memory or the named peer is unknown, the memory is no longer
-    # conflicted (an earlier decision resolved it), or the caller is not an admin of every
-    # row it names; nothing was written then.
+    # False when the memory or the named peer is unknown, an earlier decision already resolved
+    # the pair, or the caller is not an admin of every row it names; nothing was written then.
     resolved: bool
     # The decision, echoed.
     decision: ResolveDecision

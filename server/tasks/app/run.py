@@ -19,7 +19,6 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -998,8 +997,7 @@ def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime]:
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:
     """One page of a namespace's agent runs, filtered by agent, session, status, memory
-    activity, grade or text, in the asked order, with the count of every match. The count runs
-    only where the page cannot tell it (RunListOutput.total)."""
+    activity, grade or text, in the asked order; `total` when the page cannot tell it."""
 
     where: list[str] = []
     params: dict[str, Any] = {}
@@ -1036,12 +1034,7 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
         )
         params["q"] = q
     ch = get_client()
-    # The page and the count of every match share one WHERE.
     limit, offset = int(input.limit), int(input.offset)
-
-    def count() -> Awaitable[int]:
-        return runs_store.count_runs(ch, input.org, input.namespace, where=where, params=params)
-
     page = runs_store.list_runs(
         ch,
         input.org,
@@ -1052,17 +1045,19 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
         offset=offset,
         order_by=input.order_by,
     )
-    # The count reads every run of the namespace under FINAL, so it runs only when the page
-    # cannot tell the total: on the first page, and on a page past the end (the caller needs
-    # the real total to step back). A short page ends the list, so its total is offset + its
-    # rows; a full page after the first sends none and the caller keeps the first page's.
+    # The count reads the namespace's runs under FINAL, so it runs only where the page cannot
+    # tell the total. The first page counts beside the page, even when the page alone would do.
     total: int | None = None
     if offset == 0:
-        rows, total = await asyncio.gather(page, count())
+        rows, total = await asyncio.gather(
+            page, runs_store.count_runs(ch, input.org, input.namespace, where=where, params=params)
+        )
     else:
         rows = await page
         if not rows:
-            total = await count()
+            total = await runs_store.count_runs(
+                ch, input.org, input.namespace, where=where, params=params
+            )
         elif len(rows) < limit:
             total = offset + len(rows)
 

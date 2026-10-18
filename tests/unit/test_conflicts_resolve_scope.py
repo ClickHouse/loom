@@ -247,3 +247,22 @@ async def test_a_row_an_earlier_decision_resolved_is_not_decided_again(
     assert again.resolved is False
     assert again.total is None
     assert (table.tombstoned, table.activated, table.allowlisted) == written
+
+
+async def test_a_second_peer_is_resolved_after_the_first_made_the_target_active(
+    table: _Table, admin_of_a: None
+) -> None:
+    assert (await _resolve(T_OWN, "revise", peer_id=P_OWN)).resolved is True
+    # T_OWN is active now, but P_OWN2 is still conflicted with it.
+    out = await _resolve(T_OWN, "revise", peer_id=P_OWN2)
+    assert out.resolved is True
+    assert table.tombstoned == [P_OWN, P_OWN2]
+
+
+async def test_a_resolved_target_with_no_named_peer_is_not_decided_again(
+    table: _Table, admin_of_a: None
+) -> None:
+    assert (await _resolve(T_OWN, "revise", peer_id=P_OWN)).resolved is True
+    out = await _resolve(T_OWN, "contract")
+    assert out.resolved is False and out.affected_memory_ids == []
+    assert table.tombstoned == [P_OWN]
