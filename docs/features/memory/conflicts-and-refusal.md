@@ -122,8 +122,9 @@ async with Agent(org="acme", namespace="support", agent="curator") as agent:
 
 ### The conflict resolver
 
-With `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` on (the default wherever the LLM provider
-is real), a leader-only worker judges each write that has a live peer of its type at cosine
+With `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` on (the default wherever neither
+`LOOM_LLM_PROVIDER` nor the provider of `LOOM_CONFLICT_RESOLVER_MODEL` is `fake`), a
+leader-only worker judges each write that has a live peer of its type at cosine
 0.60 or more, or was flagged `conflicted`, against up to eight such peers in one call to
 `LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`). Per pair:
 
@@ -294,7 +295,7 @@ not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md
 | `LOOM_CONFLICT_THRESHOLD`                         | 0.85                             | Fallback conflict cosine; 1.0 disables flagging.                                                     |
 | `LOOM_DUPLICATE_THRESHOLD`                        | 0.97                             | Fallback duplicate cosine.                                                                           |
 | `LOOM_ADAPTIVE_THRESHOLDS`                        | true                             | Calibrate both thresholds from the live embedder.                                                    |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`           | real provider: true; fake: false | The background conflict resolver; an explicit value wins. Without its model's key, writes wait owed. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`           | true unless the LLM provider or the resolver model's provider is fake | The background conflict resolver; an explicit value wins. Without its model's key, writes wait owed. |
 | `LOOM_CONFLICT_RESOLVER_MODEL`                    | gpt-6.1-sol                      | The resolver's judge.                                                                                |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY`    | 0.60                             | Lowest cosine that marks a write and joins its cluster.                                              |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | 0.95                             | An update retires its predecessor (`auto_reinforce`, `newest_wins`) at this confidence.              |
