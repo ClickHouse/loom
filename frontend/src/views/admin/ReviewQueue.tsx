@@ -195,9 +195,12 @@ function ConflictsPanel() {
   // that page added, else the last one in the queue.
   const queueBox = useRef<HTMLDivElement>(null);
   const focusAdded = useRef<number | null>(null);
-  // Conflicts decided here, whichever visit: no read (a re-read on a return, a Load more)
-  // offers one again, even one the server answered before the decision was visible.
-  const decidedIds = useRef(new Set<string>());
+  // Conflicts decided here, by id and the version decided, whichever visit: no read (a
+  // re-read on a return, a Load more) offers that version again, even one the server
+  // answered before the decision was visible. A later version is a new conflict (a write
+  // flagged it again) and is offered.
+  const decidedAt = useRef(new Map<string, number>());
+  const undecided = (c: ConflictRow) => c.version > (decidedAt.current.get(c.memory_id) ?? -1);
   // The rows on screen as of the latest render, for an answer from another visit.
   const rowsNow = useRef(rows);
   rowsNow.current = rows;
@@ -209,7 +212,7 @@ function ConflictsPanel() {
       listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: CONFLICT_PAGE, signal })
         .then((r) => {
           if (live()) {
-            setRows(r.rows.filter((c) => !decidedIds.current.has(c.memory_id)));
+            setRows(r.rows.filter(undecided));
             setNext(r.next_before_version);
             setIndex(0);
             setReason("");
@@ -262,7 +265,7 @@ function ConflictsPanel() {
       setRows((prev) => {
         if (!prev) return prev;
         const have = new Set(prev.map((c) => c.memory_id));
-        return [...prev, ...r.rows.filter((c) => !have.has(c.memory_id) && !decidedIds.current.has(c.memory_id))];
+        return [...prev, ...r.rows.filter((c) => !have.has(c.memory_id) && undecided(c))];
       });
       setNext(r.next_before_version);
     } catch (e) {
@@ -301,20 +304,29 @@ function ConflictsPanel() {
     const myVisit = visit.current;
     setBusy(true);
     try {
-      await resolveConflict(
+      const res = await resolveConflict(
         { org: identity.org, namespace: identity.namespace },
         current.memory_id,
         decision,
         reason.trim() ? { reason: reason.trim() } : {},
       );
+      // Nothing was resolved (the row is gone, out of scope, or no longer conflicted): the
+      // queue is read again rather than dropping a row on a claim.
+      if (!res.resolved) {
+        toast("That conflict could not be resolved; it may have changed. The queue was read again.", "error");
+        if (visit.current === myVisit) setReload((n) => n + 1);
+        return;
+      }
       toast("Resolved", "ok");
       // Gone from every list, on any visit (ids are org-wide, so no other queue loses a row).
       const id = current.memory_id;
-      decidedIds.current.add(id);
+      decidedAt.current.set(id, current.version);
       if (visit.current !== myVisit) {
         // Another visit: the conflict open now stays open (a row before it moves it up one);
-        // its place, count and reason are not this decision's.
+        // its place, count and reason are not this decision's. An emptied page with more
+        // past it reads the queue again.
         const pos = rowsNow.current?.findIndex((c) => c.memory_id === id) ?? -1;
+        decided.current = true;
         setRows((prev) => prev && prev.filter((c) => c.memory_id !== id));
         if (pos >= 0) setIndex((i) => (pos < i ? i - 1 : i));
         return;
