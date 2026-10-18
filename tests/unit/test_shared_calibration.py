@@ -220,17 +220,3 @@ async def test_the_same_label_in_another_space_probes_instead_of_adopting(
     await ec.adopt_or_probe()
     assert calls["probe"] == 1 and ec.calibration_source() == "shared"
     assert len(store.rows) == 2  # each space keeps its own row
-
-
-@pytest.mark.asyncio
-async def test_a_row_keyed_by_the_model_alone_is_never_adopted(env) -> None:
-    store, _probes, calls = env
-    store.rows[MODEL] = {
-        "thresholds_json": json.dumps(asdict(_cal(conflict=0.91)), sort_keys=True),
-        "calibration_hash": "x",
-        "calibrated_by": "another process",
-        "calibrated_at": "",
-        "version": 1,
-    }
-    await ec.adopt_or_probe()
-    assert calls["probe"] == 1

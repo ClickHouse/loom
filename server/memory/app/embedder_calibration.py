@@ -462,7 +462,7 @@ def _served_model() -> str:
 def shared_key(model: str) -> str:
     """The shared calibration's key: `model` and its embedding space's
     fingerprint, so the same label at another width or endpoint is probed, not
-    adopted. A row keyed by the model alone is never read."""
+    adopted."""
     from server.core import embedding_space
 
     values = {**settings.model_dump(include=set(embedding_space.FIELDS)), "embedding_model": model}
