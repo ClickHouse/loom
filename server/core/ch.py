@@ -1380,10 +1380,9 @@ class CHClient:
 # the number of tables loom writes; dropped per table on an insert failure.
 _COLUMN_TYPES: dict[str, dict[str, str]] = {}
 
-# Ledger tables whose inserts are projected onto the live column set by
-# default: rows here are telemetry a request or a pass has
-# already finished — losing a new column's value is a gap, losing the row is
-# a hole in the cost and audit series.
+# Ledger tables whose inserts are projected onto the live column set: rows
+# here are telemetry a request or a pass has already finished — losing a new
+# column's value is a gap, losing the row is a hole in the cost and audit series.
 # loom.llm_response_cache joins them: a cache row a service behind the schema
 # cannot store whole is still a row worth storing.
 PROJECTED_TABLES: frozenset[str] = frozenset(
