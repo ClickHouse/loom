@@ -242,7 +242,7 @@ stateDiagram-v2
     proposed --> active: memory.proposal_decide (accept)
     proposed --> rejected: memory.proposal_decide (reject)
     active --> rejected: memory.reject
-    active --> superseded: newer write (newest_wins, refines)
+    active --> superseded: newer write (newest_wins, refines, conflict resolver)
     superseded --> active: memory.restore
     active --> tombstoned: memory.delete, blacklist sweep, expiry
     tombstoned --> active: memory.restore (within 14 days)
