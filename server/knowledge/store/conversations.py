@@ -317,9 +317,19 @@ async def tombstone_thread(
     counts: dict[str, int] = {}
 
     # 1. Embeddings: every turn the agent logged in the thread, a compacted one too.
-    counts["loom.conversation_embeddings"] = await _tombstone_embeddings(
-        org, namespace, agent, thread_id, None, when=when, ch=ch
+    await _tombstone_embeddings(org, namespace, agent, thread_id, None, when=when, ch=ch)
+    # One per turn (FINAL, however many embedding models hold it), earlier calls'
+    # tombstones included, as the messages count is.
+    emb_n = await ch.query_one(
+        f"""
+        SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
+          AND {_THREAD_TURNS}
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "tid": thread_id},
     )
+    counts["loom.conversation_embeddings"] = int(emb_n["n"]) if emb_n else 0
 
     # 2. Messages.
     await ch.execute(
@@ -701,9 +711,7 @@ async def tombstone_messages(
     next read sees a coherent thread. The embeddings go first: a retry after a
     failure still finds the messages live and repeats both."""
     ch = ch or _default_client()
-    await _tombstone_embeddings(
-        org, namespace, agent, thread_id, msg_ids, when=when, ch=ch, count=False
-    )
+    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids, when=when, ch=ch)
     await ch.execute(
         """
         ALTER TABLE loom.conversations
@@ -732,33 +740,9 @@ async def tombstone_messages(
 _TOMBSTONE_CHUNK = 1000
 
 
-async def _tombstone_embeddings(
-    org: str,
-    namespace: str,
-    agent: str,
-    thread_id: str,
-    msg_ids: list[str] | None,
-    *,
-    when: datetime,
-    ch: _CHClient,
-    count: bool = True,
-) -> int:
-    """Tombstone the embeddings of `agent`'s turns in one thread.
-
-    The turns are `msg_ids`, or every turn the agent logged in the thread (live or
-    tombstoned) plus its embedding rows that no message row backs. The embeddings key
-    has no agent, so a turn several agents logged is one row: it goes by turn, and
-    only once no other agent's copy is live. The turns are read first and the
-    mutation names them, so it evaluates no subquery (a replicated table refuses
-    one). With `count`, it returns how many of those turns have a tombstoned
-    embedding."""
-    if msg_ids is not None:
-        # Named turns are the agent's own (compaction reads them from its live turns).
-        turns = "msg_id IN {ids:Array(String)}"
-    else:
-        # Every turn the agent logged in the thread, and its embedding rows no message
-        # row backs (the conversation retention TTL expires message rows only).
-        turns = """(msg_id IN (
+# Every turn an agent logged in a thread (live or tombstoned), and its embedding rows
+# that no message row backs (the conversation retention TTL expires message rows only).
+_THREAD_TURNS = """(msg_id IN (
             SELECT msg_id FROM loom.conversations
             WHERE org = {org:String} AND namespace = {ns:String}
               AND agent = {agent:String} AND thread_id = {tid:String}
@@ -768,6 +752,27 @@ async def _tombstone_embeddings(
             WHERE org = {org:String} AND namespace = {ns:String}
               AND thread_id = {tid:String}
           )))"""
+
+
+async def _tombstone_embeddings(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_ids: list[str] | None,
+    *,
+    when: datetime,
+    ch: _CHClient,
+) -> None:
+    """Tombstone the embeddings of `agent`'s turns in one thread.
+
+    The turns are `msg_ids`, or every turn the agent logged in the thread
+    (`_THREAD_TURNS`). The embeddings key has no agent, so a turn several agents
+    logged is one row: it goes by turn, and only once no other agent's copy is live.
+    The turns are read first and the mutation names them, so it evaluates no
+    subquery (a replicated table refuses one)."""
+    # Named turns are the agent's own (compaction reads them from its live turns).
+    turns = "msg_id IN {ids:Array(String)}" if msg_ids is not None else _THREAD_TURNS
     params: dict[str, Any] = {"org": org, "ns": namespace, "agent": agent, "tid": thread_id}
     if msg_ids is not None:
         params["ids"] = msg_ids
@@ -805,18 +810,6 @@ async def _tombstone_embeddings(
                 "due": due[i : i + _TOMBSTONE_CHUNK],
             },
         )
-    if not count:
-        return 0
-    n = await ch.query_one(
-        f"""
-        SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
-          AND {turns}
-        """,
-        params=params,
-    )
-    return int(n["n"]) if n else 0
 
 
 async def titler_candidates(

@@ -117,6 +117,7 @@ def test_compact_reads_without_final_and_carries_the_threads_user(monkeypatch) -
         "embed_failed_at": None,
     }
     assert vec["embedding_dim"] > 0 and len(vec["embedding"]) == vec["embedding_dim"]
+    assert vec["embedding_model"] == ch_mod.get_embedder().model_name
 
 
 def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> None:

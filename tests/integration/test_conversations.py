@@ -235,13 +235,14 @@ async def test_a_compacted_turn_leaves_search(agent, ch_client) -> None:
     [summary] = [r for r in rows if r["msg_id"] == out["summary_msg_id"]]
     stored = ch_client.query(
         "SELECT agent, thread_id, role, content_excerpt, embedding_dim > 0, tombstoned_at, "
-        "user_id, run_id, embed_attempts, embed_last_error, toDateTime(ts) "
+        "user_id, run_id, embed_attempts, embed_last_error, embed_failed_at, "
+        "embedding_model != '', org, namespace, toDateTime(ts) "
         "FROM loom.conversation_embeddings FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND msg_id = {mid:String}",
         parameters={"org": agent.org, "ns": agent.namespace, "mid": out["summary_msg_id"]},
     ).result_rows
     [row] = [tuple(r) for r in stored]
-    assert row[:10] == (
+    assert row[:14] == (
         agent.agent,
         tid,
         "system",
@@ -252,9 +253,13 @@ async def test_a_compacted_turn_leaves_search(agent, ch_client) -> None:
         "-",
         1,
         "",
+        None,
+        True,
+        agent.org,
+        agent.namespace,
     )
     # Placed where the turns it replaces began, as the summary message is.
-    assert row[10].replace(tzinfo=None) == datetime.fromisoformat(
+    assert row[14].replace(tzinfo=None) == datetime.fromisoformat(
         rows[0]["ts"].replace("Z", "+00:00")
     ).replace(tzinfo=None, microsecond=0)
 

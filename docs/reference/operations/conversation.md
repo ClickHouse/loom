@@ -58,7 +58,7 @@ Summarize messages older than `keep_recent` into one embedded system message, th
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |
-| `reason` | `str` | populated when compacted=False |
+| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, or embed-failed (retry once the embedder answers). |
 
 ## `conversation.create`
 
