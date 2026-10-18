@@ -233,7 +233,7 @@ down.
 | Verdict                                                          | Confidence   | Action                                           |
 | ---------------------------------------------------------------- | ------------ | ------------------------------------------------ |
 | `update` or `contradiction` with a different entity or attribute | any          | nothing (the answer contradicts itself)          |
-| `update` from another session, for the anonymous user `-`        | any          | nothing (an agent's sessions are separate tasks) |
+| `update` or `contradiction` from another session, for user `-`   | any          | nothing (an agent's sessions are separate tasks) |
 | any                                                              | below 0.90   | nothing                                          |
 | `update`, namespace `auto_reinforce` or `newest_wins`            | 0.95 or more | retire the peer if stated first                  |
 | `update` (0.90 to 0.95, or `manual_review`), `contradiction`     | 0.90 or more | flag both rows `conflicted` for review           |

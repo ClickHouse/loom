@@ -270,16 +270,16 @@ def action_for(
     older row under `newest_wins` and `auto_reinforce` at `retire_at` or above; any other
     update, and a contradiction, goes to the review queue. `cross_session`: the peer is
     another session's row of a subject with no real user, whose sessions are an agent's
-    separate tasks: an update between them changes nothing. Every compatible verdict
-    clears."""
+    separate tasks: an update or a contradiction between them changes nothing. Every
+    compatible verdict clears."""
     verdict = v.verdict
     if verdict in (UPDATE, CONTRADICTION) and not (v.same_entity and v.same_attribute):
         return NOTHING
     if v.confidence < clear_at:
         return NOTHING
+    if cross_session and verdict in (UPDATE, CONTRADICTION):
+        return NOTHING
     if verdict == UPDATE:
-        if cross_session:
-            return NOTHING
         return RETIRE if policy in RETIRING_POLICIES and v.confidence >= retire_at else FLAG
     if verdict == CONTRADICTION:
         return FLAG

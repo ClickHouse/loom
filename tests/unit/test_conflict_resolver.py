@@ -85,6 +85,7 @@ def test_an_update_from_another_session_of_an_agent_changes_nothing() -> None:
     v = _v("update", 0.99)
     kw = {"policy": "auto_reinforce", "retire_at": 0.95, "clear_at": 0.90}
     assert cr.action_for(v, **kw, cross_session=True) == cr.NOTHING
+    assert cr.action_for(_v("contradiction", 0.99), **kw, cross_session=True) == cr.NOTHING
     assert cr.action_for(v, **kw) == cr.RETIRE
     assert cr.action_for(_v("related", 0.99), **kw, cross_session=True) == cr.CLEAR
 
