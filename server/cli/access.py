@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC
+from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -289,8 +289,14 @@ async def _scim_give_back(
                 return None, 1
             # Earlier would revive tokens SCIM has listed revoked and whose
             # names are free: a token made under one would hide a live one.
-            floor = _naive_utc(current["issued_before"] or current["revoked_at"])
-            floor = floor.replace(microsecond=0)  # revocation compares whole seconds
+            # An outright revocation's second may hold a token issued before it:
+            # the floor is the next whole second (revocation compares seconds).
+            outright_at = _naive_utc(current["revoked_at"]).replace(microsecond=0)
+            floor = (
+                _naive_utc(current["issued_before"])
+                if current["issued_before"]
+                else outright_at + timedelta(seconds=1)
+            )
             if issued_before < floor:
                 print(
                     f"  ✗ --issued-before must be at or after {floor.isoformat()}Z, "

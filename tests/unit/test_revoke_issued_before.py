@@ -353,7 +353,8 @@ def test_cli_scim_gives_back_a_subject_a_deactivation_caught(
 
     monkeypatch.setattr(scim, "_held", held)
     assert revocation.is_revoked("alice", issued_at=int(time.time()) + 60)
-    cutoff = datetime.now(UTC).replace(microsecond=0)
+    # The second after the revocation's: the earliest a give-back may take.
+    cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
     when = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
     rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"])
     assert rc == 0
@@ -367,12 +368,6 @@ def test_cli_scim_gives_back_a_subject_a_deactivation_caught(
     assert not revocation.is_revoked("alice", issued_at=int(cutoff.timestamp()))
     assert revocation.is_revoked("alice", issued_at=int(cutoff.timestamp()) - 1)
     assert written_under_lease == [1]  # SCIM's lease: never amid a reactivation's lift
-
-    # A cutoff before SCIM's would revive tokens it listed revoked: refused.
-    rc = cli.main(
-        ["revoke-token", "--subject", "alice", "--issued-before", "2000-01-01T00:00:00Z", "--scim"]
-    )
-    assert rc == 2 and "when SCIM revoked it" in capsys.readouterr().err
 
     rc = cli.main(["revoke-token", "--subject", "bob", "--issued-before", when, "--scim"])
     assert rc == 1 and "SCIM has not revoked 'bob'" in capsys.readouterr().err
@@ -413,6 +408,32 @@ def test_cli_and_servers_name_a_subjects_lease_alike_whatever_their_secret(
 
     asyncio.run(server_side())
     monkeypatch.setattr(settings, "jwt_secret", "")  # a CLI without the servers' secret
-    when = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    when = (datetime.now(UTC) + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     assert cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"]) == 0
     assert len(names) == 2 and names[0] == names[1]
+
+
+def test_a_scim_give_back_starts_the_second_after_the_revocation(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A token issued in the deactivation's own second is from before it: it stays dead.
+    asyncio.run(revocation.scim_revoke("alice", reason="scim: deactivated", revoked_by="scim"))
+
+    @asynccontextmanager
+    async def held(name: str) -> AsyncIterator[None]:
+        yield
+
+    monkeypatch.setattr(scim, "_held", held)
+    [row] = [r for r in fake_ch.rows if r["jti"] == revocation.SCIM_PREFIX + "alice"]
+    at = row["revoked_at"].replace(tzinfo=None, microsecond=0)
+
+    def give_back(when: datetime) -> int:
+        stamp = when.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return cli.main(["revoke-token", "--subject", "alice", "--issued-before", stamp, "--scim"])
+
+    assert give_back(datetime(2000, 1, 1)) == 2
+    assert give_back(at) == 2 and "when SCIM revoked it" in capsys.readouterr().err
+    assert give_back(at + timedelta(seconds=1)) == 0
+    # Narrowed now, the floor is that cutoff: a later one may follow, an earlier one not.
+    assert give_back(at) == 2
+    assert give_back(at + timedelta(seconds=5)) == 0

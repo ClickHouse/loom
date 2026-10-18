@@ -153,7 +153,7 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
                 )
             # Read after the list, so it tells whether each token listed is dead.
             revoked = await revocation.cutoffs(chunk)
-            # Only those still dead: an operator may have let the creator live since.
+            # Only those still dead: a row listed revoked is judged again, as the gate would.
             dead |= {
                 str(r["sa_subject"]) for r in rows if not r["live"] and _is_dead(r, revoked, dead)
             }
