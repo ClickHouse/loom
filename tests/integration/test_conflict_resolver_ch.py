@@ -2062,3 +2062,52 @@ async def test_a_namespace_whose_rows_are_all_newer_still_gets_a_place(ch, wired
         assert len(picked) == 2, picked
         served.append(picked)
     assert any("turn-c" in p for p in served), "the newest namespace is never read"
+
+
+async def test_two_overlapping_passes_retire_record_and_audit_a_pair_once(ch, wired) -> None:
+    """A leader handoff overlaps two passes on one owed row: one retirement, one record,
+    one audit row of the judgement that acted."""
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 250)
+    first, second = await asyncio.gather(run_pass(), run_pass())
+    assert first["retired"] + second["retired"] == 1, (first, second)
+    rows = await _rows(ch, org)
+    assert rows["office_city"]["status"] == "superseded"
+    assert len(await _audit(ch, org, "memory.auto_supersede")) == 1
+    acted = await _audit(ch, org, "memory.conflict_resolver")
+    assert [p["action"] for a in acted for p in a["pairs"]] == ["retire"]
+
+
+async def test_a_pass_that_dies_after_the_supersede_is_finished_by_the_next_and_the_repair(
+    ch, wired, monkeypatch
+) -> None:
+    """The process stops right after the supersede: no record, no follow, no stamp. The
+    next pass judges the row again and retires nothing more; the repair writes the
+    record from the intent, once."""
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.app.projection_failures import FOLLOW_OWED, retry_projection_failures
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 252)
+
+    async def gone(*a: Any, **kw: Any) -> Any:
+        return 0
+
+    with monkeypatch.context() as m:
+        m.setattr(resolver, "_after_retire", gone)
+        m.setattr(queue, "stamp_judged", gone)
+        assert (await run_pass())["retired"] == 1
+    assert await _audit(ch, org, "memory.auto_supersede") == []
+    assert (await _marks(ch, org))["office_location"] == 1, "still owed"
+    again = await run_pass()
+    assert again["retired"] == 0, again
+    _past_the_writers_grace(monkeypatch)
+    for _ in range(2):
+        await retry_projection_failures(org=org, projection=FOLLOW_OWED)
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    assert len(await _audit(ch, org, "memory.auto_supersede")) == 1
+    assert len(await _audit(ch, org, "memory.conflict_resolver")) == 1
