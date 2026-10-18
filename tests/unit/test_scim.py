@@ -6,8 +6,9 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections import Counter
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -745,7 +746,7 @@ async def test_a_reactivation_retried_after_a_timeout_waits_out_the_rest(
     first, retry = world.waits
     assert 0 < retry <= first
 
-    await scim.update(uid, user_name="lee@example.com")  # no `active`: nothing read or waited
+    await scim.update(uid, user_name="lee@example.com")  # no `active`: nothing waited
     assert len(world.waits) == 2
 
     later = time.time() + 60
@@ -1653,6 +1654,78 @@ async def test_the_transition_is_audited_even_when_the_re_read_fails(world, monk
     assert world.events == ["auth.scim_deactivated"]
 
 
+@pytest.mark.parametrize("active", [False, True])
+async def test_a_transition_whose_reply_was_lost_is_still_audited(world, active) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com", active=not active)
+    insert = world.table.insert
+
+    async def reply_lost(table: str, rows: list[dict[str, Any]]) -> None:
+        await insert(table, rows)
+        if table == scim.TABLE:
+            raise RuntimeError("the reply timed out")
+
+    world.table.insert = reply_lost  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await scim.set_active(uid, active)
+    world.table.insert = insert  # type: ignore[method-assign]
+    await scim.set_active(uid, active)  # the retry finds the row already changed
+    event = "auth.scim_reactivated" if active else "auth.scim_deactivated"
+    assert world.events[-1] == event and world.table.newest(uid)["active"] == active  # type: ignore[index]
+
+
+async def test_a_rename_of_an_inactive_user_revokes_the_tokens_of_an_account_since(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    world.person("lee@example.com", "lee", "lee2")  # an account linked since
+    world.table.tokens.append(_saved_token("laptop2", "lee2"))
+    await scim.update(uid, user_name="lee.renamed@example.com")
+    assert world.ours["lee2"] is None
+    assert world.table.token("acme", "laptop2")["revoked_at"] is not None  # type: ignore[index]
+
+
+async def test_a_push_without_active_finishes_a_failed_reactivation(world) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    world.table.fail_revoke = True
+    with pytest.raises(RuntimeError):  # the row says active, the lift failed
+        await scim.set_active(uid, True)
+    world.table.fail_revoke = False
+    assert world.ours == {"lee": None}
+    await scim.update(uid, user_name="lee.renamed@example.com")
+    assert not await world.keeps_out("lee", issued_at=_issued(60)) and world.waits == []
+
+
+async def test_a_sign_in_once_the_row_says_active_lives_after_the_lift(world, monkeypatch) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    start = datetime.now(UTC)
+
+    class Clock(datetime):
+        at = start
+
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return cls.at
+
+    write = scim._write
+    signed_in: list[int] = []
+
+    async def sign_in_meanwhile(row: dict[str, Any]) -> None:
+        await write(row)
+        Clock.at = start + timedelta(seconds=5)  # the lift comes a while after the row
+        signed_in.append(int(Clock.at.timestamp()))
+
+    monkeypatch.setattr(scim, "datetime", Clock)
+    monkeypatch.setattr(scim, "_write", sign_in_meanwhile)
+    await scim.set_active(uid, True)
+    assert not await world.keeps_out("lee", issued_at=signed_in[0])
+    assert await world.keeps_out("lee", issued_at=int(start.timestamp()))  # a token from before
+
+
 def test_unknown_paths_and_methods_answer_scim_errors(client: TestClient) -> None:
     for method, path, status in [
         ("GET", "/Groups", 404),
@@ -1727,58 +1800,117 @@ _PEOPLE = {"a": "a@example.com", "b": "b@example.com"}
 _REACHES = {"a": ["inv-a", "inv-shared"], "b": ["inv-b", "inv-shared"]}  # one subject shared
 _OPS: list[tuple[str, str, bool]] = [
     *[(op, p, on) for p in _PEOPLE for op in ("create", "patch") for on in (True, False)],
-    *[(op, p, True) for p in _PEOPLE for op in ("put", "delete", "jit")],
+    *[(op, p, True) for p in _PEOPLE for op in ("put", "attrs", "delete", "signin")],
     *[(op, s, True) for s in ("inv-a", "inv-shared") for op in ("operator", "restore")],
 ]
-# The write that fails: the user row's, a deactivation's revocation or a
-# reactivation's lift, the first or the second of the request's. "jit": a first
+# What fails, at the request's first or later one of it: a write before it
+# lands (the user row's, a deactivation's revocation, a reactivation's lift, a
+# token listed revoked), a write that lands and loses its reply, a read, or the
+# lease running out ("expired", at a store call made under one). "jit": a first
 # sign-in's account lands as the first row is written, and the second row fails.
 _FAULTS = [
-    *[(kind, n) for kind in ("row", "revoke", "lift") for n in (0, 1)],
+    *[(kind, n) for kind in ("row", "revoke", "lift", "tokens") for n in (0, 1)],
+    *[(f"{kind}-landed", n) for kind in ("row", "revoke", "lift") for n in (0, 1)],
+    *[("read", n) for n in (0, 3, 6)],
+    *[("expired", n) for n in (0, 2)],
     ("jit", 1),
 ]
-_Unit = tuple[tuple[str, str, bool], tuple[str, int] | None, bool]
+_Faults = tuple[tuple[str, int], ...]
+_Unit = tuple[tuple[str, str, bool], _Faults, bool]
 
 
 class _Run:
-    """A world taken through a sequence of requests, its writes failing where told."""
+    """A world taken through a sequence of requests, its store calls failing where told."""
 
     def __init__(self, world: _World) -> None:
         self.world = world
-        self.fault: tuple[str, int] | None = None
+        self.faults: _Faults = ()
         self.who = ""
         self.seen: dict[str, int] = {}
+        self.jitted = False  # the "jit" fault made its account
         self.dirty: set[str] = set()  # people whose last SCIM request failed
         self.operator: set[str] = set()  # subjects an operator revoked outright
-        insert = world.table.insert
+        self.sessions: list[tuple[str, str, int]] = []  # (person, subject, iat) signed in
+        for s in sorted({s for subjects in _REACHES.values() for s in subjects}):
+            world.table.tokens.append(_saved_token(f"t-{s}", s))
+        table = world.table
+        insert, query_one, query_all = table.insert, table.query_one, table.query_all
 
-        async def insert_or_fail(table: str, rows: list[dict[str, Any]]) -> None:
-            kind = "row" if table == scim.TABLE else "other"
-            if table == "loom.revoked_tokens" and rows[0]["revoked_by"] == "scim":
+        async def insert_or_fail(name: str, rows: list[dict[str, Any]]) -> None:
+            kind = {scim.TABLE: "row", "loom.service_accounts": "tokens"}.get(name, "other")
+            if name == "loom.revoked_tokens" and rows[0]["revoked_by"] == "scim":
                 kind = "lift" if rows[0]["issued_before"] else "revoke"
-            n = self.seen.get(kind, 0)
-            self.seen[kind] = n + 1
-            if self.fault and kind == ("row" if self.fault[0] == "jit" else self.fault[0]):
-                if self.fault[0] == "jit" and n == 0:
-                    self.jit(self.who)
-                if n == self.fault[1]:
-                    raise RuntimeError("injected")
-            await insert(table, rows)
+            self.expire()
+            n = self.count(kind)
+            if kind == "row" and n == 0 and ("jit", 1) in self.faults:
+                self.jit(self.who)
+                self.jitted = True
+            self.fail(kind, n)
+            if kind == "row":
+                self.fail("jit", n)
+            await insert(name, rows)
+            self.fail(f"{kind}-landed", n)
 
-        world.table.insert = insert_or_fail  # type: ignore[method-assign]
+        async def query_one_or_fail(*a: Any, **k: Any) -> Any:
+            self.expire()
+            self.fail("read", self.count("read"))
+            return await query_one(*a, **k)
+
+        async def query_all_or_fail(*a: Any, **k: Any) -> Any:
+            self.expire()
+            self.fail("read", self.count("read"))
+            return await query_all(*a, **k)
+
+        table.insert = insert_or_fail  # type: ignore[method-assign]
+        table.query_one = query_one_or_fail  # type: ignore[method-assign]
+        table.query_all = query_all_or_fail  # type: ignore[method-assign]
+
+    def count(self, kind: str) -> int:
+        n = self.seen.get(kind, 0)
+        self.seen[kind] = n + 1
+        return n
+
+    def fail(self, kind: str, n: int) -> None:
+        if (kind, n) in self.faults:
+            raise RuntimeError("injected")
+
+    def expire(self) -> None:
+        # The real lease cancels the work and answers ClaimExpired, which `_held` makes Busy.
+        if self.world.holding and ("expired", self.count("expired")) in self.faults:
+            raise scim.Busy
 
     def jit(self, person: str) -> None:
         if person in _PEOPLE and f"inv-{person}-jit" not in self.world.accounts[_PEOPLE[person]]:
             self.world.accounts[_PEOPLE[person]].append(f"inv-{person}-jit")
 
-    async def step(self, op: tuple[str, str, bool], fault: tuple[str, int] | None) -> bool:
-        """Send `op`; whether the injected failure fired."""
-        self.fault, self.who, self.seen = fault, op[1], {}
+    async def sign_in(self, person: str) -> None:
+        """An SSO sign-in as `oauth._account_for` and `_signed_in_as` make it:
+        checked, its JIT account made, checked again, then a session on each
+        subject the email reaches."""
+        email = _PEOPLE[person]
+        if await _DEACTIVATED(email):
+            return
+        self.jit(person)
+        await asyncio.sleep(0)
+        if await _DEACTIVATED(email):
+            # Refused, but the JIT account may be one the deactivation did not
+            # see: the provider's next push revokes it.
+            self.dirty.add(person)
+            return
+        iat = int(time.time())
+        self.sessions += [(person, s, iat) for s in self.world.accounts[email]]
+
+    async def step(self, op: tuple[str, str, bool], faults: _Faults) -> bool:
+        """Send `op`; whether it failed."""
+        self.faults, self.who, self.seen, self.jitted = faults, op[1], {}, False
         try:
             settled = await self._send(*op)
-        except RuntimeError:
-            self.dirty.add(op[1])
+        except (RuntimeError, scim.Busy, login.SignInUnavailable):
+            if op[0] != "signin":  # a sign-in is no SCIM request
+                self.dirty.add(op[1])
             return True
+        finally:
+            self.faults = ()
         if settled:
             self.dirty.discard(op[1])
         return False
@@ -1799,18 +1931,22 @@ class _Run:
             return (
                 await scim.update(scim.user_id(email), active=True, email_entry=entry) is not None
             )
+        elif kind == "attrs":  # a PATCH or PUT that leaves `active` out
+            entry = {"type": "work", "primary": False}
+            return await scim.update(scim.user_id(email), email_entry=entry) is not None
         elif kind == "delete":
             await scim.delete(scim.user_id(email))
             return self.world.table.newest(scim.user_id(email)) is not None
-        elif kind == "jit":
-            self.jit(arg)
+        elif kind == "signin":
+            await self.sign_in(arg)
             return False
         elif kind == "operator":
             await _operator(arg)
             self.operator.add(arg)
             return False
         else:
-            await _given_back(arg)
+            async with scim.subject_leases([arg]):  # as `loom revoke-token --scim` takes it
+                await _given_back(arg)
             return False
         return True
 
@@ -1819,6 +1955,10 @@ class _Run:
         rows = {p: w.table.newest(scim.user_id(e)) for p, e in _PEOPLE.items()}
         keys = w.table.revoked()
         later = _issued(60)  # a fresh sign-in's token, past any cutoff so far
+
+        def given_back(s: str) -> bool:
+            return keys.get(revocation.SCIM_PREFIX + s, {}).get("revoked_by") == "cli:ops"
+
         # (b) An operator's revocation stands, and SCIM never narrows one it did not write.
         assert w.operators == dict.fromkeys(self.operator)
         for s in self.operator:
@@ -1829,20 +1969,46 @@ class _Run:
             for before, r in zip(mine, mine[1:], strict=False):
                 if r["revoked_by"] == "scim" and r["issued_before"] is not None:
                     assert before["revoked_by"] == "scim" and before["issued_before"] is None
-        # (a) An inactive user's subjects stay revoked, unless an operator gave one back.
-        for row in rows.values():
-            for s in row["subjects"] if row and not row["active"] else []:
-                given_back = keys.get(revocation.SCIM_PREFIX + s, {}).get("revoked_by") == "cli:ops"
-                assert given_back or await w.keeps_out(s, issued_at=later), (s, row)
+        # (a) An inactive user's subjects stay revoked, unless an operator gave one
+        # back; once settled, every subject the email reaches, every session
+        # signed in on one, and the tokens they made.
+        live = {t["created_by"] for t in w.table.live_tokens()}
+        for p, row in rows.items():
+            if not row or row["active"]:
+                continue
+            subjects = set(row["subjects"])
+            if p not in self.dirty:
+                subjects |= set(w.accounts[_PEOPLE[p]])
+                assert not subjects & live, (p, subjects & live)
+                for who, s, iat in self.sessions:
+                    if who == p:
+                        assert given_back(s) or await w.keeps_out(s, issued_at=iat), (p, s)
+            for s in sorted(subjects):
+                assert given_back(s) or await w.keeps_out(s, issued_at=later), (s, row)
         # (c) A subject only active, settled users reach lets a fresh token in.
         for s in sorted({s for subjects in w.accounts.values() for s in subjects}):
             reachers = [p for p, e in _PEOPLE.items() if s in w.accounts[e]]
             held = [p for p in reachers if p in self.dirty or (rows[p] and not rows[p]["active"])]
             if not held and s not in self.operator:
                 assert not await w.keeps_out(s, issued_at=later), s
+        # (e) Every transition a user's row made is audited.
+        for email in _PEOPLE.values():
+            uid = scim.user_id(email)
+            went: Counter[str] = Counter()
+            before = {"active": 1, "deleted": 0}
+            for r in sorted(
+                (r for r in w.table.rows if r["id"] == uid), key=lambda r: r["version"]
+            ):
+                if bool(r["active"]) != bool(before["active"]):
+                    went["auth.scim_reactivated" if r["active"] else "auth.scim_deactivated"] += 1
+                if r["deleted"] and not before["deleted"]:
+                    went["auth.scim_deleted"] += 1
+                before = r
+            audited = Counter(e for e, kw in w.audits if kw["subject"].get("id") == uid)
+            assert all(audited[e] >= n for e, n in went.items()), (email, went, audited)
 
     def state(self) -> tuple[Any, ...]:
-        """The users and the revocations, a cutoff's time aside."""
+        """The users, the revocations, a cutoff's time aside, and the tokens listed live."""
         w = self.world
         rows = [w.table.newest(scim.user_id(e)) for e in _PEOPLE.values()]
         users = tuple(
@@ -1851,12 +2017,12 @@ class _Run:
         keys = [
             (k, r["revoked_by"], r["issued_before"] is None) for k, r in w.table.revoked().items()
         ]
-        return users, tuple(sorted(keys))
+        tokens = tuple(r["name"] for r in w.table.live_tokens())
+        return users, tuple(sorted(keys)), tokens
 
 
-async def _run(units: list[_Unit], fired: list[bool] | None = None) -> tuple[list[Any], list[bool]]:
-    """The state after each unit and whether its failure fired. With `fired` (a
-    run before), a unit whose failure fired and was retried is sent once, clean."""
+@contextmanager
+def _fresh_world() -> Iterator[_World]:
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(revocation, "_revoked_jtis", frozenset())
         mp.setattr(revocation, "_revoked_before", {})
@@ -1864,18 +2030,28 @@ async def _run(units: list[_Unit], fired: list[bool] | None = None) -> tuple[lis
         world = _World(mp)
         for p, subjects in _REACHES.items():
             world.person(_PEOPLE[p], *subjects)
+        yield world
+
+
+async def _run(
+    units: list[_Unit], fired: list[tuple[bool, bool]] | None = None
+) -> tuple[list[Any], list[tuple[bool, bool]]]:
+    """The state after each unit, and whether it failed and made a JIT account.
+    With `fired` (a run before), a unit that failed and was retried is sent
+    once, clean."""
+    with _fresh_world() as world:
         run = _Run(world)
         states, fires = [], []
-        for i, (op, fault, retried) in enumerate(units):
-            if fired is not None and fired[i] and retried:
-                if fault and fault[0] == "jit":
+        for i, (op, faults, retried) in enumerate(units):
+            if fired is not None and fired[i][0] and retried:
+                if fired[i][1]:
                     run.jit(op[1])  # what the race left, there before this time
-                fires.append(await run.step(op, None))
+                fires.append((await run.step(op, ()), False))
             else:
-                fires.append(await run.step(op, fault))
+                fires.append((await run.step(op, faults), run.jitted))
                 await run.check()
                 if retried:
-                    await run.step(op, None)
+                    await run.step(op, ())
             await run.check()
             states.append(run.state())
         return states, fires
@@ -1883,20 +2059,78 @@ async def _run(units: list[_Unit], fired: list[bool] | None = None) -> tuple[lis
 
 async def test_every_sequence_keeps_the_invariants_and_a_retry_converges() -> None:
     # Two people sharing a subject, each with one of their own, through random
-    # requests with a write failing in about half; most failures are retried.
+    # requests with one or two faults in about half; most failures are retried.
     rng = random.Random(26)
     runs = 0
-    for _ in range(10_000):
+    for _ in range(8_000):
         units: list[_Unit] = []
         for _ in range(rng.randint(2, 7)):
-            fault = rng.choice(_FAULTS) if rng.random() < 0.5 else None
-            units.append((rng.choice(_OPS), fault, fault is not None and rng.random() < 0.7))
+            faults = tuple(rng.sample(_FAULTS, rng.choice((1, 1, 2)))) if rng.random() < 0.5 else ()
+            units.append((rng.choice(_OPS), faults, bool(faults) and rng.random() < 0.7))
         try:
             states, fired = await _run(units)
-            if any(fired):  # (d) a retry ends where a clean request does
+            if any(failed for failed, _ in fired):  # (d) a retry ends where a clean request does
                 clean, _ = await _run(units, fired)
                 assert states == clean
                 runs += 1
         except AssertionError as e:
             raise AssertionError(f"{units}: {e}") from e
     assert runs > 1500  # failures fired and were compared, not just drawn
+
+
+async def _run_together(groups: list[list[tuple[str, str, bool]]], rng: random.Random) -> None:
+    """Each group's requests sent at once, with leases that exclude and a few
+    turns given up around every store call; then the invariants."""
+    with _fresh_world() as world:
+        locks: dict[str, asyncio.Lock] = {}
+
+        @asynccontextmanager
+        async def held(name: str) -> AsyncIterator[None]:
+            lock = locks.setdefault(name, asyncio.Lock())
+            try:  # waited on, then busy, as the real lease
+                async with asyncio.timeout(0.5):
+                    await lock.acquire()
+            except TimeoutError:
+                raise scim.Busy from None
+            try:
+                yield
+            finally:
+                lock.release()
+
+        async def turns() -> None:
+            for _ in range(rng.randint(0, 3)):
+                await asyncio.sleep(0)
+
+        def yielding(call: Any) -> Any:
+            async def call_between_turns(*a: Any, **k: Any) -> Any:
+                await turns()
+                result = await call(*a, **k)
+                await turns()
+                return result
+
+            return call_between_turns
+
+        for name in ("query_one", "query_all", "insert"):
+            setattr(world.table, name, yielding(getattr(world.table, name)))
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(scim, "_held", held)
+            mp.setattr(revocation, "refresh", turns)
+            run = _Run(world)
+            for group in groups:
+                await asyncio.gather(*(run.step(op, ()) for op in group))  # Busy: dirty
+                await run.check()
+
+
+async def test_requests_at_once_keep_the_invariants() -> None:
+    # Two or three requests at a time, an operator's among them taking no SCIM
+    # lease, and sign-ins racing the deactivations.
+    rng = random.Random(27)
+    for _ in range(2_000):
+        groups = [
+            [rng.choice(_OPS) for _ in range(rng.choice((1, 2, 2, 3)))]
+            for _ in range(rng.randint(2, 6))
+        ]
+        try:
+            await _run_together(groups, rng)
+        except AssertionError as e:
+            raise AssertionError(f"{groups}: {e}") from e

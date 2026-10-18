@@ -318,12 +318,22 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         token_id = args.jti or args.subject
         by = f"cli:{getpass.getuser()}"
         if args.scim:
-            if not await revocation.scim_revocations([token_id]):
-                print(f"  ✗ SCIM has not revoked {token_id!r}", file=sys.stderr)
+            from server.auth import scim
+
+            try:  # SCIM's own lease on the subject: never amid its lift of it
+                async with scim.subject_leases([token_id]):
+                    if not await revocation.scim_revocations([token_id]):
+                        print(f"  ✗ SCIM has not revoked {token_id!r}", file=sys.stderr)
+                        return 1
+                    row = await revocation.scim_revoke(
+                        token_id,
+                        issued_before=issued_before,
+                        reason=args.reason or "",
+                        revoked_by=by,
+                    )
+            except scim.Busy:
+                print(f"  ✗ SCIM is changing {token_id!r}; retry shortly", file=sys.stderr)
                 return 1
-            row = await revocation.scim_revoke(
-                token_id, issued_before=issued_before, reason=args.reason or "", revoked_by=by
-            )
         else:
             if issued_before is not None and await revocation.has_outright_row(token_id):
                 print(

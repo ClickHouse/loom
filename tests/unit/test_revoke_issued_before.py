@@ -16,6 +16,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -23,7 +25,7 @@ import jwt as pyjwt
 import pytest
 
 from server import cli
-from server.auth import revocation
+from server.auth import revocation, scim
 from server.auth.jwt import TokenError, mint_token, new_jti, verify_token
 from tests.unit.revocation_fakes import revocation_read
 
@@ -328,11 +330,27 @@ def test_cli_warns_when_a_cutoff_replaces_an_outright_revocation(
     assert "revoked outright" not in capsys.readouterr().err
 
 
+@asynccontextmanager
+async def _busy(name: str) -> AsyncIterator[None]:
+    raise scim.Busy
+    yield  # never reached: it makes this a generator
+
+
 def test_cli_scim_gives_back_a_subject_a_deactivation_caught(
-    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Someone else's `alice`, revoked by a SCIM deactivation of another person.
     asyncio.run(revocation.scim_revoke("alice", reason="scim: deactivated", revoked_by="scim"))
+    written_under_lease: list[int] = []
+
+    @asynccontextmanager
+    async def held(name: str) -> AsyncIterator[None]:
+        assert name.startswith("scim-subject:")
+        before = len(fake_ch.inserts)
+        yield
+        written_under_lease.append(len(fake_ch.inserts) - before)
+
+    monkeypatch.setattr(scim, "_held", held)
     assert revocation.is_revoked("alice", issued_at=int(time.time()) + 60)
     cutoff = datetime.now(UTC).replace(microsecond=0)
     when = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -347,7 +365,12 @@ def test_cli_scim_gives_back_a_subject_a_deactivation_caught(
     assert rows[key]["issued_before"] == cutoff.replace(tzinfo=None)
     assert not revocation.is_revoked("alice", issued_at=int(cutoff.timestamp()))
     assert revocation.is_revoked("alice", issued_at=int(cutoff.timestamp()) - 1)
+    assert written_under_lease == [1]  # SCIM's lease: never amid a reactivation's lift
 
     rc = cli.main(["revoke-token", "--subject", "bob", "--issued-before", when, "--scim"])
     assert rc == 1 and "SCIM has not revoked 'bob'" in capsys.readouterr().err
     assert cli.main(["revoke-token", "--subject", "alice", "--scim"]) == 2
+
+    monkeypatch.setattr(scim, "_held", _busy)
+    rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", when, "--scim"])
+    assert rc == 1 and "SCIM is changing 'alice'" in capsys.readouterr().err
