@@ -25,24 +25,26 @@ test("the library's filter count is announced from a status region mounted befor
     .toBe(true);
 });
 
-test("the memory search summary is announced from a status region mounted before the search", async ({ page }) => {
+// One live region says a search's result: the toolbar's count, mounted with the bar. A second
+// region saying the same (a page's own summary) would read every search twice.
+test("the memory search is announced once, from the toolbar's count, mounted before the search", async ({ page }) => {
   await open(page, "/memories");
-  const regions = await page.locator("main [role='status']").elementHandles();
+  const regions = await page.locator("main [role='status'], main [aria-live]").elementHandles();
   await page.getByRole("textbox", { name: "Search memories" }).fill("lag");
   await expect
     .poll(async () => {
       const texts = await Promise.all(regions.map((r) => r.evaluate((e) => e.textContent ?? "")));
-      return texts.some((t) => /result|match|Searching/i.test(t));
+      return texts.filter((t) => /match|Searching/i.test(t)).length;
     })
-    .toBe(true);
+    .toBe(1);
 });
 
-test("the Spaces count is a status message that stays mounted through a search", async ({ page }) => {
+test("the Spaces count is said from one live region that stays mounted through a search", async ({ page }) => {
   await open(page, "/spaces");
-  const status = page.locator("main [role='status']").filter({ hasText: /^\d+ namespaces?$/ });
-  await expect(status).toHaveCount(1);
-  const handle = await status.elementHandle();
+  const live = page.locator("main [role='status'], main [aria-live]").filter({ hasText: /^\d+ namespaces?$/ });
+  await expect(live).toHaveCount(1);
+  const handle = await live.elementHandle();
   await page.getByRole("textbox", { name: "Search namespaces" }).fill("zzzz-no-such");
-  await expect(status).toHaveText("0 namespaces");
+  await expect(live).toHaveText("0 namespaces");
   expect(await handle?.evaluate((el) => el.isConnected)).toBe(true);
 });

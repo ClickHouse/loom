@@ -303,11 +303,7 @@ export function Browse() {
 
       <ListToolbar
         label="Namespaces"
-        count={
-          <span role="status">
-            {rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : ""}
-          </span>
-        }
+        count={rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : undefined}
       >
         <div className="min-w-0 flex-1">
           <SearchField

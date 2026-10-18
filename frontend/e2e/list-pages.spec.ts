@@ -114,7 +114,7 @@ for (const path of ["/memories", "/library", "/conversations"]) {
 // Review: only the open buttons and checkboxes left the tab order; every tag chip and menu
 // trigger stayed a tab stop (151 on Memories, 241 on the Library). Only the current row's
 // controls are tab stops now.
-for (const path of ["/memories", "/library", "/conversations", "/profile", "/spaces"]) {
+for (const path of ["/memories", "/library", "/conversations", "/profile", "/spaces", "/repositories"]) {
   test(`${path}: no row but the current one has a tab stop`, async ({ page }) => {
     await open(page, path);
     await page.waitForTimeout(300);

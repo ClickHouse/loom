@@ -307,11 +307,3 @@ export function refreshDetail(detail: string): string {
     .filter((part) => part && !part.endsWith("="))
     .join(" ");
 }
-
-/** The line above a search's results: how many rows hold the text, then the ranked rest. */
-export function searchSummary(shown: number, query: string, keywordShown: number, keywordTotal: number): string {
-  const head = `${shown} match${shown === 1 ? "" : "es"} for "${query}"`;
-  if (keywordShown === 0) return `${head} · ranked by relevance`;
-  const more = keywordTotal > keywordShown ? ` (newest ${keywordShown} of ${keywordTotal})` : "";
-  return `${head} · ${keywordTotal} contain the text${more}, newest first, then related by meaning`;
-}

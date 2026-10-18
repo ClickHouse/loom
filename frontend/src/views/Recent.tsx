@@ -31,7 +31,7 @@ import { ListToolbar } from "../components/ui/ListToolbar";
 import { SkeletonCard } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { dayLabel, displayAgent, humanizeError, searchSummary, SENTINEL_AGENTS } from "../lib/format";
+import { dayLabel, displayAgent, humanizeError, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs, useMemoriesSection } from "../components/MemoryTabs";
@@ -210,8 +210,8 @@ function MemoryList() {
   // The rows whose value or key holds the typed text (newest first, ahead of the ranked
   // hits) and how many the namespace holds in all — a ranked search returns its top k, so
   // a word that 150 memories name would otherwise hide the newest of them.
-  const [keywordKeys, setKeywordKeys] = useState<Set<string>>(new Set());
   const [keywordTotal, setKeywordTotal] = useState(0);
+  const [keywordKeys, setKeywordKeys] = useState<Set<string>>(new Set());
   const [searching, setSearching] = useState(false);
   // The keyword rows are on screen and the ranked search is still answering.
   const [ranking, setRanking] = useState(false);
@@ -805,9 +805,12 @@ function MemoryList() {
   const countText =
     entries === null || failed
       ? ""
-      : searchActive || showDeleted || listFiltered
-        ? matches(flatList.length)
-        : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()}`;
+      : searchActive
+        ? // What a search covers: the newest rows holding the word, when there are more.
+          `${matches(flatList.length)}${keywordTotal > keywordKeys.size ? ` · the newest ${keywordKeys.size.toLocaleString()} of ${keywordTotal.toLocaleString()} holding "${rawQuery.trim()}"` : ""}${ranking ? " · finding related…" : ""}`
+        : showDeleted || listFiltered
+          ? matches(flatList.length)
+          : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${listTotal.toLocaleString()}`;
   const lastCount = useRef("");
   if (countText && !(searching || refreshing)) lastCount.current = countText;
   const countShown = searching || refreshing ? lastCount.current : countText;
@@ -951,14 +954,6 @@ function MemoryList() {
           )}
         </div>
       )}
-      {/* Mounted before the first search, so a screen reader hears each summary; the
-          toolbar's count is the one on screen. */}
-      <p role="status" className="sr-only">
-        {searchHits != null &&
-          (searching
-            ? "Searching…"
-            : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`)}
-      </p>
       {!searching && searchAbstain && (
         <Alert
           role="status"

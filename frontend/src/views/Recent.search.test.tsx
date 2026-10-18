@@ -233,8 +233,8 @@ describe("Recent search finds every row that names the word", () => {
     expect(await screen.findAllByRole("button", { name: "Why this result" })).toHaveLength(2);
     await userEvent.click(screen.getAllByRole("button", { name: "Why this result" })[0]);
     expect(await screen.findByTestId("search-why")).toHaveTextContent('Contains "Azure"');
-    // The summary is for a screen reader; the count on screen is the toolbar's.
-    expect(screen.getByText(/146 contain the text \(newest 2 of 146\)/)).toHaveClass("sr-only");
+    // The toolbar's count says the keyword rows are the newest of more.
+    expect(screen.getByText(/· the newest 2 of 146 holding "Azure"/).closest("[aria-live]")).not.toBeNull();
     // The keyword rows lead: the newest match is the first card.
     const keys = screen.getAllByText(/^(azure_new|coffee_pref|tea_pref)$/).map((n) => n.textContent);
     expect(keys[0]).toBe("azure_new");
@@ -315,6 +315,7 @@ describe("Recent search finds every row that names the word", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Why this result" }));
     expect(await screen.findByTestId("search-why")).toHaveTextContent("similarity 0.70");
-    expect(screen.getByText(/ranked by relevance/)).toBeInTheDocument();
+    // No row holds the word: the count is the ranked matches alone.
+    expect(screen.getByText(/^\d+ match(es)?$/).closest("[aria-live]")).not.toBeNull();
   });
 });

@@ -110,6 +110,7 @@ import {
 import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
+import { useRowNav } from "../lib/useRowNav";
 
 // The register dialog loads on first open.
 const RegisterTrackerSourceDialog = lazy(() =>
@@ -393,6 +394,9 @@ function RepositoriesHome({
   onOpen: (ns: string) => void;
   onChanged: () => void;
 }) {
+  // One tab stop for the list, as every row list (lib/useRowNav): the arrows move between
+  // repositories, and only the current one's controls are in the tab order.
+  const repoList = useRowNav();
   const actions = useJoinActions(onChanged);
   const phone = useMedia(PHONE_QUERY);
   const [requesting, setRequesting] = useState<{ repo: CodeRepoSummary; role: RepoRole } | null>(null);
@@ -680,7 +684,7 @@ function RepositoriesHome({
       {loaded && visible.length > 0 && (
         // Folded rows, so the list is a compact stack; a row grows only when opened. A new
         // page scrolls here and takes focus.
-        <div id="repositories-list" tabIndex={-1} className="space-y-2 outline-none">
+        <div ref={repoList} id="repositories-list" tabIndex={-1} className="space-y-2 outline-none">
           {pageCards.map((c) => (
             <RepositoryCard
               key={c.repo}
