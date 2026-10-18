@@ -318,8 +318,7 @@ async def _flag(org: str, row: Any, peer: Any) -> bool:
         and str(peer.memory_id) in row.conflict_with
         and str(row.memory_id) in peer.conflict_with
     ):
-        # Already on the review queue together; the peer's side is judged all the same.
-        await queue.stamp_judged(_queue_key(org, peer))
+        # Already on the review queue together. The peer keeps its own mark.
         return False
     landed = await mark_peers_conflicted(
         org=org,
@@ -529,9 +528,7 @@ async def resolve_row(
         limit=int(settings.memory_conflict_resolver_max_peers),
         prefer=frozenset(str(x) for x in row.conflict_with),
     )
-    queued_id = str(row.memory_id)
     if peers:
-        row, peers = await _newest_as_new(org, row, peers)
         row, peers = await _still_unprotected(org, row, peers)
     if row is not None and peers:
         settled = await _judge_and_act(
@@ -545,9 +542,6 @@ async def resolve_row(
         )
         if not settled:
             return  # the org came under erasure: nothing written, the row stays owed
-        if str(row.memory_id) != queued_id:
-            # Judged with a newer flagged peer as NEW: that write is judged too.
-            await queue.stamp_judged(_queue_key(org, row))
     await queue.stamp_judged(q)
 
 
@@ -562,37 +556,6 @@ async def _still_unprotected(
         return None, []
     high = await queue.protected_ids(org, str(row.namespace), [str(p["memory_id"]) for p in peers])
     return fresh, [p for p in peers if str(p["memory_id"]) not in high]
-
-
-async def _newest_as_new(
-    org: str, row: Any, peers: list[dict[str, Any]]
-) -> tuple[Any, list[dict[str, Any]]]:
-    """The judge reads NEW as the later statement. A re-checked row is often the older
-    side of its flag, so when a flagged peer was stated later, the latest such peer
-    is NEW and the row is judged as one of its peers."""
-    flagged = [p for p in peers if str(p["memory_id"]) in {str(x) for x in row.conflict_with}]
-    if not flagged:
-        return row, peers
-    order = await _assertion_order(org, str(row.namespace), [row, *flagged])
-    later = [p for p in flagged if order[str(row.memory_id)] < order[str(p["memory_id"])]]
-    if not later:
-        return row, peers
-    top = max(later, key=lambda p: order[str(p["memory_id"])])
-    new = await _head(org, str(top["memory_id"]))
-    if not _holds(new, str(row.namespace), str(top["content_sha256"])) or new.pinned:
-        # Changed since the cluster read, or pinned (never acted on): judged as queued.
-        return row, peers
-    as_peer = {
-        "memory_id": str(row.memory_id),
-        "agent": str(row.agent),
-        "user_id": str(row.user_id),
-        "session_id": str(row.session_id),
-        "memory_key": str(row.memory_key),
-        "value": memory_repo.stored_value_text(row),
-        "content_sha256": str(row.content_sha256 or ""),
-        "similarity": top["similarity"],
-    }
-    return new, [as_peer, *(p for p in peers if p is not top)]
 
 
 def _action(v: cr.PeerVerdict, policy: str) -> str:

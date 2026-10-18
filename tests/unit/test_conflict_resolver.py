@@ -595,9 +595,7 @@ async def test_a_flag_already_raised_is_not_written_again(monkeypatch) -> None:
     a = _mem("m1", status="conflicted", conflict_with=["m2"])
     b = _mem("m2", org="o", status="conflicted", conflict_with=["m1"], session_id="s3")
     assert await resolver._flag("o", a, b) is False and called == []
-    # Confirmed, not written: the peer's side is judged all the same.
-    assert [q["session_id"] for q in stamped] == ["s3"]
-    stamped.clear()
+    assert stamped == [], "confirmed, not written: the peer keeps its own mark"
     peer = _mem("m2", org="o", session_id="s2", content_sha256="sha-m2", version=7)
     assert await resolver._flag("o", _mem("m1"), peer) is True
     assert called[0]["expected_sha256"] == "sha-new", "only the judged write is flagged"
@@ -739,49 +737,14 @@ async def test_the_order_is_finer_than_the_second_and_ignores_metadata_writes(
     assert order["m1"] < order["m2"]
 
 
-async def test_a_recheck_of_the_older_side_of_a_flag_judges_the_newer_as_new(
-    monkeypatch,
-) -> None:
-    day_before = datetime(2026, 1, 1)
-    older = _mem(
-        "m1",
-        status="conflicted",
-        conflict_with=["m2"],
-        created_at=day_before,
-        updated_at=day_before,
-    )
-    newer = _mem("m2", content_sha256="sha-m2", value_text='"Office is in Rome"')
-    peers = [
-        _peer_row("m2", "s2", "office_city", "Rome")
-        | {"similarity": 0.9, "created_at": newer.created_at, "updated_at": newer.updated_at},
-        _peer_row("m3", "s3", "office_city", "Lyon") | {"similarity": 0.7},
-    ]
-
-    async def head(org: str, mid: str) -> Any:
-        return newer
-
-    async def asserted(org: str, namespace: str, rows: Any, **kw: Any) -> dict[str, int]:
-        return {"m1": 1_000, "m2": 2_000}
-
-    monkeypatch.setattr(resolver, "_head", head)
-    monkeypatch.setattr(queue, "asserted_versions", asserted)
-    new, rest = await resolver._newest_as_new("o", older, peers)
-    assert new is newer
-    assert [p["memory_id"] for p in rest] == ["m1", "m3"]
-    assert rest[0]["content_sha256"] == "sha-new" and rest[0]["similarity"] == 0.9
-    # The newer side, or a row with no later flagged peer, is judged as queued.
-    assert await resolver._newest_as_new("o", newer, peers[1:]) == (newer, peers[1:])
-    # A pinned newer row is never acted on: the row stays NEW.
-    newer.pinned = True
-    assert await resolver._newest_as_new("o", older, peers) == (older, peers)
-
-
-async def test_a_judgement_with_the_newer_side_as_new_stamps_both_rows(row_env: NS) -> None:
+async def test_a_row_with_a_newer_flagged_peer_is_judged_as_itself(row_env: NS) -> None:
+    # The flagged peer is the newer statement: the row is NEW all the same, and only its
+    # own mark is stamped (the peer comes to its own turn from its own mark).
     row_env.mem.conflict_with = ["m2"]
-    row_env.asserted = {"m1": 1_000, "m2": 2_000}  # the flagged peer is the newer
-    row_env.heads["m2"].memory_key = "office_town"
+    row_env.asserted = {"m1": 1_000, "m2": 2_000}
     await _resolve()
-    assert sorted(row_env.stamped) == ["office_city", "office_town"]
+    assert row_env.notes[0].memory_id == "m2" and row_env.stamped == ["office_city"]
+    assert row_env.acted == [(cr.FLAG, "m1", "m2")], "an update not stated later flags"
 
 
 # --- the pass ---------------------------------------------------------------------------------

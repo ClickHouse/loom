@@ -222,9 +222,8 @@ first `loom.memory_versions` version (wall-clock ns) holding its current content
 since the last version that held another, so the order is finer than the second, a
 metadata write (touch, pin, tags) does not move it, and a value that came back is
 ordered from its return; an explicit `valid_at` earlier than that moves it back. Equal keys, or a peer
-asserted later, flag the pair for review instead. A
-re-checked row is often the older side of its flag, so when a flagged peer was stated
-later, the latest such peer is presented as NEW and the row as its peer. A retirement goes through `apply_refines`: the older row is superseded behind the
+asserted later, flag the pair for review instead. A row is always judged as itself:
+a newer peer comes to its own turn from its own mark. A retirement goes through `apply_refines`: the older row is superseded behind the
 newer, a `supersedes` edge records why, one `memory.auto_supersede` record names it
 (reason `conflict_resolver`, so `memory.restore` undoes it), and the triple plane follows
 (`follow_row_supersessions`). A flag the newer row held against the retired one is
