@@ -28,8 +28,8 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> bool | None:
     """Whether the gate admits `auth` to read (org, ns): the claim, a grant
     (or an inheriting service account's creator's), the org-readable code
     rule and the restricted two-factor check, decided by `check_authorized`
-    alone. None is a refusal made because a grant or a classification could
-    not be read: still refused, but the server's failure."""
+    alone. None is a refusal made because a read it needed failed
+    (server.auth.fail_closed): still refused, but the server's failure."""
     from server.auth.authz import check_authorized
     from server.core.errors import IdentityIncompleteError
     from server.operations.base import Role
@@ -71,36 +71,32 @@ def _ledger_refusal(
         emit_refusal(op.name, auth, error_code=error_code, org=org, server_fault=server_fault)
 
 
-# Set on a refusal `_plane_namespace` made without a readable grant; the screen
-# pops it before answering.
-_UNVERIFIED = "_unverified"
-
-
-async def _plane_namespace(tool_name: Any, auth: Any, ns: str) -> str | dict[str, Any] | None:
+async def _plane_namespace(
+    tool_name: Any, auth: Any, ns: str
+) -> tuple[str | dict[str, Any] | None, bool]:
     """For a code/tracker tool's inaccessible `namespace`: the namespace it
     resolves to (and the resolution noted for the result),
     the UNKNOWN_NAMESPACE result when it names nothing, or None when it
     exists (the caller refuses as before). A resolution the caller cannot
-    read either is refused on the real namespace."""
+    read either is refused on the real namespace. Beside it, whether that
+    refusal was made because a read it needed failed."""
     from server.transport import access_refusal as ar
     from server.transport import namespace_resolve as nr
 
     if not ar.is_plane_tool(str(tool_name or "")):
-        return None
+        return None, False
     org = str(getattr(auth, "org", "") or "")
     known = nr.known_namespaces(org)
     if ns in known:
-        return None
+        return None, False
     to = nr.match(ns, known, default_branch=nr.default_branches(org))
     if to and to != ns:
         readable = await _may_read(auth, org, to)
         if not readable:
-            refusal = _not_accessible_result(tool_name, auth, to)
-            refusal[_UNVERIFIED] = readable is None
-            return refusal
+            return _not_accessible_result(tool_name, auth, to), readable is None
         nr.RESOLVED.set({"from": ns, "to": to})
-        return to
-    return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access)))
+        return to, False
+    return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access))), False
 
 
 def _verify_bearer(request: Request) -> AuthInfo | None:
@@ -306,9 +302,8 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
     if req_ns and not (readable := await _may_read(auth, target_org, str(req_ns))):
         # A code/tracker tool's `namespace` that is not a namespace resolves
         # to one or says so — never the claim text meant for a real refusal.
-        fixed = await _plane_namespace(tool_name, auth, req_ns)
+        fixed, unverified = await _plane_namespace(tool_name, auth, req_ns)
         refusal = fixed if isinstance(fixed, dict) else None
-        unverified = bool(refusal.pop(_UNVERIFIED, False)) if refusal else False
         if not fixed:
             refusal = _not_accessible_result(tool_name, auth, req_ns)
             unverified = readable is None

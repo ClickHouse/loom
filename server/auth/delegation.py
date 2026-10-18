@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from server.auth import authz
 from server.auth import jwt as jwt_mod
 from server.auth.authz import grant_role
+from server.auth.fail_closed import note_unreadable, unreadable
 from server.auth.jwt import AuthInfo
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 from server.operations.base import GRANT_ROLES, Role, grant_rank
@@ -347,11 +348,11 @@ async def _creator_account(org: str, creator: str) -> _Account:
         )
     except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
         log.warning("account lookup failed for %s/%s: %s", org, creator, e)
-        from server.auth.fail_closed import note_unreadable
-
         note_unreadable()
         return _Account(active=False, best_grant=None)
     account = _account_from_row(row or {})
+    if unreadable():  # read with only some of the creator's spellings: not kept
+        return account
     if len(_account_active) >= _ACCOUNT_CACHE_MAX:
         _account_active.clear()
     _account_active[key] = (now, account)

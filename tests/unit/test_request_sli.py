@@ -612,9 +612,12 @@ def test_a_refusal_made_without_readable_grants_is_the_server_s(monkeypatch) -> 
     """A grant, alias, account or classification read that fails still refuses
     (fail closed), but the refusal must not read as the caller's, or an outage
     of those reads leaves the SLO green."""
+    from types import SimpleNamespace
+
     from server.auth import aliases, authz, delegation, service_accounts
     from server.auth.directory import ClassificationUnavailable
     from server.auth.jwt import AuthInfo
+    from server.settings import settings
 
     class _Client:
         fails = ""  # a fragment of the one statement that fails
@@ -666,6 +669,36 @@ def test_a_refusal_made_without_readable_grants_is_the_server_s(monkeypatch) -> 
     assert status(delegated, fails="owned_live") == "server"  # the creator's account
     directory.down = True
     assert status(person) == "server"
+    monkeypatch.setattr(settings, "restricted_serve", False)
+    assert status(person) == "server"  # the kill switch refuses, the directory is down too
+
+    # A creator account read while its aliases could not be: not cached.
+    async def _read_account() -> None:
+        client.fails = "contact_email"
+        delegation._account_active.clear()
+        await delegation._creator_account("o", "root@x.com")
+        assert ("o", "root@x.com") not in delegation._account_active
+
+    asyncio.run(_read_account())
+
+    # The code-member rule reads a grant after the gate refused: its failure marks
+    # the gate's refusal too.
+    from server.auth.fail_closed import note_unreadable
+    from server.code.app import member_writes
+
+    async def _refuse(*a: Any, **k: Any) -> None:
+        raise PermissionError("refused")
+
+    async def _member_unreadable(*a: Any, **k: Any) -> bool:
+        note_unreadable()
+        return False
+
+    monkeypatch.setattr(authz, "check_authorized", _refuse)
+    monkeypatch.setattr(member_writes, "code_member_may_write", _member_unreadable)
+    op = SimpleNamespace(name="memory.set", required_role=Role.WRITER)
+    with pytest.raises(PermissionError) as e:
+        asyncio.run(member_writes.authorize_op(person, op, org="o", namespace="code-x"))
+    assert sli.status_class(False, "AUTH_INSUFFICIENT", e.value) == "server"
 
 
 def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatch) -> None:
@@ -705,14 +738,27 @@ def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatc
     monkeypatch.setattr(nr, "default_branches", lambda org: {})
     monkeypatch.setattr(nr, "suggestable", lambda *a: [])
     monkeypatch.setattr(access_refusal, "reason_fields", lambda ns: {})
+    seen: list[str] = []
+
+    async def _first_unreadable(auth: Any, org: str, ns: str) -> bool | None:
+        seen.append(ns)
+        return False if ns == "code-x" else None
+
     for ns in ("nope", "code-x-main"):
         call = {"name": "loom_code_search", "arguments": {"namespace": ns, "query": "q"}}
         result = asyncio.run(
             mcp_auth._screen_tool_call({"id": 2, "method": "tools/call", "params": call}, eve)
         )
         assert "_unverified" not in result["result"]
+    # The name given cannot be checked, but the one it resolves to is refused
+    # outright: the refusal is that one's, the caller's.
+    monkeypatch.setattr(mcp_auth, "_may_read", _first_unreadable)
+    call = {"name": "loom_code_search", "arguments": {"namespace": "code-x-main", "query": "q"}}
+    asyncio.run(mcp_auth._screen_tool_call({"id": 3, "method": "tools/call", "params": call}, eve))
+    assert seen == ["code-x-main", "code-x"]
     assert [(e.error_code, e.status_class) for e in emitted] == [
         ("NAMESPACE_NOT_ACCESSIBLE", "server"),
         ("UNKNOWN_NAMESPACE", "client"),
         ("AUTH_INSUFFICIENT", "server"),
+        ("AUTH_INSUFFICIENT", "client"),
     ]

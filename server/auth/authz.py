@@ -339,6 +339,7 @@ async def _is_restricted(org: str, namespace: str) -> bool:
     try:
         return await directory().is_restricted(org, namespace)
     except ClassificationUnavailable:
+        note_unreadable()
         return True
 
 

@@ -92,8 +92,9 @@ def status_class(success: bool, error_code: str, error: BaseException | str | No
     decision = getattr(error, "decision", None)
     if decision is not None and not decision.enforcing_rules:
         return "server"
-    # So is an access refusal made because a grant or a classification could
-    # not be read (server.auth.authz), whatever error it was raised as.
+    # So is an access refusal made because a read it needed failed (a grant,
+    # an account, a classification: server.auth.fail_closed), whatever error
+    # it was raised as.
     cause = error if isinstance(error, BaseException) else None
     seen: set[int] = set()
     while cause is not None and id(cause) not in seen:  # a chain can loop
