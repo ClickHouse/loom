@@ -779,6 +779,8 @@ export interface InstallOptions {
   /** Answer `memory.list` with this many rows, each carrying a ~600-character preview — a
    *  render-budget fixture. Default: the empty list. */
   memoryRows?: number;
+  /** The first memory row's tags, in place of the fixture's three. */
+  firstMemoryTags?: string[];
   /** Answer `knowledge.list` with this many rows. */
   knowledgeRows?: number;
   /** Answer `run.list` with this many runs, every field a run carries, projected by the
@@ -945,7 +947,10 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         {
           // One page of the rows, as the server answers `limit` and `offset`.
           const from = Number(body.offset ?? 0);
-          const rows = memoryRowsFixture(options.memoryRows, ns).slice(from, from + Number(body.limit ?? 100));
+          const rows = memoryRowsFixture(options.memoryRows, ns, options.firstMemoryTags).slice(
+            from,
+            from + Number(body.limit ?? 100),
+          );
           return json({
             entries: projectRows(rows, body, "memory_key"),
             total: options.memoryRows,
@@ -959,7 +964,7 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         // The inspector's one read on open answers from the same fixture rows, so a card
         // open can be measured end to end.
         if (!options.memoryRows) break;
-        const rows = memoryRowsFixture(options.memoryRows, ns);
+        const rows = memoryRowsFixture(options.memoryRows, ns, options.firstMemoryTags);
         const hit = rows.find((r) => r.memory_key === body.memory_key);
         if (!hit) return json({ found: false });
         return json({
@@ -1214,7 +1219,7 @@ function runGetFixture(runs: Record<string, unknown>[], runId: string): Record<s
 /** `n` memory rows the way `memory.list` returns them — a bounded string preview per row
  *  (the server caps `value` for a list), tags, an agent, alternating pins and a verified
  *  row here and there, so the card renders every chip it has. */
-function memoryRowsFixture(n: number, namespace: string): Record<string, unknown>[] {
+function memoryRowsFixture(n: number, namespace: string, firstTags?: string[]): Record<string, unknown>[] {
   const preview =
     "Alert fired on the ingest lane: consumer lag over 30 s for 4 minutes; root cause a stalled partition. ";
   return Array.from({ length: n }, (_, i) => ({
@@ -1226,7 +1231,7 @@ function memoryRowsFixture(n: number, namespace: string): Record<string, unknown
     created_at: `2026-09-19T0${i % 10}:${String(i % 60).padStart(2, "0")}:00Z`,
     expires_at: null,
     pinned: i % 17 === 0,
-    tags: ["alerts", i % 2 ? "ingest" : "storage", `lane-${i % 5}`],
+    tags: i === 0 && firstTags ? firstTags : ["alerts", i % 2 ? "ingest" : "storage", `lane-${i % 5}`],
     agent: i % 4 ? "alert-bot" : "oncall",
     namespace,
     org: "acme",

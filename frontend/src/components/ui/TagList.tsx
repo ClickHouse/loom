@@ -39,6 +39,7 @@ export function TagList({ tags, onTagClick, activeTags, max = 3, className = "" 
           outline
           ariaLabel={`${rest.length} more tags: ${rest.join(", ")}`}
           tip={rest.join(", ")}
+          className="list-row-control"
         />
       )}
     </div>
