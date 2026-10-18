@@ -175,8 +175,10 @@ head; one a later write overtook is not. One the re-read could not see is listed
 `unconfirmed`: a write's result never counts it among the rows it retired, recall is
 left as it was, and the projection repair mirrors the row's head onto recall once it
 can read it (should even queueing that fail, `loom reconcile-status` finds the
-divergence). A point write (`memory.set`, `memory.update_by_id`) writes its record
-beside the response; the conflict resolver writes its own after the retirement.
+divergence). A point write (`memory.set`, `memory.update_by_id`) writes its record and
+closes the retired rows' graph facts before it answers, and a record that fails is owed
+to the projection repair, which writes it once; the conflict resolver writes its own
+after the retirement, owed the same way.
 
 #### The Auto-resolved tab
 

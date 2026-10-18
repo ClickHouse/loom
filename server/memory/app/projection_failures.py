@@ -666,10 +666,10 @@ def _younger_than(failure: ProjectionFailureRow, seconds: float) -> bool:
 
 
 async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) -> None:
-    """The conflict resolver's `memory.auto_supersede` record of each retirement in the
-    intent that is still in place (the loser retired behind the winner) and has none
-    yet, and the winner's flag against the loser cleared. A failed emit raises, so the
-    intent stays for the next replay."""
+    """The `memory.auto_supersede` record (the resolver's, or a point write's whose own
+    record failed) of each retirement in the intent that is still in place (the loser
+    retired behind the winner) and has none yet, and the winner's flag against the
+    loser cleared. A failed emit raises, so the intent stays for the next replay."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.app.auto_resolution import (
         CONFLICT_RESOLVER,
@@ -706,7 +706,8 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
             org=failure.org,
             namespace=failure.namespace,
             retired=[entry],
-            reason=CONFLICT_RESOLVER,
+            # A point write's intent names its reason; the resolver's predate the field.
+            reason=str(failure.payload.get("reason") or CONFLICT_RESOLVER),
             request_id=failure.failure_id,
         ):
             raise RuntimeError("the retirement's record was not written")

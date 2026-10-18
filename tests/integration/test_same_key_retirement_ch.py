@@ -6565,3 +6565,78 @@ async def test_a_point_write_retirement_closes_the_retired_rows_facts(ch, org, m
         )
         await after_write.drain()
     assert await _open_facts(ch, org, {("like", "tennis")}) == {("like", "tennis")}
+
+
+async def test_a_point_write_retirement_whose_record_failed_gets_it_from_the_repair(
+    ch, org, monkeypatch
+) -> None:
+    """The record of a newest_wins same-key retirement fails: the write leaves it owed
+    (an intent with the entry and its reason), and the repair writes it, once."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, conflicts, projection_failures
+    from server.memory.app.projection_failures import retry_projection_failures
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.conflicts import ConflictResult
+    from server.observability import audit
+
+    async def _clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    monkeypatch.setattr(conflicts, "check_on_commit", _clear)
+    now = datetime.now(UTC)
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": org,
+                "namespace": NS,
+                "created_at": now,
+                "updated_at": now,
+                "active": True,
+                "default_conflict_policy": "newest_wins",
+            }
+        ],
+    )
+    real = audit.emit
+
+    async def no_record(*a: Any, **kw: Any) -> Any:
+        if kw.get("event_type", a[0] if a else "") == "memory.auto_supersede":
+            raise RuntimeError("audit insert failed")
+        return await real(*a, **kw)
+
+    ids = {}
+    for session, city in (("s1", "Paris"), ("s2", "Rome")):
+        if session == "s2":
+            monkeypatch.setattr(audit, "emit", no_record)
+        out = await handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id=session,
+                memory_key="office_city",
+                value=f"The office is in {city}",
+            )
+        )
+        ids[session] = out.memory_id
+        await after_write.drain()
+    monkeypatch.setattr(audit, "emit", real)
+
+    async def records() -> list[dict[str, Any]]:
+        rows = await ch.query_all(
+            "SELECT subject FROM loom.audit_log WHERE org = {org:String}"
+            " AND event_type = 'memory.auto_supersede' SETTINGS select_sequential_consistency = 1",
+            params={"org": org},
+        )
+        return [json.loads(r["subject"]) for r in rows]
+
+    assert await records() == []
+    monkeypatch.setattr(projection_failures, "FOLLOW_OWED_GRACE_S", 0)
+    for _ in range(2):  # a second replay writes no second record
+        await retry_projection_failures(org=org, projection="triples_follow_owed", ch=ch)
+    (record,) = await records()
+    assert record["reason"] == "same_key_newest_wins"
+    assert [(e["memory_id"], e["superseded_by"]) for e in record["retired"]] == [
+        (ids["s1"], ids["s2"])
+    ]

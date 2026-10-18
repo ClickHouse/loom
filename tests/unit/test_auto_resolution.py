@@ -103,8 +103,7 @@ async def test_the_record_carries_the_request_id(emitted) -> None:
 
 async def test_nothing_retired_writes_nothing(emitted) -> None:
     await ar.record_auto_supersessions(org="o", namespace="ns", retired=[], reason="refines")
-    ar.schedule_auto_supersessions(org="o", namespace="ns", retired=[], reason="refines")
-    await _drain()
+    await ar.settle_retirements(org="o", namespace="ns", retired=[], reason="refines")
     assert emitted == []
 
 
@@ -119,17 +118,6 @@ async def test_a_failing_audit_write_never_raises_and_says_so(monkeypatch) -> No
         )
         is False
     )
-    ar.schedule_auto_supersessions(org="o", namespace="ns", retired=[_retired("m1")], reason="x")
-    await _drain()
-
-
-async def test_a_scheduled_record_lands_beside_the_caller(emitted) -> None:
-    ar.schedule_auto_supersessions(
-        org="o", namespace="ns", retired=[_retired("m1")], reason="refines"
-    )
-    assert emitted == []  # not awaited by the caller
-    await _drain()
-    assert _ids(emitted[0]) == ["m1"]
 
 
 def test_the_tracker_records_only_rows_it_passed_that_were_written() -> None:
@@ -244,9 +232,7 @@ async def test_newest_wins_same_key_records_the_retired_not_the_locked_or_retire
         org="o", namespace="ns", new_rows=new, ch=_CH(all_=[live]), policy="newest_wins"
     )
     assert n == 1 and wrote == ["o1"]  # the retired row is not re-pointed
-    assert emitted == []  # beside the response, not awaited by the write
-    await _drain()
-    (ev,) = emitted
+    (ev,) = emitted  # awaited by the write: a failed record is owed to the repair
     assert ev["subject"]["reason"] == "same_key_newest_wins" and _ids(ev) == ["o1"]
     assert ev["subject"]["retired"][0]["superseded_by"] == "n1"
     assert ev["subject"]["retired"][0]["superseded_by_key"] == "user_city"

@@ -771,8 +771,7 @@ async def apply_refines(
         from server.memory.app.auto_resolution import (
             NEWEST_WINS_CONTRADICTION,
             RetirementTracker,
-            follow_retirements,
-            schedule_auto_supersessions,
+            settle_retirements,
         )
         from server.memory.domain.lock import refuses_retirement
 
@@ -808,12 +807,9 @@ async def apply_refines(
         if record_into is not None:
             record_into.setdefault(reason, []).extend(retired)
         else:
-            # A point write: its record beside the response, its follow here, as a bulk
-            # write's (which passes `record_into`, and follows them itself).
-            schedule_auto_supersessions(
-                org=org, namespace=namespace, retired=retired, reason=reason
-            )
-            await follow_retirements(org=org, namespace=namespace, retired=retired, op=reason)
+            # A point write: recorded and followed here (a bulk write passes
+            # `record_into`, and follows them itself).
+            await settle_retirements(org=org, namespace=namespace, retired=retired, reason=reason)
     return n
 
 
