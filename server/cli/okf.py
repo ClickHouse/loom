@@ -74,6 +74,8 @@ _LIVE_FIELDS = [
     "content_sha256",
     "verification",
 ]
+# What memory.list does not return; read with memory.bulk_get.
+_BULK_FIELDS = ["valid_to", "source_class"]
 
 
 def _resolve_token(args: argparse.Namespace) -> str:
@@ -619,7 +621,6 @@ async def _live_rows(
             break
         offset += len(entries)
 
-    # memory.list does not return valid_to or source_class.
     by_session: dict[str, list[str]] = {}
     for sid, key in rows:
         by_session.setdefault(sid, []).append(key)
@@ -631,7 +632,7 @@ async def _live_rows(
                     **ident,
                     "session_id": sid,
                     "memory_keys": keys[i : i + _BULK],
-                    "fields": ["valid_to", "source_class"],
+                    "fields": _BULK_FIELDS,
                 },
             )
             for key, g in (got.get("results") or {}).items():
@@ -913,14 +914,14 @@ def _print_import_summary(
     args: argparse.Namespace,
     org: str,
     rows: int,
-    ev_chunks: list[okf_ev.ChunkRecord],
-    ev_digests: list[okf_ev.DigestRecord],
+    chunks: int,
+    digests: int,
 ) -> None:
     would = " would be" if args.dry_run else ""
     if args.dry_run:
         head = (
             f"dry run: {n['written']} of {rows} rows ({n['unchanged']} unchanged), "
-            f"{len(ev_chunks)} raw chunks and {len(ev_digests)} session digests would be "
+            f"{chunks} raw chunks and {digests} session digests would be "
             f"written to {org}/{args.namespace}"
         )
     else:
@@ -947,17 +948,6 @@ def _print_import_summary(
             pruned += f" ({n['prune_failed']} delete failures)"
         parts.append(pruned)
     print(", ".join(parts))
-
-
-async def _read_target(
-    client: _Client, org: str, args: argparse.Namespace, with_edges: bool
-) -> tuple[dict[tuple[str, str], dict[str, Any]], set[tuple[str, str, str]]]:
-    """The live rows under the import's identity and, when asked, the namespace's edges."""
-    live = await _live_rows(client, org, args)
-    if not with_edges:
-        return live, set()
-    edges = await _fetch_edges(client, org, args.namespace)
-    return live, {(e["from_key"], e["to_key"], e["relation"]) for e in edges}
 
 
 def _cmd_import_okf(args: argparse.Namespace) -> int:
@@ -994,15 +984,18 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         links, unresolved = okf.resolve_relates_to(concepts)
         n: Counter[str] = Counter()
         async with _Client(args.server_url, token) as client:
+            live_edges: set[tuple[str, str, str]] = set()
             try:
-                live, live_edges = await _read_target(
-                    client, org, args, with_edges=bool(links) and not args.no_links
-                )
+                live = await _live_rows(client, org, args)
+                if links and not args.no_links:
+                    edges = await _fetch_edges(client, org, args.namespace)
+                    live_edges = {(e["from_key"], e["to_key"], e["relation"]) for e in edges}
             except RuntimeError as e:
                 print(f"cannot read {org}/{args.namespace}: {e}", file=sys.stderr)
                 return 1
             if args.prune:
-                # Before the writes, so each delete follows the read that chose it closely.
+                # Before the writes: a key renamed in the source would otherwise merge into
+                # its stale row, which prune then deletes.
                 keep = {(p["session_id"], p["memory_key"]) for _, p in planned}
                 claims = jwt_claims(token)
                 # The writer the server stamped on our rows; the agent name is the client's.
@@ -1026,7 +1019,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                     + (f", {ev['failed']} FAILED" if ev["failed"] else "")
                 )
                 n["evidence_failed"] = ev["failed"]
-        _print_import_summary(n, args, org, len(planned), ev_chunks, ev_digests)
+        _print_import_summary(n, args, org, len(planned), len(ev_chunks), len(ev_digests))
         failures = ("failed", "links_failed", "prune_failed", "evidence_failed")
         return 1 if any(n[k] for k in failures) else 0
 

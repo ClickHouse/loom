@@ -69,7 +69,7 @@ def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
             "memory.set",
             {
                 "namespace": src,
-                "agent": "clickgap",
+                "agent": "writer-a",
                 "memory_key": k,
                 "memory_type": "semantic",
                 "value": f"{k}: the test fails when the part count passes {len(k) * 100}.",
@@ -109,7 +109,7 @@ def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
     assert {k: _versions(url, tok, dst, k) for k in keys} == versions
     assert _audit_rows(ch_client, dst) == audit
 
-    _op(url, tok, "memory.delete", {"namespace": src, "agent": "clickgap", "memory_key": keys[2]})
+    _op(url, tok, "memory.delete", {"namespace": src, "agent": "writer-a", "memory_key": keys[2]})
     third = sync(3, "--prune")
     assert "0 written, 2 unchanged, 0 failed" in third
     assert "1 pruned" in third

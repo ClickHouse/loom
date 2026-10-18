@@ -578,18 +578,26 @@ def test_a_limit_the_export_did_not_reach_is_not_recorded(
     assert _export(tmp_path / "part", "--limit", "1")["limit"] == 1
 
 
+_LIST = ["content_sha256", "memory_type", "source_trace", "tags", "confidence", "entities"]
+
+
 @pytest.mark.parametrize(
-    "field",
-    ["content_sha256", "memory_type", "source_trace", "tags", "confidence", "entities", "valid_at"],
+    ("read", "field"),
+    [("_LIVE_FIELDS", f) for f in [*_LIST, "valid_at"]]
+    + [("_BULK_FIELDS", "valid_to"), ("_BULK_FIELDS", "source_class")],
+    ids=lambda v: str(v),
 )
 def test_a_field_the_import_does_not_read_would_rewrite_every_row(
-    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch, field: str
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch, read: str, field: str
 ) -> None:
-    # The fake returns only the fields asked for, so _LIVE_FIELDS must name each one compared.
-    root = _bundle(tmp_path / "b", [_entry("a")])
+    # The fake returns only the fields asked for, so the reads must name each one compared.
+    entry = _entry("a", valid_to="2026-12-01T00:00:00", source_class="derived")
+    root = _bundle(tmp_path / "b", [entry])
     assert _run(root) == 0
-    fields = [f for f in cli_okf._LIVE_FIELDS if f != field]
-    monkeypatch.setattr(cli_okf, "_LIVE_FIELDS", fields)
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == []
+    monkeypatch.setattr(cli_okf, read, [f for f in getattr(cli_okf, read) if f != field])
     loom.calls.clear()
     assert _run(root) == 0
     assert loom.writes() == ["memory.set"]
@@ -654,3 +662,24 @@ def test_a_failed_evidence_batch_exits_1_and_stays_out_of_the_row_count(
     out = capsys.readouterr().out
     assert "64 FAILED" in out
     assert "1 written, 0 unchanged, 0 failed" in out
+
+
+def test_a_key_renamed_in_the_source_is_written_under_its_new_name(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    serve = loom.post
+
+    async def merges_into_a_live_copy(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        # memory.set folds a value another live key already holds into that key's row.
+        if op == "memory.set" and any(
+            r["memory_key"] != body["memory_key"] and r.get("value") == body["value"]
+            for r in loom.rows.values()
+        ):
+            loom.calls.append((op, body))
+            return {"status": "", "conflict_verdict": "merge"}
+        return await serve(op, body)
+
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("x", value="same fact")])) == 0
+    monkeypatch.setattr(loom, "post", merges_into_a_live_copy)
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("y", value="same fact")]), "--prune") == 0
+    assert [k for (_a, _s, k) in loom.rows] == ["y"]

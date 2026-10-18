@@ -42,8 +42,9 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
 The last line reports the counts:
 `500 rows from the bundle into acme/shared-lessons: 0 written, 500 unchanged, 0 failed …,
 0 pruned`.
-Exit 1 means the target could not be read or a write, link or delete failed; exit 2
-means the bundle was refused (a lint finding or a prune guard) before any request.
+Exit 1 means the target could not be read or a write, link, delete or evidence batch
+failed; exit 2 means the bundle was refused (a lint finding or a prune guard) before any
+request.
 
 ## Guards
 
