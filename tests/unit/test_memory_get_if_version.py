@@ -13,11 +13,12 @@ from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError
 from server.memory.api.models_crud import MemoryGetInput
 from server.memory.app import handlers as mem
+from server.memory.store.rows import MemoryRow
 
 
-def _row(version: int = 7, sensitivity: str = "") -> SimpleNamespace:
+def _row(version: int = 7, sensitivity: str = "") -> MemoryRow:
     now = datetime(2026, 9, 12, tzinfo=UTC)
-    return SimpleNamespace(
+    return MemoryRow(
         memory_id="11111111-1111-1111-1111-111111111111",
         value={"text": "deploys on Tuesday"},
         memory_type="semantic",
@@ -53,6 +54,12 @@ def _row(version: int = 7, sensitivity: str = "") -> SimpleNamespace:
         evidence="",
         char_limit=None,
         mentioned_at=None,
+        org="acme",
+        namespace="ns",
+        agent="a",
+        user_id="-",
+        session_id="-",
+        memory_key="k",
     )
 
 

@@ -219,7 +219,7 @@ def is_high(level: object, tags: object) -> bool:
     """High by the sensitivity column or by the `sensitivity:high` tag memory.set adds."""
     if str(level or "").strip().lower() == HIGH:
         return True
-    if not isinstance(tags, (list, tuple)):
+    if not isinstance(tags, list):
         return False
     return SENSITIVITY_TAG_PREFIX + HIGH in {str(t).strip().lower() for t in tags}
 

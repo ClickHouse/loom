@@ -147,7 +147,9 @@ async def _fetch_relevant_existing_memories(
     out: list[dict[str, str]] = []
     for h in hits:
         r = by_key.get(h.memory_key)
-        if r is None:
+        # The lookup can answer another session's row of the key; a 'high' one never goes into
+        # the extraction prompt, which is sent to the LLM provider.
+        if r is None or r.sensitivity == "high":
             continue
         # sha over canonical JSON so the caller can hash-dedup extractions.
         sha = _content_sha256_of_stored(

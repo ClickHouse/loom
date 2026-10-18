@@ -1173,6 +1173,8 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
     """The rows the vector hits name are read with the session
     axis open — keyed to the session being written they would come back empty
     for every row an earlier session wrote."""
+    from types import SimpleNamespace
+
     import server.memory.app.handlers as hm
     from server.memory import store as memory_repo
 
@@ -1189,12 +1191,18 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
     seen: dict[str, object] = {}
 
     async def fake_vector_search(q):
-        return [_Hit("user_journal")]
+        return [_Hit("user_journal"), _Hit("vault")]
 
     async def fake_get_many(identity, keys, **kw):
         seen["identity"] = identity
         seen["keys"] = list(keys)
-        return [type("R", (), {"memory_key": "user_journal", "value": "User keeps a journal."})()]
+        return [
+            SimpleNamespace(
+                memory_key="user_journal", value="User keeps a journal.", sensitivity=""
+            ),
+            # another session's row of a hit key, labelled high: not for the extraction prompt
+            SimpleNamespace(memory_key="vault", value="the door code is 4412", sensitivity="high"),
+        ]
 
     monkeypatch.setattr("server.embedding.get_embedder", lambda: _Emb())
     monkeypatch.setattr("server.memory.app.retrieval.vector_search", fake_vector_search)

@@ -10,10 +10,11 @@ from server.memory.api.models_crud import MemoryGetOutput
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
+from server.memory.store.rows import MemoryRow
 
 
 def row_output(
-    row: Any,
+    row: MemoryRow,
     *,
     sha: str,
     canonical_key: str | None,
@@ -32,34 +33,32 @@ def row_output(
         confidence=row.confidence,
         version=row.version,
         created_at=row.created_at,
-        updated_at=getattr(row, "updated_at", None) or row.created_at,
+        updated_at=row.updated_at or row.created_at,
         expires_at=row.expires_at,
-        on_expire=getattr(row, "on_expire", "") or "",
-        expire_reason=getattr(row, "expire_reason", "") or "",
-        valid_at=getattr(row, "valid_at", None),
-        valid_to=getattr(row, "valid_to", None),
-        temporal_anchor=getattr(row, "temporal_anchor", None),
-        temporal_confidence=float(getattr(row, "temporal_confidence", 0.0) or 0.0),
-        char_limit=getattr(row, "char_limit", None),
+        on_expire=row.on_expire,
+        expire_reason=row.expire_reason,
+        valid_at=row.valid_at,
+        valid_to=row.valid_to,
+        temporal_anchor=row.temporal_anchor,
+        temporal_confidence=row.temporal_confidence,
+        char_limit=row.char_limit,
         pinned=row.pinned,
-        sensitivity=str(getattr(row, "sensitivity", "") or ""),
-        agent=getattr(row, "agent", "") or "",
-        status=getattr(row, "status", None),
+        sensitivity=row.sensitivity,
+        agent=row.agent,
+        status=row.status,
         superseded_by=superseded_by,
         duplicate_of=duplicate_of,
         content_sha256=sha,
-        tags=list(getattr(row, "tags", None) or []),
-        entities=public_entities(getattr(row, "entities", None)),
-        recall_count=getattr(row, "recall_count", 0) or 0,
-        last_recalled_at=getattr(row, "last_recalled_at", None),
-        verified_by=getattr(row, "verified_by", "") or "",
-        actor=getattr(row, "actor", "") or "",
-        source_class=getattr(row, "source_class", "") or "",
+        tags=list(row.tags),
+        entities=public_entities(row.entities),
+        recall_count=row.recall_count,
+        last_recalled_at=row.last_recalled_at,
+        verified_by=row.verified_by,
+        actor=row.actor,
+        source_class=row.source_class,
         **_lock.lock_state(row),
-        verified_at=getattr(row, "verified_at", None),
-        verification=_trust.verification_state(
-            getattr(row, "verified_by", ""), getattr(row, "verified_sha256", ""), sha
-        ),
+        verified_at=row.verified_at,
+        verification=_trust.verification_state(row.verified_by, row.verified_sha256, sha),
         **extra,
     )
 

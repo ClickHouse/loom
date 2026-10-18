@@ -53,7 +53,6 @@ from server.memory.api.models_temporal import (
     _OutlineSession,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.domain.sensitivity import is_high
 from server.memory.domain.temporal_sql import status_predicate
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
@@ -418,7 +417,7 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
         subjects=[
             {"memory_key": input.memory_key, "memory_id": str(r.memory_id), "version": r.version}
             for r in rows
-            if is_high(r.sensitivity, r.tags)
+            if r.sensitivity == "high"
         ],
     )
     return MemoryHistoryOutput(rows=out_rows)

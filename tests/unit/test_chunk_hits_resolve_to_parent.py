@@ -17,6 +17,7 @@ import pytest
 
 from server.memory.app.handlers import chunk_parent_key, split_chunk_key
 from server.memory.app.retrieval.pool import effective_chunk_floor
+from server.memory.store.rows import MemoryRow
 
 # ------------------------------------------------------------- the id
 
@@ -135,8 +136,12 @@ async def test_memory_get_resolves_a_memory_set_chunk_id(monkeypatch: pytest.Mon
 # ------------------------------------------------------------- bulk_get
 
 
-def _row(key: str) -> SimpleNamespace:
-    return SimpleNamespace(
+def _row(key: str) -> MemoryRow:
+    return MemoryRow(
+        org="o",
+        namespace="ns",
+        user_id="-",
+        session_id="-",
         memory_id="00000000-0000-0000-0000-000000000001",
         memory_key=key,
         value={"v": key},

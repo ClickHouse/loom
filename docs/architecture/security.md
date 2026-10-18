@@ -517,7 +517,8 @@ are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
 leg returns it: the `anchor_first` and `recent_first` tiers, the bodies a search returns and
-`memory.related`'s excerpts leave it out too. A key read of one, through `memory.get`,
+`memory.related`'s excerpts and the existing memories an extraction prompt shows the LLM
+leave it out too. A key read of one, through `memory.get`,
 `memory.get_by_id`, `memory.bulk_get` or `memory.history` (one row per `high` version), writes
 a `memory.sensitive_read` audit row.
 `memory.list` names a `high` row and its `sensitivity` but sends no value

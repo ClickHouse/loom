@@ -41,4 +41,4 @@ def test_point_read_outputs_do_not_emit_raw_entities() -> None:
         assert not raw.search(src), rel
         assert "public_entities(" in src, rel
     get_src = (ROOT / "server/memory/app/get_output.py").read_text()
-    assert 'entities=public_entities(getattr(row, "entities", None))' in get_src
+    assert "entities=public_entities(row.entities)" in get_src

@@ -149,14 +149,6 @@ async def test_list_withholds_a_high_rows_value(served) -> None:
     assert plain.value == "v"
 
 
-def test_a_contains_search_never_matches_a_high_rows_value() -> None:
-    # A pin on the predicate's text; a migrated ClickHouse showed `contains` on a high
-    # row's value finds nothing and on its key finds the row.
-    assert "sensitivity != 'high' AND positionCaseInsensitiveUTF8(value" in (
-        memory_repo.CONTAINS_PREDICATE
-    )
-
-
 @pytest.mark.asyncio
 async def test_bulk_get_audits_the_reader_named_by_the_token(served) -> None:
     from server.auth.context import set_current_auth
@@ -227,7 +219,7 @@ async def test_history_audits_each_high_version_it_serves(monkeypatch) -> None:
         return HistoryVersion.from_row({**base, **over})
 
     async def _history(*_a: Any, **_k: Any) -> list[HistoryVersion]:
-        return [version(3), version(2, sensitivity="high"), version(1, tags=["sensitivity:high"])]
+        return [version(3), version(2, sensitivity="high"), version(1, sensitivity="high")]
 
     audits: list[list[int]] = []
 

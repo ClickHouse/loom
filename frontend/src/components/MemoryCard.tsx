@@ -9,10 +9,10 @@ import { relativeTime, timeOfDay, truncate, previewValue } from "../lib/format";
 import { detectEncodedValue, detectEncodedRecord } from "../lib/encoded";
 import { useAbortableEffect } from "../lib/hooks";
 
-/** The bounded preview a card shows for a value, and whether the value was
- *  an agent-encoded (base64) envelope whose decoded text is shown instead. */
 const SENSITIVE = { value: "Sensitive: open it to read", encoded: false };
 
+/** The bounded preview a card shows for a value, and whether the value was
+ *  an agent-encoded (base64) envelope whose decoded text is shown instead. */
 function describe(v: unknown): { value: string; encoded: boolean } {
   const enc = typeof v === "string" ? detectEncodedValue(v) : detectEncodedRecord(v);
   return enc ? { value: enc.decoded, encoded: true } : { value: previewValue(v), encoded: false };

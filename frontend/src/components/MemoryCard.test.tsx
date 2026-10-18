@@ -56,7 +56,6 @@ describe("MemoryCard", () => {
         entry={{ ...entry, sensitivity: "high", value_truncated: true }}
         onSelect={vi.fn()}
         active={false}
-        value={null}
       />,
     );
     expect(screen.getByText("Sensitive: open it to read")).toBeTruthy();

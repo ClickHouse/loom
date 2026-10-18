@@ -821,7 +821,7 @@ async def _handle_memory_bulk_get(
             duplicate_of=duplicate_of_shown(r, canonical_key),
             superseded_by=successors.get(str(r.memory_id), ""),
         )
-        if getattr(r, "sensitivity", "") == "high":
+        if r.sensitivity == "high":
             high.append({"memory_key": r.memory_key, "memory_id": str(r.memory_id)})
         results[r.memory_key]._projection = keep
     for chunk_id, parent in parent_of.items():

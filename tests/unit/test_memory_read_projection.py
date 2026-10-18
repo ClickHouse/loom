@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,6 +25,7 @@ from server.memory.api.models_crud import (
     _MemoryListEntry,
 )
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
+from server.memory.store.rows import MemoryRow
 from server.operations import read_projection
 
 # ------------------------------------------------------------- defaults
@@ -121,11 +121,7 @@ def test_list_entry_projection_always_keeps_memory_key() -> None:
 # ------------------------------------------------------------- handlers
 
 
-class _Row(SimpleNamespace):
-    pass
-
-
-def _row(key: str, **kw: Any) -> _Row:
+def _row(key: str, **kw: Any) -> MemoryRow:
     base = dict(
         memory_id="00000000-0000-0000-0000-000000000001",
         memory_key=key,
@@ -152,7 +148,7 @@ def _row(key: str, **kw: Any) -> _Row:
         last_recalled_at=None,
     )
     base.update(kw)
-    return _Row(**base)
+    return MemoryRow(org="o", namespace="ns", user_id="-", session_id="-", **base)
 
 
 @pytest.mark.asyncio
