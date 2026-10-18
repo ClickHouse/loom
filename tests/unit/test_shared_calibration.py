@@ -124,7 +124,7 @@ async def test_a_missing_table_falls_back_to_the_local_probe_then_publishes(env)
 async def test_another_models_row_is_not_adopted(env) -> None:
     store, _probes, calls = env
     other = replace(_cal(), embedder_model="gemini-embedding-001")
-    store.rows[MODEL] = {"thresholds_json": json.dumps(asdict(other))}
+    store.rows[ec.shared_key(MODEL)] = {"thresholds_json": json.dumps(asdict(other))}
     await ec.adopt_or_probe()
     assert calls["probe"] == 1
 
