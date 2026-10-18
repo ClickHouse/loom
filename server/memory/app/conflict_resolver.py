@@ -445,14 +445,13 @@ async def _settle_pair(
     row: Any,
     peer: Mapping[str, Any],
     action: str,
-    order: Mapping[str, tuple[int, int]],
     counts: Counts,
 ) -> dict[str, Any] | None:
     """Act on one pair after re-reading both rows; what was done ({"action": ...}, for
     the audit row) when something changed, else None. A key another write holds past
     the lock's wait raises PreconditionFailedError."""
     async with _pair_locks(org, namespace, row, peer):
-        taken, retired = await _settle_locked_pair(org, namespace, row, peer, action, order, counts)
+        taken, retired = await _settle_locked_pair(org, namespace, row, peer, action, counts)
     if retired is not None:
         await _after_retire(org, namespace, retired)
     return taken
@@ -464,7 +463,6 @@ async def _settle_locked_pair(
     judged: Any,
     peer: Mapping[str, Any],
     action: str,
-    order: Mapping[str, tuple[int, int]],
     counts: Counts,
 ) -> tuple[dict[str, Any] | None, Retired | None]:
     row, head = await _head(org, str(judged.memory_id)), await _head(org, str(peer["memory_id"]))
@@ -484,9 +482,11 @@ async def _settle_locked_pair(
         str(head.memory_id) in row.conflict_with or str(row.memory_id) in head.conflict_with
     ):
         return None, None  # nothing flagged between them: nothing to clear
-    if action == cr.RETIRE and not order[str(head.memory_id)] < order[str(row.memory_id)]:
-        # "update" says the judged row is newer; the order does not: a person decides.
-        action = cr.FLAG
+    if action == cr.RETIRE:
+        # Read under the locks: a valid_at corrected during the call moves the order.
+        order = await _assertion_order(org, namespace, [row, head])
+        if not order[str(head.memory_id)] < order[str(row.memory_id)]:
+            action = cr.FLAG  # the order does not show the judged row is newer: a person decides
     retired = None
     if action == cr.RETIRE:
         retired = await _retire(org, namespace, row, head)
@@ -609,8 +609,7 @@ async def _judge_and_act(
     policy: str,
     counts: Counts,
 ) -> None:
-    """Judge the row and act on the answer. What the acting reads (the assertion
-    order) is read before the call, so a failure there costs no call."""
+    """Judge the row and act on the answer."""
     new = cr.Note(
         str(row.memory_id), str(row.memory_key), _plain(memory_repo.stored_value_text(row))
     )
@@ -618,11 +617,10 @@ async def _judge_and_act(
         cr.Note(str(p["memory_id"]), str(p["memory_key"]), _plain(str(p["value"])), p["similarity"])
         for p in peers
     ]
-    order = await _assertion_order(org, namespace, [row, *peers])
     verdicts, model = await judge(new, notes)
     counts.judged += 1
     acting = asyncio.ensure_future(
-        _act_on_verdicts(org, namespace, row, peers, verdicts, policy, order, counts, model)
+        _act_on_verdicts(org, namespace, row, peers, verdicts, policy, counts, model)
     )
     try:
         await asyncio.shield(acting)
@@ -640,7 +638,6 @@ async def _act_on_verdicts(
     peers: list[dict[str, Any]],
     verdicts: dict[str, cr.PeerVerdict],
     policy: str,
-    order: Mapping[str, tuple[int, int]],
     counts: Counts,
     model: str,
 ) -> None:
@@ -656,7 +653,7 @@ async def _act_on_verdicts(
                 # stays as it is.
                 counts.skipped_no_action += 1
                 continue
-            taken = await _settle_pair(org, namespace, row, peer, action, order, counts)
+            taken = await _settle_pair(org, namespace, row, peer, action, counts)
             if taken is not None:
                 acted.append(
                     {"peer_id": str(peer["memory_id"]), **taken}

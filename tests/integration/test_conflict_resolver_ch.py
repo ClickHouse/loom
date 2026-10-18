@@ -1768,3 +1768,36 @@ async def test_a_supersede_whose_response_was_lost_is_still_followed(
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
     assert not await _paris_open(ch, org, False), "the retired row's fact is closed"
     assert len(await _audit(ch, org, "memory.auto_supersede")) == 1
+
+
+async def test_a_date_corrected_during_the_call_decides_the_order(ch, wired, monkeypatch) -> None:
+    """Paris (2024) is older than Rome (2025) when the call starts; its date is corrected to
+    2026 during the call, with the same bytes: Paris is now newer and is not retired."""
+    from datetime import datetime
+
+    import server.memory.store as M
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import lifecycle
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 214)
+
+    async def dated(key: str, when: datetime) -> None:
+        mid = (await _rows(ch, org))[key]["id"]
+        row = await M.get_by_id(mid, org=org, scope=WHOLE_NAMESPACE, strong=True)
+        moved = M.build_memory_version_row(row, version=M.next_version(), valid_at=when)
+        await lifecycle.insert_memory_versions([moved], ch=ch)
+
+    await dated("office_city", datetime(2024, 1, 1))
+    await dated("office_location", datetime(2025, 1, 1))
+    real = llm.complete
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        await dated("office_city", datetime(2026, 1, 1))
+        return await real(system, user, **kw)
+
+    monkeypatch.setattr(llm, "complete", complete)
+    out = await run_pass()
+    assert out["retired"] == 0 and out["flagged"] == 1, out
+    assert (await _rows(ch, org))["office_city"]["status"] == "conflicted"
