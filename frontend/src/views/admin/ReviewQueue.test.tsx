@@ -146,6 +146,31 @@ describe("ReviewQueue", () => {
     expect(screen.getByText(/Conflict 1 of 5/)).toBeInTheDocument();
   });
 
+  it("an answer from the namespace left frees none of the new queue's controls while its own decision is out", async () => {
+    vi.mocked(listConflicts).mockImplementation(async (id) =>
+      id.namespace === "ns-b"
+        ? { rows: [conflict("b/key")], next_before_version: null }
+        : { rows: [conflict("a/key")], next_before_version: null },
+    );
+    let answerA: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    const sent = vi.mocked(resolveConflict).mock.calls.length;
+    vi.mocked(resolveConflict)
+      .mockImplementationOnce(() => new Promise((r) => (answerA = r)))
+      .mockImplementationOnce(() => new Promise(() => {}));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/key", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Drop A/ }));
+    expect(screen.getByRole("button", { name: /Keep A/ })).toBeDisabled();
+    await act(async () => answerA({ resolved: true, affected_memory_ids: [] }));
+    // B's decision is still out: its buttons stay held, so it cannot be sent twice.
+    expect(screen.getByRole("button", { name: /Keep A/ })).toBeDisabled();
+    expect(vi.mocked(resolveConflict).mock.calls.length - sent).toBe(2);
+  });
+
   it("a Load more answered after a namespace switch adds nothing to the new namespace's queue", async () => {
     let older: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
     vi.mocked(listConflicts).mockImplementation(async (id, opts) => {
@@ -162,6 +187,8 @@ describe("ReviewQueue", () => {
     await act(async () => older({ rows: [conflict("a/older")], next_before_version: null }));
     const table = screen.getByRole("table", { name: "Conflicts" });
     expect(within(table).queryByRole("button", { name: "a/older" })).toBeNull();
+    // Nor does the old queue's focus hand-off move focus into the new one.
+    expect(within(table).getByRole("button", { name: "b/key" })).not.toHaveFocus();
   });
 
   it("opens Learnings from the probe without a second read, and reads afresh when it opens again", async () => {

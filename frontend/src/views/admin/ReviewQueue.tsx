@@ -186,8 +186,13 @@ function ConflictsPanel() {
     setBusy(false);
     setLoadingMore(false);
   }
-  // The namespace a decision or a Load more was made in, for an answer that lands after.
+  // The namespace a decision or a Load more was made in, for an answer that lands after:
+  // it changes nothing here, its busy flags included.
   const rowsFor = useRef(queueKey);
+  // The last page removes Load more, which held the focus: it goes to the first conflict
+  // that page added, else the last one in the queue.
+  const queueBox = useRef<HTMLDivElement>(null);
+  const focusAdded = useRef<number | null>(null);
 
   useAbortableEffect(
     (signal, live) => {
@@ -225,10 +230,6 @@ function ConflictsPanel() {
     if (rows.length === 0 && next !== null) setReload((n) => n + 1);
   }, [rows, next]);
 
-  // The last page removes Load more, which held the focus: it goes to the first conflict
-  // that page added, else the last one in the queue.
-  const queueBox = useRef<HTMLDivElement>(null);
-  const focusAdded = useRef<number | null>(null);
   useEffect(() => {
     const at = focusAdded.current;
     if (at === null || loadingMore) return;
@@ -260,7 +261,7 @@ function ConflictsPanel() {
     } catch (e) {
       toast(`Couldn't load more conflicts: ${humanizeError(e)}`, "error");
     } finally {
-      setLoadingMore(false);
+      if (rowsFor.current === key) setLoadingMore(false);
     }
   };
 
@@ -312,7 +313,7 @@ function ConflictsPanel() {
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {
-      setBusy(false);
+      if (rowsFor.current === key) setBusy(false);
     }
   };
 
