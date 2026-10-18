@@ -407,9 +407,9 @@ def _print_revocations(rows: list[dict[str, Any]], *, as_json: bool) -> int:
         f"{'jti / sub':<40} {'revoked_at':<20} {'expires_at':<20} "
         f"{'issued_before':<20} revoked_by  reason"
     )
+    marks = {"cutoff": "cutoff→", "scim": "scim→"}
     for r in rows:
         before = r.get("issued_before")
-        marks = {"cutoff": "cutoff→", "scim": "scim→"}
         key = marks.get(str(r.get("kind")), "") + str(r.get("jti", ""))
         print(
             f"{key:<40} {str(r.get('revoked_at', ''))[:19]:<20} "

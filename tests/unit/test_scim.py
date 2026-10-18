@@ -143,10 +143,16 @@ class _Table:
     """loom.scim_users, loom.namespaces as `_subjects` reads it, and
     loom.revoked_tokens as the revocation module reads and writes it."""
 
-    def __init__(self, accounts: dict[str, list[str]], elsewhere: dict[str, list[str]]) -> None:
+    def __init__(
+        self,
+        accounts: dict[str, list[str]],
+        elsewhere: dict[str, list[str]],
+        reached_in: dict[str, list[str]],
+    ) -> None:
         self.rows: list[dict[str, Any]] = []
         self.accounts = accounts
         self.elsewhere = elsewhere
+        self.reached_in = reached_in
         self.fail_insert = False  # any other insert fails
         self.fail_revoke = False  # an insert into loom.revoked_tokens fails
         self.revocations: list[dict[str, Any]] = []  # loom.revoked_tokens, every row written
@@ -232,10 +238,16 @@ class _Table:
         if "loom.revoked_tokens" in sql:
             return [r for k, r in self.revoked().items() if k in params["keys"]]
         if "loom.namespace_grants" in sql:
-            return [{"org": o} for o in self.elsewhere.get(params["s"], [])]
+            return [
+                {"org": o} for o in self.elsewhere.get(params["s"], []) if o not in params["orgs"]
+            ]
         if "loom.namespaces" in sql:
             subjects = self.accounts.get(params["email"], [])
-            return [{"owner_email": s, "org": "acme"} for s in subjects]
+            return [
+                {"owner_email": s, "org": o}
+                for s in subjects
+                for o in self.reached_in.get(s, ["acme"])
+            ]
         return self.live()[params["skip"] : params["skip"] + params["count"]]
 
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
@@ -263,7 +275,8 @@ class _World:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.accounts: dict[str, list[str]] = {}  # email -> subjects it reaches
         self.elsewhere: dict[str, list[str]] = {}  # subject -> other orgs it is in
-        self.table = _Table(self.accounts, self.elsewhere)
+        self.reached_in: dict[str, list[str]] = {}  # subject -> orgs its email reaches it in
+        self.table = _Table(self.accounts, self.elsewhere, self.reached_in)
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.revoked_at_audit: list[dict[str, Any]] = []  # SCIM's revocations as each audit lands
         self.claim_limit: int | None = None  # names held at once before a claim runs out
@@ -365,13 +378,13 @@ async def test_deactivating_revokes_the_person_once_however_often_it_is_sent(wor
     uid = await _create("Lee@Example.com")
     assert uid == scim.user_id("lee@example.com") and world.ours == {}
 
-    row = await scim.set_active(uid, False)
+    row = await scim.update(uid, active=False)
     assert row is not None and not row["active"] and row["subjects"] == ["lee"]
     assert world.ours == {"lee": None} and world.operators == {}
     assert world.events == ["auth.scim_deactivated"]
     written, revoked = len(world.table.rows), len(world.table.revocations)
 
-    await scim.set_active(uid, False)  # the provider's retry
+    await scim.update(uid, active=False)  # the provider's retry
     assert world.events == ["auth.scim_deactivated"] and len(world.table.rows) == written
     assert len(world.table.revocations) == revoked
     assert await _DEACTIVATED("lee@example.com")
@@ -382,9 +395,9 @@ async def test_an_email_reaching_several_accounts_revokes_them_all(world) -> Non
     # refuses to pick, and deactivation must not either.
     world.person("lee@example.com", "lee", "lee-other-org")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     assert world.ours == {"lee": None, "lee-other-org": None}
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=True)
     assert sorted(world.ours) == ["lee", "lee-other-org"] and None not in world.ours.values()
 
 
@@ -392,7 +405,7 @@ async def test_a_subject_someone_else_has_elsewhere_is_revoked_and_flagged(world
     # JIT and self-signup name subjects, so another org may have an `alice` too.
     world.person("alice@example.com", "alice")
     world.elsewhere["alice"] = ["other-org"]
-    await scim.set_active(await _create("alice@example.com"), False)
+    await scim.update(await _create("alice@example.com"), active=False)
     assert world.ours == {"alice": None}  # fail closed
     [(collateral, revoked)] = [
         (kw, ours)
@@ -402,6 +415,15 @@ async def test_a_subject_someone_else_has_elsewhere_is_revoked_and_flagged(world
     assert collateral["subject"]["orgs"] == ["other-org"]
     assert "alice" not in str(collateral["subject"]["subject"])
     assert revoked == {"alice": None}  # audited once the revocation landed
+
+
+async def test_a_subject_the_email_reaches_in_two_orgs_is_not_flagged(world) -> None:
+    world.person("alice@example.com", "alice")
+    world.reached_in["alice"] = ["acme", "beta"]
+    world.elsewhere["alice"] = ["acme", "beta"]  # her grants there are her own
+    await scim.update(await _create("alice@example.com"), active=False)
+    assert world.ours == {"alice": None}
+    assert "auth.scim_collateral" not in [e for e, _ in world.audits]
 
 
 def _now() -> datetime:
@@ -432,7 +454,7 @@ async def _deactivated_then_narrowed(world: _World) -> str:
     world.person("lee@example.com", "lee")
     world.table.tokens.append(_saved_token("laptop", "lee"))
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     cutoff = await _given_back("lee")
     older = _made_since(world, "older", "lee", cutoff - timedelta(seconds=1))  # dead
     after = _made_since(world, "after", "lee", cutoff)  # issued at the cutoff: live
@@ -445,7 +467,7 @@ async def test_a_repeated_deactivation_leaves_an_operators_narrowing_alone(world
     uid = await _deactivated_then_narrowed(world)
     world.person("lee@example.com", "lee", "lee-new")
     cutoff = world.ours["lee"]
-    await scim.set_active(uid, False)  # the provider sends it again
+    await scim.update(uid, active=False)  # the provider sends it again
     assert world.ours == {"lee": cutoff, "lee-new": None}  # only the account found since
     # The token list says what the token check does: the tokens made since live.
     assert [r["name"] for r in world.table.live_tokens()] == ["after", "after-child"]
@@ -458,11 +480,11 @@ async def test_a_token_listed_revoked_before_an_operator_lets_it_live_kills_no_c
     made = _now()
     parent = _made_since(world, "parent-bot", "lee", made)
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)  # parent-bot is listed revoked
+    await scim.update(uid, active=False)  # parent-bot is listed revoked
     # The operator restores what lee made since a cutoff before parent-bot.
     await _given_back("lee", made - timedelta(seconds=10))
     _made_since(world, "child-bot", parent, made + timedelta(seconds=3))
-    await scim.set_active(uid, False)  # the provider sends it again
+    await scim.update(uid, active=False)  # the provider sends it again
     assert [r["name"] for r in world.table.live_tokens()] == ["child-bot"]
 
 
@@ -476,7 +498,7 @@ async def test_a_delete_after_an_operators_narrowing_leaves_the_tokens_made_sinc
 
 async def test_the_audit_row_names_no_subject_in_clear(world) -> None:
     world.person("lee@example.com", "lee")
-    await scim.set_active(await _create("lee@example.com"), False)
+    await scim.update(await _create("lee@example.com"), active=False)
     [(_, row)] = world.audits
     assert "lee" not in str(row) and len(row["subject"]["subjects"]) == 1
 
@@ -484,7 +506,7 @@ async def test_the_audit_row_names_no_subject_in_clear(world) -> None:
 async def test_every_row_written_carries_every_column(world) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     await scim.delete(uid)
     await scim.create("lee@example.com", "lee@example.com", active=True)  # a reactivation
     assert [sorted(r) for r in world.table.rows] == [sorted(column_names("scim_users"))] * 4
@@ -497,19 +519,19 @@ async def test_a_retry_finishes_a_deactivation_whose_revoke_failed(world) -> Non
     uid = await _create("lee@example.com")
     world.table.fail_revoke = True
     with pytest.raises(RuntimeError):
-        await scim.set_active(uid, False)
+        await scim.update(uid, active=False)
     assert not await _DEACTIVATED("lee@example.com")  # nothing recorded short of the revoke
     world.table.fail_revoke = False
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     assert world.ours == {"lee": None} and await _DEACTIVATED("lee@example.com")
 
 
 async def test_reactivating_lifts_the_refusal_and_keeps_old_tokens_revoked(world) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     before = time.time()
-    row = await scim.set_active(uid, True)
+    row = await scim.update(uid, active=True)
     after = time.time()
     assert row is not None and row["active"]
     assert not await _DEACTIVATED("lee@example.com")
@@ -523,7 +545,7 @@ async def test_reactivating_lifts_the_refusal_and_keeps_old_tokens_revoked(world
     assert before <= cutoff.timestamp() + revocation.CLOCK_SKEW_S - wait <= after
 
     written = len(world.table.revocations)
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=True)
     assert len(world.table.revocations) == written and len(world.events) == 2
 
 
@@ -554,7 +576,7 @@ async def test_a_deactivated_persons_tokens_read_revoked_and_free_their_names(wo
     world.person("lee@example.com", "lee")
     world.table.tokens += [_saved_token("laptop", "lee"), _saved_token("ci", "admin")]
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     laptop = world.table.token("acme", "laptop")
     assert laptop is not None and sorted(laptop) == sorted(column_names("service_accounts"))
     assert laptop["revoked_at"] is not None and laptop["revoked_by"] == "scim"
@@ -563,8 +585,8 @@ async def test_a_deactivated_persons_tokens_read_revoked_and_free_their_names(wo
     assert world.table.live_tokens() == [_saved_token("ci", "admin")]  # the admin's own
 
     written = len(world.table.tokens)
-    await scim.set_active(uid, False)  # the provider's retry
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=False)  # the provider's retry
+    await scim.update(uid, active=True)
     assert len(world.table.tokens) == written  # reactivating revives no token
     assert world.table.live_tokens() == [_saved_token("ci", "admin")]
     await me_service_accounts.refuse_taken_name("acme", "laptop", "lee")  # the name is free
@@ -576,9 +598,9 @@ async def test_a_failed_token_revocation_fails_the_deactivation(world) -> None:
     uid = await _create("lee@example.com")
     world.table.fail_insert = True
     with pytest.raises(RuntimeError):
-        await scim.set_active(uid, False)
+        await scim.update(uid, active=False)
     world.table.fail_insert = False
-    await scim.set_active(uid, False)  # the provider retries
+    await scim.update(uid, active=False)  # the provider retries
     assert world.table.live_tokens() == [] and await _DEACTIVATED("lee@example.com")
 
 
@@ -589,7 +611,7 @@ async def test_tokens_made_by_the_persons_tokens_read_revoked_too(world) -> None
     grandchild = _saved_token("grandchild-bot", child["sa_subject"])
     world.table.tokens += [parent, child, grandchild, _saved_token("ci", "admin")]
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     for name in ("parent-bot", "child-bot", "grandchild-bot"):
         assert (world.table.token("acme", name) or {})["revoked_by"] == "scim"
     assert world.table.live_tokens() == [_saved_token("ci", "admin")]
@@ -605,7 +627,7 @@ async def test_a_token_the_person_revoked_still_takes_its_children(world) -> Non
     }
     world.table.tokens += [parent, _saved_token("child-bot", parent["sa_subject"])]
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     assert world.table.live_tokens() == []
 
 
@@ -614,7 +636,7 @@ async def test_many_tokens_are_revoked_in_one_request_a_few_names_held_at_once(w
     world.table.tokens += [_saved_token(f"bot-{i:04}", "lee") for i in range(2000)]
     world.claim_limit = service_accounts._CLAIMS_AT_ONCE  # each task holds one name
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     assert world.table.live_tokens() == [] and world.table.token_inserts == 2000
 
 
@@ -626,7 +648,7 @@ async def test_two_passes_over_the_same_tokens_both_finish(world) -> None:
     world.table.tokens += [_saved_token(f"bot-{i:04}", "lee") for i in range(300)]
     world.table.shuffle = random.Random(7)
     one, two = await _create("lee@example.com"), await _create("lee.work@example.com")
-    await asyncio.gather(scim.set_active(one, False), scim.set_active(two, False))
+    await asyncio.gather(scim.update(one, active=False), scim.update(two, active=False))
     assert world.table.live_tokens() == []
     assert world.table.token_inserts == 300  # each name revoked once, the other pass re-read it
 
@@ -639,13 +661,13 @@ async def test_a_failed_insert_keeps_the_ones_before_it_and_the_retry_does_the_r
     uid = await _create("lee@example.com")
     world.table.fail_token_insert = "bot-0150"
     with pytest.raises(RuntimeError):
-        await scim.set_active(uid, False)
+        await scim.update(uid, active=False)
     landed = 300 - len(world.table.live_tokens())
     assert landed >= 100 and world.table.token_inserts == landed  # siblings were cancelled
     assert world.table.claimed == set()
     world.table.fail_token_insert = None
     written = len(world.table.tokens)
-    await scim.set_active(uid, False)  # the provider retries
+    await scim.update(uid, active=False)  # the provider retries
     assert world.table.live_tokens() == []
     assert len(world.table.tokens) - written == 300 - landed  # only what the first try left
 
@@ -667,9 +689,9 @@ async def test_a_late_deactivation_pass_leaves_a_token_made_after_reactivating(
             yield
 
     monkeypatch.setattr(grant_claims, "service_account_change", paused)
-    deactivating = asyncio.create_task(scim.set_active(uid, False))
+    deactivating = asyncio.create_task(scim.update(uid, active=False))
     await reached.wait()  # the pass has listed `laptop` and waits for its name
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=True)
     # The old `laptop` reads dead, so its name is free: the person makes a new
     # one, issued at the cutoff, so live, however the clocks stand.
     made = world.ours["lee"]
@@ -686,7 +708,7 @@ async def test_an_expired_token_is_left_as_it_is(world) -> None:
     expired = _saved_token("old", "lee", expires_at=datetime(2026, 1, 2))
     world.table.tokens.append(expired)
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     assert world.table.tokens == [expired]
 
 
@@ -697,11 +719,11 @@ async def test_a_retry_of_an_inactive_user_revokes_what_a_failed_try_left(world)
     uid = await _create("lee@example.com")
     world.table.fail_token_insert = "child-bot"
     with pytest.raises(RuntimeError):
-        await scim.set_active(uid, False)
+        await scim.update(uid, active=False)
     assert await _DEACTIVATED("lee@example.com")  # the row landed; the child did not
     assert [r["name"] for r in world.table.live_tokens()] == ["child-bot"]
     world.table.fail_token_insert = None
-    await scim.set_active(uid, False)  # the provider retries
+    await scim.update(uid, active=False)  # the provider retries
     assert world.table.live_tokens() == []
 
 
@@ -710,7 +732,7 @@ async def test_a_retried_reactivation_still_waits_out_the_first_ones_cutoff(
 ) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     refresh = revocation.refresh
 
     async def away() -> None:
@@ -718,7 +740,7 @@ async def test_a_retried_reactivation_still_waits_out_the_first_ones_cutoff(
 
     monkeypatch.setattr(revocation, "refresh", away)
     with pytest.raises(RuntimeError):  # written and narrowed, then the re-read failed
-        await scim.set_active(uid, True)
+        await scim.update(uid, active=True)
     monkeypatch.setattr(revocation, "refresh", refresh)
     waited: list[datetime] = []
 
@@ -729,7 +751,7 @@ async def test_a_retried_reactivation_still_waits_out_the_first_ones_cutoff(
     cutoff = world.ours["lee"]
     assert cutoff is not None
     written = len(world.table.revocations)
-    row = await scim.set_active(uid, True)  # the provider's retry narrows nothing
+    row = await scim.update(uid, active=True)  # the provider's retry narrows nothing
     assert row is not None and row["active"] and len(world.table.revocations) == written
     assert waited == [cutoff.replace(tzinfo=UTC)]
 
@@ -740,9 +762,9 @@ async def test_a_reactivation_retried_after_a_timeout_waits_out_the_rest(
     # The provider gave up during the first one's wait; the row is already active.
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
-    await scim.set_active(uid, True)
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=False)
+    await scim.update(uid, active=True)
+    await scim.update(uid, active=True)
     first, retry = world.waits
     assert 0 < retry <= first
 
@@ -751,7 +773,7 @@ async def test_a_reactivation_retried_after_a_timeout_waits_out_the_rest(
 
     later = time.time() + 60
     monkeypatch.setattr(revocation, "time", SimpleNamespace(time=lambda: later))
-    await scim.set_active(uid, True)  # a late retry answers at once
+    await scim.update(uid, active=True)  # a late retry answers at once
     assert world.waits[-1] == 0
 
 
@@ -762,7 +784,7 @@ async def test_a_retried_re_create_waits_out_the_cutoff_then_answers_409(world) 
         await _create("lee@example.com")
     assert world.waits == []
 
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     await scim.delete(uid)
     await _create("lee@example.com")  # created again: reactivated, and waits
     with pytest.raises(scim.Exists):  # the provider timed out and sends it again
@@ -787,10 +809,10 @@ async def test_a_reactivation_waits_once_its_leases_are_let_go(world, monkeypatc
 
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     monkeypatch.setattr(scim, "_held", held)
     monkeypatch.setattr(revocation, "wait_out", wait)
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=True)
     assert events[-2:] == ["let go scim-user", "waited"] and events.count("waited") == 1
 
     await scim.delete(uid)
@@ -807,8 +829,8 @@ async def test_an_operator_revocation_survives_deactivate_and_reactivate(world) 
     world.person("lee@example.com", "lee")
     await _operator("lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=False)
+    await scim.update(uid, active=True)
     assert world.operators == {"lee": None} and world.ours["lee"] is not None
     assert await world.keeps_out("lee", issued_at=_issued(60))
 
@@ -819,8 +841,8 @@ async def test_a_reactivation_never_lifts_an_operators_cutoff_ahead(world) -> No
     ahead = _now() + timedelta(days=14)
     await _operator("lee", issued_before=ahead)
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=False)
+    await scim.update(uid, active=True)
     assert world.operators == {"lee": ahead}
     assert await world.keeps_out("lee", issued_at=_issued(60))
 
@@ -843,7 +865,7 @@ async def test_an_operator_time_box_during_a_deactivation_lets_no_one_in_early(
     uid = await _create("lee@example.com")
     lapsed = datetime.now(UTC) - timedelta(seconds=1)  # the time-box, once it has run out
     _operator_writes_meanwhile(monkeypatch, expires_at=lapsed)
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     assert world.operators == {} and world.ours == {"lee": None}
     assert await world.keeps_out("lee", issued_at=_issued(60))
 
@@ -851,10 +873,10 @@ async def test_an_operator_time_box_during_a_deactivation_lets_no_one_in_early(
 async def test_an_operator_time_box_after_a_deactivation_lets_no_one_in_early(world) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     await _operator("lee", expires_at=datetime.now(UTC) + timedelta(days=14))
     await _operator("lee", expires_at=datetime.now(UTC) - timedelta(seconds=1))  # run out
-    await scim.set_active(uid, False)  # the provider sends it again
+    await scim.update(uid, active=False)  # the provider sends it again
     assert world.ours == {"lee": None}
     assert await world.keeps_out("lee", issued_at=_issued(60))
 
@@ -866,7 +888,7 @@ async def test_an_operator_lift_during_a_deactivation_lets_no_one_in(world, monk
     await _operator("lee")
     uid = await _create("lee@example.com")
     _operator_writes_meanwhile(monkeypatch, issued_before=_now())
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     assert world.ours == {"lee": None} and world.operators["lee"] is not None
     assert await world.keeps_out("lee", issued_at=_issued(60))
     await _operator("lee", issued_before=_now())  # and after it
@@ -877,9 +899,9 @@ async def test_scim_never_writes_the_subjects_own_row(world) -> None:
     world.person("lee@example.com", "lee", "lee-ops")
     await _operator("lee-ops", issued_before=_now() + timedelta(days=2))
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
-    await scim.set_active(uid, False)
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=False)
+    await scim.update(uid, active=False)
+    await scim.update(uid, active=True)
     await scim.delete(uid)
     written = [r["jti"] for r in world.table.revocations if r["revoked_by"] == "scim"]
     assert written and all(k.startswith(revocation.SCIM_PREFIX) for k in written)
@@ -891,23 +913,23 @@ async def test_scim_never_writes_the_subjects_own_row(world) -> None:
 async def test_a_reactivation_whose_row_write_failed_lifts_nothing(world) -> None:
     world.person("lee@example.com", "lee", "lee-ops")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     world.table.fail_insert = True
     with pytest.raises(RuntimeError):  # the row goes first, so nothing was narrowed
-        await scim.set_active(uid, True)
+        await scim.update(uid, active=True)
     world.table.fail_insert = False
     assert world.ours == {"lee": None, "lee-ops": None}
     cutoff = await _given_back("lee-ops")  # an operator gave this one back meanwhile
-    await scim.set_active(uid, False)  # the row still says inactive
+    await scim.update(uid, active=False)  # the row still says inactive
     assert world.ours == {"lee": None, "lee-ops": cutoff}
 
 
 async def test_a_reactivation_leaves_a_subject_given_back_as_it_is(world) -> None:
     world.person("lee@example.com", "lee", "alice")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     cutoff = await _given_back("alice", _now() - timedelta(hours=1))
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=True)
     assert world.ours["alice"] == cutoff and world.ours["lee"] is not None
 
 
@@ -916,10 +938,10 @@ async def test_an_operators_cutoff_ahead_is_never_waited_out(world) -> None:
     # retried re-create answer at once, and the operator's cutoff stays.
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     ahead = await _given_back("lee", _now() + timedelta(seconds=40))
-    await scim.set_active(uid, True)
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=True)
+    await scim.update(uid, active=True)
     with pytest.raises(scim.Exists):
         await _create("lee@example.com")
     assert world.waits == [] and world.ours == {"lee": ahead}
@@ -930,10 +952,10 @@ async def test_a_deactivation_whose_row_write_failed_is_lifted_by_active_true(wo
     uid = await _create("lee@example.com")
     world.table.fail_insert = True
     with pytest.raises(RuntimeError):  # the revocation landed, the row did not
-        await scim.set_active(uid, False)
+        await scim.update(uid, active=False)
     world.table.fail_insert = False
     assert world.ours == {"lee": None} and not await _DEACTIVATED("lee@example.com")
-    row = await scim.set_active(uid, True)  # the provider gives up and reactivates
+    row = await scim.update(uid, active=True)  # the provider gives up and reactivates
     assert row is not None and row["active"] and world.ours["lee"] is not None
     assert not await world.keeps_out("lee", issued_at=_issued(60))
 
@@ -944,7 +966,7 @@ async def test_an_email_with_no_account_is_refused_by_email(world) -> None:
     assert (await scim.get(uid) or {})["subjects"] == []
     # An account made since (by an operator) is revoked when the retry finds it.
     world.person("new@example.com", "u-new")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     assert world.ours == {"u-new": None}
 
 
@@ -962,7 +984,7 @@ async def test_a_deleted_user_is_gone_but_stays_deactivated(world) -> None:
     assert await scim.delete(uid)
     assert world.events == ["auth.scim_deactivated", "auth.scim_deleted"]
     assert await scim.get(uid) is None and not await scim.delete(uid)
-    assert await scim.set_active(uid, True) is None
+    assert await scim.update(uid, active=True) is None
     assert await _DEACTIVATED("lee@example.com")
     # Created again by the provider: assigned again, so active again.
     again = await scim.create("lee@example.com", "lee@example.com", active=True)
@@ -1245,11 +1267,11 @@ async def test_reactivating_one_user_keeps_a_subject_another_inactive_user_reach
     world.person("a@example.com", "alice")
     world.person("b@example.com", "alice")  # two addresses, one subject
     a, b = await _create("a@example.com"), await _create("b@example.com")
-    await scim.set_active(a, False)
-    await scim.set_active(b, False)  # alice is already revoked, and B lists her
-    await scim.set_active(a, True)
+    await scim.update(a, active=False)
+    await scim.update(b, active=False)  # alice is already revoked, and B lists her
+    await scim.update(a, active=True)
     assert world.ours == {"alice": None}
-    await scim.set_active(b, True)  # the last one holding her lets her go
+    await scim.update(b, active=True)  # the last one holding her lets her go
     assert list(world.ours) == ["alice"] and world.ours["alice"] is not None
 
 
@@ -1259,8 +1281,8 @@ async def test_active_true_on_an_active_user_keeps_a_subject_another_inactive_us
     world.person("a@example.com", "alice", "a-own")
     world.person("b@example.com", "alice")
     a, b = await _create("a@example.com"), await _create("b@example.com")
-    await scim.set_active(b, False)
-    await scim.set_active(a, True)  # a provider's PATCH of A, still active
+    await scim.update(b, active=False)
+    await scim.update(a, active=True)  # a provider's PATCH of A, still active
     await scim.update(a, active=True, user_name="a@example.com")  # and its PUT
     with pytest.raises(scim.Exists):
         await _create("a@example.com")  # and a retried create
@@ -1284,7 +1306,7 @@ async def test_a_retried_create_lifts_what_a_failed_deactivation_revoked(world) 
     uid = await _create("lee@example.com")
     world.table.fail_insert = True
     with pytest.raises(RuntimeError):
-        await scim.set_active(uid, False)
+        await scim.update(uid, active=False)
     world.table.fail_insert = False
     with pytest.raises(scim.Exists):  # the provider re-sends the create it timed out on
         await _create("lee@example.com")
@@ -1310,12 +1332,12 @@ async def test_a_reactivation_lifts_an_account_a_failed_second_pass_revoked(
 
     monkeypatch.setattr(scim, "_write", sign_in_meanwhile)
     with pytest.raises(RuntimeError):
-        await scim.set_active(uid, False)
+        await scim.update(uid, active=False)
     monkeypatch.setattr(scim, "_write", write)
     world.table.fail_insert = False
     assert world.ours == {"lee": None, "u-lee": None}
     assert world.table.newest(uid)["subjects"] == ["lee"]  # type: ignore[index]
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=True)
     assert not await world.keeps_out("u-lee", issued_at=_issued(60))
 
 
@@ -1449,14 +1471,14 @@ async def test_leases_go_user_then_username_then_each_subject_sorted(world) -> N
     # An active user staying active touches no subject, so takes no subject lease.
     assert world.leases == [f"scim-user:{uid}", f"scim-username:{scim.user_id('lee@example.com')}"]
     world.leases.clear()
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     by_subject = [scim._subject_lease(s) for s in ("alice", "lee")]  # sorted by subject
     assert world.leases == [f"scim-user:{uid}", *by_subject]
     world.leases.clear()
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=True)
     assert world.leases == [f"scim-user:{uid}", *by_subject]
     world.leases.clear()
-    await scim.set_active(uid, True)  # a provider's push: nothing left to lift
+    await scim.update(uid, active=True)  # a provider's push: nothing left to lift
     assert world.leases == [f"scim-user:{uid}"]
 
 
@@ -1503,15 +1525,15 @@ async def test_a_shared_subject_left_revoked_is_logged_and_nothing_waits(world, 
     world.person("a@example.com", "alice")
     world.person("b@example.com", "alice")
     a, b = await _create("a@example.com"), await _create("b@example.com")
-    await scim.set_active(a, False)
-    await scim.set_active(b, False)
+    await scim.update(a, active=False)
+    await scim.update(b, active=False)
     with caplog.at_level("WARNING", logger="server.auth.scim"):
-        await scim.set_active(a, True)
+        await scim.update(a, active=True)
     assert "another deactivated user still reaches" in caplog.text
     assert world.waits == []  # nothing narrowed, so no cutoff to wait out
     caplog.clear()
     with caplog.at_level("WARNING", logger="server.auth.scim"):
-        await scim.set_active(a, True)  # a provider's push of A, already active
+        await scim.update(a, active=True)  # a provider's push of A, already active
     assert "another deactivated user" not in caplog.text
 
 
@@ -1580,7 +1602,7 @@ async def test_an_account_made_while_deactivating_is_revoked_too(world, monkeypa
         await write(row)
 
     monkeypatch.setattr(scim, "_write", sign_in_meanwhile)
-    row = await scim.set_active(uid, False)
+    row = await scim.update(uid, active=False)
     assert row is not None and row["subjects"] == ["lee", "u-lee"]
     assert world.ours == {"lee": None, "u-lee": None}
     assert world.events == ["auth.scim_deactivated"]  # one transition, audited once
@@ -1642,11 +1664,11 @@ async def test_the_transition_is_audited_even_when_the_re_read_fails(world, monk
 
     monkeypatch.setattr(scim, "_subjects", second_read_fails)
     with pytest.raises(RuntimeError):
-        await scim.set_active(uid, False)
+        await scim.update(uid, active=False)
     assert world.events == [
         "auth.scim_deactivated"
     ]  # the retry finds it inactive: no second chance
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     assert world.events == ["auth.scim_deactivated"]
 
 
@@ -1664,11 +1686,11 @@ async def test_a_transition_whose_reply_was_lost_is_still_audited(world, active)
     world.table.insert = reply_lost  # type: ignore[method-assign]
     before = list(world.events)
     with pytest.raises(RuntimeError):
-        await scim.set_active(uid, active)
+        await scim.update(uid, active=active)
     world.table.insert = insert  # type: ignore[method-assign]
     event = "auth.scim_reactivated" if active else "auth.scim_deactivated"
     assert world.events == [*before, event]  # read back: it landed
-    await scim.set_active(uid, active)  # the retry finds the row already changed
+    await scim.update(uid, active=active)  # the retry finds the row already changed
     assert world.events == [*before, event] and world.table.newest(uid)["active"] == active  # type: ignore[index]
 
 
@@ -1686,10 +1708,10 @@ async def test_a_row_write_that_failed_audits_nothing_until_the_retry(world, act
     world.table.insert = fails  # type: ignore[method-assign]
     before = list(world.events)
     with pytest.raises(RuntimeError):
-        await scim.set_active(uid, active)
+        await scim.update(uid, active=active)
     assert world.events == before
     world.table.insert = insert  # type: ignore[method-assign]
-    await scim.set_active(uid, active)
+    await scim.update(uid, active=active)
     event = "auth.scim_reactivated" if active else "auth.scim_deactivated"
     assert world.events == [*before, event]
 
@@ -1697,7 +1719,7 @@ async def test_a_row_write_that_failed_audits_nothing_until_the_retry(world, act
 async def test_a_rename_of_an_inactive_user_revokes_the_tokens_of_an_account_since(world) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     world.person("lee@example.com", "lee", "lee2")  # an account linked since
     world.table.tokens.append(_saved_token("laptop2", "lee2"))
     await scim.update(uid, user_name="lee.renamed@example.com")
@@ -1708,10 +1730,10 @@ async def test_a_rename_of_an_inactive_user_revokes_the_tokens_of_an_account_sin
 async def test_a_push_without_active_finishes_a_failed_reactivation(world) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     world.table.fail_revoke = True
     with pytest.raises(RuntimeError):  # the row says active, the lift failed
-        await scim.set_active(uid, True)
+        await scim.update(uid, active=True)
     world.table.fail_revoke = False
     assert world.ours == {"lee": None}
     await scim.update(uid, user_name="lee.renamed@example.com")
@@ -1721,7 +1743,7 @@ async def test_a_push_without_active_finishes_a_failed_reactivation(world) -> No
 async def test_a_sign_in_once_the_row_says_active_lives_after_the_lift(world, monkeypatch) -> None:
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
-    await scim.set_active(uid, False)
+    await scim.update(uid, active=False)
     start = datetime.now(UTC)
 
     class Clock(datetime):
@@ -1741,7 +1763,7 @@ async def test_a_sign_in_once_the_row_says_active_lives_after_the_lift(world, mo
 
     monkeypatch.setattr(scim, "datetime", Clock)
     monkeypatch.setattr(scim, "_write", sign_in_meanwhile)
-    await scim.set_active(uid, True)
+    await scim.update(uid, active=True)
     assert not await world.keeps_out("lee", issued_at=signed_in[0])
     assert await world.keeps_out("lee", issued_at=int(start.timestamp()))  # a token from before
 
@@ -1976,7 +1998,7 @@ class _Run:
             except scim.Exists:
                 return before is not None and bool(before["active"]) == on
         elif kind == "patch":
-            return await scim.set_active(scim.user_id(email), on) is not None
+            return await scim.update(scim.user_id(email), active=on) is not None
         elif kind == "put":
             entry = {"type": "work", "primary": True}
             return (

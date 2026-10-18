@@ -179,11 +179,6 @@ async def create(
     return row
 
 
-async def set_active(uid: str, active: bool) -> dict[str, Any] | None:
-    """Deactivate or reactivate `uid`; None when there is no such user."""
-    return await update(uid, active=active)
-
-
 async def update(
     uid: str,
     *,
@@ -332,7 +327,7 @@ async def _set_active(
             subjects = sorted(set(found) - known)
         for subject in subjects:
             await revocation.scim_revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)
-            await _flag_collateral(new["id"], subject, set(found.values()))
+            await _flag_collateral(new["id"], subject, set().union(*found.values()))
         await _write_audited(row, new)
     # The snapshot re-read each revocation would make, once and past the leases.
     await revocation.refresh()
@@ -398,9 +393,10 @@ async def _audit_transition(row: dict[str, Any], new: dict[str, Any]) -> None:
         await _audit("auth.scim_deleted", new)
 
 
-async def _subjects(email: str) -> dict[str, str]:
+async def _subjects(email: str) -> dict[str, set[str]]:
     """Every subject an SSO sign-in with `email` could reach, in any org, and
-    its org. Unlike sign-in, several are no reason to stop: each is revoked."""
+    the orgs it is reached in. Unlike sign-in, several are no reason to stop:
+    each is revoked."""
     with own_write_reads():
         rows = await get_client().query_all(
             """
@@ -413,7 +409,10 @@ async def _subjects(email: str) -> dict[str, str]:
             """,
             params={"email": email},
         )
-    return {r["owner_email"]: r["org"] for r in rows}
+    found: dict[str, set[str]] = {}
+    for r in rows:
+        found.setdefault(r["owner_email"], set()).add(r["org"])
+    return found
 
 
 async def _flag_collateral(uid: str, subject: str, orgs: set[str]) -> None:

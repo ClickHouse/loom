@@ -468,7 +468,7 @@ async def _deactivating_anyway(uid: str, active: bool | None) -> AsyncIterator[N
         raise  # busy, or the store failing (wrapped or raw): a retry here would fail again
     except Exception:  # re-raised: a refused or failed request must still deactivate
         if active is False:
-            await scim.set_active(uid, False)
+            await scim.update(uid, active=False)
         raise
 
 

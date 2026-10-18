@@ -128,8 +128,8 @@ async def test_a_reactivation_racing_a_deactivation_of_a_shared_subject(seeded) 
         ub = await scim.create(b, b, active=True)
         await _sent(
             rng,
-            functools.partial(scim.set_active, ua["id"], True),
-            functools.partial(scim.set_active, ub["id"], False),
+            functools.partial(scim.update, ua["id"], active=True),
+            functools.partial(scim.update, ub["id"], active=False),
         )
         ra, rb = await scim.get(ua["id"]), await scim.get(ub["id"])
         assert ra is not None and ra["active"] and rb is not None and not rb["active"]
@@ -178,7 +178,7 @@ async def test_a_first_sign_in_racing_a_deactivation_keeps_no_session(seeded, mo
         user = await scim.create(email, email, active=True)
         sign_in = _SignIn(seeded, email, subject, rng)
         monkeypatch.setattr(scim, "_subjects", sign_in.accounts)
-        iat, _ = await asyncio.gather(sign_in(), scim.set_active(user["id"], False))
+        iat, _ = await asyncio.gather(sign_in(), scim.update(user["id"], active=False))
         row = await scim.get(user["id"])
         assert row is not None and not row["active"]
         if iat is not None:
