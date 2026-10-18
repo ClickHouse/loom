@@ -12,11 +12,11 @@ import server.memory.store as memory_repo
 from server.memory.api.models_bulk import MemoryBulkGetInput
 from server.memory.api.models_crud import MemoryListInput
 from server.memory.app import query
-from server.memory.store.rows import _hydrate
+from server.memory.store.rows import MemoryRow, _hydrate
 from server.observability import audit
 
 
-def _row(key: str, **over: Any) -> Any:
+def _row(key: str, **over: Any) -> MemoryRow:
     return _hydrate(
         {
             "memory_id": f"00000000-0000-0000-0000-00000000000{len(key)}",

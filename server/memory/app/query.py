@@ -33,6 +33,7 @@ from server.memory.app.provenance import writer_actor
 from server.memory.app.served_superseded import ServedFlags, shown_successors
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
+from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
@@ -77,12 +78,12 @@ def _list_verification(r: dict[str, Any]) -> str:
     )
 
 
-def _preview_for_list(row: Any, max_chars: int) -> tuple[Any, bool]:
+def _preview_for_list(row: MemoryRow, max_chars: int) -> tuple[Any, bool]:
     """`(value, value_truncated)` for one list row —
     the value cut to `max_chars`, and whether the row holds more than was
     sent (the stored preview was already cut at 2,048, or this cut did it). A 'high'
     row's value is readable by key only, through an audited read: none is sent."""
-    if getattr(row, "sensitivity", "") == "high":
+    if row.sensitivity == "high":
         return None, True
     raw = row.value
     value = _truncate_value_for_list(raw, max_chars)

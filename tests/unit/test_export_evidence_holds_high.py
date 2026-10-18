@@ -11,6 +11,7 @@ import pytest
 import server.memory.store as memory_repo
 from server.memory.api.models_evidence_transfer import MemoryExportEvidenceInput
 from server.memory.app import chunk_links, evidence_transfer
+from server.observability import audit
 
 _KEY = "sk-proj-" + "a" * 40
 
@@ -31,7 +32,7 @@ class _CH:
 
 
 @pytest.fixture
-def evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+def evidence(monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, Any]]]:
     async def _links(_ch: Any, **_k: Any) -> dict[tuple[str, int], list[str]]:
         return {("s", 0): ["k"], ("s", 1): ["vault"], ("s", 2): []}
 
@@ -42,6 +43,13 @@ def evidence(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(evidence_transfer, "get_client", lambda: _CH())
     monkeypatch.setattr(chunk_links, "chunk_memory_keys", _links)
     monkeypatch.setattr(memory_repo, "high_keys", _high_keys)
+    audits: list[list[dict[str, Any]]] = []
+
+    async def _emit_many(_event: str, **kw: Any) -> None:
+        audits.append(kw["subjects"])
+
+    monkeypatch.setattr(audit, "emit_many", _emit_many)
+    return audits
 
 
 def _input(kind: str, **over: Any) -> MemoryExportEvidenceInput:
@@ -57,6 +65,10 @@ async def test_chunks_behind_a_high_key_or_holding_a_credential_stay_home(eviden
         _input("chunks", include_high=True)
     )
     assert [c.chunk_index for c in every.chunks] == [0, 1, 2] and every.held_high == 0
+    # released on request, and audited as key reads of a high row are
+    assert evidence == [
+        [{"session_id": "s", "memory_keys": ["vault"]}, {"session_id": "s", "memory_keys": []}]
+    ]
 
 
 @pytest.mark.asyncio

@@ -51,7 +51,7 @@ async def test_body_is_read_under_the_hit_session_and_missing_bodies_are_flagged
     async def fake_get_many(identity, keys, **_):
         calls.append((identity.session_id, list(keys)))
         return [
-            SimpleNamespace(memory_key=k, value=store[(identity.session_id, k)])
+            SimpleNamespace(memory_key=k, value=store[(identity.session_id, k)], sensitivity="")
             for k in keys
             if (identity.session_id, k) in store
         ]

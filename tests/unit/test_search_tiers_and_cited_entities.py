@@ -30,7 +30,7 @@ async def test_unit_budget_buys_one_body_per_cited_entity_first(
     hits = [hit("eric_1", ["eric"]), hit("eric_2", ["eric"]), hit("zoey_1", ["zoey"])]
 
     async def fake_get_many(identity: Any, keys: list[str], *, scope: Any) -> list[Any]:
-        return [SimpleNamespace(memory_key=k, value="v" * 4000) for k in keys]
+        return [SimpleNamespace(memory_key=k, value="v" * 4000, sensitivity="") for k in keys]
 
     monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
     inp = SimpleNamespace(

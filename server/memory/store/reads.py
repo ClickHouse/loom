@@ -476,8 +476,9 @@ async def high_keys(
 ) -> set[str]:
     """The keys among `keys` with any version labelled 'high', live or deleted, under any
     memory id (a key deleted and written again gets a new one): the raw chunks and digests
-    behind such a row may hold its text. loom.memory_versions has no index on memory_key,
-    so this reads the namespace's memory_key and sensitivity columns."""
+    behind such a row may hold its text. memory_key follows the identity columns in
+    loom.memory_versions' sort key, so this reads the namespace's memory_key and
+    sensitivity columns."""
     if not keys:
         return set()
     ch = ch or _default_client()

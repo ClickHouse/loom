@@ -63,11 +63,11 @@ def row_output(
     )
 
 
-def duplicate_of_shown(row: Any, canonical_key: str | None) -> str:
+def duplicate_of_shown(row: MemoryRow, canonical_key: str | None) -> str:
     """The row's `duplicate_of` id as memory.get shows it. A read bounded to one
     user or session sees it only when the canonical resolved inside that scope:
     otherwise the id may name another user's row, and gone and foreign look alike."""
-    dup_of = str(getattr(row, "duplicate_of", "") or "")
+    dup_of = row.duplicate_of
     if dup_of and not canonical_key and request_narrowed():
         return ""
     return dup_of

@@ -516,16 +516,23 @@ are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
 A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
-leg returns it: the `anchor_first` and `recent_first` tiers, the bodies a search returns and
-`memory.related`'s excerpts and the existing memories an extraction prompt shows the LLM
-leave it out too. A key read of one, through `memory.get`,
-`memory.get_by_id`, `memory.bulk_get` or `memory.history` (one row per `high` version), writes
-a `memory.sensitive_read` audit row.
-`memory.list` names a `high` row and its `sensitivity` but sends no value
-(`value_truncated: true`), and its `contains` filter does not search that value.
-`memory.export_evidence` leaves out the raw chunks and digests linked to a key that was ever
-`high`, and those whose text reads as a credential, unless asked with `include_high`. Search
-demotes labelled rows on questions that did not ask for a contact detail
+leg returns it. The reads that could still serve its value leave it out: the `anchor_first`
+and `recent_first` tiers, `bodies: "unit"`, `memory.related`'s excerpts and the existing
+memories an extraction prompt shows the LLM. A key read of one, through `memory.get`,
+`memory.get_by_id`, `memory.bulk_get` or `memory.history` (one row per `high` version),
+writes a `memory.sensitive_read` audit row. `memory.list` names a `high` row and its
+`sensitivity` but sends no value or hash (`value_truncated: true`), and its `contains` filter
+does not search that value.
+
+Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
+has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked
+to a key with any `high` version, and those whose text the detector reads as a credential,
+unless asked with `include_high` (each one it then releases is audited). `bodies: "source"`
+leaves out a passage whose text reads as a credential. A caller-labelled `high` value that
+shares a passage with a plain row, and `memory.recall`'s raw turns, are served to readers of
+the namespace as they are.
+
+Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 
 The detector runs on `memory.set` and extraction. The `sensitivity_sweep` worker (on,

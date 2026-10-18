@@ -28,7 +28,9 @@ from server.memory.api.models_evidence_transfer import (
     MemoryImportEvidenceInput,
     MemoryImportEvidenceOutput,
 )
+from server.memory.app.provenance import writer_actor
 from server.memory.domain.okf_evidence import evidence_is_high, evidence_keys
+from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
 
@@ -217,14 +219,28 @@ async def handle_memory_export_evidence(
 
 async def _without_high(input: MemoryExportEvidenceInput, items: list[Any]) -> list[Any]:
     """`items` without those `okf_evidence.evidence_is_high` holds home, given which of the
-    keys they are linked to were ever 'high'."""
-    if input.include_high or not items:
+    keys they are linked to were ever 'high'. With `include_high` they all go, and each one
+    that would have been held is audited as a key read of a 'high' row is."""
+    if not items:
         return items
     import server.memory.store as memory_repo
 
     linked = [k for item in items for k in evidence_keys(item) if k]
     high = await memory_repo.high_keys(input.org, input.namespace, linked)
-    return [item for item in items if not evidence_is_high(item, high)]
+    if not input.include_high:
+        return [item for item in items if not evidence_is_high(item, high)]
+    await _audit.emit_many(
+        "memory.sensitive_read",
+        org=input.org,
+        namespace=input.namespace,
+        actor=writer_actor("-"),
+        subjects=[
+            {"session_id": item.session_id, "memory_keys": [k for k in evidence_keys(item) if k]}
+            for item in items
+            if evidence_is_high(item, high)
+        ],
+    )
+    return items
 
 
 def _importer_user(input: MemoryImportEvidenceInput) -> str | None:

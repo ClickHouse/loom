@@ -13,6 +13,7 @@ from server.identity.app.request_scope import request_scope
 from server.memory.app.search.request import _apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
+from server.memory.domain.sensitivity import HIGH, detect_sensitivity
 
 log = logging.getLogger(__package__)
 
@@ -301,7 +302,7 @@ async def _expand_unit_bodies(
         (ns, str(r.memory_key)): r.value
         for (ns, _), rows in zip(by_scope, reads, strict=True)
         for r in rows
-        if getattr(r, "sensitivity", "") != "high"
+        if r.sensitivity != "high"
     }
     returned = elided = tokens = 0
     spent = 0
@@ -443,7 +444,12 @@ async def _expand_source_bodies(
             """,
             params,
         )
-        passages = {str(r["eid"]): str(r["body"] or "") for r in rows}
+        # A passage has no sensitivity of its own; one that reads as a credential is not served.
+        passages = {
+            str(r["eid"]): str(r["body"] or "")
+            for r in rows
+            if detect_sensitivity(str(r["body"] or "")) != HIGH
+        }
         by_key: dict[tuple[str, str], str] = {}
         spans: dict[tuple[str, str], tuple[int, int]] = {}
         for k, ls in linked.items():

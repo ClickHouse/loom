@@ -1191,7 +1191,7 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
     seen: dict[str, object] = {}
 
     async def fake_vector_search(q):
-        return [_Hit("user_journal"), _Hit("vault")]
+        return [_Hit("user_journal")]
 
     async def fake_get_many(identity, keys, **kw):
         seen["identity"] = identity
@@ -1199,9 +1199,7 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
         return [
             SimpleNamespace(
                 memory_key="user_journal", value="User keeps a journal.", sensitivity=""
-            ),
-            # another session's row of a hit key, labelled high: not for the extraction prompt
-            SimpleNamespace(memory_key="vault", value="the door code is 4412", sensitivity="high"),
+            )
         ]
 
     monkeypatch.setattr("server.embedding.get_embedder", lambda: _Emb())
@@ -1214,3 +1212,41 @@ async def test_existing_memories_resolve_across_sessions(monkeypatch: pytest.Mon
     assert [r["memory_key"] for r in rows] == ["user_journal"]
     assert seen["identity"].session_id == "*"
     assert seen["identity"].user_id == "u" and seen["identity"].agent == "a"
+
+
+@pytest.mark.asyncio
+async def test_the_extraction_prompt_never_shows_a_high_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cross-session lookup can answer another session's row of a hit key; a 'high' one
+    stays out of the existing memories the extraction prompt sends the LLM."""
+    from types import SimpleNamespace
+
+    import server.memory.app.handlers as hm
+    from server.memory import store as memory_repo
+
+    class _Emb:
+        model_name = "fake"
+
+        async def embed(self, text: str) -> list[float]:
+            return [0.0]
+
+    async def fake_vector_search(q):
+        return [SimpleNamespace(memory_key="user_journal"), SimpleNamespace(memory_key="vault")]
+
+    async def fake_get_many(identity, keys, **kw):
+        return [
+            SimpleNamespace(
+                memory_key="user_journal", value="User keeps a journal.", sensitivity=""
+            ),
+            SimpleNamespace(memory_key="vault", value="the door code is 4412", sensitivity="high"),
+        ]
+
+    monkeypatch.setattr("server.embedding.get_embedder", lambda: _Emb())
+    monkeypatch.setattr("server.memory.app.retrieval.vector_search", fake_vector_search)
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", fake_get_many)
+    ident = memory_repo.Identity(org="o", namespace="n", agent="a", user_id="u", session_id="s")
+    rows = await hm._fetch_relevant_existing_memories(
+        ident, [{"role": "user", "content": "what is the door code"}], limit=10
+    )
+    assert [r["memory_key"] for r in rows] == ["user_journal"]
