@@ -1997,6 +1997,19 @@ async def test_a_sign_in_once_the_row_says_active_lives_after_the_lift(world, mo
     assert await world.keeps_out("lee", issued_at=int(start.timestamp()))  # a token from before
 
 
+def test_a_write_racing_a_delete_answers_404(client: TestClient, world, monkeypatch) -> None:
+    uid = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+
+    async def deleted_meanwhile(*a: Any, **k: Any) -> None:
+        return None  # what update answers once a DELETE won the user's lease
+
+    monkeypatch.setattr(scim, "update", deleted_meanwhile)
+    on = {"Operations": [{"op": "replace", "path": "active", "value": True}]}
+    assert client.patch(f"/scim/v2/Users/{uid}", json=on).status_code == 404
+    put = client.put(f"/scim/v2/Users/{uid}", json={"userName": "lee@example.com", "active": True})
+    assert put.status_code == 404
+
+
 def test_groups_is_an_empty_list(client: TestClient) -> None:
     # What Okta's and Entra's connection tests read when group push is on.
     r = client.get(

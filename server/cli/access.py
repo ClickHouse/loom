@@ -299,8 +299,8 @@ async def _scim_give_back(
             )
             if issued_before < floor:
                 print(
-                    f"  ✗ --issued-before must be at or after {floor.isoformat()}Z, "
-                    "when SCIM revoked it: its tokens from before stay dead",
+                    f"  ✗ --issued-before must be at or after {floor.isoformat()}Z: "
+                    "SCIM's revocation keeps the tokens issued before that dead",
                     file=sys.stderr,
                 )
                 return None, 2

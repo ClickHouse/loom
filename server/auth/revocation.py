@@ -432,13 +432,7 @@ async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
     """`is_revoked` for any of `subjects`, read from ClickHouse in one query:
     a token minting path cannot wait for this process's snapshot to see a
     `revoke-token`."""
-    if not subjects:
-        return False
-    for r in await _read_revocations(_keys_of(subjects)):
-        cutoff = _cutoff_seconds(r.get("issued_before"))
-        if cutoff is None or issued_at < cutoff:
-            return True
-    return False
+    return any(c is None or issued_at < c for c in (await cutoffs(subjects)).values())
 
 
 async def cutoffs(subjects: list[str]) -> dict[str, int | None]:

@@ -479,7 +479,10 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
     async with _deactivating_anyway(uid, active):
         name, email, entry = user_name_and_email(body)
         _refuse_another_email(row, email)
-        row = await _update(uid, active, name, entry) or row
+        new = await _update(uid, active, name, entry)
+        if new is None:  # deleted since it was read
+            raise _not_found()
+        row = new
     return _answer(_resource(request, row))
 
 
@@ -498,7 +501,10 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
             _refuse_another_email(row, name)  # the email is the userName
         # Every PATCH converges, one of only dropped attributes too: an active
         # user lets go what no deactivated email reaches any more.
-        row = await _update(uid, active, name, entry) or row
+        new = await _update(uid, active, name, entry)
+        if new is None:  # deleted since it was read
+            raise _not_found()
+        row = new
     return _answer(_resource(request, row))
 
 

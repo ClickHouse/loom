@@ -432,7 +432,9 @@ def test_a_scim_give_back_starts_the_second_after_the_revocation(
         return cli.main(["revoke-token", "--subject", "alice", "--issued-before", stamp, "--scim"])
 
     assert give_back(datetime(2000, 1, 1)) == 2
-    assert give_back(at) == 2 and "when SCIM revoked it" in capsys.readouterr().err
+    assert (
+        give_back(at) == 2 and "keeps the tokens issued before that dead" in capsys.readouterr().err
+    )
     assert give_back(at + timedelta(seconds=1)) == 0
     # Narrowed now, the floor is that cutoff: a later one may follow, an earlier one not.
     assert give_back(at) == 2
