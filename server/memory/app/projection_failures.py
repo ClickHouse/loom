@@ -279,11 +279,11 @@ async def mark_projection_failures_resolved(
     return len(ids)
 
 
-async def mark_projection_failure_abandoned(
-    *, org: str, failure_id: str, reason: str, ch: Any | None = None
+async def mark_projection_failures_abandoned(
+    *, org: str, failure_ids: list[str], reason: str, ch: Any | None = None
 ) -> None:
-    """Take a failure no retry can repair out of the active queue as `abandoned`,
-    its `reason` added to what the write recorded, for an operator to look at."""
+    """Take failures no retry can repair out of the active queue as `abandoned`,
+    their `reason` added to what the write recorded, for an operator to look at."""
     ch = ch or get_client()
     await ch.execute(
         """
@@ -291,24 +291,53 @@ async def mark_projection_failure_abandoned(
         UPDATE status = 'abandoned',
                error_message = concat(error_message, '; abandoned: ', {reason:String})
         WHERE org = {org:String}
-          AND toString(failure_id) = {failure_id:String}
+          AND toString(failure_id) IN {failure_ids:Array(String)}
           AND status = 'active'
         """,
-        params={"org": org, "failure_id": failure_id, "reason": reason},
+        params={"org": org, "failure_ids": failure_ids, "reason": reason},
     )
 
 
 async def retry_projection_failure(
-    failure: ProjectionFailureRow,
-    *,
-    ch: Any | None = None,
+    failure: ProjectionFailureRow, *, ch: Any | None = None
 ) -> ProjectionFailureRetryResult:
-    """Retry one supported projection failure and resolve it on success. Every kind
-    writes in the failure's org: under an erasure it waits (`pending`), and once the saga
-    ends its replay finds an erased row gone."""
+    """Retry one supported projection failure and resolve it on success."""
+    (out,) = await retry_failures([failure], ch=ch)
+    return out
+
+
+async def retry_failures(
+    failures: list[ProjectionFailureRow], *, ch: Any | None = None
+) -> list[ProjectionFailureRetryResult]:
+    """Retry each failure, then mark the repaired ones in one mutation per org and the
+    abandoned ones per org and reason: each mark is a mutation. A retry cut short leaves
+    the rest active, and every kind is safe to replay."""
+    ch = ch or get_client()
+    out: list[ProjectionFailureRetryResult] = []
+    try:
+        for failure in failures:
+            out.append(await _retry(failure, ch=ch))
+    finally:
+        done: dict[tuple[str, str], list[str]] = {}
+        for failure, r in zip(failures, out, strict=False):
+            if r.resolved or r.abandoned:
+                done.setdefault((failure.org, r.reason), []).append(r.failure_id)
+        for (org, reason), ids in done.items():
+            if reason:
+                await mark_projection_failures_abandoned(
+                    org=org, failure_ids=ids, reason=reason, ch=ch
+                )
+            else:
+                await mark_projection_failures_resolved(org=org, failure_ids=ids, ch=ch)
+    return out
+
+
+async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailureRetryResult:
+    """One failure's retry, unmarked. Every kind writes in the failure's org: under an
+    erasure it waits (`pending`), and once the saga ends its replay finds an erased row
+    gone."""
     from server.memory.store.conflict_resolver import under_erasure
 
-    ch = ch or get_client()
     reason = ""
     try:
         if (
@@ -357,14 +386,6 @@ async def retry_projection_failure(
                 resolved=False,
                 reason="unsupported_projection",
             )
-        if reason:
-            await mark_projection_failure_abandoned(
-                org=failure.org, failure_id=failure.failure_id, reason=reason, ch=ch
-            )
-        else:
-            await mark_projection_failures_resolved(
-                org=failure.org, failure_ids=[failure.failure_id], ch=ch
-            )
         return ProjectionFailureRetryResult(
             failure_id=failure.failure_id,
             projection=failure.projection,
@@ -402,10 +423,7 @@ async def retry_projection_failures(
         limit=limit,
         ch=ch,
     )
-    out: list[ProjectionFailureRetryResult] = []
-    for row in rows:
-        out.append(await retry_projection_failure(row, ch=ch))
-    return out
+    return await retry_failures(rows, ch=ch)
 
 
 async def scan_active_projection_failures(

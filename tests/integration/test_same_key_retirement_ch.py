@@ -891,7 +891,7 @@ async def test_a_successor_closes_after_its_row_is_revised_in_place(ch, org) -> 
 async def test_an_abandoned_repair_keeps_what_the_write_recorded(ch, org) -> None:
     from server.memory.app.projection_failures import (
         FOLLOW_ROWS,
-        mark_projection_failure_abandoned,
+        mark_projection_failures_abandoned,
         record_projection_failure,
     )
 
@@ -909,8 +909,8 @@ async def test_an_abandoned_repair_keeps_what_the_write_recorded(ch, org) -> Non
             break
         await asyncio.sleep(0.2)
     (row,) = rows
-    await mark_projection_failure_abandoned(
-        org=org, failure_id=row["id"], reason="unfollowable_chain: 1 pair(s)", ch=ch
+    await mark_projection_failures_abandoned(
+        org=org, failure_ids=[row["id"]], reason="unfollowable_chain: 1 pair(s)", ch=ch
     )
     for _ in range(50):
         (got,) = await ch.query_all(

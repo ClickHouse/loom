@@ -46,7 +46,7 @@ async def run_pass(
     result = ProjectionRepairResult()
     with record_pass("projection_repair") as rec:
         from server.memory.app.projection_failures import (
-            retry_projection_failure,
+            retry_failures,
             scan_active_projection_failures,
         )
 
@@ -57,8 +57,7 @@ async def run_pass(
             limit=max(1, int(cfg.max_failures_per_pass)), status_mirror=False
         )
         result.scanned = len(failures)
-        for failure in failures:
-            retry = await retry_projection_failure(failure)
+        for retry in await retry_failures(failures):
             if retry.retried:
                 result.retried += 1
             if retry.resolved:

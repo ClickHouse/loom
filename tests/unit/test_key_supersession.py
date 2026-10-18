@@ -375,7 +375,7 @@ async def test_the_repair_follows_the_pairs_a_write_left(monkeypatch) -> None:
     # The follow reads the losers' links after its plan; these rows have none.
     monkeypatch.setattr(entity_projections, "linked_triples", no_links)
     monkeypatch.setattr(projection_failures, "mark_projection_failures_resolved", resolved)
-    monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", abandoned)
+    monkeypatch.setattr(projection_failures, "mark_projection_failures_abandoned", abandoned)
     failure = SimpleNamespace(
         failure_id="f1",
         org="o",
@@ -1019,10 +1019,10 @@ async def test_a_reopen_no_retry_can_read_is_abandoned(monkeypatch) -> None:
 
     abandoned: list[str] = []
 
-    async def mark_abandoned(*, org, failure_id, reason, ch):
+    async def mark_abandoned(*, org, failure_ids, reason, ch):
         abandoned.append(reason)
 
-    monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", mark_abandoned)
+    monkeypatch.setattr(projection_failures, "mark_projection_failures_abandoned", mark_abandoned)
     failure = projection_failures.ProjectionFailureRow(
         failure_id="f1",
         org="o",
@@ -1057,13 +1057,13 @@ async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
     abandoned: list[str] = []
     called: list[str] = []
 
-    async def mark_abandoned(*, org, failure_id, reason, ch):
+    async def mark_abandoned(*, org, failure_ids, reason, ch):
         abandoned.append(reason)
 
     async def never(*a, **k):
         called.append("read")
 
-    monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", mark_abandoned)
+    monkeypatch.setattr(projection_failures, "mark_projection_failures_abandoned", mark_abandoned)
     monkeypatch.setattr(graph_undo, "rows_still_holding", never)
     monkeypatch.setattr(graph_undo, "reopen_held_facts", never)
     failure = projection_failures.ProjectionFailureRow(
@@ -1101,10 +1101,10 @@ async def test_a_payload_no_retry_can_read_is_abandoned(monkeypatch, projection,
 
     abandoned: list[str] = []
 
-    async def mark_abandoned(*, org, failure_id, reason, ch):
+    async def mark_abandoned(*, org, failure_ids, reason, ch):
         abandoned.append(reason)
 
-    monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", mark_abandoned)
+    monkeypatch.setattr(projection_failures, "mark_projection_failures_abandoned", mark_abandoned)
     failure = projection_failures.ProjectionFailureRow(
         failure_id="f1",
         org="o",

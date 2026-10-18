@@ -42,6 +42,15 @@ def _calibration_left_as_found(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- projection_repair -----------------------------------------------------------
 
 
+def _retries(retry: Any) -> Any:
+    """`retry_failures` over a fake one-failure retry."""
+
+    async def retries(failures: list[ProjectionFailureRow], **_: Any) -> list[Any]:
+        return [await retry(f) for f in failures]
+
+    return retries
+
+
 def _failure(i: int, projection: str) -> ProjectionFailureRow:
     return ProjectionFailureRow(
         failure_id=f"f{i}",
@@ -87,7 +96,7 @@ async def test_a_repair_pass_counts_each_outcome_and_survives_a_poison_row(
         return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
 
     monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
-    monkeypatch.setattr(pf, "retry_projection_failure", _retry)
+    monkeypatch.setattr(pf, "retry_failures", _retries(_retry))
 
     result = await projection_repair.run_pass(
         projection_repair.ProjectionRepairConfig(max_failures_per_pass=0)
@@ -128,11 +137,44 @@ async def test_status_mirrors_queued_first_do_not_hold_back_a_real_failure(
         return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
 
     monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
-    monkeypatch.setattr(pf, "retry_projection_failure", _retry)
+    monkeypatch.setattr(pf, "retry_failures", _retries(_retry))
     await projection_repair.run_pass(
         projection_repair.ProjectionRepairConfig(max_failures_per_pass=25)
     )
     assert "entity_edges" in retried and retried.count(pf.STATUS_MIRROR) == 30
+
+
+async def test_a_pass_marks_its_repaired_failures_in_one_mutation_per_org(
+    monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers import projection_repair
+
+    queued = [_failure(i, pf.STATUS_MIRROR) for i in range(30)]
+    mutations: list[str] = []
+
+    class CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            mutations.append(sql)
+
+    async def _scan(*, limit: int, status_mirror: bool = False) -> list[ProjectionFailureRow]:
+        return queued if status_mirror else []
+
+    async def _mirrored(f: ProjectionFailureRow, **_: Any) -> str:
+        return ""
+
+    async def no(org: str, **kw: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
+    monkeypatch.setattr(pf, "_retry_status_mirror", _mirrored)
+    monkeypatch.setattr(pf, "_younger_than", lambda f, s: False)
+    monkeypatch.setattr(pf, "get_client", lambda: CH())
+    monkeypatch.setattr(queue, "under_erasure", no)
+    result = await projection_repair.run_pass()
+    assert result.resolved == 30
+    assert sum("ALTER TABLE" in m for m in mutations) == 1
 
 
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(
