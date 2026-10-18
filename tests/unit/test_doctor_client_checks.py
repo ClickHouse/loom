@@ -224,15 +224,17 @@ def test_a_rejected_token_tells_an_agent_to_drop_it_not_to_sign_up(tmp_path: Pat
     assert "so a rejected one makes captures vanish" in d
 
 
-@pytest.mark.parametrize(("exp", "grade"), [(NOW - 7200, "FAIL"), (NOW + 3600, "WARN")])
-def test_an_agents_expiring_token_gets_the_same_fix_as_a_rejected_one(
-    exp: float, grade: str
+@pytest.mark.parametrize(
+    ("claims", "grade"),
+    [({"exp": NOW - 7200}, "FAIL"), ({"exp": NOW + 3600}, "WARN"), ({}, "FAIL")],
+)
+def test_an_agents_bad_token_gets_the_same_fix_as_a_rejected_one(
+    claims: dict[str, Any], grade: str
 ) -> None:
-    check = dc.token_check(
-        "t", "LOOM_API_KEY", {"exp": exp}, NOW, _client.DEFAULT_BASE_URL, agent=True
-    )
+    check = dc.token_check("t", "LOOM_API_KEY", claims, NOW, _client.DEFAULT_BASE_URL, agent=True)
     assert check[1] == grade
-    assert "drop --token and LOOM_API_KEY" in check[2] and "mint" not in check[2]
+    assert "drop --token and LOOM_API_KEY" in check[2]
+    assert "mint" not in check[2] and "re-copy" not in check[2]
 
 
 def test_viewer_on_the_write_namespace_fails_with_the_writer_fix(tmp_path: Path) -> None:

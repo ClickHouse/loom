@@ -155,7 +155,8 @@ def token_check(
         return (
             name,
             FAIL,
-            f"the token from {source} is not a JWT (three dot-separated parts). Fix: re-copy it.",
+            f"the token from {source} is not a JWT (three dot-separated parts). "
+            f"Fix: {_agent_token_fix(base_url) if agent else 're-copy it'}.",
         )
     exp = claims.get("exp")
     if isinstance(exp, (int, float)):
