@@ -942,6 +942,6 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     const queue = await screen.findByRole("table", { name: "Conflicts" }, WAIT);
     expect(within(queue).queryByText("Loading data")).toBeNull();
-    expect(within(queue).getByRole("status", { name: "Loading conflicts" })).toHaveAttribute("aria-busy", "true");
+    expect(within(queue).getByRole("status", { name: "Loading conflicts" })).toBeInTheDocument();
   });
 });

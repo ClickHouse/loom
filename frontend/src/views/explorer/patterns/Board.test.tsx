@@ -153,7 +153,7 @@ describe("Board", () => {
   it("shows a labelled skeleton on the first load, and keeps a loaded board, busy, while a new window loads", () => {
     const props = { selected: null, onSelect: vi.fn(), trackerNamespace: "tracker-x", daysLabel: "all open" };
     const { rerender } = render(<Board board={null} status="loading" {...props} />);
-    expect(screen.getByRole("status", { name: "Loading the bug board" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status", { name: "Loading the bug board" })).toBeInTheDocument();
     rerender(<Board board={buildBoard(ROWS, GAPS)} status="loading" {...props} />);
     const grid = screen.getByRole("grid", { name: /2 components/ });
     expect(grid.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");

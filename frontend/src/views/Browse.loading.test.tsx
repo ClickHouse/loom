@@ -36,7 +36,7 @@ describe("Browse: loading", () => {
   it("shows a labelled skeleton on the first load", async () => {
     browseNamespaces.mockReturnValue(new Promise(() => {}));
     render(<Browse />);
-    expect(await screen.findByRole("status", { name: "Loading namespaces" })).toHaveAttribute("aria-busy", "true");
+    expect(await screen.findByRole("status", { name: "Loading namespaces" })).toBeInTheDocument();
   });
 
   it("keeps the rows on screen, marked busy, while a reload is in flight", async () => {

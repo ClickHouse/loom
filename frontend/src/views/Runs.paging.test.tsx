@@ -341,7 +341,7 @@ describe("Runs paging, sorting and search on the server", () => {
     // The first read waits 300 ms before its loader shows, like every loader
     // (ui/LoadingSkeleton), under the header row already in place.
     expect(within(table).queryByText("Loading data")).toBeNull();
-    expect(within(table).getByRole("status", { name: "Loading runs" })).toHaveAttribute("aria-busy", "true");
+    expect(within(table).getByRole("status", { name: "Loading runs" })).toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Goal" })).toBeInTheDocument();
   });
 
@@ -413,7 +413,7 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(toolbar()).not.toHaveTextContent(/\d–\d/);
     const table = screen.getByRole("table", { name: "Runs" });
     expect(table).toHaveAttribute("aria-busy", "true");
-    expect(await within(table).findByRole("status", { name: "Loading runs" })).toHaveAttribute("aria-busy", "true");
+    expect(await within(table).findByRole("status", { name: "Loading runs" })).toBeInTheDocument();
     act(() => release({ runs: [run(7, { status: "failed" })], total: null, paged: false }));
     expect(await screen.findByRole("button", { name: "goal 7" })).toBeInTheDocument();
     expect(toolbar()).toHaveTextContent("1–1");

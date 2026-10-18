@@ -229,7 +229,7 @@ describe("WorkersPanel", () => {
     // The first read waits 300 ms before its loader shows, like every loader
     // (ui/LoadingSkeleton), under the header row already in place.
     expect(within(table).queryByText("Loading data")).toBeNull();
-    expect(within(table).getByRole("status", { name: "Loading workers" })).toHaveAttribute("aria-busy", "true");
+    expect(within(table).getByRole("status", { name: "Loading workers" })).toBeInTheDocument();
   });
 
   it("shows the empty state only when there is nothing from either source", async () => {

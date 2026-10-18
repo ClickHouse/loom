@@ -103,7 +103,7 @@ describe("Users table", () => {
     // The first read waits 300 ms before its loader shows, like every loader
     // (ui/LoadingSkeleton), under the header row already in place.
     expect(within(table).queryByText("Loading data")).toBeNull();
-    expect(within(table).getByRole("status", { name: "Loading users" })).toHaveAttribute("aria-busy", "true");
+    expect(within(table).getByRole("status", { name: "Loading users" })).toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Subject" })).toBeInTheDocument();
   });
 });

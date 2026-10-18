@@ -32,7 +32,8 @@ describe("LoadingSkeleton", () => {
       </LoadingSkeleton>,
     );
     const status = screen.getByRole("status", { name: "Loading runs" });
-    expect(status).toHaveAttribute("aria-busy", "true");
+    // A busy live region is not announced until it is no longer busy.
+    expect(status).not.toHaveAttribute("aria-busy");
     const shapes = status.querySelector("[aria-hidden='true']");
     expect(shapes).toHaveClass("opacity-0");
     expect(status).toHaveTextContent(/^$/);

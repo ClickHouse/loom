@@ -68,7 +68,8 @@ export interface LoadingSkeletonProps {
 export function LoadingSkeleton({ label, children, className = "" }: LoadingSkeletonProps) {
   const shown = useAfter(DELAY_MS);
   return (
-    <div role="status" aria-label={label} aria-busy="true" className={className}>
+    // No aria-busy here: a screen reader holds back a busy region's announcements.
+    <div role="status" aria-label={label} className={className}>
       {/* A live region announces text, not its label: the label is said when the shapes show. */}
       <span className="sr-only">{shown ? label : ""}</span>
       <div aria-hidden="true" className={`transition-opacity duration-150 ${shown ? "" : "opacity-0"}`}>
