@@ -183,11 +183,11 @@ emits (`memory/store/conflict_resolver.py`):
 | any real time         | Stamped by an older build: owed again only while the row is `conflicted`.                                                                                                      |
 
 A mark belongs to the write that set it: a revision emits a new vector row with its own.
-Each pass reads `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` (40) owed rows and then
+Each pass reads `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` (40) owed rows and, when it is due,
 `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` (8) rows already `conflicted` that no
 resolver judged, so a flag the cosine check raised is judged once too. That second
 read scans every `conflicted` row (no index prunes its predicate), so once it comes back
-short of a full batch it is skipped for five minutes. Both reads find their namespaces
+short of a full batch it is not due again for five minutes. Both reads find their namespaces
 first without `FINAL`, where the mark's minmax index prunes, and run `FINAL` over those
 namespaces alone. Both reads take
 rows in turns across (org, namespace), oldest first within each, so one namespace's bulk
@@ -326,9 +326,9 @@ so a backlog the resolver drains never leaves them capped. That is about 50 judg
 day per namespace at the default cap, so a large import needs that namespace's cap raised.
 The share is read before each call, and each call's cost is flushed before the next row
 starts, so a pass goes past it by at most the calls already in flight
-(`LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY`). A pass whose
-owed read comes back full reads the next batch at once, for up to five minutes, instead
-of waiting the interval.
+(`LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY`). A full batch with no errors (at least one
+row judged, the model and the locks available) is followed at once by the next, for up to
+five minutes of a pass, instead of waiting the interval.
 `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` resolves at load: off when `LOOM_LLM_PROVIDER` or
 the provider of `LOOM_CONFLICT_RESOLVER_MODEL` is `fake`, else on; an explicit value wins.
 Without the model's key (one boot warning), writes are still marked, and the judge never

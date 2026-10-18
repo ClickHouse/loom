@@ -198,9 +198,10 @@ lists its peers, as they list it. A retired duplicate comes back `duplicate` whi
 original is still served, and `active` once it is not.
 
 The Undo holds the key's write lock from its read of the row to its insert, as a
-conditional write (`if_match_sha256`) does: a conditional revision made meanwhile lands
-first and the Undo shows "Changed since", or waits for the Undo. An unconditional write
-takes no lock, and the later of the two wins. When another conditional write holds the
+conditional write (`if_match_sha256`) and every conflict resolver write do: a conditional
+revision or a resolver write made meanwhile lands first and the Undo shows "Changed
+since", or waits for the Undo. An unconditional write takes no lock, and the later of the
+two wins. When another conditional write holds the
 lock past its wait, the Undo answers 409 PRECONDITION_FAILED ("this memory is being
 written right now; retry the Undo"), and while the lease store (Keeper) does not answer,
 503 BACKEND_UNAVAILABLE. Retry either.
