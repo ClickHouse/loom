@@ -84,7 +84,8 @@ async function _awaitPeerToken(configPath, lockPath, ctx, { nowMs, sleep, waitMs
   return { status: "error", reason: "sign-up in progress in another process" };
 }
 
-/** Whether to attempt a sign-up: never with a token, never when switched off. */
+/** Whether to attempt a sign-up: never with a token, never for an agent
+ *  (`agentMode`: it signs in as itself or not at all), never when switched off. */
 export function planSignup(env, { hasToken }) {
   if (hasToken) return { run: false, reason: "token present" };
   // An agent signs in as itself or not at all: never as the token a person
@@ -226,6 +227,9 @@ export function renderFirstSessionNotice(result, serverUrl) {
     case "rate_limited":
       return `Loom: no credential; ${base} rate-limited sign-up for this address — the next session retries.`;
     case "off":
+      if (result.reason === "agent mode") {
+        return `Loom: this agent's workload token could not be exchanged at ${base}; hooks stay silent this session.`;
+      }
       return "";
     default:
       return `Loom: no credential and sign-up at ${base} failed; hooks stay silent this session.`;

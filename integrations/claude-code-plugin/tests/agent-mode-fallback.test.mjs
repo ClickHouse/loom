@@ -50,7 +50,7 @@ function run(rel, url, stdin = "") {
     });
     let stdout = "";
     child.stdout.on("data", (c) => (stdout += c));
-    child.on("close", () => resolve(stdout));
+    child.on("close", () => resolve({ stdout, home }));
     child.stdin.end(stdin);
   });
 }
@@ -61,9 +61,14 @@ for (const [name, rel, stdin] of [
 ]) {
   test(`${name} sends neither the person's saved token nor a sign-up when the exchange fails`, async () => {
     const { srv, seen, url } = await awayTokenEndpoint();
+    let home = "";
     try {
-      const stdout = await run(rel, url, stdin);
-      assert.ok(seen.some((r) => r.url.startsWith("/oauth/token")), "the exchange was tried");
+      let stdout;
+      ({ stdout, home } = await run(rel, url, stdin));
+      assert.ok(
+        seen.some((r) => r.url.startsWith("/oauth/token")),
+        "the exchange was tried",
+      );
       assert.deepEqual(
         seen.filter((r) => r.auth.includes(PERSONAL) || r.url.startsWith("/v1/auth/agent-signup")),
         [],
@@ -72,6 +77,42 @@ for (const [name, rel, stdin] of [
       if (rel.startsWith("bin/")) assert.deepEqual(JSON.parse(stdout), {});
     } finally {
       srv.close();
+      if (home) fs.rmSync(home, { recursive: true, force: true });
     }
   });
 }
+
+test("an agent's scope is never the org and namespace a person saved", async () => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-agent-scope-")));
+  try {
+    fs.mkdirSync(path.join(home, ".loom"));
+    const saved = { token: PERSONAL, org: "personal-org", namespace: "personal-ns", agent: "me" };
+    fs.writeFileSync(path.join(home, ".loom", "config.json"), JSON.stringify(saved));
+    const lib = new URL("../lib/loom-client.mjs", import.meta.url).href;
+    const script = `import { resolveScope } from ${JSON.stringify(lib)};
+      process.stdout.write(JSON.stringify(resolveScope(process.cwd())));`;
+    const out = await new Promise((resolve) => {
+      const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
+        cwd: home,
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          TMPDIR: home,
+          LOOM_HOOK_NO_MAIN: "1",
+          LOOM_BASE_URL: "http://127.0.0.1:9", // nothing listens: the exchange fails
+          LOOM_CLIENT_ID: "ci",
+          LOOM_WORKLOAD_TOKEN: "workload-proof",
+        },
+      });
+      let stdout = "";
+      child.stdout.on("data", (c) => (stdout += c));
+      child.on("close", () => resolve(stdout));
+    });
+    const scope = JSON.parse(out);
+    assert.notEqual(scope.org, "personal-org");
+    assert.notEqual(scope.namespace, "personal-ns");
+    assert.notEqual(scope.agent, "me");
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

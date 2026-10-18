@@ -249,6 +249,16 @@ describe("answers other than the token's", () => {
     await expect(bot.token()).rejects.toBeInstanceOf(error);
   });
 
+  it.each(bodies)("reads the token endpoint answering %s as a Loom error", async (_, body, error) => {
+    const answer = async (url: string) =>
+      url.endsWith("/.well-known/oauth-authorization-server")
+        ? new Response(JSON.stringify({ token_endpoint: PUBLIC_ENDPOINT }), { status: 200 })
+        : body();
+    const key = { source: "LOOM_CLIENT_KEY" as const, value: pem("ec").privatePem };
+    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", key, fetch: answer });
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+  });
+
   it.each(bodies)("reads GitHub Actions answering %s as a Loom error", async (_, body, error) => {
     vi.stubEnv("LOOM_CLIENT_ID", "gha");
     vi.stubEnv("LOOM_WORKLOAD_AUDIENCE", "https://loom.example");

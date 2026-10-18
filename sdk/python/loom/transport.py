@@ -589,7 +589,6 @@ class Transport:
                     why=f"connection failed: {type(e).__name__}",
                     request_id=request_id,
                     error=unreachable_error(self.base_url, e, request_id=request_id),
-                    cause=e,
                 )
                 continue
             except BackendUnavailable as e:
@@ -618,7 +617,6 @@ class Transport:
                     why=f"timed out ({type(e).__name__}); idempotent",
                     request_id=request_id,
                     error=unreachable_error(self.base_url, e, request_id=request_id),
-                    cause=e,
                 )
                 continue
             except httpx.RequestError as e:
@@ -727,14 +725,14 @@ class Transport:
         why: str,
         request_id: str,
         error: BaseException,
-        cause: BaseException | None = None,
     ) -> float:
         """Sleep before the next attempt of a request that got no response and
-        return the seconds slept; raise `error` (from `cause`) when the policy
-        stops (`_retry_delay`)."""
+        return the seconds slept; raise `error` when the policy stops
+        (`_retry_delay`). `error` keeps its own `__cause__`: the httpx error
+        `unreachable_error` attaches, or what the token provider raised from."""
         delay = self._retry_delay(op_path, policy, attempt, slept_s, allowed=allowed)
         if delay is None:
-            raise error from cause
+            raise error
         return await self._backoff(op_path, policy, attempt, delay, why, request_id)
 
     @staticmethod

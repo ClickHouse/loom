@@ -433,7 +433,8 @@ export function resolveScope(cwd) {
   // workspace) so we fall back to the 'coding' default.
   const claims = decodeTokenClaims(resolveToken());
   const claimNs = Array.isArray(claims.namespaces) ? claims.namespaces.find((n) => n && n !== "*") : "";
-  const cfg = loomConfig();
+  // An agent's identity is its own token's: never the scope a person saved here.
+  const cfg = agentMode() ? {} : loomConfig();
   const org = (process.env.LOOM_ORG || String(cfg.org || "") || claims.org || "default").trim();
   const agent = (process.env.LOOM_AGENT || String(cfg.agent || "") || hookClient()).trim();
   const baseNs = (process.env.LOOM_NAMESPACE || String(cfg.namespace || "") || claimNs || "coding").trim();

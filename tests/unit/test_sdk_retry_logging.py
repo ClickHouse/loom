@@ -532,3 +532,25 @@ async def test_a_call_whose_token_endpoint_was_away_is_retried_once_sent(
     assert await t.post("/v1/memory.get", {}) == {"ok": True}
     assert (_FlakyTokens.asked, seen, len(sleeps)) == (2, ["0"], 1)
     await t.close()
+
+
+async def test_a_token_endpoint_that_stays_away_keeps_its_cause(sleeps: list[float]) -> None:
+    """Once the retries are spent, the provider's BackendUnavailable is raised
+    with the network error it was raised from, for the traceback."""
+    cause = httpx.ConnectError("refused")
+
+    class _AwayTokens(httpx.Auth):
+        def auth_flow(self, request: httpx.Request) -> Any:
+            raise BackendUnavailable("token endpoint: cannot reach it") from cause
+            yield request  # pragma: no cover - a generator, as httpx expects
+
+    t = Transport("http://x", retry=RetryPolicy(max_attempts=2, backoff_s=0.1, backoff_jitter=0))
+    t._client = httpx.AsyncClient(
+        base_url=t.base_url,
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+        auth=_AwayTokens(),
+    )
+    with pytest.raises(BackendUnavailable) as err:
+        await t.post("/v1/memory.get", {})
+    assert err.value.__cause__ is cause and len(sleeps) == 1
+    await t.close()
