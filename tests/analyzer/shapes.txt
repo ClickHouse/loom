@@ -173,7 +173,6 @@
 2056fb3f58af	SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String}
 208cd8ce06ff	SELECT session_id FROM loom.session_summaries FINAL WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND tombstoned_at IS NULL AND session_id 
 209c52b5017d	SELECT source AS consumer_key, count() AS outcome_rows, countIf(action IN (?, ?)) AS outcome_positive, countIf(action IN (?, ?)) AS outcome_negative, countIf(action IN (?, ?)) AS shunt_rows, sum(token
-20dc44f2427a	SELECT jti, issued_before, revoked_by FROM loom.revoked_tokens FINAL WHERE jti IN {keys:Array(String)} AND expires_at > now()
 20e3d19bf426	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 2151bee126f9	SELECT count() AS n FROM loom.events WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 215919e82d1b	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -1279,6 +1278,7 @@ c90482c7cc77	SELECT memory_key, record_json, created_at FROM loom.memory_records
 c9131be0ae07	SELECT memory_id, conflict_with, status FROM loom.memory FINAL WHERE org = {org:String} AND memory_id = {mid:UUID} AND tombstoned_at IS NULL LIMIT ?
 c91a52f4e40f	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 c99a26ec4116	SELECT count() AS n FROM loom.memory_record_conflicts FINAL WHERE org = {org:String} AND (prior_record_id IN (SELECT record_id FROM loom.memory_records WHERE org = {org:String} AND user_id = {uid:Stri
+c9d2e184a119	SELECT jti, issued_before, revoked_by, revoked_at FROM loom.revoked_tokens FINAL WHERE jti IN {keys:Array(String)} AND expires_at > now()
 c9deebd88315	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 c9e1e8c68869	SELECT count() AS n FROM loom.entity_summaries FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}
 c9f0bb1acfcd	SELECT org, namespace, agent, user_id, session_id, memory_key, memory_type, value, confidence, source_trace, version, tombstoned_at, created_at, expires_at FROM loom.memory FINAL WHERE org = {org:Stri

@@ -368,6 +368,12 @@ def test_cli_scim_gives_back_a_subject_a_deactivation_caught(
     assert revocation.is_revoked("alice", issued_at=int(cutoff.timestamp()) - 1)
     assert written_under_lease == [1]  # SCIM's lease: never amid a reactivation's lift
 
+    # A cutoff before SCIM's would revive tokens it listed revoked: refused.
+    rc = cli.main(
+        ["revoke-token", "--subject", "alice", "--issued-before", "2000-01-01T00:00:00Z", "--scim"]
+    )
+    assert rc == 2 and "when SCIM revoked it" in capsys.readouterr().err
+
     rc = cli.main(["revoke-token", "--subject", "bob", "--issued-before", when, "--scim"])
     assert rc == 1 and "SCIM has not revoked 'bob'" in capsys.readouterr().err
     assert cli.main(["revoke-token", "--subject", "alice", "--scim"]) == 2

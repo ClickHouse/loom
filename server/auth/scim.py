@@ -22,9 +22,8 @@ SCIM's revocations are its own: each is stored under the subject's SCIM key
 (`revocation.SCIM_PREFIX`), and SCIM never writes the row an operator's
 `loom revoke-token` writes (it reads it only to list dead tokens revoked).
 The two are independent, and either keeps a person out; a reactivation lifts
-only SCIM's. A subject another
-deactivated user still reaches stays revoked through a reactivation. The
-accounts and their data stay: this is not erasure.
+only SCIM's. A subject another deactivated user still reaches stays revoked
+through a reactivation. The accounts and their data stay: this is not erasure.
 
 Leases are always taken in this order: the user's, then a userName's it takes
 (create, rename), then one per subject the user reaches, in sorted order,

@@ -273,6 +273,48 @@ def _parse_expires_at(value: str | None) -> Any:
     return dt
 
 
+async def _scim_give_back(
+    subject: str, issued_before: Any, reason: str, by: str
+) -> tuple[dict[str, Any] | None, int]:
+    """`--scim`: narrow SCIM's revocation of `subject` to the tokens issued
+    before `issued_before`. The row written, or None and the exit code."""
+    from server.auth import revocation, scim
+    from server.core import leases
+
+    try:  # SCIM's own lease on the subject: never amid its lift of it
+        async with scim.subject_leases([subject]):
+            current = (await revocation.scim_revocations([subject])).get(subject)
+            if current is None:
+                print(f"  ✗ SCIM has not revoked {subject!r}", file=sys.stderr)
+                return None, 1
+            # Earlier would revive tokens SCIM has listed revoked and whose
+            # names are free: a token made under one would hide a live one.
+            floor = _naive_utc(current["issued_before"] or current["revoked_at"])
+            floor = floor.replace(microsecond=0)  # revocation compares whole seconds
+            if issued_before < floor:
+                print(
+                    f"  ✗ --issued-before must be at or after {floor.isoformat()}Z, "
+                    "when SCIM revoked it: its tokens from before stay dead",
+                    file=sys.stderr,
+                )
+                return None, 2
+            row = await revocation.scim_revoke(
+                subject, issued_before=issued_before, reason=reason, revoked_by=by
+            )
+            return row, 0
+    except scim.Busy as e:
+        if isinstance(e.__cause__, leases.LeaseUnavailable):
+            print("  ✗ the lease store did not answer; retry once it does", file=sys.stderr)
+        else:
+            print(f"  ✗ SCIM is changing {subject!r}; retry shortly", file=sys.stderr)
+        return None, 1
+
+
+def _naive_utc(dt: Any) -> Any:
+    """A ClickHouse DateTime64 (aware or not) as the naive UTC the flags parse to."""
+    return dt.astimezone(UTC).replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+
 def _cmd_revoke_token(args: argparse.Namespace) -> int:
     """Revoke one token through `server.auth.revocation`, the
     same path the `/v1/me/service_accounts.revoke` handler and the refresh
@@ -318,26 +360,9 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         token_id = args.jti or args.subject
         by = f"cli:{getpass.getuser()}"
         if args.scim:
-            from server.auth import scim
-            from server.core import leases
-
-            try:  # SCIM's own lease on the subject: never amid its lift of it
-                async with scim.subject_leases([token_id]):
-                    if not await revocation.scim_revocations([token_id]):
-                        print(f"  ✗ SCIM has not revoked {token_id!r}", file=sys.stderr)
-                        return 1
-                    row = await revocation.scim_revoke(
-                        token_id,
-                        issued_before=issued_before,
-                        reason=args.reason or "",
-                        revoked_by=by,
-                    )
-            except scim.Busy as e:
-                if isinstance(e.__cause__, leases.LeaseUnavailable):
-                    print("  ✗ the lease store did not answer; retry once it does", file=sys.stderr)
-                else:
-                    print(f"  ✗ SCIM is changing {token_id!r}; retry shortly", file=sys.stderr)
-                return 1
+            row, failed = await _scim_give_back(token_id, issued_before, args.reason or "", by)
+            if row is None:
+                return failed
         else:
             if issued_before is not None and await revocation.has_outright_row(token_id):
                 print(

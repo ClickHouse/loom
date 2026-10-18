@@ -283,16 +283,16 @@ Loom accepts that push: once the provider sends it, the person's sessions and
 the tokens they made are refused at once by the replica that took the
 request, and by every other replica at its next revocation refresh
 (`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`, 30 s by default). No replica makes
-them a new token meanwhile: every mint reads revocations from ClickHouse. Set a long random
-token and restart:
+them a new token meanwhile: every mint reads revocations from ClickHouse. Set
+a long random token and restart:
 
 ```bash
 LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
 ```
 
 Empty (the default) leaves SCIM off and its routes unmounted; Loom refuses to
-start with a token shorter than 32 characters (`loom doctor` says so too). The token is the only
-credential `/scim/v2` takes; keep it with the client secret.
+start with a token shorter than 32 characters (`loom doctor` says so too). The
+token is the only credential `/scim/v2` takes; keep it with the client secret.
 
 To rotate it without refusing the provider in between, list both tokens,
 comma-separated, and roll the replicas; set the new one at the provider; then
@@ -394,16 +394,19 @@ What Loom does with each request:
   ([Accounts](#accounts)). Likewise a token an operator minted with the
   email itself as its subject (`loom mint-token --subject <email>`) for an
   adopted account whose subject is a handle: revoke the email with
-  `loom revoke-token --subject <email>`. A subject is a name, not an org's: when one also
-  owns an account or holds a grant in an org where the email does not reach
-  that subject (another person's `alice`), it is still revoked, and Loom
-  logs a warning and audits `auth.scim_collateral` naming those orgs.
+  `loom revoke-token --subject <email>`. A subject is a name, not an org's:
+  when one also owns an account or holds a grant in an org where the email
+  does not reach that subject (another person's `alice`), it is still
+  revoked, and Loom logs a warning and audits `auth.scim_collateral` naming
+  those orgs.
   Find it in `loom revoke-token --list` (`scim→<it>`) and, if it is someone
   else's, give it back with
-  `loom revoke-token --subject <it> --issued-before <now> --scim`. The
-  provider repeating the deactivation, or deleting the user, leaves it given
-  back, but once the person is reactivated, their next deactivation revokes
-  it outright again: give it back again then.
+  `loom revoke-token --subject <it> --issued-before <now> --scim`: its new
+  tokens work, and its tokens from before the deactivation stay dead (Loom
+  refuses an earlier `--issued-before`). The provider repeating the
+  deactivation, or deleting the user, leaves it given back, but once the
+  person is reactivated, their next deactivation revokes it outright again:
+  give it back again then.
 - **Reactivating** (`active: true`) lets the person sign in again. Tokens from
   before stay revoked; they make new ones. A subject another deactivated or
   deleted user's email still reaches (two addresses reaching one account)

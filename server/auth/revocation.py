@@ -460,7 +460,8 @@ async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
 
 async def scim_revocations(subjects: list[str]) -> dict[str, dict[str, Any]]:
     """SCIM's revocation of each of `subjects` that has one, read from
-    ClickHouse: its `issued_before` (None when outright) and `revoked_by`."""
+    ClickHouse: its `issued_before` (None when outright), `revoked_by` and
+    `revoked_at`."""
     if not subjects:
         return {}
     rows = await _read_revocations(sorted({SCIM_PREFIX + s for s in subjects}))
@@ -480,7 +481,7 @@ async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
     with own_write_reads():
         return await get_client().query_all(
             """
-            SELECT jti, issued_before, revoked_by FROM loom.revoked_tokens FINAL
+            SELECT jti, issued_before, revoked_by, revoked_at FROM loom.revoked_tokens FINAL
             WHERE jti IN {keys:Array(String)} AND expires_at > now()
             """,
             params={"keys": keys},

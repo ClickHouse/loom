@@ -36,7 +36,7 @@ async def _scim(ch: RecordingCH, c: dict[str, Any]) -> None:
 
     await scim.find("alice@x.io")
     await scim.page(1, 10)
-    await scim.deactivated("alice@x.io")  # reads only with SCIM on
+    await scim.deactivated("alice@x.io")  # every SSO sign-in reads it, SCIM on or off
     await scim._row(scim.user_id("alice@x.io"))
     await scim._subjects("alice@x.io")
     await scim._orgs_beyond("alice", {ORG})
