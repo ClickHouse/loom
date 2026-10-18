@@ -84,7 +84,7 @@ async def test_two_identities_sharing_a_key_and_version_each_get_their_own_previ
     )
     ident = memory_repo.Identity(org="o", namespace="n", agent="*", user_id="*", session_id="*")
     rows = await memory_repo.list_by_namespace(
-        ident, tag_match="folded_any", limit=100, preview=True, ch=ch, scope=WHOLE_NAMESPACE
+        ident, limit=100, preview=True, ch=ch, scope=WHOLE_NAMESPACE
     )
     assert ch.calls[1][1]["pairs"] == [(_M1, 7), (_M2, 7)]
     assert [(r.agent, r.value) for r in rows] == [("a", "a"), ("b", "b")]
@@ -103,7 +103,7 @@ async def test_a_preview_page_locates_without_previews_then_reads_them_by_pairs(
     )
     ident = memory_repo.Identity(org="o", namespace="n", agent="*", user_id="*", session_id="*")
     rows = await memory_repo.list_by_namespace(
-        ident, tag_match="folded_any", limit=100, preview=True, ch=ch, scope=WHOLE_NAMESPACE
+        ident, limit=100, preview=True, ch=ch, scope=WHOLE_NAMESPACE
     )
     assert len(ch.calls) == 2
     locate_sql, locate_params = ch.calls[0]
@@ -126,16 +126,11 @@ async def test_an_empty_page_is_one_statement_and_a_full_value_page_is_unchanged
     ch = _CH([[]])
     ident = memory_repo.Identity(org="o", namespace="n", agent="a", user_id="-", session_id="-")
     assert (
-        await memory_repo.list_by_namespace(
-            ident, tag_match="folded_any", preview=True, ch=ch, scope=WHOLE_NAMESPACE
-        )
-        == []
+        await memory_repo.list_by_namespace(ident, preview=True, ch=ch, scope=WHOLE_NAMESPACE) == []
     )
     assert len(ch.calls) == 1
     ch2 = _CH([[]])
-    await memory_repo.list_by_namespace(
-        ident, tag_match="folded_any", preview=False, ch=ch2, scope=WHOLE_NAMESPACE
-    )
+    await memory_repo.list_by_namespace(ident, preview=False, ch=ch2, scope=WHOLE_NAMESPACE)
     ((sql, _),) = ch2.calls
     assert "FROM loom.memory FINAL" in sql and " value, 0 AS value_truncated" in sql
 

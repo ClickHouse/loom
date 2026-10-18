@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core.tag_sql import TagFilter
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from tests.analyzer.cases._common import AGENT, MODEL, NS, ORG, VEC, chunk_cand, rows_by_substring
 from tests.analyzer.cases.search import _q
@@ -288,8 +289,11 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         order_by=c["order_by"],
         as_of=as_of,
         # memory.list's tag match (every tag, both sides lowercased), or memory.search's exact one.
-        tags=["kind:lesson", "kind:fact"] if c["as_of"] else ["kind:lesson"],
-        tag_match="folded_all" if c["as_of"] else "exact_any",
+        tag_filter=(
+            TagFilter(("kind:lesson", "kind:fact"), "folded_all")
+            if c["as_of"]
+            else TagFilter(("kind:lesson",), "exact_any")
+        ),
         include_tombstoned=c["as_of"],
         exclude_high_sensitivity=c["as_of"],
         ch=ch,
@@ -301,8 +305,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         memory_type="preference" if c["as_of"] else None,
         key_prefix="user_" if c["as_of"] else None,
         source_trace="s" if c["as_of"] else None,
-        tags=["kind:lesson", "kind:fact"] if c["as_of"] else None,
-        tag_match="folded_all" if c["as_of"] else "folded_any",
+        tag_filter=TagFilter(("kind:lesson", "kind:fact"), "folded_all") if c["as_of"] else None,
         as_of=as_of,
         created_since=as_of,
         ch=ch,

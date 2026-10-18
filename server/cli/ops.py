@@ -75,7 +75,6 @@ async def rechunk_namespace(
             org,
             namespace,
             include_superseded=False,
-            tag_match="folded_any",
             cursor=cursor,
             limit=page_size,
         )

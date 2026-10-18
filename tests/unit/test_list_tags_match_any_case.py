@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from server.core.tag_sql import TagFilter
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 
@@ -62,10 +63,10 @@ async def test_an_upper_case_tag_matches_a_lower_case_row_with_no_flag() -> None
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.list_by_namespace(
-        identity, tag_match="folded_any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
+        identity, scope=WHOLE_NAMESPACE, tag_filter=TagFilter(("API",), "folded_any"), ch=ch
     )
     await memory_repo.count_by_namespace(
-        identity, tag_match="folded_any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
+        identity, scope=WHOLE_NAMESPACE, tag_filter=TagFilter(("API",), "folded_any"), ch=ch
     )
     for sql, params in ch.calls:
         assert f"hasAny({_FOLDED})" in sql
@@ -83,8 +84,9 @@ async def test_the_page_and_both_counts_get_the_same_tags(
     await _handle_memory_list(
         MemoryListInput(org="acme", namespace="team", agent="*", tags=["API"])
     )
-    assert [c["tags"] for c in calls["list"]] == [["API"]]
-    assert [c["tags"] for c in calls["count"]] == [["API"], ["API"]], "total and today"
+    asked = TagFilter(("API",), "folded_any")
+    assert [c["tag_filter"] for c in calls["list"]] == [asked]
+    assert [c["tag_filter"] for c in calls["count"]] == [asked, asked], "total and today"
 
 
 @pytest.mark.asyncio
@@ -107,18 +109,17 @@ async def test_the_hidden_under_prefix_count_matches_tags_as_the_total_does(
         )
     )
     assert len(calls["count"]) == 3, "total, today and every status under the prefix"
-    assert [c["tags"] for c in calls["count"]] == [["a", "b"]] * 3
-    assert [c["tag_match"] for c in calls["count"]] == ["folded_all", "folded_all", "folded_all"]
+    assert [c["tag_filter"] for c in calls["count"]] == [TagFilter(("a", "b"), "folded_all")] * 3
 
 
 @pytest.mark.asyncio
 async def test_the_store_requires_every_tag_when_asked() -> None:
-    """`tag_match="folded_all"`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
+    """`folded_all`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
     of them are found past the newest rows that hold any one."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
-        identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tag_match="folded_all", ch=ch
+        identity, scope=WHOLE_NAMESPACE, tag_filter=TagFilter(("A", "b"), "folded_all"), ch=ch
     )
     sql, params = ch.calls[-1]
     assert f"hasAll({_FOLDED})" in sql
@@ -138,8 +139,8 @@ async def test_tags_every_reaches_the_page_both_counts_and_the_cache_key(
                 org="acme", namespace="team", agent="*", tags=["a", "b"], tags_every=all_tags
             )
         )
-    assert [c["tag_match"] for c in calls["list"]] == ["folded_any", "folded_all"]
-    assert [c["tag_match"] for c in calls["count"]] == [
+    assert [c["tag_filter"].match for c in calls["list"]] == ["folded_any", "folded_all"]
+    assert [c["tag_filter"].match for c in calls["count"]] == [
         "folded_any",
         "folded_any",
         "folded_all",
@@ -148,14 +149,13 @@ async def test_tags_every_reaches_the_page_both_counts_and_the_cache_key(
 
 
 @pytest.mark.asyncio
-async def test_a_non_ascii_tag_folds_the_same_on_both_sides() -> None:
-    """ClickHouse folds both sides: the asked tag is bound as typed and lowercased by the same
-    `lowerUTF8` as the row's tags (not `lower`, which folds only A–Z), so a non-ASCII tag such
-    as `ΟΔΟΣ` meets the row's tags under one case mapping."""
+async def test_a_non_ascii_tag_is_bound_as_typed_under_the_lower_utf8_predicate() -> None:
+    """A non-ASCII tag such as `ΟΔΟΣ` is bound as typed, and the statement lowercases both
+    sides with `lowerUTF8` (not `lower`, which folds only A–Z)."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
-        identity, tag_match="folded_any", scope=WHOLE_NAMESPACE, tags=["ΟΔΟΣ"], ch=ch
+        identity, scope=WHOLE_NAMESPACE, tag_filter=TagFilter(("ΟΔΟΣ",), "folded_any"), ch=ch
     )
     sql, params = ch.calls[-1]
     assert f"hasAny({_FOLDED})" in sql

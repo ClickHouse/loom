@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Any
 
+from server.core.tag_sql import TagFilter
 from server.identity.app.request_scope import request_scope
 from server.memory.app.search_tag_filter import request_hard_tags as _request_hard_tags
 
@@ -67,13 +68,13 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
             session_id=str(getattr(input, "session_id", None) or "-"),
         )
         run_id = str(getattr(input, "run_id", "") or "")
+        hard_tags = _request_hard_tags(input)
         rows = await list_by_namespace(
             ident,
             order_by=_TIER_ORDER[tier],
             limit=n * 4 if run_id else n,
             # The request's hard filter, matched exactly as every memory.search leg does.
-            tags=_request_hard_tags(input) or None,
-            tag_match="exact_any",
+            tag_filter=TagFilter(tuple(hard_tags), "exact_any") if hard_tags else None,
             scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — a tier never fails a search

@@ -109,6 +109,6 @@ Pick the winner of a conflict (keep A, keep B, keep both, merge).
 | `decision` | `Literal['revise', 'contract', 'allow']` | The decision, echoed. |
 | `affected_memory_ids` | `list[str]` | Every memory id this call tombstoned or reactivated. |
 | `resolved_at` | `datetime \| None` | When the resolve ran (UTC); null when nothing was resolved. |
-| `total` | `int \| None` | The namespace's conflicted count under the caller's read scope, counted after the writes; null when nothing was resolved. |
+| `total` | `int \| None` | The namespace's conflicted count under the caller's read scope, counted after the writes; null when nothing was resolved or the count failed. |
 
 <!-- prettier-ignore-end -->

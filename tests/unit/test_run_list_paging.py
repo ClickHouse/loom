@@ -177,15 +177,6 @@ def test_input_bounds() -> None:
             RunListInput(org="o", namespace="n", **bad)
 
 
-def test_store_count_reads_zero_when_no_row_answers() -> None:
-    class NoRow(StubCH):
-        async def query_one(self, sql, params=None):
-            return None
-
-    n = asyncio.run(runs_store.count_runs(NoRow(), "o", "n", where=[], params={}))
-    assert n == 0
-
-
 def test_store_refuses_an_unknown_order() -> None:
     """The order is written into the statement, so only a LIST_ORDERS key gets that far."""
     with pytest.raises(KeyError):

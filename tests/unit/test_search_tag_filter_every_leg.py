@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 import server.memory.app.search_tag_filter as tag_belt
+from server.core.tag_sql import TagFilter
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search import assemble, payload
 from server.memory.app.search.assemble import _drop_excluded_and_duplicates
@@ -320,12 +321,12 @@ async def test_tiers_pass_the_hard_filter_only_when_set(monkeypatch: pytest.Monk
     monkeypatch.setattr(repo, "list_by_namespace", fake_list)
     base = dict(org="o", namespace="ns", agent="*", user_id="-", session_id="-", run_id="", top_k=3)
     await _prepend_recent([], SimpleNamespace(recent_first=1, **base))
-    assert calls[-1]["tags"] is None
+    assert calls[-1]["tag_filter"] is None
     await _prepend_recent([], SimpleNamespace(recent_first=1, tags=["x"], tags_soft=False, **base))
     # memory.search's exact match, not memory.list's any-case one.
-    assert calls[-1]["tags"] == ["x"] and calls[-1]["tag_match"] == "exact_any"
+    assert calls[-1]["tag_filter"] == TagFilter(("x",), "exact_any")
     await _prepend_anchor([], SimpleNamespace(anchor_first=1, tags=["x"], tags_soft=True, **base))
-    assert calls[-1]["tags"] is None
+    assert calls[-1]["tag_filter"] is None
 
 
 @pytest.mark.asyncio
@@ -344,7 +345,7 @@ async def test_exact_tag_match_reads_the_search_predicate() -> None:
 
     ident = repo.Identity(org="o", namespace="ns", agent="*")
     await repo.list_by_namespace(
-        ident, scope=WHOLE_NAMESPACE, tags=["API"], tag_match="exact_any", ch=_CH()
+        ident, scope=WHOLE_NAMESPACE, tag_filter=TagFilter(("API",), "exact_any"), ch=_CH()
     )
     sql, params = seen[-1]
     assert "hasAny(tags, {tags:Array(String)})" in sql
