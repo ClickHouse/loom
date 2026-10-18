@@ -6,10 +6,11 @@ import { codeReposFixture, installApi, trackerSourcesFixture } from "./fixtures"
 // The list pages (Memories, Library, Conversations, Profile, Spaces, Repositories) against
 // the list rules, in the browser: the chrome over the first row stays inside its budget and
 // the search's placeholder fits, the selection takes a range and clears on Escape, a row
-// list is one tab stop whose ring is drawn on the row, a Library row's More menu shows
-// without a hover, a row's placeholder size is its drawn height, the Profile's sections
-// take a selection, Insights holds the usage audit and the mentor, and styles.css draws the
-// Kbd and the score bar on radius tokens.
+// list is one tab stop whose ring is drawn on the row, a row's "+N" tags show on a hover
+// and a tap on them opens the row, a Library row's More menu shows without a hover, a row's
+// placeholder size is its drawn height, the Profile's sections take a selection, Insights
+// holds the usage audit and the mentor, and styles.css draws the Kbd and the score bar on
+// radius tokens.
 
 const now = new Date().toISOString();
 const THREADS = Array.from({ length: 6 }, (_, i) => ({
@@ -207,6 +208,26 @@ test("a row's +N tag chip shows the folded tags on hover, above the row's open b
   await more.hover();
   await expect(page.getByRole("tooltip")).toHaveText("gateway, edge");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test.describe("a touch pointer at 375 px", () => {
+  test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
+
+  // A touch does not open the tip, so a tap on "+N" reaches the row's open button, and the
+  // drawer it opens lists every tag.
+  test("a tap on a row's +N tag chip opens the row's drawer", async ({ page }) => {
+    await installApi(page, { memoryRows: 12, firstMemoryTags: ["alerts", "storage", "lane-0", "gateway", "edge"] });
+    await page.goto("/memories");
+    const more = page
+      .locator("main .list-row")
+      .first()
+      .getByRole("note")
+      .filter({ hasText: "2 more tags: gateway, edge" });
+    const box = await more.boundingBox();
+    if (!box) throw new Error("the +N chip has no box");
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
 });
 
 // Click UI's Checkbox draws its unchecked box from its default variation's stroke token;

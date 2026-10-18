@@ -1316,6 +1316,15 @@ button.pane-card:hover {
     position: relative;
     z-index: 1;
   }
+  /* A tip with nothing to press (a row's "+N" tags) lifts only where the pointer can hover:
+     a touch never opens the tip, so the tap falls through to the open button, whose
+     drawer lists everything the tip would. */
+  @media (hover: hover) {
+    .list-row-control-hover {
+      position: relative;
+      z-index: 1;
+    }
+  }
 }
 .list-row[data-doc-row] {
   contain-intrinsic-size: auto 101px;
