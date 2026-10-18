@@ -121,7 +121,7 @@ Every list-page change is checked against these before it is reviewed; each line
 - **States**: loading, empty, a filter that matches nothing, an error, and a read still in flight are five different screens; the toolbar shows in every one, and "nothing matches" is said only of a read of the current filter.
 - **The whole set**: a filter, a sort, a count or a select-all covers what the server holds, or says what it covers ("the newest 1,000").
 - **Focus**: anything that unmounts while focused (a button, a bar, a page) hands focus somewhere named; a page change lands on a visible heading.
-- **Phone**: measured at 375 px with a touch pointer (`hasTouch`): nothing clipped or zero-width but a row's truncated tags, which the drawer shows in full, 44 px targets, the first row within the chrome budget.
+- **Phone**: measured at 375 px with a touch pointer (`hasTouch`): nothing clipped or zero-width (a row's truncated tags excepted: the drawer shows them in full); 44 px targets; the first row within the chrome budget.
 - **Primitives, not copies**: a second copy of a hook, a time format or a state pattern goes into `lib/` or `components/ui` instead; a raw skeleton, a hex colour or a glyph icon is a bug.
 - **Unicode**: a case-insensitive match folds both sides in one place (ClickHouse `lowerUTF8` on the row and on the asked value, not `lower`, which folds only A–Z, and not a second fold in Python); test with a non-ASCII value.
 - **Late answers**: every read a page starts (load, reload, Refresh, Retry, Load more) can be overtaken by a newer one; an answer for a scope or filter the page has left is dropped (abort it, or check a scope stamp).

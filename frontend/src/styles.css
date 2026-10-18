@@ -590,7 +590,8 @@ textarea[aria-invalid="true"]:focus-visible {
   outline-offset: -2px;
 }
 /* A list row's body is one stretched button (`data-row-open`): the ring goes round the
-   row, meta slot included, and the button draws none of its own. */
+   row, meta slot included, and the button draws none of its own. Unlayered, beside the
+   `*:focus-visible` ring it overrides, not in ui/ListRow's layer. */
 .list-row [data-row-open]:focus-visible {
   outline: none;
 }
@@ -1251,67 +1252,41 @@ textarea[aria-invalid="true"]:focus-visible {
    body block cannot hold a checkbox, a stretched button and chips side by side). Hover
    tints the background (the stroke stays, as in Click UI); the open row takes the active
    stroke; a checked row Click UI's Table row tint, its checkbox carrying the state. */
-.list-row {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--click-card-horizontal-space-md-gap);
-  padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
-  border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
-  border-radius: var(--click-card-horizontal-radii-all);
-  background: var(--click-card-horizontal-default-color-background-default);
-  scroll-margin-top: 8px;
-  /* The browser lays out and paints only the rows in view; a row not drawn yet holds its
-     list's measured height: a thread 76 px, a document 101, a memory 129, and under 640 px,
-     where a row's meta takes its own line, 105, 123 and 151 (below). */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 76px;
-}
-
-/* A record inside a narrow pane (the Explorer inspector's facts and hits): CardHorizontal sm,
-   whose one body block cannot hold a fact's links, chips and count. A button form hovers. */
-.pane-card {
-  display: block;
-  padding: var(--click-card-horizontal-space-sm-y) var(--click-card-horizontal-space-sm-x);
-  border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
-  border-radius: var(--click-card-horizontal-radii-all);
-  background: var(--click-card-horizontal-default-color-background-default);
-}
-button.pane-card:hover {
-  background: var(--click-card-horizontal-default-color-background-hover);
-}
-
-/* Profile's persona picker: a selectable CardHorizontal (a button holding a title, a line and
-   a sample); hover tints the background and keeps the stroke, as Click UI's card does. */
-.persona-card {
-  text-align: left;
-  padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
-  border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
-  border-radius: var(--click-card-horizontal-radii-all);
-  background: var(--click-card-horizontal-default-color-background-default);
-}
-.persona-card:hover {
-  background: var(--click-card-horizontal-default-color-background-hover);
-}
-
-/* A row's open button: plain text whose click target stretches over the whole row, under
-   the row's other controls (.list-row-control). useRowNav finds it by data-row-open; the
-   layout around it is the page's. */
-.list-row-open {
-  text-align: left;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-}
-.list-row-open::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-}
-/* A row's own control or tip (its tags, its menu, a time with a tooltip) sits above the
-   open button's stretched target, so it takes its own clicks and hovers. */
 @layer components {
+  .list-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--click-card-horizontal-space-md-gap);
+    padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
+    border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+    border-radius: var(--click-card-horizontal-radii-all);
+    background: var(--click-card-horizontal-default-color-background-default);
+    scroll-margin-top: 8px;
+    /* The browser lays out and paints only the rows in view; a row not drawn yet holds its
+       list's measured height: a thread 76 px, a document 101, a memory 129, and under 640 px,
+       where a row's meta takes its own line, 105, 123 and 151 (below). */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 76px;
+  }
+
+  /* A row's open button: plain text whose click target stretches over the whole row, under
+     the row's other controls (.list-row-control). useRowNav finds it by data-row-open; the
+     layout around it is the page's. */
+  .list-row-open {
+    text-align: left;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .list-row-open::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  /* A row's own control or tip (its tags, its menu, a time with a tooltip) sits above the
+     open button's stretched target, so it takes its own clicks and hovers. */
   .list-row-control {
     position: relative;
     z-index: 1;
@@ -1325,56 +1300,79 @@ button.pane-card:hover {
       z-index: 1;
     }
   }
-}
-.list-row[data-doc-row] {
-  contain-intrinsic-size: auto 101px;
-}
-.list-row[data-card] {
-  contain-intrinsic-size: auto 129px;
-}
-/* ui/RowSkeleton: the same heights, so a list's rows land without moving it. */
-.list-row-skeleton {
-  height: 76px;
-  pointer-events: none;
-}
-.list-row-skeleton[data-kind="document"] {
-  height: 101px;
-}
-.list-row-skeleton[data-kind="memory"] {
-  height: 129px;
-}
-@media (max-width: 639px) {
-  .list-row {
-    contain-intrinsic-size: auto 105px;
-  }
   .list-row[data-doc-row] {
-    contain-intrinsic-size: auto 123px;
+    contain-intrinsic-size: auto 101px;
   }
   .list-row[data-card] {
-    contain-intrinsic-size: auto 151px;
+    contain-intrinsic-size: auto 129px;
   }
+  /* ui/RowSkeleton: the same heights, so a list's rows land without moving it. */
   .list-row-skeleton {
-    height: 105px;
+    height: 76px;
+    pointer-events: none;
   }
   .list-row-skeleton[data-kind="document"] {
-    height: 123px;
+    height: 101px;
   }
   .list-row-skeleton[data-kind="memory"] {
-    height: 151px;
+    height: 129px;
+  }
+  @media (max-width: 639px) {
+    .list-row {
+      contain-intrinsic-size: auto 105px;
+    }
+    .list-row[data-doc-row] {
+      contain-intrinsic-size: auto 123px;
+    }
+    .list-row[data-card] {
+      contain-intrinsic-size: auto 151px;
+    }
+    .list-row-skeleton {
+      height: 105px;
+    }
+    .list-row-skeleton[data-kind="document"] {
+      height: 123px;
+    }
+    .list-row-skeleton[data-kind="memory"] {
+      height: 151px;
+    }
+  }
+  .list-row:hover {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
+  .list-row[data-checked] {
+    background: var(--click-table-row-color-background-active);
+  }
+  .list-row[data-active] {
+    border-color: var(--click-card-horizontal-default-color-stroke-active);
+  }
+  .list-row[data-deleted] {
+    border-style: dashed;
+  }
+  .list-row-leading {
+    display: flex;
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+  /* A row's checkbox under a coarse pointer is a 44 px target (WCAG 2.5.8), so a tap beside
+     it selects the row instead of opening it. It reaches into Click UI's checkbox markup
+     (`[role="checkbox"]`): recheck it when Click UI is upgraded. */
+  @media (pointer: coarse) {
+    .list-row-leading [role="checkbox"] {
+      position: relative;
+    }
+    .list-row-leading [role="checkbox"]::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: var(--spacing-hit);
+      height: var(--spacing-hit);
+      transform: translate(-50%, -50%);
+    }
   }
 }
-.list-row:hover {
-  background: var(--click-card-horizontal-default-color-background-hover);
-}
-.list-row[data-checked] {
-  background: var(--click-table-row-color-background-active);
-}
-.list-row[data-active] {
-  border-color: var(--click-card-horizontal-default-color-stroke-active);
-}
-.list-row[data-deleted] {
-  border-style: dashed;
-}
+
 /* AgentBadge: a long agent name is cut at 180 px with an ellipsis (the whole name is in
    its tooltip); every box inside Click UI's Badge may shrink to it. */
 .agent-badge {
@@ -1384,10 +1382,33 @@ button.pane-card:hover {
   min-width: 0;
   max-width: 100%;
 }
-.list-row-leading {
-  display: flex;
-  flex-shrink: 0;
-  padding-top: 1px;
+
+@layer components {
+  /* A record inside a narrow pane (the Explorer inspector's facts and hits): CardHorizontal sm,
+     whose one body block cannot hold a fact's links, chips and count. A button form hovers. */
+  .pane-card {
+    display: block;
+    padding: var(--click-card-horizontal-space-sm-y) var(--click-card-horizontal-space-sm-x);
+    border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+    border-radius: var(--click-card-horizontal-radii-all);
+    background: var(--click-card-horizontal-default-color-background-default);
+  }
+  button.pane-card:hover {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
+
+  /* Profile's persona picker: a selectable CardHorizontal (a button holding a title, a line and
+     a sample); hover tints the background and keeps the stroke, as Click UI's card does. */
+  .persona-card {
+    text-align: left;
+    padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
+    border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+    border-radius: var(--click-card-horizontal-radii-all);
+    background: var(--click-card-horizontal-default-color-background-default);
+  }
+  .persona-card:hover {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
 }
 
 /* ui/ListPager: Click UI's Pagination stacks into a column under 768 px (its containers are
@@ -1523,24 +1544,6 @@ button.pane-card:hover {
       width: 100%;
       height: max(100%, var(--spacing-hit));
       transform: translateY(-50%);
-    }
-  }
-  /* ui/ListRow's `.list-row-leading` slot owns this: a row's checkbox under a coarse pointer
-     is a 44 px target (WCAG 2.5.8), so a tap beside it selects the row instead of opening
-     it. It reaches into Click UI's checkbox markup (`[role="checkbox"]`): recheck it when
-     Click UI is upgraded. */
-  @media (pointer: coarse) {
-    .list-row-leading [role="checkbox"] {
-      position: relative;
-    }
-    .list-row-leading [role="checkbox"]::after {
-      content: "";
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: var(--spacing-hit);
-      height: var(--spacing-hit);
-      transform: translate(-50%, -50%);
     }
   }
 }
