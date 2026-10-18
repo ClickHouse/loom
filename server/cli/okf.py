@@ -180,9 +180,11 @@ async def _fetch_namespace(
                 "offset": offset,
                 "sort_by": "recency",
                 "include_tombstoned": include_tombstoned,
-                # memory.list hides superseded rows by default;
-                # the bundle renders them as `status: deprecated`.
+                # memory.list hides superseded and duplicate rows by default; the
+                # bundle renders them as `status: deprecated`, and a bundle without
+                # them would let --prune delete their copies.
                 "include_superseded": True,
+                "include_duplicates": True,
             },
         )
         rows = page.get("entries") or []
@@ -818,7 +820,7 @@ async def _import_links(
         print(f"  ! … {len(unresolved) - 10} more unresolved relates_to entries", file=sys.stderr)
     n: Counter[str] = Counter(links_unresolved=len(unresolved))
     # One key exported for several writers carries its edges once per concept.
-    wanted = {canonical_edge(e["from_key"], e["to_key"], e["relation"])[:3]: e for e in links}
+    wanted = {_edge_key(e): e for e in links}
     new = [e for k, e in wanted.items() if k not in live_edges]
     n["links_unchanged"] = len(wanted) - len(new)
     if args.dry_run:
@@ -842,6 +844,12 @@ async def _import_links(
             n["links_failed"] += 1
             print(f"  ✗ link {e['from_key']} {e['relation']} {e['to_key']}: {err}", file=sys.stderr)
     return n
+
+
+def _edge_key(e: dict[str, str]) -> tuple[str, str, str]:
+    """(from_key, to_key, relation) as memory.link stores the edge."""
+    edge = canonical_edge(e["from_key"], e["to_key"], e["relation"])
+    return edge.from_key, edge.to_key, edge.relation
 
 
 def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
@@ -1024,7 +1032,7 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                 live = await _live_rows(client, org, args)
                 if links and not args.no_links:
                     edges = await _fetch_edges(client, org, args.namespace)
-                    live_edges = {(e["from_key"], e["to_key"], e["relation"]) for e in edges}
+                    live_edges = {_edge_key(e) for e in edges}
             except RuntimeError as e:
                 print(f"cannot read {org}/{args.namespace}: {e}", file=sys.stderr)
                 return 1

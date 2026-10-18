@@ -54,6 +54,8 @@ guard, a path that is not a directory, or a missing `--agent`, token or org.
   the `loom.corpus_digest` the export wrote into `index.md`. A partial or edited bundle
   never drives deletes, and neither does one exported into a directory that held an
   older bundle.
+- The export carries the source's superseded and duplicate rows as `status: deprecated`,
+  so a key the source folds into another stays in the copy instead of being pruned.
 - Before each delete it reads the row under its own identity again, and goes on only if
   that row is under its `--agent` and was written by its own token, since the agent name
   alone is the caller's choice. The delete passes `memory.delete`'s `if_version`, which

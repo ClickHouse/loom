@@ -91,7 +91,9 @@ class _FakeLoom:
                 (
                     r
                     for (a, s, _k), r in self.rows.items()
-                    if body["agent"] in ("*", a) and body["session_id"] in ("*", s)
+                    if body["agent"] in ("*", a)
+                    and body["session_id"] in ("*", s)
+                    and (r.get("status") != "duplicate" or body.get("include_duplicates"))
                 ),
                 key=lambda r: r["memory_key"],
             )
@@ -667,6 +669,17 @@ def test_only_an_export_that_read_every_row_is_marked_complete(
     assert _export(tmp_path / "all")["complete"] is True
     assert _export(tmp_path / "under", "--limit", "10")["complete"] is True
     assert "complete" not in _export(tmp_path / "part", "--limit", "1")
+
+
+def test_a_complete_export_carries_rows_the_source_marked_duplicate(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Left out, a key that turns duplicate after the first sync would be pruned from the copy.
+    monkeypatch.setattr(cli_okf, "_server_build", lambda _url: "")
+    assert _run(_bundle(tmp_path / "b", [_entry("a"), _entry("c")])) == 0
+    loom.rows[("okf-sync", "-", "c")]["status"] = "duplicate"
+    pointer = _export(tmp_path / "out")
+    assert pointer["complete"] is True and pointer["concepts"] == 2
 
 
 _LIST = ["content_sha256", "memory_type", "source_trace", "tags", "confidence", "entities"]
