@@ -177,8 +177,8 @@ def _get(path: str, endpoint: Any) -> Route:
 
 
 def attach(app: Any) -> None:
-    """Mount the dashboard: the bundle, the tab icon, the old /me links and a
-    page route for `/` and each view segment (with any deeper path)."""
+    """Mount the dashboard: the bundle, the tab icon and a page route for `/`
+    and each view segment (with any deeper path)."""
     app.mount("/assets", _BundleAssets(), name="dashboard_assets")
     pages = [_get("/", dashboard_page)]
     for segment in sorted(PAGE_SEGMENTS):

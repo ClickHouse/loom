@@ -128,13 +128,12 @@ reload_proxy() {
 
 wait_ready() {
   # status=ok, readiness.ready (what /v1/health/ready answers: keys loaded,
-  # config matches the deployment's, warm-up done) and schema.pending=[]. A
-  # build from before readiness carries no `readiness` and is judged on the rest.
+  # config matches the deployment's, warm-up done) and schema.pending=[].
   local colour=$1 port=${PORT_OF[$1]} deadline=$((SECONDS + READY_TIMEOUT_S)) body=""
   echo "==> waiting for loom-$colour on 127.0.0.1:$port (status=ok, readiness.ready, schema.pending=[])"
   while ((SECONDS < deadline)); do
     body=$(curl -fsS --max-time 3 "http://127.0.0.1:$port/v1/health" 2>/dev/null || true)
-    if [[ -n "$body" ]] && echo "$body" | jq -e '.status=="ok" and .ch_ok==true and (.readiness == null or .readiness.ready == true) and (.schema.pending|type)=="array" and (.schema.pending|length)==0' >/dev/null 2>&1; then
+    if [[ -n "$body" ]] && echo "$body" | jq -e '.status=="ok" and .ch_ok==true and .readiness.ready == true and (.schema.pending|type)=="array" and (.schema.pending|length)==0' >/dev/null 2>&1; then
       echo "    ready: $(echo "$body" | jq -c '{build_commit, status, providers_degraded, embedding_dim_mismatch, schema: {pending: .schema.pending, ledger_only: .schema.ledger_only}, ratelimit: .ratelimit.backend}')"
       echo "$body" | jq -e '.providers_degraded==false and .embedding_dim_mismatch==false' >/dev/null \
         || {

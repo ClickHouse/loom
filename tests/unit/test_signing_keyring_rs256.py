@@ -242,7 +242,7 @@ def test_rotate_waits_out_the_slowest_servers_refresh(
     300 s accepted `--activate-in 60` and answered 401 for minutes."""
     import argparse
 
-    from server.cli import portability
+    from server.cli import signing_keys
 
     class _Readers(_CH):
         async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
@@ -253,14 +253,14 @@ def test_rotate_waits_out_the_slowest_servers_refresh(
     monkeypatch.setattr(settings, "jwt_keyring_refresh_seconds", 30.0)
     args = argparse.Namespace(signing_cmd="rotate", algorithm="HS256", activate_in=60.0)
     ch = _Readers()
-    assert asyncio.run(portability._signing_key_cmd(args, keyring, ch)) == 1
+    assert asyncio.run(signing_keys._signing_key_cmd(args, keyring, ch)) == 1
     assert "at least 600 s (twice the servers' slowest" in capsys.readouterr().err
     assert ch.inserted == []
     args.activate_in = 600.0
-    assert asyncio.run(portability._signing_key_cmd(args, keyring, ch)) == 0
+    assert asyncio.run(signing_keys._signing_key_cmd(args, keyring, ch)) == 0
     # Servers refreshing faster than this host set the floor, not this host.
     monkeypatch.setattr(settings, "jwt_keyring_refresh_seconds", 900.0)
-    assert asyncio.run(portability._signing_key_cmd(args, keyring, ch)) == 0
+    assert asyncio.run(signing_keys._signing_key_cmd(args, keyring, ch)) == 0
 
 
 def test_an_unloadable_keyring_is_a_message_not_a_traceback(
@@ -268,15 +268,15 @@ def test_an_unloadable_keyring_is_a_message_not_a_traceback(
 ) -> None:
     import argparse
 
-    from server.cli import portability
+    from server.cli import signing_keys
     from server.core.errors import BackendUnavailableError
 
     async def down(*_: Any, **__: Any) -> int:
         raise BackendUnavailableError("the signing keyring is not loaded yet; retry shortly")
 
-    monkeypatch.setattr(portability, "_signing_key_cmd", down)
-    monkeypatch.setattr(portability, "run_connected", lambda run: asyncio.run(run(object())))
-    assert portability._cmd_signing_key(argparse.Namespace(signing_cmd="list")) == 1
+    monkeypatch.setattr(signing_keys, "_signing_key_cmd", down)
+    monkeypatch.setattr(signing_keys, "run_connected", lambda run: asyncio.run(run(object())))
+    assert signing_keys._cmd_signing_key(argparse.Namespace(signing_cmd="list")) == 1
     assert "not loaded yet" in capsys.readouterr().err
 
 

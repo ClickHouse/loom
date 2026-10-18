@@ -162,22 +162,9 @@ def select_tables(
     return [by_name[t] for t in in_load_order(list(by_name))]
 
 
-def view_edges(client: Any, manifest: dict[str, Any]) -> list[dict[str, str]]:
-    """The backup's [{view, source, target}]. A manifest from before they were
-    recorded reads them from its source database, when the target server has
-    it; else there are none to check."""
-    if "views" in manifest:
-        return list(manifest["views"])
-    from dev.backup_loom import view_edges as read_edges
-
-    db = str(manifest.get("source_database") or "")
-    if not _IDENT.match(db):
-        return []
-    try:
-        return read_edges(client, db)
-    except Exception as e:  # noqa: BLE001 — an unreadable view list skips the check, said aloud
-        print(f"! could not read the views of {db} ({e}); the view-split check is skipped")
-        return []
+def view_edges(manifest: dict[str, Any]) -> list[dict[str, str]]:
+    """The backup's [{view, source, target}]."""
+    return list(manifest["views"])
 
 
 # Tables no view joins that are restored together all the same: (table, partner, why).
@@ -698,7 +685,7 @@ def main(argv: list[str] | None = None) -> int:
         print_plan(target.describe(), target.database, plans, state)
         try:
             if not args.allow_view_split:
-                check_view_split(plans, view_edges(client, manifest))
+                check_view_split(plans, view_edges(manifest))
             check_refusals(
                 target.database,
                 live_databases(),

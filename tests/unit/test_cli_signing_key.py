@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from server.cli import portability
+from server.cli import signing_keys
 from server.cli.app import main
 from server.core import leases
 
@@ -52,7 +52,7 @@ def ch(monkeypatch: pytest.MonkeyPatch) -> _CH:
 
     monkeypatch.setattr(settings, "jwt_secret", "r" * 40)
     fake = _CH()
-    monkeypatch.setattr(portability, "run_connected", lambda run: asyncio.run(run(fake)))
+    monkeypatch.setattr(signing_keys, "run_connected", lambda run: asyncio.run(run(fake)))
 
     class _Held:
         held = True

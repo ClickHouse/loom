@@ -591,26 +591,9 @@ def test_restore_exclude_leaves_tables_out(monkeypatch: pytest.MonkeyPatch, tmp_
     assert _restore(monkeypatch, client, ["--in-dir", str(b), "--exclude", "nope"]) == 2
 
 
-def test_an_older_manifest_reads_the_views_of_its_source_database() -> None:
-    class _Views:
-        def query(self, sql: str, parameters: Any = None) -> _Result:
-            if sql == backup_loom.VIEW_SOURCES_SQL:
-                return _Result([("memory", "memory_versions_mv")])
-            return _Result(
-                [
-                    (
-                        "memory_versions_mv",
-                        "CREATE MATERIALIZED VIEW loom.memory_versions_mv "
-                        "TO loom.memory_versions (`org` String) AS SELECT",
-                    )
-                ]
-            )
-
-    edges = restore_loom.view_edges(_Views(), {"source_database": "loom"})
-    assert edges == [
-        {"view": "memory_versions_mv", "source": "memory", "target": "memory_versions"}
-    ]
-    assert restore_loom.view_edges(_Views(), {"views": []}) == []
+def test_the_restore_checks_the_views_its_manifest_recorded() -> None:
+    edge = {"view": "memory_versions_mv", "source": "memory", "target": "memory_versions"}
+    assert restore_loom.view_edges({"views": [edge]}) == [edge]
 
 
 def test_each_restore_stages_under_its_own_run_id(

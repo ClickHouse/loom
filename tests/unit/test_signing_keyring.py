@@ -451,7 +451,7 @@ def test_a_pem_root_signs_rs256_as_default(
     assert pyjwt.get_unverified_header(token) == {"alg": "RS256", "kid": "default", "typ": "JWT"}
     assert pyjwt.decode(token, public, algorithms=["RS256"], audience=settings.jwt_audience)
     assert verify_token(token).subject == "s"
-    assert keyring.public_keys()["default"] == public
+    assert keyring.public_keys() == {"default": public}
     # A retired `default` takes the PEM root with it.
     _load([{**_row("default", at=_now()), "sealed_key": "", "retired": True}])
     with pytest.raises(keyring.NoSigningKey):
@@ -571,18 +571,17 @@ def test_a_gateway_entry_of_the_roots_own_key_dies_with_the_retire(
         verify_token(token)
 
 
-def test_retiring_the_imported_root_key_stops_its_default_tokens_in_the_gateway_map(
+def test_a_retired_key_stops_its_default_tokens_in_the_gateway_map(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The upgrade imports the old PEM as `default-rs256` and keeps the gateway
-    map that verified its `default` tokens; retiring `default-rs256` must stop
-    them under that map's `default` too."""
+    """A gateway map that verifies `default` tokens with a key this deployment
+    retired stops them too."""
     import json
 
     old_pem, old_public = _rsa()
     monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps({"default": old_public}))
     retired = {
-        **_row(keyring.ROOT_RS256_KID, at=_now() - timedelta(days=1), retired=True),
+        **_row("k0", at=_now() - timedelta(days=1), retired=True),
         "algorithm": "RS256",
         "public_pem": old_public,
     }
@@ -615,7 +614,7 @@ def test_a_retired_key_stays_retired_in_any_pem_layout_of_the_gateway_map(
         listed = layout(old_public)
     monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps({"default": listed}))
     retired = {
-        **_row(keyring.ROOT_RS256_KID, at=_now() - timedelta(days=1), retired=True),
+        **_row("k0", at=_now() - timedelta(days=1), retired=True),
         "algorithm": "RS256",
         "public_pem": old_public,
     }

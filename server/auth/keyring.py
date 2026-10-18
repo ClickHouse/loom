@@ -22,8 +22,7 @@ commands and `loom mint-token` refuse to run there and `/v1/health` and
 `loom doctor` say so. The workers leader (or a keyring command) writes it.
 
 A PEM RSA `LOOM_JWT_SECRET` seals, and signs and verifies RS256 as kid
-`default`: it is held as `ROOT_RS256_KID` unless a row of that kid or a
-retired `default` says otherwise. A gateway key of
+`default`: it is held as `ROOT_RS256_KID` unless `default` is retired. A gateway key of
 kid `default` (`jwt_public_keys_json`) verifies beside it.
 """
 
@@ -253,11 +252,9 @@ def _pem_root(secret: str) -> SigningKey | None:
 
 
 def _keys(view: _View) -> dict[str, SigningKey]:
-    """The view's keys, plus a PEM root as `ROOT_RS256_KID` unless a row of that
-    kid exists (retired, or sealed under another root) or `default` is
-    retired."""
-    rows = view.keys.keys() | view.retired | view.unsealable
-    if ROOT_RS256_KID in rows or ROOT_KID in view.retired:
+    """The view's keys, plus a PEM root as `ROOT_RS256_KID` unless `default`
+    is retired."""
+    if ROOT_KID in view.retired:
         return view.keys
     key = _pem_root(str(settings.jwt_secret))
     return view.keys if key is None else {**view.keys, ROOT_RS256_KID: key}
@@ -373,8 +370,8 @@ def _retired_key(public_pem: str) -> bool:
 def public_keys() -> dict[str, str]:
     """kid → public PEM of this deployment's RS256 keys, for the JWKS."""
     out = {k.kid: k.public_pem for k in _keys(_view).values() if k.algorithm == "RS256"}
-    if ROOT_RS256_KID in out and ROOT_KID not in _view.retired:
-        out[ROOT_KID] = out[ROOT_RS256_KID]
+    if ROOT_RS256_KID in out:
+        out[ROOT_KID] = out.pop(ROOT_RS256_KID)
     return out
 
 

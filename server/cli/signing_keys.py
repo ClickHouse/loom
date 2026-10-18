@@ -88,7 +88,7 @@ async def _signing_key_cmd(args: argparse.Namespace, keyring: Any, ch: Any) -> i
     return 0
 
 
-def register_portability_cli(sub: Any) -> None:
+def register_signing_key_cli(sub: Any) -> None:
     p_sk = sub.add_parser(
         "signing-key",
         help="The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse.",

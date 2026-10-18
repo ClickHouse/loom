@@ -168,9 +168,9 @@ def _add_code_okf_up_parsers(sub: Any) -> None:
 
     register_secrets_cli(sub)
 
-    from server.cli.portability import register_portability_cli
+    from server.cli.signing_keys import register_signing_key_cli
 
-    register_portability_cli(sub)
+    register_signing_key_cli(sub)
 
     from server.cli.provider_lock import register_provider_lock_cli
 

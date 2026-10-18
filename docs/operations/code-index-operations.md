@@ -472,8 +472,7 @@ under it is known only once a host has loaded it. CI is where that first happens
 Ubuntu 24.04 with `kernel.apparmor_restrict_unprivileged_userns=1` left on and runs the
 probe and the hostile suite in the production image with the colours' options. On a
 deploy host, check it in a throwaway container from the build about to be deployed, not
-the serving one: an image from before the `--disable-userns` fallback prints `False`
-under this profile (`True` means the sandbox runs):
+the serving one (`True` means the sandbox runs):
 
 ```bash
 docker build -q -t loom:sandbox-check .

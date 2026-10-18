@@ -435,11 +435,12 @@ async def test_shutdown_retirement_never_outlives_its_budget(setup, monkeypatch,
     assert time.monotonic() - started < 0.5
 
 
-def test_a_participant_row_expires_after_the_heartbeat_window_by_default():
-    import inspect
-
-    default = inspect.signature(pp.record_participant).parameters["stale_after_s"].default
-    assert default == pp.STALE_AFTER_S > barrier.HEARTBEAT_S
+@pytest.mark.asyncio
+async def test_a_participant_row_expires_after_the_heartbeat_window_by_default():
+    ch = SimpleNamespace(insert=AsyncMock())
+    await pp.record_participant(uuid4(), UUID(int=0), "running", ch=ch)
+    (row,) = ch.insert.call_args.args[1]
+    assert row["stale_after_s"] == pp.STALE_AFTER_S > barrier.HEARTBEAT_S
 
 
 @pytest.mark.asyncio
