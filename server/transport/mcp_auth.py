@@ -57,6 +57,15 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
+def _ledger_refusal(tool_name: Any, args: dict[str, Any], code: str) -> None:
+    from server.transport.mcp_call import _TOOLS_BY_NAME
+    from server.transport.mcp_tools import emit_refusal
+
+    op = _TOOLS_BY_NAME.get(str(tool_name or ""))
+    if op is not None:
+        emit_refusal(op.name, args, code)
+
+
 async def _plane_namespace(tool_name: Any, auth: Any, ns: str) -> str | dict[str, Any] | None:
     """For a code/tracker tool's inaccessible `namespace`: the namespace it
     resolves to (and the resolution noted for the result),
@@ -268,7 +277,9 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
     if req_org and not may_act_in_org(auth, str(req_org)):
         # result-with-isError, not a JSON-RPC error frame (clients
         # drop conversation state on those) — so the agent reads
-        # the message and can recover.
+        # the message and can recover. Ledgered in the token's org, never
+        # the one the call named.
+        _ledger_refusal(tool_name, {**args, "org": auth.org}, "ORG_MISMATCH")
         msg = f"token org {auth.org!r} != request org {req_org!r}"
         return _ok(
             req.get("id"),
@@ -284,8 +295,10 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
         # to one or says so — never the claim text meant for a real refusal.
         fixed = await _plane_namespace(tool_name, auth, req_ns)
         if isinstance(fixed, dict):
+            _ledger_refusal(tool_name, args, str(fixed["structuredContent"]["code"]))
             return _ok(req.get("id"), fixed)
         if not fixed:
+            _ledger_refusal(tool_name, args, "NAMESPACE_NOT_ACCESSIBLE")
             return _ok(req.get("id"), _not_accessible_result(tool_name, auth, req_ns))
         args["namespace"] = fixed
     # Readable: the op's own gate enforces the role it requires.

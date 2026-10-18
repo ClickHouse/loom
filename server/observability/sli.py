@@ -33,13 +33,13 @@ _SEARCH_OPS = frozenset(
     }
 )
 
-# Refusals the transports record without the exception that raised them,
-# counted as the caller's. Each answers a 4xx but IDEMPOTENT_IN_PROGRESS, a 503
-# with Retry-After that a client causes by retrying a key still running.
+# Refusals a transport records by code alone, counted as the caller's: MCP's
+# refusals before dispatch (server.transport.mcp_tools.emit_refusal) and the
+# codes the transports' literal error codes name. Each answers a 4xx but
+# IDEMPOTENT_IN_PROGRESS, a 503 with Retry-After that a client causes by
+# retrying a key still running.
 CLIENT_CODES = frozenset(
     {
-        "AUTH_INVALID",
-        "BAD_REQUEST",
         "HANDLER_HTTP_ERROR",
         "IDEMPOTENT_CONFLICT",
         "IDEMPOTENT_IN_PROGRESS",
@@ -48,6 +48,8 @@ CLIENT_CODES = frozenset(
         "ORG_MISMATCH",
         "POLICY_FORBIDDEN",
         "UNKNOWN_ARGUMENT",
+        "UNKNOWN_NAMESPACE",
+        "UNKNOWN_OP",
     }
 )
 

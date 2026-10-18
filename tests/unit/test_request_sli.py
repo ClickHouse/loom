@@ -208,6 +208,59 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
     assert counter.calls == [{"reason": "invalid", "loom.transport": "http"}]
 
 
+def test_mcp_refusals_before_dispatch_are_ledgered_as_the_caller_s(monkeypatch) -> None:
+    import asyncio
+
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+    from server.transport import mcp_call, mcp_op, mcp_tools
+    from server.transport.mcp_auth import _screen_tool_call
+
+    rows: list[tuple[str, str, str]] = []
+
+    def _capture(op_name, raw_args, latency_ms, success, error_code, request_id, **_):
+        assert not success
+        rows.append((op_name, error_code, raw_args.get("org", "")))
+
+    monkeypatch.setattr(mcp_tools, "_emit_mcp_event", _capture)
+    eve = AuthInfo(
+        subject="eve", org="eve-org", namespaces=(), roles=(Role.WRITER,), is_service_account=False
+    )
+    call = {"name": "loom_memory_set", "arguments": {"org": "acme", "namespace": "n"}}
+    assert asyncio.run(_screen_tool_call({"id": 1, "params": call}, eve)) is not None
+    # Kept off MCP, by its tool name and through loom_op; a write on a read-only connection.
+    hidden = next(op for op in mcp_call.ALL_OPERATIONS if op.name == "blacklist.remove")
+    assert isinstance(
+        asyncio.run(mcp_call._resolve_tool(2, hidden.mcp_tool_name, {}, eve, None)), dict
+    )
+    via_op = {
+        "id": 3,
+        "method": "tools/call",
+        "params": {"name": "loom_op", "arguments": {"op": "blacklist.remove"}},
+    }
+    assert mcp_op.route(via_op, toolset=None)[1] is not None
+    write = {
+        "id": 4,
+        "method": "tools/call",
+        "params": {"name": "loom_op", "arguments": {"op": "memory.set"}},
+    }
+    assert mcp_op.route(write, toolset="readonly")[1] is not None
+    # A name no op answers to writes no row.
+    unknown = {
+        "id": 5,
+        "method": "tools/call",
+        "params": {"name": "loom_op", "arguments": {"op": "no.such"}},
+    }
+    assert mcp_op.route(unknown, toolset=None)[1] is not None
+    assert rows == [
+        ("memory.set", "ORG_MISMATCH", "eve-org"),  # the token's org, not the one named
+        ("blacklist.remove", "OP_NOT_ON_MCP", ""),
+        ("blacklist.remove", "OP_NOT_ON_MCP", ""),
+        ("memory.set", "UNKNOWN_OP", ""),
+    ]
+    assert {sli.status_class(False, code, None) for _, code, _ in rows} == {"client"}
+
+
 def test_health_problems_need_no_clickhouse() -> None:
     from server.health import health_problems
 

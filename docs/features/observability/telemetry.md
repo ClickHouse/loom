@@ -22,9 +22,12 @@ passes write rows with `kind='worker'`. [Cost and usage](./cost-and-usage.md) is
 this table.
 
 Each request row also carries its service-level columns: `transport` (`http` or `mcp`),
-`slo_class` (`write`, `search`, `read`, `code`, `admin`), `status_class` (`ok`, `client`
-for a refused request, `server` for a failure) and `budget_ms`, the latency budget the
-request was held to. A refreshable materialized view folds rows older than 10 seconds
+`slo_class` (`write`, `search`, `read`, `code`, `admin`), `status_class` (`ok`; `client`
+for a 4xx refusal or a retried idempotency key still running; `server` otherwise,
+including a write refused because its history policy could not be evaluated) and
+`budget_ms`, the latency budget the request was held to. MCP writes a row for a call it
+refuses before dispatch (an org or namespace the token may not use, an op kept off MCP),
+as HTTP does for its refusals. A refreshable materialized view folds rows older than 10 seconds
 into `loom_telemetry.sli_minute` once a minute (requests, server and client errors,
 rate-limited requests, which are among the client errors, over-budget successes, latency
 quantiles, kept 400 days), for SLO dashboards and alert rules to read without scanning

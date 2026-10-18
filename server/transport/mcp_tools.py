@@ -443,6 +443,21 @@ def _emit_mcp_event(
     )
 
 
+def emit_refusal(op_name: str, raw_args: dict[str, Any], code: str) -> None:
+    """The ledger row for a call MCP refuses before dispatch (an org or
+    namespace the token may not use, an op kept off MCP), so the SLIs count it
+    as the caller's, as they do HTTP's refusals. A name no op answers to
+    writes none."""
+    import uuid
+
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    if op_name in OPERATIONS_BY_NAME:
+        _emit_mcp_event(
+            op_name, raw_args, 0, success=False, error_code=code, request_id=str(uuid.uuid4())
+        )
+
+
 # The `why` note names a hit's ranking terms in the agent's
 # words. `rank_score_raw` / `rank_score` are the base, not a reason.
 _WHY_LABELS: dict[str, str] = {
