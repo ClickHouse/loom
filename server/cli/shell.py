@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from server.cli._client import (
+    AGENT_NO_TOKEN,
+    AGENT_SOURCE,
     DEFAULT_BASE_URL,
     default_base_url,
     error_line,
@@ -158,7 +160,10 @@ def _cmd_ingest_transcript(args: argparse.Namespace) -> int:
     import time
     import urllib.request
 
-    token, _ = resolve_token(args.token)
+    token, source = resolve_token(args.token)
+    if not token and source == AGENT_SOURCE:
+        print(f"ERROR: {AGENT_NO_TOKEN}", file=sys.stderr)
+        return 2
     if not token:
         print(
             "ERROR: --token is required (or set LOOM_API_KEY, or save one to ~/.loom/token). "

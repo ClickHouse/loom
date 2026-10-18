@@ -20,6 +20,12 @@ TOKEN_FILE = "~/.loom/token"
 CONFIG_SOURCE = "~/.loom/config.json"
 # The source label of an agent's (no) token: see `resolve_token`.
 AGENT_SOURCE = "agent mode"
+# What a command that needs a token tells an agent instead of "save one".
+AGENT_NO_TOKEN = (
+    "agent mode (LOOM_CLIENT_ID with a workload token): this command uses no saved token. "
+    "`loom call` exchanges the workload token itself; to act as a person, unset "
+    "LOOM_CLIENT_ID first."
+)
 
 # Every command resolves the server URL and the token in the plugin hooks'
 # order (`resolveServerUrl` / `resolveToken` in the plugin's loom-client.mjs),

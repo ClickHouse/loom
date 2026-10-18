@@ -107,8 +107,12 @@ def test_doctor_never_reads_the_persons_namespace_or_tokens_for_an_agent(tmp_pat
     assert grade == "WARN" and "agent mode" in detail and "mint" not in detail
 
 
-def test_install_refuses_to_save_an_agents_token(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("token", [None, "a-persons-token"])
+def test_install_refuses_in_agent_mode_whatever_the_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    token: str | None,
 ) -> None:
     import argparse
 
@@ -117,7 +121,18 @@ def test_install_refuses_to_save_an_agents_token(
     for k, v in _AGENT.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOOM_API_KEY", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    assert install._cmd_install(argparse.Namespace(token=None)) == 2
-    assert "agent's Loom token" in capsys.readouterr().err
+    assert install._cmd_install(argparse.Namespace(token=token)) == 2
+    assert "not installing in agent mode" in capsys.readouterr().err
     assert not (tmp_path / ".loom" / "config.json").exists()
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_the_doctor_points_an_agent_at_the_server_it_checked(tmp_path: Path) -> None:
+    from server.cli.doctor_client import namespace_check, token_check
+
+    _, _, detail = token_check("", _client.AGENT_SOURCE, {}, 0, "https://loom.example")
+    assert "loom call --server https://loom.example namespace.list_mine" in detail
+    _, grade, why = namespace_check("coding", [], "", False, agent=True)
+    assert grade == "WARN" and "exchanged token's namespace" in why
