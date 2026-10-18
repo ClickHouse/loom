@@ -116,7 +116,7 @@ def _health_provider_fields(
 def health_problems() -> list[dict[str, object]]:
     """This process's `/v1/health` problems without a ClickHouse round trip,
     for the `loom.health.problems` gauge."""
-    return cast("list[dict[str, object]]", _health_provider_fields(True)["problems"])
+    return cast("list[dict[str, object]]", _health_provider_fields(ch_ok=True)["problems"])
 
 
 async def _ping_clickhouse() -> tuple[bool, str | None]:
