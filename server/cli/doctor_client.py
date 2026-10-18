@@ -237,19 +237,21 @@ def auth_check(
         msg = _detail(body)
         if agent:
             fix = _agent_token_fix(base_url)
-            why = "the hooks send LOOM_API_KEY, when set, before the workload token"
+            why = (
+                "the hooks send LOOM_API_KEY, when set, before the workload token, "
+                "so a rejected one makes captures vanish"
+            )
         else:
             fix = (
                 "mint a new token (`loom mint-token --save`, Settings → Tokens in the "
                 "dashboard, or `loom init --agent`)"
             )
-            why = "the hooks fail open"
+            why = "the hooks fail open, so this is why captures vanish"
         return (
             (
                 name,
                 FAIL,
-                f"the server rejected the token: {msg}. Fix: {fix} — "
-                f"{why}, so this is why captures vanish.",
+                f"the server rejected the token: {msg}. Fix: {fix} — {why}.",
             ),
             [],
         )

@@ -221,6 +221,7 @@ def test_a_rejected_token_tells_an_agent_to_drop_it_not_to_sign_up(tmp_path: Pat
     assert _grades(checks)["client:auth"] == "FAIL"
     assert "drop --token and LOOM_API_KEY" in d and "namespace.list_mine" in d
     assert "loom init" not in d
+    assert "so a rejected one makes captures vanish" in d
 
 
 @pytest.mark.parametrize(("exp", "grade"), [(NOW - 7200, "FAIL"), (NOW + 3600, "WARN")])
