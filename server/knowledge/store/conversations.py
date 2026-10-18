@@ -381,6 +381,8 @@ async def tombstone_thread(
 # msg_id is unique per agent only and a client may number its own turns. The content hash
 # also orders two turns that share a millisecond and an id; the page cursor carries only
 # (ts, msg_id), so a page boundary that falls between two such turns skips the second.
+# The cursor is a wire format the other build of a rollout reads, so carrying the hash
+# too is a change under docs/architecture/rolling-upgrades.md, rule 4.
 TURN = "msg_id, cityHash64(content)"
 
 
