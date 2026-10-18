@@ -127,7 +127,7 @@ async def test_delete_under_another_user_leaves_the_row(agent) -> None:
 
 @pytest.mark.asyncio
 async def test_list_tags_match_in_any_case(agent) -> None:
-    """`api` finds a row tagged `API`, `ärger` one tagged `ÄRGER`, and `tags_all` needs every tag."""
+    """`api` finds a row tagged `API`, `ärger` one tagged `ÄRGER`, and `tags_every` needs every tag."""
     # Unrelated sentences, so no write is folded into another as a duplicate.
     await agent.memory.set(
         "upper",
@@ -156,6 +156,6 @@ async def test_list_tags_match_in_any_case(agent) -> None:
 
     assert keys(await agent.memory.list(tags=["api"])) == {"upper", "both"}
     assert keys(await agent.memory.list(tags=["ärger"])) == {"umlaut"}
-    every = await agent.call("memory.list", tags=["API", "docs"], tags_all=True)
+    every = await agent.memory.list(tags=["API", "docs"], tags_every=True)
     assert keys(every) == {"both"}
     assert every["total"] == 1

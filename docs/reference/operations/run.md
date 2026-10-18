@@ -137,7 +137,7 @@ A verdict on a CLOSED run, usually days after it — a maintainer confirmed the 
 
 ## `run.list`
 
-One page of a namespace's agent runs, filtered by agent, session, status, memory activity, grade or text, in the asked order; `total` when the page cannot tell it.
+One page of a namespace's agent runs, filtered by agent, session, status, memory activity, grade or text, in the asked order, with `total` except on a full page after the first.
 
 `POST /v1/run.list` · MCP `loom_run_list` · role `viewer` · read · not listed under the MCP `all` toolset
 

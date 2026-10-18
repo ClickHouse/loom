@@ -61,8 +61,12 @@ async def test_an_upper_case_tag_matches_a_lower_case_row_with_no_flag() -> None
     row tagged `api` matches."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
-    await memory_repo.list_by_namespace(identity, scope=WHOLE_NAMESPACE, tags=["API"], ch=ch)
-    await memory_repo.count_by_namespace(identity, scope=WHOLE_NAMESPACE, tags=["API"], ch=ch)
+    await memory_repo.list_by_namespace(
+        identity, tag_match="folded_any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
+    )
+    await memory_repo.count_by_namespace(
+        identity, tag_match="folded_any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
+    )
     for sql, params in ch.calls:
         assert f"hasAny({_FOLDED})" in sql
         assert _EXACT not in sql
@@ -99,22 +103,22 @@ async def test_the_hidden_under_prefix_count_matches_tags_as_the_total_does(
             agent="*",
             prefix="alerts/",
             tags=["a", "b"],
-            tags_all=True,
+            tags_every=True,
         )
     )
     assert len(calls["count"]) == 3, "total, today and every status under the prefix"
     assert [c["tags"] for c in calls["count"]] == [["a", "b"]] * 3
-    assert [c["tag_match"] for c in calls["count"]] == ["all", "all", "all"]
+    assert [c["tag_match"] for c in calls["count"]] == ["folded_all", "folded_all", "folded_all"]
 
 
 @pytest.mark.asyncio
 async def test_the_store_requires_every_tag_when_asked() -> None:
-    """`tag_match="all"`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
+    """`tag_match="folded_all"`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
     of them are found past the newest rows that hold any one."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
-        identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tag_match="all", ch=ch
+        identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tag_match="folded_all", ch=ch
     )
     sql, params = ch.calls[-1]
     assert f"hasAll({_FOLDED})" in sql
@@ -122,7 +126,7 @@ async def test_the_store_requires_every_tag_when_asked() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
+async def test_tags_every_reaches_the_page_both_counts_and_the_cache_key(
     calls: dict[str, list[dict[str, Any]]],
 ) -> None:
     from server.memory.api.models_crud import MemoryListInput
@@ -131,11 +135,16 @@ async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
     for all_tags in (False, True):
         await _handle_memory_list(
             MemoryListInput(
-                org="acme", namespace="team", agent="*", tags=["a", "b"], tags_all=all_tags
+                org="acme", namespace="team", agent="*", tags=["a", "b"], tags_every=all_tags
             )
         )
-    assert [c["tag_match"] for c in calls["list"]] == ["any", "all"]
-    assert [c["tag_match"] for c in calls["count"]] == ["any", "any", "all", "all"]
+    assert [c["tag_match"] for c in calls["list"]] == ["folded_any", "folded_all"]
+    assert [c["tag_match"] for c in calls["count"]] == [
+        "folded_any",
+        "folded_any",
+        "folded_all",
+        "folded_all",
+    ]
 
 
 @pytest.mark.asyncio
@@ -145,7 +154,9 @@ async def test_a_non_ascii_tag_folds_the_same_on_both_sides() -> None:
     as `ΟΔΟΣ` meets the row's tags under one case mapping."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
-    await memory_repo.count_by_namespace(identity, scope=WHOLE_NAMESPACE, tags=["ΟΔΟΣ"], ch=ch)
+    await memory_repo.count_by_namespace(
+        identity, tag_match="folded_any", scope=WHOLE_NAMESPACE, tags=["ΟΔΟΣ"], ch=ch
+    )
     sql, params = ch.calls[-1]
     assert f"hasAny({_FOLDED})" in sql
     assert params["tags"] == ["ΟΔΟΣ"]
@@ -168,6 +179,31 @@ async def test_the_score_sorted_list_matches_tags_as_the_recency_list_does(
     sql, params = ch.calls[0]
     assert f"hasAny({_FOLDED})" in sql
     assert params["tags"] == ["API"]
+
+
+@pytest.mark.asyncio
+async def test_the_score_sorted_list_with_tags_every_needs_every_folded_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app import query as mq
+
+    ch = StubCH()
+    monkeypatch.setattr(mq, "get_client", lambda: ch)
+    monkeypatch.setattr(mq, "_record_read_exposure", lambda *a, **k: None)
+    await mq._handle_memory_list(
+        MemoryListInput(
+            org="acme",
+            namespace="team",
+            agent="*",
+            sort_by="score",
+            tags=["A", "b"],
+            tags_every=True,
+        )
+    )
+    sql, params = ch.calls[0]
+    assert f"hasAll({_FOLDED})" in sql
+    assert params["tags"] == ["A", "b"]
 
 
 @pytest.mark.asyncio

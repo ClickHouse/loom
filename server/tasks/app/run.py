@@ -997,7 +997,8 @@ def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime]:
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:
     """One page of a namespace's agent runs, filtered by agent, session, status, memory
-    activity, grade or text, in the asked order; `total` when the page cannot tell it."""
+    activity, grade or text, in the asked order, with `total` except on a full page after
+    the first."""
 
     where: list[str] = []
     params: dict[str, Any] = {}

@@ -358,10 +358,10 @@ class KnowledgeListInput(BaseModel):
 
     org: str
     namespace: str
-    # Documents carrying any one of these tags (every one with `tags_all`), in any case.
+    # Documents carrying any one of these tags (every one with `tags_every`), in any case.
     tags: list[str] = Field(default_factory=list)
     # Require every one of `tags` instead of any one; default off.
-    tags_all: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
+    tags_every: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Directory scope: documents whose source_uri starts
     # with one of these prefixes; empty = whole namespace.
     uri_prefix: list[str] = Field(default_factory=list, max_length=8)

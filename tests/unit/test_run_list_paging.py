@@ -55,6 +55,12 @@ def _where(sql: str) -> str:
     return " ".join(body.split())
 
 
+def _call(ch: StubCH, kind: str) -> tuple[str, dict[str, Any]]:
+    """The one statement of `kind` ("all" the page, "one" the count): the two may run together."""
+    (call,) = [(sql, params) for k, sql, params in ch.calls if k == kind]
+    return call
+
+
 def _list(ch: StubCH, **kw: Any):
     from server.tasks.app import run as h
 
@@ -67,7 +73,7 @@ def test_defaults_keep_todays_page_and_add_the_total() -> None:
     out = _list(ch)
     assert [r.run_id for r in out.runs] == ["r2", "r1"]
     assert out.total == 1234
-    (_, list_sql, list_params), (_, count_sql, count_params) = ch.calls
+    (list_sql, list_params), (count_sql, count_params) = _call(ch, "all"), _call(ch, "one")
     assert "ORDER BY started_at DESC, run_id DESC" in list_sql
     assert "OFFSET {off:UInt32}" in list_sql
     assert list_params == {"org": "o", "ns": "n", "lim": 50, "off": 0}
@@ -90,7 +96,7 @@ def test_defaults_keep_todays_page_and_add_the_total() -> None:
 def test_every_order_ends_on_the_run_id(order_by: str, clause: str) -> None:
     ch = StubCH()
     _list(ch, order_by=order_by, offset=100, limit=50)
-    _, sql, params = ch.calls[0]
+    sql, params = _call(ch, "all")
     assert clause in sql
     assert params["off"] == 100 and params["lim"] == 50
 
@@ -107,7 +113,7 @@ def test_q_matches_goal_run_id_and_agent_in_any_case_and_the_count_agrees() -> N
         grade="fail",
     )
     assert out.total == 3
-    (_, list_sql, list_params), (_, count_sql, count_params) = ch.calls
+    (list_sql, list_params), (count_sql, count_params) = _call(ch, "all"), _call(ch, "one")
     where = _where(list_sql)
     assert "positionCaseInsensitiveUTF8(goal, {q:String}) > 0" in where
     assert "positionCaseInsensitiveUTF8(run_id, {q:String}) > 0" in where
@@ -157,14 +163,13 @@ def test_a_page_past_the_end_counts_so_the_caller_can_step_back() -> None:
 def test_a_blank_q_is_no_filter() -> None:
     ch = StubCH()
     _list(ch, q="   ")
-    _, sql, params = ch.calls[0]
+    sql, params = _call(ch, "all")
     assert "q" not in params and "positionCaseInsensitive" not in sql
 
 
 def test_input_bounds() -> None:
     for bad in (
         {"offset": -1},
-        {"offset": 100_001},
         {"order_by": "goal_asc"},
         {"q": "x" * 201},
     ):

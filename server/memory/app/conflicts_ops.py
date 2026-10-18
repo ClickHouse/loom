@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _sha256
@@ -27,8 +28,7 @@ from server.memory.api.models_conflicts import (
 )
 from server.operations.read_projection import project_rows
 
-if TYPE_CHECKING:
-    from server.memory.store.conflicts import ConflictTarget
+log = logging.getLogger(__name__)
 
 _COUNT_TTL_S = 60.0
 _count_cache: dict[tuple[str, str, ReadFilters], tuple[float, int]] = {}
@@ -256,17 +256,6 @@ async def _peers_in_scope(input: ConflictsResolveInput, peers: list[str]) -> lis
     return live
 
 
-async def _peer_still_conflicted(org: str, target: ConflictTarget, peer_id: str) -> bool:
-    """Whether `peer_id` is still conflicted with `target` (a resolve of another peer
-    marked the target active)."""
-    from server.memory.store import conflicts as conflicts_repo
-
-    peer = await conflicts_repo.lookup_target(org, peer_id)
-    return (
-        peer is not None and peer.status == "conflicted" and target.memory_id in peer.conflict_with
-    )
-
-
 async def handle_conflicts_resolve(
     input: ConflictsResolveInput,
 ) -> ConflictsResolveOutput:
@@ -277,6 +266,7 @@ async def handle_conflicts_resolve(
               peers restored to active.
     allow:    both are legitimately distinct. Flip ALL back to active.
     """
+    from server.core.ch import own_write_reads
     from server.memory.store import conflicts as conflicts_repo
 
     now = naive_utc_now()
@@ -296,13 +286,7 @@ async def handle_conflicts_resolve(
     if input.peer_id and input.peer_id not in all_peers:
         # A stale or foreign peer id must not widen the resolve to every peer.
         return unresolved
-    named = [input.peer_id] if input.peer_id else all_peers
-    if target.status != "conflicted":
-        # A pair an earlier decision already resolved is not decided again from a stale view.
-        named = [p for p in named if await _peer_still_conflicted(input.org, target, p)]
-        if not named:
-            return unresolved
-    peers = await _peers_in_scope(input, named)
+    peers = await _peers_in_scope(input, [input.peer_id] if input.peer_id else all_peers)
     if peers is None:
         return unresolved
     affected: list[str] = []
@@ -359,13 +343,17 @@ async def handle_conflicts_resolve(
                     )
                 await conflicts_repo.allowlist_insert(allowlist_rows)
 
-    # The badge's cached counts (one per read scope) are stale now; the count below refills
-    # the caller's.
+    # The badge's cached counts (one per read scope) are stale now.
     for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:
         _count_cache.pop(key, None)
-    total = await _conflicted_count_cached(
-        conflicts_repo, input.org, input.namespace, request_scope()
-    )
+    total: int | None = None
+    try:
+        with own_write_reads():  # the count must see the writes above
+            total = await _conflicted_count_cached(
+                conflicts_repo, input.org, input.namespace, request_scope(), fresh=True
+            )
+    except Exception as e:  # noqa: BLE001 — the count never fails an applied resolve
+        log.warning("conflicts.resolve: conflicted count failed for %s: %s", input.memory_id, e)
     return ConflictsResolveOutput(
         resolved=True,
         decision=input.decision,

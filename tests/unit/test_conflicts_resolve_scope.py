@@ -23,6 +23,7 @@ import pytest
 
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
+from server.core.ch import sequential_reads_active
 from server.memory.api.models_conflicts import ConflictsResolveInput
 from server.memory.app import conflicts_ops as h
 from server.memory.store.conflicts import ConflictTarget
@@ -38,6 +39,7 @@ class _Table:
     tombstoned: list[str] = field(default_factory=list)
     activated: list[str] = field(default_factory=list)
     allowlisted: list[dict[str, Any]] = field(default_factory=list)
+    count_reads_consistent: list[bool] = field(default_factory=list)
 
 
 @pytest.fixture
@@ -60,36 +62,28 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
         row = t.rows.get(memory_id)
         if row is None or ("namespace" in kw and kw["namespace"] != row["namespace"]):
             return None
-        if row.get("status") == "tombstoned":
-            return None
         return ConflictTarget.from_row(
             {
                 "memory_id": memory_id,
                 "conflict_with": row["conflict_with"],
-                "status": row.get("status", "conflicted"),
+                "status": "conflicted",
                 "namespace": row["namespace"],
             }
         )
 
     async def _tombstone(org: str, ids: list[str], *_: Any, **__: Any) -> None:
         t.tombstoned.extend(ids)
-        for i in ids:
-            t.rows[i]["status"] = "tombstoned"
 
     async def _activate(org: str, ids: list[str], **_: Any) -> None:
         t.activated.extend(ids)
-        for i in ids:
-            t.rows[i]["status"] = "active"
-
-    async def _count(org: str, namespace: str, **_: Any) -> int:
-        return sum(
-            1
-            for row in t.rows.values()
-            if row["namespace"] == namespace and row.get("status", "conflicted") == "conflicted"
-        )
 
     async def _keys(org: str, ids: list[str], **_: Any) -> dict[str, str]:
         return {i: t.rows[i]["key"] for i in ids if i in t.rows}
+
+    async def _count(org: str, namespace: str, **_: Any) -> int:
+        t.count_reads_consistent.append(sequential_reads_active())
+        decided = {*t.tombstoned, *t.activated}
+        return sum(1 for i, r in t.rows.items() if r["namespace"] == namespace and i not in decided)
 
     async def _allow(rows: list[dict[str, Any]], **_: Any) -> None:
         t.allowlisted.extend(rows)
@@ -237,53 +231,24 @@ async def test_a_resolve_answers_the_namespaces_conflicted_count_after_its_write
     assert out.total == 1
 
 
-async def test_a_row_an_earlier_decision_resolved_is_not_decided_again(
+async def test_the_count_after_a_resolve_reads_its_own_writes(
     table: _Table, admin_of_a: None
 ) -> None:
-    assert (await _resolve(T_OWN, "allow")).resolved is True
-    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    # A stale view decides one of the rows the allow made active: refused, nothing written.
-    again = await _resolve(P_OWN, "contract")
-    assert again.resolved is False
-    assert again.total is None
-    assert (table.tombstoned, table.activated, table.allowlisted) == written
+    # A replica that has not applied the writes yet would answer a stale count that is
+    # then cached for a minute.
+    assert (await _resolve(T_OWN, "revise")).resolved is True
+    assert table.count_reads_consistent == [True]
 
 
-async def test_a_second_peer_is_resolved_after_the_first_made_the_target_active(
-    table: _Table, admin_of_a: None
+async def test_a_count_that_fails_after_the_writes_still_answers_the_applied_resolve(
+    table: _Table, admin_of_a: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert (await _resolve(T_OWN, "revise", peer_id=P_OWN)).resolved is True
-    # T_OWN is active now, but P_OWN2 is still conflicted with it.
-    out = await _resolve(T_OWN, "revise", peer_id=P_OWN2)
-    assert out.resolved is True
-    assert table.tombstoned == [P_OWN, P_OWN2]
+    from server.memory.store import conflicts as repo
 
+    async def _count_fails(*_: Any, **__: Any) -> int:
+        raise RuntimeError("ClickHouse unavailable")
 
-async def test_a_resolved_target_with_no_named_peer_decides_the_peers_still_open(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "revise", peer_id=P_OWN)).resolved is True
+    monkeypatch.setattr(repo, "count_conflicted", _count_fails)
     out = await _resolve(T_OWN, "revise")
-    assert out.resolved is True and out.affected_memory_ids == [P_OWN2, T_OWN]
-    assert table.tombstoned == [P_OWN, P_OWN2]
-
-
-async def test_a_resolved_target_with_no_open_peer_is_not_decided_again(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "allow")).resolved is True
-    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    out = await _resolve(T_OWN, "contract")
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert (table.tombstoned, table.activated, table.allowlisted) == written
-
-
-async def test_a_stale_second_click_on_the_same_pair_writes_nothing(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "allow", peer_id=P_OWN)).resolved is True
-    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    # The queue still shows the pair: the second click must not tombstone what the allow kept.
-    out = await _resolve(T_OWN, "revise", peer_id=P_OWN)
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert (table.tombstoned, table.activated, table.allowlisted) == written
+    assert out.resolved is True and out.total is None
+    assert table.tombstoned == [P_OWN, P_OWN2] and table.activated == [T_OWN]

@@ -131,8 +131,8 @@ async def handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
 
 
 def _tag_match(input: MemoryListInput) -> TagMatch:
-    """`tags_all` asks for every tag; otherwise any one, in any case."""
-    return "all" if input.tags_all else "any"
+    """`tags_every` asks for every tag; otherwise any one, in any case."""
+    return "folded_all" if input.tags_every else "folded_any"
 
 
 def _caller_is_below_writer(org: str, namespace: str) -> bool:
@@ -331,7 +331,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         input.prefix or "",
         input.source_trace or "",
         tuple(tags or ()),
-        bool(input.tags_all),
+        bool(input.tags_every),
         input.contains or "",
         bool(input.include_tombstoned),
         str(input.as_of or ""),

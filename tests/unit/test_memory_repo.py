@@ -188,6 +188,7 @@ async def test_list_by_namespace_applies_filters_and_limit() -> None:
     identity = Identity(org="clickhouse", namespace="ns", agent="bot")
     rows = await list_by_namespace(
         identity,
+        tag_match="folded_any",
         memory_type="preference",
         pinned_only=True,
         limit=50,
@@ -211,7 +212,7 @@ async def test_list_by_namespace_without_optional_filters() -> None:
     ch.query_all_returns.append([])
 
     identity = Identity(org="clickhouse", namespace="ns", agent="bot")
-    await list_by_namespace(identity, ch=ch, scope=WHOLE_NAMESPACE)
+    await list_by_namespace(identity, tag_match="folded_any", ch=ch, scope=WHOLE_NAMESPACE)
 
     sql, params = ch.query_all_calls[0]
     assert "memory_type = " not in sql
@@ -232,9 +233,16 @@ async def test_list_and_count_filter_by_contained_text(preview: bool) -> None:
     identity = Identity(org="clickhouse", namespace="ns", agent="*")
 
     await list_by_namespace(
-        identity, contains="Azure", preview=preview, ch=ch, scope=WHOLE_NAMESPACE
+        identity,
+        tag_match="folded_any",
+        contains="Azure",
+        preview=preview,
+        ch=ch,
+        scope=WHOLE_NAMESPACE,
     )
-    total = await count_by_namespace(identity, contains="Azure", ch=ch, scope=WHOLE_NAMESPACE)
+    total = await count_by_namespace(
+        identity, tag_match="folded_any", contains="Azure", ch=ch, scope=WHOLE_NAMESPACE
+    )
 
     list_sql, list_params = ch.query_all_calls[0]
     count_sql, count_params = ch.query_one_calls[0]
@@ -254,7 +262,14 @@ async def test_list_without_contains_reads_no_values(contains: str | None) -> No
     ch.query_all_returns.append([])
     identity = Identity(org="clickhouse", namespace="ns", agent="*")
 
-    await list_by_namespace(identity, contains=contains, preview=True, ch=ch, scope=WHOLE_NAMESPACE)
+    await list_by_namespace(
+        identity,
+        tag_match="folded_any",
+        contains=contains,
+        preview=True,
+        ch=ch,
+        scope=WHOLE_NAMESPACE,
+    )
 
     sql, params = ch.query_all_calls[0]
     assert "positionCaseInsensitiveUTF8" not in sql
@@ -272,6 +287,7 @@ async def test_list_by_namespace_key_prefix_and_order_options() -> None:
 
     await list_by_namespace(
         identity,
+        tag_match="folded_any",
         key_prefix="deploy_",
         order_by="memory_key_asc",
         ch=ch,
@@ -304,7 +320,12 @@ async def test_list_by_namespace_order_is_total(order_by: str, lead: str, previe
     identity = Identity(org="o", namespace="ns", agent="*", user_id="*", session_id="*")
 
     await list_by_namespace(
-        identity, order_by=order_by, preview=preview, ch=ch, scope=WHOLE_NAMESPACE
+        identity,
+        tag_match="folded_any",
+        order_by=order_by,
+        preview=preview,
+        ch=ch,
+        scope=WHOLE_NAMESPACE,
     )
     sql, _ = ch.query_all_calls[0]
     assert f"ORDER BY {lead}memory_key, agent, user_id, session_id\n" in sql
@@ -317,7 +338,9 @@ async def test_list_by_namespace_rejects_unknown_order_by() -> None:
     ch = StubCH()
     identity = Identity(org="clickhouse", namespace="ns", agent="bot")
     with pytest.raises(ValueError, match="unknown order_by"):
-        await list_by_namespace(identity, order_by="bogus", ch=ch, scope=WHOLE_NAMESPACE)
+        await list_by_namespace(
+            identity, tag_match="folded_any", order_by="bogus", ch=ch, scope=WHOLE_NAMESPACE
+        )
 
 
 @pytest.mark.asyncio

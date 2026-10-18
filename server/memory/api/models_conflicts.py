@@ -88,8 +88,8 @@ class ConflictsResolveInput(BaseModel):
 
 
 class ConflictsResolveOutput(BaseModel):
-    # False when the memory or the named peer is unknown, an earlier decision already resolved
-    # the pair, or the caller is not an admin of every row it names; nothing was written then.
+    # False when the memory or the named peer is unknown, or the caller is not an admin
+    # of every row it names; nothing was written then.
     resolved: bool
     # The decision, echoed.
     decision: ResolveDecision

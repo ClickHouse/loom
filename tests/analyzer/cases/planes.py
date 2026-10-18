@@ -492,6 +492,7 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     await D.list_with_chunk_counts(
         ORG,
         NS,
+        tag_match="folded_any",
         include_superseded=f,
         tags=["t"] if f else None,
         uri_prefixes=["doc://"] if f else None,
@@ -657,7 +658,7 @@ async def _list_score(ch: RecordingCH, c: dict[str, Any]) -> None:
         quotas={"semantic": 3} if w else None,
         tags=["ops", "infra"] if w else [],
         # Every tag, both sides lowercased.
-        tags_all=w,
+        tags_every=w,
     )
     # The served-set flags, as the handler builds them
     await _list_by_score(

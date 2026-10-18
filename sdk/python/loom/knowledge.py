@@ -228,6 +228,7 @@ class KnowledgeClient:
         self,
         *,
         tags: list[str] | None = None,
+        tags_every: bool = False,
         include_superseded: bool = False,
         limit: int = 50,
         cursor: str | None = None,
@@ -235,7 +236,8 @@ class KnowledgeClient:
         """Paginated listing of documents in this namespace.
 
         Returns {"rows": [...], "next_cursor": str | None}. Walk pages by
-        threading next_cursor back in. Tags filter is ANY-match."""
+        threading next_cursor back in. `tags` matches any one of them, in any
+        case; `tags_every=True` needs every one."""
         payload = self._scope()
         payload.update(
             {
@@ -244,6 +246,8 @@ class KnowledgeClient:
                 "limit": limit,
             }
         )
+        if tags_every:
+            payload["tags_every"] = True
         if cursor is not None:
             payload["cursor"] = cursor
         return await self._agent.transport.post("/v1/knowledge.list", payload)

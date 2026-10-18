@@ -174,7 +174,7 @@ async def list_with_chunk_counts(
     *,
     include_superseded: bool = False,
     tags: list[str] | None = None,
-    tag_match: TagMatch = "any",
+    tag_match: TagMatch,
     uri_prefixes: list[str] | None = None,
     cursor: tuple[datetime, str] | None = None,
     limit: int = 50,

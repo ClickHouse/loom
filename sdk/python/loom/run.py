@@ -331,7 +331,15 @@ class RunClient:
         memory_activity: str = "",
         grade: str = "",
         offset: int = 0,
-        order_by: str = "",
+        order_by: Literal[
+            "",
+            "started_desc",
+            "started_asc",
+            "duration_desc",
+            "duration_asc",
+            "relied_on_desc",
+            "relied_on_asc",
+        ] = "",
         q: str = "",
     ) -> dict[str, Any]:
         """Runs in `order_by` order (newest first by default).
