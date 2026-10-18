@@ -447,17 +447,20 @@ def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypat
     assert http._refused_body({"org": "acme", "namespace": "n"}, None)["org"] == "acme"
 
 
+class _Meter:
+    """Keeps each observable instrument's callback by name."""
+
+    def __init__(self) -> None:
+        self.callbacks: dict[str, Any] = {}
+
+    def _register(self, name: str, callbacks: list, **_: Any) -> None:
+        self.callbacks[name] = callbacks[0]
+
+    create_observable_gauge = create_observable_counter = _register
+
+
 def test_lost_ledger_rows_are_counted_by_reason(monkeypatch) -> None:
     from server.observability import events, metrics_gauges
-
-    class _Meter:
-        def __init__(self) -> None:
-            self.callbacks: dict[str, Any] = {}
-
-        def _register(self, name: str, callbacks: list, **_: Any) -> None:
-            self.callbacks[name] = callbacks[0]
-
-        create_observable_gauge = create_observable_counter = _register
 
     class _Emitter:
         def stats(self) -> dict[str, int]:
@@ -473,9 +476,18 @@ def test_lost_ledger_rows_are_counted_by_reason(monkeypatch) -> None:
     }
 
 
-def test_health_problems_need_no_clickhouse() -> None:
-    from server.health import health_problems
+def test_health_problems_need_no_clickhouse(monkeypatch) -> None:
+    """The gauge answers with ClickHouse out of reach: a read there would fail
+    the callback, which then exports nothing."""
+    from server.core import ch
+    from server.observability import metrics_gauges
 
-    problems = health_problems()
-    assert all({"code", "severity"} <= set(p) for p in problems)
-    assert health_problem_series(problems)  # a test process runs on fake providers
+    def _unreachable() -> Any:
+        raise AssertionError("loom.health.problems read ClickHouse")
+
+    monkeypatch.setattr(ch, "get_client", _unreachable)
+    meter = _Meter()
+    metrics_gauges._register_health_gauges(meter)
+    points = meter.callbacks["loom.health.problems"](None)
+    # A test process runs on fake providers, so there is always a problem.
+    assert {p.attributes["code"] for p in points} >= {"fake_embedder", "fake_llm"}

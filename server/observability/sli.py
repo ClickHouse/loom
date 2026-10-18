@@ -76,7 +76,7 @@ def _coded_statuses() -> dict[str, int]:
 
 
 def status_class(success: bool, error_code: str, error: BaseException | str | None) -> str:
-    """`ok`, `client` (a 4xx: the caller's request was refused) or `server`.
+    """`ok`, `client` (a 4xx, or a retried idempotency key still running) or `server`.
     A failure whose status is unknown counts against the server."""
     if success:
         return "ok"
