@@ -318,7 +318,7 @@ export function RecallLab() {
         search.catch(() => {}); // awaited below; a rejection before then is not unhandled
         const kw = await listMemories(identity, KEYWORD_PAGE, {
           contains: q,
-          fields: ["memory_key", "memory_type", "value"],
+          fields: ["memory_key", "memory_type", "value", "sensitivity"],
           previewChars: 200,
           signal: ac.signal,
         }).catch(() => null);
@@ -339,7 +339,10 @@ export function RecallLab() {
             const entry = keyword.get(key);
             return {
               key,
-              text: hit?.content_excerpt ?? previewValue(entry?.value),
+              // A high row comes without its value: say so rather than show an empty row.
+              text:
+                hit?.content_excerpt ??
+                (entry?.sensitivity === "high" ? "Sensitive: open it to read" : previewValue(entry?.value)),
               memoryType: hit?.memory_type ?? entry?.memory_type ?? "",
               keyword: entry !== undefined,
               hit,

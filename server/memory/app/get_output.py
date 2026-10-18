@@ -22,8 +22,8 @@ def row_output(
     superseded_by: str,
     **extra: Any,
 ) -> MemoryGetOutput:
-    """`extra` carries what only the caller computes (memory.get's code links, recall
-    breakdown and conflict verdict)."""
+    """`extra` carries what only memory.get computes (code links, `resolved_from`, recall
+    breakdown, conflict verdict)."""
     return MemoryGetOutput(
         found=True,
         canonical_key=canonical_key,
