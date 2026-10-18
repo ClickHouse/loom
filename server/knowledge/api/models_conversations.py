@@ -50,8 +50,8 @@ class ConversationAppendInput(BaseModel):
     msg_id: str = ""  # optional; server derives a content hash when omitted
     # Who spoke: `user`, `assistant`, `system` or `tool`.
     role: ConversationRole
-    # The message text, stored verbatim; a user or assistant turn is also embedded (its
-    # first 2,048 characters) for `conversation.search`.
+    # The message text, stored verbatim; a user or assistant turn is also embedded for
+    # `conversation.search`.
     content: str
     # The model's reasoning for this turn, stored beside `content`; empty = none.
     reasoning: str = ""
