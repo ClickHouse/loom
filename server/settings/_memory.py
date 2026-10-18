@@ -100,10 +100,11 @@ class MemorySettings(BaseModel):
     # verdict clears the pair's flag, and an update this build does not retire or a
     # contradiction flags the pair for review.
     memory_conflict_resolver_clear_confidence: float = Field(default=0.90, ge=0.0, le=1.0)
-    # Marked rows judged per pass, then rows already `conflicted` re-checked per pass.
-    # 48 rows at 8 at once are 6 rounds of ~5 s calls: a 30 s pass, then the 10 s wait,
-    # so ~70 rows a minute (55 at 7 s a call, 85 at 4 s).
+    # Marked rows judged per pass. 40 rows at 8 at once are 5 rounds of ~5 s calls: a
+    # 25 s pass, then the 10 s wait, so ~70 rows a minute (55 at 7 s a call, 80 at 4 s).
     memory_conflict_resolver_batch: int = Field(default=40, ge=1)
+    # Rows already `conflicted` that no resolver judged (a cosine flag, or an older build's
+    # judge) re-checked per pass, after the marked rows. 0 = no re-check.
     memory_conflict_resolver_recheck_batch: int = Field(default=8, ge=0)
     # Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time;
     # doubling it roughly doubles the rows judged a minute, up to the provider's rate limit.
