@@ -361,9 +361,9 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def head(org: str, mid: str) -> Any:
         return e.heads.get(mid)
 
-    async def act(action: str, org: str, namespace: str, row: Any, peer: Any) -> bool:
+    async def act(action: str, org: str, namespace: str, row: Any, peer: Any) -> Any:
         e.acted.append((action, row.memory_id, peer.memory_id))
-        return True
+        return resolver.Retired("f1", [], "a") if action == cr.RETIRE else True
 
     async def audit(org: str, namespace: str, row: Any, acted: list[Any], model: str) -> None:
         e.audits.append(acted)

@@ -219,7 +219,16 @@ async def _assertion_order(org: str, namespace: str, rows: list[Any]) -> dict[st
     return out
 
 
-async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
+@dataclass
+class Retired:
+    """A retirement that landed: its follow intent, its record's entries, its agent."""
+
+    intent: str
+    retired: list[dict[str, Any]]
+    agent: str
+
+
+async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | None:
     """Supersede `peer` behind the judged row `row`; the caller has checked that `peer`
     was stated first. Returns what `_after_retire` records and follows, or None.
 
@@ -271,10 +280,10 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
     if not retired:
         await _done(org, intent)
         return None
-    return SimpleNamespace(intent=intent, retired=retired, agent=str(winner.agent))
+    return Retired(intent=intent, retired=retired, agent=str(winner.agent))
 
 
-async def _after_retire(org: str, namespace: str, done: Any) -> None:
+async def _after_retire(org: str, namespace: str, done: Retired) -> None:
     """The retirement's record and follow, outside the keys' locks: neither writes a
     memory row."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
@@ -394,9 +403,9 @@ async def _clear(org: str, row: Any, peer: Any) -> bool:
     return a or b
 
 
-async def _act(action: str, org: str, namespace: str, row: Any, peer: Any) -> Any:
+async def _act(action: str, org: str, namespace: str, row: Any, peer: Any) -> Retired | bool:
     if action == cr.RETIRE:
-        return await _retire(org, namespace, row, peer)
+        return await _retire(org, namespace, row, peer) or False
     if action == cr.FLAG:
         return await _flag(org, row, peer)
     return await _clear(org, row, peer)
@@ -456,7 +465,7 @@ async def _settle_locked_pair(
     action: str,
     order: Mapping[str, tuple[int, int]],
     counts: Counts,
-) -> tuple[dict[str, Any] | None, Any]:
+) -> tuple[dict[str, Any] | None, Retired | None]:
     row, head = await _head(org, str(judged.memory_id)), await _head(org, str(peer["memory_id"]))
     if not (
         _holds(row, namespace, str(judged.content_sha256 or ""))
@@ -487,7 +496,7 @@ async def _settle_locked_pair(
         # The pair is settled: the winner's flag against the row it retired goes too,
         # or it stays on the review queue, stamped and never re-checked.
         taken["flag_cleared"] = await _unlink(org, row, str(head.memory_id))
-    return taken, (done if action == cr.RETIRE else None)
+    return taken, (done if isinstance(done, Retired) else None)
 
 
 async def _audit(
