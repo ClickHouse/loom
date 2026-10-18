@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict
 
 from server.core.hashing import hash_text, sha256_document_text
 from server.core.repo_base import _CHClient, _default_client
-from server.core.tag_sql import TagMatch, tag_filter
+from server.core.tag_sql import TagFilter, tag_where
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 
 
@@ -173,8 +173,7 @@ async def list_with_chunk_counts(
     namespace: str,
     *,
     include_superseded: bool = False,
-    tags: list[str] | None = None,
-    tag_match: TagMatch,
+    tag_filter: TagFilter | None = None,
     uri_prefixes: list[str] | None = None,
     cursor: tuple[datetime, str] | None = None,
     limit: int = 50,
@@ -196,8 +195,8 @@ async def list_with_chunk_counts(
     # FINAL subquery below, not the post-join scope.
     if not include_superseded:
         extra_where += " AND superseded_at IS NULL"
-    if tags:
-        extra_where += f" AND {tag_filter(tags, params, match=tag_match)}"
+    if tag_filter is not None:
+        extra_where += f" AND {tag_where(tag_filter, params)}"
     live_prefixes = [p for p in (uri_prefixes or []) if p]
     if live_prefixes:
         # Directory scope: OR of startsWith over the (org, namespace,

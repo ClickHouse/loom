@@ -98,7 +98,7 @@ class ConflictsResolveOutput(BaseModel):
     # When the resolve ran (UTC); null when nothing was resolved.
     resolved_at: datetime | None = None
     # The namespace's conflicted count under the caller's read scope, counted after the
-    # writes; null when nothing was resolved.
+    # writes; null when nothing was resolved or the count failed.
     total: int | None = None
 
 

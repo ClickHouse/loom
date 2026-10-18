@@ -332,14 +332,14 @@ class RunClient:
         grade: str = "",
         offset: int = 0,
         order_by: Literal[
-            "",
             "started_desc",
             "started_asc",
             "duration_desc",
             "duration_asc",
             "relied_on_desc",
             "relied_on_asc",
-        ] = "",
+        ]
+        | None = None,
         q: str = "",
     ) -> dict[str, Any]:
         """Runs in `order_by` order (newest first by default).
@@ -348,8 +348,7 @@ class RunClient:
         `grade="ungraded"` the closed runs still owed a verdict (`"graded"`,
         `"pass"`, `"fail"` also work). Filters apply before `limit`.
 
-        `offset`, `order_by` and `q` are sent only when set; `total` is None on a
-        full page after the first."""
+        `total` is None on a full page after the first."""
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,
@@ -362,7 +361,7 @@ class RunClient:
         }
         if offset:
             payload["offset"] = offset
-        if order_by:
+        if order_by is not None:
             payload["order_by"] = order_by
         if q.strip():
             payload["q"] = q

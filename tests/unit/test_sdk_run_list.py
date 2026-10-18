@@ -38,3 +38,16 @@ def test_paging_inputs_reach_the_request() -> None:
 def test_a_call_without_them_sends_none_of_them() -> None:
     payload = _sent()
     assert "offset" not in payload and "order_by" not in payload and "q" not in payload
+
+
+def test_order_by_offers_the_generated_orders() -> None:
+    """The hand-written signature lists the same orders as the generated RunListInput."""
+    from typing import Literal, get_args, get_origin, get_type_hints
+
+    from loom.ops import RunListInput
+    from loom.run import RunClient
+
+    hand = [a for a in get_args(get_type_hints(RunClient.list)["order_by"]) if a is not type(None)]
+    generated = get_type_hints(RunListInput)["order_by"]
+    assert len(hand) == 1 and get_origin(hand[0]) is Literal
+    assert get_args(hand[0]) == get_args(generated)

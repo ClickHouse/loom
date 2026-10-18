@@ -36,7 +36,6 @@ async def test_a_preview_read_selects_the_stored_columns_and_never_the_value() -
     )
     await memory_repo.list_by_namespace(
         ident,
-        tag_match="folded_any",
         limit=10,
         offset=0,
         preview=True,
@@ -59,9 +58,7 @@ async def test_a_whole_value_read_still_selects_the_value() -> None:
     ident = memory_repo.Identity(
         org="acme", namespace="team", agent="*", user_id="*", session_id="*"
     )
-    await memory_repo.list_by_namespace(
-        ident, tag_match="folded_any", limit=10, offset=0, ch=ch, scope=WHOLE_NAMESPACE
-    )
+    await memory_repo.list_by_namespace(ident, limit=10, offset=0, ch=ch, scope=WHOLE_NAMESPACE)
     select = ch.sql[-1][ch.sql[-1].index("SELECT") : ch.sql[-1].index("FROM loom.memory")]
     tokens = [t.strip() for t in select.replace("SELECT", "").split(",")]
     assert "value" in tokens and "value_preview AS value" not in ch.sql[-1]

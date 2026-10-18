@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from server.core.tag_sql import TagFilter
 from server.knowledge.store import documents as documents_repo
 from server.memory.store import shared as shared_repo
 
@@ -269,7 +270,7 @@ async def test_list_with_chunk_counts_default_excludes_superseded() -> None:
     can opt-in via include_superseded=True."""
     ch = StubCH()
     ch.query_all_returns.append([])
-    await documents_repo.list_with_chunk_counts("clickhouse", "ns", tag_match="folded_any", ch=ch)
+    await documents_repo.list_with_chunk_counts("clickhouse", "ns", ch=ch)
     sql, params = ch.query_all_calls[0]
     # Predicates filter the inner FINAL subquery (bare, no d. prefix); the
     # outer query keeps the d. alias for the join + ordering.
@@ -292,7 +293,6 @@ async def test_list_with_chunk_counts_include_superseded_drops_filter() -> None:
     await documents_repo.list_with_chunk_counts(
         "clickhouse",
         "ns",
-        tag_match="folded_any",
         include_superseded=True,
         ch=ch,
     )
@@ -313,7 +313,6 @@ async def test_list_with_chunk_counts_cursor_strips_tz_for_ch() -> None:
     await documents_repo.list_with_chunk_counts(
         "clickhouse",
         "ns",
-        tag_match="folded_any",
         cursor=cursor,
         ch=ch,
     )
@@ -331,7 +330,7 @@ async def test_list_with_chunk_counts_matches_tags_in_any_case() -> None:
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
-        "clickhouse", "ns", tag_match="folded_any", tags=["Specs"], ch=ch
+        "clickhouse", "ns", tag_filter=TagFilter(("Specs",), "folded_any"), ch=ch
     )
     sql, params = ch.query_all_calls[0]
     assert f"hasAny({_FOLDED})" in sql
@@ -346,7 +345,7 @@ async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
-        "clickhouse", "ns", tags=["Specs", "onboarding"], tag_match="folded_all", ch=ch
+        "clickhouse", "ns", tag_filter=TagFilter(("Specs", "onboarding"), "folded_all"), ch=ch
     )
     sql, params = ch.query_all_calls[0]
     assert f"hasAll({_FOLDED})" in sql
