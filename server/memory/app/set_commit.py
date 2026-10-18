@@ -768,7 +768,11 @@ async def _set_after_write(
     )
     # After the write's own relations, so the follow sees the successor they state.
     follow_beside_response(
-        org=input.org, namespace=input.namespace, pairs=w.follows, op="memory.set"
+        org=input.org,
+        namespace=input.namespace,
+        pairs=w.follows,
+        op="memory.set",
+        agent=input.agent,
     )
 
     # A long value is also written as verbatim chunks under the key, after the row is in and
@@ -843,6 +847,7 @@ async def _set_post_insert(
             ch=ch,
             follows=[] if follows is None else follows,
             policy=cfg.policy,
+            agent=input.agent,
         )
 
     # Every point write leaves a hash in the chained audit log: key, id, content hash,

@@ -130,35 +130,46 @@ async def record_auto_supersessions(
     `user_id`, `session_id`, `superseded_by` and optionally `label` /
     `superseded_by_key`. Nothing to record writes nothing. Never raises; False when a
     row was not written."""
-    try:
-        if not retired:
-            return True
-        from server.memory.app.provenance import writer_actor
-        from server.observability import audit as _audit
+    left = await unrecorded(
+        org=org, namespace=namespace, retired=retired, reason=reason, request_id=request_id
+    )
+    return not left
 
-        entries = [retired_entry(r) for r in retired]
-        actor = writer_actor(fallback="process:loom") or "process:loom"
-        rid = _request_id() if request_id is None else request_id
-        written = True
-        for start in range(0, len(entries), MAX_ENTRIES):
-            chunk = entries[start : start + MAX_ENTRIES]
-            written = (
-                bool(
-                    await _audit.emit(
-                        EVENT_TYPE,
-                        org=org,
-                        namespace=namespace,
-                        actor=actor,
-                        subject={"reason": reason, "count": len(chunk), "retired": chunk},
-                        request_id=rid,
-                    )
-                )
-                and written
+
+async def unrecorded(
+    *,
+    org: str,
+    namespace: str,
+    retired: Sequence[Mapping[str, Any]],
+    reason: str,
+    request_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """`record_auto_supersessions`, answering the entries whose audit row was not
+    written ([] when every one was). Never raises."""
+    from server.memory.app.provenance import writer_actor
+    from server.observability import audit as _audit
+
+    entries = [retired_entry(r) for r in retired]
+    actor = writer_actor(fallback="process:loom") or "process:loom"
+    rid = _request_id() if request_id is None else request_id
+    left: list[dict[str, Any]] = []
+    for start in range(0, len(entries), MAX_ENTRIES):
+        chunk = entries[start : start + MAX_ENTRIES]
+        try:
+            written = await _audit.emit(
+                EVENT_TYPE,
+                org=org,
+                namespace=namespace,
+                actor=actor,
+                subject={"reason": reason, "count": len(chunk), "retired": chunk},
+                request_id=rid,
             )
-        return written
-    except Exception as e:  # noqa: BLE001 — the retirement stands; its record is best effort
-        log.warning("auto_resolution: audit emit failed (non-fatal): %s", e)
-        return False
+        except Exception as e:  # noqa: BLE001 — the retirement stands; its record is owed
+            log.warning("auto_resolution: audit emit failed (non-fatal): %s", e)
+            written = None
+        if not written:
+            left += chunk
+    return left
 
 
 async def settle_retirements(
@@ -168,47 +179,48 @@ async def settle_retirements(
     retired: Sequence[Mapping[str, Any]],
     reason: str,
     follows: list[tuple[str, str]],
+    agent: str = "",
 ) -> None:
     """The record of rows a point write just retired (`record_or_owe`), and their
     (loser, winner) pairs added to `follows`, which the caller follows once its own
     relations are projected (a follow before them writes the successor fact they then
     write again). Never raises."""
     follows.extend((str(r["memory_id"]), str(r["superseded_by"])) for r in retired)
-    await record_or_owe(org=org, namespace=namespace, retired=retired, reason=reason)
+    await record_or_owe(org=org, namespace=namespace, retired=retired, reason=reason, agent=agent)
 
 
 async def record_or_owe(
-    *, org: str, namespace: str, retired: Sequence[Mapping[str, Any]], reason: str
+    *,
+    org: str,
+    namespace: str,
+    retired: Sequence[Mapping[str, Any]],
+    reason: str,
+    agent: str = "",
 ) -> None:
-    """`record_auto_supersessions`; a record that fails is owed to the projection repair
-    as a FOLLOW_OWED intent with its entries and reason, which the repair writes once.
-    Never raises."""
-    if not retired or await record_auto_supersessions(
-        org=org, namespace=namespace, retired=retired, reason=reason
-    ):
+    """`record_auto_supersessions`; the entries whose record failed are owed to the
+    projection repair as a FOLLOW_OWED intent (`agent`: the winner's writer) with their
+    reason, which the repair writes once. Never raises."""
+    left = await unrecorded(org=org, namespace=namespace, retired=retired, reason=reason)
+    if not left:
         return
     from types import SimpleNamespace
 
     from server.memory.app.projection_errors import record_input_projection_failure
     from server.memory.app.projection_failures import FOLLOW_OWED
 
-    pairs = [[str(r["memory_id"]), str(r["superseded_by"])] for r in retired]
+    pairs = [[str(r["memory_id"]), str(r["superseded_by"])] for r in left]
     await record_input_projection_failure(
-        SimpleNamespace(org=org, namespace=namespace, agent=""),
+        SimpleNamespace(org=org, namespace=namespace, agent=agent),
         projection=FOLLOW_OWED,
         error=f"retirement left for the repair to record: {len(pairs)} row(s)",
-        payload={
-            "pairs": pairs,
-            "retired": [retired_entry(r) for r in retired],
-            "reason": reason,
-        },
+        payload={"pairs": pairs, "retired": left, "reason": reason},
         source_operation=reason,
         source_resource_id=f"{reason}:{pairs[0][1]}",
     )
 
 
 def follow_beside_response(
-    *, org: str, namespace: str, pairs: list[tuple[str, str]], op: str
+    *, org: str, namespace: str, pairs: list[tuple[str, str]], op: str, agent: str = ""
 ) -> None:
     """The triple plane's follow of rows a point write retired, beside the response
     (`after_write.schedule`) once the write's relations are in; what it could not follow
@@ -218,12 +230,15 @@ def follow_beside_response(
     try:
         from server.memory.app import after_write
 
-        after_write.schedule(_follow(org, namespace, list(pairs), op), name=f"{op}.follow")
+        follow = _follow(org, namespace, agent, list(pairs), op)
+        after_write.schedule(follow, name=f"{op}.follow")
     except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them
         log.warning("%s: scheduling the triples follow failed: %s", op, e)
 
 
-async def _follow(org: str, namespace: str, pairs: list[tuple[str, str]], op: str) -> None:
+async def _follow(
+    org: str, namespace: str, agent: str, pairs: list[tuple[str, str]], op: str
+) -> None:
     from types import SimpleNamespace
 
     from server.core.ch import get_client
@@ -231,7 +246,7 @@ async def _follow(org: str, namespace: str, pairs: list[tuple[str, str]], op: st
     from server.memory.app.projection_errors import record_input_projection_failure
     from server.memory.app.projection_failures import FOLLOW_ROWS
 
-    scope = SimpleNamespace(org=org, namespace=namespace, agent="")
+    scope = SimpleNamespace(org=org, namespace=namespace, agent=agent)
     try:
         left = (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed
     except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them

@@ -1074,3 +1074,32 @@ async def test_a_value_update_whose_record_fails_owes_it(monkeypatch) -> None:
     monkeypatch.setattr(projection_errors, "record_input_projection_failure", record)
     await _value_updates(monkeypatch, {"o1": {}})
     assert [kw["payload"]["reason"] for kw in owed] == ["value_update"]
+
+
+async def test_only_the_entries_whose_record_failed_are_owed(monkeypatch) -> None:
+    """Three audit rows of a large retirement, the second fails: the intent owes its
+    rows only, so the repair does not write the other two again. It names the writer."""
+    from server.memory.app import projection_errors
+
+    calls = 0
+
+    async def second_fails(event_type, **kw):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("audit insert failed")
+        return "h"
+
+    owed: list[tuple[Any, dict]] = []
+
+    async def record(input, **kw):
+        owed.append((input, kw))
+
+    monkeypatch.setattr("server.observability.audit.emit", second_fails)
+    monkeypatch.setattr(projection_errors, "record_input_projection_failure", record)
+    retired = [_retired(f"m{i}") for i in range(2 * ar.MAX_ENTRIES + 5)]
+    await ar.record_or_owe(org="o", namespace="ns", retired=retired, reason="x", agent="bot")
+    ((scope, kw),) = owed
+    ids = [e["memory_id"] for e in kw["payload"]["retired"]]
+    assert ids == [f"m{i}" for i in range(ar.MAX_ENTRIES, 2 * ar.MAX_ENTRIES)]
+    assert scope.agent == "bot"

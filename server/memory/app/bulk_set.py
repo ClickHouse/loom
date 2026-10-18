@@ -472,6 +472,7 @@ async def _bulk_post_insert_links(
             new_rows=state.memory_rows,
             ch=ch,
             follows=same_key_pairs,
+            agent=input.agent,
         )
 
     # Value-update supersession (memory.app.value_updates). Runs after the
@@ -537,6 +538,7 @@ async def _record_intra_batch_retirements(
         namespace=input.namespace,
         retired=retired,
         reason=NEWEST_WINS_CONTRADICTION,
+        agent=input.agent,
     )
 
 
@@ -586,7 +588,11 @@ async def _bulk_settle_verdicts(
                 log.warning("bulk_set: apply_refines failed for %s: %s", new_id, e)
         for reason, retired in refined_out.items():
             await record_or_owe(
-                org=input.org, namespace=input.namespace, retired=retired, reason=reason
+                org=input.org,
+                namespace=input.namespace,
+                retired=retired,
+                reason=reason,
+                agent=input.agent,
             )
     # Merges and identity duplicates reinforce the row that already holds the fact. A
     # restatement is the same fact said again under the same key: the usage fold turns the

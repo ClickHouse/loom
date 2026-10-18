@@ -119,6 +119,7 @@ async def _revision_supersession(
         ch=ch,
         follows=follows,
         policy=policy,
+        agent=str(existing.agent),
     )
 
 
@@ -721,7 +722,9 @@ async def _write_revision(
         memory_row, new_value, input.relations, revised=True, op=op, ch=ch
     )
     # After the revision's own relations, so the follow sees the successor they state.
-    follow_beside_response(org=input.org, namespace=existing.namespace, pairs=follows, op=op)
+    follow_beside_response(
+        org=input.org, namespace=existing.namespace, pairs=follows, op=op, agent=str(existing.agent)
+    )
     return MemoryUpdateByIdOutput(
         updated=True,
         new_version=new_version,

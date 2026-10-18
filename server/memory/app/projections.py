@@ -1663,6 +1663,7 @@ async def _retire_memories_behind_repairs(
             namespace=input.namespace,
             retired=tracker.retired(victims),
             reason=NEWEST_WINS_CONTRADICTION,
+            agent=str(getattr(input, "agent", "") or ""),
         )
     log.info("newest_wins retired %d memories behind %d repaired triples", n, len(repairs))
     return n

@@ -807,6 +807,7 @@ async def apply_refines(
                 retired=retired,
                 reason=reason,
                 follows=[] if follows is None else follows,
+                agent=str(getattr(new_row, "agent", "") or ""),
             )
     return n
 

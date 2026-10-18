@@ -161,6 +161,7 @@ async def supersede_same_key_rows(
     ch: Any,
     follows: list[tuple[str, str]],
     policy: str | None = None,
+    agent: str = "",
 ) -> int:
     """Retire every older live row that shares a key with one of `new_rows`; the
     retired pairs go to `follows`, for the caller to follow once its relations are in.
@@ -222,6 +223,7 @@ async def supersede_same_key_rows(
                 ],
                 reason=SAME_KEY_NEWEST_WINS,
                 follows=follows,
+                agent=agent,
             )
         log.info(
             "same-key supersession (%s): %d older rows retired behind %d keys in %s/%s",
