@@ -342,8 +342,8 @@ the whole cap, the resolver stops too. That is about 50 judged rows a
 day per namespace at the default cap: raise `LOOM_DEFAULT_DAILY_COST_CAP_USD` (or the
 namespace's `daily_cost_cap_usd`) or `LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE` for a busier
 one.
-The share is read before each call, and each call's cost is flushed before the next row
-starts, so a pass goes past it by at most the calls already in flight
+The share is read before each call, after the costs of the calls finished so far are
+flushed, so a pass goes past it by at most the calls already in flight
 (`LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY`). A full batch with no errors (at least one
 row judged, the model and the locks available) is followed at once by the next, for up to
 five minutes of a pass, instead of waiting the interval.

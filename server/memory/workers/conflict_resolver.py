@@ -141,6 +141,8 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         cost_accumulator.begin_op()
         try:
             # Read before every call: the rows in flight at once can cross the cap together.
+            # The calls finished so far are flushed first, so the spend read sees them.
+            await get_emitter().flush_now()
             if await namespace_over_cap(org, namespace, **_cap_share()):
                 p.counts.skipped_budget += 1
                 return
@@ -172,8 +174,6 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             emit_worker_cost_event_for(
                 org=org, namespace=namespace, operation=f"worker.{NAME}", started=started
             )
-            # The next row's cap read follows at once: the spend must be readable by then.
-            await get_emitter().flush_now()
 
 
 def _attempt_key(r: Mapping[str, Any]) -> tuple[str, ...]:
