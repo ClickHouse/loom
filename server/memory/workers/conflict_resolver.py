@@ -73,7 +73,8 @@ def _cap_share() -> dict[str, Any]:
     rest of the cap stays for the requests (memory.ask, extraction), which read the
     whole spend against the whole cap."""
     share = float(settings.memory_conflict_resolver_cap_share)
-    return {"operation": f"worker.{NAME}", "share": share}
+    # A read that fails counts as over: a background spender does not pay unread.
+    return {"operation": f"worker.{NAME}", "share": share, "fail_open": False}
 
 
 async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]], bool]:

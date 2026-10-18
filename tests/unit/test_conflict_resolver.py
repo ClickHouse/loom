@@ -1343,7 +1343,7 @@ async def test_the_resolver_reads_its_own_spend_against_its_share_of_the_cap(
     """The rest of a namespace's daily cap stays for the requests (memory.ask)."""
     pass_env.owed = [_q(memory_key="k1")]
     await pass_env.run()
-    own = {"operation": "worker.conflict_resolver", "share": 0.25}
+    own = {"operation": "worker.conflict_resolver", "share": 0.25, "fail_open": False}
     assert pass_env.cap_reads == [own, own], "the pass's read and the read before the call"
 
 

@@ -23,6 +23,7 @@ async def namespaces_over_cap(
     *,
     operation: str = "",
     share: float = 1.0,
+    fail_open: bool = True,
     ch: Any | None = None,
 ) -> dict[tuple[str, str], bool]:
     """`namespace_over_cap` for a set of namespaces in ONE statement: the
@@ -35,7 +36,7 @@ async def namespaces_over_cap(
     about to extract, instead of two point reads per namespace. With `operation`,
     only that operation's spend counts, against `share` of the cap (a worker held
     to its part of the cap). Fail-open like the single form: on any error every pair
-    reads False."""
+    reads False, or True with `fail_open=False` (a background spender)."""
     wanted = sorted({(str(o), str(n)) for o, n in pairs})
     if not wanted:
         return {}
@@ -75,11 +76,12 @@ async def namespaces_over_cap(
         return out
     except Exception:
         log.warning(
-            "budget guard failed for %d namespaces — proceeding without cap",
+            "budget guard failed for %d namespaces (%s)",
             len(wanted),
+            "proceeding without cap" if fail_open else "taken as over the cap",
             exc_info=True,
         )
-        return dict.fromkeys(wanted, False)
+        return dict.fromkeys(wanted, not fail_open)
 
 
 def effective_cap(ns_cap: Any) -> tuple[float, Literal["namespace", "global", "uncapped"]]:
@@ -128,21 +130,24 @@ async def _cap_and_spend(org: str, namespace: str, operation: str = "") -> tuple
 
 
 async def namespace_over_cap(
-    org: str, namespace: str, *, operation: str = "", share: float = 1.0
+    org: str, namespace: str, *, operation: str = "", share: float = 1.0, fail_open: bool = True
 ) -> bool:
     """True iff this namespace has hit its 24h upstream-cost ceiling; with
-    `operation`, iff that operation's spend has reached `share` of it."""
+    `operation`, iff that operation's spend has reached `share` of it. A failed read is
+    under the cap (a budget-read blip never halts a request), or over it with
+    `fail_open=False` (a background spender)."""
     try:
         cap, spent = await _cap_and_spend(org, namespace, operation)
         return cap > 0 and spent >= share * cap
-    except Exception:  # fail open: a budget-read blip never halts the caller
+    except Exception:  # the caller chose which way a failed read goes
         log.warning(
-            "budget guard failed for %s/%s — proceeding without cap",
+            "budget guard failed for %s/%s (%s)",
             org,
             namespace,
+            "proceeding without cap" if fail_open else "taken as over the cap",
             exc_info=True,
         )
-        return False
+        return not fail_open
 
 
 async def namespace_budget_ratio(org: str, namespace: str) -> float:
