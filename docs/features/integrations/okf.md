@@ -102,8 +102,10 @@ Afterwards it re-creates `relates_to` edges with `memory.link` (`--no-links` ski
 
 Before writing, the import reads the live rows under its identity and skips every concept
 whose row already holds what the write would send: the value (`content_sha256`), type,
-tags, confidence, entities, `valid_at`, `valid_to`, `source_trace` and `source_class`. It
-skips edges that are already live. Re-sending an identical row would count as a
+tags, confidence, `valid_at`, `valid_to`, `source_trace`, and the entities and
+`source_class` when the bundle carries them. It skips edges that are already live.
+Concepts that land on the same row (one key exported for several writers) are written
+once: the most recently updated wins. Re-sending an identical row would count as a
 reinforcement, so importing the same bundle twice writes nothing the second time. The
 last line counts concepts written, unchanged and failed. The bundle's `evidence/` and `digests/` are
 written back through `memory.import_evidence` (`--no-evidence` skips them) and re-embedded
@@ -116,8 +118,8 @@ by the importing server.
 | `--dry-run`       | plan the writes without sending them                                                                                                                         |
 | `--prune`         | delete the rows an earlier import wrote (this `--agent`, an `okf:` `source_trace`) whose key is no longer in the bundle, through `memory.delete`             |
 
-`--prune` refuses a bundle with no concepts and one whose concept files do not hash to the
-root index's `loom.corpus_digest`, so a partial or hand-edited bundle never drives deletes.
+`--prune` refuses a bundle with no concepts, one exported with `--limit`, and one whose
+concept files do not hash to the root index's `loom.corpus_digest`, so a partial or hand-edited bundle never drives deletes.
 [Copying a namespace to another Loom](../../operations/okf-sync.md) runs export and
 import on a schedule.
 

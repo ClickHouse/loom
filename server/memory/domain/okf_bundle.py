@@ -784,12 +784,14 @@ def plan_bundle(
     title: str | None = None,
     edges: list[dict[str, Any]] | None = None,
     build_commit: str = "",
+    limit: int | None = None,
 ) -> dict[str, str]:
     """Return {relative_path: file_text} for a complete OKF v0.2 bundle.
     `edges` are the namespace's live `operator_edges` rows.
     The root `index.md` frontmatter carries the generation pointer:
-    `corpus_digest`, `concepts`, `exported_at` (a date) and, when known, the
-    `build_commit` that rendered it."""
+    `corpus_digest`, `concepts`, `exported_at` (a date), when known the
+    `build_commit` that rendered it, and the `limit` an export stopped at
+    (such a bundle holds part of the namespace)."""
     concepts = plan_concepts(entries, edges)
     by_id = {c.id: c for c in concepts}
     links = related_links(concepts)
@@ -813,6 +815,8 @@ def plan_bundle(
     }
     if build_commit:
         pointer["build_commit"] = build_commit
+    if limit is not None:
+        pointer["limit"] = limit
     root_fm = (
         yaml.safe_dump(
             {"okf_version": OKF_VERSION, "loom": pointer},

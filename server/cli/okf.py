@@ -300,6 +300,7 @@ def _plan_export(
     title: str | None,
     include_high: bool,
     server_url: str = "",
+    limit: int | None = None,
 ) -> tuple[dict[str, str], list[str], int]:
     """The bundle's files, its orphan concepts, and how many `high` rows stayed
     home. Digests link to the concepts they compressed."""
@@ -311,6 +312,7 @@ def _plan_export(
         title=title,
         edges=edges,
         build_commit=_server_build(server_url),
+        limit=limit,
     )
     orphans = okf.bundle_orphans(files)  # concepts only: evidence files are not concepts
     if chunks or digests:
@@ -372,6 +374,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             title=args.title,
             include_high=bool(args.include_high),
             server_url=args.server_url,
+            limit=args.limit,
         )
         n_concepts = len(entries) - skipped_high
         evidence_note = (
@@ -559,7 +562,7 @@ def _concept_payload(
             "agent": args.agent,
             "user_id": args.user_id,
             "session_id": session_id,
-            "source_trace": f"{_TRACE_PREFIX}{root.name}/{c.path}",
+            "source_trace": f"{_TRACE_PREFIX}{root.resolve().name}/{c.path}",
         }
     )
     return payload
@@ -644,6 +647,33 @@ def _when(v: Any) -> datetime | str | None:
     return d.replace(microsecond=0)
 
 
+def _one_per_row(
+    concepts: list[okf.Concept], org: str, args: argparse.Namespace, root: Path
+) -> list[tuple[okf.Concept, dict[str, Any]]]:
+    """The concepts with their payloads, one per target row. An export holds a key once
+    per writer, but the import writes every concept under its own identity: of the
+    concepts that land on one row, the most recently updated is written, so a run does
+    not alternate between them."""
+    newest: dict[tuple[str, str], tuple[okf.Concept, dict[str, Any]]] = {}
+    for c in concepts:
+        p = _concept_payload(c, org, args, root)
+        k = (p["session_id"], p["memory_key"])
+        if k not in newest or _updated_at(c) > _updated_at(newest[k][0]):
+            newest[k] = (c, p)
+    if len(newest) < len(concepts):
+        print(
+            f"  ! {len(concepts) - len(newest)} concept(s) share a key with a newer one "
+            f"in the bundle; only the newest is written",
+            file=sys.stderr,
+        )
+    return list(newest.values())
+
+
+def _updated_at(c: okf.Concept) -> str:
+    loom = c.extra.get("loom")
+    return str(loom.get("updated_at") or "") if isinstance(loom, dict) else ""
+
+
 def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
     """True when the live row already holds everything memory.set would write.
     `content_sha256` covers the value only, so the metadata is compared too."""
@@ -655,7 +685,11 @@ def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
         and row.get("source_trace") == payload["source_trace"]
         and set(row.get("tags") or []) == set(payload["tags"])
         and math.isclose(float(row.get("confidence") or 0), payload["confidence"], abs_tol=1e-6)
-        and (row.get("entities") or []) == canonical_entities(payload.get("entities") or [])
+        # A bundle without entities leaves them to the target's extractor.
+        and (
+            "entities" not in payload
+            or (row.get("entities") or []) == canonical_entities(payload["entities"])
+        )
         and _when(row.get("valid_at")) == _when(payload.get("valid_at"))
         and _when(row.get("valid_to")) == _when(payload.get("valid_to"))
         # Without a declared class the server derives one from the op and source_trace.
@@ -674,8 +708,7 @@ async def _import_concepts(
     """memory.set per changed or new concept (conflict detection, blacklist and audit
     apply); `--verify` re-attests human-verified concepts as the caller."""
     n = {"written": 0, "unchanged": 0, "conflicted": 0, "verified": 0, "failed": 0}
-    for c in concepts:
-        payload = _concept_payload(c, org, args, root)
+    for c, payload in _one_per_row(concepts, org, args, root):
         bundle_actor = okf.human_verified_actor(c)
         row = live.get((payload["session_id"], payload["memory_key"]))
         if row is not None and _unchanged(payload, row):
@@ -724,7 +757,7 @@ async def _verify(
                 "namespace": args.namespace,
                 "agent": args.agent,
                 "user_id": args.user_id,
-                "session_id": args.session_id,
+                "session_id": payload["session_id"],
                 "memory_key": payload["memory_key"],
             },
         )
@@ -800,10 +833,13 @@ def _prune_refusal(root: Path, concepts: list[okf.Concept]) -> str:
         fm = yaml.safe_load(okf.split_frontmatter(files.get("index.md", ""))[0])
     except yaml.YAMLError:
         fm = None
-    pointer = fm.get("loom") if isinstance(fm, dict) else None
-    declared = str(pointer.get("corpus_digest") or "") if isinstance(pointer, dict) else ""
+    loom = fm.get("loom") if isinstance(fm, dict) else None
+    pointer: dict[str, Any] = loom if isinstance(loom, dict) else {}
+    declared = str(pointer.get("corpus_digest") or "")
     if not declared:
         return "index.md carries no loom.corpus_digest, so this is not a complete export"
+    if pointer.get("limit") is not None:
+        return f"the export stopped at --limit {pointer['limit']}"
     if declared != okf_lint.bundle_digest(files):
         return "the concept files do not match index.md's loom.corpus_digest (partial or edited)"
     return ""
@@ -831,18 +867,21 @@ async def _prune(
             print(f"  would delete {key}{where}")
             n["pruned"] += 1
             continue
+        ident = {
+            "org": org,
+            "namespace": args.namespace,
+            "agent": args.agent,
+            "user_id": args.user_id,
+            "session_id": session_id,
+            "memory_key": key,
+        }
         try:
-            res = await client.post(
-                "memory.delete",
-                {
-                    "org": org,
-                    "namespace": args.namespace,
-                    "agent": args.agent,
-                    "user_id": args.user_id,
-                    "session_id": session_id,
-                    "memory_key": key,
-                },
-            )
+            # memory.delete falls back to the same key under any agent when ours is gone;
+            # delete only while the row read is still ours.
+            got = await client.post("memory.get", {**ident, "fields": ["agent"]})
+            if not got.get("found") or got.get("agent") != args.agent:
+                continue
+            res = await client.post("memory.delete", ident)
         except RuntimeError as e:
             n["prune_failed"] += 1
             print(f"  ✗ delete {key}: {e}", file=sys.stderr)
@@ -891,12 +930,19 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
             try:
                 live = await _live_rows(client, org, args)
                 live_edges: set[tuple[str, str, str]] = set()
-                if not args.no_links:
+                if not args.no_links and okf.resolve_relates_to(concepts)[0]:
                     edges = await _fetch_edges(client, org, args.namespace)
                     live_edges = {(e["from_key"], e["to_key"], e["relation"]) for e in edges}
             except RuntimeError as e:
                 print(f"cannot read {org}/{args.namespace}: {e}", file=sys.stderr)
                 return 1
+            if args.prune:
+                # Before the writes, so each delete follows the read that chose it closely.
+                keep = {
+                    (p["session_id"], p["memory_key"])
+                    for p in (_concept_payload(c, org, args, root) for c in concepts)
+                }
+                n.update(await _prune(client, org, args, live, keep))
             n.update(await _import_concepts(client, org, args, concepts, root, live))
             if not args.no_links:
                 n.update(await _import_links(client, org, args, concepts, root, live_edges))
@@ -911,12 +957,6 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                     + (f", {ev['failed']} FAILED" if ev["failed"] else "")
                 )
                 n["failed"] += ev["failed"]
-            if args.prune:
-                keep = {
-                    (p["session_id"], p["memory_key"])
-                    for p in (_concept_payload(c, org, args, root) for c in concepts)
-                }
-                n.update(await _prune(client, org, args, live, keep))
         finally:
             await client.close()
         would = " would be" if args.dry_run else ""

@@ -18,8 +18,10 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
 
 - **Nothing, when nothing changed.** The import reads the live rows under its identity
   first and skips a concept whose row already holds the same value, type, tags,
-  confidence, entities, `valid_at`, `valid_to`, `source_trace` and `source_class`. It
-  skips an edge that is already live. Re-sending an identical row would count as a
+  confidence, `valid_at`, `valid_to`, `source_trace`, and the entities and
+  `source_class` when the bundle carries them. It skips an edge that is already live.
+  When several concepts in the bundle share a key (rows of different writers), the most
+  recently updated one is written. Re-sending an identical row would count as a
   reinforcement: a version row, an audit row and a higher ranking boost on every run.
 - **One `memory.set` per new or changed concept**, through the conflict, blacklist and
   audit checks of any other write, as `source_class: imported`.
@@ -34,9 +36,12 @@ A non-zero exit means a write, link or delete failed.
 
 ## Guards
 
-- `--prune` refuses a bundle with no concepts, and one whose concept files do not hash
-  to the `loom.corpus_digest` the export wrote into `index.md`. A partial or edited bundle
-  never drives deletes.
+- `--prune` refuses a bundle with no concepts, a bundle exported with `--limit`, and one
+  whose concept files do not hash to the `loom.corpus_digest` the export wrote into
+  `index.md`. A partial or edited bundle never drives deletes.
+- Before each delete it reads the row under its own identity again and deletes only while
+  that row is still there and its own: `memory.delete` falls back to the same key under
+  another agent when the caller's row is gone.
 - The import runs only when the export exited 0 (`sh -e`), and each run writes its bundle
   to a fresh `emptyDir`, so a bundle left by an earlier run is never imported.
 - `--dry-run` lists what would be written and deleted, and writes nothing.
@@ -68,9 +73,11 @@ kubectl create secret generic okf-sync \
 Re-mint before the TTL runs out and replace the Secret; `loom revoke-token` retires a
 leaked one.
 
-Readers on the public side (a bot in public CI) get `viewer` tokens on the public Loom.
-On the private Loom, every principal other than the job's token holds at most `viewer` on
-the copied namespace, so nothing is written there that is not meant to be published.
+- On the public Loom, the job's token is the only writer on the namespace. Its readers
+  (a bot in public CI) hold `viewer` tokens.
+- On the private Loom, the namespace's writers are the people and agents who publish to
+  it. Every other principal that reads it holds `viewer`, so nothing reaches the namespace
+  that its writers did not mean to publish.
 
 ## The copied namespace is published
 
@@ -86,6 +93,10 @@ The NetworkPolicy allows no ingress. Egress is limited to DNS, the private Loom'
 on port 7777, and the public Loom's addresses on 443. A NetworkPolicy matches addresses,
 not host names: list the public Loom's addresses in the `ipBlock`, or use your CNI's
 host-name policy or an egress proxy when they change.
+
+When the private release sets `networkPolicy.enabled` with `ingressFrom`, add the job's
+pods (`app.kubernetes.io/name: okf-sync`) or their namespace to `ingressFrom`. Otherwise
+the release's own policy refuses the export.
 
 ## Related
 

@@ -119,6 +119,8 @@ spec:
           podSelector:
             matchLabels:
               k8s-app: kube-dns
+        # NodeLocal DNSCache's default address.
+        - ipBlock: { cidr: 169.254.20.10/32 }
       ports:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }

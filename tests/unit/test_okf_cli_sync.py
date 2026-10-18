@@ -37,8 +37,13 @@ def _entry(key: str, **over: Any) -> dict[str, Any]:
     return base
 
 
-def _bundle(root: Path, entries: list[dict[str, Any]], edges: list[dict[str, Any]] | None = None):
-    files = okf.plan_bundle(entries, namespace="src", exported_at=_NOW, edges=edges)
+def _bundle(
+    root: Path,
+    entries: list[dict[str, Any]],
+    edges: list[dict[str, Any]] | None = None,
+    limit: int | None = None,
+) -> Path:
+    files = okf.plan_bundle(entries, namespace="src", exported_at=_NOW, edges=edges, limit=limit)
     cli_okf._write_bundle(root, files)
     return root
 
@@ -70,6 +75,19 @@ class _FakeLoom:
                 if (body["agent"], body["session_id"], k) in self.rows
             }
             return {"results": got}
+        if op == "memory.get":
+            # The server's fallback: the same key under any agent when ours is gone.
+            ident = (body["agent"], body["session_id"], body["memory_key"])
+            row = self.rows.get(ident)
+            agent = body["agent"]
+            if row is None:
+                agent, row = next(
+                    ((a, r) for (a, _s, k), r in self.rows.items() if k == body["memory_key"]),
+                    ("", None),
+                )
+            return {"found": row is not None, "agent": agent}
+        if op == "memory.verify":
+            return {"found": True}
         if op == "memory.export_evidence":
             return {"edges": self.edges, "has_more": False}
         if op == "memory.set":
@@ -246,3 +264,61 @@ def test_unreadable_timestamps_are_never_equal() -> None:
     assert cli_okf._when("2026-08-30T08:00:00.123456Z") == datetime(2026, 8, 30, 8)
     assert cli_okf._when("2026-08-30T10:00:00+02:00") == datetime(2026, 8, 30, 8)
     assert cli_okf._when("next tuesday") != cli_okf._when(None)
+
+
+def test_a_key_held_by_two_writers_is_written_once_and_then_left(
+    tmp_path: Path, loom: _FakeLoom
+) -> None:
+    older = _entry("k", agent="a", value="old wording", updated_at="2026-08-01T00:00:00")
+    newer = _entry("k", agent="b", value="new wording", updated_at="2026-08-02T00:00:00")
+    root = _bundle(tmp_path / "b", [newer, older])
+    assert _run(root) == 0
+    sets = [b for op, b in loom.calls if op == "memory.set"]
+    assert [b["value"] for b in sets] == ["new wording"]
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == []
+
+
+def test_entities_the_target_extracted_are_not_a_change(tmp_path: Path, loom: _FakeLoom):
+    root = _bundle(tmp_path / "b", [_entry("a", entities=[])])
+    assert _run(root) == 0
+    loom.rows[("okf-sync", "-", "a")]["entities"] = ["mergetree"]  # the target's extractor
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == []
+
+
+def test_prune_refuses_a_limited_export(tmp_path: Path, loom: _FakeLoom) -> None:
+    root = _bundle(tmp_path / "b", [_entry("a")], limit=1)
+    assert _run(root, "--prune", "--no-lint") == 2
+    assert loom.calls == []
+
+
+def test_prune_never_reaches_another_writers_row_through_the_delete_fallback(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    loom.put("clickhouse-gh", "gone", source_trace="cli:bot", tags=[])
+    listed = loom.post
+
+    async def tombstoned_after_the_read(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        out = await listed(op, body)
+        if op == "memory.list":
+            loom.rows.pop(("okf-sync", "-", "gone"), None)  # someone deletes our copy
+        return out
+
+    monkeypatch.setattr(loom, "post", tombstoned_after_the_read)
+    loom.calls.clear()
+    assert _run(_bundle(tmp_path / "2" / "b", [_entry("a")]), "--prune") == 0
+    assert "memory.delete" not in loom.writes()
+    assert ("clickhouse-gh", "-", "gone") in loom.rows
+
+
+def test_verify_re_attests_the_row_in_its_own_session(tmp_path: Path, loom: _FakeLoom) -> None:
+    entry = _entry(
+        "a", session_id="s1", verification="human", verified_by="human:alice@example.com"
+    )
+    assert _run(_bundle(tmp_path / "b", [entry]), "--keep-sessions", "--verify") == 0
+    verify = [b for op, b in loom.calls if op == "memory.verify"]
+    assert [b["session_id"] for b in verify] == ["s1"]
