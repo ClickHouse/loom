@@ -1177,12 +1177,6 @@ async def test_a_write_that_started_before_a_retirement_stays_the_head(
         assert head["pinned"]
     assert out["retired"] == 0
     assert await _audit(ch, org, "memory.auto_supersede") == []
-    edges = await ch.query_all(
-        "SELECT count() AS n FROM loom.operator_edges FINAL WHERE org = {org:String}"
-        " AND relation = 'supersedes' SETTINGS select_sequential_consistency = 1",
-        params={"org": org},
-    )
-    assert edges[0]["n"] == 0, "no supersedes edge for a retirement that did not land"
 
 
 async def test_an_erasure_requested_while_a_pair_waits_for_its_lock_gets_no_write(
@@ -1276,27 +1270,38 @@ async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
     assert [r["status"] for r in await _follow_intents(ch, org, want_active=0)] == ["resolved"]
 
 
-async def test_the_undo_of_a_retirement_rescinds_its_supersedes_edge(ch, wired) -> None:
+async def test_a_retirement_and_its_undo_leave_a_users_supersedes_link_as_it_was(ch, wired) -> None:
+    """The retirement's lineage is the row's superseded_by and its record: the key-level
+    edge store, which holds the user's own links, is not written or rescinded."""
     from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.api.models_graph import MemoryLinkInput
+    from server.memory.app.ops import handle_memory_link
     from server.memory.app.restore import handle_memory_restore
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 90)
-    assert (await run_pass())["retired"] == 1
+    await handle_memory_link(
+        MemoryLinkInput(
+            org=org,
+            namespace=NS,
+            from_key="office_location",
+            to_key="office_city",
+            relation="supersedes",
+            explanation="the user's own link",
+        )
+    )
 
-    async def live_edges() -> int:
-        rows = await ch.query_all(
-            "SELECT count() AS n FROM loom.operator_edges FINAL WHERE org = {org:String}"
-            " AND from_key = 'office_location' AND to_key = 'office_city'"
-            " AND relation = 'supersedes' AND tombstoned_at IS NULL"
-            " SETTINGS select_sequential_consistency = 1",
+    async def edges() -> list[dict[str, Any]]:
+        return await ch.query_all(
+            "SELECT explanation, tombstoned_at FROM loom.operator_edges FINAL"
+            " WHERE org = {org:String} SETTINGS select_sequential_consistency = 1",
             params={"org": org},
         )
-        return int(rows[0]["n"])
 
-    assert await live_edges() == 1
-    await asyncio.sleep(1.1)  # the edge's version is its created_at, to the second
+    linked = await edges()
+    assert (await run_pass())["retired"] == 1
+    await asyncio.sleep(1.1)  # an edge's version is its created_at, to the second
     rows = await _rows(ch, org)
     undone = await handle_memory_restore(
         MemoryRestoreInput(
@@ -1310,7 +1315,9 @@ async def test_the_undo_of_a_retirement_rescinds_its_supersedes_edge(ch, wired) 
         )
     )
     assert undone.restored
-    assert await live_edges() == 0
+    assert (
+        await edges() == linked == [{"explanation": "the user's own link", "tombstoned_at": None}]
+    )
 
 
 async def test_a_peer_flagged_by_another_rows_turn_is_still_judged_against_its_own_peers(
@@ -1569,7 +1576,9 @@ async def test_an_undone_retirement_is_not_retired_again_by_the_next_pass(
     assert len(await _audit(ch, org, "memory.auto_supersede")) == 1
 
 
-async def test_a_pin_whose_vector_landed_first_keeps_its_vector_served(ch, wired, monkeypatch) -> None:
+async def test_a_pin_whose_vector_landed_first_keeps_its_vector_served(
+    ch, wired, monkeypatch
+) -> None:
     """A memory.pin of the loser takes no key lock: its vector lands before the
     retirement's mirror reads, its memory row after the supersede's head re-read. The
     pin is the memory head, so recall must serve its vector, not a superseded copy."""

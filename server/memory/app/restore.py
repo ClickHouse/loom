@@ -135,8 +135,6 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
             )
     # The facts the retirement closed and the restored value still holds come back.
     await _reopen_facts(input, existing, restored_at, ch=ch)
-    if input.if_superseded_by:
-        await _drop_supersedes_edge(input, str(existing.superseded_by), ch=ch)
     await audit.emit(
         "memory.unsupersede",
         org=input.org,
@@ -154,33 +152,6 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         version=new_version,
         from_status="superseded",
     )
-
-
-async def _drop_supersedes_edge(input: MemoryRestoreInput, winner_id: str, *, ch: Any) -> None:
-    """Tombstone the `supersedes` edge the retirement wrote from the winner's key to the
-    restored one: the Undo says the restored row is no longer superseded."""
-    import server.memory.store as memory_repo
-    from server.memory.api.models_graph import MemoryLinkInput
-    from server.memory.app.ops import handle_memory_link
-
-    try:
-        winner = await memory_repo.get_by_id(
-            winner_id, org=input.org, ch=ch, scope=WHOLE_NAMESPACE, fresh=True
-        )
-        if winner is None or winner.memory_key == input.memory_key:
-            return  # a same-key retirement writes no edge
-        await handle_memory_link(
-            MemoryLinkInput(
-                org=input.org,
-                namespace=input.namespace,
-                from_key=str(winner.memory_key),
-                to_key=input.memory_key,
-                relation="supersedes",
-                tombstone=True,
-            )
-        )
-    except Exception as e:  # noqa: BLE001 — the row is back; the edge is a projection of it
-        log.warning("memory.restore: supersedes edge left live for %s: %s", input.memory_key, e)
 
 
 async def _reopen_facts(

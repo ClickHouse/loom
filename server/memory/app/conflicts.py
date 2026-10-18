@@ -715,7 +715,6 @@ async def apply_refines(
     new_memory_key: str,
     refined_peers: list[ConflictPeer],
     ch: Any = None,
-    run_id: str = "-",
     record_into: dict[str, list[dict[str, Any]]] | None = None,
     expected_sha256: str = "",
     skip_peer: Callable[[Any], bool] | None = None,
@@ -724,9 +723,8 @@ async def apply_refines(
     """The `refines` verdict, after the new row is in: every non-pinned peer
     the new row replaces is superseded (status, superseded_by = the new row,
     invalid_at now — never deleted; recall drops it, the audit trail and `as_of`
-    keep it) and a `supersedes` edge from the new key to the old records why.
-    Best effort; returns the number of peers superseded. With `expected_sha256`
-    (a verdict reached after the write) nothing is retired or linked once the
+    keep it). Best effort; returns the number of peers superseded. With `expected_sha256`
+    (a verdict reached after the write) nothing is retired once the
     new row is another revision's, read sequentially right before the supersede;
     `skip_peer` leaves a peer whose head row it answers True for (the resolver's:
     revised since it was judged).
@@ -769,7 +767,6 @@ async def apply_refines(
         if current is None or str(current.content_sha256 or "") != expected_sha256:
             return 0
     n = 0
-    retired_ids: set[str] = set()
     if victims:
         from server.memory.app.auto_resolution import (
             NEWEST_WINS_CONTRADICTION,
@@ -798,7 +795,6 @@ async def apply_refines(
             logging.getLogger(__name__).warning("refines: supersede failed (non-fatal): %s", e)
         # What reached loom.memory, even when the embeddings mirror then failed.
         retired = [{**v, "superseded_by_key": new_memory_key} for v in tracker.retired(victims)]
-        retired_ids = {str(v["memory_id"]) for v in retired}
         reason = reason or NEWEST_WINS_CONTRADICTION
         if record_into is not None:
             record_into.setdefault(reason, []).extend(retired)
@@ -806,33 +802,6 @@ async def apply_refines(
             schedule_auto_supersessions(
                 org=org, namespace=namespace, retired=retired, reason=reason
             )
-    for p in refined_peers:
-        if p.memory_key == new_memory_key:
-            continue
-        if expected_sha256 and p.memory_id not in retired_ids:
-            continue  # a later verdict links only what it retired
-        try:
-            from server.memory.api.models_graph import MemoryLinkInput
-            from server.memory.app.ops import handle_memory_link
-
-            await handle_memory_link(
-                MemoryLinkInput(
-                    org=org,
-                    namespace=namespace,
-                    from_key=new_memory_key,
-                    to_key=p.memory_key,
-                    relation="supersedes",
-                    explanation=(
-                        "The newer memory states a new value of the same attribute and "
-                        "the namespace is newest_wins; the older row is superseded, not "
-                        "deleted."
-                    ),
-                    confidence=0.9,
-                    run_id=run_id or "-",
-                )
-            )
-        except Exception as e:  # noqa: BLE001 — the refines edge is best effort; the row is in
-            logging.getLogger(__name__).warning("refines: edge write failed (non-fatal): %s", e)
     return n
 
 

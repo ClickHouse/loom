@@ -707,8 +707,8 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
             # nothing was flagged.
             conflict_result = replace(conflict_result, verdict="clear", peers=[])
     elif conflict_result.verdict == "refines" and conflict_result.refined_peers:
-        # A templated substitution supersedes the rows it replaces and links to them;
-        # nothing is flagged, nothing is deleted.
+        # A templated substitution supersedes the rows it replaces; nothing is
+        # flagged, nothing is deleted.
         from server.memory.app.conflicts import apply_refines
 
         with traced("conflicts.apply_refines", peers=len(conflict_result.refined_peers)):

@@ -246,7 +246,7 @@ metadata write (touch, pin, tags) does not move it, and a value that came back i
 ordered from its return; an explicit `valid_at` earlier than that moves it back. Equal keys, or a peer
 asserted later, flag the pair for review instead. A row is always judged as itself:
 a newer peer comes to its own turn from its own mark. A retirement goes through `apply_refines`: the older row is superseded behind the
-newer, a `supersedes` edge records why, one `memory.auto_supersede` record names it
+newer (its `superseded_by`), one `memory.auto_supersede` record names it
 (reason `conflict_resolver`, so `memory.restore` undoes it), and the triple plane follows
 (`follow_row_supersessions`). A flag the newer row held against the retired one is
 removed as a clear removes it, and the audit row's pair says `flag_cleared`, so the
@@ -608,9 +608,8 @@ ended.
 
 ### Undo
 
-The Undo of a retirement that names its winner (`if_superseded_by`) also rescinds the
-`supersedes` operator edge the retirement wrote from the winner's key to the restored
-one. Undo makes the restored value current in the graph: every fact the restored row holds,
+A retirement writes no operator edge: its lineage is the row's `superseded_by` and its
+record, so the Undo leaves the namespace's `memory.link` edges as they are. Undo makes the restored value current in the graph: every fact the restored row holds,
 open or closed, gets a new observation (a `row-restore` marker) seen from the restore's
 instant on, to the microsecond (a closed interval before it stays as history, and every
 later repair reads the fact as stated then), as does its edge when the graph has one, so

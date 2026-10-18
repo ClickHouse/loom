@@ -264,7 +264,6 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
         new_memory_id=str(winner.memory_id),
         new_memory_key=str(winner.memory_key),
         refined_peers=[_conflict_peer(loser)],
-        run_id=str(getattr(winner, "run_id", "-") or "-"),
         record_into=into,
         expected_sha256=str(winner.content_sha256 or ""),
         skip_peer=lambda row: str(row.content_sha256 or "") != loser_sha,

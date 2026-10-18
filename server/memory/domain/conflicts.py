@@ -43,7 +43,7 @@ class ConflictResult:
                    with status='duplicate' + duplicate_of pointer
     - "conflict":  peer close-but-different; insert + flag both conflicted
     - "refines":   templated substitution under `newest_wins`; insert active,
-                   supersede refined_peers, link with a `supersedes` edge
+                   supersede refined_peers
     - "rejected":  peer pinned and close-but-different; raise 409 PINNED_CONFLICT
     """
 
@@ -57,7 +57,7 @@ class ConflictResult:
     # write path records it as a drop so a regression shows on the dashboard).
     merge_scope: str = ""
     # verdict=='refines': the peers the new row replaces; the caller inserts the row
-    # active, supersedes these and links them with a `supersedes` edge.
+    # active and supersedes these.
     refined_peers: list[ConflictPeer] = field(default_factory=list)
     # The conflict resolver owes this write a judgement: a `conflict`, or a `clear`
     # with a peer between the resolver floor and the conflict threshold.
@@ -369,10 +369,9 @@ def substitution_result(
 ) -> ConflictResult:
     """The verdict for peers that are templated substitutions of the new value
     under `newest_wins`: the row being written is the newest statement of the
-    attribute, so the peers are superseded through `apply_refines` with a
-    `supersedes` edge. This is what reaches the attribute stated under two
-    coined keys (`x_module_assignment` vs `x_assigned_module`), which same-key
-    supersession cannot bridge.
+    attribute, so the peers are superseded through `apply_refines`. This is what
+    reaches the attribute stated under two coined keys (`x_module_assignment` vs
+    `x_assigned_module`), which same-key supersession cannot bridge.
 
     The clock is the calendar before it is the arrival: when the new row and a
     peer both carry a `valid_at` and the peer's is later, the row being written

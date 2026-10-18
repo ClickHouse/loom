@@ -495,7 +495,7 @@ def _revision_run_id(input: Any, existing: MemoryRow) -> str:
 async def _update_post_write(input: Any, existing: MemoryRow, conflict_result: Any, ch: Any) -> Any:
     """Post-write, as memory.set: a conflict flags both sides (the new version
     exists, so the cross-link resolves); a templated substitution supersedes the
-    rows it replaces and links to them. Returns the verdict that landed: `clear`
+    rows it replaces. Returns the verdict that landed: `clear`
     when the mark flagged nothing (no peer, or the new row, was left live)."""
     from server.observability.otel import traced
 
