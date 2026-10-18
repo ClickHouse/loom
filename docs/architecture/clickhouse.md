@@ -429,7 +429,8 @@ with `purge=true` and runner state.
   one claim per (repository, subject), `repo:<owner/name>`, then its branches' claims in
   namespace order, and writes the branches in one insert inside that bound. A change that
   may remove an admin first holds the namespace's admins claim (the key with no subject)
-  and counts the admins under it.
+  and counts the admins under it. `task_claims`, `oauth_claims` and `grant_claims` exist
+  in the schema and no code path writes or reads them.
 - **Graph projections and graph writes** (`loom.graph_projections`, KeeperMap where the
   server has a Keeper): a projection holds one of 32 slot keys of its namespace and its
   end drops it (a begin whose insert failed uncertainly leaves its slot to go stale); a
@@ -636,11 +637,9 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 
 ## Invariants
 
-- `task_claims`, `oauth_claims` and `grant_claims` exist in the schema and no code path
-  writes them.
 - Every tenant read filters on the identity prefix of the sort key; the exceptions are
   rows addressed by a global id (`erasure_requests`, `oauth_state`) and tables with no
-  tenant columns (caches, `idempotency`, `revoked_tokens`, `task_claims`, `worker_status`).
+  tenant columns (caches, `idempotency`, `revoked_tokens`, `worker_status`).
 - A `ReplacingMergeTree` version row carries every persisted column; row-state predicates
   run after `FINAL`.
 - No expression is aliased with the name of a column its `WHERE` filters on.

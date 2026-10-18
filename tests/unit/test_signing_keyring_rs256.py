@@ -233,8 +233,8 @@ def test_each_process_records_its_refresh_interval_hourly(monkeypatch: pytest.Mo
 def test_rotate_waits_out_the_slowest_servers_refresh(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The floor came from the CLI's own setting: servers refreshing every
-    300 s accepted `--activate-in 60` and answered 401 for minutes."""
+    """Servers refreshing every 300 s refuse `--activate-in 60`: the floor is
+    twice the slowest server's interval, not this host's."""
     import argparse
 
     from server.cli import signing_keys

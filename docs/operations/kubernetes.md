@@ -89,8 +89,7 @@ helm install loom deploy/helm/loom -n loom -f deploy/helm/loom/values-eks.yaml
   deregistration delay (50 s, `readyDelaySeconds` + `gracefulSeconds`) lets it finish
   what it holds. The 300 s idle timeout covers long calls, and Loom keeps idle
   connections open longer (`keepAliveSeconds`, 310 s), so the ALB never reuses one Loom
-  has just closed. The image reads it as `LOOM_KEEP_ALIVE_S` from the release that ships
-  this chart; an older image keeps uvicorn's 5 s.
+  has just closed. The image reads it as `LOOM_KEEP_ALIVE_S`.
 
 - **`trustedProxies`.** Set it to the ALB's subnets, or every client counts as the ALB
   for the per-address sign-in limits. Not the whole VPC: any pod there could then set

@@ -304,7 +304,7 @@ def status(rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     signer = _signer(view) if loaded else None
     return {
         "loaded": loaded,
-        "signing_kid": "" if signer is None else signer.kid,
+        "signing_kid": signer.kid if signer else "",
         "unsealable": sorted(view.unsealable),
         "root_row": view.root_row,
     }
