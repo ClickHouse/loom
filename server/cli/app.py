@@ -24,7 +24,7 @@ from server.cli.maintenance import (
     _add_reextract_parser,
 )
 from server.cli.ops import (
-    _add_recalibrate_and_chunks_parsers,
+    _add_recalibrate_parser,
     _add_sensitivity_sweep_parser,
     _cmd_integrity_repair,
     _cmd_lexical_stats_rebuild,
@@ -138,8 +138,7 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 
 
 def _add_code_okf_up_parsers(sub: Any) -> None:
-    """The `code`, `okf`, `up`, `participant`, `deployment`, `signing-key` and
-    `provider-lock` subcommands, registered by their own modules."""
+    """Subcommands registered by their own modules."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)
@@ -293,7 +292,7 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
     _add_serve_and_migrate_parsers,
     _add_memory_repair_parsers,
     _add_activity_trivia_parser,
-    _add_recalibrate_and_chunks_parsers,
+    _add_recalibrate_parser,
     _add_clickgap_import_parser,
     _add_recall_import_parser,
     _add_brain_import_parser,

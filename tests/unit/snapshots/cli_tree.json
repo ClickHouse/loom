@@ -6980,99 +6980,6 @@
       }
      ]
     },
-    "backfill-chunks": {
-     "prog": "loom backfill-chunks",
-     "usage": null,
-     "description": null,
-     "epilog": null,
-     "formatter_class": "argparse:HelpFormatter",
-     "add_help": true,
-     "allow_abbrev": true,
-     "defaults": {
-      "func": "server.cli.ops:_cmd_backfill_chunks"
-     },
-     "groups": [
-      {
-       "title": "positional arguments",
-       "description": null,
-       "dests": []
-      },
-      {
-       "title": "options",
-       "description": null,
-       "dests": [
-        "help",
-        "org",
-        "namespace",
-        "dry_run"
-       ]
-      }
-     ],
-     "mutually_exclusive": [],
-     "arguments": [
-      {
-       "option_strings": [
-        "-h",
-        "--help"
-       ],
-       "dest": "help",
-       "action": "_HelpAction",
-       "default": "==SUPPRESS==",
-       "const": null,
-       "choices": null,
-       "nargs": 0,
-       "type": null,
-       "required": false,
-       "help": "show this help message and exit",
-       "metavar": null
-      },
-      {
-       "option_strings": [
-        "--org"
-       ],
-       "dest": "org",
-       "action": "_StoreAction",
-       "default": null,
-       "const": null,
-       "choices": null,
-       "nargs": null,
-       "type": null,
-       "required": true,
-       "help": null,
-       "metavar": null
-      },
-      {
-       "option_strings": [
-        "--namespace"
-       ],
-       "dest": "namespace",
-       "action": "_StoreAction",
-       "default": null,
-       "const": null,
-       "choices": null,
-       "nargs": null,
-       "type": null,
-       "required": true,
-       "help": null,
-       "metavar": null
-      },
-      {
-       "option_strings": [
-        "--dry-run"
-       ],
-       "dest": "dry_run",
-       "action": "_StoreTrueAction",
-       "default": false,
-       "const": true,
-       "choices": null,
-       "nargs": 0,
-       "type": null,
-       "required": false,
-       "help": "Report what would be written without inserting.",
-       "metavar": null
-      }
-     ]
-    },
     "import-clickgap": {
      "prog": "loom import-clickgap",
      "usage": null,
@@ -11141,7 +11048,6 @@
     "period-digest": "loom period-digest",
     "demote-activity-narration": "loom demote-activity-narration",
     "recalibrate": "loom recalibrate",
-    "backfill-chunks": "loom backfill-chunks",
     "import-clickgap": "loom import-clickgap",
     "import-recall": "loom import-recall",
     "import-brain": "loom import-brain",
@@ -11291,11 +11197,6 @@
      "dest": "recalibrate",
      "help": "Re-probe the embedder + run per-NS calibration immediately (otherwise this runs weekly via the recalibration worker).",
      "metavar": "recalibrate"
-    },
-    {
-     "dest": "backfill-chunks",
-     "help": "Backfill loom.memory_chunks from existing memory rows in one namespace. Idempotent (skips chunks already present by content_sha256). Use after migrating from a pre-chunks deploy.",
-     "metavar": "backfill-chunks"
     },
     {
      "dest": "import-clickgap",

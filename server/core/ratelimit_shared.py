@@ -64,8 +64,8 @@ def default_path() -> str:
 def open_table_fd(path: str) -> int:
     """Open (or create) the backing file the way a shared table must be
     opened (`open_private`): the file may already exist with a wider mode,
-    or have been created by something else. Raises OSError; the limiter falls back to
-    per-process buckets and names the reason in /v1/health."""
+    or have been created by something else. Raises OSError; the limiter
+    falls back to per-process buckets and names the reason in /v1/health."""
     return open_private(path, os.O_RDWR | os.O_CREAT)
 
 

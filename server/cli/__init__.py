@@ -30,7 +30,7 @@ own subcommands:
   maintenance    reconcile-status, period-digest, demote-activity-narration,
                  reextract, reembed
   okf            export-okf, import-okf, okf-lint
-  ops            recalibrate, backfill-chunks, sensitivity, integrity, rechunk,
+  ops            recalibrate, sensitivity, integrity, rechunk,
                  lexical stats
   reports        export-actions, entity-export, audit-namespace, deploy-delta, mentor
   serve          serve, migrate
