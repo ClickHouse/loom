@@ -1732,3 +1732,60 @@ async def test_the_recheck_waits_once_it_comes_back_short(
     await pass_env.run()
     await pass_env.run()
     assert pass_env.recheck_reads == 2
+
+
+# --- the claims each pinned on its own ---------------------------------------------------
+
+
+def test_the_clear_confidence_itself_changes_the_pair() -> None:
+    """At exactly 0.90 a compatible verdict clears and a contradiction flags."""
+    assert _action(_v("restatement", 0.90)) == cr.CLEAR
+    assert _action(_v("contradiction", 0.90)) == cr.FLAG
+    assert _action(_v("contradiction", 0.8999)) == cr.NOTHING
+
+
+async def test_at_most_half_the_places_go_to_rows_of_the_key_in_other_sessions() -> None:
+    """Six other sessions hold the key, all below the floor: four of them join."""
+    sessions = [f"s{i}" for i in range(2, 8)]
+    same_key = [_near(s, "office_city", 0.5) for s in sessions]
+    rows = [_peer_row(f"m{s}", s, "office_city", "v") for s in sessions]
+    ch = _ClusterCH([], rows, flagged=same_key)  # the anchored read: flagged and same-key
+    peers = await queue.cluster_peers(_q(), floor=0.6, limit=8, ch=ch)
+    assert len(peers) == 4
+    anchored = [p for sql, p in ch.calls if "same_lim" in (p or {})]
+    assert anchored and anchored[0]["same_lim"] == 4
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "user_id = {u:String} AND (user_id != '-' OR agent = {a:String})",
+    ],
+)
+def test_every_cluster_read_keeps_to_the_tenant_and_the_subject(predicate: str) -> None:
+    """Each filter on its own: a vector read or the rows' read without one of them would
+    put another tenant's or another user's text in the prompt."""
+    for sql in (queue._LIVE_VECTORS, queue._PEER_ROWS_SQL):
+        assert predicate in sql, (predicate, sql)
+
+
+async def test_a_full_batch_past_the_burst_window_ends_the_pass(pass_env: NS, monkeypatch) -> None:
+    from server.memory.workers import conflict_resolver as worker
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 2)
+    monkeypatch.setattr(worker, "BURST_S", 0.0)
+    pass_env.owed = [_q(memory_key=f"k{i}") for i in range(10)]  # every read comes back full
+    await pass_env.run()
+    assert [s for s in pass_env.seeds if s[0] == "owed"].__len__() == 1
+
+
+async def test_a_pass_tags_its_queries_as_the_resolver(pass_env: NS, monkeypatch) -> None:
+    from server.memory.workers import conflict_resolver as worker
+
+    tags: list[str] = []
+    monkeypatch.setattr(worker, "set_query_tag", tags.append)
+    await pass_env.run()
+    assert tags == ["worker.conflict_resolver"]

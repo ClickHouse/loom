@@ -1196,3 +1196,57 @@ async def test_a_late_verdict_leaves_a_retired_source_and_its_peers(monkeypatch)
 def _index(state) -> None:
     # The id -> key map `_bulk_verdicts` builds once the rows that land are known.
     state.key_of = {r["memory_id"]: r.get("memory_key", "") for r in state.memory_rows}
+
+
+@pytest.mark.parametrize("policy", ["auto_reinforce", "manual_review", "append_only"])
+async def test_outside_newest_wins_a_shared_key_alone_retires_nothing(
+    monkeypatch, emitted, policy: str
+) -> None:
+    """Extraction reuses generic keys for different facts: outside newest_wins the
+    resolver judges a same-key pair, the write never retires it on the key alone."""
+    from server.memory.app.key_supersession import supersede_same_key_rows
+
+    wrote = _fake_supersede(monkeypatch, {"o1": "active"})
+    new = [_live("n1")]
+    n = await supersede_same_key_rows(
+        org="o", namespace="ns", new_rows=new, ch=_CH(all_=[[new[0], _live("o1")]]), policy=policy
+    )
+    assert n == 0 and wrote == [] and emitted == []
+
+
+@pytest.mark.parametrize(
+    ("policy", "held", "want_owed"),
+    [
+        ("newest_wins", True, False),  # the write retires the older row itself
+        ("append_only", True, False),  # never judged
+        ("auto_reinforce", True, True),
+        ("manual_review", True, True),
+        ("auto_reinforce", False, False),
+    ],
+)
+async def test_a_point_write_is_owed_for_a_key_another_session_holds_only_where_judged(
+    monkeypatch, policy: str, held: bool, want_owed: bool
+) -> None:
+    from server.memory.app import conflicts, key_supersession
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.store.conflict_resolver import OWED_MARK
+    from server.settings import settings
+
+    reads: list[str] = []
+
+    async def keys_held_elsewhere(**kw: Any) -> set[str]:
+        reads.append(policy)
+        return {"user_city"} if held else set()
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", True)
+    monkeypatch.setattr(key_supersession, "keys_held_elsewhere", keys_held_elsewhere)
+    monkeypatch.setattr(conflicts, "get_client", lambda: object())
+    mark = await conflicts.same_key_mark(
+        ConflictResult(verdict="clear", peers=[]),
+        org="o",
+        namespace="ns",
+        memory_row=_live("n1"),
+        policy=policy,
+    )
+    assert (mark == OWED_MARK) is want_owed
+    assert bool(reads) is (policy not in ("newest_wins", "append_only")), "no read there"
