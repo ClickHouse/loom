@@ -220,20 +220,21 @@ class _Table:
         if "count()" in sql:
             return {"n": len(self.live())}
         if "lowerUTF8(user_name) =" in sql:
-            return next((r for r in self.live() if r["user_name"].lower() == params["n"]), None)
+            want = params["n"].lower()
+            return next((r for r in self.live() if r["user_name"].lower() == want), None)
         if "max(version)" in sql:
             newest = self.newest(params["k"])
             return {"v": max(time.time_ns(), newest["version"] + 1 if newest else 0)}
-        if "has(subjects" in sql:
-            heads = [self.newest(uid) for uid in {r["id"] for r in self.rows} - {params["id"]}]
-            held = [r for r in heads if r and not r["active"] and params["s"] in r["subjects"]]
-            return {"x": 1} if held else None
         row = self.newest(params["id"]) if params else None
         if "active = 0" in sql:
             return {"x": 1} if row and not row["active"] else None
         return row
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if "has(subjects" in sql:
+            heads = [self.newest(uid) for uid in {r["id"] for r in self.rows} - {params["id"]}]
+            held = [r for r in heads if r and not r["active"] and params["s"] in r["subjects"]]
+            return [{"email": r["email"]} for r in held]
         if "loom.service_accounts" in sql:
             rows = [{**r, "live": r["revoked_at"] is None} for r in self.made_by(sql, params)]
             if self.shuffle is not None:
@@ -448,6 +449,19 @@ async def test_an_account_moved_to_another_email_is_not_revoked_again(world) -> 
     assert world.ours == {"lee": None}
     await scim.update(bob, active=True)
     assert world.ours["lee"] is not None
+
+
+async def test_an_account_moved_while_its_old_user_is_deactivated_is_let_go(world) -> None:
+    # A leaver deactivated, then their account linked to a new address
+    # (`loom sso link`) and that address provisioned.
+    world.person("lee@example.com", "lee")
+    old = await _create("lee@example.com")
+    await scim.update(old, active=False)
+    await scim.delete(old)
+    world.person("lee@example.com")
+    world.person("lee.new@example.com", "lee")
+    await _create("lee.new@example.com")
+    assert world.ours["lee"] is not None  # narrowed: the old row reaches it no more
 
 
 async def test_another_subjects_org_does_not_hide_collateral(world) -> None:

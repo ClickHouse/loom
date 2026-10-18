@@ -112,8 +112,8 @@ async def find(user_name: str) -> dict[str, Any] | None:
     """The live SCIM user whose userName is `user_name`, in any case (RFC 7643 §4.1.1)."""
     row = await get_client().query_one(
         f"SELECT * FROM {TABLE} FINAL "
-        "WHERE lowerUTF8(user_name) = {n:String} AND deleted = 0 LIMIT 1",
-        params={"n": normalized(user_name)},
+        "WHERE lowerUTF8(user_name) = lowerUTF8({n:String}) AND deleted = 0 LIMIT 1",
+        params={"n": user_name.strip()},
     )
     return None if row is None else dict(row)
 
@@ -518,16 +518,21 @@ def _newest_cutoff(rows: dict[str, dict[str, Any]]) -> datetime | None:
 
 
 async def _held_by_another_inactive(uid: str, subject: str) -> bool:
+    """Whether another deactivated (or deleted) user's email still reaches
+    `subject`. One that recorded it before the account moved to another email
+    holds nothing back."""
     with own_write_reads():
-        row = await get_client().query_one(
+        rows = await get_client().query_all(
             f"""
-            SELECT 1 AS x FROM {TABLE} FINAL
+            SELECT email FROM {TABLE} FINAL
             WHERE active = 0 AND id != {{id:String}} AND has(subjects, {{s:String}})
-            LIMIT 1
             """,
             params={"id": uid, "s": subject},
         )
-    return row is not None
+    for r in rows:
+        if subject in await _subjects(r["email"]):
+            return True
+    return False
 
 
 async def _write(row: dict[str, Any]) -> None:
