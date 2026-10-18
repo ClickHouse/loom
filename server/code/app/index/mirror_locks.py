@@ -13,7 +13,7 @@ import time
 from collections.abc import AsyncIterator
 
 # A clone's temp tree beside its mirror: `<mirror>.partial-<pid>-<monotonic ns>`.
-_PARTIAL = re.compile(r"(.+\.git)\.partial-\d+-\d+")
+_PARTIAL = re.compile(r"(.+)\.partial-\d+-\d+")
 
 
 def partial_temp_dir(git_dir: str) -> str:

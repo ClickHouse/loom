@@ -185,7 +185,8 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
             return ""
         # Under the lock no clone is running: what is left was a killed one's.
         for stale in await asyncio.to_thread(glob.glob, f"{glob.escape(git_dir)}.partial-*"):
-            if partial_mirror(stale) == git_dir:
+            mirror = partial_mirror(stale)
+            if mirror is not None and os.path.basename(mirror) == os.path.basename(git_dir):
                 await asyncio.to_thread(shutil.rmtree, stale, True)
         await asyncio.to_thread(os.makedirs, tmp)
         # The clone runs as a repository job: the empty target its one writable path.

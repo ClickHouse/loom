@@ -1095,10 +1095,10 @@ class CHClient:
 
         For the ledger tables in `PROJECTED_TABLES`, columns the live table
         does not have are dropped from the statement — one WARNING per
-        (table, column) per process — instead of failing the batch. A process running code newer
-        than the service's schema (an isolated server, or the deployment
-        between an image build and its boot migration) then loses a column's
-        values, not its rows."""
+        (table, column) per process — instead of failing the batch. A process
+        running code newer than the service's schema (an isolated server, or
+        the deployment between an image build and its boot migration) then
+        loses a column's values, not its rows."""
         if not rows:
             return
         # Before the DESCRIBE — that read is the first statement
