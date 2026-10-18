@@ -103,11 +103,12 @@ same key written by two agents or in two sessions is two rows. Under the namespa
 policy `newest_wins`, the newest write for a key retires every older live row with that
 key in the namespace, whoever wrote it. Extraction mints keys from the subject and
 attribute, never from the value, so a later session that states the same attribute lands
-on the same key. Under any other policy, the conflict resolver judges the rows of one key
-that two sessions of the same user (for the anonymous user `-`, the same agent) wrote,
-as it judges any close pair: it retires the older row of an update it is sure of
-(except under `manual_review`), flags a contradiction for review and leaves two
-different facts under a reused key live.
+on the same key. Under `auto_reinforce` and `manual_review`, the conflict resolver judges
+the rows of one key that two sessions of the same user (for the anonymous user `-`, the
+same agent) wrote, from a point write or a bulk write, as it judges any close pair: it
+retires the older row of an update it is sure of (except under `manual_review`), flags a
+contradiction for review and leaves two different facts under a reused key live. Under
+`append_only` nothing is judged.
 
 ## Memory types
 

@@ -129,8 +129,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     joins back to `memory`; its `conflict_checked_at` carries the resolver's mark.
     Conflict marks then go on the peers, or `refines` supersedes them.
 13. **After the write** (`_set_after_write`, `_set_post_insert`). Same-key supersession
-    under `newest_wins` (`memory/app/key_supersession.py`; under any other policy the
-    conflict resolver judges same-key rows, see below) and the hash-only audit row are
+    under `newest_wins` (`memory/app/key_supersession.py`; under `auto_reinforce` and
+    `manual_review` the conflict resolver judges same-key rows, see below, and under
+    `append_only` nothing is marked) and the hash-only audit row are
     awaited in one round trip. The entity-graph projection is scheduled beside the
     response (`memory/app/after_write.py`) and repaired by `entity_extractor` if lost. A
     long value is also split into `memory_chunks`, fail-open.
@@ -376,10 +377,11 @@ evidence of one attribute: extraction reuses generic keys (`assistant_recommende
 `user_attended`) for different items, and in a sample of 60 same-key pairs from
 chat-history namespaces 58 were different facts.
 
-Those rows are judged by the conflict resolver like any other peers: a bulk write outside
-`newest_wins` marks each row whose key a live row of the same subject from another
-session holds (`key_supersession.keys_held_elsewhere`): the same `user_id`, or for the
-anonymous user `-` the same agent. The writer's own identity is never a peer: its stored
+Those rows are judged by the conflict resolver like any other peers: under `auto_reinforce`
+and `manual_review`, a point write (`conflicts.same_key_mark`) and a bulk write mark each
+row whose key a live row of the same subject from another session holds
+(`key_supersession.keys_held_elsewhere`): the same `user_id`, or for the anonymous user
+`-` the same agent. Under `append_only` nothing is marked. The writer's own identity is never a peer: its stored
 row is the one the write revises.
 
 **Which row is older.** Only the older statement of a pair ever retires, so two rows
