@@ -91,6 +91,18 @@ describe("NamespacePicker groups", () => {
     expect(ch.closest("section")).toHaveAccessibleName(/Code indexes/);
   });
 
+  it("puts a code index with no description on one line, its name as code", async () => {
+    seed("team", [row("team", { role: "admin" }), row("idx-bare", { kind: "code", role: "jwt" })]);
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    fireEvent.click(group(dialog, /^Code indexes/));
+    const name = within(within(dialog).getByRole("button", { name: /idx-bare/ })).getByText("idx-bare");
+    expect(name.tagName).toBe("CODE");
+    // The first line, and no empty second line under it.
+    expect(name.parentElement?.previousElementSibling).toBeNull();
+    expect(name.parentElement?.nextElementSibling).toBeNull();
+  });
+
   it("opens every group with a match while searching and hides the rest", async () => {
     seed("team");
     const user = userEvent.setup();
