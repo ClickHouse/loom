@@ -205,10 +205,9 @@ function ConflictsPanel() {
   // for its own answer: a page the server read before the resolve wrote still lists them,
   // at versions the resolve answer does not name.
   const readsOut = useRef(new Set<Set<string>>());
-  // Each count read out collects the rows decisions take meanwhile, for its own answer:
-  // a count the server made before the resolve wrote still includes them. The client
-  // cannot tell which side of the write a count was made on, so one made after it comes
-  // out that many low; either way the next count read is exact.
+  // Each count read out collects the rows decisions take meanwhile, for its own answer: a
+  // count made before the resolve wrote still includes them, one made after comes out that
+  // many low; a count read once the server's minute-long cache has passed the write is right.
   const countsOut = useRef(new Set<{ taken: number }>());
   // The rows on screen as of the latest render, for an answer from another visit.
   const rowsNow = useRef(rows);
