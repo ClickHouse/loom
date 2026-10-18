@@ -67,8 +67,8 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
 
 ### Compacting and deleting
 
-- **`conversation.compact`** (writer, needs an LLM provider) summarises the turns older
-  than the last `keep_recent` (default 10), writes the summary as one embedded `system`
+- **`conversation.compact`** (writer, needs an LLM provider) summarises the oldest turns
+  before the last `keep_recent` (default 10) that fit the summarizer's prompt, writes the summary as one embedded `system`
   turn whose `metadata.compacted_from` lists the summarised `msg_id`s, and tombstones
   the originals and their embeddings: `conversation.search` then finds the summary in
   their place (a turn another agent of the thread still holds keeps its embedding). A

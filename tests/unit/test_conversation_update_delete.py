@@ -255,3 +255,30 @@ async def test_delete_op_registered_with_admin_role_and_audit() -> None:
     op = next(o for o in OPERATIONS if o.name == "conversation.delete")
     assert op.required_role == Role.ADMIN
     assert op.audit is True
+
+
+@pytest.mark.asyncio
+async def test_a_long_thread_is_tombstoned_in_chunks() -> None:
+    """conversation.delete's embeddings tombstone names at most `_TOMBSTONE_CHUNK` turns
+    per mutation, so every statement's id list stays bounded however long the thread."""
+    from server.knowledge.store import conversations as repo
+
+    due = [f"m{i}" for i in range(2 * repo._TOMBSTONE_CHUNK + 5)]
+
+    class _CH:
+        def __init__(self) -> None:
+            self.executed: list[tuple[str, dict[str, Any]]] = []
+
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            return [{"msg_id": m} for m in due]
+
+        async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
+            self.executed.append((sql, params or {}))
+
+    ch = _CH()
+    await repo._tombstone_embeddings(
+        "o", "n", "a", "t", None, when=datetime(2026, 9, 1, 12, 0, 0), ch=ch
+    )
+    chunks = [p["due"] for sql, p in ch.executed if "conversation_embeddings" in sql]
+    assert [len(c) for c in chunks] == [repo._TOMBSTONE_CHUNK, repo._TOMBSTONE_CHUNK, 5]
+    assert sum(chunks, []) == due

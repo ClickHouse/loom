@@ -323,7 +323,9 @@ class ConversationThreadsOutput(BaseModel):
 class ConversationCompactInput(BaseModel):
     """Summarize old turns into one embedded system turn and tombstone the originals.
 
-    The turns are those older than `keep_recent`; their embeddings are tombstoned too.
+    The turns are the oldest ones before the last `keep_recent` that fit the
+    summarizer's prompt; their embeddings are tombstoned too, except a turn another
+    agent of the thread still holds.
     The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
     nothing is written (`reason="embed-failed"`).
 
