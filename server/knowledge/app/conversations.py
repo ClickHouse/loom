@@ -698,7 +698,6 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     so reruns can detect the candidate window is already covered. A summary that
     cannot be embedded compacts nothing (`reason="embed-failed"`).
     """
-    import json as _json
     import uuid as _uuid
     from datetime import UTC, datetime
 
@@ -818,7 +817,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         content=summary_text,
         user_id=summary_user_id,
         run_id=summary_run_id,
-        metadata=_json.dumps(
+        metadata=json.dumps(
             {
                 "compacted_from": sorted(candidate_ids),
                 "compacted_at": now.isoformat(),
