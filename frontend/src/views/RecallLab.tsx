@@ -12,7 +12,7 @@ import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { Chip, PageHeader, TabTrigger, TipTarget } from "../components/ui";
-import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
+import { humanizeError, relativeTime, displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
 
@@ -341,8 +341,7 @@ export function RecallLab() {
               key,
               // A high row comes without its value: say so rather than show an empty row.
               text:
-                hit?.content_excerpt ??
-                (entry?.sensitivity === "high" ? "Sensitive: open it to read" : previewValue(entry?.value)),
+                hit?.content_excerpt ?? (entry?.sensitivity === "high" ? SENSITIVE_LABEL : previewValue(entry?.value)),
               memoryType: hit?.memory_type ?? entry?.memory_type ?? "",
               keyword: entry !== undefined,
               hit,

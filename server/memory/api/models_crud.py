@@ -615,10 +615,11 @@ class _MemoryListEntry(ProjectedRow):
     # The row's value is longer than the `value`
     # sent (the preview was cut), so a caller that needs the whole value
     # reads the row; the stored hash and cap ride so it need not otherwise.
+    # A high row comes with no value, no hash and no entities: read it by key.
     value_truncated: bool = False
     content_sha256: str = ""
     char_limit: int | None = None
-    # Sensitivity tier ('' | low | medium | high), so a reader can keep 'high' rows to itself.
+    # Sensitivity tier ('' | low | medium | high); the server withholds a high row's value.
     sensitivity: str = ""
 
 

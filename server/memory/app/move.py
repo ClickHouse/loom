@@ -222,7 +222,10 @@ async def handle_memory_move(input: MemoryMoveInput) -> MemoryMoveOutput:
             redirected=False,
             dry_run=True,
             memory_type=str(set_input.memory_type),
-            value_preview=_value_text(set_input.value)[:_PREVIEW_CHARS],
+            # a high value is read by key only, through an audited read
+            value_preview=""
+            if source.sensitivity == "high"
+            else _value_text(set_input.value)[:_PREVIEW_CHARS],
         )
     set_out = await write_mod.handle_memory_set(set_input)
     dest_id = await _destination_id(set_out, set_input)

@@ -532,7 +532,8 @@ leg returns it. The other reads that could serve its value follow three rules:
   and the graph edges its earlier version projected, which `facts.traverse` and `facts.path`
   still walk.
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
-  `contains` does not search it), `conflicts.list` and `memory.proposals`.
+  `contains` does not search it), `conflicts.list`, `memory.proposals`, and the preview of a
+  `memory.move` dry run.
 - Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get`,
   `memory.history` (one row per `high` version) and `memory.evidence` each write a
   `memory.sensitive_read` row. The admin dumps `namespace.snapshot` and `erasure.export`

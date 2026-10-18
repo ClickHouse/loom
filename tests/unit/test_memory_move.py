@@ -425,6 +425,13 @@ def test_dry_run_writes_nothing_and_previews_the_destination(
     assert out.value_preview == json.dumps(_OLD_VALUE)[:200]
 
 
+def test_a_dry_run_never_previews_a_high_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A high value is readable by key only, through an audited read.
+    _Harness(monkeypatch, source=_source(sensitivity="high"))
+    out = _move(_inp(dry_run=True))
+    assert out.dry_run is True and out.value_preview == ""
+
+
 # ------------------------------------------------ every column carried forward
 
 

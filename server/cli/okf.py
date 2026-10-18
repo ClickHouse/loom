@@ -123,8 +123,8 @@ async def _fetch_namespace(
     limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Every live row of `namespace` (all agents, users and sessions), full
-    values, as memory_to_concept dicts, and the keys of the tombstoned rows whose
-    full value could not be read. `limit` caps the rows for smoke runs."""
+    values, as memory_to_concept dicts, and the keys bulk_get did not answer whose
+    full value the list does not carry. `limit` caps the rows for smoke runs."""
     entries: list[dict[str, Any]] = []
     offset = 0
     while True:

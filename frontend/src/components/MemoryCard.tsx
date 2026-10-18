@@ -5,11 +5,11 @@ import type { Identity, MemoryListEntry } from "../api";
 import { getMemory } from "../api";
 import { AgentBadge } from "./AgentBadge";
 import { Chip } from "./ui";
-import { relativeTime, timeOfDay, truncate, previewValue } from "../lib/format";
+import { relativeTime, timeOfDay, truncate, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { detectEncodedValue, detectEncodedRecord } from "../lib/encoded";
 import { useAbortableEffect } from "../lib/hooks";
 
-const SENSITIVE = { value: "Sensitive: open it to read", encoded: false };
+const SENSITIVE = { value: SENSITIVE_LABEL, encoded: false };
 
 /** The bounded preview a card shows for a value, and whether the value was
  *  an agent-encoded (base64) envelope whose decoded text is shown instead. */

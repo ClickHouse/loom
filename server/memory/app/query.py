@@ -534,39 +534,40 @@ async def _list_by_score(
     score_total = int(_total_row["n"]) if _total_row else 0
     return MemoryListOutput(
         total=score_total,
-        entries=[
-            _MemoryListEntry(
-                memory_key=r["memory_key"],
-                memory_type=r["memory_type"],
-                confidence=float(r.get("confidence") or 0.0),
-                version=int(r.get("version") or 0),
-                created_at=r["created_at"],
-                updated_at=r["created_at"],
-                expires_at=r.get("expires_at"),
-                valid_at=r.get("valid_at"),
-                status=str(r.get("status") or "active"),
-                pinned=bool(r.get("pinned") or False),
-                evidence_count=int(r.get("evidence_count") or 1),
-                recall_count=int(r.get("recall_count") or 0),
-                last_recalled_at=r.get("last_recalled_at"),
-                tags=list(r.get("tags") or []),
-                entities=[]
-                if r.get("sensitivity") == "high"
-                else public_entities(r.get("entities")),
-                agent=r.get("agent") or "",
-                user_id=r.get("user_id") or "",
-                session_id=r.get("session_id") or "",
-                source_trace=r.get("source_trace") or "",
-                # A 'high' row's value is readable by key only, through an audited read.
-                value=None if r.get("sensitivity") == "high" else _decode_value(r.get("value")),
-                value_truncated=r.get("sensitivity") == "high" or bool(r.get("value_truncated")),
-                verified_by=r.get("verified_by") or "",
-                verification=_list_verification(r),
-                sensitivity=r.get("sensitivity") or "",
-            )
-            for r in rows_dict
-        ],
+        entries=[_score_entry(r) for r in rows_dict],
         truncated=truncated,
+    )
+
+
+def _score_entry(r: dict[str, Any]) -> _MemoryListEntry:
+    """One score-ordered list row. A 'high' row's value, hash and entities are readable by
+    key only, through an audited read."""
+    high = r.get("sensitivity") == "high"
+    return _MemoryListEntry(
+        memory_key=r["memory_key"],
+        memory_type=r["memory_type"],
+        confidence=float(r.get("confidence") or 0.0),
+        version=int(r.get("version") or 0),
+        created_at=r["created_at"],
+        updated_at=r["created_at"],
+        expires_at=r.get("expires_at"),
+        valid_at=r.get("valid_at"),
+        status=str(r.get("status") or "active"),
+        pinned=bool(r.get("pinned") or False),
+        evidence_count=int(r.get("evidence_count") or 1),
+        recall_count=int(r.get("recall_count") or 0),
+        last_recalled_at=r.get("last_recalled_at"),
+        tags=list(r.get("tags") or []),
+        entities=[] if high else public_entities(r.get("entities")),
+        agent=r.get("agent") or "",
+        user_id=r.get("user_id") or "",
+        session_id=r.get("session_id") or "",
+        source_trace=r.get("source_trace") or "",
+        value=None if high else _decode_value(r.get("value")),
+        value_truncated=high or bool(r.get("value_truncated")),
+        verified_by=r.get("verified_by") or "",
+        verification=_list_verification(r),
+        sensitivity=r.get("sensitivity") or "",
     )
 
 

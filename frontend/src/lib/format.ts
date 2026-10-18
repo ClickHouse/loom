@@ -274,3 +274,6 @@ export function searchSummary(shown: number, query: string, keywordShown: number
   const more = keywordTotal > keywordShown ? ` (newest ${keywordShown} of ${keywordTotal})` : "";
   return `${head} · ${keywordTotal} contain the text${more}, newest first, then related by meaning`;
 }
+
+/** What a card shows for a high row, which the list sends without its value. */
+export const SENSITIVE_LABEL = "Sensitive: open it to read";
