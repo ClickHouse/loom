@@ -584,36 +584,41 @@ async def _current(q: Mapping[str, Any]) -> Any:
     return rows.get(key)
 
 
-async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> bool:
+async def resolve_row(
+    q: Mapping[str, Any], *, policy: str, counts: Counts, shown: frozenset[str] = frozenset()
+) -> frozenset[str] | None:
     """Judge one queue row and act on its pairs, then stamp it judged. A row whose
     head is no longer the queued write is skipped unstamped: its new write carries
-    its own mark. A provider failure raises, and the row stays owed. True when the
-    row was judged and left owed all the same (a flagged peer the answer left out)."""
+    its own mark. A provider failure raises, and the row stays owed. When the row was
+    judged and left owed all the same (a flagged peer the answer left out, or flagged
+    peers past the cluster's places), the ids it was judged against; `shown`: those of
+    its earlier attempts, whose flagged peers give their places to the others."""
     org, namespace, sha = str(q["org"]), str(q["namespace"]), str(q.get("content_sha256") or "")
     row = await _current(q)
     if row is not None and sha and str(row.content_sha256 or "") != sha:
         counts.skipped_changed += 1
-        return False
+        return None
     if not _eligible(row) or policy == "append_only":
         await queue.stamp_judged(q)
-        return False
+        return None
     if row.pinned:
         counts.skipped_pinned += 1
         await queue.stamp_judged(q)
-        return False
+        return None
     if row.conflict_with:
         try:
             await _release_dead_flags(org, namespace, row, counts)
         except PreconditionFailedError:
             counts.skipped_changed += 1  # the key is busy: the row stays owed
-            return False
-    limit = int(settings.memory_conflict_resolver_max_peers)
-    peers = await queue.cluster_peers(
+            return None
+    cluster = await queue.cluster_peers(
         q,
         floor=float(settings.memory_conflict_resolver_min_similarity),
-        limit=limit,
+        limit=int(settings.memory_conflict_resolver_max_peers),
         prefer=frozenset(str(x) for x in row.conflict_with),
+        shown=shown,
     )
+    peers = cluster.peers
     if peers:
         row, peers = await _still_unprotected(org, row, peers)
     if row is not None and peers:
@@ -625,16 +630,14 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> b
             # A key another write held past the lock's wait. That write may change only
             # metadata or fail, leaving no new mark: the row stays owed.
             counts.skipped_changed += 1
-            return False
-        flags = {str(x) for x in row.conflict_with}
-        if unanswered & flags:
-            # A flagged peer the answer left out: stamped, its flag would never be judged.
-            return True
-        if len(peers) >= limit and flags - {str(p["memory_id"]) for p in peers}:
-            # More flagged peers than the cluster's places: the rest wait for a later pass.
-            return True
+            return None
+        judged_ids = frozenset(str(p["memory_id"]) for p in peers)
+        if unanswered & {str(x) for x in row.conflict_with} or cluster.flags_left:
+            # A flagged peer the answer left out, or one past the cluster's places: stamped,
+            # its flag would never be judged.
+            return judged_ids
     await queue.stamp_judged(q)  # under erasure it writes nothing: the row stays owed
-    return False
+    return None
 
 
 async def _release_dead_flags(org: str, namespace: str, row: Any, counts: Counts) -> None:

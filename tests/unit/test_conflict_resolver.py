@@ -290,7 +290,7 @@ async def test_two_sessions_that_share_a_key_each_get_their_own_row_and_vector()
             _peer_row("m3", "s3", "office_city", "Lyon"),
         ],
     )
-    peers = await queue.cluster_peers(_q(), floor=0.6, limit=8, ch=ch)
+    peers = (await queue.cluster_peers(_q(), floor=0.6, limit=8, ch=ch)).peers
     assert [(p["memory_id"], p["value"], round(p["similarity"], 2)) for p in peers] == [
         ("m3", "Lyon", 0.9),
         ("m2", "Paris", 0.7),
@@ -303,7 +303,9 @@ async def test_the_cluster_keeps_the_floor_the_cap_and_the_rows_flags() -> None:
     near = [_near(f"s{i}", f"k{i}", 0.05 * i) for i in range(1, 12)]  # cosine 0.95 .. 0.45
     rows = [_peer_row(f"m{i}", f"s{i}", f"k{i}", "v") for i in range(1, 12)]
     ch = _ClusterCH(near, rows)
-    peers = await queue.cluster_peers(_q(), floor=0.6, limit=3, prefer=frozenset({"m8"}), ch=ch)
+    peers = (
+        await queue.cluster_peers(_q(), floor=0.6, limit=3, prefer=frozenset({"m8"}), ch=ch)
+    ).peers
     # m8 (cosine 0.60) is the row's flag: it takes a place first; below 0.60 never.
     assert [p["memory_id"] for p in peers] == ["m1", "m2", "m8"]
     sql, params = ch.calls[0]
@@ -336,7 +338,9 @@ async def test_a_flagged_peer_joins_the_cluster_whatever_the_cutoff() -> None:
     near = [_near("s1", "k1", 0.10)]
     rows = [_peer_row("m1", "s1", "k1", "v"), _peer_row("m20", "s20", "k20", "v")]
     ch = _ClusterCH(near, rows, flagged=[_near("s20", "k20", 0.50)])
-    peers = await queue.cluster_peers(_q(), floor=0.6, limit=3, prefer=frozenset({"m20"}), ch=ch)
+    peers = (
+        await queue.cluster_peers(_q(), floor=0.6, limit=3, prefer=frozenset({"m20"}), ch=ch)
+    ).peers
     assert [p["memory_id"] for p in peers] == ["m1", "m20"]
     flagged_sql, params = ch.calls[1]
     # The flags are read from the row's head in ClickHouse, never sent.
@@ -351,7 +355,9 @@ async def test_a_key_held_in_many_sessions_leaves_room_for_flags_and_near_peers(
     rows = [_peer_row(f"m{i}", f"s{i}", "office_city", "v") for i in range(10)]
     rows += [_peer_row("m20", "s20", "k20", "v"), _peer_row("m30", "s30", "k30", "v")]
     ch = _ClusterCH(near, rows, flagged=[*same, _near("s20", "k20", 0.6)])
-    peers = await queue.cluster_peers(_q(), floor=0.6, limit=8, prefer=frozenset({"m20"}), ch=ch)
+    peers = (
+        await queue.cluster_peers(_q(), floor=0.6, limit=8, prefer=frozenset({"m20"}), ch=ch)
+    ).peers
     ids = [p["memory_id"] for p in peers]
     assert "m20" in ids and "m30" in ids
     assert sum(p["memory_key"] == "office_city" for p in peers) == 4, "half the places"
@@ -395,6 +401,7 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     e = NS(
         mem=_mem(),
         heads={},
+        flags_left=set(),
         peers=[_peer_row("m2", "s2", "office_city", '"Office is in Paris"') | {"similarity": 0.8}],
         answer=_answer(_entry("p1", "update", 0.97)),
         stamped=[],
@@ -418,9 +425,9 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def current(q: Any) -> Any:
         return e.mem
 
-    async def cluster(q: Any, **kw: Any) -> list[dict[str, Any]]:
+    async def cluster(q: Any, **kw: Any) -> Any:
         e.cluster_kw = kw
-        return e.peers
+        return queue.Cluster(e.peers, frozenset(e.flags_left))
 
     async def judge(new: Any, notes: list[Any]) -> dict[str, Any]:
         e.llm_calls += 1
@@ -876,10 +883,34 @@ async def test_a_row_flagged_against_more_peers_than_places_stays_owed(
     ]
     for i in (2, 3):
         row_env.heads[f"m{i}"] = _mem(f"m{i}", session_id=f"s{i}", content_sha256=f"sha-m{i}")
-    row_env.mem.status, row_env.mem.conflict_with = "conflicted", ["m2", "m3", "m4"]
+    row_env.mem.status, row_env.mem.conflict_with = "conflicted", ["m2", "m3", "m4", "m9"]
+    row_env.flags_left = {"m4"}  # joinable, past the places (m9 never joins: no wait for it)
     row_env.answer = _answer(_entry("p1", "related", 0.95), _entry("p2", "related", 0.95))
-    left_owed = await resolver.resolve_row(_q(), policy="newest_wins", counts=resolver.Counts())
-    assert left_owed and row_env.stamped == []
+    judged = await resolver.resolve_row(_q(), policy="newest_wins", counts=resolver.Counts())
+    assert judged == {"m2", "m3"} and row_env.stamped == []
+    row_env.flags_left = set()
+    judged = await resolver.resolve_row(_q(), policy="newest_wins", counts=resolver.Counts())
+    assert judged is None and row_env.stamped == ["office_city"], "only m9 left: stamped"
+
+
+async def test_flagged_peers_not_judged_before_take_the_places_first() -> None:
+    """Three flagged peers, two places: once m1 and m2 were judged, m3 gets a place."""
+    flagged = [_near(f"s{i}", f"k{i}", 0.1 * i) for i in (1, 2, 3)]
+    rows = [_peer_row(f"m{i}", f"s{i}", f"k{i}", "v") for i in (1, 2, 3)]
+    prefer = frozenset({"m1", "m2", "m3"})
+    first = await queue.cluster_peers(
+        _q(), floor=0.6, limit=2, prefer=prefer, ch=_ClusterCH([], rows, flagged=flagged)
+    )
+    assert {p["memory_id"] for p in first.peers} == {"m1", "m2"} and first.flags_left == {"m3"}
+    again = await queue.cluster_peers(
+        _q(),
+        floor=0.6,
+        limit=2,
+        prefer=prefer,
+        shown=frozenset({"m1", "m2"}),
+        ch=_ClusterCH([], rows, flagged=flagged),
+    )
+    assert "m3" in {p["memory_id"] for p in again.peers}
 
 
 async def test_an_unflagged_peer_left_out_still_lets_the_row_be_stamped(row_env: NS) -> None:
@@ -1233,7 +1264,7 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.cap_reads.append(kw)
         return (org, namespace) in e.over
 
-    async def resolve(q, *, policy, counts):
+    async def resolve(q, *, policy, counts, shown=frozenset()):
         e.in_flight += 1
         e.most_in_flight = max(e.most_in_flight, e.in_flight)
         await asyncio.sleep(e.slow)
@@ -1242,7 +1273,7 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
             raise e.raise_for[q["memory_key"]]
         e.resolved.append((q["org"], q["namespace"], q["memory_key"], policy))
         counts.judged += 1
-        return q["memory_key"] in e.left_owed
+        return frozenset({"m2"}) if q["memory_key"] in e.left_owed else None
 
     async def stamp(q, **kw):
         e.stamped.append(q["memory_key"])
@@ -1458,7 +1489,7 @@ async def test_a_failure_that_escapes_a_row_ends_the_pass_with_no_row_running(
 
     running: set[str] = set()
 
-    async def resolve(q, *, policy, counts):
+    async def resolve(q, *, policy, counts, shown=frozenset()):
         running.add(q["memory_key"])
         try:
             await asyncio.sleep(0 if q["memory_key"] == "k1" else 0.2)
@@ -1934,7 +1965,7 @@ async def test_at_most_half_the_places_go_to_rows_of_the_key_in_other_sessions()
     same_key = [_near(s, "office_city", 0.5) for s in sessions]
     rows = [_peer_row(f"m{s}", s, "office_city", "v") for s in sessions]
     ch = _ClusterCH([], rows, flagged=same_key)  # the anchored read: flagged and same-key
-    peers = await queue.cluster_peers(_q(), floor=0.6, limit=8, ch=ch)
+    peers = (await queue.cluster_peers(_q(), floor=0.6, limit=8, ch=ch)).peers
     assert len(peers) == 4
     anchored = [p for sql, p in ch.calls if "same_lim" in (p or {})]
     assert anchored and anchored[0]["same_lim"] == 4

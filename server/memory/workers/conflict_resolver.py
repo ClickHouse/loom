@@ -50,8 +50,9 @@ class _State:
     unavailable: str | None = None
     # No key last pass: unlike an outage, its end is known without a call.
     no_key: bool = False
-    # Attempts that left a row owed, per (identity, content hash).
-    attempts: dict[tuple[str, ...], int] = field(default_factory=dict)
+    # Attempts that left a row owed, per (identity, content hash): how many, and the
+    # peers they judged it against.
+    attempts: dict[tuple[str, ...], tuple[int, frozenset[str]]] = field(default_factory=dict)
 
 
 _state = _State()
@@ -142,9 +143,10 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             if await namespace_over_cap(org, namespace, **_cap_share()):
                 p.counts.skipped_budget += 1
                 return
-            if await resolver.resolve_row(r, policy=policy, counts=p.counts) and (
-                await _out_of_attempts(r)
-            ):
+            key = _attempt_key(r)
+            shown = _state.attempts.get(key, (0, frozenset()))[1]
+            judged = await resolver.resolve_row(r, policy=policy, counts=p.counts, shown=shown)
+            if judged is not None and await _out_of_attempts(r, shown | judged):
                 p.counts.errored += 1
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
@@ -171,14 +173,20 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             await get_emitter().flush_now()
 
 
-async def _out_of_attempts(r: Mapping[str, Any]) -> bool:
-    """One more attempt that left the row owed; True (and the row stamped) on the last."""
-    key = (*_identity(r), str(r.get("content_sha256") or ""))
+def _attempt_key(r: Mapping[str, Any]) -> tuple[str, ...]:
+    return (*_identity(r), str(r.get("content_sha256") or ""))
+
+
+async def _out_of_attempts(r: Mapping[str, Any], shown: frozenset[str] = frozenset()) -> bool:
+    """One more attempt that left the row owed (`shown`: the peers judged so far); True,
+    and the row stamped, on the last."""
+    key = _attempt_key(r)
     attempts = _state.attempts
     if len(attempts) > 10_000:
         attempts.clear()  # leader-local and bounded: a row seen again starts over
-    attempts[key] = attempts.get(key, 0) + 1
-    if attempts[key] < MAX_ATTEMPTS:
+    count = attempts.get(key, (0, frozenset()))[0] + 1
+    attempts[key] = (count, shown)
+    if count < MAX_ATTEMPTS:
         return False
     try:
         await queue.stamp_judged(r)

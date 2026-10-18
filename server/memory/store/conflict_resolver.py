@@ -21,7 +21,7 @@ from __future__ import annotations
 import calendar
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
@@ -301,24 +301,33 @@ def _ident(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
     return (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"]))
 
 
+class Cluster(NamedTuple):
+    """A row's peers for one call, and its flagged peers that could join but did not fit."""
+
+    peers: list[dict[str, Any]]
+    flags_left: frozenset[str]
+
+
 async def cluster_peers(
     row: Mapping[str, Any],
     *,
     floor: float,
     limit: int,
     prefer: frozenset[str] = frozenset(),
+    shown: frozenset[str] = frozenset(),
     ch: _CHClient | None = None,
-) -> list[dict[str, Any]]:
+) -> Cluster:
     """Up to `limit` live peers of the queue row `row`: its memory_type, its subject, its
-    embedding model, each with `similarity`. Its flagged peers are read from its head; the
-    flagged peers that are also in `prefer` take the first places. Then the nearest rows of
-    its key in other sessions, at most half the places, both read whatever the cutoff and
-    the floor (a re-check judges its flags; a write owed for its key's other rows is judged
-    against them), then the nearest peers at cosine >= `floor`."""
+    embedding model, each with `similarity`. Its flagged peers are read from its head;
+    the flagged peers that are also in `prefer` take the first places, those not in
+    `shown` (judged before) ahead of the rest. Then the nearest rows of its key in other
+    sessions, at most half the places, both read whatever the cutoff and the floor (a
+    re-check judges its flags; a write owed for its key's other rows is judged against
+    them), then the nearest peers at cosine >= `floor`."""
     ch = ch or _default_client()
     emb = [float(x) for x in (row.get("embedding") or [])]
     if not emb:
-        return []
+        return Cluster([], frozenset())
     params: dict[str, Any] = {
         "org": str(row["org"]),
         "ns": str(row["namespace"]),
@@ -338,7 +347,7 @@ async def cluster_peers(
     above_floor = {_ident(c) for c in near}
     found = {_ident(c): c for c in [*anchored, *near]}
     if not found:
-        return []
+        return Cluster([], frozenset())
     rows = await ch.query_all(_PEER_ROWS_SQL, params={**params, "ids": list(found)})
     peers = [
         {**dict(r), "similarity": 1.0 - float(found[_ident(r)]["dist"])}
@@ -348,6 +357,7 @@ async def cluster_peers(
     peers.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
     key = str(row["memory_key"])
     flagged = [p for p in peers if str(p["memory_id"]) in prefer]
+    flagged.sort(key=lambda p: str(p["memory_id"]) in shown)  # not judged before first
     taken = {str(p["memory_id"]) for p in flagged}
     same_key = [p for p in peers if str(p["memory_id"]) not in taken and p["memory_key"] == key]
     same_key = same_key[:half]
@@ -355,7 +365,8 @@ async def cluster_peers(
     rest = [p for p in peers if str(p["memory_id"]) not in taken and _ident(p) in above_floor]
     kept = (flagged + same_key + rest)[: max(int(limit), 0)]
     kept.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
-    return kept
+    left = {str(p["memory_id"]) for p in flagged} - {str(p["memory_id"]) for p in kept}
+    return Cluster(kept, frozenset(left))
 
 
 # The ids the row's head flags whose row is no longer live (deleted, retired, rejected,

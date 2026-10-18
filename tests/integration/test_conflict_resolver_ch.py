@@ -2542,3 +2542,62 @@ async def test_the_resolver_pays_nothing_once_the_requests_spent_the_cap(ch, wir
     await _pair(ch, org, "office_city", "office_location", 1200)
     out = await run_pass()
     assert llm.calls == [] and out["capped_namespaces"] == 1, out
+
+
+async def test_a_flag_no_cluster_can_hold_does_not_keep_the_row_owed(
+    ch, wired, monkeypatch
+) -> None:
+    """The row is flagged (by cosine, namespace wide) against another user's row, which
+    never joins its cluster. With a full cluster the row is still stamped after one
+    judgement: no later pass could judge that flag."""
+    from types import SimpleNamespace
+
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers import conflict_resolver as worker
+    from server.settings import settings
+
+    org, llm = wired
+    monkeypatch.setattr(settings, "memory_conflict_resolver_max_peers", 2)
+    calls: list[str] = []
+
+    async def complete(system: str, user: str, **kw: Any) -> Any:
+        calls.append(re.search(r"NEW note \(key ([^,)]+)", user).group(1))  # type: ignore[union-attr]
+        entries = [
+            {
+                "peer_id": pid,
+                "reason": "scripted",
+                "same_entity": True,
+                "same_attribute": True,
+                "verdict": "related",
+                "confidence": 0.5,
+            }
+            for pid in re.findall(r"^\[(p\d+)\]", user, re.M)
+        ]
+        return SimpleNamespace(text=json.dumps({"peers": entries}))
+
+    monkeypatch.setattr(llm, "complete", complete)
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "other_user_row", "The office is in Paris", user="u2")
+        await _set(org, "s1", "near_a", "The office has a red door")
+        await _set(org, "s1", "near_b", "The office has a blue roof")
+        await _later()
+        await _set(org, "s2", "judged_row", "The office moved to Rome")
+        await after_write.drain()
+    await _place(ch, org, "s1", "other_user_row", _vec((900, 1.0)), owed=False, user="u2")
+    await _place(ch, org, "s1", "near_a", _vec((900, 0.9), (901, 0.43)), owed=False)
+    await _place(ch, org, "s1", "near_b", _vec((900, 0.9), (902, 0.43)), owed=False)
+    await _place(ch, org, "s2", "judged_row", _vec((900, 0.8), (903, 0.6)), owed=True)
+    rows = await _rows(ch, org)
+    landed = await conflicts.mark_peers_conflicted(
+        org=org, new_memory_id=rows["judged_row"]["id"], peer_ids=[rows["other_user_row"]["id"]]
+    )
+    assert landed == "conflict"
+    for _ in range(3):
+        await worker.run_pass()
+    assert calls.count("judged_row") == 1, calls
