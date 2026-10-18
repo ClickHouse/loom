@@ -1054,7 +1054,7 @@ def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     from server.memory.app import auto_resolution, conflicts, projection_failures
 
     e = NS(seen={}, records=[], followed=[], log=[], follow_ok=True, retires=True, record_ok=True)
-    e.counts = resolver.Counts()
+    e.intents = {}
 
     async def refines(**kw: Any) -> int:
         e.log.append("supersede")
@@ -1110,11 +1110,11 @@ async def test_the_follow_is_owed_before_the_supersede_and_settled_after_it(
     late = _mem("m1", content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
     retire_env.heads["m1"] = late  # not retired: still live as judged
-    done = await resolver._retire("o", "ns", current, late, retire_env.counts)
+    done = await resolver._retire("o", "ns", current, late, retire_env.intents)
     assert (done is not None) is retires
     if done is not None:
-        await resolver._after_retire("o", "ns", done, retire_env.counts)
-    await resolver.resolve_done_intents(retire_env.counts)  # as the pass does at its end
+        await resolver._after_retire("o", "ns", done, retire_env.intents)
+    await resolver.resolve_done_intents(retire_env.intents)  # as the pass does at its end
     assert retire_env.log[0] == ("intent", "triples_follow_owed", [["m1", "m2"]])
     assert retire_env.log[1] == "supersede"
     # A follow that failed stays owed to the repair; nothing retired, nothing owed.
@@ -1125,12 +1125,12 @@ async def test_a_pass_resolves_its_retirements_intents_in_one_mark(retire_env: N
     for loser, winner in (("m1", "m2"), ("m3", "m4"), ("m5", "m6")):
         late = _mem(loser, content_sha256=f"sha-{loser}")
         current = _mem(winner, session_id="s2", content_sha256=f"sha-{winner}")
-        counts = retire_env.counts
+        intents = retire_env.intents
         await resolver._after_retire(
-            "o", "ns", await resolver._retire("o", "ns", current, late, counts), counts
+            "o", "ns", await resolver._retire("o", "ns", current, late, intents), intents
         )
     assert not [x for x in retire_env.log if x[0] == "resolved"], "none before the pass ends"
-    await resolver.resolve_done_intents(retire_env.counts)
+    await resolver.resolve_done_intents(retire_env.intents)
     assert [x for x in retire_env.log if x[0] == "resolved"] == [("resolved", ["f1"] * 3)]
 
 
@@ -1138,9 +1138,9 @@ async def test_a_record_that_failed_leaves_the_intent_with_its_entry(retire_env:
     retire_env.record_ok = False
     late = _mem("m1", content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur", memory_key="office_town")
-    counts = retire_env.counts
+    intents = retire_env.intents
     await resolver._after_retire(
-        "o", "ns", await resolver._retire("o", "ns", current, late, counts), counts
+        "o", "ns", await resolver._retire("o", "ns", current, late, intents), intents
     )
     assert ("resolved", ["f1"]) not in retire_env.log, "the repair writes the record"
     assert retire_env.intent_payload["reason"] == "conflict_resolver"
@@ -1157,9 +1157,9 @@ async def test_a_retirement_behind_the_newer_row_of_the_pair(retire_env: NS) -> 
     # The peer, an older statement, retires behind the judged row.
     late = _mem("m1", valid_at=datetime(2024, 1, 1), content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
-    counts = retire_env.counts
+    intents = retire_env.intents
     await resolver._after_retire(
-        "o", "ns", await resolver._retire("o", "ns", current, late, counts), counts
+        "o", "ns", await resolver._retire("o", "ns", current, late, intents), intents
     )
     assert seen["new_memory_id"] == "m2" and seen["expected_sha256"] == "sha-cur"
     assert [p.memory_id for p in seen["refined_peers"]] == ["m1"]
@@ -1273,7 +1273,7 @@ def pass_env(monkeypatch: pytest.MonkeyPatch) -> NS:
         e.cap_reads.append(kw)
         return (org, namespace) in e.over
 
-    async def resolve(q, *, policy, counts, shown=frozenset()):
+    async def resolve(q, *, policy, counts, shown=frozenset(), intents=None):
         e.in_flight += 1
         e.most_in_flight = max(e.most_in_flight, e.in_flight)
         await asyncio.sleep(e.slow)
@@ -1498,7 +1498,7 @@ async def test_a_failure_that_escapes_a_row_ends_the_pass_with_no_row_running(
 
     running: set[str] = set()
 
-    async def resolve(q, *, policy, counts, shown=frozenset()):
+    async def resolve(q, *, policy, counts, shown=frozenset(), intents=None):
         running.add(q["memory_key"])
         try:
             await asyncio.sleep(0 if q["memory_key"] == "k1" else 0.2)

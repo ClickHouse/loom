@@ -10,7 +10,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -75,12 +75,14 @@ class Counts:
     # Namespaces left out of the pass's queue read: over their daily cost cap.
     capped_namespaces: int = 0
     errored: int = 0
-    # The follow intents of the pass's retirements that landed in full, by org: resolved
-    # in one mark at the pass's end (`resolve_done_intents`), not one mutation each.
-    done_intents: dict[str, list[str]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, int]:
-        return {k: v for k, v in asdict(self).items() if isinstance(v, int)}
+        return asdict(self)
+
+
+# The follow intents of retirements that landed in full, by org: a pass resolves them in
+# one mark at its end (`resolve_done_intents`), not one mutation each.
+Intents = dict[str, list[str]]
 
 
 def _plain(stored: str) -> str:
@@ -235,7 +237,9 @@ class Retired:
     agent: str
 
 
-async def _retire(org: str, namespace: str, row: Any, peer: Any, counts: Counts) -> Retired | None:
+async def _retire(
+    org: str, namespace: str, row: Any, peer: Any, intents: Intents
+) -> Retired | None:
     """Supersede `peer` (stated first) behind the judged row `row`; what `_after_retire`
     records and follows, or None. The record and the follow are owed to the repair
     before the supersede commits (FOLLOW_OWED, acted on only while the loser is retired
@@ -278,13 +282,13 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any, counts: Counts)
         head = await _head(org, pair[0])
         if head is None or (head.status, str(head.superseded_by)) != ("superseded", pair[1]):
             if _holds(head, namespace, loser_sha):
-                _done(counts, org, intent)  # still live as judged: none landed
+                _done(intents, org, intent)  # still live as judged: none landed
             return None  # otherwise the repair decides
         retired = [entry]
     return Retired(intent=intent, retired=retired, agent=str(winner.agent))
 
 
-async def _after_retire(org: str, namespace: str, done: Retired, counts: Counts) -> None:
+async def _after_retire(org: str, namespace: str, done: Retired, intents: Intents) -> None:
     """The retirement's record and follow, outside the keys' locks: neither writes a
     memory row."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
@@ -300,27 +304,25 @@ async def _after_retire(org: str, namespace: str, done: Retired, counts: Counts)
     )
     pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in done.retired]
     if await _follow(org, namespace, done.agent, pairs) and recorded:
-        _done(counts, org, done.intent)
+        _done(intents, org, done.intent)
 
 
-def _done(counts: Counts, org: str, intent: str) -> None:
+def _done(intents: Intents, org: str, intent: str) -> None:
     """The follow intent is no longer owed: resolved with the pass's others."""
-    counts.done_intents.setdefault(org, []).append(intent)
+    intents.setdefault(org, []).append(intent)
 
 
-async def resolve_done_intents(counts: Counts) -> None:
+async def resolve_done_intents(intents: Intents) -> None:
     """The pass's done intents, one chunked mark per org; left active (a failed mark), the
     repair replays them, which changes nothing."""
     from server.memory.app.projection_failures import mark_resolved
 
-    for org, intents in counts.done_intents.items():
+    for org, ids in intents.items():
         try:
-            await mark_resolved(org, intents)
+            await mark_resolved(org, ids)
         except Exception as e:  # noqa: BLE001 — a replay of a followed pair changes nothing
-            log.warning(
-                "conflict_resolver: %d follow intents left for the repair: %s", len(intents), e
-            )
-    counts.done_intents.clear()
+            log.warning("conflict_resolver: %d follow intents left for the repair: %s", len(ids), e)
+    intents.clear()
 
 
 async def _follow(org: str, namespace: str, agent: str, pairs: list[tuple[str, str]]) -> bool:
@@ -459,14 +461,17 @@ async def _settle_pair(
     peer: Mapping[str, Any],
     action: str,
     counts: Counts,
+    intents: Intents,
 ) -> dict[str, Any] | None:
     """Act on one pair after re-reading both rows; what was done ({"action": ...}, for
     the audit row) when something changed, else None. A key another write holds past
     the lock's wait raises PreconditionFailedError."""
     async with _pair_locks(org, namespace, row, peer):
-        taken, retired = await _settle_locked_pair(org, namespace, row, peer, action, counts)
+        taken, retired = await _settle_locked_pair(
+            org, namespace, row, peer, action, counts, intents
+        )
     if retired is not None:
-        await _after_retire(org, namespace, retired, counts)
+        await _after_retire(org, namespace, retired, intents)
     return taken
 
 
@@ -477,6 +482,7 @@ async def _settle_locked_pair(
     peer: Mapping[str, Any],
     action: str,
     counts: Counts,
+    intents: Intents,
 ) -> tuple[dict[str, Any] | None, Retired | None]:
     # Known gap, by design: an unconditional memory.set takes no lock, so one landing on
     # the winner between this re-read and the supersede is not seen here.
@@ -509,7 +515,7 @@ async def _settle_locked_pair(
             action = cr.FLAG  # the order does not show the judged row is newer: a person decides
     retired = None
     if action == cr.RETIRE:
-        retired = await _retire(org, namespace, row, head, counts)
+        retired = await _retire(org, namespace, row, head, intents)
         done = retired is not None
     elif action == cr.FLAG:
         done = await _flag(org, row, head)
@@ -585,14 +591,27 @@ async def _current(q: Mapping[str, Any]) -> Any:
 
 
 async def resolve_row(
-    q: Mapping[str, Any], *, policy: str, counts: Counts, shown: frozenset[str] = frozenset()
+    q: Mapping[str, Any],
+    *,
+    policy: str,
+    counts: Counts,
+    shown: frozenset[str] = frozenset(),
+    intents: Intents | None = None,
 ) -> frozenset[str] | None:
     """Judge one queue row and act on its pairs, then stamp it judged. A row whose
     head is no longer the queued write is skipped unstamped: its new write carries
     its own mark. A provider failure raises, and the row stays owed. When the row was
     judged and left owed all the same (a flagged peer the answer left out, or flagged
     peers past the cluster's places), the ids it was judged against; `shown`: those of
-    its earlier attempts, whose flagged peers give their places to the others."""
+    its earlier attempts, whose flagged peers give their places to the others. `intents`:
+    where the follow intents its retirements settled go (a pass's, resolved at its end);
+    without it they are resolved before it returns."""
+    if intents is None:
+        intents = {}
+        try:
+            return await resolve_row(q, policy=policy, counts=counts, shown=shown, intents=intents)
+        finally:
+            await resolve_done_intents(intents)
     org, namespace, sha = str(q["org"]), str(q["namespace"]), str(q.get("content_sha256") or "")
     row = await _current(q)
     if row is not None and sha and str(row.content_sha256 or "") != sha:
@@ -624,7 +643,7 @@ async def resolve_row(
     if row is not None and peers:
         try:
             unanswered = await _judge_and_act(
-                org, namespace, row, peers, policy=policy, counts=counts
+                org, namespace, row, peers, policy=policy, counts=counts, intents=intents
             )
         except PreconditionFailedError:
             # A key another write held past the lock's wait. That write may change only
@@ -727,6 +746,7 @@ async def _judge_and_act(
     *,
     policy: str,
     counts: Counts,
+    intents: Intents,
 ) -> set[str]:
     """Judge the row and act on the answer; the ids of the peers it gave no verdict."""
     order = await _assertion_order(org, namespace, [row, *peers])
@@ -734,7 +754,7 @@ async def _judge_and_act(
     verdicts, model = await judge(new, notes)
     counts.judged += 1
     acting = asyncio.ensure_future(
-        _act_on_verdicts(org, namespace, row, peers, verdicts, policy, counts, model)
+        _act_on_verdicts(org, namespace, row, peers, verdicts, policy, counts, intents, model)
     )
     try:
         await asyncio.shield(acting)
@@ -758,6 +778,7 @@ async def _act_on_verdicts(
     verdicts: dict[str, cr.PeerVerdict],
     policy: str,
     counts: Counts,
+    intents: Intents,
     model: str,
 ) -> None:
     """Settle each pair the answer acts on, then one audit row for the row, written
@@ -773,7 +794,7 @@ async def _act_on_verdicts(
                 # stays as it is.
                 counts.skipped_no_action += 1
                 continue
-            taken = await _settle_pair(org, namespace, row, peer, action, counts)
+            taken = await _settle_pair(org, namespace, row, peer, action, counts, intents)
             if taken is not None:
                 acted.append(
                     {"peer_id": str(peer["memory_id"]), **taken}

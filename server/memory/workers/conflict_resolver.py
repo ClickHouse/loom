@@ -82,6 +82,8 @@ class _Pass:
         self.refused: list[dict[str, Any]] = []
         # The identities the pass took, judged once a pass whatever the burst reads again.
         self.tried: set[tuple[str, ...]] = set()
+        # The follow intents its retirements settled, resolved at its end.
+        self.done_intents: resolver.Intents = {}
 
 
 def _cap_share() -> dict[str, Any]:
@@ -146,7 +148,9 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
                 return
             key = _attempt_key(r)
             shown = _state.attempts.get(key, (0, frozenset()))[1]
-            judged = await resolver.resolve_row(r, policy=policy, counts=p.counts, shown=shown)
+            judged = await resolver.resolve_row(
+                r, policy=policy, counts=p.counts, shown=shown, intents=p.done_intents
+            )
             if judged is not None and await _out_of_attempts(r, shown | judged):
                 p.counts.errored += 1
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
@@ -286,7 +290,7 @@ async def run_pass() -> dict[str, Any]:
             ):
                 break
         await _stamp_refused(p)
-        await resolver.resolve_done_intents(p.counts)
+        await resolver.resolve_done_intents(p.done_intents)
         if not found:
             pass_context.mark_idle()
         if isinstance(p.unavailable, LeaseUnavailable):
