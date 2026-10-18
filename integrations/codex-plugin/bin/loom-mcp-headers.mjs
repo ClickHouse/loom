@@ -18,6 +18,7 @@
 // Stdout is exactly one JSON object; nothing else is written.
 import { ensureCredential } from "../lib/first-session.mjs";
 import {
+  agentMode,
   envNumber,
   envSwitch,
   gitToplevel,
@@ -82,6 +83,7 @@ export async function hookToken({
   pollMs = 200,
   read = () => readConfigFile(loomConfigPath(env)),
 } = {}) {
+  if (agentMode(env)) return ""; // an agent never takes the person's saved token
   const deadline = Date.now() + waitMs;
   for (;;) {
     const cfg = read();

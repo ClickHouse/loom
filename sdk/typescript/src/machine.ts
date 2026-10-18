@@ -165,13 +165,7 @@ export class MachineLogin implements TokenProvider {
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: new URLSearchParams(form).toString(),
     });
-    let body: Record<string, unknown> = {};
-    try {
-      const parsed: unknown = await res.json();
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed as Record<string, unknown>;
-    } catch {
-      /* a proxy's page, not Loom's answer */
-    }
+    const body = await bodyObject(res, `bot ${this.clientId}`);
     if (res.status === 429 || res.status >= 500) throw answerError(`bot ${this.clientId}`, res.status);
     if (res.status !== 200 || typeof body.access_token !== "string") {
       const error = typeof body.error === "string" ? body.error : "";
@@ -193,7 +187,7 @@ export class MachineLogin implements TokenProvider {
         headers: { Accept: "application/json" },
       });
       if (!res.ok) throw answerError(`bot ${this.clientId}: server metadata`, res.status);
-      const meta = (await res.json()) as { token_endpoint?: unknown };
+      const meta = await bodyObject(res, `bot ${this.clientId}: server metadata`);
       if (typeof meta.token_endpoint !== "string") throw new AuthError("server metadata names no token_endpoint");
       this.#tokenEndpoint = meta.token_endpoint;
     }
@@ -279,7 +273,7 @@ export class MachineLogin implements TokenProvider {
       headers: { Authorization: `Bearer ${bearer}`, Accept: "application/json" },
     });
     if (!res.ok) throw answerError("GitHub Actions OIDC token", res.status);
-    const out = (await res.json()) as { value?: unknown };
+    const out = await bodyObject(res, "GitHub Actions OIDC token");
     if (typeof out.value !== "string") throw new AuthError("GitHub Actions answered no OIDC token");
     return out.value;
   }
@@ -331,4 +325,23 @@ function b64url(s: string): string {
 function answerError(what: string, status: number): LoomError {
   if (status === 429 || status >= 500) return new BackendUnavailable(`${what}: ${status}; retry shortly`, { status });
   return new AuthError(`${what}: ${status}`, { status });
+}
+
+/** The answer's JSON object; {} for a body that is not one (a proxy's page,
+ *  `null`), which the caller then refuses by the field it lacks. A body cut
+ *  off in transit is BackendUnavailable, retried like a connection failure. */
+async function bodyObject(res: Response, what: string): Promise<Record<string, unknown>> {
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    throw new BackendUnavailable(`${what}: the answer was cut off`, { status: res.status, cause: e });
+  }
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  } catch {
+    /* not JSON */
+  }
+  return {};
 }

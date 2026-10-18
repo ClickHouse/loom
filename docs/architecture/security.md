@@ -284,10 +284,11 @@ provider refuses the user at a refresh, and when a spent refresh token, code or 
 comes back (RFC 9700 reuse detection). A spent credential coming back means a copy is in
 other hands, or a client lost the answer that spent it; rotation cannot tell the two apart,
 so it does what is safe for both: the session ends, and its owner signs in again. That
-verdict reaches no further: tokens minted from the session, the person's other sessions and
-the subject are never touched by it, and nothing automatic writes a subject-wide revocation
-(which could replace an operator's outright ban). A subject revoked outright is issued
-nothing.
+verdict reaches no further: tokens minted from a `loom login` or dashboard SSO session, the
+person's other sessions and the subject are never touched by it (a third-party MCP client's
+minted tokens end with its session, below), and nothing automatic writes a subject-wide
+revocation (which could replace an operator's outright ban). A subject revoked outright is
+issued nothing.
 
 Tokens delegated from a session of Loom's own sign-in (`loom login` and the dashboard's SSO
 sign-in; the access token's `fps` claim) are not clipped to the session's hour, and they

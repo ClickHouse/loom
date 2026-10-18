@@ -153,20 +153,30 @@ def test_the_home_is_the_signed_creator_and_a_failure_names_no_default(
     # No creator (a bot, an operator-minted or self-signup token): its own subject.
     assert home.home_subject(_token("sa:bot")) == "sa:bot"
 
+    reached: list[str] = []
+
     async def _boom(*_a: Any, **_k: Any) -> Any:
+        reached.append("boom")
         raise RuntimeError("down")
 
+    async def _none(*_a: Any, **_k: Any) -> str:
+        return ""
+
+    # Provisioning is not what fails here: each case reaches the gate's view.
+    monkeypatch.setattr(home, "_provisioned", _none)
     # The gate's answer cannot be worked out: no default and nothing readable.
     monkeypatch.setattr(home, "_gate_view", _boom)
     assert asyncio.run(home.default_and_readable(_token("alice"), "o")) == ("", [])
 
     async def _down(*_a: Any, **_k: Any) -> Any:
+        reached.append("down")
         raise BackendUnavailableError("grants could not be read", operation="grant_map")
 
     # ClickHouse is down: the call is answered 503, to retry.
     monkeypatch.setattr(home, "_gate_view", _down)
     with pytest.raises(BackendUnavailableError):
         asyncio.run(home.default_and_readable(_token("alice"), "o"))
+    assert reached == ["boom", "down"]
 
 
 def test_the_resolver_asks_the_claims_before_it_ranks_grants() -> None:

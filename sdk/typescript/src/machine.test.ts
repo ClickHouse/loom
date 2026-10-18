@@ -220,6 +220,43 @@ describe("answers other than the token's", () => {
     [404, AuthError],
     [503, BackendUnavailable],
   ] as const;
+  /** A 200 whose body is a proxy's page, JSON null, or cut off mid-read. */
+  const bodies = [
+    ["an HTML page", () => new Response("<html>sign in</html>", { status: 200 }), AuthError],
+    ["JSON null", () => new Response("null", { status: 200 }), AuthError],
+    [
+      "a body cut off in transit",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.error(new TypeError("terminated"));
+            },
+          }),
+          { status: 200 },
+        ),
+      BackendUnavailable,
+    ],
+  ] as const;
+
+  it.each(bodies)("reads server metadata answering %s as a Loom error", async (_, body, error) => {
+    const answer = async (url: string) =>
+      url.endsWith("/.well-known/oauth-authorization-server")
+        ? body()
+        : new Response(JSON.stringify({ access_token: accessToken(1) }), { status: 200 });
+    const key = { source: "LOOM_CLIENT_KEY" as const, value: pem("ec").privatePem };
+    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", key, fetch: answer });
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+  });
+
+  it.each(bodies)("reads GitHub Actions answering %s as a Loom error", async (_, body, error) => {
+    vi.stubEnv("LOOM_CLIENT_ID", "gha");
+    vi.stubEnv("LOOM_WORKLOAD_AUDIENCE", "https://loom.example");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://actions.example/token");
+    vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "runner-bearer");
+    const bot = machineLogin(BASE, { fetch: async () => body() }) as MachineLogin;
+    await expect(bot.token()).rejects.toBeInstanceOf(error);
+  });
 
   it.each(busyOrRefused)("reads server metadata answering %s as the Python SDK does", async (status, error) => {
     const answer = async (url: string) =>

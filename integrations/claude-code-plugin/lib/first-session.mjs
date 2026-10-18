@@ -16,6 +16,7 @@ import { hostname, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
+  agentMode,
   envSwitch,
   loomConfigPath,
   readConfigFile,
@@ -86,6 +87,9 @@ async function _awaitPeerToken(configPath, lockPath, ctx, { nowMs, sleep, waitMs
 /** Whether to attempt a sign-up: never with a token, never when switched off. */
 export function planSignup(env, { hasToken }) {
   if (hasToken) return { run: false, reason: "token present" };
+  // An agent signs in as itself or not at all: never as the token a person
+  // saved here, nor as a new sign-up.
+  if (agentMode(env)) return { run: false, reason: "agent mode" };
   if (!envSwitch("LOOM_AUTO_SIGNUP", true, env)) return { run: false, reason: "LOOM_AUTO_SIGNUP=off" };
   return { run: true, reason: "no token" };
 }
