@@ -4,6 +4,7 @@ or the default URL."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -97,14 +98,12 @@ def test_an_agent_resolves_no_saved_token_only_an_explicit_one(tmp_path: Path) -
 
 
 def test_doctor_never_reads_the_persons_namespace_or_tokens_for_an_agent(tmp_path: Path) -> None:
-    from server.cli.doctor_client import intended_namespace, token_check, token_shadow_check
+    from server.cli.doctor_client import intended_namespace, token_shadow_check
 
     home = _home(tmp_path, config={"token": "personal", "namespace": "theirs"})
     assert intended_namespace(home, dict(_AGENT), {"namespaces": ["ci-review"]}) == "ci-review"
     assert intended_namespace(home, {}, {}) == "theirs"
     assert token_shadow_check("", _client.AGENT_SOURCE, home, dict(_AGENT)) == []
-    name, grade, detail = token_check("", _client.AGENT_SOURCE, {}, 0)
-    assert grade == "WARN" and "agent mode" in detail and "mint" not in detail
 
 
 @pytest.mark.parametrize("token", [None, "a-persons-token"])
@@ -129,10 +128,33 @@ def test_install_refuses_in_agent_mode_whatever_the_token(
     assert not (tmp_path / ".claude" / "settings.json").exists()
 
 
-def test_the_doctor_points_an_agent_at_the_server_it_checked(tmp_path: Path) -> None:
-    from server.cli.doctor_client import namespace_check, token_check
+def test_every_command_that_needs_a_token_refuses_an_agent_without_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import argparse
 
-    _, _, detail = token_check("", _client.AGENT_SOURCE, {}, 0, "https://loom.example")
-    assert "loom call --server https://loom.example namespace.list_mine" in detail
-    _, grade, why = namespace_check("coding", [], "", False, agent=True)
-    assert grade == "WARN" and "exchanged token's namespace" in why
+    from server.cli import demo, okf, shell
+
+    for k, v in _AGENT.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("LOOM_API_KEY", raising=False)
+
+    def _sent(*_a: object, **_k: object) -> None:
+        raise AssertionError("nothing is sent for an agent without a token")
+
+    monkeypatch.setattr(demo, "_get_json", _sent)
+    ns = argparse.Namespace(
+        token=None, server_url="https://loom.example", base_url="https://loom.example"
+    )
+    for run in (shell._cmd_memory_search, shell._cmd_ingest_transcript, demo._cmd_demo):
+        assert run(ns) == 2
+        assert "agent mode" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as err:
+        okf._resolve_token(ns)
+    assert err.value.code == 2 and "Pass --token or set LOOM_API_KEY" in capsys.readouterr().err
+    # The importers' HTTP writer refuses before any write.
+    from server.cli import import_recall
+
+    with pytest.raises(SystemExit) as err:
+        asyncio.run(import_recall._make_writer(ns, dict, timeout_s=1))
+    assert err.value.code == 2 and "agent mode" in capsys.readouterr().err

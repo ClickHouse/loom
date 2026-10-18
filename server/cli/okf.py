@@ -40,11 +40,10 @@ from pathlib import Path
 from typing import Any
 
 from server.cli._client import (
-    AGENT_NO_TOKEN,
-    AGENT_SOURCE,
     default_base_url,
     error_line,
     jwt_claims,
+    refused_for_agent,
     resolve_token,
 )
 from server.memory.domain import okf_bundle as okf
@@ -56,11 +55,11 @@ _BULK = 500
 
 def _resolve_token(args: argparse.Namespace) -> str:
     token, source = resolve_token(args.token)
+    if refused_for_agent(source):
+        sys.exit(2)
     if not token:
         print(
-            AGENT_NO_TOKEN
-            if source == AGENT_SOURCE
-            else "No token: pass --token, set $LOOM_API_KEY, or write one to ~/.loom/token",
+            "No token: pass --token, set $LOOM_API_KEY, or write one to ~/.loom/token",
             file=sys.stderr,
         )
         sys.exit(2)

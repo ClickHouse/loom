@@ -123,7 +123,7 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
 
 
 def token_check(
-    token: str, source: str, claims: dict[str, Any], now: float, base_url: str = ""
+    token: str, source: str, claims: dict[str, Any], now: float, base_url: str
 ) -> Check:
     name = "client:token"
     if not token and source == AGENT_SOURCE:
@@ -311,15 +311,15 @@ def reads_check(
 
 
 def namespace_check(
-    namespace: str, rows: list[dict[str, Any]], token: str, auth_ok: bool, agent: bool = False
+    namespace: str, rows: list[dict[str, Any]], token: str, auth_ok: bool, source: str
 ) -> Check:
     name = "client:namespace"
-    if agent and not token:
+    if source == AGENT_SOURCE:
         return (
             name,
             WARN,
-            "skipped: in agent mode the hooks write to the exchanged token's namespace "
-            "(or LOOM_NAMESPACE)",
+            "skipped in agent mode (these checks act for no one): the hooks write to "
+            "LOOM_NAMESPACE when it is set, else to the exchanged token's namespace",
         )
     if not token or not auth_ok:
         return (name, WARN, f"skipped: hooks would write to {namespace!r}; check auth first")
@@ -918,8 +918,7 @@ def client_checks(
     )
     checks.append(auth)
     target = intended_namespace(home, env, claims)
-    agent = tok_src == AGENT_SOURCE and not env.get("LOOM_NAMESPACE", "").strip()
-    checks.append(namespace_check(target, rows, token, auth[1] == PASS, agent))
+    checks.append(namespace_check(target, rows, token, auth[1] == PASS, tok_src))
     checks.append(recording_check(base_url, token, claims, target, post_json, auth[1] == PASS))
     checks.append(reads_check(base_url, token, claims, rows, post_json, auth[1] == PASS))
     probe = post_json if server[1] != FAIL else None

@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -23,9 +24,19 @@ AGENT_SOURCE = "agent mode"
 # What a command that needs a token tells an agent instead of "save one".
 AGENT_NO_TOKEN = (
     "agent mode (LOOM_CLIENT_ID with a workload token): this command uses no saved token. "
-    "`loom call` exchanges the workload token itself; to act as a person, unset "
-    "LOOM_CLIENT_ID first."
+    "Pass --token or set LOOM_API_KEY, or use `loom call`, which exchanges the workload "
+    "token itself; to act as a person, unset LOOM_CLIENT_ID first."
 )
+
+
+def refused_for_agent(source: str) -> bool:
+    """Print `AGENT_NO_TOKEN` and answer True when `resolve_token` found no
+    token because this is an agent; a command that needs a token then exits 2."""
+    if source != AGENT_SOURCE:
+        return False
+    print(f"ERROR: {AGENT_NO_TOKEN}", file=sys.stderr)
+    return True
+
 
 # Every command resolves the server URL and the token in the plugin hooks'
 # order (`resolveServerUrl` / `resolveToken` in the plugin's loom-client.mjs),

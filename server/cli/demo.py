@@ -34,13 +34,12 @@ from types import ModuleType
 from typing import Any
 
 from server.cli._client import (
-    AGENT_NO_TOKEN,
     DEFAULT_BASE_URL,
-    agent_mode,
     default_base_url,
     get_json,
     jwt_claims,
     post_op,
+    refused_for_agent,
     resolve_token,
 )
 from server.core.paths import REPO_ROOT
@@ -70,8 +69,6 @@ def _explain_http(op: str, status: int, body: dict[str, Any], base_url: str) -> 
     detail = str(detail)[:300]
     if status == 0:
         return f"{op}: cannot reach {base_url} ({detail}) — is the stack up? `loom up` boots it."
-    if status == 401 and agent_mode():
-        return f"{op}: HTTP 401 — {AGENT_NO_TOKEN} {detail}".rstrip()
     if status == 401:
         return (
             f"{op}: HTTP 401 — this server wants a token. Set LOOM_API_KEY or save one to "
@@ -273,6 +270,8 @@ def _print_hits_only(hits: list[dict[str, Any]], question: str, *, fake_llm: boo
 
 def _cmd_demo(args: argparse.Namespace) -> int:
     token, token_from = resolve_token(args.token)
+    if refused_for_agent(token_from):
+        return 2
     org, namespace = resolve_identity(args, token)
     base_url = args.base_url.rstrip("/")
 

@@ -11,7 +11,7 @@ from typing import Any
 
 from server.cli._apply import add_apply_flags
 from server.cli._ch import run_connected
-from server.cli._client import resolve_token
+from server.cli._client import refused_for_agent, resolve_token
 
 
 def _cmd_period_digest(args: argparse.Namespace) -> int:
@@ -223,10 +223,13 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
+        token, source = resolve_token(args.token)
+        if refused_for_agent(source):
+            return 2
         rep = await replay(
             sessions,
             base_url=args.base_url,
-            token=resolve_token(args.token)[0],
+            token=token,
             org=args.org,
             into=args.into,
             dates=args.dates,

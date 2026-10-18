@@ -30,10 +30,10 @@ work but sessions are not captured, including under `codex exec`.
 
 A single-user server on the same machine needs no token. Otherwise the helper and the
 hooks read `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`; an agent
-(`LOOM_CLIENT_ID` with a workload token) uses `LOOM_API_KEY` when set, otherwise only the token
-it exchanges. On a server
-with `LOOM_SELF_SIGNUP=open`, the first session with no credential signs the machine up
-and writes `~/.loom/config.json` itself (`LOOM_AUTO_SIGNUP=off` disables this). To use a token you already have:
+(`LOOM_CLIENT_ID` with a workload token) uses `LOOM_API_KEY` when set, otherwise only the
+token it exchanges. On a server with `LOOM_SELF_SIGNUP=open`, the first session with no
+credential signs the machine up and writes `~/.loom/config.json` itself
+(`LOOM_AUTO_SIGNUP=off` disables this). To use a token you already have:
 
 ```bash
 mkdir -p ~/.loom && cat > ~/.loom/config.json <<'EOF'
