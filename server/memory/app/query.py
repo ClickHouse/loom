@@ -213,7 +213,10 @@ async def _hidden_under_prefix(
         memory_type=input.memory_type or None,
         key_prefix=input.prefix,
         source_trace=input.source_trace or None,
+        # The same tag match as `total`, so only the status filter makes the difference.
         tags=tags,
+        tags_any_case=input.tags_any_case,
+        tags_all=input.tags_all,
         contains=input.contains or None,
         include_tombstoned=input.include_tombstoned,
         as_of=input.as_of,

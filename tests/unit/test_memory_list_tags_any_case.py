@@ -70,6 +70,31 @@ async def test_the_flag_reaches_the_page_and_both_counts(
 
 
 @pytest.mark.asyncio
+async def test_the_hidden_under_prefix_count_matches_tags_as_the_total_does(
+    calls: dict[str, list[dict[str, Any]]],
+) -> None:
+    """Under a prefix with nothing live, the "every status" count says what the status filter
+    hid; it must match the tags as `total` did, or the tag filter reads as hidden rows."""
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app.query import _handle_memory_list
+
+    await _handle_memory_list(
+        MemoryListInput(
+            org="acme",
+            namespace="team",
+            agent="*",
+            prefix="alerts/",
+            tags=["a", "b"],
+            tags_any_case=True,
+            tags_all=True,
+        )
+    )
+    assert len(calls["count"]) == 3, "total, today and every status under the prefix"
+    assert [c["tags_any_case"] for c in calls["count"]] == [True, True, True]
+    assert [c["tags_all"] for c in calls["count"]] == [True, True, True]
+
+
+@pytest.mark.asyncio
 async def test_the_counts_cache_keys_on_the_flag(calls: dict[str, list[dict[str, Any]]]) -> None:
     from server.memory.api.models_crud import MemoryListInput
     from server.memory.app.query import _handle_memory_list
