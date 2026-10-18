@@ -606,13 +606,14 @@ function NamespaceRow({
   onPick: (ns: string) => void;
   onCancelPending: (ns: string, role: string) => void;
   tabIndexOf: (key: string) => number;
-  /** A code index or tracker record: the description leads, the name is the mono second line. */
+  /** A code index or tracker record: its name is an identifier, in code, on the second line
+   *  under its description when it has one. */
   kindRow?: boolean;
 }) {
   const active = r.namespace === current;
   const pendingRole = r.pending_role;
-  const primary = kindRow && r.description ? r.description : r.namespace;
-  const secondary = kindRow ? (r.description ? r.namespace : "") : r.description;
+  const name = kindRow ? <code className="font-mono">{r.namespace}</code> : r.namespace;
+  const [first, second] = kindRow && r.description ? [r.description, name] : [name, r.description];
   return (
     <div className="ns-row flex items-center gap-1 rounded-sm" data-current={active || undefined}>
       <button
@@ -625,18 +626,8 @@ function NamespaceRow({
       >
         <RoleIcon role={r.role} />
         <span className="flex-1 min-w-0">
-          {/* A namespace name in a kind row is an identifier: code. */}
-          {kindRow && !r.description ? (
-            <code className="text-sm truncate block font-mono">{primary}</code>
-          ) : (
-            <span className="text-sm truncate block">{primary}</span>
-          )}
-          {secondary &&
-            (kindRow ? (
-              <code className="text-xs text-text-muted truncate block font-mono">{secondary}</code>
-            ) : (
-              <span className="text-xs text-text-muted truncate block">{secondary}</span>
-            ))}
+          <span className="text-sm truncate block">{first}</span>
+          {second && <span className="text-xs text-text-muted truncate block">{second}</span>}
         </span>
         <VisibilityBadge v={r.visibility} />
       </button>
