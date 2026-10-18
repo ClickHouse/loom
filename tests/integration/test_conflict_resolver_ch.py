@@ -1815,3 +1815,29 @@ async def test_a_date_corrected_during_the_call_decides_the_order(ch, wired, mon
     out = await run_pass()
     assert out["retired"] == 0 and out["flagged"] == 1, out
     assert (await _rows(ch, org))["office_city"]["status"] == "conflicted"
+
+
+async def test_a_row_flagged_against_thousands_of_rows_is_still_judged(ch, wired) -> None:
+    """The row's conflict_with names 4,000 ids, one of them its live peer: the cluster
+    reads the flags in ClickHouse, bounded, and the update is judged."""
+    import uuid
+
+    import server.memory.store as M
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import lifecycle
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 218)
+    rows = await _rows(ch, org)
+    flags = [rows["office_city"]["id"]] + [str(uuid.uuid4()) for _ in range(3999)]
+    row = await M.get_by_id(
+        rows["office_location"]["id"], org=org, scope=WHOLE_NAMESPACE, strong=True
+    )
+    flagged = M.build_memory_version_row(
+        row, version=M.next_version(), status="conflicted", conflict_with=flags
+    )
+    await lifecycle.insert_memory_versions([flagged], ch=ch)
+    out = await run_pass()
+    assert out["errored"] == 0 and llm.calls == ["office_location"], out
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"

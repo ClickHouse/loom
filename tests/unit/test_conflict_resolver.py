@@ -174,7 +174,7 @@ class _ClusterCH:
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         self.calls.append((sql, params))
-        if "flagged:Array" in sql:
+        if "arrayJoin(conflict_with)" in sql:
             return self.flagged
         return self.near if "cosineDistance" in sql else self.rows
 
@@ -260,7 +260,8 @@ async def test_a_flagged_peer_joins_the_cluster_whatever_the_cutoff() -> None:
     peers = await queue.cluster_peers(_q(), floor=0.6, limit=3, prefer=frozenset({"m20"}), ch=ch)
     assert [p["memory_id"] for p in peers] == ["m1", "m20"]
     flagged_sql, params = ch.calls[1]
-    assert "flagged:Array" in flagged_sql and params["flagged"] == ["m20"]
+    # The flags are read from the row's head in ClickHouse, never sent.
+    assert "arrayJoin(conflict_with)" in flagged_sql and "flagged" not in params
 
 
 async def test_a_key_held_in_many_sessions_leaves_room_for_flags_and_near_peers() -> None:

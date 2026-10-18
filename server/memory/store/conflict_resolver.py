@@ -250,20 +250,26 @@ _PEER_ROWS_SQL = """
         """
 
 
-# The row's flagged peers (by id) and the nearest rows of its key in other sessions,
-# with their distance: they join the cluster whatever the vector cutoff or the floor,
-# since the row may be owed for them alone. Only those of the row's subject: a cosine
-# flag can name another user's row, whose text must not reach this row's prompt.
+# The row's flagged peers (read from its head: it can hold thousands) and the nearest rows
+# of its key in other sessions, bounded, with their distance: they join the cluster whatever
+# the cutoff or the floor, since the row may be owed for them alone. Only the row's subject:
+# a cosine flag can name another user's row, whose text must not reach the prompt.
 _FLAGGED_IDENTITIES_SQL = """
                   SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL
-                  WHERE org = {org:String} AND namespace = {ns:String}
-                    AND memory_id IN {flagged:Array(UUID)}"""
+                  WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN (
+                    SELECT arrayJoin(conflict_with) FROM loom.memory FINAL
+                    WHERE org = {org:String} AND namespace = {ns:String} AND agent = {a:String}
+                      AND user_id = {u:String} AND session_id = {s:String}
+                      AND memory_key = {k:String})"""
 _ANCHORED_SQL = (
-    _LIVE_VECTORS
+    "SELECT * FROM ("
+    + _LIVE_VECTORS
     + """
           AND (agent, user_id, session_id, memory_key) IN ("""
     + _FLAGGED_IDENTITIES_SQL
     + """)
+        ORDER BY dist ASC
+        LIMIT {lim:UInt32})
         UNION ALL"""
     + _LIVE_VECTORS
     + """
@@ -288,11 +294,11 @@ async def cluster_peers(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Up to `limit` live peers of the queue row `row`: its memory_type, its subject,
-    each with `similarity`. The places go to the peers named in `prefer` (the row's
-    current flags) first, then to the nearest rows of its key in other sessions, at
-    most half the places, both read whatever the cutoff and the floor (a re-check
-    judges its flags; a write owed for its key's other rows is judged against them),
-    then to the nearest peers at cosine >= `floor`."""
+    each with `similarity`. The places go to its flagged peers first (read from its head;
+    `prefer`, its flags, orders them), then to the nearest rows of its key in other
+    sessions, at most half the places, both read whatever the cutoff and the floor (a
+    re-check judges its flags; a write owed for its key's other rows is judged against
+    them), then to the nearest peers at cosine >= `floor`."""
     ch = ch or _default_client()
     emb = [float(x) for x in (row.get("embedding") or [])]
     if not emb:
@@ -311,9 +317,7 @@ async def cluster_peers(
     }
     half = max(int(limit) // 2, 1)
     near = [c for c in await ch.query_all(_nearest_sql(), params=params) if 1 - c["dist"] >= floor]
-    anchored = await ch.query_all(
-        _ANCHORED_SQL, params={**params, "flagged": sorted(prefer), "same_lim": half}
-    )
+    anchored = await ch.query_all(_ANCHORED_SQL, params={**params, "same_lim": half})
     above_floor = {_ident(c) for c in near}
     found = {_ident(c): c for c in [*anchored, *near]}
     if not found:
