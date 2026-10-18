@@ -719,6 +719,7 @@ async def apply_refines(
     expected_sha256: str = "",
     skip_peer: Callable[[Any], bool] | None = None,
     reason: str = "",
+    follows: list[tuple[str, str]] | None = None,
 ) -> int:
     """The `refines` verdict, after the new row is in: every non-pinned peer
     the new row replaces is superseded (status, superseded_by = the new row,
@@ -732,7 +733,8 @@ async def apply_refines(
     The peers that did retire are recorded as `memory.auto_supersede`
     (`auto_resolution`): into `record_into` (reason -> entries) when the caller
     writes one record for many verdicts (a bulk write), else beside the response,
-    under `reason` (default `newest_wins_contradiction`)."""
+    under `reason` (default `newest_wins_contradiction`), the retired pairs added to
+    `follows` for the caller to follow once its relations are in."""
     from server.core.ch import sequential_reads
     from server.memory.store import get_by_id, supersede_duplicates
 
@@ -807,9 +809,13 @@ async def apply_refines(
         if record_into is not None:
             record_into.setdefault(reason, []).extend(retired)
         else:
-            # A point write: recorded and followed here (a bulk write passes
-            # `record_into`, and follows them itself).
-            await settle_retirements(org=org, namespace=namespace, retired=retired, reason=reason)
+            await settle_retirements(
+                org=org,
+                namespace=namespace,
+                retired=retired,
+                reason=reason,
+                follows=[] if follows is None else follows,
+            )
     return n
 
 

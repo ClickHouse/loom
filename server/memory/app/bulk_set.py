@@ -452,10 +452,14 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
 
 
 async def _bulk_post_insert_links(
-    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState
+    ch: Any,
+    input: MemoryBulkSetInput,
+    state: _BulkWriteState,
+    same_key_pairs: list[tuple[str, str]],
 ) -> list[Any]:
-    """Phase 11, after the insert so the new ids exist: same-key supersession, then
-    value-update linking; returns the value-update links the triple plane follows."""
+    """Phase 11, after the insert so the new ids exist: same-key supersession (its pairs
+    into `same_key_pairs`), then value-update linking; returns the value-update links
+    the triple plane follows."""
     # Same-key supersession: under `newest_wins` the rows just written retire every older
     # live row sharing their key, from any session. After the insert so the new ids are
     # visible; fail-open.
@@ -467,6 +471,7 @@ async def _bulk_post_insert_links(
             namespace=input.namespace,
             new_rows=state.memory_rows,
             ch=ch,
+            follows=same_key_pairs,
         )
 
     # Value-update supersession (memory.app.value_updates). Runs after the
@@ -879,7 +884,8 @@ async def handle_memory_bulk_set(
     _bulk_clock.mark("insert")
     await _record_intra_batch_retirements(input, state, _intra_pairs)
 
-    _value_links = await _bulk_post_insert_links(ch, input, state)
+    _same_key_pairs: list[tuple[str, str]] = []
+    _value_links = await _bulk_post_insert_links(ch, input, state, _same_key_pairs)
 
     _bulk_clock.mark("value_updates")
 
@@ -894,7 +900,7 @@ async def handle_memory_bulk_set(
         input,
         plan,
         _value_links,
-        _intra_pairs,
+        _intra_pairs + _same_key_pairs,
         _bulk_clock,
     )
     _bulk_clock.finish()

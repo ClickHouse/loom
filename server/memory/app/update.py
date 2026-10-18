@@ -27,6 +27,7 @@ from server.memory.api.models_crud import (
     MemoryUpdateOutput,
 )
 from server.memory.app import provenance as app_provenance
+from server.memory.app.auto_resolution import follow_beside_response
 from server.memory.app.conflicts import same_key_mark
 from server.memory.app.entity_projections import project_revised_edges, project_stated_relations
 from server.memory.app.high_fence import fence_high
@@ -94,7 +95,12 @@ def _cf_start_write_config(org: str, existing: Any, checked: bool) -> Any:
 
 
 async def _revision_supersession(
-    org: str, existing: Any, serialized_value: str, ch: Any, policy: str | None
+    org: str,
+    existing: Any,
+    serialized_value: str,
+    ch: Any,
+    policy: str | None,
+    follows: list[tuple[str, str]],
 ) -> None:
     """Same-key supersession for a revision; `policy` None reads it."""
     from server.memory.app.key_supersession import supersede_same_key_rows
@@ -107,7 +113,12 @@ async def _revision_supersession(
         }
     ]
     await supersede_same_key_rows(
-        org=org, namespace=existing.namespace, new_rows=batch, ch=ch, policy=policy
+        org=org,
+        namespace=existing.namespace,
+        new_rows=batch,
+        ch=ch,
+        follows=follows,
+        policy=policy,
     )
 
 
@@ -492,7 +503,13 @@ def _revision_run_id(input: Any, existing: MemoryRow) -> str:
     return revision_run_id
 
 
-async def _update_post_write(input: Any, existing: MemoryRow, conflict_result: Any, ch: Any) -> Any:
+async def _update_post_write(
+    input: Any,
+    existing: MemoryRow,
+    conflict_result: Any,
+    ch: Any,
+    follows: list[tuple[str, str]],
+) -> Any:
     """Post-write, as memory.set: a conflict flags both sides (the new version
     exists, so the cross-link resolves); a templated substitution supersedes the
     rows it replaces. Returns the verdict that landed: `clear`
@@ -527,6 +544,7 @@ async def _update_post_write(input: Any, existing: MemoryRow, conflict_result: A
                 new_memory_key=existing.memory_key,
                 refined_peers=conflict_result.refined_peers,
                 ch=ch,
+                follows=follows,
             )
     return conflict_result
 
@@ -692,15 +710,18 @@ async def _write_revision(
     await memory_repo.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
 
-    conflict_result = await _update_post_write(input, existing, conflict_result, ch)
+    follows: list[tuple[str, str]] = []
+    conflict_result = await _update_post_write(input, existing, conflict_result, ch, follows)
 
     # Same-key supersession, exactly as memory.set runs it after its insert.
-    await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy)
+    await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy, follows)
     if new_sha != existing.content_sha256:
         await project_revised_edges(memory_row, new_value, op=op, ch=ch)
     await project_stated_relations(
         memory_row, new_value, input.relations, revised=True, op=op, ch=ch
     )
+    # After the revision's own relations, so the follow sees the successor they state.
+    follow_beside_response(org=input.org, namespace=existing.namespace, pairs=follows, op=op)
     return MemoryUpdateByIdOutput(
         updated=True,
         new_version=new_version,

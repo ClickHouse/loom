@@ -164,46 +164,79 @@ async def record_auto_supersessions(
 
 
 async def settle_retirements(
-    *, org: str, namespace: str, retired: Sequence[Mapping[str, Any]], reason: str
+    *,
+    org: str,
+    namespace: str,
+    retired: Sequence[Mapping[str, Any]],
+    reason: str,
+    follows: list[tuple[str, str]],
 ) -> None:
-    """The record and the graph follow of rows a point write just retired: the record
-    (`record_auto_supersessions`) and the triple plane's follow
-    (`entity_projections.follow_row_supersessions`), as a bulk write's. What fails is
-    owed to the projection repair: a record as a FOLLOW_OWED intent with its entries and
-    reason (its replay follows too), a follow alone as FOLLOW_ROWS. Never raises."""
+    """The record of rows a write just retired (`record_auto_supersessions`), and their
+    (loser, winner) pairs added to `follows`, which the caller follows once its own
+    relations are projected (a follow before them writes the successor fact they then
+    write again). A record that fails is owed to the projection repair as a FOLLOW_OWED
+    intent with its entries and reason. Never raises."""
     pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in retired]
+    follows.extend(pairs)
+    if not pairs or await record_auto_supersessions(
+        org=org, namespace=namespace, retired=retired, reason=reason
+    ):
+        return
+    from types import SimpleNamespace
+
+    from server.memory.app.projection_errors import record_input_projection_failure
+    from server.memory.app.projection_failures import FOLLOW_OWED
+
+    await record_input_projection_failure(
+        SimpleNamespace(org=org, namespace=namespace, agent=""),
+        projection=FOLLOW_OWED,
+        error=f"retirement left for the repair to record: {len(pairs)} row(s)",
+        payload={
+            "pairs": [list(p) for p in pairs],
+            "retired": [retired_entry(r) for r in retired],
+            "reason": reason,
+        },
+        source_operation=reason,
+        source_resource_id=f"{reason}:{pairs[0][1]}",
+    )
+
+
+def follow_beside_response(
+    *, org: str, namespace: str, pairs: list[tuple[str, str]], op: str
+) -> None:
+    """The triple plane's follow of rows a point write retired, beside the response
+    (`after_write.schedule`) once the write's relations are in; what it could not follow
+    is left to the projection repair (FOLLOW_ROWS). Never raises."""
     if not pairs:
         return
+    try:
+        from server.memory.app import after_write
+
+        after_write.schedule(_follow(org, namespace, list(pairs), op), name=f"{op}.follow")
+    except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them
+        log.warning("%s: scheduling the triples follow failed: %s", op, e)
+
+
+async def _follow(org: str, namespace: str, pairs: list[tuple[str, str]], op: str) -> None:
     from types import SimpleNamespace
 
     from server.core.ch import get_client
     from server.memory.app.entity_projections import follow_row_supersessions
     from server.memory.app.projection_errors import record_input_projection_failure
-    from server.memory.app.projection_failures import FOLLOW_OWED, FOLLOW_ROWS
+    from server.memory.app.projection_failures import FOLLOW_ROWS
 
-    recorded = await record_auto_supersessions(
-        org=org, namespace=namespace, retired=retired, reason=reason
-    )
     scope = SimpleNamespace(org=org, namespace=namespace, agent="")
     try:
         left = (await follow_row_supersessions(scope, pairs, ch=get_client())).unfollowed
     except Exception as e:  # noqa: BLE001 — the rows are retired; the repair follows them
-        log.warning("%s: triples follow failed (recorded for repair): %s", reason, e)
+        log.warning("%s: triples follow failed (recorded for repair): %s", op, e)
         left = pairs
-    if recorded and not left:
-        return
-    payload: dict[str, Any]
-    if recorded:
-        owed, payload = FOLLOW_ROWS, {"pairs": [list(p) for p in left]}
-    else:
-        entries = [retired_entry(r) for r in retired]
-        owed = FOLLOW_OWED
-        payload = {"pairs": [list(p) for p in pairs], "retired": entries, "reason": reason}
-    await record_input_projection_failure(
-        scope,
-        projection=owed,
-        error=f"retirement left for the repair: {len(pairs)} row(s)",
-        payload=payload,
-        source_operation=reason,
-        source_resource_id=f"{reason}:{pairs[0][1]}",
-    )
+    if left:
+        await record_input_projection_failure(
+            scope,
+            projection=FOLLOW_ROWS,
+            error=f"supersession pairs left for the repair to follow: {len(left)}",
+            payload={"pairs": [list(p) for p in left]},
+            source_operation=op,
+            source_resource_id=f"{op}:{left[0][1]}",
+        )

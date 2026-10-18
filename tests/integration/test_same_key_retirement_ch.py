@@ -6523,12 +6523,17 @@ async def test_a_pass_that_repaired_4000_failures_marks_them_all(ch: Any, org: s
     assert len(resolved) == 4000
 
 
-async def test_a_point_write_retirement_closes_the_retired_rows_facts(ch, org, monkeypatch) -> None:
+@pytest.mark.parametrize("bulk", [False, True])
+async def test_a_retirement_closes_the_retired_rows_facts_and_opens_one_successor(
+    ch, org, monkeypatch, bulk: bool
+) -> None:
     """Under newest_wins s2's "Alice likes tennis" retires s1's "Alice likes chess" under
     the same key. `likes` holds many values, so no interval repair closes chess: the
-    retirement's follow does, and the graph no longer serves it as current."""
+    retirement's follow does, after the write's own relations, so tennis is open once."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app import after_write, conflicts
+    from server.memory.app.bulk_set import handle_memory_bulk_set
     from server.memory.app.write import handle_memory_set
     from server.memory.domain.conflicts import ConflictResult
 
@@ -6551,20 +6556,26 @@ async def test_a_point_write_retirement_closes_the_retired_rows_facts(ch, org, m
         ],
     )
     for session, game in (("s1", "chess"), ("s2", "tennis")):
-        await handle_memory_set(
-            MemorySetInput(
-                org=org,
-                namespace=NS,
-                agent="bot",
-                user_id=USER,
-                session_id=session,
-                memory_key="alice_likes",
-                value=f"Alice likes {game}",
-                relations=[("alice", "likes", game)],
+        identity = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER}
+        entry = {
+            "memory_key": "alice_likes",
+            "value": f"Alice likes {game}",
+            "relations": [("alice", "likes", game)],
+        }
+        if bulk:
+            await handle_memory_bulk_set(
+                MemoryBulkSetInput(**identity, session_id=session, entries=[entry])
             )
-        )
+        else:
+            await handle_memory_set(MemorySetInput(**identity, session_id=session, **entry))
         await after_write.drain()
     assert await _open_facts(ch, org, {("like", "tennis")}) == {("like", "tennis")}
+    rows = await ch.query_all(
+        "SELECT count() AS n FROM loom.entity_triples WHERE org = {org:String}"
+        " AND object = 'tennis' AND valid_to IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert int(rows[0]["n"]) == 1, "one open row of the successor fact"
 
 
 async def test_a_point_write_retirement_whose_record_failed_gets_it_from_the_repair(

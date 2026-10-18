@@ -759,9 +759,9 @@ async def project_stated_relations(
     states none: a proposal is one, and accepting it later projects nothing, so its
     facts are stated again once it is established. Then, for a row `revised`
     (it held a value before this write), the facts it held are reconciled with its
-    new value (`close_dropped_facts`). It runs after the same-key supersession, which
-    follows the rows it retired (`auto_resolution.settle_retirements`). A first write is
-    fenced on the
+    new value (`close_dropped_facts`). It runs after the same-key supersession and
+    before the follow of the rows it retired (`auto_resolution.follow_beside_response`),
+    so the follow sees the successor these state. A first write is fenced on the
     value it states (`row`'s `content_sha256`), as its edges are: it states nothing once
     another write revised or retired the row, and is reconciled as a revision if that
     happened while it wrote. Fail-open: a failed write is recorded for the projection

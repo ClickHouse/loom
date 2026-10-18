@@ -33,6 +33,7 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
+from server.memory.app.auto_resolution import follow_beside_response
 from server.memory.app.drops import record_drop
 from server.memory.app.entity_projections import project_stated_relations
 from server.memory.app.high_fence import fence_high
@@ -229,6 +230,8 @@ class _SetWrite:
     embedding: list[float] = field(default_factory=list)
     key_embedding: list[float] = field(default_factory=list)
     key_text: str = ""
+    # The (loser, winner) pairs this write retired, followed once its relations are in.
+    follows: list[tuple[str, str]] = field(default_factory=list)
 
 
 async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
@@ -719,6 +722,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
                 new_memory_key=input.memory_key,
                 refined_peers=conflict_result.refined_peers,
                 ch=ch,
+                follows=w.follows,
             )
     return conflict_result
 
@@ -752,6 +756,7 @@ async def _set_after_write(
         verdict="duplicate" if duplicate_of_id else conflict_result.verdict,
         actor=writer_actor or "-",
         revised=had_existing_row,
+        follows=w.follows,
     )
     await project_stated_relations(
         w.memory_row,
@@ -760,6 +765,10 @@ async def _set_after_write(
         revised=had_existing_row,
         op="memory.set",
         ch=ch,
+    )
+    # After the write's own relations, so the follow sees the successor they state.
+    follow_beside_response(
+        org=input.org, namespace=input.namespace, pairs=w.follows, op="memory.set"
     )
 
     # A long value is also written as verbatim chunks under the key, after the row is in and
@@ -808,11 +817,13 @@ async def _set_post_insert(
     verdict: str,
     actor: str,
     revised: bool = False,
+    follows: list[tuple[str, str]] | None = None,
 ) -> None:
     """What a committed point write does after its row is in.
 
-    Same-key supersession changes which rows a read serves, and the
-    chained audit row is the write's receipt: both stay awaited, in ONE round trip, not two.
+    Same-key supersession changes which rows a read serves (its record awaited, its
+    graph follow left in `follows` for after the write's relations), and the chained
+    audit row is the write's receipt: both stay awaited, in ONE round trip, not two.
     The entity-graph projection is a fail-open side effect nothing on this path reads (the
     entity_extractor worker re-projects a row it missed): it is written beside the response
     instead of in it, because its canonical read + insert + edge inserts would be the serial
@@ -826,7 +837,12 @@ async def _set_post_insert(
     async def _supersession() -> None:
         batch = _same_key_batch(input, memory_id)
         await supersede_same_key_rows(
-            org=input.org, namespace=input.namespace, new_rows=batch, ch=ch, policy=cfg.policy
+            org=input.org,
+            namespace=input.namespace,
+            new_rows=batch,
+            ch=ch,
+            follows=[] if follows is None else follows,
+            policy=cfg.policy,
         )
 
     # Every point write leaves a hash in the chained audit log: key, id, content hash,

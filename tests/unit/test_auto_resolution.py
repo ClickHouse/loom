@@ -103,7 +103,7 @@ async def test_the_record_carries_the_request_id(emitted) -> None:
 
 async def test_nothing_retired_writes_nothing(emitted) -> None:
     await ar.record_auto_supersessions(org="o", namespace="ns", retired=[], reason="refines")
-    await ar.settle_retirements(org="o", namespace="ns", retired=[], reason="refines")
+    await ar.settle_retirements(org="o", namespace="ns", retired=[], reason="refines", follows=[])
     assert emitted == []
 
 
@@ -229,7 +229,7 @@ async def test_newest_wins_same_key_records_the_retired_not_the_locked_or_retire
     new = [_live("n1")]
     live = [new[0], _live("o1"), _live("locked"), _live("retired"), _live("gone")]
     n = await supersede_same_key_rows(
-        org="o", namespace="ns", new_rows=new, ch=_CH(all_=[live]), policy="newest_wins"
+        follows=[], org="o", namespace="ns", new_rows=new, ch=_CH(all_=[live]), policy="newest_wins"
     )
     assert n == 1 and wrote == ["o1"]  # the retired row is not re-pointed
     (ev,) = emitted  # awaited by the write: a failed record is owed to the repair
@@ -245,6 +245,7 @@ async def test_newest_wins_with_nothing_retired_records_nothing(monkeypatch, emi
     _lock(monkeypatch, "locked")
     new = [_live("n1")]
     await supersede_same_key_rows(
+        follows=[],
         org="o",
         namespace="ns",
         new_rows=new,
@@ -265,6 +266,7 @@ async def test_newest_wins_records_what_reached_the_table_when_the_write_fails(
     _lock(monkeypatch)
     new = [_live("n1")]
     await supersede_same_key_rows(
+        follows=[],
         org="o",
         namespace="ns",
         new_rows=new,
@@ -1209,7 +1211,12 @@ async def test_outside_newest_wins_a_shared_key_alone_retires_nothing(
     wrote = _fake_supersede(monkeypatch, {"o1": "active"})
     new = [_live("n1")]
     n = await supersede_same_key_rows(
-        org="o", namespace="ns", new_rows=new, ch=_CH(all_=[[new[0], _live("o1")]]), policy=policy
+        follows=[],
+        org="o",
+        namespace="ns",
+        new_rows=new,
+        ch=_CH(all_=[[new[0], _live("o1")]]),
+        policy=policy,
     )
     assert n == 0 and wrote == [] and emitted == []
 

@@ -159,9 +159,11 @@ async def supersede_same_key_rows(
     namespace: str,
     new_rows: list[dict[str, Any]],
     ch: Any,
+    follows: list[tuple[str, str]],
     policy: str | None = None,
 ) -> int:
-    """Retire every older live row that shares a key with one of `new_rows`.
+    """Retire every older live row that shares a key with one of `new_rows`; the
+    retired pairs go to `follows`, for the caller to follow once its relations are in.
 
     Only under `newest_wins`; every other policy leaves same-key rows live for the
     conflict resolver to judge.
@@ -211,8 +213,7 @@ async def supersede_same_key_rows(
                 on_unconfirmed=tracker.unconfirmed,
             )
         finally:
-            # What reached loom.memory is recorded and followed even when the embeddings
-            # mirror failed; what fails is owed to the repair.
+            # What reached loom.memory is recorded even when the embeddings mirror failed.
             await settle_retirements(
                 org=org,
                 namespace=namespace,
@@ -220,6 +221,7 @@ async def supersede_same_key_rows(
                     {**v, "superseded_by_key": v["memory_key"]} for v in tracker.retired(victims)
                 ],
                 reason=SAME_KEY_NEWEST_WINS,
+                follows=follows,
             )
         log.info(
             "same-key supersession (%s): %d older rows retired behind %d keys in %s/%s",

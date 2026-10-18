@@ -778,6 +778,7 @@ async def test_newest_wins_retires_every_older_same_key_row(monkeypatch) -> None
     monkeypatch.setattr(store, "supersede_duplicates", supersede)
     new = [_row("n1", _d(20))]
     n = await supersede_same_key_rows(
+        follows=[],
         org="o",
         namespace="ns",
         new_rows=new,
