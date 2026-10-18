@@ -59,12 +59,12 @@ first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>,
 
 `namespace.register` takes `default_conflict_policy`:
 
-| Policy                     | Behaviour                                                                                                                                                                                                                                 |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto_reinforce` (default) | Conflicts are flagged; both facts stay live until resolved. An update the conflict resolver is sure of retires the older row as `superseded` (history kept); it flags other conflicts. Two sessions' rows of one key are judged as peers. |
-| `manual_review`            | Both stay live and the pair waits for review: the conflict resolver flags or clears, never retires.                                                                                                                                       |
-| `newest_wins`              | A templated substitution, or an update the conflict resolver is sure of, retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it.                            |
-| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                                                       |
+| Policy                     | Behaviour                                                                                                                                                                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto_reinforce` (default) | A contradiction is flagged for review; an update the conflict resolver is sure of retires the older row as `superseded` (history kept), and a less sure one is flagged. Two sessions' rows of one key are judged as peers. |
+| `manual_review`            | Both stay live and the pair waits for review: the conflict resolver flags or clears, never retires.                                                                                                                        |
+| `newest_wins`              | A templated substitution, or an update the conflict resolver is sure of, retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it.             |
+| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                                        |
 
 Superseded rows are served only to reads that pass `include_superseded=true` (or an
 `as_of` read of a time they held), and a served one names its successor.
