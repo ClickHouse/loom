@@ -146,11 +146,9 @@ Every vector leg filters `embedding_dim > 0`.
 ## The conflict resolver
 
 A cosine hit says two rows are about the same thing, not whether one replaces the other.
-Deciding that takes a strong model: on 200 real pairs the resolver's judge
-(`gpt-6.1-sol`, one call per row with all its peers) reached update and clear precision
-1.00 at confidence 0.90, where `gpt-6-luna` labelling three peers per write reached 0.35
-to 0.44 on the hard band. That call takes 5.6 s at the median, so it runs on the leader, after the write
-(`memory/workers/conflict_resolver.py`, `memory/app/conflict_resolver.py`).
+Deciding that takes a strong model (`LOOM_CONFLICT_RESOLVER_MODEL`, `gpt-6.1-sol`, one
+call per row with all its peers), and a call takes seconds, so it runs on the leader,
+after the write (`memory/workers/conflict_resolver.py`, `memory/app/conflict_resolver.py`).
 
 What the resolver keeps, whatever runs beside it
 (`tests/integration/test_conflict_resolver_invariants_ch.py` checks each under concurrent
@@ -230,10 +228,10 @@ answers for it, so rows stay owed while the model is down.
 | `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair           |
 
 The two thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.95) and
-`LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90). On held-out pairs, update
-precision was 0.98 to 1.00 at 0.95, and clear precision 0.96 to 0.98 at 0.90; the
-0.90 to 0.95 band was only 80% right, so an update there goes to review. A peer the
-answer leaves out, or an answer that cannot be parsed, changes nothing. The default
+`LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90): an update retires only at the
+first, an update between the two goes to review, and nothing below the second changes a
+row. A peer the answer leaves out, or an answer that cannot be parsed, changes nothing.
+The default
 `auto_reinforce` retires as `newest_wins` does: in agent use nobody works the Review
 queue, so a flagged update would leave search serving the stale value, while a
 retirement is recorded, undoable, and its history stays readable with
@@ -386,10 +384,9 @@ row is the one the write revises.
 
 **Which row is older.** Only the older statement of a pair ever retires, so two rows
 judged from either side never retire both (`conflict_resolver._assertion_order`, read
-under the pair's key locks). A row's place is when its value was first asserted: the
-first version of the current run of history rows holding its `content_sha256`, in
-nanoseconds, so
-a touch, a pin or a tag change, which keep the hash, do not move it. An explicit
+under the pair's key locks). A row's place is when its value was first asserted: the first
+version of the current run of history rows holding its `content_sha256`, in nanoseconds,
+so a touch, a pin or a tag change, which keep the hash, do not move it. An explicit
 `valid_at` earlier than that moves it back, since the fact held then; a later one (a fact
 dated ahead) does not. A row the history does not hold yet counts from its current
 version. When the order does not show the judged row as the newer statement, an update
