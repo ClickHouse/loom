@@ -449,7 +449,7 @@ def test_verify_re_attests_the_row_in_its_own_session(tmp_path: Path, loom: _Fak
     assert [b["session_id"] for b in verify] == ["s1"]
 
 
-def test_verify_re_attests_a_skipped_row_only_when_it_lost_its_attestation(
+def test_verify_re_attests_a_skipped_row_only_when_it_is_unattested(
     tmp_path: Path, loom: _FakeLoom
 ) -> None:
     entry = _entry("a", verification="human", verified_by="human:alice@example.com")

@@ -735,9 +735,9 @@ async def _import_concepts(
         row = live.get((payload["session_id"], payload["memory_key"]))
         if row is not None and _unchanged(payload, row):
             n["unchanged"] += 1
-            # A skipped row is re-attested only when it lost its attestation.
-            lost = row.get("verification") in ("none", "stale")
-            if args.verify and bundle_actor and not args.dry_run and lost:
+            # A skipped row is re-attested when no attestation binds its current content.
+            unattested = row.get("verification") in ("none", "stale")
+            if args.verify and bundle_actor and not args.dry_run and unattested:
                 n["verified"] += await _verify(client, org, args, payload, c)
             continue
         if args.dry_run:

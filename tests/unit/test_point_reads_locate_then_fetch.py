@@ -275,13 +275,13 @@ def _selected(sql: str) -> set[str]:
 
 @pytest.mark.asyncio
 async def test_the_plain_bulk_fetch_returns_the_row_the_strong_one_does() -> None:
-    # A column left out reads as its default: an empty `sensitivity` exports a high row,
-    # a null `valid_to` rewrites every imported row that carries one, and an empty
-    # `superseded_by` drops the supersedes chain from an export.
-    # Every column off its default, so any one the plain fetch leaves out shows.
+    # Every column off its default: one the plain fetch leaves out reads as its default
+    # (an empty `sensitivity` exports a high row).
     row = {
         **_full(),
         "pinned": True,
+        "status": "duplicate",
+        "expires_at": "2099-06-01 00:00:00",
         "updated_at": "2026-09-20 00:00:00",
         "run_id": "run-1",
         "source_trace": "okf:b/k.md",
