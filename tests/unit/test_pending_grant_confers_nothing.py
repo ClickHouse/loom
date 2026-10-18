@@ -95,11 +95,7 @@ def _local(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     async def aliases(org: str, subject: str, **_: Any) -> list[str]:
         return [subject]
 
-    async def nothing_restricted(org: str, namespaces: list[str]) -> list[str]:
-        return namespaces
-
     monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
-    monkeypatch.setattr(context, "_without_unreadable_restricted", nothing_restricted)
     yield
     context.set_current_auth(None)
 

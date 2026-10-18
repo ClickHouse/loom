@@ -17,7 +17,8 @@ from fastapi import HTTPException
 from server.auth import authz, context, delegation, revocation
 from server.auth.delegation import DEFAULT_TTL_DAYS, delegate
 from server.auth.jwt import AuthInfo, TokenError, mint_token, verify_token
-from server.operations.base import Role
+from server.core import grant_cache
+from server.operations.base import Role, grant_rank
 
 ORG, OTHER = "o", "other"
 RESTRICTED = "r-secret"
@@ -84,6 +85,17 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(delegation, "creator_best_grant", best_grant)
     monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH(grants))
+
+    async def grant_map_read(org: str, subject: str) -> grant_cache.GrantMap:
+        # The maps the listings ask the gate through (`authz.CachedGate`).
+        ranks = {
+            ns: grant_rank(r.name.lower())
+            for (o, ns, s), r in grants.items()
+            if o == org and s == subject
+        }
+        return grant_cache.GrantMap(ranks=ranks)
+
+    monkeypatch.setattr(grant_cache, "_read", grant_map_read)
     return state
 
 
@@ -210,6 +222,7 @@ async def test_the_creators_grants_are_rechecked_on_every_request(world) -> None
     child = await _child(_login(), {"*": None}, subject="alice", is_service_account=False)
     assert await _reaches(child, "b")
     del world["grants"][(ORG, "b", "alice")]
+    grant_cache.invalidate(ORG, ["alice"])
     assert not await _reaches(child, "b")
     assert await context_namespaces(child) == ["a"]
 

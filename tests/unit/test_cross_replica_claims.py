@@ -217,7 +217,7 @@ def test_a_personal_provision_slower_than_its_claim_allows_publishes_nothing(
     async def _provision(**kw: Any) -> None:
         written.append(kw["namespace"])
 
-    monkeypatch.setattr(pn, "_owner", _slow_owner)
+    monkeypatch.setattr(pn, "namespace_owner", _slow_owner)
     monkeypatch.setattr(ss, "provision_account", _provision)
 
     async def run() -> None:

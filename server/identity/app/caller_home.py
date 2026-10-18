@@ -10,13 +10,20 @@ per call (`_gate_view`).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.auth.context import delegated_reach, readable_named_claims
 from server.auth.personal_namespace import derive_personal_slug
+from server.core.errors import BackendUnavailableError
 from server.identity.app import caller_defaults
 from server.operations.base import Role
+
+if TYPE_CHECKING:
+    from server.auth.authz import CachedGate
+
+log = logging.getLogger(__name__)
 
 # (namespace, role) -> whether the gate admits this token there at that role.
 Admits = Callable[[str, Role], Awaitable[bool]]
@@ -101,8 +108,9 @@ async def default_namespace(auth: Any, org: str) -> str:
 
 
 async def default_and_readable(auth: Any, org: str) -> tuple[str, list[str]]:
-    """The namespace a call from `auth` that names none lands in, and the
-    claims it can read (`readable_named_claims`).
+    """The namespace a call from `auth` that names none lands in, and, when
+    there is none, the named claims the gate lets it read (the names such a
+    call must pick from; [] once a default is found, as nobody lists them).
 
     Single-user mode serves exactly ONE namespace (LOOM_DEFAULT_NAMESPACE): the
     SPA pins its identity to it and the boot-time bootstrap provisions only it,
@@ -110,21 +118,29 @@ async def default_and_readable(auth: Any, org: str) -> tuple[str, list[str]]:
     takes the first memory namespace the gate lets the token WRITE, else the
     first it lets it READ, else "" (its calls must name a namespace), looking
     at the home subject's saved switcher pick, then the token's claims, then
-    the home's grants, ranked (`_pick_default`)."""
+    the home's grants, ranked (`_pick_default`).
+
+    Fails closed: a grant read ClickHouse cannot answer reaches the transport as
+    BackendUnavailableError (a retryable 503); any other failure is logged and
+    answers no default and nothing readable."""
+    from server.auth.authz import CachedGate
     from server.settings import settings
 
-    try:
-        claimed = await readable_named_claims(auth, org)
-    except Exception:  # noqa: BLE001 — defaults fail open; the gate still decides access
-        claimed = [n for n in (getattr(auth, "namespaces", None) or ()) if n and n != "*"]
-    if settings.effective_identity_provider() == "single-user":
-        return (claimed[0] if claimed else settings.default_namespace), claimed
+    gate = None if auth is None else CachedGate(auth, org)
     home = home_subject(auth) or "you"
     try:
-        admits, extra = await _gate_view(auth, org, home)
-        return await _pick_default(auth, org, home, claimed, admits, extra), claimed
-    except Exception:  # noqa: BLE001 — no default: the call names its namespace, the gate decides
-        return "", claimed
+        if settings.effective_identity_provider() == "single-user":
+            claimed = await readable_named_claims(auth, org, gate)
+            return (claimed[0] if claimed else settings.default_namespace), claimed
+        admits, extra = await _gate_view(auth, org, home, gate)
+        named = [ns for ns in (getattr(auth, "namespaces", None) or ()) if ns != "*"]
+        default = await _pick_default(auth, org, home, named, admits, extra)
+        return default, [] if default else await readable_named_claims(auth, org, gate)
+    except BackendUnavailableError:
+        raise
+    except Exception:  # a bug, logged: no default, so the call names its namespace
+        log.warning("no default namespace for %s in %s", home, org, exc_info=True)
+        return "", []
 
 
 async def _pick_default(
@@ -173,42 +189,48 @@ async def _ranked_subjects(auth: Any, org: str, home: str) -> list[str]:
     return subjects
 
 
-async def _gate_view(auth: Any, org: str, home: str) -> tuple[Admits, list[str]]:
-    """What the gate admits this token on, worked out once for the call, and
-    the namespaces to fall back to. A delegated token: the namespaces it may
-    write and read by the gate's rules (`delegated_reach`), its readable ones
-    the fallback. Any other token: the gate's rules over its cached grant
-    maps (`authz.CachedGate`), its personal namespace the fallback, counted
-    as the gate sees it once a person with no live grant is provisioned one
-    (`gates.authorize`). No token (auth off): the gate admits anything."""
-    from server.auth.authz import CachedGate
-
-    if auth is None:
+async def _gate_view(
+    auth: Any, org: str, home: str, gate: CachedGate | None
+) -> tuple[Admits, list[str]]:
+    """What the gate admits this token on, worked out once for the call
+    (`gate`, which every step asks), and the namespaces to fall back to: a
+    delegated token's readable reach (`delegated_reach`), else its personal
+    namespace. No token (auth off): the gate admits anything."""
+    if auth is None or gate is None:
 
         async def _anything(ns: str, role: Role) -> bool:
             return True
 
         return _anything, [derive_personal_slug(home)]
-    if auth.creator:
-        writable, readable = await delegated_reach(auth, org)
+    gate.provisioned = await _provisioned(auth, org, gate)
+    if not auth.creator:
+        return gate.admits, [derive_personal_slug(auth.subject)]
+    writable, readable = await delegated_reach(auth, org, gate)
 
-        async def _reached(ns: str, role: Role) -> bool:
-            return ns in (writable if role.value >= Role.WRITER.value else readable)
+    async def _reached(ns: str, role: Role) -> bool:
+        return ns in (writable if role.value >= Role.WRITER.value else readable)
 
-        return _reached, readable
-    gate = CachedGate(auth, org)
+    return _reached, readable
+
+
+async def _provisioned(auth: Any, org: str, gate: CachedGate) -> str:
+    """The personal namespace `gates.authorize` gives this person, with an
+    admin grant, before the gate runs (`ensure_personal_namespace_cached`):
+    a person of this org with no live grant, while nobody owns the name (a
+    person whose own grant there was revoked owns it, and is given nothing);
+    "" otherwise. A delegated token counts it only when its creator is that
+    person, whose grants the gate reads."""
+    if auth.is_service_account or auth.org != org:
+        return ""
+    if auth.creator and auth.creator.lower() != auth.subject.lower():
+        return ""
+    if any((await gate.grants()).ranks.values()):
+        return ""
     slug = derive_personal_slug(auth.subject)
-    provisioned = (
-        not auth.is_service_account
-        and not auth.has_ns_roles()
-        and auth.org == org
-        and not any((await gate.grants()).ranks.values())
-    )
+    from server.auth.personal_namespace import namespace_owner
+    from server.core.ch import get_client
 
-    async def _admits(ns: str, role: Role) -> bool:
-        return (provisioned and ns == slug) or await gate.admits(ns, role)
-
-    return _admits, [slug]
+    return "" if await namespace_owner(get_client(), org, slug) is not None else slug
 
 
 __all__ = [

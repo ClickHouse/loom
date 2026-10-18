@@ -239,7 +239,7 @@ def test_a_wildcard_delegated_default_ignores_the_subjects_own_grants(
     asyncio.run(authz.check_authorized(token, Role.WRITER, ORG, "team"))
 
 
-def test_a_flat_service_account_resolves_its_creator_once_per_call(
+def test_a_flat_service_account_reads_its_claims_through_its_creator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import server.auth.service_accounts as service_accounts
@@ -254,4 +254,4 @@ def test_a_flat_service_account_resolves_its_creator_once_per_call(
     monkeypatch.setitem(GRANTS, ("sa:inherits", "left"), 0)
     token = _token("sa:inherits", ("team", "solo", "left"), is_service_account=True)
     assert asyncio.run(readable_named_claims(token, ORG)) == ["team"]
-    assert len(calls) == 1
+    assert set(calls) == {"sa:inherits"}

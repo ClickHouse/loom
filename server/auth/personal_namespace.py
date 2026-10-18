@@ -77,7 +77,7 @@ async def ensure_personal_namespace(
         async with leases.holding(f"personal-ns:{org}:{cand}", ttl_s=CLAIM_TTL_S, ch=ch) as held:
             if not held:
                 raise PersonalNamespaceBusy(cand)
-            owner = await _owner(ch, org, cand)
+            owner = await namespace_owner(ch, org, cand)
             if owner is None:
                 from server.auth.self_signup import provision_account
 
@@ -101,7 +101,8 @@ async def ensure_personal_namespace(
     return None
 
 
-async def _owner(ch: Any, org: str, namespace: str) -> str | None:
+async def namespace_owner(ch: Any, org: str, namespace: str) -> str | None:
+    """Who owns `namespace` (its row's `owner_email`), None with no row."""
     from server.core.ch import sequential_reads
 
     with sequential_reads():  # a row another replica just provisioned
@@ -158,17 +159,18 @@ async def ensure_personal_namespace_cached(
         from server.core.grant_sql import LIVE_GRANT
 
         ch = get_client()
-        # Any spelling of the person counts, as it does at the gate: a person
-        # granted under their email already has a namespace.
+        # Any spelling of the person, in any case, counts, as it does at the
+        # gate: a person granted under their email already has a namespace.
+        subjects = [s.lower() for s in await subject_aliases(org, subject, ch=ch)]
         owned = await ch.query_one(
             """
             SELECT 1 FROM loom.namespace_grants FINAL
             WHERE org = {org:String}
-              AND subject IN {subs:Array(String)}
+              AND lower(subject) IN {subs:Array(String)}
               AND {live}
             LIMIT 1
             """.replace("{live}", LIVE_GRANT),
-            params={"org": org, "subs": await subject_aliases(org, subject, ch=ch)},
+            params={"org": org, "subs": subjects},
         )
         if owned is None:
             await ensure_personal_namespace(ch, org, subject)

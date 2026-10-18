@@ -1,14 +1,19 @@
 """The MCP default and the readable list agree with the gate, over random cases.
 
 For every kind of token (flat human, scoped, flat service account that
-inherits, delegated with named claims, delegated `*`), random claims, grants
-for the subject and the creator, restricted flags, a saved pick and an
-active or disabled creator: the default an unaddressed call lands in is one
-`authz.check_authorized` lets the token WRITE whenever it may write some
-memory namespace, else one it may READ, else ""; and the readable list is
-exactly the named claims the gate lets it read, configured code namespaces
-(org-readable, private, restricted) included. Both sides run against the
-same fakes."""
+inherits, delegated service account with named or `*` claims, delegated
+human), random claims (`*` included), write claims, roles up to platform
+admin, the token's org (its own, `*`, another), grants for the subject and
+the creator (the person's under a spelling in another case), restricted
+flags, the restricted kill switch, an unreadable directory, a saved pick, an
+active or disabled creator and the owner of the person's personal namespace:
+the default an unaddressed call lands in is the first candidate
+`authz.check_authorized` lets the token WRITE, else the first it may READ,
+else "" when it may read none of them. The candidates, in order: the saved
+pick and the claims (the home's own first), then the home's live grants
+ranked and the fallback (the personal namespace, or a delegated token's
+reach). With no default, the readable list is exactly the named claims the
+gate lets it read. Both sides run against the same fakes."""
 
 from __future__ import annotations
 
@@ -20,7 +25,9 @@ from typing import Any
 import pytest
 
 from server.auth import authz
+from server.auth.directory import ClassificationUnavailable
 from server.auth.jwt import AuthInfo
+from server.auth.personal_namespace import derive_personal_slug
 from server.operations.base import Role
 
 ORG = "o"
@@ -30,13 +37,22 @@ CODE = {
     "code-private": ("standard", False),
     "code-secret": ("restricted", False),
 }
-NAMESPACES = ("carol", "team", "docs", "secret", "board", "qa-plane", *CODE)
-PERSON, BOT = "carol", "sa:bot"
+PERSON, BOT, OTHER = "carol", "sa:bot", "dave"
+SLUG = derive_personal_slug(PERSON)
+NAMESPACES = ("carol", "team", "docs", "secret", "board", "qa-plane", SLUG, *CODE)
 CASES = 5000
-SEED = 118
-KINDS = ("flat human", "scoped", "inheriting sa", "delegated named", "delegated *")
-_ROLES = (Role.VIEWER, Role.WRITER, Role.ADMIN)
+SEED = 119
+KINDS = (
+    "flat human",
+    "scoped",
+    "inheriting sa",
+    "delegated named",
+    "delegated *",
+    "delegated human",
+)
+_ROLES = (Role.VIEWER, Role.WRITER, Role.ADMIN, Role.ORG_ADMIN, Role.PLATFORM_ADMIN)
 _ROLE_NAMES = {1: "viewer", 2: "writer", 3: "admin"}
+_ROLE_BY_RANK = {1: Role.VIEWER, 2: Role.WRITER, 3: Role.ADMIN}
 
 
 @dataclass(frozen=True)
@@ -50,7 +66,8 @@ class _CodeEntry:
 class World:
     """One random case: grant ranks per (subject, namespace) (0: no longer
     live), the restricted set, the namespace kinds, the person's saved pick,
-    whether the bot inherits and whether the creator's account is active."""
+    whether the bot inherits, whether the creator's account is active, who
+    owns the personal namespace, the kill switch and a directory outage."""
 
     grants: dict[tuple[str, str], int] = field(default_factory=dict)
     restricted: frozenset[str] = frozenset()
@@ -58,15 +75,39 @@ class World:
     saved: str = ""
     inherits: bool = False
     active: bool = True
+    owner: str = ""
+    serve: bool = True
+    directory_down: bool = False
 
 
 WORLD = World()
 
 
+def _same(a: str, b: str) -> bool:
+    return a.lower() == b.lower()
+
+
+def _rank(subject: str, namespace: str) -> int | None:
+    ranks = [r for (s, ns), r in WORLD.grants.items() if ns == namespace and _same(s, subject)]
+    return max(ranks) if ranks else None
+
+
+def _ranked_rows(subjects: list[str]) -> list[dict[str, str]]:
+    """Live grants of `subjects`, by role tier, then name (the fake's recency)."""
+    live = {
+        (r, ns)
+        for (s, ns), r in WORLD.grants.items()
+        if r > 0 and any(_same(s, sub) for sub in subjects)
+    }
+    return [{"namespace": ns, "role": _ROLE_NAMES[r]} for r, ns in sorted(live, reverse=True)]
+
+
 @pytest.fixture()
 def _fakes(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.auth.aliases as aliases
+    import server.auth.context as context
     import server.auth.delegation as delegation
+    import server.auth.personal_namespace as personal_namespace
     import server.auth.service_accounts as service_accounts
     import server.code.domain.index.repos as repos
     import server.core.ch as chmod
@@ -77,13 +118,11 @@ def _fakes(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.settings import settings
 
     async def _read(org: str, subject: str) -> grant_cache.GrantMap:
-        ranks = {ns: r for (s, ns), r in WORLD.grants.items() if s == subject}
+        ranks = {ns: r for (s, ns), r in WORLD.grants.items() if _same(s, subject)}
         return grant_cache.GrantMap(ranks=ranks)
 
     async def _grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
-        return {1: Role.VIEWER, 2: Role.WRITER, 3: Role.ADMIN}.get(
-            WORLD.grants.get((subject, namespace), 0)
-        )
+        return _ROLE_BY_RANK.get(_rank(subject, namespace) or 0)
 
     async def _inheriting(org: str, subject: str, **_: Any) -> str | None:
         return PERSON if subject == BOT and WORLD.inherits else None
@@ -92,6 +131,8 @@ def _fakes(monkeypatch: pytest.MonkeyPatch) -> None:
         return WORLD.active
 
     async def _restricted_set(org: str) -> frozenset[str]:
+        if WORLD.directory_down:
+            raise ClassificationUnavailable("down")
         return WORLD.restricted
 
     async def _kinds(org: str) -> dict[str, str]:
@@ -104,8 +145,13 @@ def _fakes(monkeypatch: pytest.MonkeyPatch) -> None:
         return WORLD.saved if subject == PERSON else ""
 
     async def _ranked(org: str, subs: list[str], *, ch: Any = None) -> list[dict[str, str]]:
-        live = [(r, ns) for (s, ns), r in WORLD.grants.items() if s in subs and r > 0]
-        return [{"namespace": ns, "role": _ROLE_NAMES[r]} for r, ns in sorted(live, reverse=True)]
+        return _ranked_rows(subs)
+
+    async def _owner(ch: Any, org: str, namespace: str) -> str | None:
+        return (WORLD.owner or None) if namespace == SLUG else None
+
+    async def _granted(org: str, subjects: list[str]) -> set[str]:
+        return {str(r["namespace"]) for r in _ranked_rows(subjects)}
 
     def _code_entry(org: str, namespace: str) -> _CodeEntry | None:
         if org != ORG or namespace not in CODE:
@@ -122,20 +168,31 @@ def _fakes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(aliases, "subject_aliases", _aliases)
     monkeypatch.setattr(caller_defaults, "saved_default", _saved)
     monkeypatch.setattr(caller_defaults, "ranked_grants", _ranked)
+    monkeypatch.setattr(personal_namespace, "namespace_owner", _owner)
+    monkeypatch.setattr(context, "_granted_namespaces", _granted)
     monkeypatch.setattr(chmod, "get_client", lambda: None)
     monkeypatch.setattr(settings, "identity_provider", "trust-network")
+    monkeypatch.setattr(settings, "restricted_serve", True)
 
 
 def _random_world(rng: random.Random) -> World:
+    # The person's grants are sometimes written under a spelling in another case.
+    spelling = rng.choice((PERSON, PERSON, PERSON.capitalize()))
     grants = {}
-    for subject in (PERSON, BOT):
+    for subject in (spelling, BOT):
         for ns in NAMESPACES:
             rank = rng.choice((None, None, 0, 1, 2, 3))
             if rank is not None:
                 grants[(subject, ns)] = rank
+    if rng.random() < 0.3:
+        # A person with no live grant is the one given a personal namespace.
+        grants = {key: rank for key, rank in grants.items() if key[0] == BOT or not rank}
+    owner = rng.choice(("", "", PERSON, OTHER))
+    # A namespace nobody owns has no directory row to restrict it.
+    restricted = {ns for ns in NAMESPACES if rng.random() < 0.25 and (owner or ns != SLUG)}
     return World(
         grants=grants,
-        restricted=frozenset(ns for ns in NAMESPACES if rng.random() < 0.25),
+        restricted=frozenset(restricted),
         kinds={
             "qa-plane": "qa",
             **dict.fromkeys(CODE, "code"),
@@ -144,40 +201,34 @@ def _random_world(rng: random.Random) -> World:
         saved=rng.choice(("", *NAMESPACES)),
         inherits=rng.random() < 0.5,
         active=rng.random() < 0.85,
+        owner=owner,
+        serve=rng.random() < 0.9,
+        directory_down=rng.random() < 0.05,
     )
 
 
 def _random_token(rng: random.Random, kind: str) -> AuthInfo:
-    claims = tuple(rng.sample(NAMESPACES, rng.randint(0, 4)))
-    roles = (rng.choice(_ROLES),)
-    if kind == "flat human":
-        return AuthInfo(
-            subject=PERSON, org=ORG, namespaces=claims, roles=roles, is_service_account=False
-        )
+    claims = rng.sample(NAMESPACES, rng.randint(0, 4))
+    if kind == "delegated *" or rng.random() < 0.15:
+        claims = ["*", *claims[: rng.randint(0, 2)]]
+    named = [ns for ns in claims if ns != "*"]
+    writes = rng.sample(named, rng.randint(0, len(named))) if rng.random() < 0.3 else []
+    token: dict[str, Any] = {
+        "org": rng.choice((ORG, ORG, ORG, "*", "other")),
+        "namespaces": tuple(claims),
+        "roles": tuple(rng.sample(_ROLES, rng.randint(1, 2))),
+        "write_namespaces": tuple(writes),
+        "subject": BOT,
+        "is_service_account": True,
+    }
+    if kind in ("flat human", "scoped", "delegated human"):
+        token.update(subject=PERSON, is_service_account=False)
     if kind == "scoped":
-        ns_roles = tuple((ns, rng.choice(("viewer", "writer", "admin"))) for ns in claims)
-        return AuthInfo(
-            subject=PERSON,
-            org=ORG,
-            namespaces=claims,
-            roles=(),
-            is_service_account=False,
-            ns_roles=ns_roles,
-        )
-    if kind == "inheriting sa":
-        return AuthInfo(
-            subject=BOT, org=ORG, namespaces=claims, roles=roles, is_service_account=True
-        )
-    if kind == "delegated *":
-        claims = ("*", *claims[: rng.randint(0, 2)])
-    return AuthInfo(
-        subject=BOT,
-        org=ORG,
-        namespaces=claims,
-        roles=roles,
-        is_service_account=True,
-        creator=PERSON,
-    )
+        token["roles"] = ()
+        token["ns_roles"] = tuple((ns, rng.choice(("viewer", "writer", "admin"))) for ns in named)
+    if kind.startswith("delegated"):
+        token["creator"] = PERSON
+    return AuthInfo(**token)
 
 
 async def _admits(token: AuthInfo, role: Role, namespace: str) -> bool:
@@ -189,43 +240,118 @@ async def _admits(token: AuthInfo, role: Role, namespace: str) -> bool:
 
 
 def _provision(token: AuthInfo) -> None:
-    """What `gates.authorize` does before the gate: a person with no live
-    grant is given a personal namespace (`ensure_personal_namespace_cached`)."""
-    from server.auth.personal_namespace import derive_personal_slug
+    """What `gates.authorize` does before the gate: a person of this org with
+    no live grant, under any spelling, is given the personal namespace when
+    nobody owns it yet (`ensure_personal_namespace_cached`)."""
+    live = any(r > 0 for (s, _ns), r in WORLD.grants.items() if _same(s, token.subject))
+    if not token.is_service_account and token.org == ORG and not live and not WORLD.owner:
+        WORLD.grants[(token.subject, SLUG)] = 3
+        WORLD.owner = PERSON
 
-    live = any(r > 0 for (s, _ns), r in WORLD.grants.items() if s == token.subject)
-    if not token.is_service_account and not live:
-        WORLD.grants[(token.subject, derive_personal_slug(token.subject))] = 3
+
+def _owner_first(names: list[str], subject: str) -> list[str]:
+    login = subject.lower().split("@", 1)[0]
+    return sorted(names, key=lambda ns: ns.lower() != login)
+
+
+def _candidates(token: AuthInfo) -> tuple[list[str], list[str]]:
+    """The names a default may come from, in order, as two passes: (the
+    saved pick and the claims, the ranked grants and the fallback)."""
+    from server.identity.app.caller_home import is_memory_home
+
+    home = token.creator or token.subject
+    named = [ns for ns in token.namespaces if ns != "*"]
+    subjects = [home]
+    if not token.creator and token.subject == BOT and WORLD.inherits:
+        subjects.append(PERSON)
+    ranked = [str(r["namespace"]) for r in _ranked_rows(subjects)]
+    if token.creator:
+        reach = sorted(ns for ns in NAMESPACES if (_rank(PERSON, ns) or 0) > 0)
+        fallback = named + (reach if "*" in token.namespaces else [])
+    else:
+        fallback = [derive_personal_slug(token.subject)]
+    saved = WORLD.saved if home == PERSON else ""
+    early = [saved, *_owner_first(named, home)]
+    late = _owner_first(ranked, home) + fallback
+
+    def _memory(names: list[str]) -> list[str]:
+        return [ns for ns in dict.fromkeys(names) if ns and is_memory_home(WORLD.kinds, ns)]
+
+    return _memory(early), _memory(late)
+
+
+async def _first(token: AuthInfo, names: list[str], role: Role) -> str:
+    for ns in names:
+        if await _admits(token, role, ns):
+            return ns
+    return ""
+
+
+async def _expected_default(token: AuthInfo, early: list[str], late: list[str]) -> str:
+    return (
+        await _first(token, early, Role.WRITER)
+        or await _first(token, late, Role.WRITER)
+        or await _first(token, list(dict.fromkeys(early + late)), Role.VIEWER)
+    )
+
+
+async def _resolve_violation(token: AuthInfo) -> str:
+    """What `resolve_my_namespaces` (the search fan-out) lists that the gate
+    refuses, or, for a flat token, leaves out of its claims and live grants."""
+    from server.auth import context
+
+    context.set_current_auth(token)
+    try:
+        listed = await context.resolve_my_namespaces(ORG)
+    finally:
+        context.set_current_auth(None)
+    refused = [ns for ns in listed if not await _admits(token, Role.VIEWER, ns)]
+    if refused:
+        return f"resolve lists {refused}, which the gate refuses"
+    if token.creator or token.ns_roles:
+        return ""
+    subjects = [token.subject, *([PERSON] if token.subject == BOT and WORLD.inherits else [])]
+    reach = [*token.namespaces, *(str(r["namespace"]) for r in _ranked_rows(subjects))]
+    missed = [
+        ns
+        for ns in dict.fromkeys(reach)
+        if ns != "*" and ns not in listed and await _admits(token, Role.VIEWER, ns)
+    ]
+    return f"resolve leaves out {missed}, which the gate admits" if missed else ""
 
 
 async def _violation(token: AuthInfo) -> str:
-    """What the case gets wrong, "" when the default and the list follow the gate."""
-    from server.identity.app.caller_home import default_and_readable, is_memory_home
+    """What the case gets wrong, "" when the default and the lists follow the gate."""
+    from server.identity.app.caller_home import default_and_readable
 
+    problem = await _resolve_violation(token)
+    if problem:
+        return problem
+    early, late = _candidates(token)
     default, readable = await default_and_readable(token, ORG)
     _provision(token)
+    expected = await _expected_default(token, early, late)
+    if default != expected:
+        return f"default {default!r}, the gate's first is {expected!r} of {early} + {late}"
+    if default:
+        return ""
     named = list(dict.fromkeys(ns for ns in token.namespaces if ns != "*"))
     admitted = [ns for ns in named if await _admits(token, Role.VIEWER, ns)]
     if readable != admitted:
         return f"readable {readable} != admitted {admitted}"
-    if not default:
-        return ""
-    memory = [ns for ns in NAMESPACES if is_memory_home(WORLD.kinds, ns)]
-    writes_some = [ns for ns in memory if await _admits(token, Role.WRITER, ns)]
-    role = Role.WRITER if writes_some else Role.VIEWER
-    if not is_memory_home(WORLD.kinds, default) or not await _admits(token, role, default):
-        return f"default {default!r} not {role.name}-admitted (writable {writes_some})"
     return ""
 
 
 async def _run_cases() -> list[str]:
     import server.core.grant_cache as grant_cache
+    from server.settings import settings
 
     global WORLD
     rng = random.Random(SEED)
     failures = []
     for i in range(CASES):
         WORLD = _random_world(rng)
+        settings.restricted_serve = WORLD.serve
         token = _random_token(rng, KINDS[i % len(KINDS)])
         grant_cache.clear()
         problem = await _violation(token)
@@ -237,6 +363,18 @@ async def _run_cases() -> list[str]:
 def test_the_default_and_the_readable_list_follow_the_gate(_fakes: None) -> None:
     failures = asyncio.run(_run_cases())
     assert not failures, f"{len(failures)} of {CASES}:\n" + "\n".join(failures[:5])
+
+
+def test_the_property_fails_a_default_that_is_always_empty(
+    _fakes: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.identity.app.caller_home as caller_home
+
+    async def _nothing(*args: Any, **kwargs: Any) -> str:
+        return ""
+
+    monkeypatch.setattr(caller_home, "_pick_default", _nothing)
+    assert len(asyncio.run(_run_cases())) > CASES // 4
 
 
 def _case(world: World, token: AuthInfo) -> tuple[str, list[str]]:
@@ -260,6 +398,16 @@ def _delegated(*namespaces: str) -> AuthInfo:
     )
 
 
+def _person(*namespaces: str) -> AuthInfo:
+    return AuthInfo(
+        subject=PERSON,
+        org=ORG,
+        namespaces=namespaces,
+        roles=(Role.WRITER,),
+        is_service_account=False,
+    )
+
+
 def test_a_wildcard_token_leaves_a_saved_restricted_pick_once_its_own_grant_is_revoked(
     _fakes: None,
 ) -> None:
@@ -277,5 +425,23 @@ def test_a_delegated_token_reads_an_org_readable_code_namespace_without_a_creato
 ) -> None:
     world = World(grants={(PERSON, "team"): 2}, kinds=dict.fromkeys(CODE, "code"))
     token = _delegated("code-open", "code-private", "team")
-    assert _case(world, token) == ("team", ["code-open", "team"])
+    assert _case(world, token) == ("team", [])
+    assert _case(world, _delegated("code-open", "code-private")) == ("", ["code-open"])
     assert asyncio.run(_admits(token, Role.VIEWER, "code-open"))
+
+
+def test_a_grant_under_another_case_counts(_fakes: None) -> None:
+    assert _case(World(grants={("Carol", "team"): 2}), _person()) == ("team", [])
+
+
+def test_a_revoked_personal_namespace_is_not_the_default(_fakes: None) -> None:
+    # carol's only row is her own revoked grant there: provisioning adds nothing.
+    world = World(grants={(PERSON, SLUG): 0}, owner=PERSON)
+    assert _case(world, _person()) == ("", [])
+    # A row nobody's namespace backs: provisioning creates it, with a new grant.
+    assert _case(World(grants={(PERSON, SLUG): 0}), _person()) == (SLUG, [])
+
+
+def test_a_personal_namespace_someone_else_owns_is_not_the_default(_fakes: None) -> None:
+    assert _case(World(owner=OTHER), _person()) == ("", [])
+    assert _case(World(), _person()) == (SLUG, [])

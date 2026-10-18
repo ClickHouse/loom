@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from server.auth.jwt import AuthInfo
+from server.core.errors import BackendUnavailableError
 from server.identity.app import caller_home as home
 from server.operations.base import Role
 
@@ -155,9 +156,17 @@ def test_the_home_is_the_signed_creator_and_a_failure_names_no_default(
     async def _boom(*_a: Any, **_k: Any) -> Any:
         raise RuntimeError("down")
 
-    # The gate's answer cannot be worked out: no default, the call names one.
+    # The gate's answer cannot be worked out: no default and nothing readable.
     monkeypatch.setattr(home, "_gate_view", _boom)
-    assert asyncio.run(home.default_and_readable(_token("alice"), "o")) == ("", ["alice"])
+    assert asyncio.run(home.default_and_readable(_token("alice"), "o")) == ("", [])
+
+    async def _down(*_a: Any, **_k: Any) -> Any:
+        raise BackendUnavailableError("grants could not be read", operation="grant_map")
+
+    # ClickHouse is down: the call is answered 503, to retry.
+    monkeypatch.setattr(home, "_gate_view", _down)
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(home.default_and_readable(_token("alice"), "o"))
 
 
 def test_the_resolver_asks_the_claims_before_it_ranks_grants() -> None:

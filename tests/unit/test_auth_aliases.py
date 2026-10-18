@@ -231,3 +231,21 @@ async def test_mcp_default_namespace_checks_the_saved_pick_under_every_spelling(
     )
     out = await mi._caller_defaults(auth, "claude-code")
     assert out is not None and out["namespace"] == "team-x" and out["org"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_the_gate_matches_a_grant_whatever_the_case_of_its_subject(monkeypatch) -> None:
+    # The cached grant maps match `lower(subject)`; the gate's own read must too.
+    from server.auth import authz
+
+    async def fake_aliases(org, subject, ch=None):
+        return [subject, "Avery@Example.com"]
+
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", fake_aliases)
+    client = AsyncMock()
+    client.query_one.return_value = {"role": "writer"}
+    monkeypatch.setattr("server.core.ch.get_client", lambda: client)
+    assert await authz.grant_role_for("acme", "team", "JDoe") is authz.Role.WRITER
+    sql = client.query_one.await_args.args[0]
+    assert "lower(subject) IN {subs:Array(String)}" in sql
+    assert client.query_one.await_args.kwargs["params"]["subs"] == ["jdoe", "avery@example.com"]
