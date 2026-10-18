@@ -15,8 +15,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
-
 from server.core.ch import set_query_tag
 from server.core.leases import LeaseUnavailable
 from server.memory.app import conflict_resolver as resolver
@@ -162,7 +160,8 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the pass
             p.counts.errored += 1
             p.errors.append(f"{namespace}/{r.get('memory_key')}: {type(e).__name__}: {e}")
-            if not _transient(e) and await _out_of_attempts(r):
+            # Counted only once the judge answered: an error before it paid for nothing.
+            if isinstance(e, resolver.JudgedThenFailed) and await _out_of_attempts(r):
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}")
         finally:
             emit_worker_cost_event_for(
@@ -170,14 +169,6 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             )
             # The next row's cap read follows at once: the spend must be readable by then.
             await get_emitter().flush_now()
-
-
-def _transient(e: Exception) -> bool:
-    """A provider failure that made no paid call: the row stays owed, uncounted."""
-    if isinstance(e, httpx.HTTPStatusError):
-        status = e.response.status_code
-        return status in (408, 409, 429) or status >= 500
-    return isinstance(e, (httpx.TransportError, TimeoutError))
 
 
 async def _out_of_attempts(r: Mapping[str, Any]) -> bool:

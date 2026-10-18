@@ -1331,6 +1331,19 @@ async def test_answers_cut_for_every_row_stop_the_pass_whatever_their_cap(
     assert out["errored"] == 3 and pass_env.stamped == []
 
 
+async def test_only_a_failure_after_the_answer_counts_as_an_attempt(pass_env: NS) -> None:
+    """A ClickHouse error before the call paid for nothing: the row stays owed however
+    often it fails. One after the judge answered was paid: the third stamps it."""
+    pass_env.owed = [_q(memory_key="before"), _q(memory_key="after")]
+    pass_env.raise_for = {
+        "before": RuntimeError("Code: 202. TOO_MANY_SIMULTANEOUS_QUERIES"),
+        "after": resolver.JudgedThenFailed("RuntimeError: insert failed"),
+    }
+    for _ in range(4):
+        await pass_env.run()
+    assert pass_env.stamped == ["after"]
+
+
 async def test_a_judged_row_between_refusals_keeps_the_pass_going(pass_env: NS) -> None:
     keys = ["k0", "k1", "ok", "k2", "k3"]
     pass_env.owed = [_q(memory_key=k) for k in keys]

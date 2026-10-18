@@ -50,6 +50,11 @@ class Unanswered(RuntimeError):
 _CUT = ("length", "max_tokens")
 
 
+class JudgedThenFailed(RuntimeError):
+    """A failure after the judge answered (its cause the error): the call was paid, so
+    the worker counts it as an attempt."""
+
+
 class Unjudgeable(RuntimeError):
     """The provider refused this row's request for a reason of its own (a 4xx other
     than 408, 409 and 429): asking again gets the same answer."""
@@ -735,6 +740,10 @@ async def _judge_and_act(
         # their records, follows and audit row, and the pass ends only after them.
         await asyncio.wait([acting])
         raise
+    except PreconditionFailedError:
+        raise  # a busy key: the row stays owed, as before the call
+    except Exception as e:
+        raise JudgedThenFailed(f"{type(e).__name__}: {e}") from e
     return {str(p["memory_id"]) for p in peers} - set(verdicts)
 
 

@@ -2479,3 +2479,25 @@ async def test_a_row_left_owed_is_judged_once_a_pass_whatever_the_burst_reads(
     await worker.run_pass()
     # One judgement: the answer leaves a peer out, so it is asked once more with room.
     assert calls.count("leftout_row") == 2, calls
+
+
+async def test_a_clickhouse_error_before_the_call_never_stamps_the_row(
+    ch, wired, monkeypatch
+) -> None:
+    """The cluster read fails three passes in a row, before any call: the row stays owed."""
+    from clickhouse_connect.driver.exceptions import DatabaseError
+
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 1300)
+
+    async def boom(*a: Any, **kw: Any) -> Any:
+        raise DatabaseError("Code: 202. TOO_MANY_SIMULTANEOUS_QUERIES")
+
+    with monkeypatch.context() as m:
+        m.setattr(queue, "cluster_peers", boom)
+        for _ in range(3):
+            await run_pass()
+    assert llm.calls == [] and (await _marks(ch, org))["office_location"] == 1
