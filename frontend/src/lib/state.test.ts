@@ -1,5 +1,6 @@
 import { renderHook } from "../test/rtl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readPlace } from "./place";
 import {
   navigationHref,
   pathnameView,
@@ -330,6 +331,32 @@ describe("a navigation leaves a place for Back to restore", () => {
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
     useStore.getState().bootView("memories");
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
+  });
+
+  it("a switch on an entry Back reached forgets the memory that entry remembered", () => {
+    useStore.setState({ view: "memories", identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
+    history.replaceState({ loomNamespace: "team" }, "", "/memories");
+    useStore.getState().inspect("k", { agent: "bot" });
+    useStore.getState().navigate("graph");
+    // Back to the Memories entry: it remembers "k".
+    history.replaceState(
+      { loomNamespace: "team", loomPlace: { scrollTop: 0, focusKey: null, inspected: "k", inspectedAgent: "bot" } },
+      "",
+      "/memories?memory=k",
+    );
+    useStore.getState().arriveFromHistory("memories", readPlace(history.state));
+    expect(useStore.getState().inspectedMemoryKey).toBe("k");
+    useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" });
+    // Forward and Back again: the entry reopens nothing of "team" under "other".
+    useStore.getState().arriveFromHistory("memories", readPlace(history.state));
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+  });
+
+  it("a switch takes a task out of the URL, from any picker", () => {
+    useStore.setState({ view: "tasks", identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
+    history.replaceState(null, "", "/tasks?task=t-1");
+    useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" });
+    expect(window.location.search).toBe("");
   });
 
   it("boot's namespace correction keeps a deep link's memory open", () => {

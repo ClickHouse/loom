@@ -173,7 +173,7 @@ export function Users() {
               >
                 {options.map((o) => (
                   <Select.Item key={o.value} value={o.value}>
-                    {`${o.label} ${o.count}`}
+                    {`${o.label} ${o.count.toLocaleString()}`}
                   </Select.Item>
                 ))}
               </Select>

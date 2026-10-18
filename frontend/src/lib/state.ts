@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { hasToken, isProxyMode } from "../api";
-import { patchEntry, rememberPlace, type Place } from "./place";
+import { patchEntry, readPlace, rememberPlace, type Place } from "./place";
 
 export type View =
   | "memories"
@@ -175,6 +175,9 @@ function linkedAgent(key: string): string {
   return "*";
 }
 
+// The URL keys that name an object of one namespace: a switch drops them.
+const SWITCH_CLEARS = ["memory", "thread", "doc", "task"];
+
 /** The namespace the current history entry was made in, when the app made it (a link
  *  opened from outside carries none). */
 function entryNamespace(): string | null {
@@ -332,16 +335,21 @@ export const useStore = create<AppState>((set, get) => ({
   setGateReason: (gateReason) => set({ gateReason }),
   setMyNamespaces: (myNamespaces) => set({ myNamespaces }),
   setWhoami: (whoami) => set({ whoami }),
-  // A memory belongs to its namespace: a switch, from any picker, closes the open one.
-  // Its URL goes with it (`?memory=`, `?thread=`), or a reload would reopen it in the new one.
+  // A memory belongs to its namespace: a switch, from any picker, closes the open one. The
+  // URL keys that name an object of the namespace left go (`?memory=`, `?thread=`, `?doc=`,
+  // `?task=`), and the entry is stamped with the new namespace and forgets the memory it
+  // remembered, so neither a reload nor Back reopens the old namespace's object here.
   setIdentity: (identity) => {
     const s = get();
     if (s.identity && identity && s.identity.namespace !== identity.namespace) {
-      if (urlParam("memory") !== null) setViewParam("memory", null, { loomInspect: null });
-      if (urlParam("thread") !== null) setViewParam("thread", null);
-      if (urlParam("doc") !== null) setViewParam("doc", null);
-      // The entry is now this namespace's: Back to it reopens nothing of the old one.
-      patchEntry({ loomNamespace: identity.namespace });
+      for (const key of SWITCH_CLEARS) {
+        if (urlParam(key) !== null) setViewParam(key, null, key === "memory" ? { loomInspect: null } : {});
+      }
+      const place = readPlace(typeof history === "undefined" ? null : history.state);
+      patchEntry({
+        loomNamespace: identity.namespace,
+        ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "" } } : {}),
+      });
       set({ identity, inspectedMemoryKey: null, pendingConversationThread: null, pendingDocSourceUri: null });
     } else set({ identity });
   },
