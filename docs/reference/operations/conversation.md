@@ -22,7 +22,7 @@ Log one chat turn (role + content) to the active thread.
 | `thread_id` | `str` | required | The thread to append to; it need not have been created first. |
 | `msg_id` | `str` | `''` | optional; server derives a content hash when omitted |
 | `role` | `Literal['user', 'assistant', 'system', 'tool']` | required | Who spoke: `user`, `assistant`, `system` or `tool`. |
-| `content` | `str` | required | The message text, stored verbatim and embedded for `conversation.search`. |
+| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded (its first 2,048 characters) for `conversation.search`. |
 | `reasoning` | `str` | `''` | The model's reasoning for this turn, stored beside `content`; empty = none. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
