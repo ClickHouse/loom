@@ -134,7 +134,7 @@ async def delegate(
         # is revoked, not when the parent's access token runs out.
         parents.append(parent.session_id)
     if len(parents) > MAX_CHAIN_DEPTH:
-        # Entries: the ancestor tokens and a third-party session among them.
+        # Counts the ancestor tokens and, for a third-party client, its session.
         raise _refuse(f"a delegation chain is limited to {MAX_CHAIN_DEPTH} ancestors")
     if scoped and "*" in requested:
         raise _refuse("a per-namespace token cannot name '*'")

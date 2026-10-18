@@ -521,10 +521,9 @@ async def me_service_accounts_revoke(
                 ],
             )
 
-    # Revoke by `sub` (the sa_subject), which every copy of the token shares;
-    # without it the token keeps authenticating until its TTL. Through
-    # `revoke`, so this replica holds it at once, whatever a refresh in
-    # flight reads.
+    # The row keeps no jti, so revoke by `sub` (the sa_subject); its children
+    # die with it through `parent_subjects`. Through `revoke`, so this replica
+    # holds it at once, whatever a refresh in flight reads.
     from server.auth.revocation import revoke
 
     await revoke(
