@@ -589,6 +589,11 @@ export function Runs() {
   const filterKey = [scope, filter, agent, hideConn, q, order].join("\n");
   const readKey = `${filterKey}\n${pageSize}\n${local}`;
   const shownScope = useRef(scope);
+  // With `local`, the page, the search and the order are applied here: they read nothing.
+  const readQ = local ? "" : q;
+  const readOrder = local ? "" : order;
+  const readPage = local ? 0 : page;
+  const readSize = local ? 0 : pageSize;
 
   // A response that lands after the page, a filter or the namespace moved on is dropped,
   // so A's rows never render under B's filter. Within a namespace the rows on screen stay,
@@ -660,7 +665,6 @@ export function Runs() {
     return () => {
       live = false;
     };
-    // With `local`, the page, the search and the order are applied here: they read nothing.
   }, [
     scope,
     identity.org,
@@ -668,10 +672,10 @@ export function Runs() {
     filter,
     agent,
     hideConn,
-    local ? "" : q,
-    local ? "" : order,
-    local ? 0 : page,
-    local ? 0 : pageSize,
+    readQ,
+    readOrder,
+    readPage,
+    readSize,
     local,
     retry,
   ]);
