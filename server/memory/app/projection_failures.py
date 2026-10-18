@@ -308,6 +308,9 @@ class _KeyBusy(Exception):
 
 # A failure and the result of its retry.
 Retried = tuple[ProjectionFailureRow, ProjectionFailureRetryResult]
+# Failure ids per mark: the ids travel as one HTTP parameter, which ClickHouse caps at
+# 128 KiB (about 3,400 UUIDs).
+MARK_CHUNK = 1000
 
 
 async def retry_failures(
@@ -343,18 +346,22 @@ async def retry_each(
 
 
 async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:
-    """Mark the repaired failures of `done` in one mutation per org and the abandoned ones
-    per org and reason: each mark is a mutation."""
+    """Mark the repaired failures of `done` per org and the abandoned ones per org and
+    reason, `MARK_CHUNK` ids to a mutation."""
     ch = ch or get_client()
     by_org: dict[tuple[str, str], list[str]] = {}
     for failure, r in done:
         if r.resolved or r.abandoned:
             by_org.setdefault((failure.org, r.reason), []).append(r.failure_id)
     for (org, reason), ids in by_org.items():
-        if reason:
-            await mark_projection_failures_abandoned(org=org, failure_ids=ids, reason=reason, ch=ch)
-        else:
-            await mark_projection_failures_resolved(org=org, failure_ids=ids, ch=ch)
+        for start in range(0, len(ids), MARK_CHUNK):
+            chunk = ids[start : start + MARK_CHUNK]
+            if reason:
+                await mark_projection_failures_abandoned(
+                    org=org, failure_ids=chunk, reason=reason, ch=ch
+                )
+            else:
+                await mark_projection_failures_resolved(org=org, failure_ids=chunk, ch=ch)
 
 
 async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailureRetryResult:

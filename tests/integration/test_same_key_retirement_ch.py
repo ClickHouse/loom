@@ -6483,3 +6483,56 @@ async def test_names_that_look_like_grammar_are_reachable_from_a_point_write(ch,
     walk = FactsTraverseInput(org=org, namespace=NS, seed_entity="우간다", max_hops=1)
     nodes = {n.entity for n in (await handle_facts_traverse(walk)).nodes}
     assert {"さいたま", "르완다", "캐나다"} <= nodes, nodes
+
+
+async def test_a_pass_that_repaired_4000_failures_marks_them_all(ch: Any, org: str) -> None:
+    """The ids of a mark go as one HTTP parameter, which ClickHouse caps at 128 KiB:
+    4,000 UUIDs in one go is refused and every failure would stay active."""
+    from server.memory.app.projection_failures import (
+        STATUS_MIRROR,
+        ProjectionFailureRetryResult,
+        list_projection_failures,
+        mark_retried,
+    )
+
+    now = naive_utc_now()
+    ids = [str(uuid.uuid4()) for _ in range(4000)]
+    await ch.insert(
+        "loom.memory_projection_failures",
+        [
+            {
+                "failure_id": fid,
+                "org": org,
+                "namespace": NS,
+                "agent": "bot",
+                "projection": STATUS_MIRROR,
+                "source_operation": "",
+                "source_resource_id": "",
+                "memory_keys": [KEY],
+                "error_type": "Error",
+                "error_message": "",
+                "payload": "{}",
+                "status": "active",
+                "created_at": now,
+                "resolved_at": None,
+            }
+            for fid in ids
+        ],
+        settings={"async_insert": 0},
+    )
+    failures = await list_projection_failures(org=org, limit=5000, ch=ch)
+    assert len(failures) == 4000
+    await mark_retried(
+        [
+            (f, ProjectionFailureRetryResult(f.failure_id, f.projection, True, True))
+            for f in failures
+        ],
+        ch=ch,
+    )
+    for _ in range(60):
+        if not await list_projection_failures(org=org, limit=1, ch=ch):
+            break
+        await asyncio.sleep(0.5)
+    assert not await list_projection_failures(org=org, limit=1, ch=ch)
+    resolved = await list_projection_failures(org=org, status="resolved", limit=5000, ch=ch)
+    assert len(resolved) == 4000

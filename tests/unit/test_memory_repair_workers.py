@@ -337,6 +337,17 @@ async def test_a_pass_marks_all_its_mirror_batches_once_per_org(
     ], "three batches, one mark per org"
 
 
+async def test_a_mark_sends_at_most_mark_chunk_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ids are one HTTP parameter, capped at 128 KiB: 3,500 UUIDs in one go is refused."""
+    from server.memory.app import projection_failures as pf
+
+    failures = [_failure(i, pf.STATUS_MIRROR) for i in range(3500)]
+    done = [(f, await _resolved(f)) for f in failures]
+    marks = _fake_retry(monkeypatch, _resolved)
+    await pf.mark_retried(done)
+    assert [len(m["failure_ids"]) for m in marks] == [1000, 1000, 1000, 500]
+
+
 async def test_a_pass_cut_short_marks_the_mirrors_it_finished(
     monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
 ) -> None:
