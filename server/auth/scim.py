@@ -23,13 +23,14 @@ operator's `loom revoke-token` writes. The two are independent, and either
 keeps a person out; a reactivation lifts only SCIM's. A subject another
 deactivated user still reaches stays revoked through a reactivation. The
 accounts and their data stay: this is not erasure.
-Leases, always taken in this order: the user's, then a userName's it takes
-(create, rename), then, around a deactivation's revocations or a reactivation's
-lifts and the row they belong with, one per subject the user reaches, in sorted
-order: only users sharing a subject wait on each other (and an operator's
-`--scim` narrowing of one). Each step is
-idempotent, so a provider's retry of a half-done one finishes it. With
-`LOOM_SCIM_TOKEN` empty nothing here is read.
+
+Leases are always taken in this order: the user's, then a userName's it takes
+(create, rename), then one per subject the user reaches, in sorted order,
+around a deactivation's revocations or a reactivation's lifts and the row they
+belong with. Only users sharing a subject wait on each other (and an
+operator's `--scim` narrowing of one). Each step is idempotent, so a
+provider's retry of a half-done one finishes it. With `LOOM_SCIM_TOKEN` empty
+nothing here is read.
 """
 
 from __future__ import annotations
@@ -85,6 +86,11 @@ class Busy(Exception):
     """Another request is changing this user; retry shortly."""
 
 
+def tokens(raw: str) -> list[str]:
+    """The SCIM bearer tokens a `LOOM_SCIM_TOKEN` value lists; none means SCIM is off."""
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
 def normalized(address: str) -> str:
     return address.strip().lower()
 
@@ -126,7 +132,7 @@ async def deactivated(email: str) -> bool:
     """Whether SCIM has deactivated `email`, deleted users included; never
     while SCIM is off. Raises `SignInUnavailable` when it cannot read: a
     sign-in must not pass unchecked."""
-    if not settings.scim_token:
+    if not tokens(settings.scim_token):
         return False
     try:
         with own_write_reads():  # a deactivation may have landed a moment ago elsewhere
@@ -327,7 +333,7 @@ async def _set_active(
             subjects = sorted(set(found) - known)
         for subject in subjects:
             await revocation.scim_revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)
-            await _flag_collateral(new["id"], subject, set().union(*found.values()))
+            await _flag_collateral(new["id"], subject, found.get(subject, set()))
         await _write_audited(row, new)
     # The snapshot re-read each revocation would make, once and past the leases.
     await revocation.refresh()
@@ -417,8 +423,9 @@ async def _subjects(email: str) -> dict[str, set[str]]:
 
 async def _flag_collateral(uid: str, subject: str, orgs: set[str]) -> None:
     """Log and audit `subject`, just revoked, when it also holds accounts or
-    grants beyond `orgs`: a subject is a name, not an org's, and the same one
-    may be someone else's elsewhere."""
+    grants beyond `orgs`, the orgs where the email reaches that subject: a
+    subject is a name, not an org's, and the same one may be someone else's
+    elsewhere."""
     elsewhere = await _orgs_beyond(subject, orgs)
     if not elsewhere:
         return

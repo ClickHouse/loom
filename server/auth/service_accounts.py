@@ -91,7 +91,8 @@ async def inheriting_creator(org: str, sa_subject: str, *, ch: Any | None = None
 
 def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -> dict[str, Any]:
     """A new version of the `loom.service_accounts` row `row`, revoked. Every
-    column is carried forward: one left out reads as its default under FINAL."""
+    column is carried forward: one left out reads as its default under FINAL.
+    Its version outranks the row's, whichever host's clock wrote that one."""
     return {
         "org": row["org"],
         "name": row["name"],
@@ -104,7 +105,7 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
         "expires_at": row["expires_at"],
         "revoked_at": revoked_at,
         "revoked_by": revoked_by,
-        "version": time.time_ns(),
+        "version": max(time.time_ns(), int(row["version"]) + 1),
         "kind": row["kind"],
         "client": row["client"],
         "inherit_creator_grants": row["inherit_creator_grants"],
@@ -114,6 +115,9 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
 
 # Names a pass revokes at once: each is a lease round trip and an insert.
 _CLAIMS_AT_ONCE = 8
+# Creators read at once: their keys are one array parameter, which ClickHouse
+# refuses past its HTTP field size (a few thousand subjects).
+_CREATORS_AT_ONCE = 500
 _UNEXPIRED = "(expires_at IS NULL OR expires_at > now())"
 
 
@@ -134,21 +138,27 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
     for _ in range(MAX_CHAIN_DEPTH + 1):
         if not creators:
             return
-        with own_write_reads():
-            rows = await ch.query_all(
-                "SELECT org, name, sa_subject, created_by, created_at, "
-                "revoked_at IS NULL AS live FROM loom.service_accounts FINAL "
-                f"WHERE created_by IN {{subs:Array(String)}} AND {_UNEXPIRED}",
-                params={"subs": creators},
-            )
-        # Read after the list, so it tells whether each token listed is dead.
-        revoked = await revocation.cutoffs(creators)
-        # Only those still dead: an operator may have let the creator live since.
-        dead |= {str(r["sa_subject"]) for r in rows if not r["live"] and _is_dead(r, revoked, dead)}
-        live = [r for r in rows if r["live"]]
-        dead |= await _revoke_all(live, creators, revoked, dead, revoked_by)
-        # Revoked ones too: a retry still reaches what their tokens made.
-        made = {str(r["sa_subject"]) for r in rows} - seen
+        made: set[str] = set()
+        for i in range(0, len(creators), _CREATORS_AT_ONCE):
+            chunk = creators[i : i + _CREATORS_AT_ONCE]
+            with own_write_reads():
+                rows = await ch.query_all(
+                    "SELECT org, name, sa_subject, created_by, created_at, "
+                    "revoked_at IS NULL AS live FROM loom.service_accounts FINAL "
+                    f"WHERE created_by IN {{subs:Array(String)}} AND {_UNEXPIRED}",
+                    params={"subs": chunk},
+                )
+            # Read after the list, so it tells whether each token listed is dead.
+            revoked = await revocation.cutoffs(chunk)
+            # Only those still dead: an operator may have let the creator live since.
+            dead |= {
+                str(r["sa_subject"]) for r in rows if not r["live"] and _is_dead(r, revoked, dead)
+            }
+            live = [r for r in rows if r["live"]]
+            dead |= await _revoke_all(live, chunk, revoked, dead, revoked_by)
+            # Revoked ones too: a retry still reaches what their tokens made.
+            made |= {str(r["sa_subject"]) for r in rows}
+        made -= seen
         seen |= made
         creators = sorted(made)
 

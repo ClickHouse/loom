@@ -34,6 +34,7 @@ _LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 _ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 _CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
 _MAX_RESULTS = 200
+_LAST_INDEX = 2**32 - 1
 # A shorter bearer token is guessable: SCIM refuses to start with one.
 MIN_TOKEN_LENGTH = 32
 
@@ -51,12 +52,10 @@ class ScimError(Exception):
 async def _authorized(request: Request) -> None:
     set_query_tag(f"scim.{request.method.lower()}")  # these routes are not under the transports
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
-    expected = settings.scim_token.encode()
-    if (
-        not expected
-        or scheme.lower() != "bearer"
-        or not hmac.compare_digest(token.strip().encode(), expected)
-    ):
+    presented = token.strip().encode()
+    # Every token is compared, so the time taken doesn't say which one matched.
+    matches = [hmac.compare_digest(presented, t.encode()) for t in scim.tokens(settings.scim_token)]
+    if scheme.lower() != "bearer" or not any(matches):
         raise ScimError(401, "a valid SCIM bearer token is required")
 
 
@@ -108,20 +107,29 @@ router = APIRouter(prefix="/scim/v2", dependencies=[Depends(_authorized)], route
 
 # ── parsing ───────────────────────────────────────────────────────────────
 
-_FILTER = re.compile(r'\s*userName\s+eq\s+"((?:[^"\\]|\\.)*)"\s*', re.IGNORECASE)
+# The filters served: `userName eq "x"`, and on the email, what Entra sends when
+# it matches users on `mail`: `emails[type eq "work"].value eq "x"` or `emails.value eq "x"`.
+_FILTER = re.compile(
+    r'\s*(userName|emails(?:\[\s*type\s+eq\s+"[^"]*"\s*\])?\.value)\s+eq\s+"((?:[^"\\]|\\.)*)"\s*',
+    re.IGNORECASE,
+)
 
 
-def parse_filter(text: str) -> str:
-    """The value of `userName eq "<value>"`, the one filter served."""
+def parse_filter(text: str) -> tuple[str, str]:
+    """What a served filter compares and its value: ("userName", v) or ("email", v)."""
     m = _FILTER.fullmatch(text)
     if m:
         try:
-            value = json.loads(f'"{m.group(1)}"')
+            value = json.loads(f'"{m.group(2)}"')
         except ValueError:
             value = None
         if isinstance(value, str):
-            return value
-    raise ScimError(400, 'the only filter served is userName eq "<email>"', "invalidFilter")
+            return ("userName" if m.group(1).lower() == "username" else "email"), value
+    raise ScimError(
+        400,
+        'the filters served are userName eq "<v>" and emails[type eq "work"].value eq "<email>"',
+        "invalidFilter",
+    )
 
 
 def parse_active(value: Any) -> bool:
@@ -381,11 +389,13 @@ async def service_provider_config() -> JSONResponse:
 
 @router.get("/Users")
 async def list_users(request: Request) -> JSONResponse:
-    start = max(1, _int_param(request, "startIndex", 1))
+    # Past the end is an empty page, however far: the offset must fit its UInt32.
+    start = min(_LAST_INDEX, max(1, _int_param(request, "startIndex", 1)))
     count = min(_MAX_RESULTS, max(0, _int_param(request, "count", 100)))
     text = request.query_params.get("filter")
     if text is not None:
-        row = await scim.find(parse_filter(text))
+        attribute, value = parse_filter(text)
+        row = await (scim.find(value) if attribute == "userName" else scim.get(scim.user_id(value)))
         total, rows = (1, [row]) if row else (0, [])
         rows = rows[start - 1 : start - 1 + count]
     else:
@@ -397,6 +407,22 @@ async def list_users(request: Request) -> JSONResponse:
             "startIndex": start,
             "itemsPerPage": len(rows),
             "Resources": [_resource(request, r) for r in rows],
+        }
+    )
+
+
+@router.get("/Groups")
+async def list_groups(request: Request) -> JSONResponse:
+    """No groups: a provider's connection test and group sync read an empty
+    list here, where a 404 would count as a broken endpoint."""
+    start = min(_LAST_INDEX, max(1, _int_param(request, "startIndex", 1)))
+    return _answer(
+        {
+            "schemas": [_LIST_SCHEMA],
+            "totalResults": 0,
+            "startIndex": start,
+            "itemsPerPage": 0,
+            "Resources": [],
         }
     )
 
@@ -510,23 +536,30 @@ async def unknown(rest: str, request: Request) -> Response:
     )
     if known:
         raise ScimError(405, f"{request.method} is not served here")
-    raise ScimError(404, "this server serves only Users and ServiceProviderConfig")
+    raise ScimError(
+        404, "this server serves only Users, an empty Groups list and ServiceProviderConfig"
+    )
 
 
-def short_token_problem(token: str) -> str:
-    """Why `token` is no SCIM token to start with, or '' (SCIM off is fine)."""
-    if token and len(token) < MIN_TOKEN_LENGTH:
-        return f"LOOM_SCIM_TOKEN is {len(token)} characters; it must be at least {MIN_TOKEN_LENGTH}"
+def short_token_problem(raw: str) -> str:
+    """Why a token the `LOOM_SCIM_TOKEN` value `raw` lists is no SCIM token to
+    start with, or '' (SCIM off is fine)."""
+    for token in scim.tokens(raw):
+        if len(token) < MIN_TOKEN_LENGTH:
+            return (
+                f"a LOOM_SCIM_TOKEN token is {len(token)} characters; "
+                f"each must be at least {MIN_TOKEN_LENGTH}"
+            )
     return ""
 
 
-def require_scim_token_length(token: str) -> None:
+def require_scim_token_length(raw: str) -> None:
     """Refuse to start with a guessable SCIM token (run in the lifespan)."""
-    if problem := short_token_problem(token):
+    if problem := short_token_problem(raw):
         raise RuntimeError(f"refusing to start: {problem}")
 
 
 def attach(app: Any) -> None:
-    if not settings.scim_token:
+    if not scim.tokens(settings.scim_token):
         return
     app.include_router(router)

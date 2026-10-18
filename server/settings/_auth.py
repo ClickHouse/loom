@@ -112,6 +112,7 @@ class AuthSettings(BaseModel):
     # Bearer token an identity provider presents on SCIM 2.0 provisioning
     # (/scim/v2), where it deactivates and reactivates people. Empty = SCIM off,
     # its routes not mounted. A long random secret; nothing else authenticates SCIM.
+    # Comma-separated tokens are each accepted, to rotate one without downtime.
     scim_token: str = ""
 
     @property

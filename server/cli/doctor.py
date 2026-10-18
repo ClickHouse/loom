@@ -259,7 +259,10 @@ def _doctor_scim_token_check(settings: Any) -> tuple[str, str, str]:
 
     if problem := short_token_problem(settings.scim_token):
         return ("scim_token", FAIL, problem)
-    return ("scim_token", PASS, "set" if settings.scim_token else "SCIM off")
+    from server.auth.scim import tokens
+
+    count = len(tokens(settings.scim_token))
+    return ("scim_token", PASS, f"{count} token(s) set" if count else "SCIM off")
 
 
 def _doctor_trusted_proxies_check(settings: Any) -> tuple[str, str, str]:

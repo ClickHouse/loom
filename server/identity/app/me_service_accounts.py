@@ -462,7 +462,7 @@ async def me_service_accounts_revoke(
             """
             SELECT sa_subject, namespaces, created_by, created_at,
                    expires_at, ttl_days, roles, kind, client,
-                   inherit_creator_grants, ns_roles, revoked_at
+                   inherit_creator_grants, ns_roles, revoked_at, version
             FROM loom.service_accounts FINAL
             WHERE org = {org:String} AND name = {name:String}
             LIMIT 1

@@ -278,9 +278,11 @@ of the above, so they do not stop with someone's offboarding.
 ## Deprovisioning with SCIM
 
 Identity providers push deactivations to apps over SCIM 2.0 (RFC 7643/7644).
-Loom accepts that push: a person deactivated at the provider is revoked in
-Loom within seconds, sessions and the tokens they made included. Set a long
-random token and restart:
+Loom accepts that push: once the provider sends it, the person's sessions and
+the tokens they made are refused at once by the replica that took the
+request, and by every other replica at its next revocation refresh
+(`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`, 30 s by default). Set a long random
+token and restart:
 
 ```bash
 LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
@@ -289,6 +291,14 @@ LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
 Empty (the default) leaves SCIM off and its routes unmounted; Loom refuses to
 start with a token shorter than 32 characters (`loom doctor` says so too). The token is the only
 credential `/scim/v2` takes; keep it with the client secret.
+
+To rotate it without refusing the provider in between, list both tokens,
+comma-separated, and roll the replicas; set the new one at the provider; then
+remove the old one and roll again:
+
+```bash
+LOOM_SCIM_TOKEN="$OLD_TOKEN,$(openssl rand -hex 32)"
+```
 
 Loom keys a SCIM user on an email: the request's `emails` entry marked
 primary, else its work entry, else its first, or its `userName` when it sends
@@ -319,12 +329,29 @@ People already assigned are pushed when you next assign or update them, or
 from **Assignments → Provision User**. Other providers (OneLogin, …) take the
 same base URL and bearer token.
 
-**Microsoft Entra ID** maps `userPrincipalName` to `userName` and `mail` to
-`emails[type eq "work"].value` by default, and its ID token's `email` claim is
-`mail`. Keep the `mail` mapping (Loom takes the email from it), and where a
-user has no `mail`, map `userName` to `mail` too, not to the UPN, which can be
-another address. Use **Tenant URL** `<public Loom URL>/scim/v2` and the token
-as **Secret Token**.
+Okta sends a deactivation (the person deactivated in Okta, or unassigned
+from the app) as `active: false` by `PATCH` or `PUT`, and
+never sends `DELETE`.
+
+In **Microsoft Entra ID**, on the enterprise application you sign in with:
+
+1. **Provisioning → Get started**, set **Provisioning Mode** to **Automatic**.
+2. **Admin Credentials:** **Tenant URL** `<public Loom URL>/scim/v2`, and the
+   `LOOM_SCIM_TOKEN` value as **Secret Token**. **Test Connection**, then save.
+3. **Mappings:** keep the user mapping. Entra maps `userPrincipalName` to
+   `userName` and `mail` to `emails[type eq "work"].value`, and its ID token's
+   `email` claim is `mail`, so Loom takes the email from `mail`. Where a user
+   has no `mail`, map `mail` from the address their ID token carries, not
+   from the UPN, which can be another address. Matching on `userName` (the
+   default) or on `emails[type eq "work"].value` both work. Groups can stay
+   on or off: Loom answers an empty group list.
+4. **Settings → Scope:** **Sync only assigned users and groups**, then
+   **Start provisioning**.
+
+Entra sends `active: false` when a user is disabled, soft-deleted or
+unassigned, and `DELETE` only on a hard delete (30 days after a soft delete).
+It provisions in cycles of about 40 minutes, so a deactivation reaches Loom
+in the next cycle; **Provision on demand** on the user sends it at once.
 
 What Loom does with each request:
 
@@ -352,10 +379,14 @@ What Loom does with each request:
   names are free again; a reactivation does not bring them back. While it
   lasts, SSO sign-in with the email is refused ("this account is
   deactivated"), even if it reaches no account yet. The accounts, their
-  grants and their data stay; this is not erasure. A subject is a name, not
-  an org's: when one also owns an account or holds a grant in an org the
-  email does not reach (another person's `alice`), it is still revoked, and
-  Loom logs a warning and audits `auth.scim_collateral` naming those orgs.
+  grants and their data stay; this is not erasure. A password account that
+  names the email but was never linked to it (not adopted, linked or proven
+  at an SSO sign-in) is not one an SSO sign-in reaches, so it is left alone:
+  revoke it with `loom revoke-token --subject`, or adopt it before offboarding
+  ([Accounts](#accounts)). A subject is a name, not an org's: when one also
+  owns an account or holds a grant in an org where the email does not reach
+  that subject (another person's `alice`), it is still revoked, and Loom
+  logs a warning and audits `auth.scim_collateral` naming those orgs.
   Find it in `loom revoke-token --list` (`scim→<it>`) and, if it is someone
   else's, give it back with
   `loom revoke-token --subject <it> --issued-before <now> --scim`. The
@@ -367,9 +398,10 @@ What Loom does with each request:
   deleted user still reaches (two addresses reaching one account) stays
   revoked until the last of them is reactivated, and Loom logs a warning for
   each one it leaves. A reactivation answers after about 6 s, once every
-  replica's clock is past its cutoff; a retry sent meanwhile waits out the
-  rest. A sign-in within a second of a reactivation, or in the few seconds
-  after through a replica whose clock runs behind, may need repeating.
+  replica's clock is past its cutoff, so a sign-in after it gets a token that
+  lives (one in that wait would get a token from before the cutoff, already
+  dead); a retry sent meanwhile waits out the rest. Another replica still
+  refuses the new session until its next revocation refresh, then takes it.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
   reactivates them, answering after the same wait; a retry of that create
@@ -390,8 +422,10 @@ deployment does, deleted users included: that row is what keeps a deactivated
 person out. Requests are idempotent, so the provider's retries are safe, and
 they run side by side: only those for people who reach a shared account wait
 on each other (a busy one answers 503 and the provider retries it). The
-only filter served is `userName eq "<userName>"`; `GET /Users`,
-`GET /Users/{id}` and `GET /ServiceProviderConfig` answer as RFC 7644 says.
+filters served are `userName eq "<userName>"` and, on the email,
+`emails[type eq "work"].value eq "<email>"` (or `emails.value eq`);
+`GET /Users`, `GET /Users/{id}` and `GET /ServiceProviderConfig` answer as
+RFC 7644 says, and `GET /Groups` answers an empty list.
 
 Turning SCIM off (`LOOM_SCIM_TOKEN` empty) stops refusing sign-in by email,
 and nothing reactivates anyone any more. The revocations stand: a deactivated

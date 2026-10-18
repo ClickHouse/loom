@@ -43,22 +43,26 @@ _TOKEN = "scim-test-token-" + "x" * 32
 
 
 @pytest.mark.parametrize(
-    ("text", "value"),
+    ("text", "parsed"),
     [
-        ('userName eq "lee@example.com"', "lee@example.com"),
-        ('  USERNAME EQ "Lee@Example.com" ', "Lee@Example.com"),
-        (r'userName eq "a\"b@example.com"', 'a"b@example.com'),
+        ('userName eq "lee@example.com"', ("userName", "lee@example.com")),
+        ('  USERNAME EQ "Lee@Example.com" ', ("userName", "Lee@Example.com")),
+        (r'userName eq "a\"b@example.com"', ("userName", 'a"b@example.com')),
+        # Entra, matching users on `mail`.
+        ('emails[type eq "work"].value eq "lee@example.com"', ("email", "lee@example.com")),
+        ('emails.value eq "lee@example.com"', ("email", "lee@example.com")),
     ],
 )
-def test_the_username_filter_is_parsed(text: str, value: str) -> None:
-    assert parse_filter(text) == value
+def test_the_served_filters_are_parsed(text: str, parsed: tuple[str, str]) -> None:
+    assert parse_filter(text) == parsed
 
 
 @pytest.mark.parametrize(
     "text",
     [
         'userName co "lee"',
-        'emails.value eq "lee@example.com"',
+        'externalId eq "lee"',
+        'emails[type eq "work"].display eq "lee"',
         'userName eq "a" or userName eq "b"',
         "userName eq lee@example.com",
         'userName eq "bad \\x"',
@@ -415,6 +419,18 @@ async def test_a_subject_someone_else_has_elsewhere_is_revoked_and_flagged(world
     assert collateral["subject"]["orgs"] == ["other-org"]
     assert "alice" not in str(collateral["subject"]["subject"])
     assert revoked == {"alice": None}  # audited once the revocation landed
+
+
+async def test_another_subjects_org_does_not_hide_collateral(world) -> None:
+    # The email reaches `alice@example.com` in acme and `alice` (a linked
+    # account) in beta; someone else owns an `alice` in acme.
+    world.person("alice@example.com", "alice@example.com", "alice")
+    world.reached_in["alice@example.com"] = ["acme"]
+    world.reached_in["alice"] = ["beta"]
+    world.elsewhere["alice"] = ["acme", "beta"]
+    await scim.update(await _create("alice@example.com"), active=False)
+    [collateral] = [kw for e, kw in world.audits if e == "auth.scim_collateral"]
+    assert collateral["subject"]["orgs"] == ["acme"]
 
 
 async def test_a_subject_the_email_reaches_in_two_orgs_is_not_flagged(world) -> None:
@@ -1077,6 +1093,19 @@ def test_every_route_wants_the_scim_token(client: TestClient, header: str | None
         assert r.json()["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:Error"]
 
 
+def test_either_listed_token_is_taken_while_one_is_rotated(client: TestClient, monkeypatch) -> None:
+    new = "n" * 40
+    # A token mounted from a file keeps its trailing newline.
+    monkeypatch.setattr(settings, "scim_token", f"{_TOKEN}, {new}\n")
+    for token in (_TOKEN, new):
+        r = client.get(
+            "/scim/v2/ServiceProviderConfig", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert r.status_code == 200, token
+    r = client.get("/scim/v2/ServiceProviderConfig", headers={"Authorization": "Bearer ,"})
+    assert r.status_code == 401
+
+
 def test_scim_is_not_mounted_without_a_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "scim_token", "")
     app = FastAPI()
@@ -1091,6 +1120,9 @@ def test_a_short_token_refuses_to_start_and_doctor_says_so(monkeypatch) -> None:
     scim_routes.require_scim_token_length("x" * 32)
     with pytest.raises(RuntimeError, match="at least 32"):
         scim_routes.require_scim_token_length("x" * 31)
+    with pytest.raises(RuntimeError, match="at least 32"):  # each one listed counts
+        scim_routes.require_scim_token_length(f"{'x' * 32},{'y' * 31}")
+    scim_routes.require_scim_token_length(" , ")  # lists none: off
     monkeypatch.setattr(settings, "scim_token", "x" * 31)
     assert doctor._doctor_scim_token_check(settings)[1] == doctor.FAIL
     monkeypatch.setattr(settings, "scim_token", "")
@@ -1120,6 +1152,9 @@ def test_a_provider_creates_finds_and_deactivates_a_person(client: TestClient, w
     assert again.status_code == 409
 
     found = client.get("/scim/v2/Users", params={"filter": 'userName eq "lee.upn@corp.example"'})
+    assert [u["id"] for u in found.json()["Resources"]] == [uid]
+    by_mail = 'emails[type eq "work"].value eq "Lee@Example.com"'  # Entra matching on `mail`
+    found = client.get("/scim/v2/Users", params={"filter": by_mail})
     assert [u["id"] for u in found.json()["Resources"]] == [uid]
     off = {"Operations": [{"op": "replace", "value": {"active": False}}]}
     patched = client.patch(f"/scim/v2/Users/{uid}", json=off)
@@ -1768,9 +1803,30 @@ async def test_a_sign_in_once_the_row_says_active_lives_after_the_lift(world, mo
     assert await world.keeps_out("lee", issued_at=int(start.timestamp()))  # a token from before
 
 
+def test_groups_is_an_empty_list(client: TestClient) -> None:
+    # What Okta's and Entra's connection tests read when group push is on.
+    r = client.get(
+        "/scim/v2/Groups",
+        params={"excludedAttributes": "members", "filter": 'displayName eq "x"'},
+    )
+    assert r.status_code == 200
+    assert r.json() == {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+        "totalResults": 0,
+        "startIndex": 1,
+        "itemsPerPage": 0,
+        "Resources": [],
+    }
+
+
+def test_a_start_index_past_any_offset_is_an_empty_page(client: TestClient, world) -> None:
+    r = client.get("/scim/v2/Users", params={"startIndex": str(2**40), "count": "10"})
+    assert r.status_code == 200 and r.json()["Resources"] == []
+
+
 def test_unknown_paths_and_methods_answer_scim_errors(client: TestClient) -> None:
     for method, path, status in [
-        ("GET", "/Groups", 404),
+        ("POST", "/Groups", 405),
         ("GET", "/Schemas", 404),
         ("POST", "/Users/x", 405),
         ("DELETE", "/Users", 405),

@@ -24,7 +24,7 @@ class _CH:
     async def query_one(self, sql: str, params: Any = None, **_: Any) -> dict[str, Any]:
         if "loom.revoked_tokens" in sql:  # the version a revocation writes past
             return {"v": 0}
-        assert "inherit_creator_grants" in sql and "ns_roles" in sql
+        assert "inherit_creator_grants" in sql and "ns_roles" in sql and "version" in sql
         if not self.claimed:
             self.unclaimed.append("read")
         return self.row
@@ -53,6 +53,7 @@ async def test_revoke_carries_ns_roles_and_the_inherit_flag(monkeypatch) -> None
         "inherit_creator_grants": False,
         "ns_roles": '{"a": "viewer", "b": "writer"}',
         "revoked_at": None,
+        "version": 2**63,  # written by a host whose clock runs ahead
     }
     ch = _CH(row)
     monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
@@ -82,6 +83,7 @@ async def test_revoke_carries_ns_roles_and_the_inherit_flag(monkeypatch) -> None
     [written] = [r for t, rows in ch.inserts if t == "loom.service_accounts" for r in rows]
     assert written["ns_roles"] == row["ns_roles"]
     assert written["inherit_creator_grants"] is False and written["revoked_at"] is not None
+    assert written["version"] > row["version"]  # it replaces the live row under FINAL
     assert ch.unclaimed == []
 
     # Revoked again (a retry, a second click): the first revocation stands.

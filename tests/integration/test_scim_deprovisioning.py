@@ -98,17 +98,20 @@ def scim_server(ch_client) -> Iterator[tuple[str, str, str, str, Any]]:
         with idp.running(), loom_server("scim", env, port=port):
             yield base, org, email, ns, ch_client
     finally:
-        # None of these rows names the org the suite purges by.
-        for table, column, value in (
-            ("scim_users", "email", email),
-            ("revoked_tokens", "jti", email),
-            ("revoked_tokens", "jti", SCIM_PREFIX + email),
-        ):
-            ch_client.command(
-                f"ALTER TABLE loom.{table} DELETE WHERE {column} = %(e)s "
-                "SETTINGS mutations_sync = 2",
-                parameters={"e": value},
-            )
+        _cleanup(ch_client, email)
+
+
+def _cleanup(ch_client: Any, email: str) -> None:
+    # None of these rows names the org the suite purges by.
+    for table, column, value in (
+        ("scim_users", "email", email),
+        ("revoked_tokens", "jti", email),
+        ("revoked_tokens", "jti", SCIM_PREFIX + email),
+    ):
+        ch_client.command(
+            f"ALTER TABLE loom.{table} DELETE WHERE {column} = %(e)s SETTINGS mutations_sync = 2",
+            parameters={"e": value},
+        )
 
 
 def _sign_in(base: str) -> httpx.Response:
@@ -165,7 +168,7 @@ def _set_active(base: str, uid: str, active: bool) -> dict[str, Any]:
             "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
             "Operations": [{"op": "replace", "value": {"active": active}}],
         },
-        timeout=30,  # a reactivation returns once every replica's clock is past its cutoff
+        timeout=30,  # a reactivation answers once every replica's clock is past its cutoff
     )
     assert r.status_code == 200, r.text
     out: dict[str, Any] = r.json()
