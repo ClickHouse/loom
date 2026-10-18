@@ -205,8 +205,8 @@
   --click-field-color-placeholder-default: #696e79; /* slate-600, 5.0:1 */
   --click-field-color-stroke-default: #808691; /* slate-500, 3.6:1 */
   --click-field-color-stroke-hover: #696e79;
-  --click-checkbox-color-stroke-default: #808691;
-  --click-checkbox-color-stroke-hover: #696e79;
+  /* Click UI's Checkbox draws its unchecked stroke from its default variation's token. */
+  --click-checkbox-color-variations-default-stroke-default: #808691;
   --click-radio-color-stroke-default: #808691;
   --click-radio-color-stroke-hover: #696e79;
   --click-switch-color-stroke-default: #808691;
@@ -1483,12 +1483,6 @@ button.pane-card:hover {
   }
 }
 
-/* Click UI's unchecked checkbox stroke is 2:1 against the page, under WCAG's 3:1 for a
-   control's boundary: the muted text colour (5:1) draws it. */
-button[role="checkbox"][data-state="unchecked"]:not(:disabled) {
-  border-color: var(--color-text-muted);
-}
-
 /* A table row being acted on (the review queue's current conflict) carries aria-current on
    its key; Table's active tint alone is 1.03:1, so a bar marks it. */
 tbody tr:has([aria-current="true"]) > td:first-child {
@@ -1608,15 +1602,14 @@ tr:hover .recall-bar > span {
   justify-content: flex-end;
 }
 
-/* Repositories: a row's one action is Click UI's SplitButton. On a phone it takes the row's
-   width under the summary line; under a coarse pointer its menu half (a div that
-   ui/SplitButton makes a button) is a 44 px target like every other button. */
 /* Click UI's split button clips its halves (overflow: hidden), so its focus ring is drawn
    inside each half; on any split button, wherever it sits (ui/SplitButton). */
 .split-button button:focus-visible,
 .split-button [data-testid="split-button-dropdown"]:focus-visible {
   outline-offset: -2px;
 }
+/* Repositories: a row's one action is Click UI's SplitButton. On a phone it takes the row's
+   width under the summary line. */
 @media (max-width: 639px) {
   .repo-action {
     display: block;
@@ -1629,6 +1622,8 @@ tr:hover .recall-bar > span {
     flex: 1;
   }
 }
+/* Under a coarse pointer the split button's menu half (a div that ui/SplitButton makes a
+   button) is a 44 px target like every other button. */
 @media (pointer: coarse) {
   .repo-action [data-testid="split-button-dropdown"] {
     display: grid;

@@ -16,13 +16,12 @@ export interface RowNavOptions {
 }
 
 /**
- * Keyboard for a list of `ui/ListRow`s whose open buttons carry `data-row-open`: Loom's
- * roving tab stop (the WAI-ARIA listbox pattern; Click UI's Table has no row keys), as the
- * Tasks list moves. The list is one tab stop (the row last focused,
- * else the first), `↑/↓` and `j/k` move the focus from row to row, `Home/End` jump to the
- * ends, `Enter` opens the focused row (its button's own click), and `Space` toggles the
- * row's checkbox instead of opening it. Escape is the caller's (it closes its drawer, or
- * clears a selection). Returns the ref for the list's container.
+ * Keyboard for a list of `ui/ListRow`s whose open buttons carry `data-row-open`: a roving
+ * tabindex (Click UI's Table has no row keys), as the Tasks list moves. The list is one tab
+ * stop (the row last focused, else the first), `↑/↓` and `j/k` move the focus from row to
+ * row, `Home/End` jump to the ends, `Enter` opens the focused row (its button's own click),
+ * and `Space` toggles the row's checkbox instead of opening it. Escape is the caller's (it
+ * closes its drawer, or clears a selection). Returns the ref for the list's container.
  *
  * `j/k` work from anywhere on the page that is not a field and honour the single-key
  * switch (`lib/shortcuts.ts`, through `useKeyboard`); the arrows and `Home/End` move only
@@ -100,9 +99,7 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
   const bindings = useMemo(() => {
     const here = (): HTMLElement | null => {
       const el = document.activeElement;
-      return el && list?.contains(el)
-        ? (el.closest<HTMLElement>(ROW)?.querySelector<HTMLElement>(OPEN) ?? null)
-        : null;
+      return el && list?.contains(el) ? (el.closest<HTMLElement>(ROW)?.querySelector<HTMLElement>(OPEN) ?? null) : null;
     };
     const onList = () => {
       const el = document.activeElement;

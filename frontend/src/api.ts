@@ -750,8 +750,6 @@ export async function listConflicts(
   return post("/v1/conflicts.list", body, opts.signal);
 }
 
-/** The live conflicted count for a badge: the same operation with `count_only`, answered
- *  from a 60 s server cache with no value column read. */
 /** The namespace's conflicted count. `fresh` counts now instead of answering from the
  *  replica's minute-long cache (the review queue; the sidebar badge takes the cache). */
 export async function countConflicts(
