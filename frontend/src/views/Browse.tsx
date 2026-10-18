@@ -28,11 +28,9 @@ import { useRowNav } from "../lib/useRowNav";
 import { useFold } from "../lib/folds";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { IconButton } from "../components/IconButton";
-import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { humanizeError, isSystemKind } from "../lib/format";
+import { humanizeError, isSystemKind, sentenceCase } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -345,9 +343,13 @@ export function Browse() {
 
         {/* SECTION 2: public namespaces in the org to join. */}
         <section aria-labelledby="spaces-public-heading">
-          <h2 id="spaces-public-heading" className="mb-2 text-sm font-semibold">
-            Public namespaces in <span className="font-mono">{identity.org}</span>
-          </h2>
+          <SectionHeading
+            level={2}
+            id="spaces-public-heading"
+            label="Public namespaces"
+            caption={`in ${identity.org}`}
+            className="mb-2"
+          />
 
           {error !== null && (
             <ListState kind="error" things="namespaces" error={error} onRetry={() => setReads((n) => n + 1)} />
@@ -364,15 +366,16 @@ export function Browse() {
           )}
 
           {rows !== null && filtered.length === 0 && !query && (
-            <EmptyState
+            <ListState
+              kind="empty"
               icon="globe"
               title="No public namespaces yet"
-              description="Nobody in your organisation has opened a shared space yet. Until someone does, your own private namespace is the only one you can use."
+              description="Nobody in your org has opened a shared space yet. Until someone does, your own private namespace is the only one you can use."
               details={
                 <>
-                  An admin creates a shared space with <code className="font-mono text-xs">namespace.register</code> and{" "}
-                  <code className="font-mono text-xs">visibility=public</code>; it then appears here for everyone in the
-                  org to join.
+                  An admin creates a shared space with <code className="code-inline text-xs">namespace.register</code>{" "}
+                  and <code className="code-inline text-xs">visibility=public</code>; it then appears here for everyone
+                  in the org to join.
                 </>
               }
             />
@@ -413,9 +416,9 @@ export function Browse() {
                     onOpen={open}
                     action={
                       isPending ? (
-                        <Tip content="Withdraw the pending request">
+                        <Tip content="Your request is waiting for an admin">
                           <Button type="secondary" htmlType="button" iconLeft="clock" onClick={open}>
-                            Pending
+                            Withdraw request
                           </Button>
                         </Tip>
                       ) : isAdmin ? (
@@ -530,8 +533,9 @@ function SpaceRow({
             >
               {namespace}
             </button>
-            <Badge text={visibility} state={visibility === "public" ? "success" : "neutral"} size="sm" />
-            {kind && <Badge text={kind} state="neutral" size="sm" />}
+            {/* Visibility is not a status: neutral either way. */}
+            <Badge text={sentenceCase(visibility)} state="neutral" size="sm" />
+            {kind && <Badge text={sentenceCase(kind)} state="neutral" size="sm" />}
           </div>
           {description && <p className="mt-0.5 truncate text-xs text-text-muted">{description}</p>}
         </div>
@@ -599,7 +603,7 @@ function ManagedKindSection({
                     <div className="text-sm text-text truncate">{r.description || r.namespace}</div>
                     {r.description && <div className="text-xs font-mono text-text-muted truncate">{r.namespace}</div>}
                   </div>
-                  <Badge text={r.visibility} state={r.visibility === "public" ? "success" : "neutral"} size="sm" />
+                  <Badge text={sentenceCase(r.visibility)} state="neutral" size="sm" />
                   <Tip content={`Invite people to ${r.namespace}`}>
                     <Button
                       type="secondary"
@@ -612,11 +616,9 @@ function ManagedKindSection({
                       Invite
                     </Button>
                   </Tip>
-                  <IconButton
-                    icon="gear"
-                    label={`Namespace settings for ${r.namespace}`}
-                    onClick={() => onSettings(r.namespace)}
-                    className="shrink-0"
+                  <RowMenu
+                    name={r.namespace}
+                    items={[{ label: "Settings", icon: "gear", onSelect: () => onSettings(r.namespace) }]}
                   />
                 </div>
               </ListRow>

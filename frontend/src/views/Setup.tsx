@@ -350,7 +350,7 @@ function MemoryTab() {
           </h2>
           <p className="text-xs text-text-muted mt-0.5">
             Turn an AGENTS.md, CLAUDE.md or rules file into memories — one per{" "}
-            <code className="font-mono text-xs">##</code> section.
+            <code className="code-inline text-xs">##</code> section.
           </p>
         </div>
         <Button type="secondary" htmlType="button" iconLeft="upload" onClick={() => setImporting(true)}>
@@ -1296,10 +1296,9 @@ function TokensSection({
               </pre>
               <CopyButton text={botSnippet(mintedToken)} label="Copy code" className={COPY_BELOW_CAPTION} />
               <div className="mt-1.5 text-xs text-text-muted leading-relaxed">
-                Install with{" "}
-                <code className="font-mono text-xs bg-surface-2 px-1 rounded">pip install clickhouse-loom</code>. The
-                same token also works on raw HTTP:{" "}
-                <code className="font-mono text-xs bg-surface-2 px-1 rounded">
+                Install with <code className="code-inline text-xs">pip install clickhouse-loom</code>. The same token
+                also works on raw HTTP:{" "}
+                <code className="code-inline text-xs">
                   curl -H "Authorization: Bearer $LOOM_API_KEY" {mintedToken.baseUrl}/v1/memory.search
                 </code>
               </div>
@@ -1386,7 +1385,7 @@ function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace
     <div className="mt-2 rounded-lg border border-border bg-surface-2 p-3">
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="text-xs text-text-muted leading-relaxed">
-          Export the minted token as <code className="font-mono">LOOM_API_KEY</code>; the namespace follows the first
+          Export the minted token as <code className="code-inline">LOOM_API_KEY</code>; the namespace follows the first
           one you tick.
         </div>
         <CopyButton
@@ -1399,9 +1398,8 @@ function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace
         {code}
       </pre>
       <div className="mt-2 text-xs text-text-muted leading-relaxed">
-        Install with <code className="font-mono text-xs bg-surface px-1 rounded">pip install clickhouse-loom</code>.
-        Same JWT also works on raw HTTP — set{" "}
-        <code className="font-mono text-xs bg-surface px-1 rounded">Authorization: Bearer $LOOM_API_KEY</code>.
+        Install with <code className="code-inline text-xs">pip install clickhouse-loom</code>. Same JWT also works on
+        raw HTTP — set <code className="code-inline text-xs">Authorization: Bearer $LOOM_API_KEY</code>.
       </div>
     </div>
   );
@@ -1514,9 +1512,9 @@ function ImportCuratedPanel() {
     <div className="space-y-3">
       <div className="text-xs text-text-muted leading-relaxed">
         Paste a doc that represents reviewed knowledge — your AGENTS.md, CLAUDE.md, .cursor/rules, or any
-        operating-principles doc. Each <code className="font-mono text-xs">##</code> section becomes one memory in{" "}
-        <code className="font-mono text-xs">{identity.namespace}</code>. The import bypasses the review queue but still
-        respects pinned memories: if a section contradicts a pinned memory it's rejected per-row.
+        operating-principles doc. Each <code className="code-inline text-xs">##</code> section becomes one memory in{" "}
+        <code className="code-inline text-xs">{identity.namespace}</code>. The import bypasses the review queue but
+        still respects pinned memories: if a section contradicts a pinned memory it's rejected per-row.
       </div>
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <TextField

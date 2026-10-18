@@ -65,7 +65,7 @@ describe("Browse: code indexes you manage", () => {
       repo.compareDocumentPosition(within(body).getByText("code-ch")) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(within(body).getByRole("button", { name: "Invite people to code-ch" })).toBeInTheDocument();
-    expect(within(body).getByRole("button", { name: "Namespace settings for code-ch" })).toBeInTheDocument();
+    expect(within(body).getByRole("button", { name: "Actions for code-ch" })).toBeInTheDocument();
     fireEvent.click(within(body).getByRole("button", { name: "Manage indexing in Repositories" }));
     expect(useStore.getState().view).toBe("code");
     // No tracker record managed: no tracker section.

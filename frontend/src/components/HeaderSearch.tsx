@@ -22,7 +22,7 @@ import {
 import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
-import { displayAgent } from "../lib/format";
+import { displayAgent, sentenceCase } from "../lib/format";
 import { Kbd, Loading, TagList } from "./ui";
 import { toast } from "./Toast";
 import { paletteShortcut } from "../lib/platform";
@@ -361,6 +361,9 @@ export function HeaderSearch({
   // A query highlights its top hit, so Enter opens it; the empty box highlights nothing
   // until ↓ moves into it. Each open starts over.
   const [activeIdx, setActiveIdx] = useState(-1);
+  // Whether the pointer made the active option: Click UI's menus tint a hovered item and
+  // ring only the item the keys moved to.
+  const [byPointer, setByPointer] = useState(false);
   useEffect(() => {
     if (open) setActiveIdx(q ? 0 : -1);
   }, [q, open]);
@@ -397,9 +400,11 @@ export function HeaderSearch({
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
+      setByPointer(false);
       setActiveIdx((i) => Math.min(activations.length - 1, i + 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
+      setByPointer(false);
       setActiveIdx((i) => Math.max(0, i - 1));
     } else if (e.key === "Enter") {
       e.preventDefault();
@@ -423,8 +428,11 @@ export function HeaderSearch({
     role: "option",
     "aria-selected": idx === activeIdx,
     tabIndex: -1,
-    onMouseEnter: () => setActiveIdx(idx),
-    className: rowClass(idx === activeIdx),
+    onMouseEnter: () => {
+      setByPointer(true);
+      setActiveIdx(idx);
+    },
+    className: rowClass(idx === activeIdx, !byPointer),
   });
 
   // Radix counts the anchor as outside the panel, so the focus that opens the panel (or a
@@ -500,7 +508,8 @@ export function HeaderSearch({
               {[
                 matchedNamespaces.length > 0 &&
                   `${matchedNamespaces.length} namespace${matchedNamespaces.length === 1 ? "" : "s"}`,
-                matchedProfile.length > 0 && `${matchedProfile.length} profile`,
+                matchedProfile.length > 0 &&
+                  `${matchedProfile.length} profile section${matchedProfile.length === 1 ? "" : "s"}`,
                 matchedDocuments.length > 0 &&
                   `${matchedDocuments.length} document${matchedDocuments.length === 1 ? "" : "s"}`,
               ]
@@ -523,7 +532,7 @@ export function HeaderSearch({
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <TypeIcon kind="memory" />
-                      <span className="font-mono text-xs truncate">{e.memory_key}</span>
+                      <span className="font-mono text-sm truncate">{e.memory_key}</span>
                     </div>
                   </button>
                 ))}
@@ -541,7 +550,7 @@ export function HeaderSearch({
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <TypeIcon kind="profile" />
-                      <span className="font-mono text-xs truncate">{s.label}</span>
+                      <span className="font-mono text-sm truncate">{s.label}</span>
                     </div>
                   </button>
                 ))}
@@ -557,12 +566,8 @@ export function HeaderSearch({
                     <button type="button" key={r.namespace} {...optionProps(idx)} onClick={() => switchNs(r.namespace)}>
                       <div className="flex items-center gap-2">
                         <TypeIcon kind="namespace" />
-                        <span className="font-mono text-xs">{r.namespace}</span>
-                        <Badge
-                          text={r.visibility}
-                          size="sm"
-                          state={r.visibility === "public" ? "success" : "default"}
-                        />
+                        <span className="font-mono text-sm">{r.namespace}</span>
+                        <Badge text={sentenceCase(r.visibility)} size="sm" state="neutral" />
                         {!r.joined && <span className="text-xs text-text-muted">not joined</span>}
                       </div>
                       {r.description && (
@@ -587,7 +592,7 @@ export function HeaderSearch({
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeIcon kind="profile" />
-                        <span className="font-mono text-xs truncate">{s.label}</span>
+                        <span className="font-mono text-sm truncate">{s.label}</span>
                       </div>
                       <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">{truncateForRow(s.value)}</div>
                     </button>
@@ -609,7 +614,7 @@ export function HeaderSearch({
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeIcon kind="memory" />
-                        <span className="font-mono text-xs truncate">{e.memory_key}</span>
+                        <span className="font-mono text-sm truncate">{e.memory_key}</span>
                         <span className="text-xs text-text-muted shrink-0 ml-auto">{e.memory_type}</span>
                       </div>
                       {/* Rows are per key and agent: the agent tells two of one key apart. */}
@@ -632,7 +637,7 @@ export function HeaderSearch({
                     <button type="button" key={d.source_uri} {...optionProps(idx)} onClick={() => openDocument(d)}>
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeIcon kind="document" />
-                        <span className={`truncate ${d.title ? "text-sm" : "font-mono text-xs"}`}>{label}</span>
+                        <span className={`truncate text-sm ${d.title ? "" : "font-mono"}`}>{label}</span>
                         {/* At most three, so no "+N" with a tooltip sits inside the option. */}
                         <TagList tags={(d.tags || []).slice(0, 3)} className="shrink-0" />
                       </div>
@@ -765,10 +770,12 @@ function MoreLink({
 /** A result row bleeds into the popover's padding so its hover fill spans the width. */
 const ROW_BLEED = "block text-left -mx-2 w-[calc(100%+1rem)] px-2 rounded-sm cursor-pointer";
 
-// Focus stays in the field (aria-activedescendant), so the active option's ring is the
-// only focus indicator: Click UI's outline blue, inset, over the menu tint.
-function rowClass(isActive: boolean): string {
-  return `${ROW_BLEED} py-2 no-underline hover:no-underline text-text ${isActive ? "bg-surface-2 ring-2 ring-inset ring-focus" : "hover:bg-surface-2"}`;
+// Focus stays in the field (aria-activedescendant), so the ring on the option the keys moved
+// to is the only focus indicator: Click UI's outline blue, inset, over the menu tint. An
+// option the pointer is on takes the tint alone.
+function rowClass(isActive: boolean, byKeys: boolean): string {
+  const active = byKeys ? "bg-surface-2 ring-2 ring-inset ring-focus" : "bg-surface-2";
+  return `${ROW_BLEED} py-2 no-underline hover:no-underline text-text ${isActive ? active : "hover:bg-surface-2"}`;
 }
 
 /** The query syntax, under the empty box's options. */
@@ -778,21 +785,19 @@ function SyntaxHelp() {
       <div className="section-label pt-2 pb-1 border-t border-border mt-2">Syntax</div>
       <div className="pb-1 space-y-1 text-xs text-text-muted">
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">coffee</code>
+          <code className="code-inline">coffee</code>
           <span>match across profile, memory, library</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">tag:work</code>
+          <code className="code-inline">tag:work</code>
           <span>memories + library tagged work (partial OK)</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">namespace:qa</code>
+          <code className="code-inline">namespace:qa</code>
           <span>jump to a namespace</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">
-            type:profile|memory|doc
-          </code>
+          <code className="code-inline">type:profile|memory|doc</code>
           <span>constrain to one content type</span>
         </div>
       </div>
@@ -811,8 +816,8 @@ function NoResults({ q }: { q: string }) {
         No matches for <span className="font-mono text-text">{q}</span>
       </div>
       <div className="text-xs text-text-muted mt-1.5">
-        Try <code className="font-mono">tag:</code>, <code className="font-mono">namespace:</code>, or{" "}
-        <code className="font-mono">type:</code>.
+        Try <code className="code-inline">tag:</code>, <code className="code-inline">namespace:</code>, or{" "}
+        <code className="code-inline">type:</code>.
       </div>
     </div>
   );

@@ -187,7 +187,7 @@ export function GettingStarted({
             {spaceName ? (
               <>
                 {" "}
-                — <code className="font-mono text-xs bg-surface-2 px-1 rounded-sm">{spaceName}</code>
+                — <code className="code-inline text-xs">{spaceName}</code>
               </>
             ) : null}
             . Four steps show the whole loop; about five minutes.
@@ -326,7 +326,8 @@ function ConnectLine({ mint }: { mint: { token: string; mcpUrl: string } }) {
         </Tabs.Content>
         <Tabs.Content value="cursor" className="mt-2">
           <p className="text-xs text-text-muted mb-1">
-            Paste into Cursor's MCP settings (<code className="font-mono">.cursor/mcp.json</code>), then restart Cursor:
+            Paste into Cursor's MCP settings (<code className="code-inline">.cursor/mcp.json</code>), then restart
+            Cursor:
           </p>
           <CopyBlock text={JSON.stringify(cursor.block, null, 2)} label="Copy config" />
         </Tabs.Content>

@@ -251,8 +251,8 @@ export function Users() {
 
           <div className="mt-3 text-xs text-text-muted">
             To promote someone to platform admin, add their email to{" "}
-            <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">LOOM_PLATFORM_ADMINS</code> in{" "}
-            <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">.env</code> and have them re-login.
+            <code className="code-inline text-xs">LOOM_PLATFORM_ADMINS</code> in{" "}
+            <code className="code-inline text-xs">.env</code> and have them re-login.
           </div>
         </div>
       )}

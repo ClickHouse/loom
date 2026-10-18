@@ -163,9 +163,9 @@ export function Sharing() {
         <p className="mt-2 text-xs text-text-muted leading-relaxed">
           Totals span the {totals.namespaces} namespace{totals.namespaces === 1 ? "" : "s"} you hold a grant on. A write
           is any operation that puts knowledge into a namespace — a memory, a captured observation, a seeded
-          conversation, a typed record. A recall is a <code className="font-mono">memory.search</code> or a code read. A
-          cross-namespace recall is a search that fanned out across your own namespaces (
-          <code className="font-mono">namespace_scope=all_mine</code>), not only the one it was addressed to.
+          conversation, a typed record. A recall is a <code className="code-inline">memory.search</code> or a code read.
+          A cross-namespace recall is a search that fanned out across your own namespaces (
+          <code className="code-inline">namespace_scope=all_mine</code>), not only the one it was addressed to.
         </p>
       </section>
 

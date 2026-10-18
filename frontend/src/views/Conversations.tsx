@@ -23,7 +23,7 @@ import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { toast } from "../components/Toast";
 import { AgentBadge } from "../components/AgentBadge";
-import { displayAgent, truncate, humanizeError } from "../lib/format";
+import { displayAgent, truncate, humanizeError, sentenceCase } from "../lib/format";
 import { useAbortableEffect, useKeyboard } from "../lib/hooks";
 import { useRowNav } from "../lib/useRowNav";
 import { IconButton } from "../components/IconButton";
@@ -374,7 +374,8 @@ export function Conversations() {
     if (!threads || threads.length === 0) return null;
     return (
       <div className="space-y-2">
-        <div id="threads-list" tabIndex={-1} className="outline-none">
+        {/* A page change lands here; its ring shows where focus went. */}
+        <div id="threads-list" tabIndex={-1}>
           <SectionHeading level={2} label={label} caption="active in the last year" />
         </div>
         <div ref={threadsNav} className="space-y-2">
@@ -391,7 +392,7 @@ export function Conversations() {
                   {/* Line 1: the thread; right, when it was last active. */}
                   <span className="flex items-baseline gap-3">
                     <span
-                      className={`min-w-0 flex-1 truncate text-sm font-medium ${title ? "text-text" : "text-text-muted"}`}
+                      className={`min-w-0 flex-1 truncate text-sm font-semibold ${title ? "text-text" : "text-text-muted"}`}
                     >
                       {title || UNTITLED_THREAD}
                     </span>
@@ -404,7 +405,7 @@ export function Conversations() {
                   <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
                     <span className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-0">
                       <span className="inline-flex shrink-0">
-                        <Badge text={t.last_role} state="neutral" size="sm" />
+                        <Badge text={sentenceCase(t.last_role)} state="neutral" size="sm" />
                       </span>{" "}
                       <span className="min-w-0 flex-1 truncate">{truncate(t.last_content_excerpt, 140)}</span>
                     </span>
@@ -556,8 +557,8 @@ export function Conversations() {
           description="Once an AI agent connected to this namespace starts saving its chats, each thread shows up here."
           details={
             <>
-              The agent calls <code className="font-mono text-xs">conversation.append</code> once per chat turn (the MCP
-              tool description nudges it to).
+              The agent calls <code className="code-inline text-xs">conversation.append</code> once per chat turn (the
+              MCP tool description nudges it to).
             </>
           }
         />
@@ -604,7 +605,7 @@ export function Conversations() {
               >
                 <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span
-                    className={`min-w-0 flex-1 truncate text-sm font-medium ${g.title ? "text-text" : "text-text-muted"}`}
+                    className={`min-w-0 flex-1 truncate text-sm font-semibold ${g.title ? "text-text" : "text-text-muted"}`}
                   >
                     {g.title || UNTITLED_THREAD}
                   </span>
@@ -628,10 +629,11 @@ export function Conversations() {
                         knownTitle: g.title || UNTITLED_THREAD,
                       })
                     }
-                    className="relative z-[1] -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-xs text-text-muted hover:bg-surface-2"
+                    // The row's own hover is this tint already: a matching turn darkens its text.
+                    className="relative z-[1] -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-xs text-text-muted hover:text-text"
                   >
                     <span className="inline-flex shrink-0">
-                      <Badge text={h.role} state="neutral" size="sm" />
+                      <Badge text={sentenceCase(h.role)} state="neutral" size="sm" />
                     </span>
                     {/* A space for the line's name ("user Are refunds…"); the flex gap draws it. */}{" "}
                     <span className="min-w-0 flex-1 truncate">

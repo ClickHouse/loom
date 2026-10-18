@@ -107,7 +107,7 @@ describe("Spaces: the rows", () => {
     const team = within(managed).getByText("team");
     expect(team).toHaveClass("font-mono");
     const r = row("team");
-    expect(within(r).getByText("private")).toBeInTheDocument();
+    expect(within(r).getByText("Private")).toBeInTheDocument();
     expect(within(r).getByText("The platform team")).toBeInTheDocument();
     await user.click(within(r).getByRole("button", { name: "Invite people to team" }));
     expect(screen.getByRole("dialog", { name: "Members of team" })).toBeInTheDocument();
@@ -127,7 +127,7 @@ describe("Spaces: the rows", () => {
     render(<Browse />);
     await screen.findAllByText("alpha");
     const alpha = row("alpha");
-    expect(within(alpha).getByText("public")).toBeInTheDocument();
+    expect(within(alpha).getByText("Public")).toBeInTheDocument();
     expect(within(alpha).getByText("1 member")).toBeInTheDocument();
     expect(within(alpha).getByText("Support team runbooks")).toBeInTheDocument();
     expect(within(alpha).getByRole("button", { name: "Join" })).toBeInTheDocument();

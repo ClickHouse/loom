@@ -122,6 +122,11 @@ export function formatValue(v: unknown): string {
   }
 }
 
+/** A wire value shown as a label, in sentence case ("assistant" → "Assistant"). */
+export function sentenceCase(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
 export function truncate(s: string, max: number): string {
   if (!s || s.length <= max) return s;
   return s.slice(0, max - 1).trimEnd() + "…";

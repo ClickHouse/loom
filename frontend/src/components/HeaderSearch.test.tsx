@@ -105,6 +105,23 @@ describe("HeaderSearch", () => {
     expect(option).not.toHaveAttribute("href");
   });
 
+  it("rings the option the keys move to, and only tints the one the pointer is on", async () => {
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    const input = screen.getByRole("combobox", { name: "Search Loom" });
+    await user.click(input);
+    await user.type(input, "coffee");
+    const best = await screen.findByRole("group", { name: "Best matches" });
+    const [first, second] = within(best).getAllByRole("option");
+    await user.hover(second);
+    expect(second).toHaveAttribute("aria-selected", "true");
+    expect(second.className).not.toMatch(/ring-2/);
+    await user.keyboard("{ArrowUp}");
+    const active = screen.getAllByRole("option").find((o) => o.getAttribute("aria-selected") === "true");
+    expect(active?.className).toMatch(/ring-2/);
+    expect(first).toBeInTheDocument();
+  });
+
   it("names each best match's agent, so two agents' rows of one key tell apart", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);

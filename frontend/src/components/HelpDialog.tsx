@@ -130,7 +130,7 @@ function ShortcutGroup({ group }: { group: Group }) {
           <Fragment key={`${r.keys}-${r.label}`}>
             <dt className="flex flex-wrap items-center gap-1">
               {r.syntax ? (
-                <code className="font-mono text-xs">{r.keys}</code>
+                <code className="code-inline text-xs">{r.keys}</code>
               ) : r.cap ? (
                 <Kbd>{r.keys}</Kbd>
               ) : (

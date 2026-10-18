@@ -709,7 +709,7 @@ export function Documents() {
                         <span className="flex min-w-0 max-w-full items-center gap-2">
                           <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
                           <span
-                            className={`min-w-0 truncate text-text ${r.title ? "text-sm font-medium" : "font-mono text-xs"}`}
+                            className={`min-w-0 truncate text-text ${r.title ? "text-sm font-semibold" : "font-mono text-xs"}`}
                           >
                             {name}
                           </span>

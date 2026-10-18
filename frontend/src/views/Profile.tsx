@@ -558,9 +558,8 @@ function ReachSection() {
           <div className="font-medium text-xs text-text-muted mb-1">Claude Desktop · Cursor · any MCP client</div>
           <div className="mb-1">Delivered when the client connects, as Loom&apos;s session instructions.</div>
           <div className="text-xs text-text-muted leading-relaxed">
-            If a client ignores server instructions, type{" "}
-            <code className="font-mono bg-accent-soft text-accent rounded px-1 py-0.5">use loom</code> once at the start
-            of the conversation; it re-delivers the same text.
+            If a client ignores server instructions, type <code className="code-inline">use loom</code> once at the
+            start of the conversation; it re-delivers the same text.
           </div>
         </div>
         <details className="group">

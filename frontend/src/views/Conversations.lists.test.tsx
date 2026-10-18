@@ -149,7 +149,7 @@ describe("Conversations list", () => {
     render(<Conversations />);
     await screen.findByText("Payments API 5xx spike");
     await search("refund");
-    await userEvent.click(await screen.findByRole("button", { name: /^user Are refunds still failing\?$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /^User Are refunds still failing\?$/ }));
     // Named as the row names it until the detail lands; an untitled one then by its first
     // user turn.
     const dialog = await screen.findByRole("dialog");

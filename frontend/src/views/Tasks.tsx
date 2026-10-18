@@ -771,9 +771,9 @@ export function Tasks() {
           action={mayAdmin ? { label: "Register inbox", onClick: () => setSettings("register") } : undefined}
           details={
             <>
-              Admins call <code className="font-mono">inbox.register</code> with the owner agent, the posters allowed to
-              write blind into it and the disclosure levels it accepts. Agents then{" "}
-              <code className="font-mono">task.pull</code> with a lease; people work the board here.
+              Admins call <code className="code-inline">inbox.register</code> with the owner agent, the posters allowed
+              to write blind into it and the disclosure levels it accepts. Agents then{" "}
+              <code className="code-inline">task.pull</code> with a lease; people work the board here.
             </>
           }
         />

@@ -1341,6 +1341,19 @@ textarea[aria-invalid="true"]:focus-visible {
   mask-image: linear-gradient(to bottom, transparent, black 24px, black calc(100% - 24px), transparent);
 }
 
+/* Inline code in copy (an op name, a setting, a query example): Click UI's CodeInline tokens,
+   at the size of the text around it. 0.13 exports no inline code component. */
+@layer components {
+  .code-inline {
+    padding: 0 var(--click-codeInline-space-x);
+    border: var(--click-codeInline-stroke) solid var(--click-codeInline-color-stroke-default);
+    border-radius: var(--click-codeInline-radii-all);
+    background: var(--click-codeInline-color-background-default);
+    color: var(--click-codeInline-color-text-default);
+    font-family: var(--font-mono);
+  }
+}
+
 /* Kbd (ui/Kbd.tsx): a key or a short chord on Click UI's tokens: Inter 12 px/500, muted
    text on the muted surface, the default stroke, inline code's radius, 20 px high. In the
    components layer, so a utility the caller passes (`hidden`, a position) still wins. */

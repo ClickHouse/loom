@@ -257,7 +257,7 @@ export function Policies() {
       <p className="text-sm text-text-muted mb-5 max-w-[80ch]">
         Rules over an agent's own recent history: forbid or require an action based on what the same caller did in the
         last minutes or hours. {meta && <span className="text-text">{meta.blurb}</span>} The mode is the server's{" "}
-        <code className="font-mono text-xs">LOOM_POLICY_MODE</code>; it cannot be changed here.
+        <code className="code-inline text-xs">LOOM_POLICY_MODE</code>; it cannot be changed here.
       </p>
 
       <div className="space-y-4">

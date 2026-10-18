@@ -12,6 +12,7 @@ import {
   relativeTime,
   timeOfDay,
   truncate,
+  sentenceCase,
 } from "./format";
 
 describe("displaySubject", () => {
@@ -209,5 +210,13 @@ describe("dayLabel", () => {
     expect(dayLabel(new Date(2026, 9, 16, 9).toISOString())).toBe("Yesterday · Oct 16");
     expect(dayLabel(new Date(2026, 9, 15, 9).toISOString())).toBe("Oct 15");
     expect(dayLabel(new Date(2025, 11, 31, 9).toISOString())).toBe("Dec 31, 2025");
+  });
+});
+
+describe("sentenceCase", () => {
+  it("capitalises the first letter of a wire value and keeps the rest", () => {
+    expect(sentenceCase("assistant")).toBe("Assistant");
+    expect(sentenceCase("public")).toBe("Public");
+    expect(sentenceCase("")).toBe("");
   });
 });

@@ -362,7 +362,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     fireEvent.change(box, { target: { value: "ship" } });
     fireEvent.keyDown(box, { key: "Enter" });
     // The hit line, not the row's title (an untitled thread is named by what the user said).
-    fireEvent.click(await screen.findByRole("button", { name: /^user ship the fix$/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^User ship the fix$/ }));
     await screen.findAllByText("plan the fix");
     const ringed = [...document.querySelectorAll("[data-highlighted]")].map((el) => el.textContent);
     expect(ringed).toHaveLength(1);
