@@ -59,10 +59,9 @@ _IDENT_JOIN = (
 # `memory_key IN` is a secondary-key filter inside the namespace. Every check that reads
 # loom.memory or loom.memory_embeddings carries it.
 _KEYS = "(empty({keys:Array(String)}) OR memory_key IN {keys:Array(String)})"
-# A high row's text is readable by key only: no check quotes or matches it.
 _LIVE = (
     "FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
-    f"AND tombstoned_at IS NULL AND sensitivity != 'high' AND {_KEYS}"
+    f"AND tombstoned_at IS NULL AND {_KEYS}"
 )
 
 # Time cues a fact's text can carry without the extractor having resolved an
@@ -153,6 +152,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         SELECT count() OVER () AS total, a.memory_key AS memory_key,
                dateDiff('second', a.created_at, now()) AS age_seconds
         FROM (SELECT {_IDENT}, created_at {_LIVE}
+              -- a high row is never embedded, by design
+              AND sensitivity != 'high'
               AND created_at < now() - INTERVAL {{grace:UInt32}} SECOND) AS a
         LEFT ANTI JOIN (SELECT {_IDENT} FROM loom.memory_embeddings FINAL
                         WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -274,6 +275,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         SELECT count() OVER () AS total, memory_key, toString(valid_at) AS said_on,
                substring(JSONExtractString(value), 1, 160) AS text
         {_LIVE} AND status = 'active' AND temporal_anchor IS NULL
+          -- a high row's text is readable by key only: never quoted or matched here
+          AND sensitivity != 'high'
           AND memory_type IN ('semantic', 'episodic', 'preference')
           AND match(lower(JSONExtractString(value)), {{cue:String}})
         ORDER BY valid_at DESC, memory_key
@@ -292,6 +295,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         f"""
         SELECT count() OVER () AS total, memory_key, agent, evidence
         {_LIVE} AND status = 'active' AND grounding = 'unresolved'
+          -- the evidence quote is the high row's own text
+          AND sensitivity != 'high'
         ORDER BY created_at DESC, memory_key
         LIMIT {{lim:UInt32}}
         """,

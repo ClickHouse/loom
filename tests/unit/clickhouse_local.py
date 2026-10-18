@@ -47,6 +47,7 @@ def run(setup: list[str], sql: str, params: dict[str, Any] | None = None) -> lis
         [CLICKHOUSE or "clickhouse", "local", "--multiquery", "-q", script + " FORMAT JSONEachRow"],
         capture_output=True,
         text=True,
-        check=True,
-    ).stdout
-    return [json.loads(line) for line in out.splitlines() if line.strip()]
+    )
+    if out.returncode != 0:
+        raise AssertionError(out.stderr.strip()[-2000:])
+    return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]

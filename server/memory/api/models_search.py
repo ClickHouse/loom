@@ -819,7 +819,8 @@ class MemorySearchOutput(BaseModel):
 
 
 class MemoryAggregateInput(_Identity):
-    """Templated SQL aggregation over typed records in loom.memory.
+    """Templated SQL aggregation over typed records in loom.memory. A high row is never
+    counted, grouped or matched: its value is readable by key only.
 
     `agg_func` is whitelisted; field names pass through an identifier
     regex; all values bind as CH params. Hard LIMIT 1000 result rows.

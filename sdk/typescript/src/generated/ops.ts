@@ -1860,6 +1860,7 @@ export interface ConflictRow {
   created_at: string; // date-time
   conflict_with: string[];
   content_sha256?: string;
+  sensitivity?: string;
 }
 
 export interface ConflictsListOutput {
@@ -4941,6 +4942,7 @@ export interface MemoryProposal {
   agent?: string;
   memory_type?: string;
   value_preview?: string;
+  sensitivity?: string;
   tags?: string[];
   created_at?: string;
   graded_passes?: number;

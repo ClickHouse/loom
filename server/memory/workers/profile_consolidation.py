@@ -155,6 +155,8 @@ async def _consolidate_identity(
         FROM loom.memory FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND user_id = {uid:String} AND tombstoned_at IS NULL
+          -- a high row is readable by key only, never folded into the profile
+          AND sensitivity != 'high'
           AND memory_type IN ('preference', 'decision')
           AND status NOT IN ('superseded', 'rejected', 'proposed')  -- proposed: not a fact yet
           AND (valid_to IS NULL OR valid_to > now())

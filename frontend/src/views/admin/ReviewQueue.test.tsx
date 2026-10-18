@@ -80,6 +80,16 @@ describe("ReviewQueue", () => {
     cleanup();
   });
 
+  it("shows a high conflict as sensitive, not as an empty value", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [{ ...conflict("vault"), value: null, sensitivity: "high" }],
+      next_before_version: null,
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    expect(await screen.findByText("Sensitive: open it to read", {}, WAIT)).toBeTruthy();
+  });
+
   it("drops a post-decision reload that lands after a namespace switch", async () => {
     let finishStale: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
     vi.mocked(listConflicts).mockImplementation(async (id) => {

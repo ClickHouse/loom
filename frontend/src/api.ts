@@ -728,6 +728,8 @@ export interface ConflictRow {
   created_at: string;
   conflict_with: string[];
   content_sha256: string;
+  // A high row comes without its value; the inspector reads it by key.
+  sensitivity?: string;
 }
 
 export async function listConflicts(

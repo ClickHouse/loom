@@ -87,6 +87,7 @@ async def handle_conflicts_list(
             created_at=r["created_at"],
             conflict_with=[str(p) for p in r["conflict_with"]],
             content_sha256=_sha256(r["value"]) if r["value"] else "",
+            sensitivity=r["sensitivity"],
         )
         for r in rows
     ]
@@ -162,7 +163,10 @@ async def handle_conflicts_propose_revision(
             )
         )
 
-    target_mem = next((m for m in memories if m.memory_id == input.memory_id), memories[0])
+    target_mem = next((m for m in memories if m.memory_id == input.memory_id), None)
+    if target_mem is None:
+        # The target is high or outside the read scope: not found, whatever its peers are.
+        return ConflictsProposeRevisionOutput(found=False)
     peer_mems = [m for m in memories if m.memory_id != target_mem.memory_id]
     peer_local_ids = [m.local_id for m in peer_mems]
 

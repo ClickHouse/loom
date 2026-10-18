@@ -119,22 +119,33 @@ async def test_auth_disabled_exports_everything(exports) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_export_audits_each_high_row_it_serves(monkeypatch) -> None:
+async def test_the_export_audits_each_high_row_it_serves(exports, monkeypatch) -> None:
     def row(ns: str, key: str, sensitivity: str) -> dict:
-        return {"namespace": ns, "memory_key": key, "version": 1, "sensitivity": sensitivity}
+        return {
+            "namespace": ns,
+            "memory_key": key,
+            "memory_id": f"id-{key}",
+            "version": 1,
+            "sensitivity": sensitivity,
+            "value": "v",
+        }
 
-    async def _rows(*_a, **_k):
-        return [row(STD, "plain", ""), row(STD, "vault", "high"), row(PRIV, "key", "high")]
+    async def _mem(*_a, **_k):
+        rows = [row(STD, "plain", ""), row(STD, "vault", "high"), row(PRIV, "hidden", "high")]
+        return rows, len(rows), False
 
     audited: list[tuple[str, list[str]]] = []
 
     async def _emit_many(event, **kw):
         audited.append((kw["namespace"], [s["memory_key"] for s in kw["subjects"]]))
 
-    monkeypatch.setattr(h.erasure_exports, "export_memory", _rows)
+    monkeypatch.setattr(h, "_export_memory", _mem)
     monkeypatch.setattr(h.audit, "emit_many", _emit_many)
-    rows, count, _ = await h._export_memory(
-        "o", "namespace", STD, include_tombstoned=False, limit=10
+    # An org admin with no grant on the restricted namespace: its rows are not served,
+    # so they are not audited as read either.
+    set_current_auth(_admin("*", role=Role.ORG_ADMIN))
+    out = await h.handle_erasure_export(
+        ErasureExportInput(org=ORG, scope_type="user_id", scope_value="u1", requester="ops@x")
     )
-    assert count == 3
-    assert sorted(audited) == sorted([(PRIV, ["key"]), (STD, ["vault"])])
+    assert [r["memory_key"] for r in out.memory.rows] == ["plain", "vault"]
+    assert audited == [(STD, ["vault"])]

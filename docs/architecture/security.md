@@ -522,7 +522,10 @@ leg returns it. The other reads that could serve its value follow three rules:
   excerpts, `memory.aggregate` (no group key or filter match on a `high` value),
   `profile.render` and the `memory.stack`, context pack and MCP primer built from it,
   `memory.ask`'s bridge hop and stale-fact masks, `conflicts.propose_revision`,
-  `namespace.validate`'s checks, and the existing memories an extraction prompt shows the LLM.
+  `namespace.validate`'s checks that quote a value, a search's duplicate substitution (a
+  `high` canonical is not seated in its duplicate's place), the profile fold, the entity graph
+  (a `high` row projects only the entities its writer declared, never words of its value), and
+  the existing memories an extraction prompt shows the LLM.
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
   `contains` does not search it), `conflicts.list` and `memory.proposals`.
 - Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get`,

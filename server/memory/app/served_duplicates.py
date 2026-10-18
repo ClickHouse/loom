@@ -103,7 +103,8 @@ async def _canonicals(
     import server.memory.store as memory_repo
 
     rows = await memory_repo.canonical_rows_by_ids(org, namespaces, ids, scope=scope)
-    return {(r.namespace, r.canonical_id): r for r in rows}
+    # A high canonical is readable by key only: its duplicate is hidden with no substitute.
+    return {(r.namespace, r.canonical_id): r for r in rows if r.sensitivity != "high"}
 
 
 def _duplicate_only(t: DuplicateStatus | None) -> bool:

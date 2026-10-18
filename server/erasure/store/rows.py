@@ -99,6 +99,7 @@ class MemoryExportRow(TypedDict):
     agent: str
     user_id: str
     session_id: str
+    memory_id: str
     memory_key: str
     memory_type: str
     value: str

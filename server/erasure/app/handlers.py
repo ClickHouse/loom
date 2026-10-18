@@ -97,20 +97,24 @@ async def _export_memory(
     rows = await erasure_exports.export_memory(
         org, scope_type, scope_value, include_tombstoned=include_tombstoned, limit=limit + 1
     )
-    # The export serves high rows on purpose; each one is audited as a key read is.
-    for ns in sorted({r["namespace"] for r in rows[:limit] if r["sensitivity"] == "high"}):
+    return _page(rows, limit)
+
+
+async def _audit_high_rows(org: str, rows: list[dict[str, object]]) -> None:
+    """The export serves high rows on purpose; each one it serves is audited as a key read is."""
+    by_ns: dict[str, list[dict[str, object]]] = {}
+    for r in rows:
+        if r.get("sensitivity") == "high":
+            subject = {"memory_key": r["memory_key"], "memory_id": r["memory_id"]}
+            by_ns.setdefault(str(r["namespace"]), []).append({**subject, "version": r["version"]})
+    for ns, subjects in by_ns.items():
         await audit.emit_many(
             "memory.sensitive_read",
             org=org,
             namespace=ns,
             actor=writer_actor("-"),
-            subjects=[
-                {"memory_key": r["memory_key"], "version": r["version"]}
-                for r in rows[:limit]
-                if r["namespace"] == ns and r["sensitivity"] == "high"
-            ],
+            subjects=subjects,
         )
-    return _page(rows, limit)
 
 
 async def _export_knowledge(
@@ -205,6 +209,7 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         limit=input.section_limit,
     )
     mem_rows, mem_count = _visible(mem_rows, mem_count)
+    await _audit_high_rows(input.org, mem_rows)
     know_rows, know_count = _visible(know_rows, know_count)
     evt_rows, evt_count = _visible(evt_rows, evt_count)
     aud_rows, aud_count = _visible(aud_rows, aud_count)

@@ -7086,6 +7086,7 @@ class ConflictRow(TypedDict, total=False):
     created_at: Required[str]  # date-time as ISO-8601 text
     conflict_with: Required[list[str]]
     content_sha256: NotRequired[str]
+    sensitivity: NotRequired[str]
 
 
 class ConflictsProposeRevisionInput(TypedDict, total=False):
@@ -9349,7 +9350,7 @@ class MemoryAgentsListOutput(TypedDict, total=False):
 
 
 class MemoryAggregateInput(TypedDict, total=False):
-    "Templated SQL aggregation over typed records in loom.memory."
+    "Templated SQL aggregation over typed records in loom.memory. A high row is never"
 
     org: Required[str]
     namespace: Required[str]
@@ -9365,7 +9366,7 @@ class MemoryAggregateInput(TypedDict, total=False):
 
 
 class MemoryAggregateBody(TypedDict, total=False):
-    "Templated SQL aggregation over typed records in loom.memory."
+    "Templated SQL aggregation over typed records in loom.memory. A high row is never"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11663,6 +11664,7 @@ class MemoryProposal(TypedDict, total=False):
     agent: NotRequired[str]
     memory_type: NotRequired[str]
     value_preview: NotRequired[str]
+    sensitivity: NotRequired[str]
     tags: NotRequired[list[str]]
     created_at: NotRequired[str]
     graded_passes: NotRequired[int]

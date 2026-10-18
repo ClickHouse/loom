@@ -43,12 +43,15 @@ class _ConflictRow(ProjectedRow):
     memory_id: str
     memory_key: str
     memory_type: str
+    # The row's value; null for a high row, whose value is read by key (memory.get).
     value: dict[Any, Any] | list[Any] | str | int | float | bool | None
     version: int
     pinned: bool
     created_at: datetime
     conflict_with: list[str]
-    content_sha256: str = ""
+    content_sha256: str = ""  # "" for a high row
+    # Sensitivity tier ('' | low | medium | high); a high row comes without its value.
+    sensitivity: str = ""
 
 
 class ConflictsListOutput(BaseModel):

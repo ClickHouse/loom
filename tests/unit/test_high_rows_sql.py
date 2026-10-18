@@ -146,9 +146,10 @@ def _row(
     sensitivity: str = "",
     kind: str = "semantic",
     peers: str = "[]",
+    user: str = "-",
 ) -> str:
     return (
-        f"('o', 'n', 'a', '-', '-', '{mid}', '{key}', '{kind}', '{value}', '{status}', "
+        f"('o', 'n', 'a', '{user}', '-', '{mid}', '{key}', '{kind}', '{value}', '{status}', "
         f"'{sensitivity}', 1, {peers})"
     )
 
@@ -277,3 +278,81 @@ async def test_namespace_validate_never_quotes_a_high_row() -> None:
         sql, {"org": "o", "ns": "n", "keys": [], "cue": nv._TIME_CUE_RE, "lim": 10}
     )
     assert [r["memory_key"] for r in rows] == ["trip"]
+
+
+@pytest.mark.asyncio
+async def test_a_revision_proposal_for_a_high_or_unseen_target_is_not_found(monkeypatch) -> None:
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.api.models_conflicts import ConflictsProposeRevisionInput
+    from server.memory.app import conflicts_ops
+
+    ch = _memory(
+        _row(_A, "vault", "code 4412", status="conflicted", sensitivity="high", peers=f"['{_B}']"),
+        _row(_B, "note", "plain words", status="conflicted", user="u"),
+        _row(_C, "theirs", "their words", status="conflicted", user="other", peers=f"['{_B}']"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.conflicts._default_client", lambda: ch)
+    high = await conflicts_ops.handle_conflicts_propose_revision(
+        ConflictsProposeRevisionInput(org="o", namespace="n", memory_id=_A)
+    )
+    assert high.found is False  # never a peer presented as the target
+    own_user = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    monkeypatch.setattr(conflicts_ops, "request_scope", lambda: own_user)
+    unseen = await conflicts_ops.handle_conflicts_propose_revision(
+        ConflictsProposeRevisionInput(org="o", namespace="n", memory_id=_C)
+    )
+    assert unseen.found is False  # another user's id is not confirmed to exist
+
+
+@pytest.mark.asyncio
+async def test_namespace_validate_still_resolves_links_to_a_high_row() -> None:
+    from server.identity.app import namespace_validate as nv
+
+    ch = _LocalCH(
+        ddl("memory"),
+        "SET enable_quantized_codec = 1",  # the embeddings table's codec
+        ddl("memory_embeddings"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, memory_type, value, status, sensitivity, version, superseded_by, created_at) "
+        f"VALUES ('o', 'n', 'a', '-', '-', '{_A}', 'old', 'semantic', 'v1', 'superseded', '', 1, "
+        f"'{_B}', now() - 3600), ('o', 'n', 'a', '-', '-', '{_B}', 'new', 'semantic', 'v2', "
+        "'active', 'high', 1, '', now() - 3600)",
+    )
+    params = {"org": "o", "ns": "n", "keys": [], "lim": 10, "grace": 60}
+    _s, _h, dangling = nv._CHECKS["superseded_dangling"]
+    _s, _h, unembedded = nv._CHECKS["unembedded"]
+    assert await ch.query_all(dangling, params) == []  # its high successor is live
+    # a high row is never embedded, so it is not reported as missing its vector
+    assert "new" not in [r["memory_key"] for r in await ch.query_all(unembedded, params)]
+
+
+@pytest.mark.asyncio
+async def test_search_never_seats_a_high_canonical(monkeypatch) -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.app import served_duplicates
+
+    ch = _memory(_row(_A, "door", "code 4412", sensitivity="high"), _row(_B, "tea", "likes tea"))
+    monkeypatch.setattr("server.memory.store.dedup._default_client", lambda: ch)
+    seated = await served_duplicates._canonicals("o", ["n"], [_A, _B], WHOLE_NAMESPACE)
+    assert [row.memory_key for row in seated.values()] == ["tea"]
+
+
+@pytest.mark.asyncio
+async def test_the_profile_fold_never_reads_a_high_row(monkeypatch) -> None:
+    from server.memory.workers import profile_consolidation as fold
+
+    ch = _memory(
+        _row(_A, "user_tea", "likes tea", kind="preference"),
+        _row(_B, "user_health", "a private diagnosis", kind="preference", sensitivity="high"),
+    )
+    read: list[Any] = []
+
+    def _render(rows: list[Any]) -> str:
+        read.extend(rows)
+        return ""  # nothing to fold: the worker stops before the LLM
+
+    monkeypatch.setattr(fold, "render_fold_input", _render)
+    cfg = fold.ProfileConsolidationConfig()
+    await fold._consolidate_identity(ch, {"org": "o", "namespace": "n", "user_id": "-"}, cfg)
+    assert [r["value"] for r in read] == ["likes tea"]
