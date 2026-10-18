@@ -1484,11 +1484,12 @@ button.pane-card:hover {
     border-color: var(--click-checkbox-color-variations-default-stroke-active);
     color: var(--click-checkbox-color-check-active);
   }
-  /* A chip that takes a press, hovered: Click UI's Checkbox hover stroke and the default
-     text colour. */
+  /* A chip that takes a press or follows a link (a memory's entity), hovered: Click UI's
+     Checkbox hover stroke and the default text colour. */
   @media (hover: hover) {
     button.chip-filled:hover,
-    button.chip-outline:hover {
+    button.chip-outline:hover,
+    a.chip-outline:hover {
       border-color: var(--click-checkbox-color-variations-default-stroke-hover);
       color: var(--click-global-color-text-default);
     }
@@ -1498,10 +1499,6 @@ button.pane-card:hover {
     background: var(--click-global-color-background-default);
     border-color: var(--click-badge-opaque-color-stroke-default);
     color: var(--click-badge-opaque-color-text-default);
-  }
-  /* A chip-shaped link (a memory's entity) takes the card's hover. */
-  a.chip-outline:hover {
-    background: var(--click-card-horizontal-default-color-background-hover);
   }
   /* Click UI's disabled field colours, not an opacity, natively disabled or aria-disabled
      (a disabled chip with a tip stays focusable so its reason can be read). */
