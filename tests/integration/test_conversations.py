@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,7 +19,6 @@ async def _admin_post(mint, agent, control_plane_url: str, op: str, body: dict) 
     """POST `op` with an admin token for the agent's org (`mint` is the
     `mint_test_token` fixture): namespace settings and conversation.delete need one,
     and the `agent` fixture is writer-scoped on purpose."""
-    import httpx
 
     tok = mint(org=agent.org, roles=["admin"], subject="test-suite-admin")
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=30.0) as c:
@@ -348,6 +348,27 @@ async def test_a_deleted_thread_leaves_search_but_another_agents_turn_stays(
     )
     assert out["rows_affected"]["loom.conversations"] == 4
     assert out["rows_affected"]["loom.conversation_embeddings"] == 3  # all but the shared
+    # Every row this delete tombstoned carries the time it answered with.
+    stamped = ch_client.query(
+        "SELECT DISTINCT toDateTime(tombstoned_at) FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND msg_id IN {ids:Array(String)} "
+        "UNION DISTINCT SELECT DISTINCT toDateTime(tombstoned_at) FROM loom.conversations "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "AND agent = {agent:String} AND msg_id != {compacted:String}",
+        parameters={
+            "org": agent.org,
+            "ns": agent.namespace,
+            "tid": tid,
+            "agent": agent.agent,
+            "ids": [i for i in ids if i not in (shared, compacted)],
+            "compacted": compacted,
+        },
+    ).result_rows
+    when = datetime.fromisoformat(out["tombstoned_at"].replace("Z", "+00:00"))
+    assert [r[0].replace(tzinfo=None) for r in stamped] == [
+        when.replace(tzinfo=None, microsecond=0)
+    ]
 
     hits = await agent.conversations.search(f"ibex {nonce}", thread_id=tid, agent_id="*")
     assert {h["msg_id"] for h in hits["hits"]} == {shared}, hits["hits"]
@@ -363,18 +384,38 @@ async def test_the_embedding_row_keeps_the_embedded_text_and_a_hit_shows_its_sta
     nonce = uuid.uuid4().hex[:10]
     content = f"gazelle {nonce} " * 200  # about 3,800 characters, all on topic
     mid = uuid.uuid4().hex
-    await agent.conversations.append(tid, mid, "user", content)
+    appended = await agent.conversations.append(tid, mid, "user", content)
 
     stored = ch_client.query(
-        "SELECT agent, thread_id, role, content_excerpt, embedding_dim > 0, tombstoned_at, "
-        "user_id, run_id, embed_attempts, embed_last_error, embedding_model != '' "
+        "SELECT msg_id, agent, thread_id, role, content_excerpt, embedding_dim > 0, "
+        "tombstoned_at, user_id, run_id, embed_attempts, embed_last_error, embed_failed_at, "
+        "embedding_model, toDateTime(ts) "
         "FROM loom.conversation_embeddings FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND msg_id = {mid:String}",
         parameters={"org": agent.org, "ns": agent.namespace, "mid": mid},
     ).result_rows
-    assert [tuple(r) for r in stored] == [
-        (agent.agent, tid, "user", content[:2048], True, None, "-", "-", 1, "", True)
-    ]
+    [row] = [tuple(r) for r in stored]
+    assert row[:12] == (
+        mid,
+        agent.agent,
+        tid,
+        "user",
+        content[:2048],
+        True,
+        None,
+        "-",
+        "-",
+        1,
+        "",
+        None,
+    )
+    # The model is the live embedder's: vector_search reads only rows of that model,
+    # and the search below finds this one.
+    assert row[12]
+    # The row's time is the turn's, as append returned it.
+    assert row[13].replace(tzinfo=None) == datetime.fromisoformat(
+        appended["ts"].replace("Z", "+00:00")
+    ).replace(tzinfo=None, microsecond=0)
 
     hits = await agent.conversations.search(f"gazelle {nonce}", thread_id=tid)
     [hit] = [h for h in hits["hits"] if h["msg_id"] == mid]

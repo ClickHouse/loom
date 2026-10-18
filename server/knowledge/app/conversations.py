@@ -163,11 +163,11 @@ async def handle_conversation_append(
         with traced("ch.insert.conversation", role=input.role):
             await conversation_repo.append(msg_row)
 
-    # Concurrent because they are independent: neither the transcript row nor the vector
-    # depends on the other, and run sequentially the ~66 ms insert would sit in front of a
-    # ~210 ms embed. The embedding row is written only once the message row landed, so a
-    # failed insert leaves no searchable turn; both complete before the response, so
-    # conversation.search keeps its read-your-write guarantee.
+    # The message insert and the embed are independent, so they run concurrently: run
+    # sequentially the ~66 ms insert would sit in front of a ~210 ms embed. The embedding
+    # row is written only once the message row landed, so a failed insert leaves no
+    # searchable turn; both complete before the response, so conversation.search keeps
+    # its read-your-write guarantee.
     _, embedded = await asyncio.gather(
         _insert_message(),
         _embed_turn(
