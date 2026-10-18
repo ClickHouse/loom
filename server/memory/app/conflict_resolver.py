@@ -290,8 +290,12 @@ async def _after_retire(org: str, namespace: str, done: Retired) -> None:
 
     if await queue.under_erasure(org):
         return  # the intent stays; the repair replays it once the erasure is over
-    recorded = await record_auto_supersessions(
-        org=org, namespace=namespace, retired=done.retired, reason=CONFLICT_RESOLVER
+    recorded = await record_auto_supersessions(  # the intent's id: the repair finds it
+        org=org,
+        namespace=namespace,
+        retired=done.retired,
+        reason=CONFLICT_RESOLVER,
+        request_id=done.intent,
     )
     pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in done.retired]
     if await _follow(org, namespace, done.agent, pairs) and recorded:

@@ -1269,7 +1269,7 @@ async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
     """The record's emit fails after the supersede: the follow intent stays active with
     the record's entry, and its replay writes the record the Auto-resolved list reads,
     once. A record of an earlier retirement of the same pair (since undone) is not it."""
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
 
     from server.insights.api.models_audit import AuditListInput
     from server.insights.app.audit import handle_audit_list
@@ -1289,7 +1289,8 @@ async def test_a_retirement_whose_record_failed_gets_it_from_the_repair(
             "loom.audit_log",
             [
                 {
-                    "ts": datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1),
+                    # Seconds before this retirement's intent: an Undo came between.
+                    "ts": datetime.now(UTC).replace(tzinfo=None),
                     "event_type": "memory.auto_supersede",
                     "org": org,
                     "namespace": NS,

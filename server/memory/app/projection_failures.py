@@ -8,7 +8,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
@@ -595,9 +595,6 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
     from server.memory.app.conflict_resolver import clear_retired_flag
     from server.memory.store import get_by_id
 
-    # The intent is committed before its retirement: a record from before it is an
-    # earlier retirement of the pair, since undone. A few seconds cover clock skew.
-    since = to_naive_utc(failure.created_at or datetime(1970, 1, 1)) - timedelta(seconds=5)
     for entry in failure.payload.get("retired") or []:
         loser, winner = str(entry["memory_id"]), str(entry["superseded_by"])
         head = await get_by_id(loser, org=failure.org, ch=ch, scope=WHOLE_NAMESPACE, strong=True)
@@ -607,16 +604,16 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
         found = await ch.query_all(
             "SELECT count() AS n FROM loom.audit_log"
             " WHERE org = {org:String} AND namespace = {ns:String} AND event_type = {e:String}"
-            " AND ts >= {since:DateTime64(3)}"
-            " AND position(subject, {loser:String}) > 0 AND position(subject, {winner:String}) > 0"
+            # The record names its intent (request_id): an earlier, undone retirement
+            # of the same pair has another.
+            " AND request_id = {intent:String} AND position(subject, {loser:String}) > 0"
             " SETTINGS select_sequential_consistency = 1",
             params={
                 "org": failure.org,
                 "ns": failure.namespace,
                 "e": EVENT_TYPE,
-                "since": since,
+                "intent": failure.failure_id,
                 "loser": loser,
-                "winner": winner,
             },
         )
         if found and int(found[0]["n"]):
@@ -626,7 +623,7 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
             namespace=failure.namespace,
             retired=[entry],
             reason=CONFLICT_RESOLVER,
-            request_id="",
+            request_id=failure.failure_id,
         ):
             raise RuntimeError("the retirement's record was not written")
 
