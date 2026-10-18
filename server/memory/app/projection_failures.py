@@ -303,30 +303,47 @@ class _KeyBusy(Exception):
     """A row's key lock is held past the repair's short wait: retried next pass."""
 
 
+# A failure and the result of its retry.
+Retried = tuple[ProjectionFailureRow, ProjectionFailureRetryResult]
+
+
 async def retry_failures(
     failures: list[ProjectionFailureRow], *, ch: Any | None = None
 ) -> list[ProjectionFailureRetryResult]:
-    """Retry each failure, then mark the repaired ones in one mutation per org and the
-    abandoned ones per org and reason: each mark is a mutation. A retry cut short leaves
-    the rest active, and every kind is safe to replay."""
+    """Retry each failure, then mark what it repaired or gave up on (`mark_retried`). A
+    retry cut short leaves the rest active, and every kind is safe to replay."""
     ch = ch or get_client()
-    out: list[ProjectionFailureRetryResult] = []
+    done: list[Retried] = []
     try:
-        for failure in failures:
-            out.append(await _retry(failure, ch=ch))
+        await retry_each(failures, done, ch=ch)
     finally:
-        done: dict[tuple[str, str], list[str]] = {}
-        for failure, r in zip(failures, out, strict=False):
-            if r.resolved or r.abandoned:
-                done.setdefault((failure.org, r.reason), []).append(r.failure_id)
-        for (org, reason), ids in done.items():
-            if reason:
-                await mark_projection_failures_abandoned(
-                    org=org, failure_ids=ids, reason=reason, ch=ch
-                )
-            else:
-                await mark_projection_failures_resolved(org=org, failure_ids=ids, ch=ch)
-    return out
+        await mark_retried(done, ch=ch)
+    return [r for _, r in done]
+
+
+async def retry_each(
+    failures: list[ProjectionFailureRow], done: list[Retried], *, ch: Any | None = None
+) -> None:
+    """Retry each failure and append it with its result to `done`, unmarked: the caller
+    marks `done` with `mark_retried` once it has retried all it will."""
+    ch = ch or get_client()
+    for failure in failures:
+        done.append((failure, await _retry(failure, ch=ch)))
+
+
+async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:
+    """Mark the repaired failures of `done` in one mutation per org and the abandoned ones
+    per org and reason: each mark is a mutation."""
+    ch = ch or get_client()
+    by_org: dict[tuple[str, str], list[str]] = {}
+    for failure, r in done:
+        if r.resolved or r.abandoned:
+            by_org.setdefault((failure.org, r.reason), []).append(r.failure_id)
+    for (org, reason), ids in by_org.items():
+        if reason:
+            await mark_projection_failures_abandoned(org=org, failure_ids=ids, reason=reason, ch=ch)
+        else:
+            await mark_projection_failures_resolved(org=org, failure_ids=ids, ch=ch)
 
 
 async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailureRetryResult:

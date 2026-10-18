@@ -42,13 +42,22 @@ def _calibration_left_as_found(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- projection_repair -----------------------------------------------------------
 
 
-def _retries(retry: Any) -> Any:
-    """`retry_failures` over a fake one-failure retry."""
+def _fake_retry(monkeypatch: pytest.MonkeyPatch, retry: Any) -> list[dict[str, Any]]:
+    """Each failure retried by `retry`; the marks are recorded (their params) instead of run."""
+    from server.memory.app import projection_failures as pf
 
-    async def retries(failures: list[ProjectionFailureRow], **_: Any) -> list[Any]:
-        return [await retry(f) for f in failures]
+    marks: list[dict[str, Any]] = []
 
-    return retries
+    class CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            marks.append(params)
+
+    async def _retry(f: ProjectionFailureRow, **_: Any) -> ProjectionFailureRetryResult:
+        return await retry(f)
+
+    monkeypatch.setattr(pf, "_retry", _retry)
+    monkeypatch.setattr(pf, "get_client", lambda: CH())
+    return marks
 
 
 def _failure(i: int, projection: str) -> ProjectionFailureRow:
@@ -98,7 +107,7 @@ async def test_a_repair_pass_counts_each_outcome_and_survives_a_poison_row(
         return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
 
     monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
-    monkeypatch.setattr(pf, "retry_failures", _retries(_retry))
+    _fake_retry(monkeypatch, _retry)
 
     result = await projection_repair.run_pass(
         projection_repair.ProjectionRepairConfig(max_failures_per_pass=0)
@@ -141,7 +150,7 @@ async def test_status_mirrors_queued_first_do_not_hold_back_a_real_failure(
         return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
 
     monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
-    monkeypatch.setattr(pf, "retry_failures", _retries(_retry))
+    _fake_retry(monkeypatch, _retry)
     await projection_repair.run_pass(
         projection_repair.ProjectionRepairConfig(max_failures_per_pass=25)
     )
@@ -259,9 +268,80 @@ async def test_a_pass_reads_mirror_batches_until_one_comes_back_short(
 
     monkeypatch.setattr(settings, "projection_repair_status_mirror_seconds", seconds)
     monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
-    monkeypatch.setattr(pf, "retry_failures", _retries(_retry))
+    _fake_retry(monkeypatch, _retry)
     await projection_repair.run_pass()
     assert len(retried) == want and len(set(retried)) == want
+
+
+def _mirrors(n: int) -> list[ProjectionFailureRow]:
+    """`n` status mirrors created a second apart, in two orgs."""
+    import dataclasses
+    from datetime import datetime, timedelta
+
+    from server.memory.app import projection_failures as pf
+
+    start = datetime(2026, 1, 1)
+    return [
+        dataclasses.replace(
+            _failure(i, pf.STATUS_MIRROR),
+            org=("acme", "beta")[i % 2],
+            created_at=start + timedelta(seconds=i),
+        )
+        for i in range(n)
+    ]
+
+
+def _paged(rows: list[ProjectionFailureRow], *, fail_after: int = 0) -> Any:
+    """A scan of `rows` paged by (created_at, failure_id); with `fail_after`, the scan
+    after that many batches raises."""
+    batches = 0
+
+    async def scan(
+        *, limit: int, status_mirror: bool = False, after: Any = None
+    ) -> list[ProjectionFailureRow]:
+        nonlocal batches
+        if not status_mirror:
+            return []
+        if fail_after and batches == fail_after:
+            raise ConnectionError("clickhouse unreachable")
+        batches += 1
+        return [f for f in rows if after is None or (f.created_at, f.failure_id) > after][:limit]
+
+    return scan
+
+
+async def _resolved(f: ProjectionFailureRow) -> ProjectionFailureRetryResult:
+    return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
+
+
+async def test_a_pass_marks_all_its_mirror_batches_once_per_org(
+    monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.workers import projection_repair
+
+    monkeypatch.setattr(pf, "scan_active_projection_failures", _paged(_mirrors(700)))
+    marks = _fake_retry(monkeypatch, _resolved)
+    result = await projection_repair.run_pass()
+    assert result.resolved == 700
+    assert sorted((m["org"], len(m["failure_ids"])) for m in marks) == [
+        ("acme", 350),
+        ("beta", 350),
+    ], "three batches, one mark per org"
+
+
+async def test_a_pass_cut_short_marks_the_mirrors_it_finished(
+    monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.workers import projection_repair
+
+    monkeypatch.setattr(pf, "scan_active_projection_failures", _paged(_mirrors(700), fail_after=2))
+    marks = _fake_retry(monkeypatch, _resolved)
+    with pytest.raises(ConnectionError):
+        await projection_repair.run_pass()
+    assert sum(len(m["failure_ids"]) for m in marks) == 600
+    assert len(marks) == 2
 
 
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(

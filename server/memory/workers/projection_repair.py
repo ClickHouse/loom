@@ -47,25 +47,32 @@ async def run_pass(
     result = ProjectionRepairResult()
     with record_pass("projection_repair") as rec:
         from server.memory.app.projection_failures import (
-            ProjectionFailureRetryResult,
+            Retried,
+            mark_retried,
+            retry_each,
             retry_failures,
             scan_active_projection_failures,
         )
 
-        retries: list[ProjectionFailureRetryResult] = []
+        mirrored: list[Retried] = []
         until = time.monotonic() + float(settings.projection_repair_status_mirror_seconds)
-        after = None
-        while True:
-            batch = await scan_active_projection_failures(
-                limit=STATUS_MIRROR_BATCH, status_mirror=True, after=after
-            )
-            retries += await retry_failures(batch)
-            # Past the batch's last row: a row left pending, or marked by a mutation not
-            # applied yet, is not read again this pass.
-            last = batch[-1] if len(batch) == STATUS_MIRROR_BATCH else None
-            if last is None or last.created_at is None or time.monotonic() >= until:
-                break
-            after = (last.created_at, last.failure_id)
+        try:
+            after = None
+            while True:
+                batch = await scan_active_projection_failures(
+                    limit=STATUS_MIRROR_BATCH, status_mirror=True, after=after
+                )
+                await retry_each(batch, mirrored)
+                # Past the batch's last row: a row left pending, or retried and not marked
+                # yet, is not read again this pass.
+                last = batch[-1] if len(batch) == STATUS_MIRROR_BATCH else None
+                if last is None or last.created_at is None or time.monotonic() >= until:
+                    break
+                after = (last.created_at, last.failure_id)
+        finally:
+            # One mark per org for the whole loop; a pass cut short marks what it did.
+            await mark_retried(mirrored)
+        retries = [r for _, r in mirrored]
         others = await scan_active_projection_failures(
             limit=max(1, int(cfg.max_failures_per_pass)), status_mirror=False
         )
