@@ -134,9 +134,11 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
     try:
         with llm_stage("conflict_resolver"):
             res, verdicts = await ask(cap)
-            if not verdicts:
-                # Cut at the cap, or malformed: once more, with room.
-                res, verdicts = await ask(2 * cap)
+            if len(verdicts) < len(peers):
+                # Cut at the cap, malformed, or a peer left out: once more, with room.
+                again, more = await ask(2 * cap)
+                if len(more) > len(verdicts):
+                    res, verdicts = again, more
     except httpx.HTTPStatusError as e:
         status, reason = e.response.status_code, str(e).splitlines()[0]
         if status in (401, 403, 404):
@@ -578,11 +580,16 @@ async def resolve_row(q: Mapping[str, Any], *, policy: str, counts: Counts) -> N
         row, peers = await _still_unprotected(org, row, peers)
     if row is not None and peers:
         try:
-            await _judge_and_act(org, namespace, row, peers, policy=policy, counts=counts)
+            unanswered = await _judge_and_act(
+                org, namespace, row, peers, policy=policy, counts=counts
+            )
         except PreconditionFailedError:
             # A key another write held past the lock's wait. That write may change only
             # metadata or fail, leaving no new mark: the row stays owed.
             counts.skipped_changed += 1
+            return
+        if unanswered & {str(x) for x in row.conflict_with}:
+            # A flagged peer the answer left out: stamped, its flag would never be judged.
             return
     await queue.stamp_judged(q)  # under erasure it writes nothing: the row stays owed
 
@@ -639,8 +646,8 @@ async def _judge_and_act(
     *,
     policy: str,
     counts: Counts,
-) -> None:
-    """Judge the row and act on the answer."""
+) -> set[str]:
+    """Judge the row and act on the answer; the ids of the peers it gave no verdict."""
     new = cr.Note(
         str(row.memory_id), str(row.memory_key), _plain(memory_repo.stored_value_text(row))
     )
@@ -660,6 +667,7 @@ async def _judge_and_act(
         # their records, follows and audit row, and the pass ends only after them.
         await asyncio.wait([acting])
         raise
+    return {str(p["memory_id"]) for p in peers} - set(verdicts)
 
 
 async def _act_on_verdicts(

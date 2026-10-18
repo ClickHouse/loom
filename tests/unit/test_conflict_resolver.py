@@ -742,6 +742,21 @@ async def test_the_recheck_clears_a_false_flag_and_judges_the_flagged_peer(row_e
     assert row_env.acted == [(cr.CLEAR, "m1", "m2")] and counts.cleared == 1
 
 
+async def test_a_flagged_peer_the_answer_leaves_out_keeps_the_row_owed(row_env: NS) -> None:
+    # The answer judges nothing about m2, the peer the row is flagged against: stamped,
+    # that flag would never be judged again.
+    row_env.mem.status, row_env.mem.conflict_with = "conflicted", ["m2"]
+    row_env.answer = _answer()
+    await _resolve()
+    assert row_env.stamped == []
+
+
+async def test_an_unflagged_peer_left_out_still_lets_the_row_be_stamped(row_env: NS) -> None:
+    row_env.answer = _answer()
+    await _resolve()
+    assert row_env.stamped == ["office_city"]
+
+
 async def test_a_flag_against_a_row_no_longer_live_is_cleared_with_its_audit(
     row_env: NS,
 ) -> None:
@@ -1363,7 +1378,8 @@ async def test_the_judge_sends_the_schema_and_the_model(monkeypatch) -> None:
     class LLM:
         async def complete(self, system: str, user: str, **kw: Any) -> Any:
             seen.update(system=system, user=user, **kw)
-            return NS(text=_answer(_entry("p2", "related", 0.9)), model="gpt-6.1-sol-2026-09-01")
+            text = _answer(_entry("p1", "related", 0.9), _entry("p2", "related", 0.9))
+            return NS(text=text, model="gpt-6.1-sol-2026-09-01")
 
     models: list[str] = []
     monkeypatch.setattr(
@@ -1374,8 +1390,28 @@ async def test_the_judge_sends_the_schema_and_the_model(monkeypatch) -> None:
     got, answered = await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
     assert models == [(settings.conflict_resolver_model, "low")] == [("gpt-6.1-sol", "low")]
     assert seen["system"] == cr.SYSTEM_PROMPT and seen["response_format"] == cr.RESPONSE_FORMAT
-    assert seen["max_tokens"] == 120 + 90 * 2 and list(got) == [_PEERS[1].memory_id]
+    assert seen["max_tokens"] == 120 + 90 * 2
+    assert list(got) == [_PEERS[0].memory_id, _PEERS[1].memory_id]
     assert answered == "gpt-6.1-sol-2026-09-01", "the audit names the model that answered"
+
+
+async def test_an_answer_that_leaves_a_peer_out_is_asked_again_with_room(monkeypatch) -> None:
+    import server.llm.client as llm_client
+
+    answers = [
+        _answer(_entry("p2", "related", 0.9)),
+        _answer(_entry("p1", "update", 0.97), _entry("p2", "related", 0.9)),
+    ]
+    caps: list[int] = []
+
+    class LLM:
+        async def complete(self, system: str, user: str, **kw: Any) -> Any:
+            caps.append(kw["max_tokens"])
+            return NS(text=answers[len(caps) - 1], model="m")
+
+    monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: LLM())
+    got, _ = await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
+    assert caps == [300, 600] and set(got) == {p.memory_id for p in _PEERS}
 
 
 def test_the_resolver_client_never_falls_back_to_another_model(monkeypatch) -> None:

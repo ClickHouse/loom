@@ -305,8 +305,10 @@ actions, verdicts and confidences, never the text.
   A transient failure (408, 409, 429, 5xx, a timeout) leaves the row owed. Any other 4xx
   refuses this row's request, and asking again gets the same answer: the row is stamped
   judged and counted `errored`. An answer with nothing usable (cut at the output cap,
-  `length` or `max_tokens`, or malformed) is asked once more with twice the room; nothing
-  usable again, the row is stamped judged and counted `errored`. The same refusal three
+  `length` or `max_tokens`, or malformed), or with no verdict for some peer, is asked once
+  more with twice the room, and the answer that covers more peers is kept; nothing usable
+  again, the row is stamped judged and counted `errored`. A row flagged against a peer
+  neither answer judged stays owed, so the flag is judged later. The same refusal three
   rows in a row is the request's fault, not the rows': it stops the pass like a refused
   model, and the rest stay owed. The keys' write locks unavailable (Keeper down) stop the
   pass after that call; the rows stay owed.
