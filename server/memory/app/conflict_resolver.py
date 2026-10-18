@@ -16,7 +16,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -71,9 +71,12 @@ class Counts:
     # Namespaces left out of the pass's queue read: over their daily cost cap.
     capped_namespaces: int = 0
     errored: int = 0
+    # The follow intents of the pass's retirements that landed in full, by org: resolved
+    # in one mark at the pass's end (`resolve_done_intents`), not one mutation each.
+    done_intents: dict[str, list[str]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, int]:
-        return asdict(self)
+        return {k: v for k, v in asdict(self).items() if isinstance(v, int)}
 
 
 def _plain(stored: str) -> str:
@@ -230,7 +233,7 @@ class Retired:
     agent: str
 
 
-async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | None:
+async def _retire(org: str, namespace: str, row: Any, peer: Any, counts: Counts) -> Retired | None:
     """Supersede `peer` (stated first) behind the judged row `row`; what `_after_retire`
     records and follows, or None. The record and the follow are owed to the repair
     before the supersede commits (FOLLOW_OWED, acted on only while the loser is retired
@@ -273,13 +276,13 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | No
         head = await _head(org, pair[0])
         if head is None or (head.status, str(head.superseded_by)) != ("superseded", pair[1]):
             if _holds(head, namespace, loser_sha):
-                await _done(org, intent)  # still live as judged: none landed
+                _done(counts, org, intent)  # still live as judged: none landed
             return None  # otherwise the repair decides
         retired = [entry]
     return Retired(intent=intent, retired=retired, agent=str(winner.agent))
 
 
-async def _after_retire(org: str, namespace: str, done: Retired) -> None:
+async def _after_retire(org: str, namespace: str, done: Retired, counts: Counts) -> None:
     """The retirement's record and follow, outside the keys' locks: neither writes a
     memory row."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, record_auto_supersessions
@@ -295,17 +298,27 @@ async def _after_retire(org: str, namespace: str, done: Retired) -> None:
     )
     pairs = [(str(r["memory_id"]), str(r["superseded_by"])) for r in done.retired]
     if await _follow(org, namespace, done.agent, pairs) and recorded:
-        await _done(org, done.intent)
+        _done(counts, org, done.intent)
 
 
-async def _done(org: str, intent: str) -> None:
-    """The follow intent is no longer owed; left active, the repair replays it."""
-    from server.memory.app.projection_failures import mark_projection_failures_resolved
+def _done(counts: Counts, org: str, intent: str) -> None:
+    """The follow intent is no longer owed: resolved with the pass's others."""
+    counts.done_intents.setdefault(org, []).append(intent)
 
-    try:
-        await mark_projection_failures_resolved(org=org, failure_ids=[intent])
-    except Exception as e:  # noqa: BLE001 — a replay of a followed pair changes nothing
-        log.warning("conflict_resolver: follow intent left for the repair: %s", e)
+
+async def resolve_done_intents(counts: Counts) -> None:
+    """The pass's done intents, one chunked mark per org; left active (a failed mark), the
+    repair replays them, which changes nothing."""
+    from server.memory.app.projection_failures import mark_resolved
+
+    for org, intents in counts.done_intents.items():
+        try:
+            await mark_resolved(org, intents)
+        except Exception as e:  # noqa: BLE001 — a replay of a followed pair changes nothing
+            log.warning(
+                "conflict_resolver: %d follow intents left for the repair: %s", len(intents), e
+            )
+    counts.done_intents.clear()
 
 
 async def _follow(org: str, namespace: str, agent: str, pairs: list[tuple[str, str]]) -> bool:
@@ -456,7 +469,7 @@ async def _settle_pair(
     async with _pair_locks(org, namespace, row, peer):
         taken, retired = await _settle_locked_pair(org, namespace, row, peer, action, counts)
     if retired is not None:
-        await _after_retire(org, namespace, retired)
+        await _after_retire(org, namespace, retired, counts)
     return taken
 
 
@@ -499,7 +512,7 @@ async def _settle_locked_pair(
             return None, None  # retired behind this row before and undone: a person decided
     retired = None
     if action == cr.RETIRE:
-        retired = await _retire(org, namespace, row, head)
+        retired = await _retire(org, namespace, row, head, counts)
         done = retired is not None
     elif action == cr.FLAG:
         done = await _flag(org, row, head)

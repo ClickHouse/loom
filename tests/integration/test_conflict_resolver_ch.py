@@ -888,7 +888,8 @@ async def _follow_intents(ch: Any, org: str, want_active: int) -> list[dict[str,
         rows = await ch.query_all(
             "SELECT status, payload FROM loom.memory_projection_failures"
             " WHERE org = {org:String} AND projection = 'triples_follow_owed'"
-            " SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1",
+            # Not on the fly: the mark sets resolved_at = now(), which cannot be.
+            " SETTINGS select_sequential_consistency = 1",
             params={"org": org},
         )
         if sum(r["status"] == "active" for r in rows) == want_active:

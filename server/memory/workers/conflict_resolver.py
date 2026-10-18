@@ -272,6 +272,7 @@ async def run_pass() -> dict[str, Any]:
             ):
                 break
         await _stamp_refused(p)
+        await resolver.resolve_done_intents(p.counts)
         if not found:
             pass_context.mark_idle()
         if isinstance(p.unavailable, LeaseUnavailable):

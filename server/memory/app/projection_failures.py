@@ -361,14 +361,21 @@ async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:
         if r.resolved or r.abandoned:
             by_org_reason.setdefault((failure.org, r.reason), []).append(r.failure_id)
     for (org, reason), ids in by_org_reason.items():
+        if not reason:
+            await mark_resolved(org, ids, ch=ch)
+            continue
         for start in range(0, len(ids), MARK_CHUNK):
             chunk = ids[start : start + MARK_CHUNK]
-            if reason:
-                await mark_projection_failures_abandoned(
-                    org=org, failure_ids=chunk, reason=reason, ch=ch
-                )
-            else:
-                await mark_projection_failures_resolved(org=org, failure_ids=chunk, ch=ch)
+            await mark_projection_failures_abandoned(
+                org=org, failure_ids=chunk, reason=reason, ch=ch
+            )
+
+
+async def mark_resolved(org: str, ids: list[str], *, ch: Any | None = None) -> None:
+    """`mark_projection_failures_resolved`, `MARK_CHUNK` ids to a mutation."""
+    for start in range(0, len(ids), MARK_CHUNK):
+        chunk = ids[start : start + MARK_CHUNK]
+        await mark_projection_failures_resolved(org=org, failure_ids=chunk, ch=ch)
 
 
 def _pending(failure: ProjectionFailureRow) -> ProjectionFailureRetryResult:
