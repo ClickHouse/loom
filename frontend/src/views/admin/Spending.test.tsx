@@ -200,6 +200,20 @@ describe("Spending table count and failure", () => {
     expect(bar).toHaveTextContent("2 rows");
   });
 
+  it("keeps the toolbar and its Select while another breakdown reads, and draws none of the old rows", async () => {
+    vi.mocked(api.listCostRollup)
+      .mockResolvedValueOnce({ rows: [cost("memory.set", 0.01)] })
+      .mockReturnValueOnce(new Promise(() => {}));
+    render(<Spending />);
+    await screen.findByText("memory.set");
+    fireEvent.click(screen.getByRole("button", { name: "Break down by" }));
+    await waitFor(() => expect(document.querySelector('[cui-select-item][data-value="agent"]')).not.toBeNull());
+    fireEvent.click(document.querySelector('[cui-select-item][data-value="agent"]') as HTMLElement);
+    await waitFor(() => expect(screen.queryByText("memory.set")).toBeNull());
+    expect(screen.getByRole("button", { name: "Break down by" })).toBeInTheDocument();
+    expect(document.querySelector('search[aria-label="Usage breakdown"]')).not.toHaveTextContent(/\d+ rows?/);
+  });
+
   it("says a failed read failed, with Retry, never 'No operations recorded'", async () => {
     vi.mocked(api.listCostRollup).mockRejectedValueOnce(
       new ApiError({ status: 503, message: "down", requestId: "r-1" }),

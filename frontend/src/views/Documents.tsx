@@ -241,7 +241,6 @@ export function Documents() {
     void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
       .then((found) => {
         if (ac.signal.aborted) return;
-        linkRead.current = null;
         if (found) void onOpenRef.current(found);
         else setViewParam("doc", null);
       })

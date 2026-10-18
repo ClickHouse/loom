@@ -223,7 +223,7 @@ function StandingChip({
       ariaLabel={`${name}: ${disabledReason ? disabledReason : standingWord(st)}`}
       tip={tip}
       className={
-        st === "pending" ? "border-warn/40 text-warn" : st === "closed" || st === "registering" ? "text-text-muted" : ""
+        st === "pending" ? "border-info/40 text-info" : st === "closed" || st === "registering" ? "text-text-muted" : ""
       }
     />
   );

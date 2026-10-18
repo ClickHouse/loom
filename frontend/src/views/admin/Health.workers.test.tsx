@@ -172,6 +172,26 @@ describe("WorkersPanel", () => {
     cleanup();
   });
 
+  it("with every worker disabled in config, its empty state offers Show all, which shows them", async () => {
+    const worker = {
+      enabled: false,
+      effective: false,
+      disabled_reason: "disabled_by_setting",
+      interval_seconds: 30,
+      last_run_at: null,
+      last_duration_ms: 0,
+      consecutive_failures: 0,
+      last_pass_status: "",
+      source: "registry",
+    };
+    respond({ workers: { embedding_worker: worker } });
+    render(<WorkersPanel />);
+    expect(await screen.findByText("Nothing to show")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(await screen.findByText("Memory indexing")).toBeInTheDocument();
+    cleanup();
+  });
+
   it("lays the workers out as a table, one row each, its status a badge", async () => {
     const worker = {
       enabled: true,

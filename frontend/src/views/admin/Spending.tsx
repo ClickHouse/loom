@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { NumberField } from "@clickhouse/click-ui/NumberField";
@@ -63,6 +63,10 @@ export function Spending() {
   const [budget, setBudget] = useState<BudgetStatus | null>(null);
   const [orgBudget, setOrgBudget] = useState<BudgetStatus | null>(null);
   const [breakdown, setBreakdown] = useState<Breakdown>("operation");
+  // The breakdown the rows on screen were read by: another one's rows are not drawn under
+  // the toolbar, which stays (with its focused Select) while the new pivot reads.
+  const [rowsBy, setRowsBy] = useState<Breakdown | null>(null);
+  const rowsFor = useRef("");
   // Default OFF: read ops (memory.list, audit.list, conflicts.list) dominate
   // the row count but have $0 cost and no tokens, drowning the few rows that
   // actually matter for spend. Toggle exposes them for performance debugging.
@@ -94,17 +98,24 @@ export function Spending() {
   );
   const canEditCap = canUpdateNamespace(whoami, myNamespaces, identity.namespace, nsRow);
 
-  // Rows re-fetch when the pivot changes; the budget bars don't.
+  // Rows re-fetch when the pivot changes; the budget bars don't. Another namespace starts
+  // from the skeleton.
   useAbortableEffect(
     (signal, live) => {
-      setRows(null);
+      if (rowsFor.current !== `${identity.org}/${identity.namespace}`) {
+        rowsFor.current = `${identity.org}/${identity.namespace}`;
+        setRows(null);
+      }
       setError(null);
       listCostRollup(
         { org: identity.org, namespace: identity.namespace },
         { days: 7, ...BREAKDOWN_QUERY[breakdown], signal },
       )
         .then((r) => {
-          if (live()) setRows(r.rows || []);
+          if (live()) {
+            setRows(r.rows || []);
+            setRowsBy(breakdown);
+          }
         })
         .catch((e) => {
           if (live()) setError(e);
@@ -345,7 +356,11 @@ export function Spending() {
 
           <ListToolbar
             label="Usage breakdown"
-            count={`${visibleRows.length.toLocaleString()} ${visibleRows.length === 1 ? "row" : "rows"}`}
+            count={
+              rowsBy === breakdown
+                ? `${visibleRows.length.toLocaleString()} ${visibleRows.length === 1 ? "row" : "rows"}`
+                : undefined
+            }
           >
             <Select
               value={breakdown}
@@ -364,7 +379,12 @@ export function Spending() {
           </ListToolbar>
           {/* A phone's toolbar has room for the breakdown only; the switch sits under it. */}
           {phone && <div className="-mt-1 mb-3">{allOps}</div>}
-          {visibleRows.length === 0 && (
+          {rowsBy !== breakdown && !error && (
+            <LoadingSkeleton label="Loading usage">
+              <Skeleton className="h-40 w-full" />
+            </LoadingSkeleton>
+          )}
+          {rowsBy === breakdown && visibleRows.length === 0 && (
             <ListState
               kind="filtered"
               // The filter in force is the hidden no-cost operations: Clear filters shows them.
@@ -373,7 +393,7 @@ export function Spending() {
               onClear={() => setShowAllOps(true)}
             />
           )}
-          {visibleRows.length > 0 && (
+          {rowsBy === breakdown && visibleRows.length > 0 && (
             <Table
               aria-label={`Usage by day and ${breakdown}`}
               size="sm"

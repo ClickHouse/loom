@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "../test/rtl";
+import { fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
@@ -87,6 +87,16 @@ describe("HeaderSearch", () => {
     expect(library).not.toHaveTextContent("#beans");
     // The outlined chip a row's TagList draws.
     expect(screen.getByText("beans").closest(".rounded-full")?.className).toMatch(/click-badge-opaque-color-stroke/);
+  });
+
+  it("names each best match's agent, so two agents' rows of one key tell apart", async () => {
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    const input = screen.getByRole("combobox", { name: "Search Loom" });
+    await user.click(input);
+    await user.type(input, "coffee");
+    const best = await screen.findByRole("group", { name: "Best matches" });
+    expect(within(best).getAllByText(/^a · /).length).toBeGreaterThan(0);
   });
 
   it("highlights options with the arrow keys and opens the highlighted one on Enter", async () => {

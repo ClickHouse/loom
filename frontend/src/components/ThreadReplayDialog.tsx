@@ -14,6 +14,7 @@ import {
 import { Chip, ExternalLink, ListTime, Loading, SectionHeading } from "./ui";
 import { Modal } from "./ui/Modal";
 import { BusyButton } from "./ui/BusyButton";
+import { ListState } from "./ui/ListState";
 import { toast } from "./Toast";
 import { displayAgent, humanizeError } from "../lib/format";
 import { AgentBadge } from "./AgentBadge";
@@ -164,6 +165,9 @@ export function ThreadReplayDialog({
 }) {
   const [threadDetail, setThreadDetail] = useState<ConversationThreadDetail | null>(null);
   const [threadLoading, setThreadLoading] = useState(false);
+  // A failed read of the thread, said in the dialog with Retry; Retry reads it again.
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [retries, setRetries] = useState(0);
   // Durable memories this thread produced (via source_trace=conversation:<id>).
   const [threadMemories, setThreadMemories] = useState<MemoryListEntry[]>([]);
   // How many memories the thread produced in all: the panel reads the first 20.
@@ -191,6 +195,7 @@ export function ThreadReplayDialog({
     setLoadingMore(false);
     setThreadMemories([]);
     setThreadMemoriesTotal(0);
+    setLoadError(null);
     if (!thread) {
       setThreadLoading(false);
       setHighlight(null);
@@ -233,7 +238,7 @@ export function ThreadReplayDialog({
         setMoreCursor(d.next_cursor ?? null);
       } catch (e) {
         if (signal.aborted) return;
-        toast(`Open thread failed: ${humanizeError(e)}`, "error");
+        setLoadError(e);
       } finally {
         if (!signal.aborted) setThreadLoading(false);
       }
@@ -241,7 +246,7 @@ export function ThreadReplayDialog({
     return () => ctl.abort();
     // `identity` is read for the namespace's org; a new thread object is the trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread]);
+  }, [thread, retries]);
 
   const highlightedTurn = useMemo(() => {
     if (!highlight || !threadDetail) return null;
@@ -373,6 +378,9 @@ export function ThreadReplayDialog({
           </div>
         )}
         {threadLoading && <Loading label="Loading thread" />}
+        {!threadLoading && loadError !== null && (
+          <ListState kind="error" things="the thread" error={loadError} onRetry={() => setRetries((n) => n + 1)} />
+        )}
         {!threadLoading && threadDetail && !threadDetail.found && (
           <div className="text-center text-sm text-text-muted py-12">
             {/* The upgrade clause goes with the previous-release fallback above. */}

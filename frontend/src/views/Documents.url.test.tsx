@@ -155,6 +155,31 @@ describe("Library keeps the open document in its URL", () => {
     expect(new URLSearchParams(location.search).get("doc")).toBe("docs/handbook.md");
   });
 
+  it("a linked document's read that lands after the reader closed the preview opens nothing", async () => {
+    let answer: (v: unknown) => void = () => {};
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[] }) =>
+      opts.uriPrefix ? new Promise((r) => (answer = r)) : { rows: ROWS, next_cursor: "c-2" },
+    );
+    history.replaceState(null, "", "/library");
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Preview Handbook" }));
+    await settle();
+    // Back reaches an entry naming a document past the loaded rows; its read is out.
+    act(() => useStore.setState({ pendingDocSourceUri: "docs/late.md" }));
+    await settle();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await settle();
+    api.getKnowledge.mockClear();
+    await act(async () =>
+      answer({ rows: [{ ...ROWS[0], source_uri: "docs/late.md", title: "Late doc" }], next_cursor: null }),
+    );
+    await settle();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.getKnowledge).not.toHaveBeenCalled();
+    expect(location.search).toBe("");
+  });
+
   it("a linked document's read that lands after a namespace switch opens nothing", async () => {
     let answer: (v: unknown) => void = () => {};
     api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: { uriPrefix?: string[] }) => {

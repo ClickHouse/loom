@@ -177,3 +177,17 @@ describe("Users late answers", () => {
     expect(screen.getByText("user-2@example.com")).toBeInTheDocument();
   });
 });
+
+describe("Users, the service-accounts toggle", () => {
+  it("keeps the toolbar and draws neither the old rows nor their count until its read answers", async () => {
+    adminListUsers.mockResolvedValueOnce(result([user(1), user(2)])).mockReturnValueOnce(new Promise(() => {}));
+    render(<Users />);
+    expect(await screen.findAllByRole("row")).not.toHaveLength(0);
+    await waitFor(() => expect(bodyRows()).toHaveLength(2));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include service accounts" }));
+    await waitFor(() => expect(adminListUsers).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("checkbox", { name: "Include service accounts" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Filter users", { selector: "search" })).not.toHaveTextContent(/of 2/);
+    expect(screen.getByRole("table", { name: "Users" })).toHaveAttribute("aria-busy", "true");
+  });
+});

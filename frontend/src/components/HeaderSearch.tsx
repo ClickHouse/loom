@@ -22,6 +22,7 @@ import {
 import { sharedMine } from "../lib/sharedReads";
 import { useStore, viewHref } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
+import { displayAgent } from "../lib/format";
 import { Kbd, Loading, TagList } from "./ui";
 import { toast } from "./Toast";
 import { paletteShortcut } from "../lib/platform";
@@ -618,7 +619,9 @@ export function HeaderSearch({
                         <span className="font-mono text-xs truncate">{e.memory_key}</span>
                         <span className="text-xs text-text-muted shrink-0 ml-auto">{e.memory_type}</span>
                       </div>
+                      {/* Rows are per key and agent: the agent tells two of one key apart. */}
                       <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">
+                        {e.agent ? `${displayAgent(e.agent)} · ` : ""}
                         {e.content_excerpt || "(empty)"}
                       </div>
                     </button>

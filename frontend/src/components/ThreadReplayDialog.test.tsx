@@ -66,6 +66,17 @@ describe("ThreadReplayDialog", () => {
     expect(screen.getByText("37")).toBeInTheDocument();
   });
 
+  it("says a failed read of the thread failed, with Retry that reads it again", async () => {
+    getConversationThread.mockRejectedValueOnce(new Error("down")).mockResolvedValue(detail);
+    render(
+      <ThreadReplayDialog identity={identity} thread={{ thread_id: "t-1", namespace: "ns" }} onClose={() => {}} />,
+    );
+    expect(await screen.findByText("Couldn't load the thread", {}, { timeout: 2000 })).toBeInTheDocument();
+    screen.getByRole("button", { name: "Retry" }).click();
+    expect(await screen.findByText("plan the fix", {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load the thread")).toBeNull();
+  });
+
   it("moves the focus to the transcript when the last page comes back empty", async () => {
     getConversationThread.mockResolvedValue({ ...detail, msg_count: 5, next_cursor: "c1" } as ConversationThreadDetail);
     vi.mocked(listConversationMessages).mockResolvedValueOnce({ rows: [], next_cursor: null } as never);

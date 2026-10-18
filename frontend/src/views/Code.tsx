@@ -215,9 +215,9 @@ export function CodeView() {
 
 // ---------------------------------------------------------------------------
 // Repositories home. One card per repository; each branch is a row of its table, with its
-// state and a menu of its own. A person is joined to nothing by default: an open repository joins in one click,
-// a restricted one is requested and a maintainer approves. Every surface here says
-// read-only.
+// state and a menu of its own. A person is joined to nothing by default: an open
+// repository joins in one click, a restricted one is requested and a maintainer approves.
+// Every surface here says read-only.
 // ---------------------------------------------------------------------------
 
 /** The two roles a repository has: viewer = reader, admin = maintainer. */
@@ -1824,7 +1824,7 @@ function StageCard({
 
 export function HealthTab({ id }: { id: CodeId }) {
   const [st, setSt] = useState<CodeIndexStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showState, setShowState] = useState(false);
   // undefined while the first read is out, null once a read failed.
@@ -1844,7 +1844,7 @@ export function HealthTab({ id }: { id: CodeId }) {
           }
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(e);
         });
       codeCoverage(id, { signal })
         .then((c) => {
@@ -1902,7 +1902,18 @@ export function HealthTab({ id }: { id: CodeId }) {
     }
   };
 
-  if (error) return <EmptyState icon="activity" title="Couldn't load index status" description={error} />;
+  if (error)
+    return (
+      <ListState
+        kind="error"
+        things="index status"
+        error={error}
+        onRetry={() => {
+          setError(null);
+          load();
+        }}
+      />
+    );
   if (!st) return <Loading label="Loading the index health" />;
 
   const W = st.workers;

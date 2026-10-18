@@ -171,3 +171,13 @@ describe("Policies, a failed read", () => {
     expect(api.listPolicyDecisions).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Policies mode before a read answers", () => {
+  it("claims no mode while loading, nor after a failed read", async () => {
+    vi.mocked(api.listPolicies).mockRejectedValueOnce(new Error("down"));
+    render(<Policies />);
+    expect(screen.queryByText(/^mode: /)).toBeNull();
+    expect(await screen.findByText("Couldn't load rules")).toBeInTheDocument();
+    expect(screen.queryByText(/^mode: /)).toBeNull();
+  });
+});

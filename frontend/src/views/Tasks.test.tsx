@@ -913,6 +913,16 @@ describe("Tasks page", () => {
     expect(claimTask).not.toHaveBeenCalled();
   });
 
+  it("a failed first task.counts leaves the rail's counts unknown, never 'empty'", async () => {
+    vi.mocked(taskCounts).mockRejectedValueOnce(new Error("down"));
+    seed(admin, [row("admin")]);
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await waitFor(() => expect(taskCounts).toHaveBeenCalled());
+    const rail = screen.getByRole("navigation", { name: "Inboxes" });
+    expect(within(rail).queryByText("empty")).toBeNull();
+  });
+
   it("an empty board column under a filter says none match", async () => {
     localStorage.setItem("loom_tasks_mode", "board");
     try {

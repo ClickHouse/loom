@@ -333,7 +333,16 @@ export function Outline({
       </div>
       {capped && (
         <div className="mt-1">
-          <Button type="empty" htmlType="button" onClick={() => setAll(true)}>
+          <Button
+            type="empty"
+            htmlType="button"
+            onClick={() => {
+              // The button goes with the cap: focus moves to the first row it hid.
+              const next = rows[CAP];
+              setAll(true);
+              if (next) focusRow(next.entity);
+            }}
+          >
             Show all {rows.length}
           </Button>
         </div>

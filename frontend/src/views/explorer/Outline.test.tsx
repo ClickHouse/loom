@@ -80,6 +80,8 @@ describe("Outline", () => {
     expect(screen.getAllByRole("treeitem")).toHaveLength(20);
     await userEvent.click(screen.getByRole("button", { name: "Show all 31" }));
     expect(screen.getAllByRole("treeitem")).toHaveLength(31);
+    // The button went with the cap: focus is on the first row it hid.
+    expect(screen.getAllByRole("treeitem")[20]).toHaveFocus();
     expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
   });
 

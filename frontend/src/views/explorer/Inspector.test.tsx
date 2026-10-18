@@ -170,6 +170,8 @@ describe("Inspector lists", () => {
     expect(list()).toHaveLength(20);
     await userEvent.click(screen.getByRole("button", { name: "Show all 24" }));
     expect(list()).toHaveLength(24);
+    // The button went with the cap: focus is in the first row it hid.
+    await waitFor(() => expect(list()[20].contains(document.activeElement)).toBe(true));
     // Another edge starts capped again.
     view.rerender(inspector({ selection: { kind: "edge", parent: "logical", child: "keeper" } }));
     await waitFor(() => expect(screen.getByText(/keeper-0/)).toBeInTheDocument(), { timeout: 2000 });

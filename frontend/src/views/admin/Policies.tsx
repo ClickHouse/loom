@@ -182,7 +182,8 @@ function parseJsonObject(text: string, what: string): Record<string, unknown> {
 export function Policies() {
   const identity = useIdentity();
   const [rules, setRules] = useState<PolicyRule[] | null>(null);
-  const [mode, setMode] = useState<PolicyMode | string>("off");
+  // The server's mode, unknown until a read answers: none is claimed before then.
+  const [mode, setMode] = useState<PolicyMode | string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
@@ -243,17 +244,17 @@ export function Policies() {
     }
   };
 
-  const meta = modeMeta(mode);
+  const meta = mode === null ? null : modeMeta(mode);
 
   return (
     <PageContainer>
       <PageHeader title="Policies">
         <ScopeBadge kind="namespace" value={identity.namespace} />
-        <ModeBadge mode={mode} />
+        {mode !== null && <ModeBadge mode={mode} />}
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-[80ch]">
         Rules over an agent's own recent history: forbid or require an action based on what the same caller did in the
-        last minutes or hours. <span className="text-text">{meta.blurb}</span> The mode is the server's{" "}
+        last minutes or hours. {meta && <span className="text-text">{meta.blurb}</span>} The mode is the server's{" "}
         <code className="font-mono text-xs">LOOM_POLICY_MODE</code>; it cannot be changed here.
       </p>
 

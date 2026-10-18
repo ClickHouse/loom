@@ -754,7 +754,7 @@ function Side({
       </div>
       <div className="flex items-center gap-2 text-xs text-text-muted tabular">
         {version != null && <span>v{version}</span>}
-        {pinned && <Badge text="Pinned" state="warning" size="sm" />}
+        {pinned && <Badge text="Pinned" state="info" size="sm" />}
         {createdAt && <ListTime iso={createdAt} />}
       </div>
     </Panel>

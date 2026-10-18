@@ -99,11 +99,14 @@ export function Users() {
     );
   }
 
+  // The accounts on screen were read with the service-accounts setting now ticked; until a
+  // toggle's read answers, its counts and rows are not drawn.
+  const dataCurrent = dataWithServiceAccounts === includeServiceAccounts;
   const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
   // One read holds at most 1,000 accounts: past that the list says it holds the first ones.
   const cut = data !== null && data.total > data.users.length;
   const count =
-    !error && data && rows.length > 0
+    !error && data && dataCurrent && rows.length > 0
       ? `${(page * pageSize + 1).toLocaleString()}–${(page * pageSize + pageRows.length).toLocaleString()} of ${rows.length.toLocaleString()}${cut ? ` · the first ${data.users.length.toLocaleString()} of ${data.total.toLocaleString()} accounts` : ""}`
       : undefined;
   const pick = (value: string) => {
@@ -124,7 +127,6 @@ export function Users() {
         { value: "active7d", label: "Active last 7d", count: filtered(data, "active7d").length },
       ]
     : [];
-  const dataCurrent = dataWithServiceAccounts === includeServiceAccounts;
   const serviceAccounts = (
     <Checkbox
       label="Include service accounts"
@@ -161,7 +163,8 @@ export function Users() {
         </p>
       </div>
 
-      {data && !error && (
+      {/* The toolbar stays through a failed read: its checkbox is how the reader got there. */}
+      {data && (
         <>
           <ListToolbar label="Filter users" count={count}>
             {/* Three filters with their counts are wider than a phone: there they are a select. */}
@@ -174,7 +177,7 @@ export function Users() {
               >
                 {options.map((o) => (
                   <Select.Item key={o.value} value={o.value}>
-                    {`${o.label} ${o.count.toLocaleString()}`}
+                    {dataCurrent ? `${o.label} ${o.count.toLocaleString()}` : o.label}
                   </Select.Item>
                 ))}
               </Select>
@@ -186,7 +189,7 @@ export function Users() {
                   onClick={pick}
                   options={options.map((o) => ({
                     value: o.value,
-                    label: <FilterLabel label={o.label} count={o.count} icon={o.icon} />,
+                    label: <FilterLabel label={o.label} count={dataCurrent ? o.count : null} icon={o.icon} />,
                   }))}
                 />
                 {serviceAccounts}
@@ -198,7 +201,7 @@ export function Users() {
       )}
 
       {!!error && <ListState kind="error" things="users" error={error} onRetry={() => setReads((n) => n + 1)} />}
-      {!error && data === null && (
+      {!error && (data === null || !dataCurrent) && (
         <Table
           aria-label="Users"
           aria-busy
@@ -208,7 +211,7 @@ export function Users() {
           noDataMessage={<TableSkeleton label="Loading users" />}
         />
       )}
-      {!error && data !== null && data.users.length === 0 && (
+      {!error && data !== null && dataCurrent && data.users.length === 0 && (
         <ListState
           kind="empty"
           icon="users"
@@ -216,7 +219,7 @@ export function Users() {
           description="When users sign up in the dashboard or get granted on a namespace, they'll appear here."
         />
       )}
-      {!error && data !== null && data.users.length > 0 && (
+      {!error && data !== null && dataCurrent && data.users.length > 0 && (
         <div className="space-y-2" aria-busy={refreshing || undefined}>
           {data.platform_admins_configured.length > 0 && (
             <div className="mb-3 text-xs text-text-muted">
@@ -235,8 +238,8 @@ export function Users() {
             label="Users pages"
             page={page}
             pageSize={pageSize}
-            shown={dataCurrent ? pageRows.length : 0}
-            total={dataCurrent ? rows.length : undefined}
+            shown={pageRows.length}
+            total={rows.length}
             busy={refreshing}
             onPage={setPage}
             onPageSize={(n) => {
@@ -350,12 +353,12 @@ function ClaimReleaseSection() {
 }
 
 // ButtonGroup draws an option's `icon` only in icon-only mode, so the label carries it.
-function FilterLabel({ label, count, icon }: { label: string; count: number; icon?: IconName }) {
+function FilterLabel({ label, count, icon }: { label: string; count: number | null; icon?: IconName }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       {icon && <Icon name={icon} size="xs" aria-hidden="true" />}
       {label}
-      <span className="tabular">{count.toLocaleString()}</span>
+      {count !== null && <span className="tabular">{count.toLocaleString()}</span>}
     </span>
   );
 }

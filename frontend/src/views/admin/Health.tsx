@@ -22,6 +22,7 @@ import { isRecord } from "../../lib/guards";
 import { Skeleton, TableSkeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ListState } from "../../components/ui/ListState";
+import { ApiError } from "../../lib/errors";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { BusyButton } from "../../components/ui/BusyButton";
@@ -409,8 +410,9 @@ export function WorkersPanel() {
           description={
             rows.length === 0
               ? "Neither this process nor loom.worker_status has a worker pass on record. Either no workers colour is running, or /v1/admin/workers.status is not reachable from here."
-              : "All workers are disabled in config. Toggle Show all to see them."
+              : "All workers are disabled in config."
           }
+          action={rows.length > 0 ? { label: "Show all", onClick: () => setShowAll(true) } : undefined}
         />
       )}
       {!error && rows !== null && rows.length > 0 && reporting.length === 0 && effective.length > 0 && (
@@ -609,13 +611,19 @@ export function parseOpMix(d: unknown): OpMixData | null {
   };
 }
 
-/** ops.health's op_mix answer: a report ({check, data}), a check the server ran but could
- *  not compute (data: null — status "fail", detail says why), or null when the check is
- *  absent or the request was refused. */
+/** ops.health's op_mix answer, with the scope it was read for: a report ({check, data}), a
+ *  check the server ran but could not compute (data: null — status "fail", detail says
+ *  why), or null when the check is absent or the request was refused. Any other failed
+ *  read is said as one. */
 export function OpMixPanel() {
   const identity = useIdentity();
-  const [op, setOp] = useState<{ check: OpsHealthCheck; data: OpMixData | null } | null | undefined>(undefined);
   const [scope, setScope] = useState<"namespace" | "org">("namespace");
+  const [op, setOp] = useState<
+    { check: OpsHealthCheck; data: OpMixData | null; scope: typeof scope } | null | undefined
+  >(undefined);
+  const [error, setError] = useState<unknown>(null);
+  // Retry reads again through the effect.
+  const [reads, setReads] = useState(0);
   // A scope toggle keeps the mix (and the toggle) on screen, marked busy, until it answers;
   // another namespace starts over.
   const [refreshing, setRefreshing] = useState(false);
@@ -628,6 +636,8 @@ export function OpMixPanel() {
         setOp(undefined);
       }
       setRefreshing(true);
+      setError(null);
+      const asked = scope;
       getOpsHealth(
         { org: identity.org, namespace: identity.namespace },
         { namespace: scope === "namespace" ? identity.namespace : null, signal },
@@ -635,18 +645,23 @@ export function OpMixPanel() {
         .then((r) => {
           if (!live()) return;
           const check = r.checks.find((c) => c.name === "op_mix");
-          setOp(check ? { check, data: parseOpMix(check.data) } : null);
+          setOp(check ? { check, data: parseOpMix(check.data), scope: asked } : null);
         })
-        .catch(() => {
-          if (live()) setOp(null);
+        .catch((e) => {
+          if (!live()) return;
+          // A refusal is the role, said as such; any other failure is a failed read.
+          if (e instanceof ApiError && e.status === 403) setOp(null);
+          else setError(e);
         })
         .finally(() => {
           if (live()) setRefreshing(false);
         });
     },
-    [identity.org, identity.namespace, scope],
+    [identity.org, identity.namespace, scope, reads],
   );
 
+  if (error)
+    return <ListState kind="error" things="the operation mix" error={error} onRetry={() => setReads((n) => n + 1)} />;
   if (op === undefined)
     return (
       <LoadingSkeleton label="Loading the operation mix">
@@ -681,7 +696,8 @@ export function OpMixPanel() {
   return (
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="flex flex-wrap items-center gap-3">
-        {scope === "namespace" ? (
+        {/* The scope the figures were read for, which a toggle's read has not yet replaced. */}
+        {op.scope === "namespace" ? (
           <ScopeBadge kind="namespace" value={identity.namespace} />
         ) : (
           <Badge size="sm" state="neutral" text={`org · ${identity.org}`} />

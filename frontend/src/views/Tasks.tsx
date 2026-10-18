@@ -238,9 +238,9 @@ export function Tasks() {
       .then((c) => {
         if (seq === countsSeq.current) setCounts(c);
       })
-      .catch(() => {
-        if (seq === countsSeq.current) setCounts((c) => c ?? []);
-      });
+      // A failed read keeps what the rail had: with none yet it stays "…", not "empty" for
+      // inboxes that hold tasks.
+      .catch(() => {});
   }, [caller]);
 
   // Only the latest task.list may write the rows: picking B while A's read (or A's poll)

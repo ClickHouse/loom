@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
@@ -121,15 +121,32 @@ function seedNode(m: WalkModel): XNode {
 /** Rows a list shows before "Show all N". */
 const CAP = 20;
 
-/** The rows to draw: the first 20 of a longer list until "Show all N" is pressed. */
-function useCapped<T>(items: T[] | null): { shown: T[]; more: ReactNode } {
+/** The rows to draw: the first 20 of a longer list until "Show all N" is pressed. The
+ *  button goes with the cap, so focus moves to the first row it hid (`listRef` on the list). */
+function useCapped<T>(items: T[] | null): { shown: T[]; more: ReactNode; listRef: RefObject<HTMLUListElement> } {
   const [all, setAll] = useState(false);
+  const listRef = useRef<HTMLUListElement>(null);
+  const focusAdded = useRef(false);
+  useEffect(() => {
+    if (!all || !focusAdded.current) return;
+    focusAdded.current = false;
+    listRef.current?.children[CAP]?.querySelector<HTMLElement>("button, a[href]")?.focus();
+  }, [all]);
   const list = items ?? [];
-  if (all || list.length <= CAP) return { shown: list, more: null };
+  if (all || list.length <= CAP) return { shown: list, more: null, listRef };
   return {
     shown: list.slice(0, CAP),
+    listRef,
     more: (
-      <Button type="empty" htmlType="button" onClick={() => setAll(true)} className="mt-1">
+      <Button
+        type="empty"
+        htmlType="button"
+        onClick={() => {
+          focusAdded.current = true;
+          setAll(true);
+        }}
+        className="mt-1"
+      >
         Show all {list.length}
       </Button>
     ),
@@ -154,12 +171,12 @@ function FactList({
   onOpenMemory: (k: string) => void;
   emptyText: string;
 }) {
-  const { shown, more } = useCapped(facts);
+  const { shown, more, listRef } = useCapped(facts);
   if (facts === null) return <Loading layout="inline" label="Loading facts" />;
   if (facts.length === 0) return <div className="text-xs text-text-muted">{emptyText}</div>;
   return (
     <>
-      <ul className="space-y-1">
+      <ul ref={listRef} className="space-y-1">
         {shown.map((f) => {
           const rel = relationLabel(f.relation);
           const link = (e: string) => (
