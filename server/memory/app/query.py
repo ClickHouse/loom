@@ -29,6 +29,7 @@ from server.memory.api.models_search import (
     _AggregateRow,
 )
 from server.memory.app.get_output import duplicate_of_shown, row_output
+from server.memory.app.provenance import writer_actor
 from server.memory.app.served_superseded import ServedFlags, shown_successors
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
@@ -79,7 +80,10 @@ def _list_verification(r: dict[str, Any]) -> str:
 def _preview_for_list(row: Any, max_chars: int) -> tuple[Any, bool]:
     """`(value, value_truncated)` for one list row —
     the value cut to `max_chars`, and whether the row holds more than was
-    sent (the stored preview was already cut at 2,048, or this cut did it)."""
+    sent (the stored preview was already cut at 2,048, or this cut did it). A 'high'
+    row's value is readable by key only, through an audited read: none is sent."""
+    if getattr(row, "sensitivity", "") == "high":
+        return None, True
     raw = row.value
     value = _truncate_value_for_list(raw, max_chars)
     stored_cut = bool(getattr(row, "value_truncated", False))
@@ -547,7 +551,9 @@ async def _list_by_score(
                 user_id=r.get("user_id") or "",
                 session_id=r.get("session_id") or "",
                 source_trace=r.get("source_trace") or "",
-                value=_decode_value(r.get("value")),
+                # A 'high' row's value is readable by key only, through an audited read.
+                value=None if r.get("sensitivity") == "high" else _decode_value(r.get("value")),
+                value_truncated=r.get("sensitivity") == "high" or bool(r.get("value_truncated")),
                 verified_by=r.get("verified_by") or "",
                 verification=_list_verification(r),
                 sensitivity=r.get("sensitivity") or "",
@@ -829,7 +835,7 @@ async def _handle_memory_bulk_get(
         "memory.sensitive_read",
         org=input.org,
         namespace=input.namespace,
-        actor=input.agent,
+        actor=writer_actor(input.agent),
         subjects=high,
     )
     missing = [k for k in input.memory_keys if k not in results]

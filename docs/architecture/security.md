@@ -519,6 +519,8 @@ row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`),
 leg returns it: the `anchor_first` and `recent_first` tiers, the bodies a search returns and
 `memory.related`'s excerpts leave it out too. A key read of one, through `memory.get`,
 `memory.get_by_id` or `memory.bulk_get`, writes a `memory.sensitive_read` audit row.
+`memory.list` names a `high` row and its `sensitivity` but sends no value
+(`value_truncated: true`), and its `contains` filter does not search that value.
 `memory.export_evidence` leaves out the raw chunks and digests linked to a key that was ever
 `high`, and those whose text reads as a credential, unless asked with `include_high`. Search
 demotes labelled rows on questions that did not ask for a contact detail

@@ -471,22 +471,24 @@ _BULK_FETCH_SQL = """
     """
 
 
-async def keys_ever_high(
+async def high_keys(
     org: str, namespace: str, keys: Sequence[str], *, ch: _CHClient | None = None
 ) -> set[str]:
-    """The keys among `keys` with any version, live or deleted, labelled 'high': the text
-    of such a row may sit in the raw chunks and digests behind it."""
+    """The keys among `keys` with a row labelled 'high', live or tombstoned (a tombstone
+    carries the row's sensitivity forward): the raw chunks and digests behind such a row
+    may hold its text. No FINAL: an older version not yet merged away counts too. The
+    `memory_key` n-gram index keeps this off the namespace's other granules."""
     if not keys:
         return set()
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
         SELECT DISTINCT memory_key
-        FROM loom.memory_versions
+        FROM loom.memory
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND memory_key IN {keys:Array(String)}
-          AND sensitivity = 'high'
+          AND (sensitivity = 'high' OR has(tags, 'sensitivity:high'))
         """,
         params={"org": org, "ns": namespace, "keys": sorted(set(keys))},
     )
@@ -629,9 +631,10 @@ _LIST_ORDER = {
 # The keyword filter of a list: the value or the key holds the text, any case. A scan of
 # the namespace's values (no text index on `value`), so it is offered on the namespace-scoped
 # list only, where the primary key bounds the read to one namespace.
+# The value of a 'high' row is not searched: it is readable by key only.
 CONTAINS_PREDICATE = (
-    "(positionCaseInsensitiveUTF8(value, {contains:String}) > 0"
-    " OR positionCaseInsensitiveUTF8(memory_key, {contains:String}) > 0)"
+    "(positionCaseInsensitiveUTF8(memory_key, {contains:String}) > 0"
+    " OR (sensitivity != 'high' AND positionCaseInsensitiveUTF8(value, {contains:String}) > 0))"
 )
 
 
@@ -937,7 +940,8 @@ async def _overlay_usage_totals(row: MemoryRow, ch: _CHClient) -> MemoryRow:
             SELECT
                 sum(evidence_count) AS evidence_count,
                 sum(recall_count) AS recall_count,
-                max(last_recalled_at) AS last_recalled_at
+                -- Events other than recalls carry the epoch here.
+                nullIf(max(last_recalled_at), toDateTime(0)) AS last_recalled_at
             FROM loom.memory_usage_totals
             WHERE org = {org:String}
               AND namespace = {ns:String}
@@ -968,7 +972,8 @@ async def overlay_usage_totals_many(
                 memory_id,
                 sum(evidence_count) AS evidence_count,
                 sum(recall_count) AS recall_count,
-                max(last_recalled_at) AS last_recalled_at
+                -- Events other than recalls carry the epoch here.
+                nullIf(max(last_recalled_at), toDateTime(0)) AS last_recalled_at
             FROM loom.memory_usage_totals
             WHERE org = {org:String}
               AND namespace = {ns:String}

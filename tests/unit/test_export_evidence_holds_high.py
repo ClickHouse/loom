@@ -41,7 +41,7 @@ def evidence(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(evidence_transfer, "get_client", lambda: _CH())
     monkeypatch.setattr(chunk_links, "chunk_memory_keys", _links)
-    monkeypatch.setattr(memory_repo, "keys_ever_high", _ever_high)
+    monkeypatch.setattr(memory_repo, "high_keys", _ever_high)
 
 
 def _input(kind: str, **over: Any) -> MemoryExportEvidenceInput:

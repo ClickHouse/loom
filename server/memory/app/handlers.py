@@ -42,6 +42,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app.get_output import duplicate_of_shown, row_output
+from server.memory.app.provenance import writer_actor
 from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
@@ -402,7 +403,8 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
             "memory.sensitive_read",
             org=input.org,
             namespace=input.namespace,
-            actor=input.agent,
+            # The reader, from the token: a bulk or wildcard read names no agent.
+            actor=writer_actor(input.agent),
             subject={"memory_key": input.memory_key, "memory_id": str(row.memory_id)},
         )
 
@@ -864,9 +866,8 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
             "memory.sensitive_read",
             org=input.org,
             namespace=row.namespace,
-            # get_by_id carries no caller agent; the row's writer is the best
-            # available actor for the ledger.
-            actor=getattr(input, "agent", "") or row.agent or "-",
+            # The reader, from the token; get_by_id names no agent to fall back on.
+            actor=writer_actor(row.agent or "-"),
             subject={"memory_id": str(row.memory_id), "memory_key": row.memory_key},
         )
     return MemoryGetByIdOutput(

@@ -67,6 +67,7 @@ def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     async def _emit_many(event: str, **kw: Any) -> None:
         seen["audits"].append((event, [s["memory_key"] for s in kw["subjects"]]))
+        seen["actor"] = kw["actor"]
 
     monkeypatch.setattr(memory_repo, "get_many_by_keys", _rows)
     monkeypatch.setattr(memory_repo, "list_by_namespace", _rows)
@@ -88,6 +89,7 @@ async def test_bulk_get_serves_sensitivity_and_usage_and_audits_high_rows(served
     assert out.results["plain"].sensitivity == ""
     assert out.results["plain"].recall_count == 4
     assert served["audits"] == [("memory.sensitive_read", ["secret"])]  # one insert per call
+    assert served["actor"] == "a"  # the token's principal; with no token, the request's agent
 
 
 @pytest.mark.asyncio
@@ -135,3 +137,19 @@ async def test_emit_many_writes_rows_that_verify_like_emit_rows(monkeypatch) -> 
     )
     many, one = inserts
     assert len(many) == 2 and all(audit.row_matches_hash(r) for r in many + one)
+
+
+@pytest.mark.asyncio
+async def test_list_withholds_a_high_rows_value(served) -> None:
+    # Readable by key only: the entry says the value was cut, and a reader asks memory.get.
+    out = await query._handle_memory_list(MemoryListInput(org="o", namespace="n", agent="a"))
+    secret = next(e for e in out.entries if e.memory_key == "secret")
+    assert secret.value is None and secret.value_truncated is True
+    plain = next(e for e in out.entries if e.memory_key == "plain")
+    assert plain.value == "v"
+
+
+def test_a_contains_search_never_matches_a_high_rows_value() -> None:
+    assert "sensitivity != 'high' AND positionCaseInsensitiveUTF8(value" in (
+        memory_repo.CONTAINS_PREDICATE
+    )

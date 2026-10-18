@@ -381,7 +381,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         finally:
             await client.close()
         if not args.include_high:
-            # Also here, for a server that does not hold this evidence back itself.
+            # The rows this export held home, which the server's rule may not cover (a level
+            # it does not know, or a server that holds nothing back).
             held = {e["memory_key"] for e in entries if not okf.is_exportable(e)}
             chunks, digests, held_here = okf_ev.without_high(chunks, digests, held)
             held_evidence += held_here

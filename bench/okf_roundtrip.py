@@ -287,7 +287,7 @@ async def run(args: argparse.Namespace) -> int:
                 description="OKF round-trip import target",
                 keep=args.keep_namespaces,
             )
-        source = await _fetch_namespace(
+        source, _ = await _fetch_namespace(
             client, args.org, args.namespace, include_tombstoned=False, limit=args.limit
         )
         # Typed edges travel as relates_to
@@ -304,7 +304,9 @@ async def run(args: argparse.Namespace) -> int:
         src_digests: list[okf_ev.DigestRecord] = []
         if not args.no_evidence:
             # Raw chunks and session digests travel too
-            src_chunks, src_digests = await _fetch_evidence(client, args.org, args.namespace)
+            src_chunks, src_digests, _ = await _fetch_evidence(
+                client, args.org, args.namespace, include_high=True
+            )
             paths = okf.concept_paths_by_key(okf.plan_concepts(source, src_edges))
             files.update(okf_ev.plan_files(src_chunks, src_digests, paths))
         bundle_dir = Path(args.bundle_dir or tempfile.mkdtemp(prefix="okf-rt-"))
@@ -360,11 +362,14 @@ async def run(args: argparse.Namespace) -> int:
             )
             ev_totals = await _import_evidence(client, args.org, ev_args, ev_chunks, ev_digests)
         t_import = (datetime.now(UTC) - t1).total_seconds()
-        imported = await _fetch_namespace(client, args.org, target, include_tombstoned=False)
+        imported, _ = await _fetch_namespace(client, args.org, target, include_tombstoned=False)
         imp_chunks: list[okf_ev.ChunkRecord] = []
         imp_digests: list[okf_ev.DigestRecord] = []
         if not args.no_evidence:
-            imp_chunks, imp_digests = await _fetch_evidence(client, args.org, target)
+            # A round trip measures fidelity, so it keeps everything.
+            imp_chunks, imp_digests, _ = await _fetch_evidence(
+                client, args.org, target, include_high=True
+            )
         evidence = evidence_drift(src_chunks, imp_chunks, src_digests, imp_digests)
         evidence.update(
             {k: v for k, v in ev_totals.items() if k in ("failed", "edited", "skipped")}
