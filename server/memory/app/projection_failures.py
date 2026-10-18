@@ -452,14 +452,18 @@ async def scan_active_projection_failures(
     *,
     limit: int = 50,
     status_mirror: bool = False,
+    after: tuple[datetime, str] | None = None,
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
     """Return active failures across orgs for the repair worker, oldest first: the
     STATUS_MIRROR intents with `status_mirror`, else every other kind. Each judged
-    retirement queues one, so they get their own budget and order."""
+    retirement queues one, so they get their own budget and order. `after`: only rows
+    past that (created_at, failure_id), the last row of the previous batch."""
 
     ch = ch or get_client()
     kind = "=" if status_mirror else "!="
+    # failure_id is the toString alias here, as in the ORDER BY: compared as text.
+    past = "AND (created_at, failure_id) > ({at:DateTime}, {fid:String})" if after else ""
     rows = await ch.query_all(
         f"""
         SELECT
@@ -478,11 +482,12 @@ async def scan_active_projection_failures(
             created_at,
             resolved_at
         FROM loom.memory_projection_failures
-        WHERE status = 'active' AND projection {kind} {{mirror_kind:String}}
+        WHERE status = 'active' AND projection {kind} {{mirror_kind:String}} {past}
         ORDER BY created_at ASC, failure_id ASC
         LIMIT {{lim:UInt32}}
         """,
-        params={"lim": int(limit), "mirror_kind": STATUS_MIRROR},
+        params={"lim": int(limit), "mirror_kind": STATUS_MIRROR}
+        | ({"at": after[0], "fid": after[1]} if after else {}),
     )
     return [_row_from_ch(dict(row)) for row in rows]
 

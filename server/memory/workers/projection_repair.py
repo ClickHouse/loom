@@ -8,6 +8,7 @@ belief write fail. This worker gives those soft failures a bounded replay path.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 
 from server.settings import settings
@@ -15,9 +16,9 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-# STATUS_MIRROR intents a pass replays, before and apart from the other failures: one per
+# STATUS_MIRROR intents read at a time, before and apart from the other failures: one per
 # judged retirement, nearly all no-ops, so a burst of them never delays a real failure.
-STATUS_MIRRORS_PER_PASS = 300
+STATUS_MIRROR_BATCH = 300
 
 
 @dataclass(frozen=True)
@@ -46,18 +47,31 @@ async def run_pass(
     result = ProjectionRepairResult()
     with record_pass("projection_repair") as rec:
         from server.memory.app.projection_failures import (
+            ProjectionFailureRetryResult,
             retry_failures,
             scan_active_projection_failures,
         )
 
-        failures = await scan_active_projection_failures(
-            limit=STATUS_MIRRORS_PER_PASS, status_mirror=True
-        )
-        failures += await scan_active_projection_failures(
+        retries: list[ProjectionFailureRetryResult] = []
+        until = time.monotonic() + float(settings.projection_repair_status_mirror_seconds)
+        after = None
+        while True:
+            batch = await scan_active_projection_failures(
+                limit=STATUS_MIRROR_BATCH, status_mirror=True, after=after
+            )
+            retries += await retry_failures(batch)
+            # Past the batch's last row: a row left pending, or marked by a mutation not
+            # applied yet, is not read again this pass.
+            last = batch[-1] if len(batch) == STATUS_MIRROR_BATCH else None
+            if last is None or last.created_at is None or time.monotonic() >= until:
+                break
+            after = (last.created_at, last.failure_id)
+        others = await scan_active_projection_failures(
             limit=max(1, int(cfg.max_failures_per_pass)), status_mirror=False
         )
-        result.scanned = len(failures)
-        for retry in await retry_failures(failures):
+        retries += await retry_failures(others)
+        result.scanned = len(retries)
+        for retry in retries:
             if retry.retried:
                 result.retried += 1
             if retry.resolved:

@@ -80,7 +80,9 @@ async def test_a_repair_pass_counts_each_outcome_and_survives_a_poison_row(
     ]
     limits: list[int] = []
 
-    async def _scan(*, limit: int, status_mirror: bool = False) -> list[ProjectionFailureRow]:
+    async def _scan(
+        *, limit: int, status_mirror: bool = False, **_: Any
+    ) -> list[ProjectionFailureRow]:
         limits.append(limit)
         return [] if status_mirror else rows
 
@@ -125,7 +127,9 @@ async def test_status_mirrors_queued_first_do_not_hold_back_a_real_failure(
 
     queued = [_failure(i, pf.STATUS_MIRROR) for i in range(30)] + [_failure(99, "entity_edges")]
 
-    async def _scan(*, limit: int, status_mirror: bool | None = None) -> list[ProjectionFailureRow]:
+    async def _scan(
+        *, limit: int, status_mirror: bool | None = None, **_: Any
+    ) -> list[ProjectionFailureRow]:
         if status_mirror is None:  # one scan of every kind
             return queued[:limit]
         return [f for f in queued if (f.projection == pf.STATUS_MIRROR) == status_mirror][:limit]
@@ -158,7 +162,9 @@ async def test_a_pass_reads_each_orgs_erasure_and_marks_its_failures_once(
         async def execute(self, sql: str, params: Any = None) -> None:
             mutations.append(sql)
 
-    async def _scan(*, limit: int, status_mirror: bool = False) -> list[ProjectionFailureRow]:
+    async def _scan(
+        *, limit: int, status_mirror: bool = False, **_: Any
+    ) -> list[ProjectionFailureRow]:
         return queued if status_mirror else []
 
     async def _mirrored(f: ProjectionFailureRow, **_: Any) -> str:
@@ -179,6 +185,40 @@ async def test_a_pass_reads_each_orgs_erasure_and_marks_its_failures_once(
     assert result.resolved == 30
     assert sum("ALTER TABLE" in m for m in mutations) == 1
     assert reads == ["acme"], "the org's erasure is read once a pass"
+
+
+async def test_a_pass_reads_mirror_batches_until_one_comes_back_short(
+    monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
+) -> None:
+    import dataclasses
+    from datetime import datetime, timedelta
+
+    from server.memory.app import projection_failures as pf
+    from server.memory.workers import projection_repair
+
+    start = datetime(2026, 1, 1)
+    mirrors = [
+        dataclasses.replace(_failure(i, pf.STATUS_MIRROR), created_at=start + timedelta(seconds=i))
+        for i in range(700)
+    ]
+
+    async def _scan(
+        *, limit: int, status_mirror: bool = False, after: Any = None
+    ) -> list[ProjectionFailureRow]:
+        if not status_mirror:
+            return [_failure(999, "entity_edges")]
+        return [f for f in mirrors if after is None or (f.created_at, f.failure_id) > after][:limit]
+
+    retried: list[str] = []
+
+    async def _retry(f: ProjectionFailureRow, **_: Any) -> ProjectionFailureRetryResult:
+        retried.append(f.failure_id)
+        return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
+
+    monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
+    monkeypatch.setattr(pf, "retry_failures", _retries(_retry))
+    await projection_repair.run_pass()
+    assert len(retried) == 701 and len(set(retried)) == 701
 
 
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(

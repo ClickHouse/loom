@@ -159,8 +159,8 @@ memory.set, memory.pin, memory.delete, Undo and erasure requests):
 - No user write or pin is lost: every resolver write re-reads its row under the row's key
   lock and lands at the read version + 1, so a write that started after the read is newer.
   A retirement also queues a status mirror (`memory_status_mirror`) that the projection
-  repair makes a minute later at the earliest, up to 300 a pass apart from the other
-  failures: a pin whose memory row landed after the retirement's vector copy has its
+  repair makes a minute later at the earliest, 300 at a time for up to a minute of each
+  pass, apart from the other failures: a pin whose memory row landed after the retirement's vector copy has its
   status served again.
 - Every retirement has a `memory.auto_supersede` record and can be undone.
 - Nothing changes below confidence 0.90.
