@@ -205,6 +205,9 @@ function ConflictsPanel() {
   // for its own answer: a page the server read before the resolve wrote still lists them,
   // at versions the resolve answer does not name.
   const readsOut = useRef(new Set<Set<string>>());
+  // Each count read out collects the rows decisions take meanwhile, for its own answer:
+  // a count the server made before the resolve wrote still includes them.
+  const countsOut = useRef(new Set<{ taken: number }>());
   // The rows on screen as of the latest render, for an answer from another visit.
   const rowsNow = useRef(rows);
   rowsNow.current = rows;
@@ -216,7 +219,6 @@ function ConflictsPanel() {
       const goneHere = new Set<string>();
       readsOut.current.add(goneHere);
       listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: CONFLICT_PAGE, signal })
-        .finally(() => readsOut.current.delete(goneHere))
         .then((r) => {
           if (live()) {
             setRows(r.rows.filter((c) => undecided(c) && !goneHere.has(c.memory_id)));
@@ -227,14 +229,18 @@ function ConflictsPanel() {
         })
         .catch((e) => {
           if (live()) setError(e);
-        });
+        })
+        .finally(() => readsOut.current.delete(goneHere));
+      const countHere = { taken: 0 };
+      countsOut.current.add(countHere);
       countConflicts({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((n) => {
-          if (live()) setTotal(n);
+          if (live()) setTotal(Math.max(n - countHere.taken, 0));
         })
         .catch(() => {
           if (live()) setTotal(null);
-        });
+        })
+        .finally(() => countsOut.current.delete(countHere));
     },
     [identity.org, identity.namespace, reload],
   );
@@ -302,7 +308,7 @@ function ConflictsPanel() {
     );
   }
 
-  // Deciding the last conflict on hand leaves the one before it current.
+  // A guard: the cursor can outrun the rows only between two batched updates.
   const at = Math.min(index, rows.length - 1);
   const current = rows[at];
 
@@ -353,6 +359,7 @@ function ConflictsPanel() {
       // On this visit the decided row was on screen even if an earlier answer took it off.
       const taken = sameVisit ? Math.max(dropped, 1) : dropped;
       setTotal((t) => (t === null ? t : Math.max(t - taken, 0)));
+      for (const out of countsOut.current) out.taken += taken;
       // Another visit: the reason is not this decision's. An emptied page with more past
       // it reads the queue again (the decided flag).
       if (!sameVisit) return;

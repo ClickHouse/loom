@@ -497,6 +497,39 @@ describe("ReviewQueue", () => {
     expect(within(table).queryByRole("button", { name: "a/x" })).toBeNull();
   });
 
+  it("a count read before a decision wrote, answering after it, leaves that decision off", async () => {
+    let countA: (n: number) => void = () => {};
+    let aCounts = 0;
+    vi.mocked(countConflicts).mockImplementation(async (id: { namespace: string }) => {
+      if (id.namespace === "ns-b") return 1;
+      aCounts += 1;
+      return aCounts === 1 ? 3 : new Promise<number>((r) => (countA = r));
+    });
+    onTestFinished(() => {
+      vi.mocked(countConflicts).mockImplementation(async () => 0);
+    });
+    vi.mocked(listConflicts).mockImplementation(async (id) =>
+      id.namespace === "ns-b"
+        ? { rows: [conflict("b/key")], next_before_version: null }
+        : { rows: [conflict("a/x"), conflict("a/y"), conflict("a/z")], next_before_version: null },
+    );
+    let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText(/Conflict 1 of 3/, {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    seed("ns-a");
+    await screen.findByText("value of a/x", {}, WAIT);
+    await waitFor(() => expect(aCounts).toBe(2), WAIT);
+    await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
+    // The count was read before the resolve wrote: it still says 3.
+    await act(async () => countA(3));
+    await screen.findByText(/Conflict 1 of 2/, {}, WAIT);
+  });
+
   it("a Load more answered after a namespace switch adds nothing to the new namespace's queue", async () => {
     let older: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
     vi.mocked(listConflicts).mockImplementation(async (id, opts) => {
