@@ -331,7 +331,8 @@ function MemoryList() {
         // soon as they arrive (a few hundred ms) and the ranked hits join them when the
         // search answers (it embeds the query first); a failed keyword read leaves the
         // ranked hits standing.
-        // A local write (memoriesVersion) ranks again; a filter change alone does not.
+        // A local write (memoriesVersion) searches and ranks again, so a hit deleted or pinned
+        // here shows as it now is; a filter change alone reuses the ranking.
         const rankedKey = `${identity.org}/${identity.namespace}\n${memoriesVersion}\n${rawQuery}`;
         if (rankedRef.current?.key !== rankedKey) {
           rankedRef.current?.ac.abort();
@@ -439,7 +440,7 @@ function MemoryList() {
       clearTimeout(t);
       ac.abort();
     };
-  }, [rawQuery, identity, searchFilterGen]);
+  }, [rawQuery, identity, searchFilterGen, memoriesVersion]);
 
   // Keep entriesRef current for the search effect (which reads it without
   // subscribing, to avoid re-running on every poll refresh).
@@ -1241,6 +1242,8 @@ function MemoryList() {
           pageSize={pageSize}
           shown={(listFiltered && filterRead) || (!listFiltered && browsedCurrent) ? pageList.length : 0}
           total={listFiltered ? (filterRead ? listTotal : undefined) : browsedTotal}
+          // A filtered read the server cut short holds its newest matches, not every one.
+          capped={listFiltered && truncated}
           onPage={setPage}
           onPageSize={(n) => {
             setPageSize(n);

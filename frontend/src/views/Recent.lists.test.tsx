@@ -189,6 +189,8 @@ describe("Memories list chrome", () => {
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
     await waitFor(() => expect(toolbar()).toHaveTextContent("340 matches"));
     expect(screen.getByText(/Showing the newest matches/)).toBeInTheDocument();
+    // The pager covers the rows read: the newest 100, not every match.
+    expect(screen.getByRole("navigation", { name: "Memories pages" })).toHaveTextContent("1–50 of the newest 100");
   });
 
   it("drops the server's count while a typed tag waits to be applied", async () => {

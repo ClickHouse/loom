@@ -168,6 +168,43 @@ describe("Recent search under a tag filter", () => {
   });
 });
 
+describe("Recent search after a local write", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: admin,
+      myNamespaces: [row("alice", "admin")],
+      identity: { org: "dev", namespace: "alice", agent: "loom-ui" },
+      view: "memories",
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("searches again after a write here, so a deleted or pinned hit shows as it now is", async () => {
+    vi.mocked(listMemories).mockImplementation(async () => ({
+      entries: [entry("coffee_pref")],
+      total: 1,
+      today: 0,
+      truncated: false,
+    }));
+    render(<Recent />);
+    await screen.findByText("coffee_pref");
+    await userEvent.type(screen.getByLabelText("Search memories"), "milk");
+    await waitFor(() => expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk")).toHaveLength(1), {
+      timeout: 3000,
+    });
+    act(() => useStore.getState().bumpMemoriesVersion());
+    await waitFor(() => expect(vi.mocked(searchMemory).mock.calls.filter(([, q]) => q === "milk")).toHaveLength(2), {
+      timeout: 3000,
+    });
+  });
+});
+
 describe("Recent across a namespace switch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
