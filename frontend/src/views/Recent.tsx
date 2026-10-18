@@ -640,6 +640,8 @@ function MemoryList() {
   // that page while it is still the size shown, so a second Next while a page reads asks
   // for the same page and the range says the rows under it.
   const [entriesAt, setEntriesAt] = useState({ page: 0, size: 0 });
+  // The namespace's total from the last browsed read: a filter's count is not it.
+  const [browsedTotal, setBrowsedTotal] = useState<number | undefined>(undefined);
   const browsedCurrent = entriesAt.size === pageSize;
   // The filter the rows on screen were read for: until a read of the current one lands,
   // the old rows stay up and "nothing matches" is not said.
@@ -699,7 +701,6 @@ function MemoryList() {
           });
           if (!live()) return;
           if (isFirst) {
-            setRefreshing(false);
             setReadFor(readKey);
             setLoadError(null);
           }
@@ -715,6 +716,9 @@ function MemoryList() {
             knownKeysRef.current = new Set(r.entries.map((e) => e.memory_key));
             setEntries(r.entries);
             setEntriesAt({ page: off / lim, size: lim });
+            if (!listFiltered && !showDeleted) setBrowsedTotal(r.total);
+            // Next comes back with the rows it read, not before them.
+            setRefreshing(false);
           } else {
             // Any key we haven't seen before is "new".
             const fresh = new Set<string>();
@@ -1161,11 +1165,11 @@ function MemoryList() {
       {!searchActive && !showDeleted && !failed && entries !== null && (
         <ListPager
           label="Memories pages"
-          page={listFiltered ? page : browsedCurrent ? entriesAt.page : page}
+          page={!listFiltered && browsedCurrent ? entriesAt.page : page}
           busy={refreshing}
           pageSize={pageSize}
           shown={listFiltered || browsedCurrent ? pageList.length : 0}
-          total={listTotal}
+          total={listFiltered ? listTotal : browsedTotal}
           onPage={setPage}
           onPageSize={(n) => {
             setPageSize(n);

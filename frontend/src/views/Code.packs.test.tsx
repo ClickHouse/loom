@@ -133,7 +133,12 @@ describe("PR packs pages", () => {
     render(<PacksTab id={ID} repo="acme/app" />);
     expect(await screen.findByText("Couldn't load PR packs")).toBeInTheDocument();
     expect(screen.getByLabelText("Filter by PR number")).toBeInTheDocument();
+    let answer: (v: unknown) => void = () => {};
+    listCodeContextPacks.mockReturnValueOnce(new Promise((r) => (answer = r)));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    // The read is in flight: the error gives way to it.
+    await waitFor(() => expect(screen.queryByText("Couldn't load PR packs")).toBeNull());
+    await act(async () => answer({ rows: [pack(7)], total: 1 }));
     expect(await screen.findByText("PR 7")).toBeInTheDocument();
   });
 

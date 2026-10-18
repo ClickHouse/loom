@@ -2688,6 +2688,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
         }
       }
       setRefreshing(true);
+      setError(null);
       const pr = parseInt(prSettled, 10);
       listCodeContextPacks(id, { limit: pageSize, offset, pr_number: Number.isFinite(pr) ? pr : 0, signal })
         .then((r) => {

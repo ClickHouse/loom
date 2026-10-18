@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
+import type { MemoryListEntry, MemoryListResponse, MyNamespaceEntry, WhoAmI } from "../api";
 import { ApiError } from "../lib/errors";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
@@ -77,6 +77,7 @@ async function pick(select: string, value: string) {
 describe("Memories list chrome", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     resetNamespaceRoleCache();
     vi.mocked(listMemories).mockResolvedValue({ entries: ROWS, total: 1234, today: 2, truncated: false });
     useStore.setState({
@@ -91,6 +92,49 @@ describe("Memories list chrome", () => {
   afterEach(() => {
     cleanup();
     useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  // A browsed page, then reads held open: a new page size, then a filter cleared.
+  function browseThenHold() {
+    let hold = false;
+    vi.mocked(listMemories).mockImplementation(async (_id, limit = 50, opts): Promise<MemoryListResponse> => {
+      if (limit === 1000) return { entries: ROWS.slice(0, 2), total: 2, today: 0, truncated: false };
+      const from = opts?.offset ?? 0;
+      const answer = {
+        entries: Array.from({ length: limit }, (_, i) => entry(`k${from + i}`)),
+        total: 1234,
+        today: 0,
+        truncated: false,
+      };
+      return hold ? new Promise<MemoryListResponse>(() => {}) : answer;
+    });
+    return () => {
+      hold = true;
+    };
+  }
+
+  it("says it is loading, with the namespace's total, while a new page size reads", async () => {
+    const holdReads = browseThenHold();
+    render(<Recent />);
+    await screen.findByText("k0");
+    const pager = () => screen.getByRole("navigation", { name: "Memories pages" });
+    holdReads();
+    await userEvent.click(within(pager()).getByRole("button", { name: "Rows per page" }));
+    await userEvent.click(await screen.findByText(/^100/));
+    await waitFor(() => expect(pager()).toHaveTextContent("Loading… · 1,234 in all"));
+  });
+
+  it("does not count a cleared filter's matches as the namespace's total", async () => {
+    const holdReads = browseThenHold();
+    render(<Recent />);
+    await screen.findByText("k0");
+    await pick("Status", "pinned");
+    await waitFor(() => expect(listMemories).toHaveBeenLastCalledWith(expect.anything(), 1000, expect.anything()));
+    holdReads();
+    await userEvent.click(within(toolbar()).getByRole("button", { name: "Clear filters" }));
+    const pager = await screen.findByRole("navigation", { name: "Memories pages" });
+    expect(pager).toHaveTextContent("1,234 in all");
+    expect(pager).not.toHaveTextContent(/\b2 in all/);
   });
 
   // Next waits for the page's read, and the pager pages from the rows on screen.

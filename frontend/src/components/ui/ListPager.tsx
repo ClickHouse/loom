@@ -32,7 +32,8 @@ export interface ListPagerProps {
   /** Zero-based. */
   page: number;
   pageSize: number;
-  /** Rows on the current page. */
+  /** Rows of this list on screen: 0 while the rows there were read for another filter or
+   *  page size (with `busy`, the pager then says it is loading). */
   shown: number;
   /** Every row the list holds, when the server says; without it, a short page is the last. */
   total?: number;
@@ -42,7 +43,8 @@ export interface ListPagerProps {
   maxOffset?: number;
   /** What the list holds (its filters): a change clears what the pager last said. */
   resetKey?: string;
-  /** A read is in flight: Next waits for it, so a second press does not skip a page. */
+  /** A read is in flight: Next waits for it, so a second press does not skip a page; with
+   *  `shown` 0 the range says "Loading…". */
   busy?: boolean;
   onPage: (page: number) => void;
   /** With it, a page-size choice sits beside the pages. */
