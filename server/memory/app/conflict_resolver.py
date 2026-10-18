@@ -240,6 +240,9 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | No
     loser, winner = peer, row
     loser_sha = str(loser.content_sha256 or "")
     pair = (str(loser.memory_id), str(winner.memory_id))
+    entry = retired_entry(
+        loser, superseded_by=pair[1], superseded_by_key=str(winner.memory_key), label=cr.UPDATE
+    )
     intent = await record_projection_failure(
         org=org,
         namespace=namespace,
@@ -248,17 +251,7 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | No
         source_operation=f"worker.{CONFLICT_RESOLVER}",
         source_resource_id=f"{CONFLICT_RESOLVER}:{pair[1]}",
         error="conflict_resolver: retirement to follow",
-        payload={
-            "pairs": [list(pair)],
-            "retired": [
-                retired_entry(
-                    loser,
-                    superseded_by=pair[1],
-                    superseded_by_key=str(winner.memory_key),
-                    label=cr.UPDATE,
-                )
-            ],
-        },
+        payload={"pairs": [list(pair)], "retired": [entry]},
     )
     into: dict[str, list[dict[str, Any]]] = {}
     await apply_refines(
@@ -274,8 +267,13 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | No
     )
     retired = [{**r, "label": cr.UPDATE} for r in into.get(CONFLICT_RESOLVER, [])]
     if not retired:
-        await _done(org, intent)
-        return None
+        # Nothing tracked does not mean nothing landed (a lost response): the head says.
+        head = await _head(org, pair[0])
+        if head is None or (head.status, str(head.superseded_by)) != ("superseded", pair[1]):
+            if _holds(head, namespace, loser_sha):
+                await _done(org, intent)  # still live as judged: none landed
+            return None  # otherwise the repair decides
+        retired = [entry]
     return Retired(intent=intent, retired=retired, agent=str(winner.agent))
 
 

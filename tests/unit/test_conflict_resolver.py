@@ -291,6 +291,7 @@ def _mem(mid: str = "m1", **kw: Any) -> Any:
         user_id="u",
         session_id="s1",
         status="active",
+        superseded_by="",
         pinned=False,
         content_sha256="sha-new",
         conflict_with=[],
@@ -832,6 +833,12 @@ def retire_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def no_erasure(org: str, **kw: Any) -> bool:
         return False
 
+    e.heads = {}  # the loser's head, read when nothing was tracked
+
+    async def head(org: str, mid: str) -> Any:
+        return e.heads.get(mid)
+
+    monkeypatch.setattr(resolver, "_head", head)
     monkeypatch.setattr(queue, "under_erasure", no_erasure)
     monkeypatch.setattr(conflicts, "apply_refines", refines)
     monkeypatch.setattr(auto_resolution, "record_auto_supersessions", record)
@@ -848,6 +855,7 @@ async def test_the_follow_is_owed_before_the_supersede_and_settled_after_it(
     retire_env.retires, retire_env.follow_ok = retires, follow_ok
     late = _mem("m1", content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
+    retire_env.heads["m1"] = late  # not retired: still live as judged
     done = await resolver._retire("o", "ns", current, late)
     assert (done is not None) is retires
     if done is not None:

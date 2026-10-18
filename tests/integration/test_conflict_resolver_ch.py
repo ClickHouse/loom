@@ -1743,3 +1743,28 @@ async def test_the_status_mirror_repair_never_serves_a_row_retired_during_it(ch,
     assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
     (served,) = await live_embedding_rows_for_key(ch, org=org, namespace=NS, **ident)
     assert served["status"] == "superseded", "a retired row is never served again"
+
+
+async def test_a_supersede_whose_response_was_lost_is_still_followed(
+    ch, wired, monkeypatch
+) -> None:
+    """The supersede commits, but its insert call raises (a lost response): the row is
+    retired, so its record and its graph follow are still made."""
+    from server.memory.store import lifecycle
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _seed(ch, org, monkeypatch)
+    real = lifecycle.insert_memory_versions
+
+    async def lost(rows: list[dict[str, Any]], **kw: Any) -> Any:
+        out = await real(rows, **kw)
+        if any(r.get("status") == "superseded" for r in rows):
+            raise ConnectionError("the response was lost")
+        return out
+
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", lost)
+    await run_pass()
+    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    assert not await _paris_open(ch, org, False), "the retired row's fact is closed"
+    assert len(await _audit(ch, org, "memory.auto_supersede")) == 1
