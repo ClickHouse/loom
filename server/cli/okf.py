@@ -902,7 +902,7 @@ async def _prune(
             res = await client.post("memory.delete", ident)
         except RuntimeError as e:
             n["prune_failed"] += 1
-            print(f"  ✗ delete {key}: {e}", file=sys.stderr)
+            print(f"  ✗ prune {key}: {e}", file=sys.stderr)
             continue
         n["pruned"] += int(bool(res.get("tombstoned")))
     return n

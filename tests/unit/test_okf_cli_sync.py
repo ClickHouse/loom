@@ -21,7 +21,7 @@ from server.memory.domain.edge_relations import canonical_edge
 from server.memory.domain.graph_quality import canonical_entities
 
 _NOW = datetime(2026, 9, 1, tzinfo=UTC)
-# An unsigned token: the CLI reads its claims; the fake server stamps `actor` from them.
+# An unsigned token the CLI reads claims from; _ACTOR is the actor these claims give.
 _TOKEN = (
     "e30."
     + base64.urlsafe_b64encode(json.dumps({"sub": "okf-sync", "sa": True}).encode())
@@ -578,14 +578,79 @@ def test_a_limit_the_export_did_not_reach_is_not_recorded(
     assert _export(tmp_path / "part", "--limit", "1")["limit"] == 1
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["content_sha256", "memory_type", "source_trace", "tags", "confidence", "entities", "valid_at"],
+)
 def test_a_field_the_import_does_not_read_would_rewrite_every_row(
-    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch, field: str
 ) -> None:
     # The fake returns only the fields asked for, so _LIVE_FIELDS must name each one compared.
     root = _bundle(tmp_path / "b", [_entry("a")])
     assert _run(root) == 0
-    fields = [f for f in cli_okf._LIVE_FIELDS if f != "valid_at"]
+    fields = [f for f in cli_okf._LIVE_FIELDS if f != field]
     monkeypatch.setattr(cli_okf, "_LIVE_FIELDS", fields)
     loom.calls.clear()
     assert _run(root) == 0
     assert loom.writes() == ["memory.set"]
+
+
+def test_a_concept_with_a_source_is_written_on_every_run(tmp_path: Path, loom: _FakeLoom):
+    root = _bundle(tmp_path / "b", [_entry("a", source_resource_id="doc://runbook")])
+    assert _run(root) == 0
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == ["memory.set"]
+
+
+def _failing(loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch, failing_op: str) -> None:
+    serve = loom.post
+
+    async def post(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == failing_op:
+            loom.calls.append((op, body))
+            raise RuntimeError(f"{op} → 503")
+        return await serve(op, body)
+
+    monkeypatch.setattr(loom, "post", post)
+
+
+def test_a_target_that_cannot_be_read_exits_1_before_any_write(
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _failing(loom, monkeypatch, "memory.list")
+    assert _run(_bundle(tmp_path / "b", [_entry("a")])) == 1
+    assert loom.writes() == []
+    assert "cannot read acme/dst" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failing_op", ["memory.set", "memory.link", "memory.delete"])
+def test_a_failed_write_exits_1(
+    tmp_path: Path, loom: _FakeLoom, monkeypatch: pytest.MonkeyPatch, failing_op: str
+) -> None:
+    edge = {"from_key": "a", "to_key": "c", "relation": "supports", "author": "x"}
+    assert _run(_bundle(tmp_path / "1" / "b", [_entry("a"), _entry("gone")])) == 0
+    _failing(loom, monkeypatch, failing_op)
+    root = _bundle(tmp_path / "2" / "b", [_entry("a", value="new"), _entry("c")], edges=[edge])
+    assert _run(root, "--prune") == 1
+
+
+def test_a_failed_evidence_batch_exits_1_and_stays_out_of_the_row_count(
+    tmp_path: Path,
+    loom: _FakeLoom,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def evidence_fails(*_a: Any) -> dict[str, int]:
+        keys = ("chunks_written", "links_written", "digests_written", "skipped", "edited")
+        return dict.fromkeys(keys, 0) | {"failed": 64}
+
+    monkeypatch.setattr(cli_okf, "_walk_evidence", lambda _root: ([object()], []))
+    monkeypatch.setattr(cli_okf, "_import_evidence", evidence_fails)
+    assert _run(_bundle(tmp_path / "b", [_entry("a")])) == 1
+    out = capsys.readouterr().out
+    assert "64 FAILED" in out
+    assert "1 written, 0 unchanged, 0 failed" in out

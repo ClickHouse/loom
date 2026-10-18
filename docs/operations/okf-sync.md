@@ -25,9 +25,9 @@ LOOM_API_KEY="$PUBLIC_WRITER" loom import-okf /tmp/bundle --server-url "$PUBLIC_
   most recently updated one is written. Re-sending an identical row would count as a
   reinforcement: a version row, an audit row and a higher ranking boost on every run. A
   concept with `sources:` is the exception: it is written on every run, because the reads
-  the import makes do not return the source it links to. So is a concept the target merges into another key's
-  row: each run sends it again and reinforces that row, and the last line counts it as
-  merged.
+  the import makes do not return the source it links to. So is a concept the target
+  merges into another key's row: each run sends it again and reinforces that row, and
+  the last line counts it as merged.
 - **One `memory.set` per new or changed concept**, through the conflict, blacklist and
   audit checks of any other write, with the token as its actor. A row the source marked
   `derived` or `external` keeps that class; every other row is stored as `imported`,
@@ -47,10 +47,10 @@ means the bundle was refused (a lint finding or a prune guard) before any reques
 
 ## Guards
 
-- `--prune` refuses a bundle with no concepts, a bundle exported with `--limit`, and one
-  whose concept files do not hash to the `loom.corpus_digest` the export wrote into
-  `index.md`. A partial or edited bundle never drives deletes, and neither does one exported
-  into a directory that held an older bundle.
+- `--prune` refuses a bundle with no concepts, a bundle whose export stopped at its
+  `--limit`, and one whose concept files do not hash to the `loom.corpus_digest` the
+  export wrote into `index.md`. A partial or edited bundle never drives deletes, and
+  neither does one exported into a directory that held an older bundle.
 - Before each delete it reads the row under its own identity again and deletes only while
   that row is still there under its `--agent` and was written by its own token:
   `memory.delete` falls back to the same key under another agent when the caller's row is
@@ -97,8 +97,9 @@ kubectl create secret generic okf-sync \
 Re-mint before the TTL runs out, with the same `--subject`, and replace the Secret. Prune
 deletes only rows its token's subject wrote, so a token with another subject leaves the
 earlier copies in place (the last line counts them as kept); `loom revoke-token` retires a
-leaked one. Prune needs a JWT: with a token that carries no subject (a server with
-authentication off) it deletes nothing and counts every candidate as kept.
+leaked one. Prune compares the writer the server stamped with the token's subject; on a
+server with authentication off no row carries one, so prune deletes nothing and counts
+every candidate as kept.
 
 - On the public Loom, the job's token is the only writer on the namespace. Its readers
   (a bot in public CI) hold `viewer` tokens.
