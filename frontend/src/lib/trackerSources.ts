@@ -73,9 +73,8 @@ export interface TrackerSource {
 
 export interface TrackerSourceListResponse {
   sources: TrackerSource[];
-  /** Whether `tracker.source.add/rotate/remove` answer on this deployment; absent on a
-   *  server that predates the field. */
-  self_service?: boolean;
+  /** Whether `tracker.source.add/rotate/remove` answer on this deployment. */
+  self_service: boolean;
 }
 
 /** The freshness object when it carries counts, else null. */

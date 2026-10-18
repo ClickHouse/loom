@@ -51,7 +51,6 @@ from server.code.app.index.gitrepo import auth_env, communicate_or_kill, git_con
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.typescript_dependencies import (
     LOCKFILES,
-    install_roots,
     prepare_dependencies,
 )
 from server.core.paths import SCIP_HARNESS_DIR
@@ -102,11 +101,6 @@ def _resolve_paths(cfg: RepoConfig) -> tuple[Path, Path, str | None]:
     if not binary.exists():
         return checkout, bare, f"scip-typescript missing at {binary}"
     return checkout, bare, None
-
-
-def _install_roots(checkout: Path, projects: tuple[str, ...]) -> list[Path]:
-    """The package roots prepared before indexing (compatibility helper)."""
-    return install_roots(checkout, projects)
 
 
 async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResult) -> None:

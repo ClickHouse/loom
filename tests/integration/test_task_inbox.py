@@ -11,7 +11,6 @@ sees nothing. Needs LOOM_BASE_URL (skips otherwise).
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 
 import httpx
@@ -397,8 +396,7 @@ async def test_long_poll_wakes_on_a_create(control_plane_url: str, mint_test_tok
         assert len(out["tasks"]) == 1 and out["tasks"][0]["status"] == "in_progress"
         # woken well before the 15 s ceiling (an in-process wake-up or the 2 s re-read)
         assert out["waited_ms"] < 8000, out["waited_ms"]
-        if os.environ.get("LOOM_TASK_LEASE_BACKEND") == "keeper":
-            assert out["backend"] == "keeper"
+        assert out["backend"] == "keeper"
 
 
 @pytest.mark.slow

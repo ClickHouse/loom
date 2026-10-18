@@ -515,12 +515,10 @@ class CodeClient:
         settings, history, blame, qa, risk (`jit_risk` and
         `author_revert_prior`, priors for ranking, never a gate) — each with
         a verdict, plus `decisions` (test_only, symbol_with_regressions,
-        uncovered_symbol, randomized_setting, deleted_lines_blamed). The
-        `groups` / `reviewers` sections do not exist; naming one is a 422.
-        `tier` trivial | standard |
-        full selects the sections and the token budget; a PR never briefed
-        is built now — from the ledger's row, or from the
-        merge commit the mirror names when the ledger predates the PR
+        uncovered_symbol, randomized_setting, deleted_lines_blamed).
+        `tier` trivial | standard | full selects the sections and the token
+        budget; a PR never briefed is built now — from the ledger's row, or
+        from the merge commit the mirror names when the ledger predates the PR
         (`source: built_from_mirror`, `ledger: absent`). `store=False`
         serves such a build without caching it (a measurement consumer never
         caches).

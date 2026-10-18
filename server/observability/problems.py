@@ -623,7 +623,7 @@ def _layout_problems(state: HealthState) -> list[Problem]:
         state.repo_sandbox is None and shutil.which("bwrap") is not None
     )
     fix = (
-        "Move the data paths (LOOM_BLOB_DIR, LOOM_CODE_REPOS_ROOT, "
+        "Move the data paths (LOOM_CODE_REPOS_ROOT, "
         "LOOM_CODE_SCIP_CHECKOUT_DIR, LOOM_ENV_FILE) out of the Python install and "
         "system directories."
     )
@@ -754,8 +754,7 @@ def _participant_problems(state: HealthState) -> list[Problem]:
             "warn",
             f"A provider reconfiguration would wait on these participants: {ids}. "
             "`heartbeat_expired` ones stopped heartbeating (they may be paused), "
-            "`queries_running` ones did so with a query still running, and `no_heartbeat` "
-            "rows come from a build without heartbeats.",
+            "and `queries_running` ones did so with a query still running.",
             "Once a participant's process is confirmed stopped, retire it with "
             "`loom participant retire --participant <id> --yes`.",
             source="runtime",

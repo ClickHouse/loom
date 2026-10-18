@@ -20,7 +20,7 @@ test("teamRulesNamespace: the cached entry's primary namespace, same org, not th
   assert.equal(teamRulesNamespace(entry, scope), "code-clickhouse");
   assert.equal(teamRulesNamespace(null, scope), "");
   assert.equal(teamRulesNamespace({ indexed: false, primaryNamespace: "code-clickhouse" }, scope), "");
-  assert.equal(teamRulesNamespace({ ...entry, primaryNamespace: "" }, scope), ""); // older cache entry
+  assert.equal(teamRulesNamespace({ ...entry, primaryNamespace: "" }, scope), ""); // no primary namespace
   assert.equal(teamRulesNamespace({ ...entry, org: "other" }, scope), "");
   assert.equal(teamRulesNamespace(entry, { ...scope, namespace: "code-clickhouse" }), "");
 });

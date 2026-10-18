@@ -15,7 +15,7 @@ interface HealthProblem {
 }
 
 /** The well-formed entries of a `/v1/health` body's `problems`; [] when it is absent or
- *  not a list (an older server, a proxy's rewrite) — a bad body means no banner, never a
+ *  not a list (a proxy's rewrite) — a bad body means no banner, never a
  *  render crash. */
 function healthProblems(d: Record<string, unknown>): HealthProblem[] {
   const raw: unknown = d.problems;

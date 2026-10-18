@@ -33,7 +33,7 @@ Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 | Entity graph                 | `entity_edges`, `entity_degree`, `entity_triples`, `entity_edge_memories`, `entity_triple_memories`, `entity_vectors`, `entity_summaries`, `entity_canonical_map`, `entity_communities`, `operator_edges`                                                                                              | The `memory.set` after-write projection, `entity_extractor`, `entity_communities`; `entity_degree_mv`                  |
 | Code index                   | `code_files`, `code_chunks`, `code_symbols`, `code_edges`, `code_pr_history` and the other `code_*` tables                                                                                                                                                                                             | `code_ingest`, the `code_scip_*` workers, `code_pr_history`, `code_embed_recovery`, `code_summary`, `code_graph_stats` |
 | Tracker                      | `qa_sources`, `qa_item_embeddings`, `qa_link_candidates`, `qa_test_daily`, `qa_rollup_days`, `qa_fail_hours`                                                                                                                                                                                           | `tracker.source.add`, `tracker_embed`, `tracker_links`, `tracker_test_daily`                                           |
-| Runs, tasks, briefs          | `agent_runs`, `agent_turn_usage`, `session_outcomes_by_user`, `procedure_runs`, `tasks`, `task_events`, `task_claims`, `task_leases`, `agent_run_claims`, `task_inboxes`, `session_briefs`, `context_blobs` and neighbours                                                                             | `run.*`, `task.*` / `inbox.*`, `session.brief_*`, `context.offload`, `reflection_distill`                              |
+| Runs, tasks, briefs          | `agent_runs`, `agent_turn_usage`, `session_outcomes_by_user`, `procedure_runs`, `tasks`, `task_events`, `task_leases`, `agent_run_claims`, `task_inboxes`, `session_briefs`, `context_blobs` and neighbours                                                                                            | `run.*`, `task.*` / `inbox.*`, `session.brief_*`, `context.offload`, `reflection_distill`                              |
 | Namespaces, auth, governance | `namespaces`, `namespace_grants`, `namespace_policies`, `namespace_types`, `namespace_snapshots`, `namespace_calibration_*`, `service_accounts`, `user_state`, `revoked_tokens`, `signing_keys`, `auth_attempts`, `runtime_overrides`, `oauth_state`, `idempotency`, `policy_decisions` and neighbours | `namespace.*`, `grants.*`, sign-up and claim flows, `recalibration`, the idempotency cache                             |
 | Telemetry, audit, cost       | `events`, `agent_events`, `agent_cost_rollup_daily`, `audit_log`, `audit_checkpoints`, `search_trace_log`, `memory_exposures`, `memory_usage_events`, `memory_usage_totals`, `code_search_trace`, `worker_status` and neighbours                                                                       | The events stream, the op ledger, `observability/audit.py`, `audit_verifier`, the supervisor                           |
 | Erasure                      | `erasure_requests`, `erasure_reversals`                                                                                                                                                                                                                                                                | `erasure.request`, `erasure_recovery`, `memory.restore`                                                                |
@@ -421,10 +421,9 @@ with `purge=true` and runner state.
 - **Sign-in state** (`loom.oauth_signin_state`, KeeperMap) holds each code, device
   grant, finished IdP round trip and session's current refresh token. A value changes
   only by a strict-mode compare-and-set: an `INSERT` for a new key, otherwise an
-  `ALTER … UPDATE` conditioned on the value the writer read. Keys carry their credential's expiry, and a sweep every five
-  minutes drops the expired ones with one `ALTER … DELETE`; all are Keeper key
-  operations, not MergeTree mutations. `loom.oauth_claims` (migration 028) is used only by a
-  previous build still serving during a rolling upgrade.
+  `ALTER … UPDATE` conditioned on the value the writer read. Keys carry their
+  credential's expiry, and a sweep every five minutes drops the expired ones with one
+  `ALTER … DELETE`; all are Keeper key operations, not MergeTree mutations.
 - **Grant change and account claims** are leases (`server.core.leases`): keys of
   `loom._migration_lock`. A grant change holds the grant's claim from its read to its
   write, so a concurrent change of the same grant waits for it. Its reads are sequentially
@@ -436,8 +435,8 @@ with `purge=true` and runner state.
   the namespace's admins claim (the key with no subject) and counts the admins under it.
   A change that rewrites an account's registry row (a release, a password set, a
   namespace register or delete) holds that account's claim the same way.
-  `loom.grant_claims`, the KeeperMap table builds before 033 claimed in, is no longer
-  written.
+  `task_claims`, `oauth_claims` and `grant_claims` exist in the schema and no code path
+  writes or reads them.
 - **Graph projections and graph writes** (`loom.graph_projections`, KeeperMap where the
   server has a Keeper): a projection holds one of 32 slot keys of its namespace and its
   end drops it (a begin whose insert failed uncertainly leaves its slot to go stale); a
@@ -646,7 +645,7 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 
 - Every tenant read filters on the identity prefix of the sort key; the exceptions are
   rows addressed by a global id (`erasure_requests`, `oauth_state`) and tables with no
-  tenant columns (caches, `idempotency`, `revoked_tokens`, `task_claims`, `worker_status`).
+  tenant columns (caches, `idempotency`, `revoked_tokens`, `worker_status`).
 - A `ReplacingMergeTree` version row carries every persisted column; row-state predicates
   run after `FINAL`.
 - No expression is aliased with the name of a column its `WHERE` filters on.

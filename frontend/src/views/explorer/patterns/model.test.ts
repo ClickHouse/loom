@@ -362,7 +362,8 @@ describe("trackerGraphFrom: the selected issue's typed, directed neighbourhood",
 
 describe("cellIssues: a server-filtered read is the cell, not narrowed again", () => {
   // rows as the server returns them for `severities: ["low"]`: every row is
-  // low; an older answer (no `severities` param) is the component's top 50
+  // low; an answer without the parameter (a severity the server does not rank)
+  // is the component's top 50
   const low = (n: number) => ({
     number: n,
     title: `l${n}`,
@@ -403,7 +404,7 @@ describe("cellIssues: a server-filtered read is the cell, not narrowed again", (
     expect(r.read).toBe(3);
   });
 
-  it("narrows by severity itself when the server did not (an older answer), reading limit 50 by default", () => {
+  it("narrows by severity itself when the server did not rank it, reading limit 50 by default", () => {
     const mixed = [...rows, { ...low(9), severity_level: "medium" }];
     const r = cellIssues({ params: { component: "MergeTree", limit: 50 }, rows: mixed }, "medium", new Set());
     expect(r.serverFiltered).toBe(false);

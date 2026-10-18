@@ -280,6 +280,47 @@ async def test_a_killed_clones_temp_directory_is_removed_by_the_next_clone(
     assert not [p for p in tmp_path.iterdir() if ".partial-" in p.name]
 
 
+@pytest.mark.parametrize(
+    ("name", "mirror"),
+    [
+        ("r.git.partial-1234-5678", "r.git"),
+        ("mirror.partial-1-2", "mirror"),  # a mirror path need not end in .git
+        ("r.git.partial-1.git", None),  # a mirror whose name only looks like a temp dir
+        ("r.git.partial", None),
+        ("r.git", None),
+    ],
+)
+def test_a_clone_temp_dir_is_known_by_its_exact_shape(name: str, mirror: str | None) -> None:
+    from server.code.app.index.mirror_locks import partial_mirror
+
+    want = None if mirror is None else os.path.join("/srv", mirror)
+    assert partial_mirror(os.path.join("/srv", name)) == want
+
+
+@pytest.mark.asyncio
+async def test_a_clone_removes_only_its_own_mirrors_temp_dirs(monkeypatch, tmp_path) -> None:
+    from types import SimpleNamespace
+
+    from server.code.app.index import sandbox
+
+    cfg = _Cfg(str(tmp_path / "mirror"))  # LOOM_CODE_GIT_DIR takes any path
+    os.makedirs(cfg.git_dir + ".partial-1-2")
+    for keep in ("mirror.partial-1.git", "mirror.partial-1.git.partial-3-4"):
+        os.makedirs(tmp_path / keep)  # another mirror, and its clone's temp dir
+
+    async def _job(argv: list[str], **_kw: Any) -> Any:
+        os.makedirs(os.path.join(argv[-1], "objects"))
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr(sandbox, "run_job", _job)
+    assert await bootstrap.clone_mirror(cfg) == ""
+    assert {p.name for p in tmp_path.iterdir() if p.is_dir()} == {
+        "mirror",
+        "mirror.partial-1.git",
+        "mirror.partial-1.git.partial-3-4",
+    }
+
+
 @pytest.mark.asyncio
 async def test_a_cancelled_wait_for_the_clone_lock_holds_nothing(tmp_path) -> None:
     import fcntl
@@ -407,24 +448,6 @@ async def test_a_head_no_fetch_brings_backs_off_instead_of_fetching_every_read(
     assert fetched == [cfg.git_dir]
     until, tries = bootstrap._FOREIGN[cfg.git_dir, "gone"]
     assert tries == 1 and until > 0
-
-
-@pytest.mark.asyncio
-async def test_an_older_builds_partial_clone_is_removed_too(monkeypatch, tmp_path) -> None:
-    from types import SimpleNamespace
-
-    from server.code.app.index import sandbox
-
-    cfg = _Cfg(str(tmp_path / "r.git"))
-    os.makedirs(cfg.git_dir + ".partial")  # no suffix: an older build's temp dir
-
-    async def _job(argv: list[str], **_kw: Any) -> Any:
-        os.makedirs(os.path.join(argv[-1], "objects"))
-        return SimpleNamespace(returncode=0, stderr=b"")
-
-    monkeypatch.setattr(sandbox, "run_job", _job)
-    assert await bootstrap.clone_mirror(cfg) == ""
-    assert not (tmp_path / "r.git.partial").exists()
 
 
 class _StateRepo:

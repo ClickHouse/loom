@@ -31,7 +31,7 @@ flowchart LR
 The tracker plane is repository-neutral. Jira, GitHub, GitLab, Linear, a help desk or an
 internal tracker can serve the same contract through ClickHouse views or a saved mapping;
 no repository name or vendor is selected in code. The required logical records are issues
-and pull requests/changes. The contract keeps the legacy table names `github_issues` and
+and pull requests/changes. The contract's table names are `github_issues` and
 `github_prs`, but mapping mode presents them in the dashboard as **items** and **changes**,
 so the source's own tables and columns do not need those names.
 

@@ -1049,7 +1049,7 @@ List memory keys under this identity, optionally filtered.
 | --- | --- | --- |
 | `entries` | `list[_MemoryListEntry]` | The matching rows in the requested order; empty on an `unchanged` poll. |
 | `truncated` | `bool` | true if more entries exist beyond `limit` |
-| `total` | `int` | Total rows matching this scope (ignores `limit`), so callers can show "N of TOTAL". 0 when not computed (older callers / error path). |
+| `total` | `int` | Total rows matching this scope (ignores `limit`), so callers can show "N of TOTAL". 0 on an `unchanged` poll, which carries no counts. |
 | `today` | `int` | Of `total`, how many were created since UTC midnight today — the true "today" count (not the truncated page count the day-group headers show). |
 | `namespace_version` | `str` | The namespace's newest memory version (any agent, any status — every write moves it). |
 | `unchanged` | `bool` | True when `known_version` matched: entries, total and today were not read and are their defaults. |

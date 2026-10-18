@@ -29,7 +29,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from server.code.app.index.mirror_locks import fetch_lock, lock_file
+from server.code.app.index.mirror_locks import (
+    fetch_lock,
+    lock_file,
+    partial_mirror,
+    partial_temp_dir,
+)
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.bootstrap")
@@ -172,16 +177,17 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
     from server.code.app.index.sandbox import SandboxRequiredError, run_job
 
     git_dir = cfg.git_dir
-    tmp = f"{git_dir}.partial-{os.getpid()}-{time.monotonic_ns()}"
+    tmp = partial_temp_dir(git_dir)
     lock = -1
     try:
         lock = await lock_file(f"{git_dir}.clone-lock")
         if await asyncio.to_thread(os.path.isdir, git_dir):
             return ""
-        # Under the lock no clone is running: what is left was a killed one's
-        # (`.partial` without a suffix: an older build's).
-        for stale in await asyncio.to_thread(glob.glob, f"{glob.escape(git_dir)}.partial*"):
-            await asyncio.to_thread(shutil.rmtree, stale, True)
+        # Under the lock no clone is running: what is left was a killed one's.
+        for stale in await asyncio.to_thread(glob.glob, f"{glob.escape(git_dir)}.partial-*"):
+            mirror = partial_mirror(stale)
+            if mirror is not None and os.path.basename(mirror) == os.path.basename(git_dir):
+                await asyncio.to_thread(shutil.rmtree, stale, True)
         await asyncio.to_thread(os.makedirs, tmp)
         # The clone runs as a repository job: the empty target its one writable path.
         done = await run_job(

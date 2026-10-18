@@ -25,18 +25,18 @@ from server.code.domain.index.risk_calibration import (
 )
 from server.tracker.domain.similar import RRF_K
 
-# FIT_VERSION 2 adds the vector leg's evidence — `vector` (the leg found the
+# The fit reads the vector leg's evidence: `vector` (the leg found the
 # candidate), `agreement` (lexical AND vector), `closeness` (1 − cosine
 # distance / 0.5, floored at 0). Without a vector feature the only road to
 # `duplicate_of` is `mentions`, so a fit calls the duplicates a draft cites and
-# none of the uncited ones. Each version's fit is stored under its own state
-# key so a server on an older version keeps reading its own.
-# FIT_VERSION 3 adds `vector_inv_rank` — 1 / the candidate's rank WITHIN the
-# vector leg (0 when the leg did not find it; a lexical twin is not used: on
+# none of the uncited ones. `vector_inv_rank` is 1 / the candidate's rank WITHIN
+# the vector leg (0 when the leg did not find it; a lexical twin is not used: on
 # lexical-only lists it equals `inv_rank` exactly and the fit diverges). The
 # fused `inv_rank` punishes a candidate only the vector leg found: recall-only
 # fusion appends it after every lexical candidate, so a target at vector rank 1
-# (cosine 0.21) can sit at fused rank 12 and score 0.02.
+# (cosine 0.21) can sit at fused rank 12 and score 0.02. Each FIT_VERSION's fit
+# is stored under its own state key, so the other build of a rollout keeps
+# reading its own.
 FIT_VERSION = 3
 # cosine distance at which `closeness` reaches 0 (text-embedding-3-large;
 # the duplicate gold's true targets sit at 0.21–0.35)

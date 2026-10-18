@@ -1339,8 +1339,8 @@ async def _answer_at_k(
     # register them with rerank_endpoint='builtin:openai'.
     # No bench-side query classification — the server's LLM-judged
     # query enrichment (preference_attribute axis) decides what
-    # this question wants. Using regex here would be the same
-    # anti-pattern the server no longer has.
+    # this question wants; a regex here would be the anti-pattern the
+    # server avoids.
     question_str = str(item["question"])
     effective_top_k = top_k
     # Lexical columns; zero / empty unless --lexical-scores.
@@ -1356,7 +1356,7 @@ async def _answer_at_k(
     # specialized modes (temporal/graph). Production callers don't know
     # the category of an incoming query, so headline numbers must come
     # from a fixed mode (default "rrf": the server planner routes every
-    # query itself). "auto" is the deprecated alias, normalized in main().
+    # query itself).
     effective_search_mode = search_mode
     if search_mode == "oracle-routed":
         effective_search_mode = {
@@ -1936,7 +1936,6 @@ async def main() -> int:
         choices=[
             "rrf",
             "oracle-routed",
-            "auto",
             "semantic",
             "lexical",
             "hybrid",
@@ -1949,8 +1948,8 @@ async def main() -> int:
         "number. 'oracle-routed' picks the mode from the dataset's GOLD "
         "question_type (temporal-reasoning→temporal, multi-session→graph, "
         "else rrf) — an oracle-router ablation, since production callers "
-        "don't know the category ('auto' is its deprecated alias). Pass a "
-        "single mode to ablate (e.g. bm25_hybrid for the old fixed posture).",
+        "don't know the category. Pass a single mode to ablate (e.g. "
+        "bm25_hybrid).",
     )
     parser.add_argument(
         "--rerank",
@@ -2140,12 +2139,6 @@ async def main() -> int:
             file=sys.stderr,
         )
 
-    if args.search_mode == "auto":
-        print(
-            "NOTE: --search-mode auto is deprecated; treating it as 'oracle-routed'.",
-            file=sys.stderr,
-        )
-        args.search_mode = "oracle-routed"
     if args.search_mode == "oracle-routed":
         print(
             "WARNING: oracle-routed search-mode selects the retrieval mode "

@@ -194,9 +194,9 @@ def tool_error(message: str, data: dict[str, Any]) -> dict[str, Any]:
 
 
 def refused_result(op: Any, detail: dict[str, Any]) -> dict[str, Any]:
-    """`tool_error` for a refusal made before validation (a removed field,
-    a write's misspelled argument), with the op's args named so the retry
-    needs no help call."""
+    """`tool_error` for a refusal made before validation (a write's
+    misspelled argument), with the op's args named so the retry needs no
+    help call."""
     message = str(detail.get("message") or f"{op.name}: argument refused")
     if detail.get("code") == "UNKNOWN_ARGUMENT":
         req, opt = required_args(op.input_model), optional_args(op.input_model)

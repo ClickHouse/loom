@@ -343,7 +343,7 @@ async def run_task(
                     "recall_chain_ms": ms,
                 }
             )
-        except Exception as e:  # noqa: BLE001 — the op may be absent on an older server
+        except Exception as e:  # noqa: BLE001 — one arm's failure must not end the run
             row["recall_chain_error"] = str(e)[:120]
     return row
 
