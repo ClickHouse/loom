@@ -23,6 +23,7 @@ import pytest
 
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
+from server.core.ch import sequential_reads_active
 from server.memory.api.models_conflicts import ConflictsResolveInput
 from server.memory.app import conflicts_ops as h
 from server.memory.store.conflicts import ConflictTarget
@@ -38,6 +39,7 @@ class _Table:
     tombstoned: list[str] = field(default_factory=list)
     activated: list[str] = field(default_factory=list)
     allowlisted: list[dict[str, Any]] = field(default_factory=list)
+    count_reads_consistent: list[bool] = field(default_factory=list)
 
 
 @pytest.fixture
@@ -47,10 +49,14 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
     t = _Table(
         rows={
             T_OWN: {"namespace": "a", "key": "deploy_day", "conflict_with": [P_OWN, P_OWN2]},
-            P_OWN: {"namespace": "a", "key": "deploy_day_2", "conflict_with": [T_OWN]},
+            P_OWN: {"namespace": "a", "key": "deploy_day_2", "conflict_with": [T_OWN, T_MIXED]},
             P_OWN2: {"namespace": "a", "key": "deploy_day_3", "conflict_with": [T_OWN]},
             T_FOREIGN: {"namespace": "b", "key": "payroll", "conflict_with": [P_FOREIGN]},
-            P_FOREIGN: {"namespace": "b", "key": "payroll_2", "conflict_with": [T_FOREIGN]},
+            P_FOREIGN: {
+                "namespace": "b",
+                "key": "payroll_2",
+                "conflict_with": [T_FOREIGN, T_MIXED],
+            },
             # A target in the caller's namespace whose conflict set reaches into b.
             T_MIXED: {"namespace": "a", "key": "salary", "conflict_with": [P_OWN, P_FOREIGN]},
         }
@@ -82,6 +88,7 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
             t.rows[i]["status"] = "active"
 
     async def _count(org: str, namespace: str, **_: Any) -> int:
+        t.count_reads_consistent.append(sequential_reads_active())
         return sum(
             1
             for row in t.rows.values()
@@ -94,6 +101,10 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
     async def _allow(rows: list[dict[str, Any]], **_: Any) -> None:
         t.allowlisted.extend(rows)
 
+    async def _allowed_peers(org: str, namespace: str, key: str, **_: Any) -> set[str]:
+        pairs = [(r["memory_key_a"], r["memory_key_b"]) for r in t.allowlisted]
+        return {b if a == key else a for a, b in pairs if key in (a, b)}
+
     async def _get_by_id(memory_id: str, **_: Any) -> Any:
         row = t.rows.get(memory_id)
         return None if row is None else SimpleNamespace(namespace=row["namespace"])
@@ -104,6 +115,7 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
     monkeypatch.setattr(repo, "mark_active_by_ids", _activate)
     monkeypatch.setattr(repo, "lookup_keys_for_ids", _keys)
     monkeypatch.setattr(repo, "allowlist_insert", _allow)
+    monkeypatch.setattr(repo, "allowlisted_peers", _allowed_peers)
     monkeypatch.setattr(repo, "count_conflicted", _count)
     h.reset_conflicts_count_cache()
     return t
@@ -242,8 +254,8 @@ async def test_a_row_an_earlier_decision_resolved_is_not_decided_again(
 ) -> None:
     assert (await _resolve(T_OWN, "allow")).resolved is True
     written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    # A stale view decides one of the rows the allow made active: refused, nothing written.
-    again = await _resolve(P_OWN, "contract")
+    # A stale view decides the pair from the row the allow made active: refused.
+    again = await _resolve(P_OWN, "contract", peer_id=T_OWN)
     assert again.resolved is False
     assert again.total is None
     assert (table.tombstoned, table.activated, table.allowlisted) == written
@@ -284,6 +296,54 @@ async def test_a_stale_second_click_on_the_same_pair_writes_nothing(
     assert (await _resolve(T_OWN, "allow", peer_id=P_OWN)).resolved is True
     written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
     # The queue still shows the pair: the second click must not tombstone what the allow kept.
+    out = await _resolve(T_OWN, "revise", peer_id=P_OWN)
+    assert out.resolved is False and out.affected_memory_ids == []
+    assert (table.tombstoned, table.activated, table.allowlisted) == written
+
+
+async def test_the_count_after_a_resolve_reads_its_own_writes(
+    table: _Table, admin_of_a: None
+) -> None:
+    # A replica that has not applied the writes yet would answer a stale count that is
+    # then cached for a minute.
+    assert (await _resolve(T_OWN, "revise")).resolved is True
+    assert table.count_reads_consistent == [True]
+
+
+async def test_a_stale_click_on_an_allowed_pair_after_the_target_is_reflagged_writes_nothing(
+    table: _Table, admin_of_a: None
+) -> None:
+    assert (await _resolve(T_OWN, "allow", peer_id=P_OWN)).resolved is True
+    # A later write E re-flags T_OWN; conflict_with still names the allowed peer.
+    later = "66666666-6666-6666-6666-666666666666"
+    table.rows[later] = {"namespace": "a", "key": "deploy_day_4", "conflict_with": [T_OWN]}
+    table.rows[T_OWN]["status"] = "conflicted"
+    table.rows[T_OWN]["conflict_with"] = [P_OWN, P_OWN2, later]
+    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
+    out = await _resolve(T_OWN, "revise", peer_id=P_OWN)
+    assert out.resolved is False and out.affected_memory_ids == []
+    assert (table.tombstoned, table.activated, table.allowlisted) == written
+
+
+async def test_a_conflicted_target_whose_peers_are_gone_is_decided_alone(
+    table: _Table, admin_of_a: None
+) -> None:
+    del table.rows[P_OWN], table.rows[P_OWN2]
+    out = await _resolve(T_OWN, "revise")
+    assert out.resolved is True and out.affected_memory_ids == [T_OWN]
+    assert table.tombstoned == [] and table.activated == [T_OWN]
+
+
+async def test_a_stale_click_on_an_allowed_pair_after_the_peer_is_reflagged_writes_nothing(
+    table: _Table, admin_of_a: None
+) -> None:
+    assert (await _resolve(T_OWN, "allow", peer_id=P_OWN)).resolved is True
+    # A later write E re-flags P_OWN, which still lists T_OWN: only the allowlist says decided.
+    later = "77777777-7777-7777-7777-777777777777"
+    table.rows[later] = {"namespace": "a", "key": "deploy_day_5", "conflict_with": [P_OWN]}
+    table.rows[P_OWN]["status"] = "conflicted"
+    table.rows[P_OWN]["conflict_with"] = [T_OWN, T_MIXED, later]
+    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
     out = await _resolve(T_OWN, "revise", peer_id=P_OWN)
     assert out.resolved is False and out.affected_memory_ids == []
     assert (table.tombstoned, table.activated, table.allowlisted) == written

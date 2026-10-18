@@ -320,12 +320,12 @@ async def test_tiers_pass_the_hard_filter_only_when_set(monkeypatch: pytest.Monk
     monkeypatch.setattr(repo, "list_by_namespace", fake_list)
     base = dict(org="o", namespace="ns", agent="*", user_id="-", session_id="-", run_id="", top_k=3)
     await _prepend_recent([], SimpleNamespace(recent_first=1, **base))
-    assert "tags" not in calls[-1]
+    assert calls[-1]["tags"] is None
     await _prepend_recent([], SimpleNamespace(recent_first=1, tags=["x"], tags_soft=False, **base))
     # memory.search's exact match, not memory.list's any-case one.
     assert calls[-1]["tags"] == ["x"] and calls[-1]["tag_match"] == "exact"
     await _prepend_anchor([], SimpleNamespace(anchor_first=1, tags=["x"], tags_soft=True, **base))
-    assert "tags" not in calls[-1]
+    assert calls[-1]["tags"] is None
 
 
 @pytest.mark.asyncio

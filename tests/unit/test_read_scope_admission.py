@@ -400,8 +400,8 @@ async def test_listing_and_counts_carry_the_scope_under_a_wildcard_identity() ->
     from server.memory.store import reads
 
     ch = _CH()
-    await reads.list_by_namespace(_WILD, scope=U1, ch=ch)
-    await reads.count_by_namespace(_WILD, scope=U1, ch=ch)
+    await reads.list_by_namespace(_WILD, tag_match="any", scope=U1, ch=ch)
+    await reads.count_by_namespace(_WILD, tag_match="any", scope=U1, ch=ch)
     _bound_to_u1(ch)
 
 

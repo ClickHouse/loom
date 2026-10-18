@@ -256,15 +256,33 @@ async def _peers_in_scope(input: ConflictsResolveInput, peers: list[str]) -> lis
     return live
 
 
-async def _peer_still_conflicted(org: str, target: ConflictTarget, peer_id: str) -> bool:
-    """Whether `peer_id` is still conflicted with `target` (a resolve of another peer
-    marked the target active)."""
+async def _open_peers(
+    org: str, namespace: str, target: ConflictTarget, named: list[str]
+) -> list[str]:
+    """The named peers whose pair with `target` is still open: the peer is live,
+    conflicted and lists the target, and no allow has recorded the pair. The
+    target's own status is not consulted: a later write can re-flag it while
+    `conflict_with` still names the peers an earlier resolve decided."""
+    from server.core.ch import own_write_reads
     from server.memory.store import conflicts as conflicts_repo
 
-    peer = await conflicts_repo.lookup_target(org, peer_id)
-    return (
-        peer is not None and peer.status == "conflicted" and target.memory_id in peer.conflict_with
-    )
+    with own_write_reads():  # must see the decision a resolve a moment ago wrote
+        keys = await conflicts_repo.lookup_keys_for_ids(org, [target.memory_id, *named])
+        target_key = keys.get(target.memory_id)
+        allowed = (
+            await conflicts_repo.allowlisted_peers(org, namespace, target_key)
+            if target_key
+            else set()
+        )
+        open_peers: list[str] = []
+        for peer_id in named:
+            peer = await conflicts_repo.lookup_target(org, peer_id)
+            if peer is None or peer.status != "conflicted":
+                continue
+            if target.memory_id not in peer.conflict_with or keys.get(peer_id) in allowed:
+                continue
+            open_peers.append(peer_id)
+    return open_peers
 
 
 async def handle_conflicts_resolve(
@@ -277,6 +295,7 @@ async def handle_conflicts_resolve(
               peers restored to active.
     allow:    both are legitimately distinct. Flip ALL back to active.
     """
+    from server.core.ch import own_write_reads
     from server.memory.store import conflicts as conflicts_repo
 
     now = naive_utc_now()
@@ -297,11 +316,11 @@ async def handle_conflicts_resolve(
         # A stale or foreign peer id must not widen the resolve to every peer.
         return unresolved
     named = [input.peer_id] if input.peer_id else all_peers
-    if target.status != "conflicted":
-        # A pair an earlier decision already resolved is not decided again from a stale view.
-        named = [p for p in named if await _peer_still_conflicted(input.org, target, p)]
-        if not named:
-            return unresolved
+    # A pair an earlier decision already resolved is not decided again from a stale view;
+    # a conflicted target whose peers are all gone is still decided on its own.
+    named = await _open_peers(input.org, input.namespace, target, named)
+    if not named and (input.peer_id or target.status != "conflicted"):
+        return unresolved
     peers = await _peers_in_scope(input, named)
     if peers is None:
         return unresolved
@@ -363,9 +382,10 @@ async def handle_conflicts_resolve(
     # the caller's.
     for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:
         _count_cache.pop(key, None)
-    total = await _conflicted_count_cached(
-        conflicts_repo, input.org, input.namespace, request_scope()
-    )
+    with own_write_reads():  # the count must see the writes above, or it caches a stale one
+        total = await _conflicted_count_cached(
+            conflicts_repo, input.org, input.namespace, request_scope()
+        )
     return ConflictsResolveOutput(
         resolved=True,
         decision=input.decision,

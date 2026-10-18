@@ -61,8 +61,12 @@ async def test_an_upper_case_tag_matches_a_lower_case_row_with_no_flag() -> None
     row tagged `api` matches."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
-    await memory_repo.list_by_namespace(identity, scope=WHOLE_NAMESPACE, tags=["API"], ch=ch)
-    await memory_repo.count_by_namespace(identity, scope=WHOLE_NAMESPACE, tags=["API"], ch=ch)
+    await memory_repo.list_by_namespace(
+        identity, tag_match="any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
+    )
+    await memory_repo.count_by_namespace(
+        identity, tag_match="any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
+    )
     for sql, params in ch.calls:
         assert f"hasAny({_FOLDED})" in sql
         assert _EXACT not in sql
@@ -145,7 +149,9 @@ async def test_a_non_ascii_tag_folds_the_same_on_both_sides() -> None:
     as `ΟΔΟΣ` meets the row's tags under one case mapping."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
-    await memory_repo.count_by_namespace(identity, scope=WHOLE_NAMESPACE, tags=["ΟΔΟΣ"], ch=ch)
+    await memory_repo.count_by_namespace(
+        identity, tag_match="any", scope=WHOLE_NAMESPACE, tags=["ΟΔΟΣ"], ch=ch
+    )
     sql, params = ch.calls[-1]
     assert f"hasAny({_FOLDED})" in sql
     assert params["tags"] == ["ΟΔΟΣ"]
@@ -168,6 +174,26 @@ async def test_the_score_sorted_list_matches_tags_as_the_recency_list_does(
     sql, params = ch.calls[0]
     assert f"hasAny({_FOLDED})" in sql
     assert params["tags"] == ["API"]
+
+
+@pytest.mark.asyncio
+async def test_the_score_sorted_list_with_tags_all_needs_every_folded_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app import query as mq
+
+    ch = StubCH()
+    monkeypatch.setattr(mq, "get_client", lambda: ch)
+    monkeypatch.setattr(mq, "_record_read_exposure", lambda *a, **k: None)
+    await mq._handle_memory_list(
+        MemoryListInput(
+            org="acme", namespace="team", agent="*", sort_by="score", tags=["A", "b"], tags_all=True
+        )
+    )
+    sql, params = ch.calls[0]
+    assert f"hasAll({_FOLDED})" in sql
+    assert params["tags"] == ["A", "b"]
 
 
 @pytest.mark.asyncio

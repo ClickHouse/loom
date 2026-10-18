@@ -492,6 +492,7 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     await D.list_with_chunk_counts(
         ORG,
         NS,
+        tag_match="any",
         include_superseded=f,
         tags=["t"] if f else None,
         uri_prefixes=["doc://"] if f else None,

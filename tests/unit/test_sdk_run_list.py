@@ -15,7 +15,6 @@ def _sent(**kwargs: Any) -> dict[str, Any]:
     sent: list[dict[str, Any]] = []
 
     async def fake_post(op_path, payload, idempotency_key=None, *, timeout_s=None):
-        await asyncio.sleep(0)
         assert op_path == "/v1/run.list"
         sent.append(payload)
         return {"runs": [], "total": 0}

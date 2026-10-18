@@ -557,11 +557,15 @@ def test_memory_list_hides_the_redirect_by_default_and_include_duplicates_shows_
     ident = memory_repo.Identity(org="test", namespace="ops-alerts", agent="sre")
     ch = _CH()
     asyncio.run(
-        memory_repo.list_by_namespace(ident, ch=ch, include_duplicates=False, scope=WHOLE_NAMESPACE)
+        memory_repo.list_by_namespace(
+            ident, tag_match="any", ch=ch, include_duplicates=False, scope=WHOLE_NAMESPACE
+        )
     )
     assert "status != 'duplicate'" in ch.query_all_sqls[-1]
     asyncio.run(
-        memory_repo.list_by_namespace(ident, ch=ch, include_duplicates=True, scope=WHOLE_NAMESPACE)
+        memory_repo.list_by_namespace(
+            ident, tag_match="any", ch=ch, include_duplicates=True, scope=WHOLE_NAMESPACE
+        )
     )
     assert "status != 'duplicate'" not in ch.query_all_sqls[-1]
 

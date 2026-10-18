@@ -361,15 +361,15 @@ async def test_repo_list_and_count_carry_the_predicate_only_when_asked() -> None
             return {"n": 0}
 
     ident = memory_repo.Identity(org="o", namespace="n", agent="a", user_id="-", session_id="-")
-    await memory_repo.list_by_namespace(ident, ch=_CH(), scope=WHOLE_NAMESPACE)
-    await memory_repo.count_by_namespace(ident, ch=_CH(), scope=WHOLE_NAMESPACE)
+    await memory_repo.list_by_namespace(ident, tag_match="any", ch=_CH(), scope=WHOLE_NAMESPACE)
+    await memory_repo.count_by_namespace(ident, tag_match="any", ch=_CH(), scope=WHOLE_NAMESPACE)
     assert not any("duplicate" in s for s in sqls), "other callers' statements are unchanged"
     sqls.clear()
     await memory_repo.list_by_namespace(
-        ident, ch=_CH(), include_duplicates=False, scope=WHOLE_NAMESPACE
+        ident, tag_match="any", ch=_CH(), include_duplicates=False, scope=WHOLE_NAMESPACE
     )
     await memory_repo.count_by_namespace(
-        ident, ch=_CH(), include_duplicates=False, scope=WHOLE_NAMESPACE
+        ident, tag_match="any", ch=_CH(), include_duplicates=False, scope=WHOLE_NAMESPACE
     )
     assert all("status != 'duplicate'" in s for s in sqls)
 
