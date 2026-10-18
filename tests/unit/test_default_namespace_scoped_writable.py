@@ -179,6 +179,13 @@ def test_a_non_home_default_is_named_and_home_is_silent() -> None:
     assert mi.default_namespace_note() == {}
 
 
+def test_an_agent_landing_in_its_own_namespace_is_not_away() -> None:
+    mi.note_default_namespace(True, "ci-review", _Auth("sa:ci:review"))
+    assert mi.default_namespace_note() == {}
+    mi.note_default_namespace(True, "ci-other", _Auth("sa:ci:review"))
+    assert mi.default_namespace_note() == {"namespace_defaulted": "ci-other"}
+
+
 def test_a_scoped_writer_outside_its_write_claim_is_not_the_default(wire) -> None:
     wire(_CH(None, {"team-x": "writer", "team-y": "writer"}))
     token = _Auth(

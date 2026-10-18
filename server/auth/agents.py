@@ -32,6 +32,15 @@ def namespace(trust: str, agent: str) -> str:
     return f"{trust}-{agent}"
 
 
+def home_of(subject_: str) -> str:
+    """The namespace of the agent whose subject is `subject_`; "" for any
+    other subject."""
+    trust, _, agent = subject_.removeprefix("sa:").partition(":")
+    if not subject_.startswith("sa:") or not agent:
+        return ""
+    return namespace(trust, agent)
+
+
 TAG_PREFIX = "machine:"
 
 

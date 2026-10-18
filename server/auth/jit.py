@@ -50,7 +50,7 @@ async def _accounts_naming(org: str, ident: str) -> list[dict[str, Any]]:
             SELECT namespace, toString(owner_email) AS owner, active, tags,
                    password_hash = '' AS sso
             FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND lower(contact_email) = {ident:String}
+            WHERE org = {org:String} AND contact_email = {ident:String}
             """,
             params={"org": org, "ident": ident},
         )

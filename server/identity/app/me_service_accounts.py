@@ -432,8 +432,6 @@ async def me_service_accounts_revoke(
     """Mark an SA as revoked. The JWT itself remains valid until TTL —
     for hard cutoff, also revoke the grants the SA depends on. Caller
     must be the creator or admin on at least one of the SA's namespaces."""
-    import time as _time
-
     from server.core.ch import get_client
 
     if settings.auth_actually_required():
@@ -507,7 +505,7 @@ async def me_service_accounts_revoke(
                         "expires_at": row["expires_at"],
                         "revoked_at": now,
                         "revoked_by": subject,
-                        "version": _time.time_ns(),
+                        "version": time.time_ns(),
                         # Column-mirror discipline: carry every column
                         # forward or the merge zeros it.
                         "kind": row.get("kind") or "service_account",

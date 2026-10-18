@@ -255,9 +255,11 @@ An agent with no Loom token of its own sets `LOOM_CLIENT_ID` (a workload trust,
 `LOOM_WORKLOAD_TOKEN_FILE` (the OIDC token its control plane issued it). Right
 after `LOOM_API_KEY`, the hooks and the MCP headers helper then use the token
 `bin/loom-agent-token.mjs` exchanges it for (RFC 8693), which never outlives the
-workload token: saved 0600 in ~/.loom/agent-token-<agent>.json, one per agent,
-renewed halfway through its life, and not retried for 30 s after a failed
-renewal. Use the file form for a workload token that lives minutes and is
+workload token: saved 0600 in ~/.loom/agent-token-<hash of LOOM_CLIENT_ID>.json,
+bound to the workload token it was exchanged for, renewed halfway through its
+life, and not retried for 30 s after a failed renewal. Agents of one client
+that share a home overwrite each other's file and exchange on every call; give
+each its own `HOME`. Use the file form for a workload token that lives minutes and is
 rotated: one in `LOOM_WORKLOAD_TOKEN` serves only until it expires.
 
 Switches read on/true/1/yes and off/false/0/no. Defaults in parentheses.

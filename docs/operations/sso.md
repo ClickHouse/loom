@@ -99,12 +99,14 @@ link --email <their provider address> --org <org> --namespace <ns>` shows
 - `loom sso unlink --email <email> --apply` takes a link back. Sessions already
   open are not ended; revoke them with `loom revoke-token --subject`.
 - Someone who says a password account naming their address is not theirs is
-  denied, and `auth.sso_link_declined` is audited: a second account naming the
-  same address would receive every grant made to it. To free an address
-  someone else registered, release that account (`loom claim-release`), which
-  clears its email and links; the person's next sign-in then makes their own
-  account. A revoked account naming the address blocks new accounts, since it
-  may be the same person.
+  denied when that account is in `LOOM_OIDC_JIT_ORG`, and
+  `auth.sso_link_declined` is audited: a second account there naming the same
+  address would receive every grant made to it. To free an address someone
+  else registered, release that account (`loom claim-release`), which clears
+  its email and links; with `LOOM_OIDC_JIT_PROVISION=true` the person's next
+  sign-in then makes their own account. An account in another org does not
+  stop them. A revoked account naming the address blocks new accounts, since
+  it may be the same person.
 
 For a person with no account:
 

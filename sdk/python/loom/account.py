@@ -60,7 +60,8 @@ class AccountClient:
         (one of the Setup tab's client keys), saved to your token list, where
         you revoke it. `ttl_days`: None for 90 days, 0 for never. The result's
         `namespace` is where calls that name none land; "" when the token has no
-        default, so every call from the client must name one."""
+        default, so every call from the client must name one; None when the
+        server could not read it at mint time (each call resolves it)."""
         # The previous server build reads a missing `persist` as false; drop it once that
         # build is gone.
         body: dict[str, Any] = {"client": client, "persist": True}

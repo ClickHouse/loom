@@ -943,26 +943,42 @@ async def _link_proven(
 async def _declined_password_account(
     email: str, sign_in: dict[str, Any], upstream: str
 ) -> Response:
-    """Someone else registered the address with a password. No second account
-    is made beside it: both would name the email, and every grant made to it
-    would reach both (`server.auth.aliases`). The person is sent to the
-    operator, who frees the address by releasing that account."""
+    """Someone else registered the address with a password. In the org JIT
+    provisions into, no second account is made beside it: both would name the
+    email, and every grant made to it there would reach both
+    (`server.auth.aliases`), so the person is sent to the operator, who frees
+    the address by releasing that account. One in another org shares nothing
+    with the JIT org, and the person goes on to an account of their own."""
     from server.auth import device, oidc
+    from server.auth.jit import jit_provision_for_email
+    from server.auth.login import SignInUnavailable
 
+    declined = await sso_links.unlinked_accounts(email)
     # The signal an operator looks for when an address was squatted.
     await audit.emit(
         "auth.sso_link_declined",
         org="-",
         namespace="-",
         actor=email,
-        subject={"namespaces": [a["namespace"] for a in await sso_links.unlinked_accounts(email)]},
+        subject={"namespaces": [a["namespace"] for a in declined]},
     )
-    await oidc.revoke(upstream)
-    if sign_in["kind"] == "device":
-        await device.deny(sign_in["user_code"])
-    return _denied_page(
-        "another account uses this email; ask your Loom operator to release it, then sign in again"
-    )
+    if any(a["org"] == settings.oidc_jit_org for a in declined):
+        reason = "another account uses this email; ask your Loom operator to release it"
+        identity = None
+    else:
+        reason = "no loom account for this email; ask your Loom operator for access"
+        try:
+            identity = await jit_provision_for_email(email)
+        except SignInUnavailable:
+            await oidc.revoke(upstream)
+            return _sign_in_unavailable(_restart_url(sign_in))
+    if identity is None:
+        await _signin_denied(email, reason)
+        await oidc.revoke(upstream)
+        if sign_in["kind"] == "device":
+            await device.deny(sign_in["user_code"])
+        return _denied_page(reason)
+    return await _signed_in_as(sign_in, identity, upstream)
 
 
 async def _connect_consent(

@@ -443,6 +443,27 @@ describe("Transport with a token provider", () => {
     expect(v1(srv).map(count)).toEqual(["0", "0"]);
   });
 
+  it("retries a call whose token endpoint was away, as a connection failure", async () => {
+    let asked = 0;
+    const provider: TokenProvider = {
+      token: () => {
+        asked++;
+        if (asked === 1) throw new BackendUnavailable("token endpoint answered 503");
+        return "t";
+      },
+      origin: BASE,
+    };
+    const srv = server();
+    const t = new Transport({
+      baseUrl: BASE,
+      tokenProvider: provider,
+      fetch: srv.fetch,
+      retry: { maxAttempts: 2, backoffMs: 1, backoffMaxMs: 1 },
+    });
+    expect(await t.post("memory.get", { org: "o" })).toEqual({ ok: true });
+    expect([asked, v1(srv).map(auth)]).toEqual([2, ["Bearer t"]]);
+  });
+
   it("takes a provider that answers a plain string, with or without a signal", async () => {
     const provider: TokenProvider = { token: () => "plain", origin: BASE };
     const srv = server();

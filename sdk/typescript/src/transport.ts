@@ -410,7 +410,21 @@ export class Transport {
       ctx.resending = false;
       headers["X-Loom-Retry-Count"] = String(ctx.sent - 1);
       const asked = Date.now();
-      if (this.#provider) await this.authorize(ctx, timeoutMs);
+      if (this.#provider) {
+        try {
+          await this.authorize(ctx, timeoutMs);
+        } catch (e) {
+          // The token endpoint was away: the op was never sent, so it is retried
+          // as a connection failure is.
+          if (
+            e instanceof BackendUnavailable &&
+            policy.retryConnectionErrors &&
+            (await retryAfter(attempt, `token unavailable: ${describe(e)}`))
+          )
+            continue;
+          throw e;
+        }
+      }
       // What the token wait left of this attempt's timeout.
       const responseMs = Math.max(0, timeoutMs - (Date.now() - asked));
       this.log.debug(
