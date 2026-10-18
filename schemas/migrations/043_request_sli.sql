@@ -43,7 +43,8 @@ SETTINGS ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000;
 -- insert never waits on it. The first refresh starts 31 days back, enough for
 -- every SLO window without reading the whole ledger; the high-water mark is
 -- read from those 31 days too, since an older one loses to that floor. Rows
--- with no SLO class (the `/v1/me/*` routes, MCP's initialize) are left out.
+-- with no SLO class (the `/v1/me/*` routes, and MCP calls that name no
+-- registered op, such as initialize) are left out.
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_refresh
 REFRESH EVERY 1 MINUTE APPEND TO loom_telemetry.sli_minute
 DEFINER = CURRENT_USER SQL SECURITY DEFINER
