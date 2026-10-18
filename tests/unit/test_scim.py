@@ -464,6 +464,37 @@ async def test_an_account_moved_while_its_old_user_is_deactivated_is_let_go(worl
     assert world.ours["lee"] is not None  # narrowed: the old row reaches it no more
 
 
+async def test_an_account_moved_after_its_new_address_was_provisioned_waits_for_a_request(
+    world,
+) -> None:
+    world.person("lee@example.com", "lee")
+    old = await _create("lee@example.com")
+    await scim.update(old, active=False)
+    await scim.delete(old)
+    new = await _create("lee.new@example.com")  # reaches nothing yet
+    world.person("lee@example.com")
+    world.person("lee.new@example.com", "lee")  # then `loom sso link` moves the account
+    assert world.ours["lee"] is None  # nothing has looked again
+    await scim.update(new, active=True)  # the next request for it, Provision on demand's
+    assert world.ours["lee"] is not None
+
+
+async def test_a_repeat_deactivation_revokes_an_account_let_go_while_out_of_reach(
+    world,
+) -> None:
+    world.person("bob@example.com", "shared")
+    world.person("alice@example.com", "shared")
+    bob, alice = await _create("bob@example.com"), await _create("alice@example.com")
+    await scim.update(bob, active=False)
+    await scim.update(alice, active=False)
+    world.person("bob@example.com")  # an operator unlinks bob@ from it
+    await scim.update(alice, active=True)  # nothing holds it back: let go
+    assert world.ours["shared"] is not None
+    world.person("bob@example.com", "shared")  # linked to bob@ again
+    await scim.update(bob, active=False)  # the provider repeats bob's deactivation
+    assert world.ours["shared"] is None
+
+
 async def test_another_subjects_org_does_not_hide_collateral(world) -> None:
     # The email reaches `alice@example.com` in acme and `alice` (a linked
     # account) in beta; someone else owns an `alice` in acme.

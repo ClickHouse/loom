@@ -398,9 +398,12 @@ What Loom does with each request:
 - **Reactivating** (`active: true`) lets the person sign in again. Tokens from
   before stay revoked; they make new ones. A subject another deactivated or
   deleted user's email still reaches (two addresses reaching one account)
-  stays revoked until the last of them is reactivated or no longer reaches it,
-  and Loom logs a warning for each one it leaves. An account moved to a new
-  address (`loom sso link`) is let go when that address is provisioned. A reactivation answers after about 6 s, once every
+  stays revoked, and Loom logs a warning for each one it leaves. Once none
+  reaches it (the last is reactivated, or an operator moves the account to
+  another address with `loom sso link`), the next request for an active user
+  whose email reaches it lets it go; **Provision on demand** sends one, and
+  `loom revoke-token --subject <it> --issued-before <now> --scim` does the
+  same by hand. A reactivation answers after about 6 s, once every
   replica's clock is past its cutoff, so a sign-in after it gets a token that
   lives (one in that wait would get a token from before the cutoff, already
   dead); a retry sent meanwhile waits out the rest. Another replica still

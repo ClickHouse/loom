@@ -339,14 +339,21 @@ async def _set_active(
     async with subject_leases([*known, *found]):
         # Going inactive revokes, and records, what the email reaches now: an
         # account an operator has since moved to another email is that
-        # person's. Once inactive, a repeat revokes the accounts found since:
-        # one an operator narrowed (someone else's subject, given back) stays
-        # narrowed, and stays recorded.
+        # person's. Once inactive, a repeat revokes what the email reaches and
+        # SCIM doesn't revoke outright, but for one an operator gave back
+        # (someone else's subject): a reactivation's lift may have let it go
+        # while it was out of reach.
         if row["active"]:
             new["subjects"] = subjects = sorted(found)
         else:
             new["subjects"] = sorted(known | set(found))
-            subjects = sorted(set(found) - known)
+            rows = await revocation.scim_revocations(sorted(found))
+            subjects = [
+                s
+                for s in sorted(found)
+                if s not in rows
+                or (rows[s]["revoked_by"] == _BY and rows[s]["issued_before"] is not None)
+            ]
         for subject in subjects:
             await revocation.scim_revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)
             await _flag_collateral(new["id"], subject, found.get(subject, set()))

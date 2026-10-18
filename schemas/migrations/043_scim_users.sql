@@ -7,10 +7,11 @@
 -- email_primary describe that entry, so a PATCH filtered on an entry
 -- (`emails[type eq "work"]`) is checked against the email only when it
 -- selects it or one that would take its place.
--- active = 0 is a deactivation: every subject in subjects (each one an SSO
--- sign-in with the email could reach when it was deactivated, or since) is
--- revoked unless an operator gave it back (`loom revoke-token --scim`), and
--- SSO sign-in with the email is refused until it is 1 again. deleted = 1 is a
+-- active = 0 is a deactivation: subjects lists what an SSO sign-in with the
+-- email could reach when it was deactivated, or since. Each one the email
+-- still reaches is revoked unless an operator gave it back
+-- (`loom revoke-token --scim`), and SSO sign-in with the email is refused
+-- until active is 1 again. deleted = 1 is a
 -- SCIM DELETE: the person stays deactivated and the resource answers 404.
 CREATE TABLE IF NOT EXISTS loom.scim_users
 (
