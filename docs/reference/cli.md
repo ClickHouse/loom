@@ -35,7 +35,8 @@ Commands fall into two kinds:
   then `~/.loom/token` (moved by `LOOM_API_KEY_FILE`). `LOOM_CONFIG_FILE` moves the config file.
   For an agent (`LOOM_CLIENT_ID` with a workload token) they use only `--token` or
   `LOOM_API_KEY`, never a saved token, and refuse (exit 2) without one; `loom install` refuses
-  whatever `--token` says; `loom call` exchanges the workload token itself.
+  whatever `--token` says, `loom init` refuses before it signs anything up, and `loom call`
+  exchanges the workload token itself.
 
 `loom mint-token` needs only `LOOM_JWT_SECRET`: it signs a token locally.
 
