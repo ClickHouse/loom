@@ -48,7 +48,7 @@ import { SkeletonCard } from "../components/Skeleton";
 import { LoadingSkeleton, PageHeader } from "../components/ui";
 import { MenuTrigger } from "../components/ui/Menu";
 import { ListState } from "../components/ui/ListState";
-import { ListToolbar } from "../components/ui/ListToolbar";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import type { RowMenuItem } from "../components/ui/RowMenu";
 import { IconButton } from "../components/IconButton";
 import { EmptyState } from "../components/EmptyState";
@@ -808,14 +808,14 @@ export function Tasks() {
             )}
             <div className="tq-main min-w-0">
               <ListToolbar label="Search and filters" count={count}>
-                <div className="min-w-[10rem] flex-1">
+                <ListToolbarSearch>
                   <SearchField
                     value={filters.q}
                     onChange={(q) => setFilters((f) => ({ ...f, q }))}
                     placeholder="Search tasks"
                     aria-label="Search tasks"
                   />
-                </div>
+                </ListToolbarSearch>
                 {!compact && filterSelects}
               </ListToolbar>
               {compact && !narrow && <div className="-mt-1 mb-3 flex items-center gap-2">{filterSelects}</div>}

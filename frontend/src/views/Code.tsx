@@ -2833,7 +2833,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
                       <span className="text-xs text-text-muted tabular shrink-0">{fmtInt(r.pack_tokens)} tokens</span>
                       <ListTime iso={r.created_at} quiet className="text-xs text-text-muted shrink-0" />
                     </button>
-                    <span className="relative z-[1] shrink-0">
+                    <span className="list-row-control shrink-0">
                       <ExternalLink
                         href={`https://github.com/${repo}/pull/${r.pr_number}`}
                         label={`PR #${r.pr_number} on GitHub`}

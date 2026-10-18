@@ -20,7 +20,7 @@ import { ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../compone
 import { ListPager } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
-import { ListToolbar } from "../components/ui/ListToolbar";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { toast } from "../components/Toast";
 import { AgentBadge } from "../components/AgentBadge";
 import { displayAgent, truncate, humanizeError, sentenceCase } from "../lib/format";
@@ -488,7 +488,7 @@ export function Conversations() {
         label="Search and filters"
         count={countShown && <span aria-busy={busy || loadingThreads || undefined}>{countShown}</span>}
       >
-        <div className="min-w-[10rem] flex-1">
+        <ListToolbarSearch>
           <SearchField
             ref={searchRef}
             value={q}
@@ -503,7 +503,7 @@ export function Conversations() {
             placeholder="Search transcripts"
             aria-label="Search conversation transcripts"
           />
-        </div>
+        </ListToolbarSearch>
         {agentSelect("hidden w-48 shrink-0 sm:block")}
       </ListToolbar>
       {/* A phone's bar has room for the search and the count only; the agent filter sits under it. */}
@@ -628,7 +628,7 @@ export function Conversations() {
                       })
                     }
                     // The row's own hover is this tint already: a matching turn darkens its text.
-                    className="relative z-[1] -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-xs text-text-muted hover:text-text"
+                    className="list-row-control -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-xs text-text-muted hover:text-text"
                   >
                     <span className="inline-flex shrink-0">
                       <Badge text={sentenceCase(h.role)} state="neutral" size="sm" />

@@ -1062,8 +1062,10 @@ textarea[aria-invalid="true"]:focus-visible {
   .tq-assignee {
     display: inline-flex;
   }
+  /* A lane's "Show all" row: a task row's cell padding across, the empty Button's own
+     height down. */
   .tq-more {
-    padding: 4px 8px;
+    padding: 0 var(--click-table-body-cell-space-sm-x);
     border-top: 1px solid var(--color-border);
   }
   .tq-lease {
@@ -1105,12 +1107,12 @@ textarea[aria-invalid="true"]:focus-visible {
     background: var(--click-card-horizontal-default-color-background-default);
     border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
     border-radius: var(--click-card-horizontal-radii-all);
-    padding: 10px 12px;
+    padding: var(--click-card-horizontal-space-sm-y) var(--click-card-horizontal-space-sm-x);
     text-align: left;
     width: 100%;
     min-width: 0;
     display: grid;
-    gap: 6px;
+    gap: var(--click-card-horizontal-space-sm-y);
     cursor: pointer;
   }
   .tq-card:hover {
@@ -1292,8 +1294,8 @@ button.pane-card:hover {
 }
 
 /* A row's open button: plain text whose click target stretches over the whole row, under
-   the row's other controls (which sit above it, relative z-[1]). useRowNav finds it by
-   data-row-open; the layout around it is the page's. */
+   the row's other controls (.list-row-control). useRowNav finds it by data-row-open; the
+   layout around it is the page's. */
 .list-row-open {
   text-align: left;
   background: transparent;
@@ -1305,6 +1307,14 @@ button.pane-card:hover {
   content: "";
   position: absolute;
   inset: 0;
+}
+/* A row's own control or tip (its tags, its menu, a time with a tooltip) sits above the
+   open button's stretched target, so it takes its own clicks and hovers. */
+@layer components {
+  .list-row-control {
+    position: relative;
+    z-index: 1;
+  }
 }
 .list-row[data-doc-row] {
   contain-intrinsic-size: auto 101px;
@@ -1424,13 +1434,31 @@ button.pane-card:hover {
 }
 
 /* ui/Chip: Click UI's opaque badge shape (md), which Chip draws as a button or a static
-   chip; the colours are Chip's own classes. */
+   chip, since Click UI has no filter chip; the filled and selected colours are Loom's
+   colour utilities in Chip. */
 @layer components {
   .chip {
     gap: var(--click-badge-space-md-gap);
     padding: var(--click-badge-space-md-y) var(--click-badge-space-md-x);
     border-radius: var(--click-badge-radii-all);
     font: var(--click-badge-typography-label-md-default);
+  }
+  /* A tag: the opaque default badge's stroke and text on the page. */
+  .chip-outline {
+    background: var(--color-surface);
+    border-color: var(--click-badge-opaque-color-stroke-default);
+    color: var(--click-badge-opaque-color-text-default);
+  }
+  /* A chip-shaped link (a memory's entity) takes the card's hover. */
+  a.chip-outline:hover {
+    background: var(--click-card-horizontal-default-color-background-hover);
+  }
+  /* Click UI's disabled field colours, not an opacity, natively disabled or aria-disabled
+     (a disabled chip with a tip stays focusable so its reason can be read). */
+  .chip-disabled {
+    background: var(--click-field-color-background-disabled);
+    border-color: var(--click-field-color-stroke-disabled);
+    color: var(--click-field-color-text-disabled);
   }
 }
 
@@ -1467,9 +1495,11 @@ tbody tr:has([aria-current="true"]) > td:first-child {
   box-shadow: inset 3px 0 0 var(--color-text);
 }
 
-/* Kbd (ui/Kbd.tsx): a key or a short chord on Click UI's tokens: Inter 12 px/500, muted
-   text on the muted surface, the default stroke, inline code's radius, 20 px high. In the
-   components layer, so a utility the caller passes (`hidden`, a position) still wins. */
+/* Kbd (ui/Kbd.tsx): a key or a short chord. It stands in for Click UI's inline code
+   (its stroke, radius and side padding) in the badge's 500 12 px Inter, muted text on the
+   muted surface. Click UI has no key component and no token for a key's 20 px square: the
+   one hand size here. In the components layer, so a utility the caller passes (`hidden`,
+   a position) still wins. */
 @layer components {
   .kbd {
     display: inline-flex;
@@ -1477,17 +1507,44 @@ tbody tr:has([aria-current="true"]) > td:first-child {
     justify-content: center;
     min-width: 20px;
     height: 20px;
-    padding: 0 6px;
-    border: 1px solid var(--global-color-stroke-default);
+    padding: 0 var(--click-codeInline-space-x);
+    border: var(--click-codeInline-stroke) solid var(--global-color-stroke-default);
     border-radius: var(--click-codeInline-radii-all);
     background: var(--global-color-background-muted);
-    font-family: var(--font-sans);
-    font-size: var(--text-xs);
-    font-weight: 500;
+    font: var(--click-badge-typography-label-md-default);
     line-height: 1;
     color: var(--global-color-text-muted);
     white-space: nowrap;
   }
+}
+
+/* A field of chips (a tracker source's repositories): Click UI's text field frame around
+   the chips and an input, since Click UI has no multi-value field. */
+@layer components {
+  .chip-field {
+    gap: var(--click-field-space-gap);
+    padding: var(--click-field-space-y) var(--click-field-space-x);
+    border: 1px solid var(--click-field-color-stroke-default);
+    border-radius: var(--click-field-radii-all);
+    background: var(--click-field-color-background-default);
+  }
+  .chip-field:focus-within {
+    border-color: var(--click-field-color-stroke-active);
+  }
+}
+
+/* ui/AnchoredPopover: a summary's width, kept inside a phone's screen. Click UI's Popover
+   has no width token: 360 px is the one hand size here. */
+@layer components {
+  .anchored-popover {
+    width: min(360px, calc(100vw - 2rem));
+  }
+}
+
+/* ThreadReplayDialog: the turn a search hit points at takes the card's active stroke, as
+   an inspected list row does. */
+.thread-turn[data-highlighted] {
+  box-shadow: 0 0 0 1px var(--click-card-horizontal-default-color-stroke-active);
 }
 
 /* Tasks: the open card on the board takes Click UI's active stroke, as an inspected list row does. */

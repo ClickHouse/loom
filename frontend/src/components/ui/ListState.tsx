@@ -94,8 +94,7 @@ function FilteredState({ things, filter, among, onClear }: ListFilteredProps) {
       <span role="status" className="min-w-0 break-words">
         {said && (
           <>
-            No {things} match{" "}
-            {filter ? <span className="font-mono text-text">{filter}</span> : "the filters in force"}
+            No {things} match {filter ? <span className="font-mono text-text">{filter}</span> : "the filters in force"}
             {among && ` in ${among}`}
           </>
         )}

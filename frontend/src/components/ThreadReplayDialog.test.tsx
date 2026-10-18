@@ -109,10 +109,9 @@ describe("ThreadReplayDialog", () => {
     }
     const turns = [...document.querySelectorAll<HTMLElement>("[data-msg-id]")];
     expect(turns).toHaveLength(3);
-    for (const t of turns) expect(t.className).not.toMatch(/border-accent|border-warn|ring-accent/);
-    const hit = document.querySelector<HTMLElement>("[data-highlighted]");
-    expect(hit?.textContent).toContain("ran the tests");
-    expect(hit?.className).toContain("--click-card-horizontal-default-color-stroke-active");
+    // The hit's turn alone is marked; styles.css strokes it.
+    expect(turns.filter((t) => t.hasAttribute("data-highlighted")).map((t) => t.dataset.msgId)).toEqual(["2"]);
+    expect(document.querySelector("[data-highlighted]")).toHaveTextContent("ran the tests");
   });
 
   it("names the thread's agent in the neutral agent badge, and dates an old thread by its day", async () => {

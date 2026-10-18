@@ -43,7 +43,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { Modal } from "../components/ui/Modal";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
-import { ListToolbar } from "../components/ui/ListToolbar";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 
 // The ten fields a run row reads of the twenty a run carries; the replay reads the rest
@@ -432,16 +432,7 @@ interface RunListProps {
   loading?: boolean;
 }
 
-function RunTable({
-  label,
-  rows,
-  onOpen,
-  order,
-  onOrder,
-  busy,
-  hideHeader = false,
-  loading = false,
-}: RunListProps) {
+function RunTable({ label, rows, onOpen, order, onOrder, busy, hideHeader = false, loading = false }: RunListProps) {
   // Click UI's sort arrow is named after its icon, so the header would read "Started
   // arrow-down"; `aria-sort` already says it. Click UI draws a new arrow on every sort.
   const table = useRef<HTMLTableElement>(null);
@@ -489,7 +480,7 @@ function RunRows({ label, rows, onOpen, busy }: RunListProps) {
                 >
                   {r.goal || "(no goal)"}
                 </button>
-                <span className="relative z-[1] shrink-0">
+                <span className="list-row-control shrink-0">
                   <StatusBadge status={r.status} inferred={inferred} />
                 </span>
               </div>
@@ -851,14 +842,14 @@ export function Runs() {
       )}
 
       <ListToolbar label="Search and filters" count={count}>
-        <div className="min-w-[10rem] flex-1">
+        <ListToolbarSearch>
           <SearchField
             value={query}
             onChange={(value) => setQuery(value)}
             placeholder="Search runs by goal, id or agent"
             aria-label="Search runs"
           />
-        </div>
+        </ListToolbarSearch>
         {!phone && <div className="flex min-w-0 items-center gap-2 overflow-x-auto">{filters}</div>}
       </ListToolbar>
       {/* A phone's toolbar has room for the search only; the filters and the View menu sit

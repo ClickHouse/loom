@@ -39,7 +39,7 @@ export function RowMenu({ name, items, tabIndex }: RowMenuProps) {
           label={label}
           tooltip="More actions"
           tabIndex={tabIndex}
-          className="relative z-[1]"
+          className="list-row-control"
         />
       </MenuTrigger>
       {/* Radix names the menu after its trigger; the label names it instead. */}

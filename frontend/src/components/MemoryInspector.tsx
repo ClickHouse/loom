@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import * as RadixPopover from "@radix-ui/react-popover";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
-import { Popover } from "@clickhouse/click-ui/Popover";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { Title } from "@clickhouse/click-ui/Title";
@@ -47,6 +45,7 @@ import { toast } from "./Toast";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
 import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
+import { AnchoredPopover } from "./ui/AnchoredPopover";
 import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
@@ -1733,8 +1732,10 @@ function EntityChip({
     go();
   };
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <RadixPopover.Anchor asChild>
+    <AnchoredPopover
+      open={open}
+      onOpenChange={setOpen}
+      anchor={
         <a
           ref={chipRef}
           href={graphSeedHref(entity)}
@@ -1748,39 +1749,35 @@ function EntityChip({
             leaving.current = false;
             setOpen((v) => !v);
           }}
-          className={`${CHIP_OUTLINE_CLASS} no-underline transition-colors hover:bg-(--click-card-horizontal-default-color-background-hover)`}
+          className={`${CHIP_OUTLINE_CLASS} no-underline transition-colors`}
         >
           <Icon name="share-network" size="xs" aria-hidden="true" />
           {entity}
         </a>
-      </RadixPopover.Anchor>
-      <Popover.Content
-        align="start"
-        aria-label={`Entity ${entity}`}
-        className="w-[min(360px,92vw)]"
-        // The summary takes the focus and hands it to its first link once the links have
-        // loaded (Radix would focus the one link drawn before they arrive).
-        onOpenAutoFocus={(e) => {
-          e.preventDefault();
-          if (e.currentTarget instanceof HTMLElement)
-            e.currentTarget.querySelector<HTMLElement>("[data-entity-summary]")?.focus();
-        }}
-        onCloseAutoFocus={(e) => {
-          e.preventDefault();
-          if (!leaving.current) chipRef.current?.focus();
-        }}
-      >
-        {open && (
-          <EntitySummary
-            entity={entity}
-            identity={identity}
-            readMentions={readMentions}
-            onInspect={(key) => leave(() => onInspect(key))}
-            onWalk={() => leave(() => onWalk(entity))}
-          />
-        )}
-      </Popover.Content>
-    </Popover>
+      }
+      aria-label={`Entity ${entity}`}
+      // The summary takes the focus and hands it to its first link once the links have
+      // loaded (Radix would focus the one link drawn before they arrive).
+      onOpenAutoFocus={(e) => {
+        e.preventDefault();
+        if (e.currentTarget instanceof HTMLElement)
+          e.currentTarget.querySelector<HTMLElement>("[data-entity-summary]")?.focus();
+      }}
+      onCloseAutoFocus={(e) => {
+        e.preventDefault();
+        if (!leaving.current) chipRef.current?.focus();
+      }}
+    >
+      {open && (
+        <EntitySummary
+          entity={entity}
+          identity={identity}
+          readMentions={readMentions}
+          onInspect={(key) => leave(() => onInspect(key))}
+          onWalk={() => leave(() => onWalk(entity))}
+        />
+      )}
+    </AnchoredPopover>
   );
 }
 

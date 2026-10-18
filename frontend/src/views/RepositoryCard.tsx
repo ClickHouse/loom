@@ -144,7 +144,7 @@ export function worstHealth(branches: readonly CodeRepoSummary[]): Health | null
 function HealthBadge({ health }: { health: Health }) {
   return (
     // Lifted over the row's stretched disclosure, so a hover reaches the tooltip.
-    <TipTarget tip={health.detail} className="relative z-[1] inline-flex rounded">
+    <TipTarget tip={health.detail} className="list-row-control inline-flex rounded">
       <Badge text={health.text} state={health.state} size="sm" />
     </TipTarget>
   );
@@ -807,7 +807,7 @@ export function RepositoryCard({
             </div>
             {summary && <p className="mt-0.5 text-xs text-text-muted tabular-nums break-words">{summary}</p>}
           </div>
-          <div className="relative z-[1] sm:shrink-0">
+          <div className="list-row-control sm:shrink-0">
             <RowAction card={card} busy={anyBusy} code={code} record={record} />
           </div>
         </div>

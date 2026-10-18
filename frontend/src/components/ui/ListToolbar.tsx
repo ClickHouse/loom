@@ -132,9 +132,7 @@ export function ListToolbar({ label, search = true, children, count, selection }
             </div>
           </>
         ) : (
-          <>
-            <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
-          </>
+          <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
         )}
         {/* One live region, mounted with the bar, so each change is said: the count (shown on
             a phone too) as a search, a filter or a page moves it, or, unseen, the selection
@@ -149,4 +147,10 @@ export function ListToolbar({ label, search = true, children, count, selection }
       </Bar>
     </>
   );
+}
+
+/** The toolbar's search field: it takes the room the filters beside it leave, and never
+ *  less than 10rem. */
+export function ListToolbarSearch({ children }: { children: ReactNode }) {
+  return <div className="min-w-40 flex-1">{children}</div>;
 }

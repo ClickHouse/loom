@@ -6,9 +6,9 @@ import { Tip } from "./Tooltip";
 /**
  * Chip — a filter or value chip. Click UI has no filter chip, so this is drawn as its
  * opaque badge (pill, 1 px stroke, 500 12 px, 2 × 12 px padding) with a 24 px hit target
- * on a fine pointer (44 × 44 px under `pointer: coarse`, a static chip excepted), an optional tabular count and
- * an optional swatch. One shape for the toggles in Facets, the status filters in Runs,
- * the keys in a run's detail.
+ * on a fine pointer (44 × 44 px under `pointer: coarse`, a static chip excepted), an
+ * optional tabular count and an optional swatch. One shape for the toggles in Facets, the
+ * status filters in Runs, the keys in a run's detail.
  *
  * - With `onClick` it is a `<button>`. Pass `selected` for a toggle: it sets `aria-pressed`
  *   and fills the chip the way Click UI fills a checked control. An action chip (a key that
@@ -47,18 +47,11 @@ const SHAPE = "chip inline-flex items-center justify-center max-w-full min-h-6 b
 const BASE = `${SHAPE} pointer-coarse:min-h-11 pointer-coarse:min-w-11`;
 const OFF = "bg-surface-2 border-border text-text-muted";
 const INTERACTIVE_OFF = "hover:text-text hover:border-border-strong";
-const OUTLINE =
-  "bg-surface border-(--click-badge-opaque-color-stroke-default) text-(--click-badge-opaque-color-text-default)";
+const OUTLINE = "chip-outline";
 const ON = "bg-text border-text text-bg";
 /** An outlined chip's look, for a chip-shaped control this component cannot draw (a link
  *  that anchors a popover). */
 export const CHIP_OUTLINE_CLASS = `${BASE} ${OUTLINE}`;
-// Click UI's disabled field colours, not an opacity: natively disabled, and aria-disabled
-// (a disabled chip with a tip stays focusable so its reason can be read).
-const DISABLED =
-  "disabled:bg-(--click-field-color-background-disabled) disabled:border-(--click-field-color-stroke-disabled) disabled:text-(--click-field-color-text-disabled)";
-const SOFT_DISABLED =
-  "aria-disabled:bg-(--click-field-color-background-disabled) aria-disabled:border-(--click-field-color-stroke-disabled) aria-disabled:text-(--click-field-color-text-disabled)";
 
 export function Chip({
   label,
@@ -99,7 +92,12 @@ export function Chip({
       )}
     </>
   );
-  const tone = selected ? ON : `${outline ? OUTLINE : OFF} ${onClick ? INTERACTIVE_OFF : ""}`;
+  // A disabled chip takes `.chip-disabled`'s colours (styles.css), which a tone would override.
+  const tone = disabled
+    ? "chip-disabled"
+    : selected
+      ? ON
+      : `${outline ? OUTLINE : OFF} ${onClick ? INTERACTIVE_OFF : ""}`;
   const wrap = (el: ReactNode) => (tip ? <Tip content={tip}>{el}</Tip> : el);
   // A span has no role that takes a name, so a static chip's spoken name is sr-only text
   // and the visible text is hidden from assistive technology.
@@ -135,7 +133,7 @@ export function Chip({
       disabled={disabled && !softDisabled}
       aria-disabled={disabled || undefined}
       onClick={softDisabled ? undefined : onClick}
-      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} ${DISABLED} ${SOFT_DISABLED} aria-disabled:cursor-not-allowed ${className}`}
+      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} aria-disabled:cursor-not-allowed ${className}`}
     >
       {inner}
     </button>
@@ -152,7 +150,7 @@ export function Chip({
         disabled={disabled}
         aria-disabled={disabled || undefined}
         onClick={onRemove}
-        className={`inline-flex items-center justify-center min-h-6 min-w-6 rounded-r-full border ${selected ? ON : `${OFF} ${INTERACTIVE_OFF}`} ${DISABLED} pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
+        className={`inline-flex items-center justify-center min-h-6 min-w-6 rounded-r-full border ${disabled ? "chip-disabled" : selected ? ON : `${OFF} ${INTERACTIVE_OFF}`} pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
       >
         <Icon name="cross" size="xs" aria-hidden="true" />
       </button>

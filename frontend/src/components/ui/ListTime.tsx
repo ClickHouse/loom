@@ -31,7 +31,7 @@ export function ListTime({ iso, quiet: quietProp, className = "" }: ListTimeProp
         ref={quietProp === undefined ? setEl : undefined}
         dateTime={d.toISOString()}
         tabIndex={quiet ? undefined : 0}
-        className={`tabular whitespace-nowrap ${quiet ? "relative z-[1]" : "rounded"} ${className}`}
+        className={`tabular whitespace-nowrap ${quiet ? "list-row-control" : "rounded"} ${className}`}
       >
         {listTime(iso)}
         {/* Quiet, it takes no focus, so its tooltip is out of a keyboard's reach: the

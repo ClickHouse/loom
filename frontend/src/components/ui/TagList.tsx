@@ -30,7 +30,7 @@ export function TagList({ tags, onTagClick, activeTags, max = 3, className = "" 
           onClick={onTagClick ? () => onTagClick(t) : undefined}
           selected={onTagClick ? (activeTags?.has(t.toLowerCase()) ?? false) : undefined}
           ariaLabel={onTagClick ? `Filter by tag ${t}` : undefined}
-          className="relative z-[1]"
+          className="list-row-control"
         />
       ))}
       {rest.length > 0 && (

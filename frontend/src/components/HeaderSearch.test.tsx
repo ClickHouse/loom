@@ -87,7 +87,7 @@ describe("HeaderSearch", () => {
     const library = await screen.findByRole("group", { name: "Library" });
     expect(library).not.toHaveTextContent("#beans");
     // The outlined chip a row's TagList draws.
-    expect(screen.getByText("beans").closest(".chip")?.className).toMatch(/click-badge-opaque-color-stroke/);
+    expect(screen.getByText("beans").closest(".chip")).toHaveClass("chip-outline");
   });
 
   it("draws a Jump to namespace as a button: the switch keeps the page, so it has no href", async () => {

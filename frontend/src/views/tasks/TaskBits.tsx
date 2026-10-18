@@ -28,7 +28,7 @@ export function copyTaskId(id: string): void {
 export function Assignee({ name, label }: { name: string; label: string }) {
   return (
     <Tip content={label}>
-      <span className="tq-assignee relative z-[1]">
+      <span className="tq-assignee list-row-control">
         <Avatar text={name.replace(/^(sa|human|process):/, "").replace(/[-_.@]+/g, " ")} aria-hidden="true" />
         <span className="sr-only">{label}</span>
       </span>

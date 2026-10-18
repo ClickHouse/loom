@@ -540,7 +540,7 @@ function SpaceRow({
           </div>
           {description && <p className="mt-0.5 truncate text-xs text-text-muted">{description}</p>}
         </div>
-        <div className="relative z-[1] ml-auto flex shrink-0 items-center gap-2">
+        <div className="list-row-control ml-auto flex shrink-0 items-center gap-2">
           {members !== undefined && (
             <span className="whitespace-nowrap text-xs text-text-muted tabular">
               {members} member{members === 1 ? "" : "s"}

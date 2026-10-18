@@ -143,14 +143,14 @@ describe("an entity on a memory opens in place", () => {
   });
   afterEach(() => cleanup());
 
-  // An entity is a tag-like value: Click UI's outlined badge stroke and text, and the
-  // CardHorizontal hover tint, not an accent-coloured text hover.
-  it("draws the entity as an outlined chip with a hover background", async () => {
+  // An entity is a link to its graph that opens a summary in place: it says it has one,
+  // and whether it is open.
+  it("draws the entity as a link that says it opens a summary", async () => {
     await open();
-    const cls = chip("rate limiting").className;
-    expect(cls).toContain("--click-badge-opaque-color-stroke-default");
-    expect(cls).toContain("hover:bg-(--click-card-horizontal-default-color-background-hover)");
-    expect(cls).not.toContain("hover:text-accent");
+    const link = chip("rate limiting");
+    expect(link).toHaveAttribute("href", expect.stringContaining("rate"));
+    expect(link).toHaveAttribute("aria-haspopup", "dialog");
+    expect(link).toHaveAttribute("aria-expanded", "false");
   });
 
   it("shows a tag by its name, with no '#' glyph", async () => {

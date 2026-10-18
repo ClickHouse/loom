@@ -26,7 +26,7 @@ export function AgentBadge({ agent, quiet }: { agent: string; quiet?: boolean })
         ref={quiet === undefined ? setBox : undefined}
         tabIndex={focusable ? 0 : undefined}
         role={focusable ? "note" : undefined}
-        className={`agent-badge inline-flex min-w-0 rounded ${cut && !focusable ? "relative z-[1]" : ""}`}
+        className={`agent-badge inline-flex min-w-0 rounded ${cut && !focusable ? "list-row-control" : ""}`}
       >
         <Badge
           text={

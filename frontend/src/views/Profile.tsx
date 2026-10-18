@@ -30,7 +30,7 @@ import { PopoverTrigger } from "../components/ui/Menu";
 import { fieldError, ListRow, LoadingSkeleton, PageHeader } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
-import { ListToolbar } from "../components/ui/ListToolbar";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowMenu } from "../components/ui/RowMenu";
 import { useRowNav } from "../lib/useRowNav";
 import { useRowSelection } from "../lib/useRowSelection";
@@ -225,14 +225,14 @@ export function Profile() {
                 : null
             }
           >
-            <div className="min-w-[10rem] flex-1">
+            <ListToolbarSearch>
               <SearchField
                 aria-label="Search profile sections"
                 value={query}
                 onChange={(value) => setQuery(value)}
                 placeholder="Search by label or value…"
               />
-            </div>
+            </ListToolbarSearch>
           </ListToolbar>
           {newOpen && (
             <div className="mb-2">
@@ -301,7 +301,7 @@ export function Profile() {
                         toggleSelect(b.label, e.shiftKey);
                       }}
                       aria-label={`Select section ${b.label}`}
-                      className="relative z-[1]"
+                      className="list-row-control"
                     />
                   }
                 >
@@ -681,7 +681,7 @@ const SectionRow = memo(function SectionRow({
         </span>
       </button>
       {/* Edit is the row's one inline action; the rest are in its More menu. */}
-      <div className="relative z-[1] -my-1 flex shrink-0 items-center">
+      <div className="list-row-control -my-1 flex shrink-0 items-center">
         <IconButton
           onClick={() => onEdit(section.label)}
           label={`Edit ${section.label}`}

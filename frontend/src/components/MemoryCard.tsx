@@ -225,7 +225,7 @@ export const MemoryCard = memo(function MemoryCard({
             </span>
           )}
         </button>
-        {aside && <div className="relative z-[1] -my-1 flex shrink-0 items-center">{aside}</div>}
+        {aside && <div className="list-row-control -my-1 flex shrink-0 items-center">{aside}</div>}
       </div>
       <TagList
         tags={entry.tags ?? []}

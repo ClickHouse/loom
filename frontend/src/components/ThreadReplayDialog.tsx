@@ -393,7 +393,7 @@ export function ThreadReplayDialog({
                   id={turnId(m)}
                   data-msg-id={m.msg_id}
                   data-highlighted={highlighted || undefined}
-                  className={`rounded-lg px-3 py-2 ${meta.card} ${highlighted ? "ring-1 ring-[color:var(--click-card-horizontal-default-color-stroke-active)]" : ""}`}
+                  className={`thread-turn rounded-lg px-3 py-2 ${meta.card}`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <RoleBadge label={label} />

@@ -27,7 +27,7 @@ import { Alert, ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
-import { ListToolbar } from "../components/ui/ListToolbar";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -1029,7 +1029,7 @@ function MemoryList() {
             : null
         }
       >
-        <div className="min-w-[10rem] flex-1">
+        <ListToolbarSearch>
           <SearchField
             ref={searchInputRef}
             value={query}
@@ -1042,7 +1042,7 @@ function MemoryList() {
             }
             aria-label="Search memories"
           />
-        </div>
+        </ListToolbarSearch>
         <span className="sm:hidden">
           <IconButton
             icon="filter"
@@ -1198,7 +1198,7 @@ function MemoryList() {
                           toggleSelect(e.memory_key, ev.shiftKey);
                         }}
                         aria-label={`Select ${e.memory_key}`}
-                        className="relative z-[1]"
+                        className="list-row-control"
                       />
                     }
                   >
@@ -1233,7 +1233,7 @@ function MemoryList() {
                         <Button
                           type="empty"
                           htmlType="button"
-                          className="relative z-[1]"
+                          className="list-row-control"
                           onClick={async (ev) => {
                             ev.stopPropagation();
                             // Identity carries only (org, namespace, agent);

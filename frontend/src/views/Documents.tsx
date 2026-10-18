@@ -26,7 +26,7 @@ import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip } from "../
 import { BusyButton } from "../components/ui/BusyButton";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
-import { ListToolbar } from "../components/ui/ListToolbar";
+import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { Modal } from "../components/ui/Modal";
 import { formatBytesShort } from "../lib/format";
@@ -578,7 +578,7 @@ export function Documents() {
             : null
         }
       >
-        <div className="min-w-[10rem] flex-1">
+        <ListToolbarSearch>
           <SearchField
             ref={searchRef}
             value={query}
@@ -587,7 +587,7 @@ export function Documents() {
             placeholder={phone ? "Search, or tag:specs" : "Search title, filename, description, or tag — try tag:specs"}
             aria-label="Search library"
           />
-        </div>
+        </ListToolbarSearch>
         {queryTags.length > 0 && (
           <Button
             type="empty"
@@ -701,7 +701,7 @@ export function Documents() {
                       e.stopPropagation();
                       selection.toggle(r.source_uri, e.shiftKey);
                     }}
-                    className="relative z-[1]"
+                    className="list-row-control"
                   />
                 }
               >
