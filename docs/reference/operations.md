@@ -572,7 +572,7 @@ Fields for every `run` op: [operations/run.md](operations/run.md).
 | [`run.complete`](operations/run.md#runcomplete) | Close a run opened with run.begin — call EXACTLY ONCE when the task ends. | writer | write | yes | yes |
 | [`run.get`](operations/run.md#runget) | Replay one run: goal, status, final response, the memories it relied on, the memory_keys it wrote, how many memories it recalled and observed, and what its model turns cost. | viewer | read | yes |  |
 | [`run.grade`](operations/run.md#rungrade) | A verdict on a CLOSED run, usually days after it — a maintainer confirmed the finding, CI passed, a reviewer rejected it. | writer | idempotent | no | yes |
-| [`run.list`](operations/run.md#runlist) | One page of a namespace's agent runs, filtered by agent, session, status, memory activity, grade or text, in the asked order; `total` when the page cannot tell it. | viewer | read | no |  |
+| [`run.list`](operations/run.md#runlist) | One page of a namespace's agent runs, filtered by agent, session, status, memory activity, grade or text, in the asked order, with `total` except on a full page after the first. | viewer | read | no |  |
 
 ### search
 

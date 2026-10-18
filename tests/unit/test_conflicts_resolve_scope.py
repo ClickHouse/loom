@@ -238,3 +238,17 @@ async def test_the_count_after_a_resolve_reads_its_own_writes(
     # then cached for a minute.
     assert (await _resolve(T_OWN, "revise")).resolved is True
     assert table.count_reads_consistent == [True]
+
+
+async def test_a_count_that_fails_after_the_writes_still_answers_the_applied_resolve(
+    table: _Table, admin_of_a: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.store import conflicts as repo
+
+    async def _count_fails(*_: Any, **__: Any) -> int:
+        raise RuntimeError("ClickHouse unavailable")
+
+    monkeypatch.setattr(repo, "count_conflicted", _count_fails)
+    out = await _resolve(T_OWN, "revise")
+    assert out.resolved is True and out.total is None
+    assert table.tombstoned == [P_OWN, P_OWN2] and table.activated == [T_OWN]

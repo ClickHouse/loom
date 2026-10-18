@@ -154,5 +154,5 @@ async def test_list_tags_match_in_any_case(control_plane_url: str) -> None:
         assert uris(await a.knowledge.list(tags=["specs"], limit=10)) == {"doc://specs"}
         summer = await a.knowledge.list(tags=["Été"], limit=10)
         assert uris(summer) == {"doc://summer", "doc://plain"}
-        every = await a.call("knowledge.list", tags=["été", "draft"], tags_all=True, limit=10)
+        every = await a.knowledge.list(tags=["été", "draft"], tags_every=True, limit=10)
         assert uris(every) == {"doc://summer"}

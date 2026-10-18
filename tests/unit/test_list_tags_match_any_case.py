@@ -103,7 +103,7 @@ async def test_the_hidden_under_prefix_count_matches_tags_as_the_total_does(
             agent="*",
             prefix="alerts/",
             tags=["a", "b"],
-            tags_all=True,
+            tags_every=True,
         )
     )
     assert len(calls["count"]) == 3, "total, today and every status under the prefix"
@@ -126,7 +126,7 @@ async def test_the_store_requires_every_tag_when_asked() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
+async def test_tags_every_reaches_the_page_both_counts_and_the_cache_key(
     calls: dict[str, list[dict[str, Any]]],
 ) -> None:
     from server.memory.api.models_crud import MemoryListInput
@@ -135,7 +135,7 @@ async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
     for all_tags in (False, True):
         await _handle_memory_list(
             MemoryListInput(
-                org="acme", namespace="team", agent="*", tags=["a", "b"], tags_all=all_tags
+                org="acme", namespace="team", agent="*", tags=["a", "b"], tags_every=all_tags
             )
         )
     assert [c["tag_match"] for c in calls["list"]] == ["folded_any", "folded_all"]
@@ -182,7 +182,7 @@ async def test_the_score_sorted_list_matches_tags_as_the_recency_list_does(
 
 
 @pytest.mark.asyncio
-async def test_the_score_sorted_list_with_tags_all_needs_every_folded_tag(
+async def test_the_score_sorted_list_with_tags_every_needs_every_folded_tag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.memory.api.models_crud import MemoryListInput
@@ -193,7 +193,12 @@ async def test_the_score_sorted_list_with_tags_all_needs_every_folded_tag(
     monkeypatch.setattr(mq, "_record_read_exposure", lambda *a, **k: None)
     await mq._handle_memory_list(
         MemoryListInput(
-            org="acme", namespace="team", agent="*", sort_by="score", tags=["A", "b"], tags_all=True
+            org="acme",
+            namespace="team",
+            agent="*",
+            sort_by="score",
+            tags=["A", "b"],
+            tags_every=True,
         )
     )
     sql, params = ch.calls[0]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -26,6 +27,8 @@ from server.memory.api.models_conflicts import (
     _ConflictRow,
 )
 from server.operations.read_projection import project_rows
+
+log = logging.getLogger(__name__)
 
 _COUNT_TTL_S = 60.0
 _count_cache: dict[tuple[str, str, ReadFilters], tuple[float, int]] = {}
@@ -343,10 +346,14 @@ async def handle_conflicts_resolve(
     # The badge's cached counts (one per read scope) are stale now.
     for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:
         _count_cache.pop(key, None)
-    with own_write_reads():  # the count must see the writes above, or it caches a stale one
-        total = await _conflicted_count_cached(
-            conflicts_repo, input.org, input.namespace, request_scope()
-        )
+    total: int | None = None
+    try:
+        with own_write_reads():  # the count must see the writes above
+            total = await _conflicted_count_cached(
+                conflicts_repo, input.org, input.namespace, request_scope(), fresh=True
+            )
+    except Exception as e:  # noqa: BLE001 — the count never fails an applied resolve
+        log.warning("conflicts.resolve: conflicted count failed for %s: %s", input.memory_id, e)
     return ConflictsResolveOutput(
         resolved=True,
         decision=input.decision,
