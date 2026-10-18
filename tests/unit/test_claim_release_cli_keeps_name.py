@@ -57,6 +57,8 @@ class _FakeCH:
         return {"c": 2}
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if "sso_links" in sql or "machine_identities" in sql:
+            return []  # no SSO links or bots to drop
         return [
             {"subject": "alice@acme.test", "role": "admin", "granted_by": "alice@acme.test"},
             {"subject": "bob@acme.test", "role": "writer", "granted_by": "alice@acme.test"},

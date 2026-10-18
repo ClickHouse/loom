@@ -81,7 +81,7 @@ async def test_every_admin_route_admits_only_its_authority(
 @pytest.mark.parametrize(
     ("path", "body"),
     [
-        ("/v1/admin/token.mint", {"subject": "s", "org": "globex", "namespaces": ["n"]}),
+        ("/v1/admin/token.mint", {"name": "s", "org": "globex", "namespaces": ["n"]}),
         ("/v1/admin/namespace.adopt", {"org": "globex", "namespace": "n", "new_admin": "eve"}),
         ("/v1/admin/claim_release", {"org": "globex", "namespace": "n"}),
     ],

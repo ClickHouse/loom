@@ -216,6 +216,14 @@ class KnowledgeClient:
         }
         return await self._agent.transport.post("/v1/knowledge.outline", payload)
 
+    async def download(self, source_uri: str) -> bytes:
+        """The document as uploaded, or its stored text as Markdown when no
+        original file was kept."""
+        resp = await self._agent.transport.request(
+            "GET", "/v1/knowledge.download", params={**self._scope(), "source_uri": source_uri}
+        )
+        return resp.content
+
     async def list(
         self,
         *,

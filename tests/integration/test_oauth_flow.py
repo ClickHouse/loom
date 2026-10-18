@@ -172,6 +172,15 @@ def test_full_oauth_handshake(oauth_server) -> None:
         },
     ).json()
     assert tok2["access_token"]
+    tok3 = httpx.post(
+        md["token_endpoint"],
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": tok2["refresh_token"],
+            "client_id": cid,
+        },
+    ).json()
+    assert tok3["access_token"]
     reused = httpx.post(
         md["token_endpoint"],
         data={

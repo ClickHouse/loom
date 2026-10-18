@@ -48,6 +48,15 @@ def verify_bearer_header(authorization: str | None) -> AuthInfo | None:
     return None if token is None else verify_bearer(token)
 
 
+def auth_unavailable(e: AuthUnavailable) -> HTTPException:
+    """503 AUTH_UNAVAILABLE with Retry-After: the token may be good, try again."""
+    return HTTPException(
+        status_code=503,
+        detail={"code": "AUTH_UNAVAILABLE", "message": str(e)},
+        headers={"Retry-After": "5"},
+    )
+
+
 def verify_bearer(token: str) -> AuthInfo:
     """The principal `token` names; HTTPException 401 / 503 otherwise. The
     rest of the request's ClickHouse queries carry its quota key, so routes
@@ -55,11 +64,7 @@ def verify_bearer(token: str) -> AuthInfo:
     try:
         info = verify_token(token)
     except AuthUnavailable as e:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "AUTH_UNAVAILABLE", "message": str(e)},
-            headers={"Retry-After": "5"},
-        ) from e
+        raise auth_unavailable(e) from e
     except TokenError as e:
         raise HTTPException(
             status_code=401,

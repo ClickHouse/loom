@@ -22,6 +22,9 @@ from server.operations.base import Role
 
 ORG, TEAM, SA, CREATOR = "o", "team", "sa:agent-box-1", "alice"
 
+# The listing asks the gate, which reads the grant maps from the fake below.
+pytestmark = pytest.mark.claim_cap
+
 
 class _Directory:
     async def is_restricted(self, org: str, namespace: str) -> bool:
@@ -58,6 +61,9 @@ class _CH:
         params = params or {}
         if "service_accounts" in sql:
             return [self.sa_row] if params.get("sub") == SA else []
+        if "groupArray((namespace, rank))" in sql:  # the grant map (`grant_cache`)
+            grants = [(TEAM, 1)] if params.get("sub") == CREATOR else []
+            return [{"grants": grants, "spellings": [params.get("sub")]}]
         if "namespace_grants" in sql:
             if params.get("ns") not in (None, TEAM):
                 return []

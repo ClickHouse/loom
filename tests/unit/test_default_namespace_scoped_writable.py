@@ -8,11 +8,13 @@ read would answer FORBIDDEN, or land on a viewer-only plane."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from typing import Any
 
 import pytest
 
 import server.transport.mcp_identity as mi
+from server.auth.jwt import AuthInfo
 from server.operations.base import Role
 
 KINDS = {
@@ -25,34 +27,22 @@ KINDS = {
 }
 
 
-class _Auth:
+def _Auth(
+    subject: str,
+    namespaces: tuple[str, ...] = (),
+    ns_roles: tuple[tuple[str, str], ...] = (),
+    write_namespaces: tuple[str, ...] = (),
+) -> AuthInfo:
     """A legacy token (no ns_roles) or a scoped one (ns_roles given)."""
-
-    def __init__(
-        self,
-        subject: str,
-        namespaces: tuple[str, ...] = (),
-        ns_roles: tuple[tuple[str, str], ...] = (),
-    ) -> None:
-        self.subject = subject
-        self.org = "clickhouse"
-        self.namespaces = namespaces
-        self.ns_roles = ns_roles
-        self.issued_at = None
-        self.write_namespaces: tuple[str, ...] = ()
-        self.is_service_account = False
-
-    def has_ns_roles(self) -> bool:
-        return bool(self.ns_roles)
-
-    def effective_role(self, org: str, namespace: str) -> Role | None:
-        for ns, role in self.ns_roles:
-            if ns == namespace:
-                return Role[role.upper()]
-        return None
-
-    def can_write(self, org: str, ns: str) -> bool:
-        return ns in self.namespaces or any(n == ns for n, _ in self.ns_roles)
+    return AuthInfo(
+        subject=subject,
+        org="clickhouse",
+        namespaces=namespaces,
+        roles=() if ns_roles else (Role.WRITER,),
+        is_service_account=False,
+        ns_roles=ns_roles,
+        write_namespaces=write_namespaces,
+    )
 
 
 class _CH:
@@ -80,6 +70,7 @@ def wire(monkeypatch: pytest.MonkeyPatch):
     def _wire(ch: _CH) -> None:
         import server.auth.aliases as aliases
         import server.core.ch as chmod
+        import server.identity.app.namespace_classification as nc
         import server.identity.app.namespace_kinds as nk
 
         async def _aliases(org: str, subject: str, *, ch: Any = None) -> list[str]:
@@ -88,9 +79,22 @@ def wire(monkeypatch: pytest.MonkeyPatch):
         async def _kind_map(org: str) -> dict[str, str]:
             return dict(KINDS)
 
+        import server.core.grant_cache as grant_cache
+
+        ranks = {"viewer": 1, "writer": 2, "admin": 3}
+
+        async def _grant_map(org: str, subject: str) -> grant_cache.GrantMap:
+            return grant_cache.GrantMap(ranks={n: ranks[r] for n, r in ch.grants.items()})
+
         monkeypatch.setattr(chmod, "get_client", lambda: ch)
         monkeypatch.setattr(aliases, "subject_aliases", _aliases)
+        monkeypatch.setattr(grant_cache, "_read", _grant_map)
+
+        async def _none_restricted(org: str) -> frozenset[str]:
+            return frozenset()
+
         monkeypatch.setattr(nk, "kind_map", _kind_map)
+        monkeypatch.setattr(nc, "restricted_set", _none_restricted)
         from server.settings import settings
 
         monkeypatch.setattr(settings, "identity_provider", "trust-network")
@@ -160,36 +164,39 @@ def test_viewer_only_caller_still_gets_its_readable_plane(wire) -> None:
     assert _ns(_Auth("dave")) == "team-alerts"
 
 
-def test_saved_pick_ok_rules() -> None:
-    legacy = _Auth("z")
-    scoped = _Auth("z", ("a",), ns_roles=(("a", "writer"),))
-    assert mi.saved_pick_ok("jdoe", "admin", KINDS, legacy, "clickhouse", [])
-    assert not mi.saved_pick_ok("team-alerts", "viewer", KINDS, legacy, "clickhouse", [])
-    assert not mi.saved_pick_ok("qa-clickhouse", "admin", KINDS, legacy, "clickhouse", [])
-    assert not mi.saved_pick_ok("b", "writer", KINDS, scoped, "clickhouse", ["a"])
-    assert mi.saved_pick_ok("a", "writer", KINDS, scoped, "clickhouse", ["a"])
+def test_a_saved_plane_or_unclaimed_pick_is_no_default(wire) -> None:
+    wire(_CH("qa-clickhouse", {"qa-clickhouse": "admin", "team-x": "writer"}))
+    assert _ns(_Auth("z")) == "team-x"
+    wire(_CH("team-y", {"team-x": "writer", "team-y": "writer"}))
+    assert _ns(_Auth("z", ("team-x",), ns_roles=(("team-x", "writer"),))) == "team-x"
 
 
 def test_a_non_home_default_is_named_and_home_is_silent() -> None:
-    mi.note_default_namespace(True, "team-alerts", "jdoe")
+    mi.note_default_namespace(True, "team-alerts", _Auth("jdoe"))
     assert mi.default_namespace_note() == {"namespace_defaulted": "team-alerts"}
-    mi.note_default_namespace(True, "jdoe", "jdoe@example.com")
+    mi.note_default_namespace(True, "jdoe", _Auth("jdoe@example.com"))
     assert mi.default_namespace_note() == {}
-    mi.note_default_namespace(False, "team-x", "jdoe")  # explicit namespace
+    mi.note_default_namespace(False, "team-x", _Auth("jdoe"))  # explicit namespace
     assert mi.default_namespace_note() == {}
 
 
-def test_a_scoped_writer_outside_its_write_claim_is_not_writable() -> None:
-    from server.auth.jwt import AuthInfo
+def test_an_agent_landing_in_its_own_namespace_is_not_away() -> None:
+    mi.note_default_namespace(True, "ci-review", _Auth("sa:ci:review"))
+    assert mi.default_namespace_note() == {}
+    mi.note_default_namespace(True, "ci-other", _Auth("sa:ci:review"))
+    assert mi.default_namespace_note() == {"namespace_defaulted": "ci-other"}
+    # A token the agent delegated lands in the agent's namespace too.
+    delegated = dataclasses.replace(_Auth("sa:review-tok-1a2b3c"), creator="sa:ci:review")
+    mi.note_default_namespace(True, "ci-review", delegated)
+    assert mi.default_namespace_note() == {}
 
-    token = AuthInfo(
-        subject="sa:bot",
-        org="o",
-        namespaces=("a", "b"),
-        roles=(),
-        is_service_account=True,
-        ns_roles=(("a", "writer"), ("b", "writer")),
-        write_namespaces=("a",),
+
+def test_a_scoped_writer_outside_its_write_claim_is_not_the_default(wire) -> None:
+    wire(_CH(None, {"team-x": "writer", "team-y": "writer"}))
+    token = _Auth(
+        "bob",
+        ("team-y", "team-x"),
+        ns_roles=(("team-y", "writer"), ("team-x", "writer")),
+        write_namespaces=("team-x",),
     )
-    assert mi.token_can_write(token, "o", "a")
-    assert not mi.token_can_write(token, "o", "b")
+    assert _ns(token) == "team-x"

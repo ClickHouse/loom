@@ -16,6 +16,7 @@ from server.cli._client import (
     default_base_url,
     error_line,
     jwt_claims,
+    refused_for_agent,
     resolve_token,
 )
 from server.cli._paths import write_private
@@ -34,7 +35,9 @@ def _cmd_memory_search(args: argparse.Namespace) -> int:
 
     import httpx
 
-    token, _ = resolve_token(args.token)
+    token, source = resolve_token(args.token)
+    if refused_for_agent(source):
+        return 2
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -158,7 +161,9 @@ def _cmd_ingest_transcript(args: argparse.Namespace) -> int:
     import time
     import urllib.request
 
-    token, _ = resolve_token(args.token)
+    token, source = resolve_token(args.token)
+    if refused_for_agent(source):
+        return 2
     if not token:
         print(
             "ERROR: --token is required (or set LOOM_API_KEY, or save one to ~/.loom/token). "

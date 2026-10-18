@@ -3,6 +3,7 @@
 // localStorage.
 
 import { noteCallEnd, noteCallStart } from "./lib/vitalsCounter";
+import { claimsFromToken } from "./lib/boot";
 import { apiErrorFromResponse } from "./lib/errors";
 export { ApiError } from "./lib/errors";
 // The two code-plane shapes the shell reads; the plane itself lives in api/code.ts and rides with the Repositories view.
@@ -70,6 +71,26 @@ export function setToken(jwt: string): void {
 
 export function clearToken(): void {
   localStorage.removeItem(KEY_TOKEN);
+}
+
+/** Sign out: forget the stored token here at once, and end its session on the server
+ *  when it belongs to one (the dashboard's SSO token, or a `loom login` token pasted in).
+ *  The revocation is sent without waiting for it: `keepalive` lets it finish across the
+ *  page reload that follows, and it gives up after a few seconds. A token with no
+ *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. */
+export function signOut(): void {
+  const t = token();
+  clearToken();
+  if (!t || !claimsFromToken(t)?.session) return;
+  fetch("/oauth/revoke", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: t, client_id: "loom-dashboard" }),
+    keepalive: true,
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => {
+    // Offline, too slow or the route is absent: the token is gone from this browser anyway.
+  });
 }
 
 // Presence check that seeds auth state at boot: if a token is already stored, the SPA can

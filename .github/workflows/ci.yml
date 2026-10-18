@@ -389,7 +389,8 @@ jobs:
     name: pytest integration (ClickHouse service)
     needs: clickhouse
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The suite, then the auth-on server's tests, with room for a slow runner.
+    timeout-minutes: 45
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost

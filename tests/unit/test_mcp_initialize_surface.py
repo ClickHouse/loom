@@ -128,17 +128,19 @@ async def test_descriptions_do_not_repeat_workspace_preamble() -> None:
 def test_initialize_instructions_gate_profile_on_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, Any] = {}
 
-    async def _primer(
-        auth: Any, *, include_profile: bool = True, toolset: str | None = None
-    ) -> str:
+    async def _primer(auth: Any, *, include_profile: bool = True, **_k: Any) -> str:
         seen["include_profile"] = include_profile
         return "PRIMER"
 
-    async def _ctx(auth: Any) -> str:
+    async def _ctx(auth: Any, defaults: Any = None) -> str:
         return "\n\nWORKSPACE-CTX"
+
+    async def _no_defaults(*a: Any, **k: Any) -> None:
+        return None
 
     monkeypatch.setattr(mcp_primer, "_loom_primer_text", _primer)
     monkeypatch.setattr(mcp_primer, "_caller_default_context", _ctx)
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", _no_defaults)
 
     out = asyncio.run(mcp._initialize_instructions(None))
     assert out == "PRIMER\n\nWORKSPACE-CTX"
@@ -375,7 +377,7 @@ def test_the_initialize_primer_names_only_tools_its_listing_carries(
     async def _defaults(*a: Any, **k: Any) -> dict[str, str]:
         return {"org": "o", "namespace": "ns", "agent": "claude-code"}
 
-    async def _ctx(auth: Any) -> str:
+    async def _ctx(auth: Any, defaults: Any = None) -> str:
         return ""
 
     monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)

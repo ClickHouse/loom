@@ -1,294 +1,100 @@
-"""OAuth 2.1 Authorization Server for MCP one-click connect (opt-in).
+"""OAuth 2.1 Authorization Server: sign-in for the CLI, the SDK and MCP clients.
 
-When `LOOM_OAUTH_ENABLED=true`, loom advertises OAuth discovery and serves the
-authorization-code + PKCE flow MCP clients use to connect via browser sign-in
-instead of a pasted JWT:
-
-  client → /.well-known discovery → /oauth/register (dynamic client
-  registration) → GET /oauth/authorize (sign-in) → redirect with code →
-  POST /oauth/token (PKCE verify → loom JWT access token + refresh token).
-
-The access token is a normal loom JWT minted subject-aligned to the user, so it
-verifies through the existing JWKS path and inherits the user's namespace
-grants. Public clients only (PKCE replaces a client secret), S256 only. The
-sign-in step is password by default, or delegated to an external OIDC provider
-when `LOOM_OAUTH_LOGIN_PROVIDER=oidc` (see oidc.py). Grants persist in
-`loom.oauth_state`, durable across restarts and replicas.
+`router` (mounted whenever auth is on) serves the device grant (device.py),
+the token and revocation endpoints, the IdP callback and the dashboard's SSO
+sign-in; `connect_router` adds MCP one-click connect when
+`LOOM_OAUTH_ENABLED=true`. Loom issues its own JWTs; under
+`LOOM_OAUTH_LOGIN_PROVIDER=oidc` the IdP only authenticates (oidc.py). State
+lives in oauth_store.py. The flows, sessions and threat model are in
+docs/architecture/security.md ("OIDC and OAuth").
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
-import functools
 import hashlib
 import html
 import json
 import logging
 import secrets
 import time
-from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from collections.abc import Coroutine
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server.auth.jwt import mint_token
-from server.core import leases
-from server.core.ch import own_write_reads
+from server.auth import agents, claims, machines, shielded, sso_links
+from server.auth.attempts import Attempts, address_key, client_address
+from server.auth.jwt import AuthInfo, mint_token, new_jti
+from server.auth.oauth_store import (
+    PENDING_TTL,
+    UPSTREAM_PURPOSE,
+    ClickHouseStore,
+    CodeReplayed,
+    Device,
+    Grant,
+    OAuthStore,
+    SessionRetired,
+    token_id,
+)
+from server.core.errors import BackendUnavailableError, GrantBusyError
+from server.core.secrets_at_rest import open_sealed, seal, unseal
+from server.observability import audit
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.auth.login import Identity
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+connect_router = APIRouter()
+
+
+class OAuthError(Exception):
+    """An OAuth error answer: `{"error": …, "error_description": …}` at the top
+    of the body (RFC 6749 §5.2, RFC 8628 §3.5), which OAuth clients read to
+    tell "keep polling" from "stop"."""
+
+    def __init__(
+        self,
+        error: str,
+        status_code: int = 400,
+        *,
+        description: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(error)
+        self.error = error
+        self.status_code = status_code
+        self.description = description
+        self.headers = headers or {}
+
+
+# On every token and device sign-in answer of a build that keeps sessions: a
+# client that has seen it, told invalid_grant without it, heard a previous
+# build mid-upgrade, which knows none, and keeps its session to ask again.
+SESSIONS_HEADER = "Loom-Sessions"
+
+
+def oauth_error_response(request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, OAuthError)
+    body = {"error": exc.error}
+    if exc.description:
+        body["error_description"] = exc.description
+    headers = {"Cache-Control": "no-store", SESSIONS_HEADER: "1", **exc.headers}
+    return JSONResponse(body, status_code=exc.status_code, headers=headers)
+
 
 _ACCESS_TTL = 3600  # 1h access token
 _CODE_TTL = 60  # auth code: short-lived, single-use
-_REFRESH_TTL = 30 * 86400  # 30d refresh token
-_PENDING_TTL = 600  # OIDC pending-login record: time to complete IdP sign-in
-_CLAIM_TTL = 30  # a pending login's claim: the read and the consume insert, with room to spare
-# An exchange's claim outlives a live exchange: each phase below is a wall-clock bound
-# (80 s at most, retries and pool waits included); the rest is margin for the clocks.
-_EXCHANGE_TTL_S = 120
-_FIND_TIMEOUT_S = 10  # the read before any claim
-_CLAIM_TIMEOUT_S = 10
-_EXCHANGE_TIMEOUT_S = 60
-_CONSUME_TIMEOUT_S = 10
-
-
-# --------------------------------------------------------------------------
-# Grant store — durable (ClickHouse) by default; in-memory for tests.
-#
-# Async interface (`_CHStore`; tests swap in tests/unit/oauth_store_fake.py):
-#   save_client(client_id, redirect_uris, client_name) / get_client(client_id)
-#   save_code(code, grant)   / find_code(code), consume_code(code, grant)
-#   save_refresh(token, gr)  / find_refresh(token, client_id),
-#     consume_refresh(token, grant) — single-use: consumed once the exchange
-#     is decided, under the credential's claim (`_exchange`);
-#     a refresh is bound to the issuee: another client_id finds
-#     nothing, so a wrong presenter can't burn it.
-# Codes and refresh tokens are bearer secrets, so the store keys them by
-# _token_id(token) (sha256 hex), never the token itself: a row read out of
-# loom.oauth_state (a backup, a SELECT grant) is not a working credential.
-# A "grant" is the dict {client_id, redirect_uri, code_challenge, subject, org,
-# namespaces, roles, exp(int epoch)} (code) or the subset for refresh.
-# expires_at is stored as a Unix epoch int (UInt32), NOT a DateTime: integers
-# have no timezone, so they round-trip through CH without the naive-datetime
-# local-vs-UTC shift that would mark every fresh code instantly expired.
-# --------------------------------------------------------------------------
-def _token_id(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _after(row: dict[str, Any]) -> int:
-    """A consume row's version: above the row it spends, whose writer's clock may
-    run ahead of this host's (the consume must win under FINAL)."""
-    return max(time.time_ns(), int(row.get("version") or 0) + 1)
-
-
-class _CHStore:
-    """Durable OAuth state in loom.oauth_state — survives restart + replicas.
-
-    Single-use is a consumed=1 ReplacingMergeTree version; reads take FINAL +
-    consumed=0 + unexpired, with sequential consistency (a registration, code or
-    consume another replica just wrote is in the read). Finding and consuming are
-    two steps (the exchange is decided in between), so /oauth/token keeps two
-    concurrent exchanges of one credential apart with a deployment-wide claim
-    (`server.core.leases`); an OIDC pending login is taken under one too.
-    """
-
-    _T = "loom.oauth_state"
-
-    def _ch(self) -> Any:
-        from server.core.ch import get_client
-
-        return get_client()
-
-    async def save_client(self, client_id: str, redirect_uris: list[str], name: str) -> None:
-        await self._ch().insert(
-            self._T,
-            [
-                {
-                    "record_type": "client",
-                    "id": client_id,
-                    "redirect_uris": list(redirect_uris),
-                    "client_name": name,
-                    "version": time.time_ns(),
-                }
-            ],
-        )
-
-    async def get_client(self, client_id: str) -> dict[str, Any] | None:
-        with own_write_reads():  # /register may have landed on another replica
-            row = await self._ch().query_one(
-                f"SELECT redirect_uris, client_name FROM {self._T} FINAL "
-                "WHERE record_type = 'client' AND id = {id:String} AND consumed = 0 LIMIT 1",
-                params={"id": client_id},
-            )
-        if not row:
-            return None
-        return {"redirect_uris": list(row["redirect_uris"]), "client_name": row["client_name"]}
-
-    async def save_code(self, code: str, g: dict[str, Any]) -> None:
-        await self._ch().insert(
-            self._T,
-            [
-                {
-                    "record_type": "code",
-                    "id": _token_id(code),
-                    "client_id": g["client_id"],
-                    "redirect_uri": g["redirect_uri"],
-                    "code_challenge": g["code_challenge"],
-                    "subject": g["subject"],
-                    "org": g["org"],
-                    "namespaces": list(g["namespaces"]),
-                    "roles": list(g["roles"]),
-                    "expires_at": int(g["exp"]),
-                    "version": time.time_ns(),
-                }
-            ],
-        )
-
-    async def save_refresh(self, token: str, g: dict[str, Any]) -> None:
-        await self._ch().insert(
-            self._T,
-            [
-                {
-                    "record_type": "refresh",
-                    "id": _token_id(token),
-                    "client_id": g["client_id"],
-                    "subject": g["subject"],
-                    "org": g["org"],
-                    "namespaces": list(g["namespaces"]),
-                    "roles": list(g["roles"]),
-                    "expires_at": int(g["exp"]),
-                    "version": time.time_ns(),
-                }
-            ],
-        )
-
-    async def find_code(self, code: str) -> dict[str, Any] | None:
-        return await self._find("code", _token_id(code))
-
-    async def find_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
-        return await self._find("refresh", _token_id(token), client_id)
-
-    async def consume_code(self, code: str, grant: dict[str, Any]) -> None:
-        await self._consume("code", _token_id(code), grant)
-
-    async def consume_refresh(self, token: str, grant: dict[str, Any]) -> None:
-        await self._consume("refresh", _token_id(token), grant)
-
-    async def _find(
-        self, rtype: str, rid: str, client_id: str | None = None
-    ) -> dict[str, Any] | None:
-        with own_write_reads():
-            row = await self._ch().query_one(
-                f"""SELECT client_id, redirect_uri, code_challenge, subject, org,
-                           namespaces, roles, expires_at, version
-                    FROM {self._T} FINAL
-                    WHERE record_type = {{t:String}} AND id = {{id:String}} AND consumed = 0
-                    LIMIT 1""",
-                params={"t": rtype, "id": rid},
-            )
-        if not row:
-            return None
-        exp = int(row.get("expires_at") or 0)
-        if exp and exp < int(time.time()):
-            return None
-        if client_id is not None and row["client_id"] != client_id:
-            return None
-        return {
-            "client_id": row["client_id"],
-            "redirect_uri": row.get("redirect_uri", ""),
-            "code_challenge": row.get("code_challenge", ""),
-            "subject": row["subject"],
-            "org": row["org"],
-            "namespaces": list(row["namespaces"]),
-            "roles": list(row["roles"]),
-            "exp": exp or (int(time.time()) + _REFRESH_TTL),
-            "version": int(row.get("version") or 0),
-        }
-
-    async def _consume(self, rtype: str, rid: str, grant: dict[str, Any]) -> None:
-        """Mark consumed: a new full-row version (RMT collapses to it)."""
-        await self._ch().insert(
-            self._T,
-            [
-                {
-                    "record_type": rtype,
-                    "id": rid,
-                    "client_id": grant["client_id"],
-                    "redirect_uri": grant["redirect_uri"],
-                    "code_challenge": grant["code_challenge"],
-                    "subject": grant["subject"],
-                    "org": grant["org"],
-                    "namespaces": list(grant["namespaces"]),
-                    "roles": list(grant["roles"]),
-                    "expires_at": int(grant["exp"]),
-                    "consumed": 1,
-                    "version": _after(grant),
-                }
-            ],
-        )
-
-    async def save_pending(self, state: str, data: dict[str, Any]) -> None:
-        # OIDC in-flight login: stash the MCP client's params + nonce keyed by
-        # the IdP `state` nonce. Single-use, short TTL; the JSON blob rides the
-        # client_name column (unused for non-client records).
-        await self._ch().insert(
-            self._T,
-            [
-                {
-                    "record_type": "oidc_pending",
-                    "id": state,
-                    "client_name": json.dumps(data),
-                    "expires_at": int(time.time()) + _PENDING_TTL,
-                    "version": time.time_ns(),
-                }
-            ],
-        )
-
-    async def take_pending(self, state: str) -> dict[str, Any] | None:
-        name = f"oauth:oidc_pending:{_token_id(state)}"
-        async with leases.holding(name, ttl_s=_CLAIM_TTL, ch=self._ch()) as held:
-            if not held:
-                return None
-            with own_write_reads():
-                return await self._take_pending_claimed(state)
-
-    async def _take_pending_claimed(self, state: str) -> dict[str, Any] | None:
-        ch = self._ch()
-        row = await ch.query_one(
-            f"SELECT client_name, expires_at, version FROM {self._T} FINAL WHERE "
-            "record_type = 'oidc_pending' AND id = {id:String} AND consumed = 0 LIMIT 1",
-            params={"id": state},
-        )
-        if not row:
-            return None
-        exp = int(row.get("expires_at") or 0)
-        if exp and exp < int(time.time()):
-            return None
-        await ch.insert(
-            self._T,
-            [
-                {
-                    "record_type": "oidc_pending",
-                    "id": state,
-                    "client_name": row["client_name"],
-                    "expires_at": exp,
-                    "consumed": 1,
-                    "version": _after(row),
-                }
-            ],
-        )
-        data: dict[str, Any] = json.loads(row["client_name"])
-        return data
-
-
-_store: _CHStore = _CHStore()
+_REFRESH_TTL = 30 * 86400  # 30d refresh token; each refresh issues a new one
+store: OAuthStore = ClickHouseStore()
 
 
 # --------------------------------------------------------------------------
@@ -314,33 +120,79 @@ def issuer(request: Request) -> str:
     return settings.oauth_issuer.rstrip("/") or public_base_url(request)
 
 
-async def _form_body(request: Request) -> dict[str, str]:
+async def form_body(request: Request) -> dict[str, str]:
     """Parse an application/x-www-form-urlencoded body (the OAuth wire format)
     without pulling in python-multipart — last value wins per key. A body
     that is not UTF-8 is the client's error (400 invalid_request), not a 500."""
     try:
         raw = (await request.body()).decode("utf-8")
     except UnicodeDecodeError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "invalid_request", "error_description": "body is not UTF-8"},
-        ) from e
+        raise OAuthError("invalid_request", description="body is not UTF-8") from e
     return {k: v[-1] for k, v in parse_qs(raw, keep_blank_values=True).items()}
 
 
 def authorization_server_metadata(issuer: str) -> dict[str, Any]:
-    """Authorization-server metadata — what the client needs to drive the flow."""
-    return {
+    """Authorization-server metadata — what the client needs to drive the flow.
+    The authorize and registration endpoints exist only with MCP connect on."""
+    from server.auth.device import DEVICE_GRANT
+
+    meta: dict[str, Any] = {
         "issuer": issuer,
-        "authorization_endpoint": f"{issuer}/oauth/authorize",
         "token_endpoint": f"{issuer}/oauth/token",
-        "registration_endpoint": f"{issuer}/oauth/register",
-        "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
-        "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none"],
+        "device_authorization_endpoint": f"{issuer}/oauth/device_authorization",
+        "revocation_endpoint": f"{issuer}/oauth/revoke",
+        "grant_types_supported": [
+            DEVICE_GRANT,
+            "refresh_token",
+            "client_credentials",
+            machines.TOKEN_EXCHANGE,
+        ],
+        "response_types_supported": [],  # required by RFC 8414; "code" with MCP connect
+        "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
+        "token_endpoint_auth_signing_alg_values_supported": sorted(machines.KEY_ALGORITHMS),
+        "revocation_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": ["loom"],
     }
+    if settings.oauth_enabled:
+        meta |= {
+            "authorization_endpoint": f"{issuer}/oauth/authorize",
+            "registration_endpoint": f"{issuer}/oauth/register",
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", *meta["grant_types_supported"]],
+            "code_challenge_methods_supported": ["S256"],
+        }
+    return meta
+
+
+# The sign-in pages run no script and may not be framed: a page that cannot be
+# put under another site's overlay cannot be clickjacked into approving.
+_PAGE_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+    ),
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+}
+
+
+def html_page(
+    title: str, body: str, status_code: int = 200, headers: dict[str, str] | None = None
+) -> HTMLResponse:
+    """One of the server-rendered sign-in pages. `body` is trusted HTML: every
+    value in it must already be escaped."""
+    return HTMLResponse(
+        f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{{font-family:system-ui;max-width:26rem;margin:4rem auto;padding:0 1rem}}
+input{{display:block;width:100%;padding:.6rem;margin:.4rem 0;box-sizing:border-box}}
+button{{padding:.6rem 1rem;width:100%;margin:.3rem 0;background:#111;color:#fff;border:0;
+border-radius:6px}} button.secondary{{background:#eee;color:#111}}
+code{{font-size:1.4rem;letter-spacing:.15rem}} .error{{color:#b00020}}
+</style></head><body>{body}</body></html>""",
+        status_code=status_code,
+        headers={**_PAGE_HEADERS, **(headers or {})},
+    )
 
 
 def protected_resource_metadata(issuer: str, resource: str) -> dict[str, Any]:
@@ -360,7 +212,7 @@ async def as_metadata(request: Request) -> JSONResponse:
     return JSONResponse(authorization_server_metadata(issuer(request)))
 
 
-@router.get("/.well-known/oauth-protected-resource")
+@connect_router.get("/.well-known/oauth-protected-resource")
 async def prm_metadata(request: Request) -> JSONResponse:
     iss = issuer(request)
     return JSONResponse(protected_resource_metadata(iss, f"{iss}/mcp"))
@@ -372,6 +224,20 @@ _MAX_URI_CHARS = 2048
 # to a client.
 _BAD_SCHEMES = frozenset({"javascript", "data", "file", "vbscript", "blob", "about"})
 _LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _destination(redirect_uri: str) -> str:
+    """Where an authorization goes, as a consent page names it: the host, or
+    the app scheme of a native client."""
+    return urlsplit(redirect_uri).netloc or redirect_uri.split(":", 1)[0]
+
+
+def _back_to_client(redirect_uri: str, params: dict[str, str], state: str) -> RedirectResponse:
+    """Send the browser back to the MCP client with `params` (and its state)."""
+    if state:
+        params = {**params, "state": state}
+    sep = "&" if "?" in redirect_uri else "?"
+    return RedirectResponse(url=f"{redirect_uri}{sep}{urlencode(params)}", status_code=302)
 
 
 def valid_redirect_uri(uri: str) -> bool:
@@ -395,17 +261,13 @@ def valid_redirect_uri(uri: str) -> bool:
 # --------------------------------------------------------------------------
 # Dynamic client registration — public clients, no secret
 # --------------------------------------------------------------------------
-@router.post("/oauth/register")
+@connect_router.post("/oauth/register")
 async def register(request: Request) -> JSONResponse:
     try:
         body = await request.json()
     except ValueError as e:  # JSONDecodeError and UnicodeDecodeError both are
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "invalid_client_metadata",
-                "error_description": "the registration body must be a JSON object",
-            },
+        raise OAuthError(
+            "invalid_client_metadata", description="the registration body must be a JSON object"
         ) from e
     redirect_uris = body.get("redirect_uris") if isinstance(body, dict) else None
     if (
@@ -413,20 +275,15 @@ async def register(request: Request) -> JSONResponse:
         or not 0 < len(redirect_uris) <= _MAX_REDIRECT_URIS
         or not all(isinstance(u, str) and valid_redirect_uri(u) for u in redirect_uris)
     ):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "invalid_redirect_uri",
-                "error_description": (
-                    "redirect_uris: 1-10 absolute URIs without a fragment; "
-                    "https, http to a loopback host, or an app scheme"
-                ),
-            },
+        raise OAuthError(
+            "invalid_redirect_uri",
+            description="redirect_uris: 1-10 absolute URIs without a fragment; "
+            "https, http to a loopback host, or an app scheme",
         )
     client_id = "loom-" + secrets.token_urlsafe(16)
     uris = list(redirect_uris)
     name = "".join(c for c in str(body.get("client_name") or "MCP client") if c.isprintable())
-    await _store.save_client(client_id, uris, name[:120] or "MCP client")
+    await store.save_client(client_id, uris, name[:120] or "MCP client")
     return JSONResponse(
         {
             "client_id": client_id,
@@ -445,21 +302,18 @@ async def register(request: Request) -> JSONResponse:
 async def _validate_authorize_params(
     client_id: str, redirect_uri: str, code_challenge: str, code_challenge_method: str
 ) -> dict[str, Any]:
-    client: dict[str, Any] | None = await _store.get_client(client_id)
+    client: dict[str, Any] | None = await store.get_client(client_id)
     if client is None:
-        raise HTTPException(status_code=400, detail={"error": "invalid_client"})
+        raise OAuthError("invalid_client")
     if redirect_uri not in client["redirect_uris"]:
-        raise HTTPException(status_code=400, detail={"error": "invalid_redirect_uri"})
+        raise OAuthError("invalid_redirect_uri")
     if code_challenge_method != "S256" or not code_challenge:
         # PKCE S256 is mandatory — no plaintext / no missing challenge.
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "invalid_request", "error_description": "S256 PKCE required"},
-        )
+        raise OAuthError("invalid_request", description="S256 PKCE required")
     return client
 
 
-@router.get("/oauth/authorize", response_class=HTMLResponse)
+@connect_router.get("/oauth/authorize", response_class=HTMLResponse)
 async def authorize_form(
     request: Request,
     client_id: str = "",
@@ -472,24 +326,25 @@ async def authorize_form(
     resource: str = "",
 ) -> Response:
     if response_type != "code":
-        raise HTTPException(status_code=400, detail={"error": "unsupported_response_type"})
+        raise OAuthError("unsupported_response_type")
     client = await _validate_authorize_params(
         client_id, redirect_uri, code_challenge, code_challenge_method
     )
     # Delegate the human sign-in to an external IdP when configured; loom still
     # mints the token after the callback maps the verified email to an account.
     if settings.oauth_login_provider == "oidc":
-        return await _start_oidc_login(
-            client_id,
-            redirect_uri,
-            code_challenge,
-            code_challenge_method,
-            state,
+        return await start_oidc_login(
+            "mcp",
+            client_address(request),
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            mcp_state=state,
         )
     client_name = html.escape(client["client_name"])
     # Dynamic registration lets anyone name a client anything, so the page
     # also says where the authorization goes — the part a phisher cannot fake.
-    destination = html.escape(urlsplit(redirect_uri).netloc or redirect_uri.split(":", 1)[0])
+    destination = html.escape(_destination(redirect_uri))
     # Carry the OAuth params through the consent POST as hidden fields.
     hidden = "".join(
         f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(v)}">'
@@ -503,13 +358,9 @@ async def authorize_form(
             "resource": resource,
         }.items()
     )
-    return HTMLResponse(
-        f"""<!doctype html><html><head><meta charset="utf-8"><title>Connect Loom</title>
-<style>body{{font-family:system-ui;max-width:24rem;margin:4rem auto;padding:0 1rem}}
-input{{display:block;width:100%;padding:.6rem;margin:.4rem 0;box-sizing:border-box}}
-button{{padding:.6rem 1rem;width:100%;background:#111;color:#fff;border:0;border-radius:6px}}
-</style></head><body>
-<h2>Connect <b>{client_name}</b> to Loom</h2>
+    return html_page(
+        "Connect Loom",
+        f"""<h2>Connect <b>{client_name}</b> to Loom</h2>
 <p>Sign in to authorize this client to access your memories.
 After you sign in, Loom sends the authorization to <b>{destination}</b>.</p>
 <form method="post" action="/oauth/authorize">{hidden}
@@ -518,20 +369,22 @@ After you sign in, Loom sends the authorization to <b>{destination}</b>.</p>
 <input name="password" type="password" placeholder="password"
        autocomplete="current-password" required>
 <button type="submit">Authorize</button>
-</form></body></html>"""
+</form>""",
     )
 
 
-@router.post("/oauth/authorize")
+@connect_router.post("/oauth/authorize")
 async def authorize_submit(request: Request) -> RedirectResponse:
-    f = await _form_body(request)
+    f = await form_body(request)
     client_id = f.get("client_id", "")
     redirect_uri = f.get("redirect_uri", "")
     code_challenge = f.get("code_challenge", "")
     code_challenge_method = f.get("code_challenge_method", "S256")
     state = f.get("state", "")
     await _validate_authorize_params(client_id, redirect_uri, code_challenge, code_challenge_method)
-    from server.auth.attempts import client_address
+    if settings.oauth_login_provider == "oidc":
+        # The GET sends people to the IdP; a password posted here would skip it.
+        raise OAuthError("password_sign_in_disabled", 404)
     from server.auth.login import LoginThrottled, resolve_user_credentials
 
     # The code's issue time is taken before the revocations are read at its
@@ -543,39 +396,56 @@ async def authorize_submit(request: Request) -> RedirectResponse:
             f.get("identifier", ""), f.get("password", ""), address=client_address(request)
         )
     except LoginThrottled as e:
-        raise HTTPException(
-            status_code=429,
-            detail={"error": "temporarily_unavailable"},
-            headers={"Retry-After": "900"},
-        ) from e
+        raise OAuthError("temporarily_unavailable", 429, headers={"Retry-After": "900"}) from e
     if resolved is None:
         # Bounce back to the form with an error (don't leak which field).
-        raise HTTPException(status_code=401, detail={"error": "access_denied"})
-    subject, org, namespaces, roles = resolved
+        raise OAuthError("access_denied", 401)
+    return await _redirect_with_code(
+        {"client_id": client_id, "redirect_uri": redirect_uri, "code_challenge": code_challenge},
+        resolved,
+        upstream_refresh="",
+        state=state,
+        since=issued_at,
+    )
+
+
+async def _redirect_with_code(
+    client: dict[str, str],
+    identity: Identity,
+    *,
+    upstream_refresh: str,
+    state: str,
+    since: int,
+) -> RedirectResponse:
+    """Mint the MCP client's single-use code for a signed-in user and send the
+    browser back to the client with it. `since` is when the identity was
+    resolved: a subject revoked after it gets no tokens for the code."""
+    subject, org, namespaces, roles = identity
     code = secrets.token_urlsafe(32)
-    await _store.save_code(
+    await store.save_code(
         code,
         {
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "code_challenge": code_challenge,
+            "client_id": client["client_id"],
+            "redirect_uri": client["redirect_uri"],
+            "code_challenge": client["code_challenge"],
             "subject": subject,
             "org": org,
             "namespaces": namespaces,
             "roles": roles,
-            "exp": issued_at + _CODE_TTL,
+            "exp": int(time.time()) + _CODE_TTL,
+            "since": since,
+            "family": new_jti(),
+            "upstream_refresh": upstream_refresh,
         },
     )
-    params = {"code": code}
-    if state:
-        params["state"] = state
-    sep = "&" if "?" in redirect_uri else "?"
-    return RedirectResponse(url=f"{redirect_uri}{sep}{urlencode(params)}", status_code=302)
+    return _back_to_client(client["redirect_uri"], {"code": code}, state)
 
 
 # --------------------------------------------------------------------------
 # OIDC-brokered login: delegate the human sign-in to an external IdP, then map
-# the verified email to a loom account and resume loom's own code issuance.
+# the verified email to a loom account. Three things start one: MCP connect
+# (`mcp`), the device approval page (`device`) and the dashboard (`dashboard`);
+# the callback finishes each its own way.
 # --------------------------------------------------------------------------
 def _oidc_callback_url() -> str:
     # From trusted config only (validate_config requires oauth_issuer under
@@ -584,113 +454,686 @@ def _oidc_callback_url() -> str:
     return f"{settings.oauth_issuer.rstrip('/')}/oauth/callback"
 
 
-async def _start_oidc_login(
-    client_id: str,
-    redirect_uri: str,
-    code_challenge: str,
-    code_challenge_method: str,
-    state: str,
-) -> RedirectResponse:
+# The browser that starts an IdP sign-in carries a cookie named after its
+# `state`, and the callback requires it: a sign-in started in one browser
+# cannot be finished in another, so nobody can sign a victim into their own
+# account by sending them a callback link. One cookie per sign-in, so two
+# tabs signing in at once don't undo each other.
+def _state_cookie(state: str) -> str:
+    """The cookie carrying one IdP sign-in in flight."""
+    return f"loom_oidc_{token_id(state)[:16]}"
+
+
+_PENDING_PURPOSE = "oidc sign-in in flight"
+_COOKIE_MAX = 3800  # browsers drop a cookie past 4 KB
+_starts_by_address = Attempts("oidc.start", 300, 900)
+# Callbacks that failed (cancelled, or a code the IdP would not exchange): a
+# flood of them costs audit rows and calls to the IdP.
+_failed_callbacks_by_address = Attempts("oidc.failed_callback", 30, 900)
+
+
+def seal_pending(record: dict[str, Any]) -> str:
+    return seal(_PENDING_PURPOSE, json.dumps(record))
+
+
+def _pending_from(request: Request, state: str) -> dict[str, Any] | None:
+    """The sign-in this browser started under `state`: sealed in its cookie,
+    so a callback URL without the starting browser finishes nothing."""
+    raw = open_sealed(_PENDING_PURPOSE, request.cookies.get(_state_cookie(state), ""))
+    record: dict[str, Any] | None = json.loads(raw) if raw else None
+    if record is None or record.get("state") != state or record["exp"] < int(time.time()):
+        return None
+    return record
+
+
+async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
+    """Send the browser to the IdP; `data` comes back to the callback. The
+    round trip rides the browser's own cookie, sealed, so starting a sign-in
+    writes nothing on the server: only a callback the IdP sent back does."""
     from server.auth import oidc
 
+    if not await _starts_by_address.allow(address_key(address)):
+        log_refused("start", address)
+        return html_page(
+            "Sign in to Loom",
+            "<h2>Too many sign-ins from here</h2><p>Try again in 15 minutes.</p>",
+            429,
+            headers={"Retry-After": "900"},
+        )
     oidc_state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
-    await _store.save_pending(
-        oidc_state,
-        {
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "code_challenge": code_challenge,
-            "code_challenge_method": code_challenge_method,
-            "mcp_state": state,
-            "nonce": nonce,
-        },
-    )
+    verifier = secrets.token_urlsafe(48)
+    record = {
+        **data,
+        "kind": kind,
+        "nonce": nonce,
+        "code_verifier": verifier,
+        "state": oidc_state,
+        "exp": int(time.time()) + PENDING_TTL,
+    }
+    cookie = seal_pending(record)
+    if len(cookie) > _COOKIE_MAX:
+        raise OAuthError("invalid_request", description="sign-in parameters too long")
     url = await oidc.build_authorize_url(
-        redirect_uri=_oidc_callback_url(), state=oidc_state, nonce=nonce
+        redirect_uri=_oidc_callback_url(),
+        state=oidc_state,
+        nonce=nonce,
+        code_challenge=_b64url(hashlib.sha256(verifier.encode("ascii")).digest()),
+        offline=kind != "dashboard",  # the dashboard's token never refreshes
     )
-    return RedirectResponse(url=url, status_code=302)
+    response = RedirectResponse(url=url, status_code=302)
+    response.set_cookie(
+        _state_cookie(oidc_state),
+        cookie,
+        max_age=PENDING_TTL,
+        path="/oauth/callback",
+        secure=settings.oauth_issuer.startswith("https://"),
+        httponly=True,
+        samesite="lax",  # sent on the IdP's top-level redirect back
+    )
+    return response
+
+
+_refused_logged_at: dict[str, float] = {}
+
+
+def log_refused(what: str, address: str) -> None:
+    """At most once a minute per kind, so a flood shows up without filling
+    the log."""
+    if time.monotonic() - _refused_logged_at.get(what, -60.0) > 60:
+        _refused_logged_at[what] = time.monotonic()
+        log.warning("oauth: too many sign-in %ss from %s; refused", what, address)
+
+
+@router.get("/oauth/sso")
+async def dashboard_sso(request: Request) -> Response:
+    """The dashboard's "Sign in with SSO" button."""
+    if settings.oauth_login_provider != "oidc":
+        raise OAuthError("sso_not_configured", 404)
+    return await start_oidc_login("dashboard", client_address(request))
+
+
+async def _signin_denied(email: str, reason: str) -> None:
+    await audit.emit(
+        "auth.signin_denied",
+        org="-",
+        namespace="-",
+        actor=email or "-",
+        subject={"provider": "oidc", "reason": reason},
+    )
+
+
+def _denied_page(reason: str) -> Response:
+    return html_page(
+        "Sign-in denied",
+        f"<h2>Sign-in denied</h2><p>{html.escape(reason)}.</p>",
+        403,
+    )
+
+
+def _expired_sign_in() -> Response:
+    return html_page(
+        "Sign in to Loom",
+        "<h2>This sign-in has expired</h2><p>Start it again from where you began.</p>",
+        400,
+    )
+
+
+def _sign_in_unavailable(restart: str) -> Response:
+    """Loom could not finish a sign-in it may not resume: the IdP's code is
+    spent, so `restart` (where it began) starts a fresh one."""
+    return html_page(
+        "Sign in to Loom",
+        "<h2>Sign-in is unavailable right now</h2>"
+        f'<p><a href="{html.escape(restart)}">Start again</a> in a minute.</p>',
+        503,
+    )
+
+
+def _restart_url(pending: dict[str, Any]) -> str:
+    """Where the sign-in `pending` carries began, to begin it once more."""
+    if pending["kind"] == "dashboard":
+        return "/oauth/sso"
+    if pending["kind"] == "device":
+        return "/oauth/device?" + urlencode({"user_code": pending["user_code"]})
+    return "/oauth/authorize?" + urlencode(
+        {
+            "response_type": "code",
+            "client_id": pending["client_id"],
+            "redirect_uri": pending["redirect_uri"],
+            "code_challenge": pending["code_challenge"],
+            "code_challenge_method": "S256",
+            "state": pending["mcp_state"],
+        }
+    )
 
 
 @router.get("/oauth/callback")
-async def oidc_callback(request: Request) -> RedirectResponse:
+async def oidc_callback(request: Request) -> Response:
+    try:
+        response: Response = await _finish_oidc_login(request)
+    except OAuthError as e:  # answered here, so its cookie goes too
+        response = oauth_error_response(request, e)
+    state = request.query_params.get("state", "")
+    # Refused before the IdP exchange (it is away, or this address is over its
+    # limit): the IdP code is unspent and a retry needs the round trip still.
+    retryable = response.status_code in (429, 502)
+    if state and not retryable:
+        response.delete_cookie(_state_cookie(state), path="/oauth/callback")
+    return response
+
+
+class _StartAgain(Exception):
+    """The IdP refused the code: a stale one, so the person starts again."""
+
+
+class _Spent(Exception):
+    """The IdP's code was exchanged but the sign-in could not finish."""
+
+
+# States whose code is being exchanged in this process: an IdP code is spent
+# once, so a second callback of the same sign-in waits for nothing.
+_exchanging: set[str] = set()
+
+
+async def _exchange_at_idp(
+    request: Request, code: str, pending: dict[str, Any], address: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The IdP's tokens and verified id_token claims for `code`. A code it
+    refuses raises _StartAgain and counts against `address`; a fault on its
+    side (its outage, a rejected client secret) answers 502 and counts not.
+    Its keys away once the code is spent raise _Spent: a reload cannot finish."""
+    import jwt
+
+    from server.auth import oidc
+
+    try:
+        if not await oidc.check_callback_issuer(request.query_params.get("iss", "")):
+            raise OAuthError("invalid_issuer")
+        tokens = await oidc.exchange_code(
+            code=code,
+            redirect_uri=_oidc_callback_url(),
+            code_verifier=pending["code_verifier"],
+        )
+    except OAuthError:
+        await _failed_callbacks_by_address.record(address)
+        raise
+    except httpx.HTTPStatusError as e:
+        # Its response body stays in the log, not the browser.
+        log.warning("oidc callback: the identity provider answered %s", e.response.status_code)
+        if e.response.status_code == 400 and oidc.error_code(e.response) == "invalid_grant":
+            await _failed_callbacks_by_address.record(address)
+            raise _StartAgain from e  # a stale or made-up code
+        raise OAuthError("temporarily_unavailable", 502) from e
+    except httpx.TransportError as e:  # the IdP is away
+        log.warning("oidc callback: identity provider exchange failed: %s", type(e).__name__)
+        raise OAuthError("temporarily_unavailable", 502) from e
+    except Exception as e:  # any other exchange failure refuses the login (re-raised)
+        await _failed_callbacks_by_address.record(address)
+        log.warning("oidc callback: identity provider exchange refused: %s", type(e).__name__)
+        raise OAuthError("oidc_error") from e
+    try:
+        id_claims = await oidc.verify_id_token(tokens.get("id_token", ""), nonce=pending["nonce"])
+    except jwt.PyJWKClientConnectionError as e:
+        log.warning("oidc callback: the identity provider's keys are away: %s", e)
+        await oidc.revoke(str(tokens.get("refresh_token") or ""))
+        raise _Spent from e
+    except Exception as e:  # any other verify failure refuses the login (re-raised)
+        await _failed_callbacks_by_address.record(address)
+        log.warning("oidc callback: id_token refused: %s", type(e).__name__)
+        raise OAuthError("oidc_error") from e
+    return tokens, id_claims
+
+
+async def _finish_oidc_login(request: Request) -> Response:
+    from server.auth import device, oidc
+
+    state = request.query_params.get("state", "")
+    if not state:
+        return _expired_sign_in()
+    pending = _pending_from(request, state)
+    if pending is None:
+        return _expired_sign_in()
+    kind, user_code = pending["kind"], pending.get("user_code", "")
+    address = address_key(client_address(request))
+    if await _failed_callbacks_by_address.blocked(address):
+        log_refused("callback", address)
+        return html_page(
+            "Sign in to Loom",
+            "<h2>Too many failed sign-ins from here</h2><p>Try again in 15 minutes.</p>",
+            429,
+            headers={"Retry-After": "900"},
+        )
+    if request.query_params.get("error"):
+        # Cancelled at the IdP, or refused there. A device grant stays pending:
+        # who cancelled is unknown, so it is no reason to end anyone's sign-in.
+        await _failed_callbacks_by_address.record(address)
+        await _signin_denied("", "cancelled at the identity provider")
+        return _denied_page("The identity provider did not sign you in; try again")
+    code = request.query_params.get("code", "")
+    if not code:
+        raise OAuthError("invalid_request")
+    if state in _exchanging:  # the same callback twice at once: an IdP code is spent once
+        return _expired_sign_in()
+    _exchanging.add(state)
+    try:
+        tokens, id_claims = await _exchange_at_idp(request, code, pending, address)
+    except _StartAgain:
+        return _expired_sign_in()
+    except _Spent:
+        return _sign_in_unavailable(_restart_url(pending))
+    finally:
+        _exchanging.discard(state)
+    upstream = str(tokens.get("refresh_token") or "")
+    # The IdP vouched for this person: only now is the round trip marked used,
+    # so a callback nobody signed in for writes nothing.
+    try:
+        first = await store.use_once(f"callback:{state}", pending["exp"])
+    except claims.Busy:  # Keeper cannot answer right now
+        await oidc.revoke(upstream)
+        return _sign_in_unavailable(_restart_url(pending))
+    if not first:
+        await oidc.revoke(upstream)
+        return _expired_sign_in()
+    email = oidc.verified_email(id_claims)
+    resolved = await _account_for(email, pending, upstream) if email else None
+    if isinstance(resolved, Response):
+        return resolved
+    if resolved is None or isinstance(resolved, _Denied):
+        if isinstance(resolved, _Denied):
+            reason = resolved.reason
+        else:
+            reason = "no loom account for this email" if email else "verified email required"
+        await _signin_denied(str(id_claims.get("email") or ""), reason)
+        await oidc.revoke(upstream)
+        if kind == "device":
+            await device.deny(user_code)
+        return _denied_page(f"{reason}; ask your Loom operator for access")
+    return await _signed_in_as(pending, resolved, upstream)
+
+
+class _Denied(NamedTuple):
+    """A verified email that signs in to no account, and why."""
+
+    reason: str
+
+
+async def _account_for(
+    email: str, pending: dict[str, Any], upstream: str
+) -> Identity | Response | _Denied | None:
+    """The account a verified `email` signs in to, a page to answer instead
+    (link a password account, or try again later), why it signs in to none,
+    or None: no account."""
     from server.auth import oidc
     from server.auth.jit import finish_unfinished_account, jit_provision_for_email
     from server.auth.login import SignInUnavailable, resolve_identity_for_email
 
-    code = request.query_params.get("code", "")
-    state = request.query_params.get("state", "")
-    if not code or not state:
-        raise HTTPException(status_code=400, detail={"error": "invalid_request"})
-    pending = await _store.take_pending(state)  # single-use; CSRF guard
-    if pending is None:
-        raise HTTPException(status_code=400, detail={"error": "invalid_state"})
-    try:
-        tokens = await oidc.exchange_code(code=code, redirect_uri=_oidc_callback_url())
-        claims = await oidc.verify_id_token(tokens.get("id_token", ""), nonce=pending["nonce"])
-    except (httpx.TransportError, httpx.HTTPStatusError) as e:
-        # The IdP is unreachable or refused the exchange: not the user's fault,
-        # and its response body stays in the log, not the browser.
-        log.warning("oidc callback: identity provider exchange failed: %s", type(e).__name__)
-        raise HTTPException(status_code=502, detail={"error": "temporarily_unavailable"}) from e
-    except Exception as e:  # any other verify failure refuses the login (re-raised)
-        log.warning("oidc callback: id_token refused: %s", type(e).__name__)
-        raise HTTPException(status_code=400, detail={"error": "oidc_error"}) from e
-    email = oidc.verified_email(claims)
-    if not email:
-        raise HTTPException(
-            status_code=403,
-            detail={"error": "access_denied", "error_description": "verified email required"},
-        )
-    # As in authorize_submit, the code's lifetime counts
-    # from here, so the account lookup (and a JIT provisioning) comes out of it.
-    issued_at = int(time.time())
     try:
         await finish_unfinished_account(email)
         resolved = await resolve_identity_for_email(email)
-        if resolved is None:
-            # No account — auto-provision one if JIT is on (else stay fail-closed).
-            resolved = await jit_provision_for_email(email)
+        if resolved is not None:
+            return resolved
+        if await sso_links.reaching(email):
+            # Linked accounts that disagree (owners, orgs): fail closed, saying so.
+            return _Denied("this email's linked accounts do not resolve to one account")
+        if await sso_links.unlinked_accounts(email):
+            # Their password account: proving it links it, no new one is made.
+            return await _offer_link(pending, email, upstream)
+        # No account — auto-provision one if JIT is on (else stay fail-closed).
+        return await jit_provision_for_email(email)
     except SignInUnavailable as e:
-        raise _logged_unavailable("sign-in", e) from e
-    if resolved is None:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "access_denied",
-                "error_description": "no loom account for this email",
+        log.warning("oidc callback: the account could not be read: %s", e)
+        await oidc.revoke(upstream)
+        return _sign_in_unavailable(_restart_url(pending))
+
+
+async def _signed_in_as(
+    pending: dict[str, Any],
+    identity: Identity,
+    upstream: str,
+) -> Response:
+    """Carry on the sign-in `pending` began, as `identity`."""
+    from server.auth import device
+
+    if pending["kind"] == "device":
+        return await device.signed_in(pending["user_code"], identity, upstream)
+    if pending["kind"] == "dashboard":
+        return await _dashboard_signed_in(identity)
+    return await _connect_consent(pending, identity, upstream)
+
+
+def _link_cookie(ticket: str) -> str:
+    """The cookie binding a link ticket to the browser that did the IdP round
+    trip, one per ticket so two sign-ins in one browser keep theirs: a ticket
+    seen elsewhere (a log, a shared screen) finishes nothing on its own."""
+    return f"loom_link_{token_id(ticket)[:12]}"
+
+
+async def _offer_link(pending: dict[str, Any], email: str, upstream: str) -> Response:
+    ticket, binding = secrets.token_urlsafe(32), secrets.token_urlsafe(16)
+    try:
+        await store.save_pending(
+            token_id(ticket),
+            {
+                "kind": "link",
+                "email": email,
+                "binding": token_id(binding),
+                "sign_in": pending,
+                "upstream_refresh": seal(UPSTREAM_PURPOSE, upstream),
             },
         )
-    subject, org, namespaces, roles = resolved
-    # Resume loom's own flow: mint a code bound to the MCP client's PKCE.
-    code_out = secrets.token_urlsafe(32)
-    await _store.save_code(
-        code_out,
-        {
-            "client_id": pending["client_id"],
-            "redirect_uri": pending["redirect_uri"],
-            "code_challenge": pending["code_challenge"],
-            "subject": subject,
-            "org": org,
-            "namespaces": namespaces,
-            "roles": roles,
-            "exp": issued_at + _CODE_TTL,
-        },
+    except claims.Busy:
+        from server.auth import oidc
+
+        await oidc.revoke(upstream)
+        return _sign_in_unavailable(_restart_url(pending))
+    response = _link_page(ticket, email)
+    response.set_cookie(
+        _link_cookie(ticket),
+        binding,
+        max_age=PENDING_TTL,
+        path="/oauth/link",
+        secure=settings.oauth_issuer.startswith("https://"),
+        httponly=True,
+        samesite="strict",  # posted only from the link page itself
     )
-    params = {"code": code_out}
-    if pending.get("mcp_state"):
-        params["state"] = pending["mcp_state"]
-    target = pending["redirect_uri"]
-    sep = "&" if "?" in target else "?"
-    return RedirectResponse(url=f"{target}{sep}{urlencode(params)}", status_code=302)
+    return response
+
+
+def _link_page(ticket: str, email: str, error: str = "", status_code: int = 200) -> Response:
+    message = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    return html_page(
+        "Sign in to Loom",
+        f"""<h2>Link your Loom account</h2>
+<p>A Loom account with a password already uses <b>{html.escape(email)}</b>.
+Enter that password once, and single sign-on opens this account from now on,
+with all of its namespaces and data.</p>{message}
+<form method="post" action="/oauth/link">
+<input type="hidden" name="ticket" value="{ticket}">
+<input name="password" type="password" placeholder="Loom password"
+       autocomplete="current-password" required>
+<button type="submit">Link and continue</button>
+<button type="submit" name="decision" value="not_mine" class="secondary" formnovalidate>
+That isn't my account</button>
+</form>
+<p>No longer know it? Your Loom operator can link it for you.</p>""",
+        status_code,
+    )
+
+
+@router.post("/oauth/link")
+async def link_account(request: Request) -> Response:
+    """The person the IdP vouched for proves the password of the account that
+    names their email; that account is then theirs under SSO."""
+    from server.auth import oidc
+    from server.auth.login import LoginThrottled, resolve_user_credentials
+
+    f = await form_body(request)
+    ticket = f.get("ticket", "")
+    held = await store.pending(token_id(ticket))
+    binding = token_id(request.cookies.get(_link_cookie(ticket), ""))
+    if (
+        held is None
+        or held.get("kind") != "link"
+        or not secrets.compare_digest(binding, held.get("binding", ""))
+    ):
+        return _expired_sign_in()
+    email, sign_in = held["email"], held["sign_in"]
+    proven = None
+    if f.get("decision") != "not_mine":
+        try:
+            proven = await resolve_user_credentials(
+                email, f.get("password", ""), address=client_address(request)
+            )
+        except LoginThrottled:
+            return _link_page(ticket, email, "Too many failed attempts. Try again later.", 429)
+        if proven is None:
+            return _link_page(ticket, email, "That is not the account's password.", 401)
+    if await store.take_pending(token_id(ticket)) is None:
+        return _expired_sign_in()  # the form sent twice: the other one carries on
+    upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
+    try:
+        if proven is None:
+            response = await _declined_password_account(email, sign_in, upstream)
+        else:
+            response = await _link_proven(email, proven, f.get("password", ""), sign_in, upstream)
+    except Exception as e:  # noqa: BLE001 — the ticket is spent: the person starts again
+        log.warning("oauth: linking %s's account failed: %r", email, e)
+        await oidc.revoke(upstream)
+        response = _sign_in_unavailable(_restart_url(sign_in))
+    response.delete_cookie(_link_cookie(ticket), path="/oauth/link")
+    return response
+
+
+async def _link_proven(
+    email: str, proven: Identity, password: str, sign_in: dict[str, Any], upstream: str
+) -> Response:
+    from server.auth import oidc
+    from server.auth.login import resolve_identity_for_email
+    from server.auth.passwords import verify_password_off_loop
+    from server.core.ch import own_write_reads
+
+    subject, org, namespaces, _ = proven
+    # The password proves the accounts behind its own hash, not every one the
+    # identity reaches (a restricted namespace granted to it) or names the email.
+    accounts = [
+        (a["org"], a["namespace"])
+        for a in await sso_links.unlinked_accounts(email)
+        if a["org"] == org
+        and a["namespace"] in namespaces
+        and await verify_password_off_loop(a["password_hash"], password)
+    ]
+    accounts = await sso_links.link_live(email, accounts, "self")
+    await audit.emit(
+        "auth.sso_linked",
+        org=org,
+        namespace="-",
+        actor=subject,
+        subject={"email": email, "by": "self", "namespaces": [ns for _, ns in accounts]},
+    )
+    with own_write_reads():
+        resolved = await resolve_identity_for_email(email)
+    if resolved is None:  # its accounts disagree (orgs, owners): the guard holds
+        await _signin_denied(email, "linked account does not resolve")
+        await oidc.revoke(upstream)
+        return _denied_page("this email names several accounts; ask your Loom operator")
+    return await _signed_in_as(sign_in, resolved, upstream)
+
+
+async def _declined_password_account(
+    email: str, sign_in: dict[str, Any], upstream: str
+) -> Response:
+    """Someone else registered the address with a password. In the org JIT
+    provisions into, no second account is made beside it: both would name the
+    email, and every grant made to it there would reach both
+    (`server.auth.aliases`), so the person is sent to the operator, who frees
+    the address by releasing that account. One in another org shares nothing
+    with the JIT org, and the person goes on to an account of their own."""
+    from server.auth import device, oidc
+    from server.auth.jit import jit_provision_for_email
+    from server.auth.login import SignInUnavailable
+
+    declined = await sso_links.unlinked_accounts(email)
+    # The signal an operator looks for when an address was squatted.
+    await audit.emit(
+        "auth.sso_link_declined",
+        org="-",
+        namespace="-",
+        actor=email,
+        subject={"namespaces": [a["namespace"] for a in declined]},
+    )
+    if any(a["org"] == settings.oidc_jit_org for a in declined):
+        reason, advice = "another account uses this email", "ask your Loom operator to release it"
+        identity = None
+    else:
+        reason, advice = "no loom account for this email", "ask your Loom operator for access"
+        try:
+            identity = await jit_provision_for_email(email)
+        except SignInUnavailable:
+            await oidc.revoke(upstream)
+            return _sign_in_unavailable(_restart_url(sign_in))
+    if identity is None:
+        await _signin_denied(email, reason)
+        await oidc.revoke(upstream)
+        if sign_in["kind"] == "device":
+            await device.deny(sign_in["user_code"])
+        return _denied_page(f"{reason}; {advice}")
+    return await _signed_in_as(sign_in, identity, upstream)
+
+
+async def _connect_consent(
+    pending: dict[str, Any],
+    identity: Identity,
+    upstream_refresh: str,
+) -> Response:
+    """Under OIDC the IdP may sign the user in without a single click, so the
+    MCP client gets its code only after the user approves here, on a page that
+    names the client and where the authorization goes."""
+    client = await store.get_client(pending["client_id"])
+    if client is None:
+        raise OAuthError("invalid_client")
+    ticket = secrets.token_urlsafe(32)
+    try:
+        await store.save_pending(
+            token_id(ticket),
+            {
+                "kind": "connect",
+                "client_id": pending["client_id"],
+                "redirect_uri": pending["redirect_uri"],
+                "code_challenge": pending["code_challenge"],
+                "mcp_state": pending["mcp_state"],
+                "identity": list(identity),
+                "since": int(time.time()),  # the identity was resolved now
+                "upstream_refresh": seal(UPSTREAM_PURPOSE, upstream_refresh),
+            },
+        )
+    except claims.Busy:
+        from server.auth import oidc
+
+        await oidc.revoke(upstream_refresh)
+        return _sign_in_unavailable(_restart_url(pending))
+    subject, org = identity[0], identity[1]
+    destination = _destination(pending["redirect_uri"])
+    return html_page(
+        "Connect Loom",
+        f"""<h2>Connect <b>{html.escape(client["client_name"])}</b> to Loom?</h2>
+<p>Signed in as <b>{html.escape(subject)}</b> ({html.escape(org)}).</p>
+<p>Approving lets this client read and write your memories. Loom sends the
+authorization to <b>{html.escape(destination)}</b>.</p>
+<form method="post" action="/oauth/authorize/approve">
+<input type="hidden" name="ticket" value="{ticket}">
+<button type="submit" name="decision" value="approve">Approve</button>
+<button type="submit" name="decision" value="deny" class="secondary">Deny</button>
+</form>""",
+    )
+
+
+@connect_router.post("/oauth/authorize/approve")
+async def connect_approve(request: Request) -> Response:
+    f = await form_body(request)
+    try:
+        return await _decide_connect(f)
+    except claims.Busy:  # nothing was spent: the same choice can be sent again
+        return html_page(
+            "Connect Loom",
+            "<h2>Loom is busy</h2><p>Go back and submit your choice again in a moment.</p>",
+            503,
+        )
+
+
+async def _decide_connect(f: dict[str, str]) -> Response:
+    ticket = token_id(f.get("ticket", ""))
+    expired = html_page("Connect Loom", "<h2>This approval has expired</h2>", 400)
+    pending = await store.pending(ticket)
+    if pending is None or pending.get("kind") != "connect":
+        return expired
+    subject, org, namespaces, roles = pending["identity"]
+    approved = f.get("decision") == "approve"
+    client = {
+        "client_id": pending["client_id"],
+        "redirect_uri": pending["redirect_uri"],
+        "code_challenge": pending["code_challenge"],
+    }
+    # Minted before the ticket is spent, so a failed write leaves the approval
+    # to submit again; of two submits only the one that spends the ticket answers.
+    answer = None
+    if approved:
+        answer = await _redirect_with_code(
+            client,
+            (subject, org, namespaces, roles),
+            upstream_refresh=unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]),
+            state=pending["mcp_state"],
+            since=pending["since"],
+        )
+    if await store.take_pending(ticket) is None:
+        return expired  # the other submit answered
+    await audit.emit(
+        "auth.connect_approved" if approved else "auth.connect_denied",
+        org=org,
+        namespace="-",
+        actor=subject,
+        subject={"client_id": pending["client_id"], "redirect_uri": pending["redirect_uri"]},
+    )
+    if answer is not None:
+        return answer
+    from server.auth import oidc
+
+    await oidc.revoke(unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]))
+    return _back_to_client(client["redirect_uri"], {"error": "access_denied"}, pending["mcp_state"])
+
+
+async def _dashboard_signed_in(identity: Identity) -> Response:
+    """Hand the dashboard its token the way a sign-in link does: in the URL
+    fragment, which the browser never sends to a server. The token is short
+    because the dashboard cannot refresh it and only a refresh asks the IdP
+    whether the user is still active."""
+    subject, org, namespaces, roles = identity
+    family = new_jti()
+    token = mint_token(
+        subject=subject,
+        org=org,
+        namespaces=namespaces,
+        roles=roles,
+        ttl_seconds=_ACCESS_TTL,
+        is_service_account=False,
+        # A sign-in session like the CLI's: revocable as one, and what it mints
+        # is bounded like the person, not by its hour.
+        session_id=family,
+        first_party=True,
+    )
+    await audit.emit(
+        "auth.sso_signin",
+        org=org,
+        namespace="-",
+        actor=subject,
+        subject={"client": "dashboard", "family": family, "namespaces": namespaces, "roles": roles},
+    )
+    return RedirectResponse(url=f"/me#token={token}", status_code=302)
 
 
 # --------------------------------------------------------------------------
 # Token endpoint
 # --------------------------------------------------------------------------
-async def _issue_tokens(grant: dict[str, Any], client_id: str, issued_at: int) -> dict[str, Any]:
-    """The tokens for a decided grant, both issued at `issued_at`: the time
-    the exchange took before it read the revocations."""
+def _invalid_grant(description: str = "") -> OAuthError:
+    return OAuthError("invalid_grant", description=description)
+
+
+async def issue_tokens(
+    grant: Grant | Device, client_id: str, since: int, generation: int = 0
+) -> dict[str, Any]:
+    """An access token for the grant's session, and the next refresh token.
+    Under OIDC a session with no IdP refresh token gets no Loom refresh token:
+    nothing could tell Loom the user was deactivated, so the session ends with
+    its access token. A subject revoked since `since` (when the grant was
+    issued) gets nothing; that is read from ClickHouse, not this process's
+    snapshot, and a failed read raises so the caller puts the credential back.
+    `generation` is the refresh token's place in its session's rotations."""
+    from server.auth.device import DEVICE_CLIENT_ID
+    from server.auth.revocation import subjects_revoked
+
+    issued_at = int(time.time())  # before the read: a revocation after it postdates the tokens
+    if await subjects_revoked([grant["subject"]], issued_at=since):
+        raise _invalid_grant("this account's tokens are revoked")
     access = mint_token(
         subject=grant["subject"],
         org=grant["org"],
@@ -698,244 +1141,493 @@ async def _issue_tokens(grant: dict[str, Any], client_id: str, issued_at: int) -
         roles=list(grant["roles"]),
         ttl_seconds=_ACCESS_TTL,
         is_service_account=False,
+        session_id=grant["family"] or None,
+        # A third-party MCP client's session mints nothing that outlives it.
+        first_party=client_id == DEVICE_CLIENT_ID,
         issued_at=issued_at,
     )
+    body = {
+        "access_token": access,
+        "token_type": "Bearer",
+        "expires_in": _ACCESS_TTL,
+        "scope": "loom",
+    }
+    if settings.oauth_login_provider == "oidc" and not grant["upstream_refresh"]:
+        return body
     refresh = secrets.token_urlsafe(32)
-    await _store.save_refresh(
+    await store.save_refresh(
         refresh,
         {
             "client_id": client_id,
+            "redirect_uri": "",
+            "code_challenge": "",
             "subject": grant["subject"],
             "org": grant["org"],
             "namespaces": list(grant["namespaces"]),
             "roles": list(grant["roles"]),
             "exp": issued_at + _REFRESH_TTL,
+            "family": grant["family"],
+            "generation": generation,
+            "upstream_refresh": grant["upstream_refresh"],
+            "held": grant.get("held", {}),  # a rotation swaps from the token it spent
         },
     )
-    return {
-        "access_token": access,
-        "token_type": "Bearer",
-        "expires_in": _ACCESS_TTL,
-        "refresh_token": refresh,
-        "scope": "loom",
-    }
+    body["refresh_token"] = refresh
+    return body
 
 
-@router.post("/oauth/token")
-async def token(request: Request) -> JSONResponse:
-    f = await _form_body(request)
-    grant_type = f.get("grant_type", "")
-    code = f.get("code", "")
-    redirect_uri = f.get("redirect_uri", "")
-    client_id = f.get("client_id", "")
-    code_verifier = f.get("code_verifier", "")
-    refresh_token = f.get("refresh_token", "")
-    if grant_type == "authorization_code":
-        issued = await _exchange(
-            "code",
-            code,
-            client_id=client_id,
-            decide=lambda grant: _decide_code(grant, client_id, redirect_uri, code_verifier),
-        )
-        return JSONResponse(issued)
+async def end_session(grant: Grant | Device, reason: str) -> None:
+    """Revoke the grant's session family: its refresh tokens stop refreshing and
+    its access tokens stop verifying. Tokens minted from a `loom login` or
+    dashboard SSO session are their owner's to revoke: an automatic verdict
+    that could be wrong (a lost answer looks like a replay) never reaches them.
+    Those a third-party MCP client's session minted name the session in their
+    `parents` (`delegation.delegate`) and end with it.
 
-    if grant_type == "refresh_token":
-        # A public client identifies itself on refresh (RFC 6749 §6), and the
-        # token refreshes only for the client it was issued to; a mismatch
-        # finds nothing and leaves the token for its owner.
-        if not client_id:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "invalid_request", "error_description": "client_id required"},
-            )
-        issued = await _exchange(
-            "refresh", refresh_token, client_id=client_id, decide=_decide_refresh
-        )
-        return JSONResponse(issued)
+    When the revocation cannot be written, a `revocation_owed` row stands in
+    for it: the revocation snapshot every process loads counts the family as
+    revoked. Raises only when neither landed."""
+    from server.auth.revocation import revoke, revoked_here
 
-    raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
-
-
-# What an exchange presents: an authorization code or a refresh token.
-_Kind = Literal["code", "refresh"]
-_Decider = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
-
-
-async def _exchange(
-    kind: _Kind, credential: str, *, client_id: str, decide: _Decider
-) -> dict[str, Any]:
-    """Exchange a code or refresh token for tokens, once: under the credential's
-    deployment-wide claim."""
-    # A made-up credential costs a read, not a claim.
+    family = grant["family"]
+    if not family:
+        return  # nothing was issued under it (a denied grant), or it predates families
+    until = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
     try:
-        async with asyncio.timeout(_FIND_TIMEOUT_S):
-            found = await _find(kind, credential, client_id)
-    except Exception as e:  # an unreadable store answers retryably, as below
-        raise _logged_unavailable("credential read", e) from e
-    if found is None:
+        await revoke(family, expires_at=until, reason=reason, revoked_by="oauth")
+    except Exception:  # the owed row stands in for it, or the error goes on
+        log.exception("oauth: revoking session %s failed; recording it as owed", family)
+        await store.owe_revocation(family, reason)
+        revoked_here(family)  # other processes read the owed row at their next refresh
+    await _audit_ended(grant, reason)
+
+
+async def _audit_ended(grant: Grant | Device, reason: str) -> None:
+    await audit.emit(
+        "auth.session_revoked",
+        org=grant["org"],
+        namespace="-",
+        actor=grant["subject"],
+        subject={"family": grant["family"], "client_id": grant["client_id"], "reason": reason},
+    )
+
+
+async def put_back(saving: Coroutine[Any, Any, None]) -> None:
+    """Return a spent credential from a request that failed or is being
+    cancelled: held to its end, within _PUT_BACK_S, even if a cancellation
+    comes (shutdown drains it before ClickHouse goes), and a failure logged
+    from inside it, so it neither hides the request's own outcome nor goes
+    unseen."""
+
+    async def logged() -> None:
+        try:
+            async with asyncio.timeout(_PUT_BACK_S):
+                await saving
+        except Exception as e:  # noqa: BLE001 — the request's own outcome is what goes on
+            log.warning("oauth: could not put a credential back: %r", e)
+
+    await shielded.shielded(logged(), name="oauth put-back")
+
+
+def _unavailable() -> OAuthError:
+    return OAuthError("temporarily_unavailable", 503, headers={"Retry-After": "5"})
+
+
+_REPLAYED = (
+    "this session was ended because a spent {what} was presented again: "
+    "a copy of it is in other hands, or an answer was lost"
+)
+
+
+async def end_replayed_session(e: CodeReplayed, what: str) -> OAuthError:
+    """A spent credential came back: a copy is in other hands, or a client lost
+    an answer. Either way the session ends; its owner signs in again, told why,
+    so a theft is not taken for an expiry. While the end is not recorded
+    anywhere, the answer is "retry", not a final refusal."""
+    family = e.grant["family"]
+    ended = bool(family) and await _ended(family)
+    if ended:  # a logout spent it, or an earlier replay ended the session
+        log.warning("oauth: a spent %s of ended session %s was presented again", what, family)
+        return _invalid_grant("this session has ended; sign in again")
+    try:
+        await end_session(e.grant, f"{what} replayed")
+    except Exception:  # nothing durable landed: the presenter is told to retry
+        log.exception("oauth: ending a replayed %s's session failed", what)
+        return _unavailable()
+    await _revoke_upstream(e.grant)  # may be rotated already
+    return _invalid_grant(_REPLAYED.format(what=what))
+
+
+async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
+    client_id = f.get("client_id", "")
+    code, verifier = f.get("code", ""), f.get("code_verifier", "")
+
+    def presented_right(g: Grant) -> bool:
+        return g["redirect_uri"] == f.get("redirect_uri", "") and verify_pkce_s256(
+            verifier, g["code_challenge"]
+        )
+
+    try:
+        grant = await store.take_code(code, client_id, presented_right)  # single-use
+    except CodeReplayed as e:
+        # Only the client itself (its verifier) presents it again: a leaked
+        # code alone was refused above, unspent.
+        raise await end_replayed_session(e, "authorization code") from None
+    if grant is None:
         raise _invalid_grant()
     try:
-        async with asyncio.timeout(_CLAIM_TIMEOUT_S):
-            lease = await leases.take(
-                f"oauth:{kind}:{_token_id(credential)}", ttl_s=_EXCHANGE_TTL_S, expect_free=True
-            )
-    except Exception as e:  # an exchange no claim keeps apart does not run
-        raise _logged_unavailable("exchange claim", e) from e
-    if lease is None:
-        log.info("oauth: %s is being exchanged by another request; told to retry", kind)
-        raise _unavailable()
-    issued_at = int(time.time())  # before the decision reads the revocations
-    release = functools.partial(leases.release_shielded, lease)
-    return await _exchange_claimed(kind, credential, client_id, decide, issued_at, release)
+        return await issue_tokens(grant, client_id, since=grant["since"])
+    except OAuthError:
+        raise
+    except asyncio.CancelledError:  # cancelled at shutdown: the code is the client's again
+        await put_back(store.save_code(code, grant))
+        raise
+    except Exception as e:  # Loom's own failure: unspend the code so the retry is no replay
+        log.warning("oauth: issuing tokens for a code failed: %s", e)
+        await put_back(store.save_code(code, grant))
+        raise _unavailable() from e
 
 
-async def _exchange_claimed(
-    kind: _Kind,
-    credential: str,
-    client_id: str,
-    decide: _Decider,
-    issued_at: int,
-    release: Callable[[], Awaitable[None]],
-) -> dict[str, Any]:
-    """Under the claim: read the credential again, decide, then use it up, so
-    a failure before the consume leaves it for the client's retry. The claim
-    is released unless the consume did not finish: that may still land, and
-    the kept claim holds a retry off until it expires."""
-    keep_claim = False
-    grant: dict[str, Any] | None = None
-    refusal: HTTPException | None = None
+async def _ask_identity_provider(grant: Grant, refresh_token: str) -> str:
+    """Spend the session's IdP refresh token; the IdP refusing means the user
+    is gone there (deactivated, signed out everywhere), so the session ends.
+    Returns the IdP refresh token to keep."""
+    from server.auth import oidc
+
+    if not grant["upstream_refresh"]:
+        raise _invalid_grant("sign in again")  # signed in before SSO was on
     try:
-        try:
-            async with asyncio.timeout(_EXCHANGE_TIMEOUT_S):
-                grant = await _find(kind, credential, client_id)
-                if grant is None:
-                    raise _invalid_grant()
-                tokens = await _decide_and_issue(grant, decide, issued_at)
-        except HTTPException as e:
-            if e.status_code == 503 or grant is None:  # nothing to use up
-                raise
-            refusal = e
-        except Exception as e:  # a find, decision or issue that did not finish
-            raise _logged_unavailable("exchange", e) from e
-        keep_claim = True  # until the consume answers: a cancelled one may still land
-        if await _consume(kind, credential, grant):
-            keep_claim = False
-    finally:
-        if not keep_claim:
-            await release()
-    if refusal is not None:
-        raise refusal
-    if keep_claim and kind == "refresh":
-        # A code expires before the claim does, so its tokens are
-        # answered; the new refresh token is saved but never delivered.
-        log.warning("oauth: consume of a refresh token did not finish")
-        raise _unavailable(_EXCHANGE_TTL_S)
-    return tokens
+        return await oidc.refresh(grant["upstream_refresh"])
+    except oidc.UpstreamRefused:
+        # Family only: the IdP also says this when its refresh token merely
+        # expired, which is no reason to end the person's machine tokens.
+        if grant.get("taken_over"):  # likely the token the dead process had rotated
+            await end_session(grant, "identity provider refused a taken-over refresh")
+            unfinished = "this sign-in's last refresh did not finish; sign in again"
+            raise _invalid_grant(unfinished) from None
+        await end_session(grant, "identity provider refused the user")
+        raise _invalid_grant("the identity provider ended this session") from None
+    except oidc.UpstreamUnavailable as e:
+        # Not the user's fault: put the spent token back so the retry works.
+        log.warning("oauth refresh: identity provider unavailable: %s", e)
+        await put_back(store.save_refresh(refresh_token, grant))
+        raise OAuthError("temporarily_unavailable", 503, headers={"Retry-After": "5"}) from e
 
 
-async def _decide_and_issue(
-    grant: dict[str, Any], decide: _Decider, issued_at: int
-) -> dict[str, Any]:
-    """The tokens for `grant`; a refusal is raised as its HTTPException."""
-    decided = await decide(grant)
-    return await _issue_tokens(decided, decided["client_id"], issued_at)
-
-
-async def _find(kind: _Kind, credential: str, client_id: str) -> dict[str, Any] | None:
-    if kind == "code":
-        return await _store.find_code(credential)
-    return await _store.find_refresh(credential, client_id)
-
-
-def _invalid_grant() -> HTTPException:
-    return HTTPException(status_code=400, detail={"error": "invalid_grant"})
-
-
-async def _consume(kind: _Kind, credential: str, grant: dict[str, Any]) -> bool:
-    """Mark the credential consumed; False when that did not finish within
-    `_CONSUME_TIMEOUT_S` (it may still land)."""
+async def _ended(family: str) -> bool:
+    """Whether the session has ended, from storage; unknown counts as not."""
     try:
-        async with asyncio.timeout(_CONSUME_TIMEOUT_S):
-            if kind == "code":
-                await _store.consume_code(credential, grant)
-            else:
-                await _store.consume_refresh(credential, grant)
-        return True
-    except Exception as e:  # noqa: BLE001 — the answer is decided; the caller keeps the claim
-        log.warning("oauth: consume failed for %r in %r: %s", grant["subject"], grant["org"], e)
+        return await store.session_ended(family)
+    except Exception:  # unreadable: ending it again only replaces its stored reason
+        log.exception("oauth: could not read whether session %s has ended", family)
         return False
 
 
-async def _decide_code(
-    grant: dict[str, Any], client_id: str, redirect_uri: str, code_verifier: str
-) -> dict[str, Any]:
-    if grant["client_id"] != client_id or grant["redirect_uri"] != redirect_uri:
-        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-    if not verify_pkce_s256(code_verifier, grant["code_challenge"]):
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "invalid_grant", "error_description": "PKCE failed"},
-        )
-    code_issued_at = int(grant["exp"]) - _CODE_TTL
-    return {**grant, "namespaces": await _mint_namespaces(grant, code_issued_at)}
+async def _revoke_upstream(grant: Grant | Device) -> None:
+    """Best effort: revoke the session's IdP refresh token once Loom's ends."""
+    if grant["upstream_refresh"] and settings.oauth_login_provider == "oidc":
+        from server.auth import oidc
+
+        await oidc.revoke(grant["upstream_refresh"])
 
 
-async def _decide_refresh(grant: dict[str, Any]) -> dict[str, Any]:
-    """The grant a refresh mints from. The grant is a sign-in snapshot; each
-    refresh re-checks the account is still active and re-derives its roles,
-    so neither a released account nor a removed host rides a rolling 30-day
-    chain."""
+# A refresh runs, its spend included, for at most _REFRESH_DEADLINE_S, and a
+# failed one's put-back for _PUT_BACK_S more; each can end in a cancelled
+# write's undo (claims.UNDO_S). At most 45 s: inside the SDK's 60-second wait,
+# and well before another request may call the spend abandoned (_ABANDONED_S).
+_REFRESH_DEADLINE_S = 25.0
+_PUT_BACK_S = 10.0
+
+
+async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
+    # A public client identifies itself on refresh (RFC 6749 §6), and the
+    # token refreshes only for the client it was issued to; a mismatch is
+    # refused unconsumed.
+    client_id = f.get("client_id", "")
+    if not client_id:
+        raise OAuthError("invalid_request", description="client_id required")
+    refresh_token = f.get("refresh_token", "")
+    deadline = asyncio.get_running_loop().time() + _REFRESH_DEADLINE_S
+    try:
+        async with asyncio.timeout_at(deadline):
+            grant = await store.take_refresh(refresh_token, client_id)  # rotates
+    except CodeReplayed as e:
+        raise await end_replayed_session(e, "refresh token") from None
+    except SessionRetired:
+        raise _invalid_grant("this session has ended; sign in again") from None
+    except TimeoutError:  # the spend, if it landed, was undone (claims.swap)
+        raise _unavailable() from None
+    if grant is None:
+        raise _invalid_grant()
+    try:
+        async with asyncio.timeout_at(deadline):
+            return await _refresh_session(grant, refresh_token)
+    except OAuthError as e:
+        if e.status_code != 503:  # refused for good: no token replaces this one
+            await store.retire_refresh(grant)
+            await _revoke_upstream(grant)  # the IdP's, rotated before the refusal or not
+        raise  # an answer: refused, or retry later with the token put back
+    except asyncio.CancelledError:  # cancelled at shutdown: the token is the client's again
+        await put_back(store.save_refresh(refresh_token, grant))
+        raise
+    except Exception as e:  # Loom's own failure (or too slow): unspend the token for the retry
+        log.warning("oauth: refreshing a session failed: %r", e)
+        await put_back(store.save_refresh(refresh_token, grant))  # with the IdP token it rotated
+        raise _unavailable() from e
+
+
+async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
+    """The refresh grant's checks and new tokens, once the old token is spent."""
     from server.auth.login import refreshed_roles
 
     # exp is always saved as mint time + _REFRESH_TTL.
     issued_at = int(grant["exp"]) - _REFRESH_TTL
-    try:
-        roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
-    except Exception as e:  # an account that could not be read mints nothing
-        raise _logged_unavailable("account read", e, grant) from e
+    # Read from storage, not this process's snapshot: a session ended a moment
+    # ago on another process (or owed its revocation) mints nothing more.
+    if await store.session_ended(grant["family"]):
+        raise _invalid_grant()
+    if settings.oauth_login_provider == "oidc":
+        grant["upstream_refresh"] = await _ask_identity_provider(grant, refresh_token)
+    elif grant["upstream_refresh"]:
+        # Signed in through SSO, now off: nothing vouches for the user any more.
+        raise _invalid_grant("single sign-on is off here; sign in again")
+    # The grant is a sign-in snapshot; each refresh re-checks the account
+    # is still active and re-derives its roles, so neither a released
+    # account nor a removed host rides a rolling 30-day chain.
+    roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
     if roles is None:
-        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-    return {**grant, "roles": roles, "namespaces": await _mint_namespaces(grant, issued_at)}
-
-
-def _logged_unavailable(
-    what: str, cause: Exception, grant: dict[str, Any] | None = None
-) -> HTTPException:
-    """The retryable 503 for an exchange whose `what` failed because of
-    `cause`, which it logs."""
-    who = f" for {grant['subject']!r} in {grant['org']!r}" if grant else ""
-    log.warning("oauth: %s failed%s: %s", what, who, cause)
-    return _unavailable()
-
-
-def _unavailable(retry_after: int = 5) -> HTTPException:
-    return HTTPException(
-        status_code=503,
-        detail={"error": "temporarily_unavailable"},
-        headers={"Retry-After": str(retry_after)},
+        await end_session(grant, "account no longer active")
+        raise _invalid_grant()
+    return await issue_tokens(
+        {**grant, "roles": roles},
+        grant["client_id"],
+        since=issued_at,
+        generation=grant.get("generation", 0) + 1,
     )
 
 
-async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
-    """The namespaces a token minted from `grant` may claim, `issued_at` being
-    when the grant was decided; refused when the subject was revoked since.
-    Read from ClickHouse: a token minted past a revocation this process has
-    not seen keeps it."""
+def _refused(e: machines.Refused) -> OAuthError:
+    status = {"invalid_client": 401, "temporarily_unavailable": 503}.get(e.error, 400)
+    return OAuthError(e.error, status, description=e.description)
+
+
+async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> dict[str, Any]:
+    """A bot proving its key (RFC 7523 private_key_jwt): an hour-long token."""
+    assertion = f.get("client_assertion", "")
+    if f.get("client_assertion_type") != machines.ASSERTION_TYPE or not assertion:
+        raise OAuthError(
+            "invalid_client", 401, description="send a private_key_jwt client assertion"
+        )
+    since = int(time.time())  # before the bot is read: see _machine_tokens
+    try:
+        m, proof = await machines.verify_assertion(assertion, f.get("client_id", ""), audiences)
+    except machines.Refused as e:
+        raise _refused(e) from None
+    if not await store.use_once(
+        f"assertion:{token_id(m['name'] + ':' + str(proof['jti']))}", int(proof["exp"]) + 60
+    ):
+        raise OAuthError(
+            "invalid_client", 401, description="this client assertion was used already"
+        )
+    return await _machine_tokens(m, since, since + machines.TOKEN_TTL, {"by": "key"})
+
+
+async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
+    """A CI job's own OIDC token for the bot whose workload trust it meets
+    (RFC 8693). Exchanged as often as the job's clients need while it lives,
+    and the token issued never outlives it."""
+    token = f.get("subject_token", "")
+    if f.get("subject_token_type") not in machines.SUBJECT_TOKEN_TYPES or not token:
+        raise OAuthError("invalid_request", description="send the workload's OIDC token as a jwt")
+    since = int(time.time())  # before the bot is read: see _machine_tokens
+    agent = own = ""
+    try:
+        client_id = f.get("client_id", "")
+        if client_id:
+            m, proof = await machines.verify_workload(token, client_id)
+        else:
+            m, proof = await machines.verify_any_workload(token)
+        if m["agent_claim"]:
+            agent = agents.agent_of(m, proof)
+            own = await agents.ensure_namespace(m, agent)
+    except machines.Refused as e:
+        raise _refused(e) from None
+    except (GrantBusyError, BackendUnavailableError):  # its first exchange, made elsewhere now
+        raise _unavailable() from None
+    # The token never outlives the proof, nor an hour from `since`: its issue
+    # time, which revocation is judged by.
+    ends = min(int(proof["exp"]), since + machines.TOKEN_TTL)
+    issued = await _machine_tokens(
+        m, since, ends, {"by": "workload", "workload_sub": str(proof["sub"])}, agent, own
+    )
+    return {**issued, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"}
+
+
+async def _machine_tokens(
+    m: machines.Machine,
+    since: int,
+    ends: int,
+    how: dict[str, str],
+    agent: str = "",
+    own: str = "",
+) -> dict[str, Any]:
+    """The token for bot `m`, or for its `agent` on the agent's `own`
+    namespace, good until `ends` (epoch seconds). `since` was taken before `m`
+    was read, so a disable the read missed has a later cutoff, and revokes
+    this token. An agent's token names the trust as its parent: disabling the
+    trust ends every agent's."""
     from server.auth.revocation import subjects_revoked
 
+    trust = machines.subject(m["name"])
+    subject = agents.subject(m["name"], agent) if agent else trust
+    if await subjects_revoked([trust, subject], issued_at=since):
+        raise OAuthError("invalid_client", 401, description="this bot is revoked")
+    ns_roles = ([(own, "writer")] if own else []) + await machines.live_roles(m)
+    if not ns_roles:
+        raise OAuthError(
+            "invalid_client", 401, description="none of this bot's namespaces is active"
+        )
+    jti, now = new_jti(), int(time.time())
+    if ends - now < 30:  # its proof runs out (verify's leeway, a slow lookup)
+        raise OAuthError("invalid_grant", description="the proof has run out")
+    token = mint_token(
+        subject=subject,
+        org=m["org"],
+        namespaces=[ns for ns, _ in ns_roles],
+        roles=[],
+        ns_roles=dict(ns_roles),
+        ttl_seconds=ends - since,  # dated `since`, it ends when its proof does
+        is_service_account=True,
+        jti=jti,
+        issued_at=since,
+        parent_subjects=[trust] if agent else None,
+        parent_iats=[since] if agent else None,
+    )
+    await audit.emit(
+        "auth.machine_token",
+        org=m["org"],
+        namespace="-",
+        actor=subject,
+        subject={"jti": jti, **how},
+    )
+    return {"access_token": token, "token_type": "Bearer", "expires_in": ends - now}
+
+
+@router.post("/oauth/token")
+async def token(request: Request) -> JSONResponse:
+    from server.auth import device
+
+    f = await form_body(request)
+    grant_type = f.get("grant_type", "")
+    iss = issuer(request)
+    grants = {
+        "authorization_code": _authorization_code_grant,
+        "refresh_token": _refresh_token_grant,
+        device.DEVICE_GRANT: device.device_code_grant,
+        "client_credentials": lambda f: _client_credentials_grant(f, [f"{iss}/oauth/token", iss]),
+        machines.TOKEN_EXCHANGE: _token_exchange_grant,
+    }
+    if grant_type not in grants:
+        raise OAuthError("unsupported_grant_type")
+    body = await grants[grant_type](f)  # Keeper not answering is _busy_response's
+    return JSONResponse(body, headers={"Cache-Control": "no-store", SESSIONS_HEADER: "1"})
+
+
+def _revocation_end(info: AuthInfo) -> datetime | None:
+    """How long revoking this token must last: a session as long as its refresh
+    tokens can, any other token until it expires (None: it never does)."""
+    if info.session_id:
+        return datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
+    return datetime.fromtimestamp(info.expires_at, UTC) if info.expires_at else None
+
+
+@router.post("/oauth/revoke")
+async def revoke_token(request: Request) -> Response:
+    """RFC 7009 token revocation: `loom logout`. A refresh token ends its whole
+    session, an access token Loom issued ends just that token's session. The
+    answer is 200 whatever the token was (§2.2), so it tells a caller nothing."""
+    from server.auth.jwt import TokenError, verify_token
+    from server.auth.revocation import revoke
+
+    f = await form_body(request)
+    token_value = f.get("token", "")
+    client_id = f.get("client_id", "")
+    if not client_id:
+        # A public client names itself (RFC 7009 §2.1); without it a refresh
+        # token could not be matched, and logout would quietly do nothing.
+        raise OAuthError("invalid_request", description="client_id required")
+    grant: Grant | Device | None = None
+    spent: Grant | None = None  # spent by this logout
+    reason = "logout"
     try:
-        revoked = await subjects_revoked([grant["subject"]], issued_at=issued_at)
-    except Exception as e:  # no token is minted past a revocation it could not read
-        raise _logged_unavailable("mint-time read", e, grant) from e
-    if revoked:
-        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-    return list(grant["namespaces"])
+        grant = spent = await store.take_refresh(token_value, client_id)
+    except (SessionRetired, CodeReplayed) as e:
+        # A logout retried, an old copy (a later token was issued), or a
+        # refusal that may not have ended the session; the audit keeps which.
+        spent_how = "retired" if isinstance(e, SessionRetired) else "spent"
+        grant, reason = e.grant, f"logout (token already {spent_how})"
+    if grant is not None and await _ended(grant["family"]):
+        # Ended already (a logout, a replay): only confirmed, so its first
+        # reason stands. A token this logout took has nothing to replace it.
+        if spent is not None:
+            try:
+                await store.retire_refresh(spent)
+            except Exception:  # its session has ended: an unretired key refreshes nothing
+                log.exception("oauth: logout could not retire a token of ended session")
+            # The current token holds the IdP's current token, which whatever
+            # ended the session (a replay, an old copy's logout) never had.
+            await _revoke_upstream(spent)
+        return Response(status_code=200)
+    if grant is not None:
+        try:
+            await end_session(grant, reason)
+            if spent is not None:  # nothing replaces it
+                await store.retire_refresh(spent)
+        except Exception as e:  # nothing durable landed: the client must not think it did
+            log.exception("oauth: logout could not end session %s", grant["family"])
+            raise _unavailable() from e
+        await _revoke_upstream(grant)
+        return Response(status_code=200)
+    try:
+        info = verify_token(token_value)
+    except TokenError:
+        return Response(status_code=200)  # unknown, expired or already revoked
+    # A session's access token ends its whole session; any other token itself.
+    key = info.session_id or info.token_id
+    if key:
+        try:
+            await revoke(
+                key, expires_at=_revocation_end(info), reason="logout", revoked_by=info.subject
+            )
+        except Exception as e:  # not revoked: the client is told to retry, not that it worked
+            log.exception("oauth: logout could not revoke %s", key)
+            raise _unavailable() from e
+        await audit.emit(
+            "auth.session_revoked",
+            org=info.org,
+            namespace="-",
+            actor=info.subject,
+            subject={"family": info.session_id, "jti": info.token_id, "reason": "logout"},
+        )
+    return Response(status_code=200)
+
+
+def _busy_response(request: Request, exc: Exception) -> JSONResponse:
+    """Keeper could not answer a sign-in step: retryable, wherever it was."""
+    log.warning("oauth: %s answered 503: %s", request.url.path, exc)
+    return oauth_error_response(request, _unavailable())
 
 
 def attach(app: Any) -> None:
-    """Mount the OAuth AS only when enabled (opt-in authz surface)."""
-    if settings.oauth_enabled:
-        from server.auth import oidc
+    """Mount sign-in wherever there is something to sign in to, and MCP
+    connect (dynamic client registration, an opt-in surface) only when enabled."""
+    from server.auth import device, oidc
 
+    if settings.auth_actually_required() or settings.oauth_enabled:
         oidc.validate_config()  # fail fast if provider=oidc but IdP config missing
+        app.add_exception_handler(OAuthError, oauth_error_response)
+        app.add_exception_handler(claims.Busy, _busy_response)
         app.include_router(router)
+        app.include_router(device.router)
+    if settings.oauth_enabled:
+        app.include_router(connect_router)

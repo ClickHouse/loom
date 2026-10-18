@@ -151,6 +151,7 @@ const ERROR_CODE_PREFIXES: Record<string, string> = {
   IDENTITY_INCOMPLETE: "This token is scoped — the request has to name the namespace:",
   FORBIDDEN: "You don't have permission for this.",
   POLICY_FORBIDDEN: "Blocked by a policy:",
+  TOKEN_NAME_TAKEN: "Name taken:",
   NOT_FOUND: "Couldn't find it.",
   RESOURCE_NOT_FOUND: "Couldn't find it.",
   NAMESPACE_NOT_FOUND: "That namespace doesn't exist.",

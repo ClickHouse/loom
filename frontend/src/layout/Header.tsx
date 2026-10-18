@@ -5,7 +5,7 @@ import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { useStore } from "../lib/state";
-import { clearToken, isProxyMode } from "../api";
+import { isProxyMode, signOut } from "../api";
 import { toast } from "../components/Toast";
 import { NamespacePicker as RichNamespacePicker } from "../components/NamespacePicker";
 // The shell evaluates what it shows. The two dialogs open on a click and the search box's
@@ -50,7 +50,7 @@ export function Header() {
   const readOnly = !canWrite(role);
 
   const onLogout = () => {
-    clearToken();
+    signOut();
     toast("Signed out", "info");
     setTimeout(() => location.reload(), 300);
   };
