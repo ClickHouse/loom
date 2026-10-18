@@ -183,6 +183,20 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(setConversationLogging.mock.calls[0][1]).toBe(true);
   });
 
+  it("a failed search in one namespace does not hide the next namespace's threads", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-b", "Title B")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    searchConversations.mockRejectedValueOnce(new Error("search down"));
+    render(<Conversations />);
+    const box = screen.getByLabelText("Search conversation transcripts");
+    fireEvent.change(box, { target: { value: "hello" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByText("Couldn't load search results")).toBeInTheDocument();
+    act(() => setNamespace("ns-b"));
+    await waitFor(() => expect(screen.queryByText("Couldn't load search results")).toBeNull());
+    expect(await screen.findByText("Title B")).toBeInTheDocument();
+  });
+
   it("opens a hit from another namespace in that namespace", async () => {
     listConversationThreads.mockResolvedValue({ threads: [] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });

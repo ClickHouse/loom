@@ -143,6 +143,7 @@ export function Conversations() {
     searchSeq.current += 1;
     scopeGen.current += 1;
     setHits(null);
+    setSearchError(null);
     setBusy(false);
     setThreads(null);
     setThreadPage(0);

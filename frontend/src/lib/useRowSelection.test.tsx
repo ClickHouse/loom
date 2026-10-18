@@ -84,5 +84,8 @@ describe("useRowSelection", () => {
     await user.click(screen.getByLabelText("Select four"));
     rerender(<List names={["four", "five"]} />);
     expect(picked()).toBe("four");
+    // "two" comes back (the page before, a cleared search, another namespace's row): unticked.
+    rerender(<List />);
+    expect(picked()).toBe("four");
   });
 });

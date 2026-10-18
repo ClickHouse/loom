@@ -115,6 +115,25 @@ describe("ReviewQueue", () => {
     expect(screen.getByText("value of b/key")).toBeTruthy();
   });
 
+  it("a decision answered after a namespace switch leaves the new namespace's queue alone", async () => {
+    vi.mocked(listConflicts).mockImplementation(async (id) =>
+      id.namespace === "ns-b"
+        ? { rows: [conflict("b/key")], next_before_version: null }
+        : { rows: [conflict("a/key"), conflict("a/next")], next_before_version: null },
+    );
+    let answer: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/key", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    await act(async () => answer({ resolved: true, affected_memory_ids: [] }));
+    expect(screen.getByText("value of b/key")).toBeTruthy();
+    expect(screen.queryByText("value of a/next")).toBeNull();
+  });
+
   it("falls back to Conflicts when the new namespace hides the open sub-tab", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listLearnings).mockImplementation(async (id) => ({

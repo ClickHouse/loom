@@ -240,6 +240,7 @@ function ConflictsPanel() {
   const held = total === null ? null : Math.max(total, rows.length);
 
   const decide = async (decision: ResolveDecision) => {
+    const key = rowsFor.current;
     setBusy(true);
     try {
       await resolveConflict(
@@ -249,6 +250,8 @@ function ConflictsPanel() {
         reason.trim() ? { reason: reason.trim() } : {},
       );
       toast("Resolved", "ok");
+      // The namespace changed while the decision was out: its queue is not this one's.
+      if (rowsFor.current !== key) return;
       setReason("");
       // The decided conflict leaves the queue; the next one takes its place.
       const rest = rows.filter((c) => c.memory_id !== current.memory_id);

@@ -465,7 +465,11 @@ function MemoryList() {
 
   // The agents the namespace's rows were written by, gathered as pages and filters load
   // (sentinels "*" and "-" are not writers); a new namespace starts again.
-  useEffect(() => setSeenAgents([]), [identity.org, identity.namespace]);
+  // The agent filter goes with them: another namespace's agent is not one of this one's.
+  useEffect(() => {
+    setSeenAgents([]);
+    setAgentFilter(null);
+  }, [identity.org, identity.namespace]);
   useEffect(() => {
     const here = (entries ?? []).map((e) => e.agent || "").filter((a) => a && !SENTINEL_AGENTS.has(a));
     setSeenAgents((prev) => {

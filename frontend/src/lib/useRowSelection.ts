@@ -29,6 +29,9 @@ export function useRowSelection(keys: readonly string[], { enabled = true }: { e
     const kept = [...picked].filter((k) => onPage.has(k));
     return kept.length === picked.size ? picked : new Set(kept);
   }, [picked, onPage]);
+  // A row that left the page leaves the selection for good: one that comes back (the page
+  // before, a cleared search, another namespace's row of the same key) is not selected.
+  if (selected !== picked) setPicked(selected);
 
   // Read through refs, so the callbacks stay stable for memoised rows.
   const keysRef = useRef(keys);

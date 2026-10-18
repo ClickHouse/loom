@@ -597,10 +597,12 @@ export function Runs() {
       shownScope.current = scope;
       setShown(null);
       setAgents([]);
-      // Another namespace may be another server's answer: ask it for a page first.
-      if (page !== 0 || local) {
+      // Another namespace may be another server's answer: ask it for a page first. Its
+      // agents are not this one's, so the agent filter goes too.
+      if (page !== 0 || local || agent !== "") {
         setPage(0);
         setLocal(false);
+        setAgent("");
         return;
       }
     }

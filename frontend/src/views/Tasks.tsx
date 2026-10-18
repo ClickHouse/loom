@@ -259,7 +259,12 @@ export function Tasks() {
     setOpenRow(null);
     setSelectedId(null);
     setFilters(NO_FILTERS);
+    // The old inbox is read again only once the new namespace says it has one.
+    setPicked(null);
   }
+  // The caller as of the latest render, for an answer that lands after a switch.
+  const callerNow = useRef(caller);
+  callerNow.current = caller;
 
   useEffect(() => {
     // A namespace switch restores only its own inboxes, and drops any row read in flight.
@@ -478,6 +483,8 @@ export function Tasks() {
                 ? await unblockTask(caller, task.task_id)
                 : await resumeTask(caller, task.task_id);
         toast(actionDone(action, task.title), "ok");
+        // A switch while the move was out: the list on screen is another namespace's.
+        if (callerNow.current !== caller) return;
         afterChange(r.task);
         focusAfter(origin, next);
       } catch (e) {

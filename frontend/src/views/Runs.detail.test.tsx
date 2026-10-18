@@ -156,6 +156,21 @@ describe("Runs page", () => {
     expect(opts?.agent).toBe("reporter");
   });
 
+  it("another namespace reads its runs for every agent, not the agent picked in the last", async () => {
+    listRuns.mockResolvedValue([row(), full]);
+    render(<Runs />);
+    await screen.findByText("fix the thing");
+    await userEvent.click(await screen.findByRole("button", { name: "Agent" }));
+    await userEvent.click(
+      must(document.querySelector<HTMLElement>('[cui-select-item][data-value="reporter"]'), "reporter item"),
+    );
+    await waitFor(() => expect(listRuns.mock.calls.at(-1)?.[1]?.agent).toBe("reporter"));
+    const before = useStore.getState().identity!;
+    act(() => useStore.setState({ identity: { ...before, namespace: `${before.namespace}-2` } }));
+    await waitFor(() => expect(listRuns.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: `${before.namespace}-2` }));
+    expect(listRuns.mock.calls.at(-1)?.[1]?.agent).toBe("");
+  });
+
   it("the replay of a hollow run says what each empty field would have needed", async () => {
     listRuns.mockResolvedValue([row()]);
     render(<Runs />);
