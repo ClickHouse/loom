@@ -93,6 +93,7 @@ class _Writer:
     def __init__(self, ch: Any, org: str, seed: int) -> None:
         self.ch, self.org, self.rng = ch, org, random.Random(seed * 7919)
         self.want: dict[tuple[str, str], tuple[str, Any, bool]] = {}
+        self.versions: dict[tuple[str, str], int] = {}
         self.tasks: list[asyncio.Task[None]] = []
         self.locks: dict[tuple[str, str], asyncio.Lock] = {}
         self.steps = 0
@@ -108,6 +109,7 @@ class _Writer:
         )
         from server.memory.app.handlers import handle_memory_delete, handle_memory_pin
         from server.memory.app.restore import handle_memory_restore
+        from server.memory.app.write import handle_memory_set
 
         self.steps += 1
         step = self.steps
@@ -121,19 +123,22 @@ class _Writer:
             if op == "set" and not (head is not None and head["pinned"]):
                 # A pinned key refuses a write that does not pin.
                 value = f"{key} changed by the user at step {step}"
-                await _set(self.org, session, key, value)
-                self.want[(key, session)] = ("value", value, False)
-            elif op == "pin" and head is not None and head["tombstoned_at"] is None:
-                value = _text(head["value"])
-                await handle_memory_pin(
+                out = await handle_memory_set(
                     MemorySetInput(**ident, session_id=session, memory_key=key, value=value)
                 )
-                self.want[(key, session)] = ("value", value, True)
+                self.wrote(key, session, out.version, ("value", value, False))
+            elif op == "pin" and head is not None and head["tombstoned_at"] is None:
+                value = _text(head["value"])
+                out = await handle_memory_pin(
+                    MemorySetInput(**ident, session_id=session, memory_key=key, value=value)
+                )
+                self.wrote(key, session, out.version, ("value", value, True))
             elif op == "delete":
-                await handle_memory_delete(
+                gone = await handle_memory_delete(
                     MemoryDeleteInput(**ident, session_id=session, memory_key=key)
                 )
-                self.want[(key, session)] = ("deleted", None, False)
+                if gone.tombstoned:
+                    self.wrote(key, session, gone.version, ("deleted", None, False))
             elif op == "undo" and head is not None and head["status"] == "superseded":
                 await handle_memory_restore(
                     MemoryRestoreInput(
@@ -143,6 +148,12 @@ class _Writer:
                         if_superseded_by=str(head["superseded_by"]),
                     )
                 )
+
+    def wrote(self, key: str, session: str, version: int, want: tuple[str, Any, bool]) -> None:
+        """The user's write that must hold: the one at the highest version."""
+        if version > self.versions.get((key, session), 0):
+            self.versions[(key, session)] = version
+            self.want[(key, session)] = want
 
     async def run(self, n: int) -> None:
         for _ in range(n):
