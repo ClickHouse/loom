@@ -11,8 +11,8 @@
 -- email could reach when it was deactivated, or since. Each one the email
 -- still reaches is revoked unless an operator gave it back
 -- (`loom revoke-token --scim`), and SSO sign-in with the email is refused
--- until active is 1 again. deleted = 1 is a
--- SCIM DELETE: the person stays deactivated and the resource answers 404.
+-- until active is 1 again. deleted = 1 is a SCIM DELETE: the person stays
+-- deactivated and the resource answers 404.
 CREATE TABLE IF NOT EXISTS loom.scim_users
 (
     `id` String,

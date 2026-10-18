@@ -495,6 +495,31 @@ async def test_a_repeat_deactivation_revokes_an_account_let_go_while_out_of_reac
     assert world.ours["shared"] is None
 
 
+def test_a_patch_of_dropped_attributes_lets_a_moved_account_go(client: TestClient, world) -> None:
+    world.person("lee@example.com", "lee")
+    old = client.post("/scim/v2/Users", json={"userName": "lee@example.com"}).json()["id"]
+    client.delete(f"/scim/v2/Users/{old}")
+    new = client.post("/scim/v2/Users", json={"userName": "lee.new@example.com"}).json()["id"]
+    world.person("lee@example.com")
+    world.person("lee.new@example.com", "lee")  # `loom sso link` moves the account
+    assert world.ours["lee"] is None
+    rename = {"Operations": [{"op": "Replace", "path": "displayName", "value": "Lee"}]}
+    assert client.patch(f"/scim/v2/Users/{new}", json=rename).status_code == 200
+    assert world.ours["lee"] is not None
+
+
+async def test_a_give_back_for_one_user_does_not_shield_another(world) -> None:
+    world.person("a@example.com", "alice")
+    world.person("b@example.com")
+    a, b = await _create("a@example.com"), await _create("b@example.com")
+    await scim.update(a, active=False)
+    await _given_back("alice", _now())  # alice was A's collateral, given back
+    await scim.update(b, active=False)  # B reaches nothing yet
+    world.person("b@example.com", "alice")  # an operator links B's address to alice
+    await scim.update(b, active=False)  # the provider repeats B's deactivation
+    assert world.ours["alice"] is None
+
+
 async def test_another_subjects_org_does_not_hide_collateral(world) -> None:
     # The email reaches `alice@example.com` in acme and `alice` (a linked
     # account) in beta; someone else owns an `alice` in acme.

@@ -489,8 +489,9 @@ async def patch_user(uid: str, request: Request) -> JSONResponse:
             _refuse_another_email(row, str(entry.get("value") or row["email"]))
         elif name is not None and scim.normalized(row["user_name"]) == row["email"]:
             _refuse_another_email(row, name)  # the userName may be where the email came from
-        if active is not None or name is not None or entry is not None:
-            row = await _update(uid, active, name, entry) or row
+        # Every PATCH converges, one of only dropped attributes too: an active
+        # user lets go what no deactivated email reaches any more.
+        row = await _update(uid, active, name, entry) or row
     return _answer(_resource(request, row))
 
 

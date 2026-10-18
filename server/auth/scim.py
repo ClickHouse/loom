@@ -14,8 +14,9 @@ changes is `active`:
   it lasts, even when it reaches no account yet.
 - Reactivating lifts the refusal and narrows those revocations to the tokens
   issued before now, so the person signs in again and the old tokens stay dead.
-  Every request that leaves a user active does it (`_converge_active`), so a
-  repeat of one finishes what a failed request left.
+  Every write that leaves a user active does it (`_converge_active`), a
+  create, a PUT or a PATCH of any attribute, so a repeat of one finishes what
+  a failed request left.
 
 SCIM's revocations are its own: each is stored under the subject's SCIM key
 (`revocation.SCIM_PREFIX`), and SCIM never reads or writes the row an
@@ -338,22 +339,16 @@ async def _set_active(
     known = set(row["subjects"])
     async with subject_leases([*known, *found]):
         # Going inactive revokes, and records, what the email reaches now: an
-        # account an operator has since moved to another email is that
-        # person's. Once inactive, a repeat revokes what the email reaches and
-        # SCIM doesn't revoke outright, but for one an operator gave back
-        # (someone else's subject): a reactivation's lift may have let it go
-        # while it was out of reach.
+        # account an operator has since moved to another email is that person's.
         if row["active"]:
             new["subjects"] = subjects = sorted(found)
         else:
+            # A repeat also re-revokes what a reactivation let go while out of
+            # reach; an operator's give-back of a subject this user knew stays.
             new["subjects"] = sorted(known | set(found))
             rows = await revocation.scim_revocations(sorted(found))
-            subjects = [
-                s
-                for s in sorted(found)
-                if s not in rows
-                or (rows[s]["revoked_by"] == _BY and rows[s]["issued_before"] is not None)
-            ]
+            given_back = {s for s in known if s in rows and rows[s]["revoked_by"] != _BY}
+            subjects = sorted(set(found) - _outright(rows) - given_back)
         for subject in subjects:
             await revocation.scim_revoke(subject, reason=DEACTIVATED, revoked_by=_BY, reread=False)
             await _flag_collateral(new["id"], subject, found.get(subject, set()))
