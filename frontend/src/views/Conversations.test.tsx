@@ -500,6 +500,32 @@ describe("Conversations: thread pages", () => {
     expect(screen.getByText("Thread 30")).toBeInTheDocument();
   });
 
+  it("a second Next while a page loads asks for that page again, and counts the threads right", async () => {
+    const pending: Array<() => void> = [];
+    listConversationThreads.mockImplementation(
+      (_id: unknown, opts: { offset?: number }) =>
+        new Promise((resolve) => {
+          const from = opts.offset ?? 0;
+          const answer = () => resolve({ threads: from === 0 ? page(0, 30) : from === 30 ? page(30, 10) : [] });
+          if (from === 0) answer();
+          else pending.push(answer);
+        }),
+    );
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    const next = () =>
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" });
+    fireEvent.click(next());
+    await waitFor(() => expect(pending).toHaveLength(1));
+    fireEvent.click(next());
+    await new Promise((r) => setTimeout(r, 50));
+    const offsets = listConversationThreads.mock.calls.map((c) => (c[1] as { offset?: number }).offset ?? 0);
+    expect(offsets.filter((o) => o > 0)).toEqual([30]);
+    act(() => pending.forEach((answer) => answer()));
+    expect(await screen.findByText("Thread 30")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Thread pages" })).not.toHaveTextContent(/of 60/);
+  });
+
   it("with an exact multiple of 30 threads, the empty page after the last goes back to it", async () => {
     listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => ({
       threads: (opts.offset ?? 0) >= 60 ? [] : page(opts.offset ?? 0, 30),

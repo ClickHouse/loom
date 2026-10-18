@@ -919,10 +919,10 @@ export function Runs() {
       </div>
       {/* Kept on an empty later page (runs finished or left the filter meanwhile), so it steps
           back to the last page. */}
-      {error === null && shown !== null && (rows.length > 0 || page > 0) && (
+      {error === null && shown !== null && (rows.length > 0 || (localRows ? page : shown.page) > 0) && (
         <ListPager
           label="Runs pages"
-          page={page}
+          page={localRows ? page : shown.page}
           pageSize={pageSize}
           shown={rows.length}
           total={localRows ? localRows.length : (shown.total ?? undefined)}

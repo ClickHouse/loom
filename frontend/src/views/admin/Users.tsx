@@ -113,7 +113,10 @@ export function Users() {
     <Checkbox
       label="Include service accounts"
       checked={includeServiceAccounts}
-      onCheckedChange={(x) => setIncludeServiceAccounts(x === true)}
+      onCheckedChange={(x) => {
+        setIncludeServiceAccounts(x === true);
+        setPage(0);
+      }}
     />
   );
 

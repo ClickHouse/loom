@@ -405,6 +405,9 @@ describe("Runs paging, sorting and search on the server", () => {
     await waitFor(() => expect(lastOpts()).toMatchObject({ offset: 0 }));
     expect(await screen.findByRole("button", { name: "goal 1" })).toBeInTheDocument();
     expect(toolbar()).toHaveTextContent("1–45 of 45");
+    expect(within(screen.getByRole("navigation", { name: "Runs pages" })).getByRole("status")).toHaveTextContent(
+      "Page 1 of 1",
+    );
   });
 
   // Runs that started together keep run.list's order: run_id in the direction of the sort.

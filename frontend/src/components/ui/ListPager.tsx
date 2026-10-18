@@ -67,9 +67,12 @@ export function ListPager({
   topId,
 }: ListPagerProps) {
   const [said, setSaid] = useState("");
-  // The page the status speaks of: when the view moves the list elsewhere (a filter takes it
-  // to its first page), the status is cleared rather than left naming a page not on screen.
-  const saidPage = useRef<number | null>(null);
+  // The page asked for and not yet on screen: if its read finds it past the end, the view
+  // stays on (or steps back to) the last page, and the status says so.
+  const asked = useRef<number | null>(null);
+  // The page the status names: when the view moves the list elsewhere (a filter takes it to
+  // its first page), the status is cleared rather than left naming a page not on screen.
+  const spoken = useRef<number | null>(null);
   // The page being typed into the field: Click UI reports every keystroke as a page, so the
   // pager goes there only on Enter or when the field loses focus.
   const [draft, setDraft] = useState<number | null>(null);
@@ -98,16 +101,26 @@ export function ListPager({
   // A page past the end (its last rows deleted, or Next onto an empty page) steps back to
   // the last one, and says so.
   const pastEnd = pages !== undefined && page > pages - 1;
+  const sayLast = (last: number) => {
+    asked.current = null;
+    spoken.current = last - 1;
+    setSaid(`Page ${last} of ${last}`);
+  };
   useEffect(() => {
     if (!pastEnd || pages === undefined) return;
-    saidPage.current = pages - 1;
-    setSaid(`Page ${pages} of ${pages}`);
+    sayLast(pages);
     onPage(pages - 1);
   }, [pastEnd, pages, onPage]);
+  // The view stays on the page shown when the page asked for turns out to be past the end.
   useEffect(() => {
+    if (asked.current === null || pages === undefined) return;
+    if (asked.current > pages - 1 && page === pages - 1) sayLast(pages);
+  }, [page, pages]);
+  useEffect(() => {
+    if (page === asked.current) asked.current = null;
     // A page past the end is stepping back, and says so itself.
-    if (pastEnd || saidPage.current === null || saidPage.current === page) return;
-    saidPage.current = null;
+    if (pastEnd || spoken.current === null || spoken.current === page) return;
+    spoken.current = null;
     setSaid("");
   }, [page, pastEnd]);
   const lastKnown =
@@ -134,7 +147,8 @@ export function ListPager({
     const n = Math.min(typed, last);
     if (n === page + 1) return;
     onPage(n - 1);
-    saidPage.current = n - 1;
+    asked.current = n - 1;
+    spoken.current = n - 1;
     setSaid(pages !== undefined ? `Page ${n} of ${pages}` : `Page ${n}`);
     const top = focusList && topId ? document.getElementById(topId) : null;
     if (top) {
@@ -171,7 +185,8 @@ export function ListPager({
               pageSize,
               maxRowsPerPageList: SIZES,
               onPageSizeChange: (n: number) => {
-                saidPage.current = null;
+                asked.current = null;
+                spoken.current = null;
                 onPageSize?.(n);
                 setSaid(`${n} rows per page, page 1`);
               },

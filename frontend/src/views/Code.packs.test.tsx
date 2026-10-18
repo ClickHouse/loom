@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CodeContextPackRow } from "../api";
 import { PacksTab } from "./Code";
@@ -48,6 +48,27 @@ describe("PR packs pages", () => {
     expect(listCodeContextPacks.mock.calls.at(-1)?.[1]).toMatchObject({ limit: 50, offset: 50 });
     await waitFor(() => expect(nav).toHaveTextContent("51–100 of 120"));
     expect(document.getElementById("packs-list")).toHaveFocus();
+  });
+
+  it("steps back to the last page when the next page's read finds its packs gone", async () => {
+    let total = 60;
+    listCodeContextPacks.mockImplementation(async (_id, opts: { offset: number; limit: number }) => ({
+      rows: Array.from({ length: Math.max(0, Math.min(opts.limit, total - opts.offset)) }, (_, i) =>
+        pack(1000 - opts.offset - i),
+      ),
+      total,
+    }));
+    render(<PacksTab id={ID} repo="acme/app" />);
+    await screen.findByText("PR 1000");
+    total = 45;
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(listCodeContextPacks.mock.calls.at(-1)?.[1]).toMatchObject({ offset: 0 }));
+    expect(await screen.findByText("PR 1000")).toBeInTheDocument();
+    expect(screen.queryByText("No packs yet")).toBeNull();
+    expect(document.getElementById("packs-list")).toHaveFocus();
+    expect(within(screen.getByRole("navigation", { name: "PR pack pages" })).getByRole("status")).toHaveTextContent(
+      "Page 1 of 1",
+    );
   });
 
   it("draws no pager when one page holds every pack", async () => {

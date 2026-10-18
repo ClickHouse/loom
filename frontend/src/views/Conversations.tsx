@@ -96,6 +96,9 @@ export function Conversations() {
   const [threadsRetry, setThreadsRetry] = useState(0);
   // Threads come a page at a time, most recently active first, over the past year.
   const [threadPage, setThreadPage] = useState(0);
+  // The page the threads on screen came from: the pager pages from it, so a second Next
+  // while a page loads asks for that same page again.
+  const [shownThreadPage, setShownThreadPage] = useState(0);
   const [threadsPaged, setThreadsPaged] = useState(true);
   // Known only once the page after the last full one comes back empty (without a total the
   // pager goes no further than the next page).
@@ -139,6 +142,7 @@ export function Conversations() {
     setBusy(false);
     setThreads(null);
     setThreadPage(0);
+    setShownThreadPage(0);
     setSeenAgents([]);
     setThreadsPaged(true);
     setThreadsTotal(undefined);
@@ -171,11 +175,13 @@ export function Conversations() {
             setThreadPage(0);
             return;
           } else if (rows.length === 0) {
-            // The page before was full and this one is empty: that is how many threads there
-            // are, and the pager steps back to the last page.
+            // The pager reaches a page only from the full page before it, so this empty one
+            // says how many threads there are; the list stays on the page shown.
             setThreadsTotal(threadPage * THREADS_PAGE);
+            setThreadPage(threadPage - 1);
             return;
           }
+          setShownThreadPage(threadPage);
           setThreads(rows);
           setSeenAgents((prev) => Array.from(new Set([...prev, ...rows.map((t) => t.agent)])).sort());
         })
@@ -307,7 +313,7 @@ export function Conversations() {
   // One count, at the end of the toolbar: the matches of a search, the
   // threads shown (the total is known only once the last page is read), the last one while
   // a read is in flight, nothing on an error.
-  const pageStart = threadPage * THREADS_PAGE;
+  const pageStart = shownThreadPage * THREADS_PAGE;
   const countText =
     hits !== null
       ? matchCount
@@ -401,7 +407,7 @@ export function Conversations() {
         {threadsPaged && hits === null && (
           <ListPager
             label="Thread pages"
-            page={threadPage}
+            page={shownThreadPage}
             pageSize={THREADS_PAGE}
             shown={threads.length}
             total={threadsTotal}
