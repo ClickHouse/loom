@@ -76,6 +76,9 @@ export interface RunListPage {
   total: number | null;
 }
 
+// The largest `offset` run.list serves (its `le`); a larger one is a 422.
+export const RUN_LIST_MAX_OFFSET = 100_000;
+
 // A server a release behind ignores offset / order_by / q (named in its ignored_args)
 // and answers the newest first page without a total.
 export async function listRunsPage(

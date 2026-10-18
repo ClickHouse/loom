@@ -499,6 +499,10 @@ describe("Conversations: thread pages", () => {
       expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent("31–45 of 45"),
     );
     expect(screen.getByText("Thread 30")).toBeInTheDocument();
+    // The page it lands on is announced, not the page typed.
+    expect(within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("status")).toHaveTextContent(
+      "Page 2 of 2",
+    );
     // One read past the end, not one per page stepped back.
     const offsets = listConversationThreads.mock.calls.map((c) => (c[1] as { offset?: number }).offset ?? 0);
     expect(offsets.filter((o) => o > 30)).toEqual([150]);

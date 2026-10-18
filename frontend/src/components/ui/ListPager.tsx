@@ -26,9 +26,6 @@ export function usePageSize(view: string, fallback = 50): [number, (size: number
   return [size, choose];
 }
 
-// The largest `offset` run.list and conversation.threads serve; a larger one is a 422.
-export const SERVER_MAX_OFFSET = 100_000;
-
 export interface ListPagerProps {
   /** The navigation landmark's name ("Memories pages"). */
   label: string;
@@ -70,6 +67,9 @@ export function ListPager({
   topId,
 }: ListPagerProps) {
   const [said, setSaid] = useState("");
+  // The page last announced: when the view lands elsewhere (a typed page past the end sent
+  // back), the page it lands on is announced too.
+  const saidPage = useRef<number | null>(null);
   // The page being typed into the field: Click UI reports every keystroke as a page, so the
   // pager goes there only on Enter or when the field loses focus.
   const [draft, setDraft] = useState<number | null>(null);
@@ -100,6 +100,11 @@ export function ListPager({
   useEffect(() => {
     if (pastEnd && pages !== undefined) onPage(pages - 1);
   }, [pastEnd, pages, onPage]);
+  useEffect(() => {
+    if (saidPage.current === null || saidPage.current === page) return;
+    saidPage.current = page;
+    setSaid(pages !== undefined ? `Page ${page + 1} of ${pages}` : `Page ${page + 1}`);
+  }, [page, pages]);
   const lastKnown =
     pages !== undefined ? page >= pages - 1 : shown < pageSize || (reachable !== undefined && page >= reachable - 1);
   // With a page size picked, the choice stays reachable while the list is longer than the
@@ -110,13 +115,15 @@ export function ListPager({
   const end = page * pageSize + shown;
   const span = shown === 0 ? `${start.toLocaleString()}` : `${start.toLocaleString()}–${end.toLocaleString()}`;
   const counts = total === undefined ? span : `${span} of ${capped ? "the newest " : ""}${total.toLocaleString()}`;
-  const range = cut && reachable !== undefined ? `${counts} · the first ${reachable.toLocaleString()} pages` : counts;
+  const range =
+    cut && reachable !== undefined ? `${counts} · pages 1–${reachable.toLocaleString()} can be opened` : counts;
 
   const go = (typed: number, { focusList }: { focusList: boolean }) => {
     setDraft(null);
     const n = reachable !== undefined ? Math.min(typed, reachable) : typed;
     if (n === page + 1) return;
     onPage(n - 1);
+    saidPage.current = n - 1;
     setSaid(pages !== undefined ? `Page ${n} of ${pages}` : `Page ${n}`);
     const top = focusList && topId ? document.getElementById(topId) : null;
     if (top) {

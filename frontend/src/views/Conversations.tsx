@@ -8,6 +8,7 @@ import {
   listConversationThreads,
   getNamespace,
   setConversationLogging,
+  THREADS_MAX_OFFSET,
   type ConversationHit,
   type ConversationThreadSummary,
 } from "../api";
@@ -16,7 +17,7 @@ import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { Skeleton } from "../components/Skeleton";
 import { ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
-import { ListPager, SERVER_MAX_OFFSET } from "../components/ui/ListPager";
+import { ListPager } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar } from "../components/ui/ListToolbar";
@@ -414,7 +415,7 @@ export function Conversations() {
             pageSize={THREADS_PAGE}
             shown={threads.length}
             total={threadsTotal}
-            maxOffset={SERVER_MAX_OFFSET}
+            maxOffset={THREADS_MAX_OFFSET}
             onPage={setThreadPage}
             topId="threads-list"
           />

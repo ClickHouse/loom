@@ -370,6 +370,20 @@ describe("Runs paging, sorting and search on the server", () => {
     expect(toolbar()).toHaveTextContent("1–1");
   });
 
+  // run.list serves no offset past 100,000, so the pager offers the pages it can serve and
+  // says where it stops.
+  it("offers only the pages run.list can serve when it counts more", async () => {
+    listRunsPage.mockImplementation(async () => ({
+      runs: Array.from({ length: 50 }, (_, i) => run(i + 1)),
+      total: 1_000_000,
+    }));
+    render(<Runs />);
+    await screen.findByRole("button", { name: "goal 1" });
+    expect(screen.getByRole("navigation", { name: "Runs pages" })).toHaveTextContent(
+      "1–50 of 1,000,000 · pages 1–2,001 can be opened",
+    );
+  });
+
   // Runs that started together keep run.list's order: run_id in the direction of the sort.
   it("against a server that does not page, breaks a tie in start by run_id, newest first", async () => {
     const at = { started_at: "2026-09-20T07:00:00Z" };

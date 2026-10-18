@@ -127,6 +127,9 @@ export async function listConversationMessages(
   return post("/v1/conversation.list", body, opts.signal);
 }
 
+// The largest `offset` conversation.threads serves (its `le`); a larger one is a 422.
+export const THREADS_MAX_OFFSET = 100_000;
+
 /** Recent threads on a namespace. Drives the Sessions view's default
  *  landing surface so users with no query have somewhere to click. */
 export async function listConversationThreads(

@@ -114,7 +114,7 @@ describe("ListPager, typed and edge pages", () => {
       />,
     );
     const nav = screen.getByRole("navigation", { name: "Runs pages" });
-    expect(nav).toHaveTextContent("1–50 of 1,000,000 · the first 2,001 pages");
+    expect(nav).toHaveTextContent("1–50 of 1,000,000 · pages 1–2,001 can be opened");
     const field = screen.getByRole("spinbutton", { name: "Page" });
     // Click UI's field takes no number above its last page.
     fireEvent.change(field, { target: { value: "5000" } });
