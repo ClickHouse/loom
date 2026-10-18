@@ -264,3 +264,59 @@ def test_a_rerun_on_a_compacted_thread_compacts_nothing(monkeypatch) -> None:
     )
     assert (out.compacted, out.reason) == (False, "already-compacted")
     assert fake.inserted == [] and fake.embedded == []
+
+
+def test_a_large_turn_behind_a_summary_is_compacted_whole(monkeypatch) -> None:
+    """An earlier summary is folded in without spending the prompt budget, so the turn
+    behind it is summarised (whole, up to the cap) rather than leaving a window of
+    the summary alone to be compacted again on every run."""
+    import server.core.ch
+    import server.llm.client
+
+    big = "x" * 15000
+    rows = [
+        {
+            "msg_id": "compact-1",
+            "role": "system",
+            "content": "s" * 2000,
+            "ts": T0,
+            "metadata": '{"compacted_from": ["m0"]}',
+            "user_id": "alice",
+            "run_id": "run-1",
+        },
+        *(
+            {
+                "msg_id": f"m{i}",
+                "role": "user",
+                "content": big if i == 1 else f"turn {i}",
+                "ts": T0 + timedelta(seconds=i),
+                "metadata": "{}",
+                "user_id": "alice",
+                "run_id": "run-1",
+            }
+            for i in range(1, 4)
+        ),
+    ]
+    prompts: list[str] = []
+
+    class _RecordingLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            prompts.append(kw["user"])
+            return await super().complete(**kw)
+
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=1
+            )
+        )
+    )
+    assert out.compacted is True
+    [summary] = fake.inserted
+    # The summary is free, so the 15,000-character turn and the short one after it fit.
+    assert '"compacted_from": ["compact-1", "m1", "m2"]' in summary["metadata"]
+    [prompt] = prompts
+    assert big in prompt  # the large turn reached the summarizer whole

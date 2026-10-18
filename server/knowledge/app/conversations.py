@@ -738,11 +738,22 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     # is cut to the oldest messages whose lines fit the prompt, and the rest stay
     # verbatim for the next run (a message past the cap was never summarized, so
     # tombstoning it would drop it).
+    # An earlier summary is folded in without spending the budget, and the window
+    # always reaches the first new turn: a large turn behind a summary would otherwise
+    # leave a window of the summary alone, compacted again on every run.
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
-    fit = _fitting_prefix(lines, _COMPACT_TRANSCRIPT_CHARS)
+    folded = [_is_compaction_summary(r) for r in candidates]
+    fit = _fitting_prefix(
+        ["" if f else line for line, f in zip(lines, folded, strict=True)],
+        _COMPACT_TRANSCRIPT_CHARS,
+    )
+    fit = max(fit, folded.index(False) + 1)
     candidates = candidates[:fit]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
-    transcript = "\n".join(lines[:fit])[:_COMPACT_TRANSCRIPT_CHARS]
+    cap = _COMPACT_TRANSCRIPT_CHARS + sum(
+        len(line) + 1 for line, f in zip(lines[:fit], folded[:fit], strict=True) if f
+    )
+    transcript = "\n".join(lines[:fit])[:cap]
 
     llm = get_llm_client()
     system_prompt = (
