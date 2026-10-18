@@ -1000,7 +1000,7 @@ async def test_a_mirror_past_the_deadline_leaves_its_other_rows_for_the_next_pas
     clock, mirrored = _timed_mirrors(monkeypatch)
     failures = [_mirror_failure("f1", "a1"), _mirror_failure("f2", "m1", "m2", "m3")]
     retried = projection_failures.retry_each(
-        failures, ch=object(), expired=lambda: clock.t >= 1.5, first=True
+        failures, ch=object(), expired=lambda: clock.t >= 1.5, retry_first=True
     )
     outs = [out async for _, out in retried]
     assert mirrored == ["a1", "m1"]
@@ -1015,7 +1015,7 @@ async def test_the_forced_first_mirror_finishes_past_the_deadline(monkeypatch) -
     _, mirrored = _timed_mirrors(monkeypatch)
     failures = [_mirror_failure("f1", "m1", "m2"), _mirror_failure("f2", "n1")]
     retried = projection_failures.retry_each(
-        failures, ch=object(), expired=lambda: True, first=True
+        failures, ch=object(), expired=lambda: True, retry_first=True
     )
     ((_, out),) = [r async for r in retried]
     assert mirrored == ["m1", "m2"]

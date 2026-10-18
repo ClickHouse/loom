@@ -73,7 +73,7 @@ async def run_pass(
                     limit=STATUS_MIRROR_BATCH, status_mirror=True, after=after
                 )
                 # The first mirror of a pass always runs: a zero budget still moves the queue.
-                async for retried in retry_each(batch, expired=expired, first=not mirrored):
+                async for retried in retry_each(batch, expired=expired, retry_first=not mirrored):
                     mirrored.append(retried)
                 if len(batch) < STATUS_MIRROR_BATCH or expired():
                     break

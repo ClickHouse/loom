@@ -204,7 +204,7 @@ async def test_past_the_deadline_only_a_first_failure_is_retried(
 
     _fake_retry(monkeypatch, _resolved)
     failures = [_failure(i, pf.STATUS_MIRROR) for i in range(3)]
-    retried = pf.retry_each(failures, expired=lambda: True, first=first)
+    retried = pf.retry_each(failures, expired=lambda: True, retry_first=first)
     got = [f.failure_id async for f, _ in retried]
     assert got == want
 

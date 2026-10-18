@@ -336,15 +336,15 @@ async def retry_each(
     *,
     ch: Any | None = None,
     expired: Callable[[], bool] | None = None,
-    first: bool = False,
+    retry_first: bool = False,
 ) -> AsyncIterator[Retried]:
     """Retry each failure and yield it with its result, unmarked: the caller marks what
     it collected with `mark_retried`. Once `expired()` says the deadline has passed, the
-    failures not yet retried stay active; with `first`, the first one is retried, to
+    failures not yet retried stay active; with `retry_first`, the first one is retried, to
     its end, even then."""
     ch = ch or get_client()
     for i, failure in enumerate(failures):
-        forced = first and i == 0
+        forced = retry_first and i == 0
         if expired is not None and not forced and expired():
             return
         # No deadline for the forced one: left pending, it would come back first every pass.
