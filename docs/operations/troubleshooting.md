@@ -256,8 +256,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Symptom:** the Loom host's disk fills (containers fail to write, image builds fail),
   or ClickHouse reports low free space.
-- **Check:** on the host, `docker system df` and the size of `var/code_repos` and the blob
-  volume; in ClickHouse, the per-table sizes and `system.disks` queries in
+- **Check:** on the host, `docker system df` and the size of `var/code_repos`; in
+  ClickHouse, the per-table sizes and `system.disks` queries in
   [maintenance](./maintenance.md#disk-pressure-hygiene). When the disk is full, write
   diagnostic output to `/dev/shm`.
 - **Fix:** cap Docker's JSON logs, remove build cache and dangling images

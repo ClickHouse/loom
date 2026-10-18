@@ -581,7 +581,8 @@ def execute(
             # A merge in staging would collapse rows before the attach; the
             # rows are the same to a FINAL read, but the restored count would
             # no longer match the manifest's. Needs the SYSTEM STOP MERGES
-            # grant; without it the restore runs as before.
+            # grant; without it merges in staging may collapse rows and the
+            # restored count can differ from the manifest's.
             with contextlib.suppress(Exception):
                 client.command(f"SYSTEM STOP MERGES {staging}")
             with p.path.open("rb") as f:

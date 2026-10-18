@@ -200,8 +200,8 @@ async def register_tracker_namespaces(ch: Any) -> None:
 async def require_clickhouse_ready() -> None:
     """The ClickHouse preflight, before the first connect (which selects the
     `loom` database): a wrong address, an old server or a missing database
-    stops boot with one line that names the fix. Every process but a read
-    replica needs the DDL grants (its workers and provider rebuilds use them);
+    stops boot with one line that names the fix. Every process needs the DDL
+    grants (its workers and provider rebuilds use them);
     one that migrates also creates a missing database where its user may."""
     from server.core.schema import preflight
 

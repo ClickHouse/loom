@@ -138,8 +138,8 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 
 
 def _add_module_parsers(sub: Any) -> None:
-    """Subcommands registered by their own modules: code, okf, up, participant,
-    deployment, secrets, signing-key and provider-lock."""
+    """Subcommands registered by their own modules: code, okf, up, ch-setup,
+    participant, deployment, secrets, signing-key and provider-lock."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)
