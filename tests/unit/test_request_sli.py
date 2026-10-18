@@ -327,10 +327,53 @@ def _mcp_refusals_before_dispatch(monkeypatch) -> None:
             "-",
             "-",
         )
-        assert e.subject == "eve" and e.consumer != "someone-else"
+        assert e.subject == "eve" and e.consumer == "user"  # the token's subject class
         assert e.upstream_cost_usd == 0.0 and e.run_id in ("", "-")
         assert "secret text" not in repr(e.args) and e.transport == "mcp"
         assert e.status_class == "client"
+
+
+def test_a_wildcard_token_s_mcp_refusal_names_no_org_but_the_one_it_was_authorized_in(
+    monkeypatch,
+) -> None:
+    import contextvars
+
+    contextvars.copy_context().run(_wildcard_refusals, monkeypatch)
+
+
+def _wildcard_refusals(monkeypatch) -> None:
+    import asyncio
+
+    from server.auth.jwt import AuthInfo
+    from server.observability import events
+    from server.operations.base import Role
+    from server.transport import mcp_auth, mcp_op
+
+    emitted: list = []
+
+    class _Emitter:
+        def emit(self, event) -> None:
+            emitted.append(event)
+
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
+
+    async def _no(*_a) -> bool:
+        return False
+
+    monkeypatch.setattr(mcp_auth, "_may_read", _no)
+    ops = AuthInfo(
+        subject="ops", org="*", namespaces=(), roles=(Role.WRITER,), is_service_account=True
+    )
+    call = {"name": "loom_memory_set", "arguments": {"org": "acme", "namespace": "n"}}
+    asyncio.run(mcp_auth._screen_tool_call({"id": 1, "method": "tools/call", "params": call}, ops))
+    hidden = {"name": "loom_op", "arguments": {"op": "blacklist.remove"}}
+    mcp_op.route({"id": 2, "method": "tools/call", "params": hidden}, toolset=None, auth=ops)
+    # The screen authorized acme, as HTTP records it; before the screen no org is known.
+    assert [(e.error_code, e.org) for e in emitted] == [
+        ("NAMESPACE_NOT_ACCESSIBLE", "acme"),
+        ("OP_NOT_ON_MCP", "-"),
+    ]
 
 
 def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypatch) -> None:
@@ -355,8 +398,25 @@ def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypat
     with pytest.raises(HTTPException):
         http._validate_payload(op, "r", {"org": "acme", "namespace": "n"}, eve)
     assert (bodies[-1]["org"], bodies[-1]["namespace"]) == ("eve-org", "-")
-    # The unknown-argument refusal before authorization shares it; open mode keeps the body.
-    assert http._refused_body({"org": "acme", "namespace": "n"}, eve)["org"] == "eve-org"
+    # A misspelled write argument, refused while the body is read.
+    import asyncio
+
+    class _Request:
+        async def json(self) -> dict:
+            return {"org": "acme", "namespace": "n", "memory_key": "k", "valu": "v"}
+
+    with pytest.raises(HTTPException):
+        asyncio.run(http._read_body(OPERATIONS_BY_NAME["memory.set"], _Request(), "r", eve))
+    assert (bodies[-1]["org"], bodies[-1]["namespace"]) == ("eve-org", "-")
+    # A code.* 422 also leaves a code-trace row, recorded the same way.
+    traced: list[dict] = []
+    monkeypatch.setattr(
+        http, "schedule_code_trace_validation_failure", lambda op, body, errors: traced.append(body)
+    )
+    with pytest.raises(HTTPException):
+        http._validate_payload(OPERATIONS_BY_NAME["code.search"], "r", {"org": "acme"}, eve)
+    assert (traced[-1]["org"], traced[-1]["namespace"]) == ("eve-org", "-")
+    # Open mode keeps the body.
     assert http._refused_body({"org": "acme", "namespace": "n"}, None)["org"] == "acme"
 
 

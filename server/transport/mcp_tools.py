@@ -443,29 +443,29 @@ def _emit_mcp_event(
     )
 
 
-def emit_refusal(op_name: str, code: str, auth: Any) -> None:
+def emit_refusal(op_name: str, code: str, auth: Any, org: str = "") -> None:
     """The ledger row for a call MCP refuses before dispatch (an org or
     namespace the token may not use, an op kept off MCP, a write on a
-    read-only connection), so the SLIs count it as the caller's, as they do
-    HTTP's refusals. A name no op answers to writes none.
+    read-only connection) to the registered op `op_name`, so the SLIs count
+    it as the caller's, as they do HTTP's refusals.
 
-    The caller is not bound yet, so the row is the token's alone: its org and
-    subject, `-` for the rest, no arguments. Nothing the refused call named
-    reaches the ledger, and the previous call of a batch leaves nothing on it."""
+    The caller is not bound yet, so the row is the token's: `org` when the
+    screen has authorized the one the call named, else the token's own (`-`
+    for a wildcard token), its subject and consumer, `-` for the rest, no
+    arguments. The previous call of a batch leaves nothing on it."""
     import uuid
 
     from server.core.naming import SENTINEL
     from server.observability.consumer import bind_current_consumer
     from server.observability.ledger import emit_agent_event
-    from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport._common import sli_columns
     from server.transport.mcp_call import _begin_call
 
-    if op_name not in OPERATIONS_BY_NAME:
-        return
     _begin_call()
     bind_current_consumer(None, auth)
-    org = str(getattr(auth, "org", "") or SENTINEL)
+    org = org or str(getattr(auth, "org", "") or "")
+    if org in ("", "*"):
+        org = SENTINEL
     emit_agent_event(
         op_name=op_name,
         identity={

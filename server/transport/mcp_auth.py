@@ -57,13 +57,13 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
-def _ledger_refusal(tool_name: Any, code: str, auth: AuthInfo) -> None:
+def _ledger_refusal(tool_name: Any, code: str, auth: AuthInfo, org: str = "") -> None:
     from server.transport.mcp_call import _TOOLS_BY_NAME
     from server.transport.mcp_tools import emit_refusal
 
     op = _TOOLS_BY_NAME.get(str(tool_name or ""))
     if op is not None:
-        emit_refusal(op.name, code, auth)
+        emit_refusal(op.name, code, auth, org)
 
 
 async def _plane_namespace(tool_name: Any, auth: Any, ns: str) -> str | dict[str, Any] | None:
@@ -298,7 +298,9 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
         if not fixed:
             refusal = _not_accessible_result(tool_name, auth, req_ns)
         if refusal is not None:
-            _ledger_refusal(tool_name, str(refusal["structuredContent"]["code"]), auth)
+            # The org the token may act in, as HTTP records the same refusal.
+            code = str(refusal["structuredContent"]["code"])
+            _ledger_refusal(tool_name, code, auth, target_org)
             return _ok(req.get("id"), refusal)
         args["namespace"] = fixed
     # Readable: the op's own gate enforces the role it requires.
