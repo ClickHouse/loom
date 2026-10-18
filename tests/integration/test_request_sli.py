@@ -224,8 +224,10 @@ def test_each_row_is_folded_once_however_late_and_a_refresh_is_bounded(ch_client
 
         # Arrives now, past that mark, but its request ended 20 hours ago, in
         # the first row's minute.
+        # Stamped by ClickHouse's clock, which the mark is read against.
         time.sleep(2)
-        insert(now - timedelta(hours=20), datetime.now(UTC) - timedelta(seconds=70.5), "server")
+        server_now = ch_client.query("SELECT now64(3)").result_rows[0][0].replace(tzinfo=UTC)
+        insert(now - timedelta(hours=20), server_now - timedelta(seconds=70.5), "server")
         assert refresh() == (3, 2, 2)
         assert refresh() == (3, 2, 2)
     finally:

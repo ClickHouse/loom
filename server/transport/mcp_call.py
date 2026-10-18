@@ -25,7 +25,7 @@ from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
-from server.transport._common import bind_request, validation_note
+from server.transport._common import begin_call, bind_request, validation_note
 from server.transport._common import validation_errors as _validation_errors
 from server.transport.arg_feedback import feedback, refused_result, tool_error
 from server.transport.lean_results import lean_result
@@ -320,25 +320,6 @@ async def _call_tool(
     return await _success_response(
         call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint
     )
-
-
-def begin_call() -> None:
-    """Reset the request-scoped state a `tools/call` writes to."""
-    # Op-scoped cost accumulator so embedder / LLM spend during this call is
-    # attributed in agent_events (mirrors HTTP). _emit_mcp_event drains it.
-    from server.transport._common import begin_request
-
-    begin_request()  # + degradation notes and the work bag
-    # The ledger's `out_hint_code` and traffic class are this call's, as
-    # HTTP's `_begin_request` resets them: a batch runs its entries in one
-    # task, so the previous entry's would otherwise ride every later row.
-    from server.observability.ledger import set_hint_context
-    from server.observability.run_context import set_ledger_run
-    from server.observability.traffic_class import set_current_traffic_class
-
-    set_hint_context("")
-    set_current_traffic_class("")
-    set_ledger_run("")  # bound again once the call is admitted
 
 
 def _stamp_session_run(

@@ -599,8 +599,10 @@ def test_the_rollup_waits_longer_than_a_ledger_insert_may_run() -> None:
     from server.settings._clickhouse import ClickHouseSettings
 
     sql = (REPO_ROOT / "schemas" / "migrations" / "043_request_sli.sql").read_text()
-    margin = int(re.search(r"now64\(3\) - toIntervalSecond\((\d+)\)\) AS fold_to", sql).group(1))
-    assert margin == sli.FOLD_MARGIN_S
+    # Every wait in the view is the one margin.
+    waits = {int(n) for n in re.findall(r"now64\(3\) - toIntervalSecond\((\d+)\)", sql)}
+    assert waits == {sli.FOLD_MARGIN_S}
+    margin = sli.FOLD_MARGIN_S
     default = ClickHouseSettings.model_fields["ch_timeout_write_s"].default
     assert default < margin and _sli_problems(SimpleNamespace(ch_timeout_write_s=default)) == []
     for deadline in (0, margin, 300):

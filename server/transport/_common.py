@@ -106,6 +106,21 @@ def begin_request() -> RequestWork:
     return request_work.begin()
 
 
+def begin_call() -> None:
+    """`begin_request` for one MCP `tools/call`, and the request-scoped state
+    HTTP's `_begin_request` also resets: a batch runs its entries in one task,
+    so the previous entry's hint, traffic class and run would otherwise ride
+    every later row."""
+    from server.observability.ledger import set_hint_context
+    from server.observability.run_context import set_ledger_run
+    from server.observability.traffic_class import set_current_traffic_class
+
+    begin_request()
+    set_hint_context("")
+    set_current_traffic_class("")
+    set_ledger_run("")  # bound again once the call is admitted
+
+
 async def emit_budget_violation(
     *,
     op_name: str,

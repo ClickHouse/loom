@@ -6,8 +6,7 @@ the `search.query` op's result as the `loom_search` tool answers it (a text
 summary plus the lean sections), and writes a call's ledger row
 (`_emit_mcp_event`) or a refusal's before dispatch (`emit_refusal`, built in
 a copy of the request context from a reset state, so the caller's is left
-as it was). Imports ``mcp_call`` only inside `_emit_refusal`, and never
-``server.transport.mcp``.
+as it was). Never imports ``mcp_call`` or ``server.transport.mcp``.
 """
 
 from __future__ import annotations
@@ -461,8 +460,7 @@ def _emit_refusal(op_name: str, auth: Any, code: str, org: str, server_fault: bo
     from server.observability.consumer import bind_current_consumer
     from server.observability.ledger import emit_agent_event
     from server.observability.traffic_class import bind_claimed_class
-    from server.transport._common import sli_columns
-    from server.transport.mcp_call import begin_call
+    from server.transport._common import begin_call, sli_columns
 
     begin_call()
     bind_current_consumer(None, auth)

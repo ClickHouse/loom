@@ -4302,7 +4302,7 @@ AS WITH
         FROM loom.agent_events
         WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded)
     ) AS first_unfolded,
-    if(first_unfolded > folded, least(first_unfolded + toIntervalHour(1), now64(3) - toIntervalSecond(70)), now64(3) - toIntervalSecond(70)) AS fold_to
+    least(if(first_unfolded > folded, first_unfolded + toIntervalHour(1), now64(3)), now64(3) - toIntervalSecond(70)) AS fold_to
 SELECT
     toStartOfMinute(ts) AS minute,
     slo_class,
@@ -4338,7 +4338,7 @@ WITH
         FROM loom.agent_events
         WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded)
     ) AS first_unfolded,
-    if(first_unfolded > folded, least(first_unfolded + toIntervalHour(1), now64(3) - toIntervalSecond(70)), now64(3) - toIntervalSecond(70)) AS fold_to
+    least(if(first_unfolded > folded, first_unfolded + toIntervalHour(1), now64(3)), now64(3) - toIntervalSecond(70)) AS fold_to
 SELECT
     toStartOfDay(now()) AS minute,
     '' AS slo_class,
