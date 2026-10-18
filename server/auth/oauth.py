@@ -894,7 +894,7 @@ async def link_account(request: Request) -> Response:
     upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
     try:
         if proven is None:
-            response = await _without_the_password_account(email, sign_in, upstream)
+            response = await _declined_password_account(email, sign_in, upstream)
         else:
             response = await _link_proven(email, proven, f.get("password", ""), sign_in, upstream)
     except Exception as e:  # noqa: BLE001 — the ticket is spent: the person starts again
@@ -940,14 +940,14 @@ async def _link_proven(
     return await _signed_in_as(sign_in, resolved, upstream)
 
 
-async def _without_the_password_account(
+async def _declined_password_account(
     email: str, sign_in: dict[str, Any], upstream: str
 ) -> Response:
-    """Someone else registered the address with a password: the person goes on
-    to an account of their own (JIT), as if that one did not exist."""
+    """Someone else registered the address with a password. No second account
+    is made beside it: both would name the email, and every grant made to it
+    would reach both (`server.auth.aliases`). The person is sent to the
+    operator, who frees the address by releasing that account."""
     from server.auth import device, oidc
-    from server.auth.jit import jit_provision_for_email
-    from server.auth.login import SignInUnavailable
 
     # The signal an operator looks for when an address was squatted.
     await audit.emit(
@@ -957,18 +957,12 @@ async def _without_the_password_account(
         actor=email,
         subject={"namespaces": [a["namespace"] for a in await sso_links.unlinked_accounts(email)]},
     )
-    try:
-        identity = await jit_provision_for_email(email)
-    except SignInUnavailable:
-        await oidc.revoke(upstream)
-        return _sign_in_unavailable(_restart_url(sign_in))
-    if identity is None:
-        await _signin_denied(email, "no loom account for this email")
-        await oidc.revoke(upstream)
-        if sign_in["kind"] == "device":
-            await device.deny(sign_in["user_code"])
-        return _denied_page("no loom account for this email; ask your Loom operator for access")
-    return await _signed_in_as(sign_in, identity, upstream)
+    await oidc.revoke(upstream)
+    if sign_in["kind"] == "device":
+        await device.deny(sign_in["user_code"])
+    return _denied_page(
+        "another account uses this email; ask your Loom operator to release it, then sign in again"
+    )
 
 
 async def _connect_consent(

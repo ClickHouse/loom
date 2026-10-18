@@ -137,7 +137,7 @@ async def _swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -
         try:
             if old is None:
                 await ch.execute(
-                    f"INSERT INTO loom.oauth_signin_state (claim_key, value, expires_at) "
+                    "INSERT INTO loom.oauth_signin_state (claim_key, value, expires_at) "
                     f"SETTINGS keeper_map_strict_mode = 1, {_BOUNDED} "
                     "VALUES ({k:String}, {v:String}, {e:UInt32})",
                     params=params,

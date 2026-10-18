@@ -27,7 +27,7 @@ import pytest
 from server.auth import authz
 from server.auth.directory import ClassificationUnavailable
 from server.auth.jwt import AuthInfo
-from server.auth.personal_namespace import derive_personal_slug
+from server.auth.personal_namespace import derive_personal_slug, personal_candidates
 from server.operations.base import Role
 
 ORG = "o"
@@ -39,6 +39,8 @@ CODE = {
 }
 PERSON, BOT, OTHER = "carol", "sa:bot", "dave"
 SLUG = derive_personal_slug(PERSON)
+# The name provisioning takes when someone else owns SLUG.
+FALLBACK = personal_candidates(PERSON)[1]
 NAMESPACES = ("carol", "team", "docs", "secret", "board", "qa-plane", SLUG, *CODE)
 CASES = 5000
 SEED = 119
@@ -239,14 +241,24 @@ async def _admits(token: AuthInfo, role: Role, namespace: str) -> bool:
     return True
 
 
-def _provision(token: AuthInfo) -> None:
-    """What `gates.authorize` does before the gate: a person of this org with
-    no live grant, under any spelling, is given the personal namespace when
-    nobody owns it yet (`ensure_personal_namespace_cached`)."""
+def _provisioned(token: AuthInfo) -> str:
+    """What `gates.authorize` gives before the gate: a person of this org with
+    no live grant, under any spelling, gets the personal namespace when nobody
+    owns it yet, else its fallback name when someone else does
+    (`ensure_personal_namespace_cached`); "" otherwise."""
     live = any(r > 0 for (s, _ns), r in WORLD.grants.items() if _same(s, token.subject))
-    if not token.is_service_account and token.org == ORG and not live and not WORLD.owner:
-        WORLD.grants[(token.subject, SLUG)] = 3
-        WORLD.owner = PERSON
+    if token.is_service_account or token.org != ORG or live:
+        return ""
+    if not WORLD.owner:
+        return SLUG
+    return FALLBACK if WORLD.owner == OTHER and token.subject == PERSON else ""
+
+
+def _provision(token: AuthInfo) -> None:
+    name = _provisioned(token)
+    if name:
+        WORLD.grants[(token.subject, name)] = 3
+        WORLD.owner = WORLD.owner or PERSON
 
 
 def _owner_first(names: list[str], subject: str) -> list[str]:
@@ -269,7 +281,7 @@ def _candidates(token: AuthInfo) -> tuple[list[str], list[str]]:
         reach = sorted(ns for ns in NAMESPACES if (_rank(PERSON, ns) or 0) > 0)
         fallback = named + (reach if "*" in token.namespaces else [])
     else:
-        fallback = [derive_personal_slug(token.subject)]
+        fallback = [_provisioned(token) or derive_personal_slug(token.subject)]
     saved = WORLD.saved if home == PERSON else ""
     early = [saved, *_owner_first(named, home)]
     late = _owner_first(ranked, home) + fallback
@@ -442,6 +454,8 @@ def test_a_revoked_personal_namespace_is_not_the_default(_fakes: None) -> None:
     assert _case(World(grants={(PERSON, SLUG): 0}), _person()) == (SLUG, [])
 
 
-def test_a_personal_namespace_someone_else_owns_is_not_the_default(_fakes: None) -> None:
-    assert _case(World(owner=OTHER), _person()) == ("", [])
+def test_a_personal_namespace_someone_else_owns_gives_way_to_the_fallback_name(
+    _fakes: None,
+) -> None:
+    assert _case(World(owner=OTHER), _person()) == (FALLBACK, [])
     assert _case(World(), _person()) == (SLUG, [])

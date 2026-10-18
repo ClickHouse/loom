@@ -205,7 +205,7 @@ async def _gate_view(
 
         return _anything, [derive_personal_slug(home)]
     if not auth.creator:
-        return gate.admits, [derive_personal_slug(auth.subject)]
+        return gate.admits, [gate.provisioned or derive_personal_slug(auth.subject)]
     writable, readable = await delegated_reach(auth, org, gate)
 
     async def _reached(ns: str, role: Role) -> bool:
@@ -217,8 +217,9 @@ async def _gate_view(
 async def _provisioned(auth: Any, org: str) -> str:
     """The personal namespace `gates.authorize` gives this person, with an
     admin grant, before the gate runs (`ensure_personal_namespace_cached`):
-    a person of this org with no live grant, while nobody owns the name (a
-    person whose own grant there was revoked owns it, and is given nothing),
+    a person of this org with no live grant gets the first of its names
+    nobody owns (`personal_candidates`; a person who owns one, their grant
+    there revoked, is given nothing),
     and only while this process has not already resolved the person, which it
     does once (`provisioning_pending`); "" otherwise. A delegated token counts
     it only when its creator is that person, whose grants the gate reads."""
@@ -226,7 +227,11 @@ async def _provisioned(auth: Any, org: str) -> str:
         return ""
     if auth.creator and auth.creator.lower() != auth.subject.lower():
         return ""
-    from server.auth.personal_namespace import namespace_owner, provisioning_pending
+    from server.auth.personal_namespace import (
+        namespace_owner,
+        personal_candidates,
+        provisioning_pending,
+    )
     from server.core.ch import get_client
     from server.core.grant_cache import grant_map
 
@@ -234,8 +239,13 @@ async def _provisioned(auth: Any, org: str) -> str:
         return ""
     if any((await grant_map(org, auth.subject)).ranks.values()):
         return ""
-    slug = derive_personal_slug(auth.subject)
-    return "" if await namespace_owner(get_client(), org, slug) is not None else slug
+    for name in personal_candidates(auth.subject):
+        owner = await namespace_owner(get_client(), org, name)
+        if owner is None:
+            return name
+        if owner == auth.subject:
+            return ""  # theirs, with the grant revoked: nothing is given
+    return ""
 
 
 __all__ = [

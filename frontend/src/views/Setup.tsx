@@ -430,7 +430,7 @@ function TokensSection({
   const [mcpResult, setMcpResult] = useState<{
     token: string;
     mcpUrl: string;
-    namespace?: string;
+    namespace?: string | null;
     restricted?: string[];
     /** The namespace the mint named ("" for the `*` default). */
     named?: string;
@@ -1092,7 +1092,9 @@ function TokensSection({
             text="This is the only time the token is shown. The same token works in every client — switch clients below to copy each one's config block, then paste into each client's MCP config file and restart."
           />
           <div className="text-xs text-text-muted" data-testid="minted-token-scope">
-            {mcpResult?.namespace === "" ? (
+            {mcpResult?.namespace === null ? (
+              <>Its default namespace could not be read now; each call resolves it</>
+            ) : mcpResult?.namespace === "" ? (
               <>Has no default namespace{mustName(mcpResult)}</>
             ) : (
               <>
@@ -1431,7 +1433,7 @@ function Field({ hint, children }: { hint: string; children: (hintId: string) =>
 
 type MintedScope = {
   named?: string;
-  namespace?: string;
+  namespace?: string | null;
   restricted?: string[];
   claim?: string[];
   readScope?: "inherited_grants" | "named_namespaces";

@@ -50,7 +50,7 @@ async def _accounts_naming(org: str, ident: str) -> list[dict[str, Any]]:
             SELECT namespace, toString(owner_email) AS owner, active, tags,
                    password_hash = '' AS sso
             FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND contact_email = {ident:String}
+            WHERE org = {org:String} AND lower(contact_email) = {ident:String}
             """,
             params={"org": org, "ident": ident},
         )
@@ -176,6 +176,12 @@ async def _provision_jit(org: str, ident: str, base: str) -> login.Identity | No
     # (self-signup never verified the address), so it is not theirs here.
     if any(a["active"] and a["sso"] for a in accounts):
         return await _resolve_as_written(ident)  # their account, whatever its name
+    # Nor is it someone else's to sit beside: two active accounts naming one
+    # email tie both to every grant made to it (`server.auth.aliases`). The
+    # address is freed by releasing that account (`loom claim-release`).
+    if any(a["active"] for a in accounts):
+        log.info("oidc jit: a password account names %r in %s; not provisioning", ident, org)
+        return None
     # Any account naming the email counts, a password one too: its owner may
     # be the person offboarded. A squatter's is released (`loom claim-release`
     # clears its email), not revoked, to free the address.

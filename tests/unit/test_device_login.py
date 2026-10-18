@@ -637,22 +637,19 @@ def test_sso_reaches_a_password_account_once_its_password_is_proven(
     assert "auth.sso_linked" in [n for n, _ in _world["events"]]
 
 
-def test_someone_elses_password_account_does_not_lock_the_owner_out(
-    bobs_password_account, monkeypatch
+def test_declining_someone_elses_password_account_makes_no_second_one(
+    bobs_password_account, _world
 ) -> None:
-    # Whoever registered bob's address with a password is not bob: he can go
-    # on without it, to an account of his own.
-    own = ("u-bob-1a2b3c4d", "acme", ["u-bob-1a2b3c4d"], ["writer"])
-
-    async def jit_account(email: str) -> Any:
-        return own
-
-    monkeypatch.setattr(jit, "jit_provision_for_email", jit_account)
+    # Whoever registered bob's address with a password is not bob, but an
+    # account of bob's own beside it would name the same email, and every grant
+    # made to that email would reach both: he is sent to the operator instead
+    # (the fixture's JIT raises if it runs).
     c = _client()
     page = _sso_round_trip(c, _start(c)["user_code"])
     r = c.post("/oauth/link", data={"ticket": _ticket(page.text), "decision": "not_mine"})
-    assert r.status_code == 200 and "u-bob-1a2b3c4d" in r.text
+    assert r.status_code == 403 and "release it" in r.text
     assert not bobs_password_account  # nothing linked
+    assert "auth.sso_link_declined" in [n for n, _ in _world["events"]]
 
 
 def test_linked_accounts_that_disagree_make_no_new_one(sso, monkeypatch) -> None:

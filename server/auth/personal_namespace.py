@@ -46,6 +46,14 @@ def derive_personal_slug(sub: str) -> str:
     return f"personal-{slug}"
 
 
+def personal_candidates(sub: str) -> list[str]:
+    """The names `ensure_personal_namespace` tries for `sub`, in order."""
+    base = derive_personal_slug(sub)
+    if sub.startswith("personal-"):
+        return [base]
+    return [base, f"{base}-{hashlib.sha1(sub.encode('utf-8')).hexdigest()[:6]}"]
+
+
 async def ensure_personal_namespace(
     ch: Any,
     org: str,
@@ -63,15 +71,9 @@ async def ensure_personal_namespace(
     candidate is owned by someone else. Raises PersonalNamespaceBusy while
     another process holds a candidate's claim.
     """
-    base = derive_personal_slug(sub)
-    candidates = [base]
-    if not sub.startswith("personal-"):
-        sub_hash = hashlib.sha1(sub.encode("utf-8")).hexdigest()[:6]
-        candidates.append(f"{base}-{sub_hash}")
-
     from server.core import leases
 
-    for cand in candidates:
+    for cand in personal_candidates(sub):
         # One claimant per name across replicas; while another holds it (likely
         # this subject's own concurrent first request) nothing is decided here.
         async with leases.holding(f"personal-ns:{org}:{cand}", ttl_s=CLAIM_TTL_S, ch=ch) as held:

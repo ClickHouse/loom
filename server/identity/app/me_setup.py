@@ -345,11 +345,12 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     # transport's own resolver, asked about the token just minted.
     token = delegated.as_auth(sa_subject)
     try:
-        displayed_namespace = await default_namespace(token, caller_org(token) or org)
+        displayed_namespace: str | None = await default_namespace(token, caller_org(token) or org)
     except BackendUnavailableError:
         # The token is already minted and listed: hand it over without a name
-        # rather than fail, or a retry would mint a second one.
-        displayed_namespace = ""
+        # rather than fail, or a retry would mint a second one. None (not "",
+        # which means it has no default): each call resolves it.
+        displayed_namespace = None
 
     # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.
     from server.auth.public_url import public_base_url
@@ -382,6 +383,6 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         "mcp_url": mcp_url,
         "sa_subject": sa_subject,
         "expires_at": expires_at.isoformat() if expires_at else None,
-        # Retired: every token is saved now.
+        # `persist` is ignored: every Setup token is saved and listed.
         **({"ignored_args": ["persist"]} if "persist" in payload else {}),
     }

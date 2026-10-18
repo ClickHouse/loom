@@ -122,6 +122,23 @@ async def test_every_token_is_saved_under_its_own_subject(
 
 
 @pytest.mark.asyncio
+async def test_an_unreadable_default_still_hands_over_the_saved_token(
+    monkeypatch: pytest.MonkeyPatch, grants: dict
+) -> None:
+    # The token is minted and listed before its default is asked: a 503 then
+    # would leave it unseen and a retry would mint another.
+    from server.core.errors import BackendUnavailableError
+
+    async def unreadable(auth: Any, org: str) -> str:
+        raise BackendUnavailableError("grants could not be read")
+
+    monkeypatch.setattr(me, "default_namespace", unreadable)
+    out = await _setup(monkeypatch, _caller(), {})
+    assert out["namespace"] is None and len(saved) == 1
+    assert verify_token(out["token"]).subject == saved[0]["sa_subject"]
+
+
+@pytest.mark.asyncio
 async def test_a_service_account_mints_a_saved_service_account_token(
     monkeypatch: pytest.MonkeyPatch, grants: dict
 ) -> None:

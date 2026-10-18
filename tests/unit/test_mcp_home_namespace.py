@@ -158,6 +158,20 @@ def test_a_person_without_grants_defaults_to_the_personal_namespace_the_gate_pro
     assert ns == "personal-viewer" and home.is_memory_home(KINDS, ns)
 
 
+def test_a_person_whose_personal_name_is_taken_defaults_to_the_fallback_name(_wired) -> None:
+    from server.auth.personal_namespace import personal_candidates
+
+    class _Taken(_CH):
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            if "owner_email" in sql and (params or {}).get("ns") == "personal-viewer":
+                return {"owner": "viewer@other.example"}
+            return await super().query_one(sql, params)
+
+    _wired(_Taken(saved=None, grants=[]))
+    ns = _defaults(_Auth("viewer@example.com", ("code-loom",)))["namespace"]
+    assert ns == personal_candidates("viewer@example.com")[1] != "personal-viewer"
+
+
 def test_a_person_this_process_already_resolved_is_not_provisioned_again(
     _wired, monkeypatch: pytest.MonkeyPatch
 ) -> None:

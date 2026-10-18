@@ -158,7 +158,9 @@ export interface McpConfigResponse {
   token: string;
   subject: string;
   org: string;
-  namespace: string;
+  /** Where unaddressed calls land; "" when none does, null when it could not be read
+   * at mint time (each call resolves it). */
+  namespace: string | null;
   namespace_scope: "all" | "single";
   /** How reads are scoped. `inherited_grants`: the token reads every
    * namespace its creator holds a grant on, now and later. `named_namespaces`: only the
