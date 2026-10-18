@@ -10,9 +10,8 @@ from datetime import datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.core.tag_sql import tag_filter
+from server.core.tag_sql import TagMatch, tag_filter
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
-from server.memory.domain.search_sql import tag_predicate
 from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
@@ -633,8 +632,7 @@ async def list_by_namespace(
     key_prefix: str | None = None,
     source_trace: str | None = None,
     tags: Sequence[str] | None = None,
-    tags_all: bool = False,
-    exact_tags: bool = False,
+    tag_match: TagMatch = "any",
     contains: str | None = None,
     order_by: str = "created_at_desc",
     limit: int = 200,
@@ -654,8 +652,8 @@ async def list_by_namespace(
       - memory_type: exact match (e.g. "preference", "procedural")
       - pinned_only: only rows where pinned=1
       - key_prefix:  startsWith(memory_key, prefix) — for hierarchical key spaces
-      - tags:        any one (every one with tags_all), in any case; with exact_tags
-                     any one exactly, as memory.search matches
+      - tags:        matched as `tag_match` says: any one or every one in any case,
+                     or any one exactly as memory.search matches
       - contains:    case-insensitive substring of the value or the key — the
                      keyword filter a browse page's search box applies
 
@@ -709,11 +707,8 @@ async def list_by_namespace(
     if source_trace is not None:
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
-    if tags and exact_tags:
-        where.append(tag_predicate(alias=""))
-        params["tags"] = [str(t) for t in tags]
-    elif tags:
-        where.append(tag_filter(tags, params, every=tags_all))
+    if tags:
+        where.append(tag_filter(tags, params, match=tag_match))
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains
@@ -838,7 +833,7 @@ async def count_by_namespace(
     key_prefix: str | None = None,
     source_trace: str | None = None,
     tags: Sequence[str] | None = None,
-    tags_all: bool = False,
+    tag_match: TagMatch = "any",
     contains: str | None = None,
     include_tombstoned: bool = False,
     as_of: datetime | None = None,
@@ -884,7 +879,7 @@ async def count_by_namespace(
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
     if tags:
-        where.append(tag_filter(tags, params, every=tags_all))
+        where.append(tag_filter(tags, params, match=tag_match))
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains

@@ -323,13 +323,13 @@ async def test_tiers_pass_the_hard_filter_only_when_set(monkeypatch: pytest.Monk
     assert "tags" not in calls[-1]
     await _prepend_recent([], SimpleNamespace(recent_first=1, tags=["x"], tags_soft=False, **base))
     # memory.search's exact match, not memory.list's any-case one.
-    assert calls[-1]["tags"] == ["x"] and calls[-1]["exact_tags"] is True
+    assert calls[-1]["tags"] == ["x"] and calls[-1]["tag_match"] == "exact"
     await _prepend_anchor([], SimpleNamespace(anchor_first=1, tags=["x"], tags_soft=True, **base))
     assert "tags" not in calls[-1]
 
 
 @pytest.mark.asyncio
-async def test_exact_tags_reads_the_search_predicate() -> None:
+async def test_exact_tag_match_reads_the_search_predicate() -> None:
     """The tiers are memory.search rows: their store read carries the exact predicate every
     search leg carries, not memory.list's lowercased one."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -344,7 +344,7 @@ async def test_exact_tags_reads_the_search_predicate() -> None:
 
     ident = repo.Identity(org="o", namespace="ns", agent="*")
     await repo.list_by_namespace(
-        ident, scope=WHOLE_NAMESPACE, tags=["API"], exact_tags=True, ch=_CH()
+        ident, scope=WHOLE_NAMESPACE, tags=["API"], tag_match="exact", ch=_CH()
     )
     sql, params = seen[-1]
     assert "hasAny(tags, {tags:Array(String)})" in sql

@@ -241,8 +241,8 @@ async def list_runs(
     where: list[str],
     params: dict[str, Any],
     limit: int,
-    offset: int = 0,
-    order_by: str = "started_desc",
+    offset: int,
+    order_by: str,
 ) -> list[RunLedgerRow]:
     """One page of the namespace's runs matching the extra `where` fragments, in
     `order_by` order (a key of LIST_ORDERS), `offset` runs in."""

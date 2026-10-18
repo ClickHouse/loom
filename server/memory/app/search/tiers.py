@@ -46,7 +46,7 @@ def _tier_tag_kwargs(input: Any) -> dict[str, Any]:
     """`tags=` for the tier reads only when the request carries a hard filter, so an untagged
     request issues an untagged call; they match exactly, as every memory.search leg does."""
     hard_tags = _request_hard_tags(input)
-    return {"tags": hard_tags, "exact_tags": True} if hard_tags else {}
+    return {"tags": hard_tags, "tag_match": "exact"} if hard_tags else {}
 
 
 # tier -> the order its rows are read in: the anchor is what a task set out to do (its oldest

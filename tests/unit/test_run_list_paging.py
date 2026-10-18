@@ -186,7 +186,7 @@ def test_store_refuses_an_unknown_order() -> None:
     with pytest.raises(KeyError):
         asyncio.run(
             runs_store.list_runs(
-                StubCH(), "o", "n", where=[], params={}, limit=1, order_by="goal_asc"
+                StubCH(), "o", "n", where=[], params={}, limit=1, offset=0, order_by="goal_asc"
             )
         )
 

@@ -340,14 +340,8 @@ class RunClient:
         `grade="ungraded"` the closed runs still owed a verdict (`"graded"`,
         `"pass"`, `"fail"` also work). Filters apply before `limit`.
 
-        Paging: `offset` skips that many runs; `order_by` is `started_desc`
-        (the default), `started_asc`, `duration_desc` / `_asc` or
-        `relied_on_desc` / `_asc`; `q` keeps runs whose goal, run id or agent
-        holds the text, any case. The answer's `total` counts every run the
-        filters match on the first page, the last page and a page past the end,
-        and is None on a full page after the first (keep the first page's); a
-        server a release behind sends none and ignores these three, so each is
-        sent only when set."""
+        `offset`, `order_by` and `q` are sent only when set; `total` is None on a
+        full page after the first."""
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,

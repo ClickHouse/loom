@@ -259,10 +259,31 @@ async def test_a_second_peer_is_resolved_after_the_first_made_the_target_active(
     assert table.tombstoned == [P_OWN, P_OWN2]
 
 
-async def test_a_resolved_target_with_no_named_peer_is_not_decided_again(
+async def test_a_resolved_target_with_no_named_peer_decides_the_peers_still_open(
     table: _Table, admin_of_a: None
 ) -> None:
     assert (await _resolve(T_OWN, "revise", peer_id=P_OWN)).resolved is True
+    out = await _resolve(T_OWN, "revise")
+    assert out.resolved is True and out.affected_memory_ids == [P_OWN2, T_OWN]
+    assert table.tombstoned == [P_OWN, P_OWN2]
+
+
+async def test_a_resolved_target_with_no_open_peer_is_not_decided_again(
+    table: _Table, admin_of_a: None
+) -> None:
+    assert (await _resolve(T_OWN, "allow")).resolved is True
+    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
     out = await _resolve(T_OWN, "contract")
     assert out.resolved is False and out.affected_memory_ids == []
-    assert table.tombstoned == [P_OWN]
+    assert (table.tombstoned, table.activated, table.allowlisted) == written
+
+
+async def test_a_stale_second_click_on_the_same_pair_writes_nothing(
+    table: _Table, admin_of_a: None
+) -> None:
+    assert (await _resolve(T_OWN, "allow", peer_id=P_OWN)).resolved is True
+    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
+    # The queue still shows the pair: the second click must not tombstone what the allow kept.
+    out = await _resolve(T_OWN, "revise", peer_id=P_OWN)
+    assert out.resolved is False and out.affected_memory_ids == []
+    assert (table.tombstoned, table.activated, table.allowlisted) == written
