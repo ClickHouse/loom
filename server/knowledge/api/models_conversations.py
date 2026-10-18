@@ -337,7 +337,8 @@ class ConversationCompactInput(BaseModel):
     agent: str
     # The thread to compact.
     thread_id: str
-    # The newest this many messages stay verbatim; everything older is summarized.
+    # The newest this many messages stay verbatim; older ones are summarized, as many
+    # as fit the summarizer's prompt.
     keep_recent: int = Field(default=10, ge=1, le=200)
     # Skip when fewer new turns than this precede the last keep_recent; an earlier
     # summary does not count.

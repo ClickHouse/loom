@@ -736,13 +736,8 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="below-min-to-compact",
         )
 
-    # The summary replaces exactly the messages the summarizer read: the window
-    # is cut to the oldest messages whose lines fit the prompt, and the rest stay
-    # verbatim for the next run (a message past the cap was never summarized, so
-    # tombstoning it would drop it).
-    # An earlier summary is folded in without spending the budget, and the window
-    # always reaches the first new turn: a large turn behind a summary would otherwise
-    # leave a window of the summary alone, compacted again on every run.
+    # The window is the oldest turns whose lines fit the prompt; a turn past the cap stays live.
+    # An earlier summary costs no budget, and the window always reaches the first new turn.
     lines = [f"{r['role']}: {r['content']}" for r in candidates]
     fit = _fitting_prefix(
         ["" if f else line for line, f in zip(lines, folded, strict=True)],

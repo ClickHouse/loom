@@ -48,7 +48,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `thread_id` | `str` | required | The thread to compact. |
-| `keep_recent` | `int` | `10` | The newest this many messages stay verbatim; everything older is summarized. |
+| `keep_recent` | `int` | `10` | The newest this many messages stay verbatim; older ones are summarized, as many as fit the summarizer's prompt. |
 | `min_to_compact` | `int` | `4` | Skip when fewer new turns than this precede the last keep_recent; an earlier summary does not count. |
 
 | Output field | Type | Meaning |
