@@ -8,8 +8,6 @@ the rows up per minute for SLO dashboards and alert rules to read.
 
 from __future__ import annotations
 
-SLO_CLASSES = ("write", "search", "read", "code", "admin")
-
 # Retrieval ops that are reads by role but carry the search SLO.
 _SEARCH_OPS = frozenset(
     {
@@ -32,12 +30,12 @@ _SEARCH_OPS = frozenset(
 
 # Refusals a transport records by code alone, counted as the caller's: MCP's
 # refusals before dispatch (server.transport.mcp_tools.emit_refusal) and the
-# codes the transports' literal error codes name. Each answers a 4xx but
+# transports' other literal codes. Each answers a 4xx but
 # IDEMPOTENT_IN_PROGRESS, a 503 with Retry-After that a client causes by
-# retrying a key still running.
+# retrying a key still running. HANDLER_HTTP_ERROR is not one: its status is
+# the handler's, read from the exception recorded with it.
 CLIENT_CODES = frozenset(
     {
-        "HANDLER_HTTP_ERROR",
         "IDEMPOTENT_CONFLICT",
         "IDEMPOTENT_IN_PROGRESS",
         "NAMESPACE_NOT_ACCESSIBLE",

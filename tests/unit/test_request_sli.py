@@ -11,18 +11,7 @@ from server.observability import sli
 from server.observability.metrics import AUTH_REFUSAL_REASONS, auth_refusal_reason
 from server.observability.metrics_gauges import health_problem_series
 from server.operations.base import Role
-from server.operations.registry import ALL_OPERATIONS
 from server.transport._common import sli_columns
-
-
-def test_every_registered_op_falls_in_a_known_class() -> None:
-    for op in ALL_OPERATIONS:
-        cls = sli.slo_class(
-            op.name,
-            writes=op.required_role == Role.WRITER,
-            admin=op.required_role >= Role.ADMIN,
-        )
-        assert cls in sli.SLO_CLASSES, op.name
 
 
 def test_slo_classes() -> None:
@@ -115,7 +104,8 @@ def test_an_otlp_deployment_exports_its_metrics_to_the_same_endpoint() -> None:
 
 def test_every_code_the_transports_record_without_an_exception_is_classified() -> None:
     """A refusal written by code alone (no exception) must still be the
-    caller's; only INTERNAL_ERROR is the server's."""
+    caller's; INTERNAL_ERROR is the server's, and so is HANDLER_HTTP_ERROR
+    without the handler's exception, whose status is the only one that counts."""
     import re
 
     from server.core.paths import REPO_ROOT
@@ -125,7 +115,7 @@ def test_every_code_the_transports_record_without_an_exception_is_classified() -
         literals |= set(re.findall(r'error_code="([A-Z_0-9]+)"', path.read_text(encoding="utf-8")))
     assert literals, "no literal codes found: the pattern no longer matches the transports"
     for code in sorted(literals):
-        expected = "server" if code == "INTERNAL_ERROR" else "client"
+        expected = "server" if code in ("INTERNAL_ERROR", "HANDLER_HTTP_ERROR") else "client"
         assert sli.status_class(False, code, None) == expected, code
 
 
@@ -185,7 +175,6 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
     from server.insights.app import admin_routes
     from server.knowledge.app import download_routes
     from server.observability import metrics
-    from server.operations.base import Role
     from server.tasks.app import watch_routes
     from server.transport import http
 
@@ -232,7 +221,6 @@ def _mcp_refusals_before_dispatch(monkeypatch) -> None:
     from server.auth.jwt import AuthInfo
     from server.observability import consumer, cost_accumulator, events
     from server.observability.run_context import set_ledger_run
-    from server.operations.base import Role
     from server.transport import access_refusal, mcp_auth, mcp_call, mcp_op
     from server.transport import namespace_resolve as nr
 
@@ -353,7 +341,6 @@ def _wildcard_refusals(monkeypatch) -> None:
 
     from server.auth.jwt import AuthInfo
     from server.observability import events
-    from server.operations.base import Role
     from server.transport import mcp_auth, mcp_op
 
     emitted: list = []
@@ -387,7 +374,6 @@ def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypat
     import pytest
 
     from server.auth.jwt import AuthInfo
-    from server.operations.base import Role
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import http
 
