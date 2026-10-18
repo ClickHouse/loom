@@ -20,13 +20,19 @@ from typing import Any
 
 import pytest
 
-from server.auth import authz, context
+from server.auth import aliases, authz, context
 from server.auth.jwt import AuthInfo
 from server.operations.base import Role
 
 ROOT = Path(__file__).resolve().parents[2]
 CLICKHOUSE = shutil.which("clickhouse")
-pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+# The fixture below stubs the alias lookup; one test reads the real one.
+_REAL_ALIASES = aliases.subject_aliases
+# `claim_cap`: the gate reads the real grant rows through the grant cache.
+pytestmark = [
+    pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed"),
+    pytest.mark.claim_cap,
+]
 
 _ROWS = """INSERT INTO loom.namespace_grants
 (org, namespace, subject, role, granted_by, revoked_at, version, status) VALUES
@@ -36,18 +42,24 @@ _ROWS = """INSERT INTO loom.namespace_grants
 ('o', 'gone',   'eve',    'writer', 'op',  '2026-01-01 00:00:00', 2, 'active'),
 ('o', 'theirs', 'carol',  'writer', 'op',  NULL, 1, 'active'),
 ('o', 'asked',  'carol',  'writer', 'carol', NULL, 1, 'pending'),
-('o', 'asked',  'mallory', 'admin', 'mallory', NULL, 1, 'pending')"""
+('o', 'asked',  'mallory', 'admin', 'mallory', NULL, 1, 'pending'),
+('o', 'team',   'Dave',   'writer', 'op',  NULL, 1, 'active'),
+('o', 'mailed', 'f@x.com', 'writer', 'op', NULL, 1, 'active');
+INSERT INTO loom.namespaces (org, namespace, owner_email, contact_email) VALUES
+('o', 'home-frank', 'frank', 'f@x.com')"""
 
 
-def _ddl() -> str:
+def _ddl(table: str) -> str:
     schema = (ROOT / "schemas" / "schema.sql").read_text()
-    body = schema.split("CREATE TABLE IF NOT EXISTS loom.namespace_grants\n", 1)[1]
-    return "CREATE TABLE loom.namespace_grants\n" + body.split(";", 1)[0]
+    body = schema.split(f"CREATE TABLE IF NOT EXISTS loom.{table}\n", 1)[1]
+    return f"CREATE TABLE loom.{table}\n" + body.split(";", 1)[0]
 
 
 def _render(sql: str, params: dict[str, Any]) -> str:
     def lit(m: re.Match[str]) -> str:
         v = params[m.group(1)]
+        if isinstance(v, bool):
+            return "true" if v else "false"
         return "[" + ",".join(f"'{x}'" for x in v) + "]" if isinstance(v, list) else f"'{v}'"
 
     return re.sub(r"\{(\w+):[^}]+\}", lit, sql)
@@ -60,7 +72,10 @@ class _LocalCH:
         script = ";\n".join(
             [
                 "CREATE DATABASE loom",
-                _ddl(),
+                _ddl("namespace_grants"),
+                # Each namespace's classification and the accounts that tie a
+                # person's spellings.
+                _ddl("namespaces"),
                 _ROWS,
                 _render(sql, params or {}) + " FORMAT JSONEachRow",
             ]
@@ -95,11 +110,7 @@ def _local(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     async def aliases(org: str, subject: str, **_: Any) -> list[str]:
         return [subject]
 
-    async def nothing_restricted(org: str, namespaces: list[str]) -> list[str]:
-        return namespaces
-
     monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
-    monkeypatch.setattr(context, "_without_unreadable_restricted", nothing_restricted)
     yield
     context.set_current_auth(None)
 
@@ -126,6 +137,22 @@ def test_the_gate_and_the_list_agree() -> None:
         if asyncio.run(authz.grant_role_for("o", ns, "eve")) is not None
     }
     assert listed == granted
+
+
+def test_a_grant_under_another_case_is_listed_and_admitted() -> None:
+    _as("dave")
+    assert asyncio.run(context.resolve_my_namespaces("o")) == ["team"]
+    assert asyncio.run(authz.grant_role_for("o", "team", "dave")) is not None
+
+
+def test_an_alias_owner_in_another_case_reaches_the_grant_under_its_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    aliases._CACHE.clear()
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _REAL_ALIASES)
+    _as("Frank")
+    assert asyncio.run(context.resolve_my_namespaces("o")) == ["mailed"]
+    assert asyncio.run(authz.grant_role_for("o", "mailed", "Frank")) is not None
 
 
 def test_a_service_account_inherits_only_its_creators_live_grants(

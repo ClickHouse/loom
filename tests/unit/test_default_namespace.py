@@ -431,12 +431,24 @@ async def test_mcp_defaults_claimed_namespace_still_wins(  # type: ignore[no-unt
 ) -> None:
     """A Setup-tab service-account token minted for a specific namespace keeps
     targeting it even in single-user mode."""
-    from types import SimpleNamespace
-
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
     from server.settings import settings
     from server.transport.mcp_identity import _caller_defaults
 
-    auth = SimpleNamespace(subject="svc@local", org="dev", namespaces=["minted-ns"], issued_at=None)
+    async def _none_restricted(org: str) -> frozenset[str]:
+        return frozenset()
+
+    monkeypatch.setattr(
+        "server.identity.app.namespace_classification.restricted_set", _none_restricted
+    )
+    auth = AuthInfo(
+        subject="sa:svc",
+        org="dev",
+        namespaces=("minted-ns",),
+        roles=(Role.WRITER,),
+        is_service_account=True,
+    )
     with (
         patch.object(settings, "auth_required", False),
         patch.object(settings, "identity_provider", ""),

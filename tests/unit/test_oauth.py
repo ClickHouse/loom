@@ -11,42 +11,18 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
+import secrets
 import time
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.auth import login, oauth
-from tests.unit.oauth_store_fake import MemoryOAuthStore
+from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
-pytestmark = pytest.mark.usefixtures("subjects_not_revoked", "keeper")
-
-
-@pytest.fixture
-def keeper(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Claims held in process memory; returns the names released."""
-    from server.core import leases
-    from tests.unit.claims_fake import MemoryClaims
-
-    claims = MemoryClaims()
-    released: list[str] = []
-
-    async def _take(name: str, **kw: Any) -> Any:
-        lease = await claims.take(name, **kw)
-        if lease is not None:
-            inner = lease.release
-
-            async def _release() -> None:
-                released.append(name)
-                await inner()
-
-            lease.release = _release
-        return lease
-
-    monkeypatch.setattr(leases, "take", _take)
-    return released
+pytestmark = pytest.mark.usefixtures("subjects_not_revoked", "auth_attempts")
 
 
 def _revoke_subject(monkeypatch: pytest.MonkeyPatch, cutoff: int | None) -> None:
@@ -72,7 +48,7 @@ def _mem_store(monkeypatch):
     unit tests). The router reads the module global per call, so this applies.
     A refresh re-checks the account in CH; here it is active and keeps its
     roles unless a test says otherwise."""
-    monkeypatch.setattr(oauth, "_store", MemoryOAuthStore())
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
 
     async def active(subject: str, org: str, roles: list[str]) -> list[str]:
         return roles
@@ -81,8 +57,7 @@ def _mem_store(monkeypatch):
 
 
 def _client() -> TestClient:
-    app = FastAPI()
-    app.include_router(oauth.router)
+    app = oauth_app()
     return TestClient(app)
 
 
@@ -95,7 +70,18 @@ def test_verify_pkce_s256() -> None:
     assert oauth.verify_pkce_s256(v, "") is False
 
 
-def test_discovery_metadata_shape() -> None:
+def test_sign_in_metadata_without_mcp_connect(monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "oauth_enabled", False)
+    md = oauth.authorization_server_metadata("https://loom.example")
+    assert md["device_authorization_endpoint"] == "https://loom.example/oauth/device_authorization"
+    assert md["revocation_endpoint"] == "https://loom.example/oauth/revoke"
+    assert "authorization_endpoint" not in md
+    assert "registration_endpoint" not in md
+    assert "authorization_code" not in md["grant_types_supported"]
+
+
+def test_discovery_metadata_shape(monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "oauth_enabled", True)
     md = oauth.authorization_server_metadata("https://loom.example")
     assert md["issuer"] == "https://loom.example"
     assert md["authorization_endpoint"].endswith("/oauth/authorize")
@@ -135,7 +121,7 @@ def _seed_code(
 ) -> tuple[str, str]:
     """Seed an authorized code (as if consent succeeded). Returns (code, verifier)."""
     verifier = "verifier-" + base64.urlsafe_b64encode(b"x" * 24).decode()
-    code = "test-code-123"
+    code = f"test-code-{secrets.token_hex(4)}"
     grant = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -145,8 +131,11 @@ def _seed_code(
         "namespaces": ["alice-ns"],
         "roles": ["writer"],
         "exp": int(time.time()) + 60,
+        "since": int(time.time()),
+        "family": f"f-{secrets.token_hex(4)}",
+        "upstream_refresh": "",
     }
-    asyncio.run(oauth._store.save_code(code, grant))
+    asyncio.run(oauth.store.save_code(code, grant))
     return code, verifier
 
 
@@ -202,7 +191,7 @@ def test_pkce_mismatch_rejected() -> None:
             "code_verifier": "the-wrong-verifier",
         },
     )
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_token_rotates() -> None:
@@ -221,7 +210,7 @@ def test_refresh_token_rotates() -> None:
     rt = first["refresh_token"]
     r = _refresh(c, rt)
     assert r.status_code == 200 and r.json()["access_token"]
-    # Old refresh token is rotated out (single-use).
+    # The old refresh token is rotated out (single-use).
     assert _refresh(c, rt).status_code == 400
 
 
@@ -253,7 +242,7 @@ def test_refresh_refused_for_another_client() -> None:
     c = _client()
     rt = _refresh_token_for_alice(c)
     r = _refresh(c, rt, client_id="loom-other")
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
     r = _refresh(c, rt)
     assert r.status_code == 200 and r.json()["access_token"]
 
@@ -264,7 +253,7 @@ def test_refresh_without_client_id_is_refused_unconsumed() -> None:
     c = _client()
     rt = _refresh_token_for_alice(c)
     r = _refresh(c, rt, client_id="")
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_request"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_request"
     assert _refresh(c, rt).status_code == 200
 
 
@@ -272,61 +261,12 @@ def test_store_keeps_token_hashes_not_tokens() -> None:
     """Neither the code nor the refresh token is readable from the store: a
     leaked oauth_state row must not be a working credential."""
     c = _client()
-    store = oauth._store
+    store = oauth.store
     code, _ = _seed_code()
-    assert list(store.codes) == [hashlib.sha256(code.encode()).hexdigest()]
+    assert list(store.records("code")) == [hashlib.sha256(code.encode()).hexdigest()]
     rt = _refresh_token_for_alice(c)
     assert list(store.refresh) == [hashlib.sha256(rt.encode()).hexdigest()]
-
-
-class _FakeCH:
-    """Just enough of the CH client for _CHStore: inserts append versions,
-    query_one answers the FINAL + consumed = 0 read of one (record_type, id)."""
-
-    def __init__(self) -> None:
-        self.rows: list[dict] = []
-
-    async def insert(self, table: str, rows: list[dict]) -> None:
-        self.rows.extend(dict(r) for r in rows)
-
-    async def query_one(self, sql: str, params: dict | None = None) -> dict | None:
-        p = params or {}
-        versions = [
-            r for r in self.rows if r["record_type"] == p.get("t") and r["id"] == p.get("id")
-        ]
-        if not versions:
-            return None
-        last = max(versions, key=lambda r: r["version"])
-        return None if last.get("consumed", 0) else last
-
-
-def _ch_store(monkeypatch) -> _FakeCH:
-    ch = _FakeCH()
-    store = oauth._CHStore()
-    monkeypatch.setattr(store, "_ch", lambda: ch)
-    monkeypatch.setattr(oauth, "_store", store)
-    return ch
-
-
-def test_ch_store_writes_token_hashes(monkeypatch) -> None:
-    ch = _ch_store(monkeypatch)
-    c = _client()
-    code, verifier = _seed_code()
-    tok = c.post(
-        "/oauth/token",
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": "http://127.0.0.1:9999/cb",
-            "client_id": "loom-test",
-            "code_verifier": verifier,
-        },
-    ).json()
-    rt = tok["refresh_token"]
-    ids = {r["id"] for r in ch.rows}
-    assert code not in ids and rt not in ids
-    assert hashlib.sha256(rt.encode()).hexdigest() in ids
-    assert _refresh(c, rt).status_code == 200
+    assert not any(token in str(store.keeper) for token in (code, rt))
 
 
 def test_refresh_refused_for_subject_revoked_after_issue(monkeypatch) -> None:
@@ -336,7 +276,7 @@ def test_refresh_refused_for_subject_revoked_after_issue(monkeypatch) -> None:
     rt = _refresh_token_for_alice(c)
     _revoke_subject(monkeypatch, int(time.time()) + 5)
     r = _refresh(c, rt)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_refused_for_fully_revoked_subject(monkeypatch) -> None:
@@ -344,7 +284,7 @@ def test_refresh_refused_for_fully_revoked_subject(monkeypatch) -> None:
     rt = _refresh_token_for_alice(c)
     _revoke_subject(monkeypatch, None)
     r = _refresh(c, rt)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_allowed_when_cutoff_predates_issue(monkeypatch) -> None:
@@ -433,7 +373,7 @@ def test_redirect_uri_policy(uri: str, ok: bool) -> None:
 )
 def test_registration_refuses_unsafe_redirects(body: object) -> None:
     r = _client().post("/oauth/register", json=body)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_redirect_uri"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_redirect_uri"
 
 
 def test_consent_page_names_where_the_code_goes() -> None:
@@ -458,7 +398,7 @@ def test_consent_page_names_where_the_code_goes() -> None:
 def _refresh_token(c: TestClient, roles: list[str] | None = None) -> str:
     code, verifier = _seed_code()
     if roles is not None:
-        oauth._store.codes[oauth._token_id(code)]["roles"] = roles
+        oauth.store.change("code", roles=roles)
     return c.post(
         "/oauth/token",
         data={
@@ -478,7 +418,7 @@ def test_refresh_by_another_client_is_refused() -> None:
         "/oauth/token",
         data={"grant_type": "refresh_token", "refresh_token": rt, "client_id": "loom-other"},
     )
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_ends_when_the_account_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -489,7 +429,7 @@ def test_refresh_ends_when_the_account_is_gone(monkeypatch: pytest.MonkeyPatch) 
     c = _client()
     rt = _refresh_token(c)
     r = _refresh(c, rt)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_carries_the_re_derived_roles(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -540,7 +480,7 @@ def test_a_malformed_registration_body_is_a_400_not_a_500(body: bytes) -> None:
         "/oauth/register", content=body, headers={"content-type": "application/json"}
     )
     assert r.status_code == 400
-    assert r.json()["detail"]["error"] == "invalid_client_metadata"
+    assert r.json()["error"] == "invalid_client_metadata"
 
 
 @pytest.mark.parametrize("path", ["/oauth/token", "/oauth/authorize"])
@@ -551,7 +491,26 @@ def test_a_non_utf8_form_body_is_a_400_not_a_500(path: str) -> None:
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
     assert r.status_code == 400
-    assert r.json()["detail"]["error"] == "invalid_request"
+    assert r.json()["error"] == "invalid_request"
+
+
+def test_a_code_spend_lost_to_an_undone_change_is_a_retry_not_a_replay(monkeypatch) -> None:
+    from server.auth import claims
+
+    code, verifier = _seed_code()
+    store = oauth.store
+    real = store._swap
+
+    async def swap(key: str, old: str | None, new: str, expires_at: int) -> str | None:
+        # Another request's change lands first and is undone: not spent.
+        store.keeper[key] = json.dumps(json.loads(store.keeper[key]) | {"nonce": "other"})
+        monkeypatch.setattr(store, "_swap", real)
+        return store.keeper[key]
+
+    monkeypatch.setattr(store, "_swap", swap)
+    with pytest.raises(claims.Changed):
+        asyncio.run(store.take_code(code, "loom-test", lambda _g: True))
+    assert asyncio.run(store.take_code(code, "loom-test", lambda _g: True)) is not None
 
 
 def _exchange(c: TestClient, code: str, verifier: str):
@@ -576,85 +535,29 @@ def test_a_code_exchange_is_refused_for_a_subject_revoked_since(
         return True
 
     monkeypatch.setattr(revocation, "subjects_revoked", _revoked)
-    c = _client()
     code, verifier = _seed_code()
-    r = _exchange(c, code, verifier)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    r = _exchange(_client(), code, verifier)
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
-def test_an_unreadable_revocation_store_mints_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unreadable_revocation_store_mints_nothing_and_keeps_the_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from server.auth import revocation
+
+    real = revocation.subjects_revoked
 
     async def _down(subjects: list[str], *, issued_at: int) -> bool:
         raise RuntimeError("replica away")
 
-    monkeypatch.setattr(revocation, "subjects_revoked", _down)
     c = _client()
     code, verifier = _seed_code()
-    r = _exchange(c, code, verifier)
-    assert r.status_code == 503 and r.json()["detail"]["error"] == "temporarily_unavailable"
-
-
-def test_a_concurrent_exchange_of_a_claimed_credential_is_told_to_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Another exchange of the code holds its claim: this one may be the owner
-    retrying, so it gets a retryable 503, never a final invalid_grant, and the
-    code is left for the exchange that holds it."""
-    from server.core import leases
-
-    async def _taken(name: str, **_k: Any) -> None:
-        return None
-
-    c = _client()
-    code, verifier = _seed_code()
-    with monkeypatch.context() as racing:
-        racing.setattr(leases, "take", _taken)
-        refused = _exchange(c, code, verifier)
-    assert refused.status_code == 503 and refused.headers["retry-after"] == "5"
-    assert _exchange(c, code, verifier).status_code == 200
-
-
-def test_an_exchange_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An exchange is bounded below the age its claim is taken over at, so a
-    slow one never runs beside a taker; the code is left for the retry."""
-    import asyncio
-
-    from server.auth import revocation
-
-    async def _slow(subjects: list[str], *, issued_at: int) -> bool:
-        await asyncio.sleep(1)
-        return False
-
-    c = _client()
-    code, verifier = _seed_code()
-    with monkeypatch.context() as slow:
-        slow.setattr(oauth, "_EXCHANGE_TIMEOUT_S", 0.05)
-        slow.setattr(revocation, "subjects_revoked", _slow)
-        assert _exchange(c, code, verifier).status_code == 503
-    assert _exchange(c, code, verifier).status_code == 200
-
-
-def test_a_slow_consume_that_landed_is_never_answered_with_a_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The consume has its own bound, not what is left of the decision's, so
-    a consume that wrote its row and replied late still answers with the
-    tokens."""
-    import asyncio
-
-    store = oauth._store
-    consume = store.consume_code
-
-    async def _slow(code: str, grant: dict) -> None:
-        await consume(code, grant)
-        await asyncio.sleep(0.3)
-
-    monkeypatch.setattr(oauth, "_EXCHANGE_TIMEOUT_S", 0.2)
-    monkeypatch.setattr(store, "consume_code", _slow)
-    c = _client()
-    code, verifier = _seed_code()
-    assert _exchange(c, code, verifier).status_code == 200
+    with monkeypatch.context() as down:
+        down.setattr(revocation, "subjects_revoked", _down)
+        r = _exchange(c, code, verifier)
+    assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"
+    monkeypatch.setattr(revocation, "subjects_revoked", real)
+    assert _exchange(c, code, verifier).status_code == 200  # put back for the retry
 
 
 @pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])
@@ -664,7 +567,6 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_revocation_read(
     """A subject revocation can land while the exchange runs, after its read:
     the tokens carry the time taken before the read, so it still postdates
     them and cuts them."""
-
     import jwt as pyjwt
 
     from server.auth import revocation
@@ -673,7 +575,6 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_revocation_read(
     code, verifier = _seed_code()
     if grant_type == "refresh_token":
         rt = _exchange(c, code, verifier).json()["refresh_token"]
-
     before = int(time.time())
     now = {"t": float(before)}
     monkeypatch.setattr(time, "time", lambda: now["t"])
@@ -688,203 +589,167 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_revocation_read(
     # Unverified: a verify would refuse an iat past the real clock first.
     claims = pyjwt.decode(tok["access_token"], options={"verify_signature": False})
     assert claims["iat"] == before
-    saved = oauth._store.refresh[oauth._token_id(tok["refresh_token"])]
+    saved = oauth.store.refresh[oauth.token_id(tok["refresh_token"])]
     assert int(saved["exp"]) - oauth._REFRESH_TTL == before
 
 
-def test_a_find_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The credential read is inside the exchange's deadline: a find that
-    stalls (its retries, a pool wait) cannot carry a live exchange past the
-    age its claim is taken over at."""
-    import asyncio
-
-    store = oauth._store
-    find = store.find_code
-
-    async def _slow(code: str) -> dict | None:
-        await asyncio.sleep(1)
-        return await find(code)
+def test_a_read_behind_keeper_is_a_retry_and_a_later_generation_a_replay(monkeypatch) -> None:
+    from server.auth import claims
 
     c = _client()
-    code, verifier = _seed_code()
-    with monkeypatch.context() as slow:
-        slow.setattr(oauth, "_EXCHANGE_TIMEOUT_S", 0.05)
-        slow.setattr(store, "find_code", _slow)
-        assert _exchange(c, code, verifier).status_code == 503
-    assert _exchange(c, code, verifier).status_code == 200
+    rt = _refresh(c, _refresh_token_for_alice(c)).json()["refresh_token"]  # generation 1
+    store = oauth.store
+    grant = store.refresh[oauth.token_id(rt)]
+    assert grant["generation"] == 1
+    key = f"family:{grant['family']}"
+    real = store._swap
+
+    async def behind(k: str, old: str | None, new: str, exp: int) -> str | None:
+        return f"0:{'0' * 64}"  # generation 0: what a read behind the rotation shows
+
+    monkeypatch.setattr(store, "_swap", behind)
+    with pytest.raises(claims.Busy):
+        asyncio.run(store.take_refresh(rt, "loom-test"))
+
+    async def ahead(k: str, old: str | None, new: str, exp: int) -> str | None:
+        return f"{grant.get('generation', 0) + 1}:{'1' * 64}"
+
+    monkeypatch.setattr(store, "_swap", ahead)
+    with pytest.raises(oauth.CodeReplayed):
+        asyncio.run(store.take_refresh(rt, "loom-test"))
+    monkeypatch.setattr(store, "_swap", real)
+    assert key in store.keeper
 
 
-@pytest.mark.parametrize(("verifier", "status"), [(None, 200), ("not-the-verifier", 400)])
-def test_a_decided_exchange_releases_its_claim(
-    keeper: list[str], verifier: str | None, status: int
+def test_a_spend_abandoned_long_ago_is_taken_over(monkeypatch) -> None:
+    from server.auth import claims
+
+    rt = _refresh_token_for_alice(_client())
+    store = oauth.store
+    grant = store.refresh[oauth.token_id(rt)]
+    key = f"family:{grant['family']}"
+    started = int(time.time())
+    store.keeper[key] = f"0:spending:{started}:n"  # its process died mid-refresh
+    with pytest.raises(claims.Busy):  # still in time to finish
+        asyncio.run(store.take_refresh(rt, "loom-test"))
+    monkeypatch.setattr(time, "time", lambda: started + 600)
+    # It never saved a next token, so none was handed out: the session goes on.
+    r = _refresh(_client(), rt)
+    assert r.status_code == 200 and r.json()["refresh_token"] != rt
+
+
+def test_an_older_generations_abandoned_spend_seen_by_a_read_behind_is_a_retry(
+    monkeypatch,
 ) -> None:
-    """Issued or refused, the credential is used up, so its claim goes."""
+    from server.auth import claims
+
     c = _client()
-    code, seeded = _seed_code()
-    assert _exchange(c, code, verifier or seeded).status_code == status
-    assert keeper == [f"oauth:code:{oauth._token_id(code)}"]
-    assert _exchange(c, code, seeded).status_code == 400
+    rt = _refresh(c, _refresh_token_for_alice(c)).json()["refresh_token"]  # generation 1
+    store = oauth.store
+
+    async def behind(k: str, old: str | None, new: str, exp: int) -> str | None:
+        return f"0:spending:{int(time.time()) - 600}:n"  # generation 0's, long ago
+
+    monkeypatch.setattr(store, "_swap", behind)
+    with pytest.raises(claims.Busy):
+        asyncio.run(store.take_refresh(rt, "loom-test"))
 
 
-@pytest.mark.parametrize("outcome", ["code", "refused", "refresh"])
-def test_a_consume_that_did_not_finish_keeps_the_claim(
-    keeper: list[str], monkeypatch: pytest.MonkeyPatch, outcome: str
-) -> None:
-    """A consume that failed may still land, so the claim is kept until it
-    goes stale and no retry reads the credential meanwhile. A code expires
-    before that, so its tokens are answered; a refresh token answers 503."""
-    store = oauth._store
-
-    async def _down(token: str, grant: dict) -> None:
-        raise RuntimeError("replica away")
-
+def test_a_refresh_cancelled_midway_leaves_the_token_usable(monkeypatch) -> None:
     c = _client()
-    code, verifier = _seed_code()
-    if outcome == "refresh":
-        rt = _exchange(c, code, verifier).json()["refresh_token"]
-        keeper.clear()
-        monkeypatch.setattr(store, "consume_refresh", _down)
-        r = _refresh(c, rt)
-        assert r.status_code == 503 and r.headers["retry-after"] == "120"
-    else:
-        monkeypatch.setattr(store, "consume_code", _down)
-        if outcome == "code":
-            assert _exchange(c, code, verifier).status_code == 200
-        else:
-            r = _exchange(c, code, "not-the-verifier")
-            assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
-    assert keeper == []
+    rt = _refresh_token_for_alice(c)
+
+    async def cancelled(subject: str, org: str, roles: list[str]) -> list[str]:
+        raise asyncio.CancelledError  # the server shuts down while the refresh runs
+
+    form = {"grant_type": "refresh_token", "refresh_token": rt, "client_id": "loom-test"}
+    with monkeypatch.context() as gone:
+        gone.setattr(login, "refreshed_roles", cancelled)
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(oauth._refresh_token_grant(form))
+    assert _refresh(c, rt).status_code == 200
 
 
-@pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])
-def test_a_failed_token_issue_leaves_the_credential_for_the_retry(
-    monkeypatch: pytest.MonkeyPatch, grant_type: str
-) -> None:
-    """The new refresh token is saved before the old credential is used up,
-    so a save that fails answers 503 and the retry gets its tokens."""
-    store = oauth._store
-    c = _client()
-    code, verifier = _seed_code()
-    if grant_type == "authorization_code":
+async def test_a_put_back_that_fails_still_lets_the_cancellation_through() -> None:
+    async def fails() -> None:
+        raise RuntimeError("Keeper away")
 
-        def exchange():
-            return _exchange(c, code, verifier)
-    else:
-        rt = _exchange(c, code, verifier).json()["refresh_token"]
+    async def refresh() -> None:
+        try:
+            raise asyncio.CancelledError
+        except asyncio.CancelledError:
+            await oauth.put_back(fails())
+            raise
 
-        def exchange():
-            return _refresh(c, rt)
-
-    save = store.save_refresh
-
-    async def _down(token: str, grant: dict) -> None:
-        raise RuntimeError("replica away")
-
-    monkeypatch.setattr(store, "save_refresh", _down)
-    assert exchange().status_code == 503
-    monkeypatch.setattr(store, "save_refresh", save)
-    assert exchange().status_code == 200
-
-
-@pytest.mark.parametrize("outcome", ["issued", "refused"])
-def test_a_cancelled_consume_keeps_the_claim(
-    keeper: list[str], monkeypatch: pytest.MonkeyPatch, outcome: str
-) -> None:
-    """A consume cancelled from outside may still land: the claim is kept as
-    for one that failed, and the cancellation propagates."""
-    import asyncio
-
-    code, verifier = _seed_code()
-    asyncio.run(_cancel_while_consuming(monkeypatch, code, verifier, outcome))
-    assert keeper == []
-
-
-async def _cancel_while_consuming(
-    monkeypatch: pytest.MonkeyPatch, code: str, verifier: str, outcome: str
-) -> None:
-    import asyncio
-
-    started = asyncio.Event()
-
-    async def _hang(code: str, grant: dict) -> None:
-        started.set()
-        await asyncio.sleep(30)
-
-    monkeypatch.setattr(oauth._store, "consume_code", _hang)
-    verifier = verifier if outcome == "issued" else "not-the-verifier"
-
-    async def decide(grant: dict) -> dict:
-        return await oauth._decide_code(grant, "loom-test", "http://127.0.0.1:9999/cb", verifier)
-
-    task = asyncio.create_task(oauth._exchange("code", code, client_id="loom-test", decide=decide))
-    await started.wait()
-    task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await refresh()
 
 
-async def test_an_exchange_cancelled_before_its_consume_still_releases(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Nothing was used up, so the claim goes; the release runs to its end
-    though the request is cancelled again while it waits (anyio repeats it)."""
-    import asyncio
+async def test_a_put_back_finishes_though_the_request_is_cancelled_again() -> None:
+    saved = asyncio.Event()
 
-    from server.core import leases
+    async def slow_save() -> None:
+        await asyncio.sleep(0.05)
+        saved.set()
 
-    released: list[str] = []
-    releasing = asyncio.Event()
-    finding = asyncio.Event()
-
-    class _Lease:
-        name = "lease"
-
-        def __init__(self, name: str) -> None:
-            self.claim = name
-
-        async def release(self) -> None:
-            releasing.set()
-            await asyncio.sleep(0.05)
-            released.append(self.claim)
-
-    async def _held(name: str, **_k: Any) -> _Lease:
-        return _Lease(name)
-
-    monkeypatch.setattr(leases, "take", _held)
-
-    reads: list[str] = []
-
-    async def _find(code: str) -> dict | None:
-        reads.append(code)
-        if len(reads) == 1:
-            return {"subject": "alice@example.com", "org": "test-org"}  # the pre-claim read
-        finding.set()
-        await asyncio.sleep(30)
-        return None
-
-    async def unused(*_a: object) -> dict:
-        raise AssertionError
-
-    monkeypatch.setattr(oauth._store, "find_code", _find)
-    task = asyncio.create_task(oauth._exchange("code", "c", client_id="loom-test", decide=unused))
-    await finding.wait()
-    task.cancel()
-    await releasing.wait()
-    task.cancel()
+    request = asyncio.create_task(oauth.put_back(slow_save()))
+    await asyncio.sleep(0)
+    request.cancel()  # the shutdown cancels again while the put-back runs
     with pytest.raises(asyncio.CancelledError):
-        await task
-    await asyncio.sleep(0.1)
-    assert released == ["oauth:code:" + oauth._token_id("c")]
+        await request
+    await asyncio.wait_for(saved.wait(), 1)
 
 
-def test_a_made_up_credential_is_refused_before_any_claim(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.core import leases
+async def test_shutdown_lands_a_put_back_its_cancelled_request_left_running() -> None:
+    from server.auth import shielded
 
-    async def _no_claim(name: str, **_k: Any) -> None:
-        raise AssertionError("claimed a credential that does not exist")
+    saved = asyncio.Event()
 
-    monkeypatch.setattr(leases, "take", _no_claim)
-    r = _exchange(_client(), "no-such-code", "v")
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    async def slow_save() -> None:
+        await asyncio.sleep(0.05)
+        saved.set()
+
+    request = asyncio.create_task(oauth.put_back(slow_save()))
+    await asyncio.sleep(0)
+    request.cancel()  # cancelled again: the wait returns, the save runs on
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    assert not saved.is_set()
+    await shielded.drain(timeout_s=1)  # what shutdown does before ClickHouse goes
+    assert saved.is_set()
+
+
+def test_a_refused_refresh_presented_again_is_no_theft(monkeypatch) -> None:
+    # A client that asks twice (the SDK retries once) after an honest refusal
+    # must not be told a copy is in other hands, nor have its session ended for it.
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        events.append((event_type, kw))
+        return ""
+
+    monkeypatch.setattr(oauth.audit, "emit", emit)
+    c = _client()
+    rt = _refresh_token_for_alice(c)
+    _revoke_subject(monkeypatch, None)
+    first, again = _refresh(c, rt), _refresh(c, rt)
+    assert first.status_code == again.status_code == 400
+    assert "presented again" not in again.json().get("error_description", "")
+    assert not [
+        kw for name, kw in events if kw.get("subject", {}).get("reason") == "refresh token replayed"
+    ]
+
+
+def test_every_token_answer_says_this_build_keeps_sessions() -> None:
+    # The SDK takes a refusal without it for a previous build's, mid-upgrade.
+    from types import SimpleNamespace
+
+    c = _client()
+    answers = [
+        _refresh(c, _refresh_token_for_alice(c)),
+        _refresh(c, "not-a-token"),
+        c.post("/oauth/token", data={"grant_type": "password"}),
+        oauth._busy_response(SimpleNamespace(url=SimpleNamespace(path="/oauth/token")), OSError()),
+    ]
+    assert [r.status_code for r in answers] == [200, 400, 400, 503]
+    assert all(r.headers.get(oauth.SESSIONS_HEADER) == "1" for r in answers)

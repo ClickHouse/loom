@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from server.cli._client import resolve_token
+from server.cli._client import refused_for_agent, resolve_token
 
 log = logging.getLogger(__name__)
 
@@ -752,7 +752,9 @@ async def _make_writer(
     if base_url:
         import httpx
 
-        token, _ = resolve_token(args.token)
+        token, source = resolve_token(args.token)
+        if refused_for_agent(source):
+            raise SystemExit(2)
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         client = httpx.AsyncClient(timeout=timeout_s, headers=headers)
         base = base_url.rstrip("/")

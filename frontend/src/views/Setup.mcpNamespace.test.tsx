@@ -107,10 +107,123 @@ describe("Setup's MCP home namespace", () => {
     expect(await mintedNamespace()).toBe("ns-c");
   });
 
+  it("names where the minted token's unaddressed calls land, as the server says", async () => {
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(/^Writes to ns-a;/);
+  });
+
+  it("says a token with no default namespace must name one", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({ ...minted, namespace: "" });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/memory and tracker calls must name one;/);
+    expect(scope).not.toHaveTextContent(/Writes to/);
+  });
+
+  it("says the default could not be read, not that there is none, when the server says null", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({ ...minted, namespace: null });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/^Its default namespace could not be read now; each call resolves it/);
+    expect(scope).not.toHaveTextContent(/Has no default|Writes to/);
+  });
+
+  it("names the claim a token with no default namespace must name one of", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({
+      ...minted,
+      namespace: "",
+      read_scope: "named_namespaces",
+      namespaces: ["qa-a", "qa-b"],
+    });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    // The list is said once: the claim it must name is the claim it reads.
+    expect(scope).toHaveTextContent(
+      /^Has no default namespace: memory and tracker calls must name one of qa-a, qa-b\.$/,
+    );
+  });
+
+  it("says a token minted for a named namespace reads only that one", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({
+      ...minted,
+      read_scope: "named_namespaces",
+      restricted_namespaces: ["code-private"],
+    });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/reads only ns-a, code-private\.$/);
+    expect(scope).not.toHaveTextContent(/every namespace/);
+  });
+
+  it("lists the minted claim when `*` was narrowed to the person's own namespaces", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({
+      ...minted,
+      read_scope: "named_namespaces",
+      namespaces: ["ns-a", "ns-b", "ns-c"],
+    });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/reads only ns-a, ns-b, ns-c\.$/);
+  });
+
+  it("says a token with an empty claim reads no namespace", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({
+      ...minted,
+      namespace: "",
+      read_scope: "named_namespaces",
+      namespaces: [],
+    });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(/^Has no default namespace; reads no namespace\.$/);
+    expect(scope).not.toHaveTextContent(/reads only/);
+  });
+
+  it("says a `*` token reads every namespace, including ones joined later", async () => {
+    const minted = await vi.mocked(generateMcpConfig)("claude-desktop");
+    vi.mocked(generateMcpConfig).mockClear();
+    vi.mocked(generateMcpConfig).mockResolvedValueOnce({ ...minted, read_scope: "inherited_grants" });
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    await mintedNamespace();
+    const scope = await screen.findByTestId("minted-token-scope", undefined, WAIT);
+    expect(scope).toHaveTextContent(
+      /reads every namespace and repository you belong to, including ones you join later/,
+    );
+  });
+
   it("announces each field's hint as its description", async () => {
     render(<Setup />);
     await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
     expect(picker()).toHaveAccessibleDescription(/Where this client saves memories/);
-    expect(screen.getAllByLabelText("Expires in (days)")[0]).toHaveAccessibleDescription("Blank = 90 days. Max 3650.");
+    expect(screen.getAllByLabelText("Expires in (days)")[0]).toHaveAccessibleDescription(
+      "Blank = 90 days. 0 = never expires (needs an SSO or `loom login` session). Max 3650, less if your own sign-in expires sooner.",
+    );
   });
 });

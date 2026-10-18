@@ -225,3 +225,13 @@ test("single-user server: token saved, no claim file, notice says connected", as
   assert.match(notice, /connected this machine to http:\/\/localhost:7777/);
   assert.doesNotMatch(notice, /claim/i);
 });
+
+test("an agent whose exchange failed is told so once, not left silent", () => {
+  assert.equal(
+    planSignup({ LOOM_CLIENT_ID: "ci", LOOM_WORKLOAD_TOKEN: "w" }, { hasToken: false }).reason,
+    "agent mode",
+  );
+  const notice = renderFirstSessionNotice({ status: "off", reason: "agent mode" }, "https://loom.example");
+  assert.match(notice, /workload token could not be exchanged at https:\/\/loom\.example/);
+  assert.equal(renderFirstSessionNotice({ status: "off", reason: "LOOM_AUTO_SIGNUP=off" }, "x"), "");
+});

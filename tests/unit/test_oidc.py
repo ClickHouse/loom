@@ -9,6 +9,7 @@ against an in-process fake IdP.
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -21,20 +22,36 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from tests.unit.claims_fake import memory_claims
-from tests.unit.oauth_store_fake import MemoryOAuthStore
+from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from server.auth import jit, login, oauth, oidc, revocation, self_signup  # noqa: E402
+from server.auth import jit, login, oauth, oidc, revocation, self_signup, sso_links  # noqa: E402
+from server.core.secrets_at_rest import unseal  # noqa: E402
 from server.settings import settings  # noqa: E402
 
-pytestmark = pytest.mark.usefixtures("subjects_not_revoked")
+pytestmark = pytest.mark.usefixtures("subjects_not_revoked", "auth_attempts")
 
 _ISS = "https://idp.example.com"
 _CLIENT_ID = "loom-oidc-client"
 # verify_id_token raises ValueError (nonce) or a PyJWT error (sig/aud/exp).
 _VERIFY_ERRORS = (pyjwt.PyJWTError, ValueError)
+
+
+@pytest.fixture(autouse=True)
+def _no_password_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No password account names the signed-in email unless a test says so."""
+
+    async def none(email: str) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(sso_links, "unlinked_accounts", none)
+
+    async def no_links(email: str) -> list[tuple[str, str]]:
+        return []
+
+    monkeypatch.setattr(sso_links, "reaching", no_links)
 
 
 @pytest.fixture
@@ -83,7 +100,7 @@ def _inject(monkeypatch: pytest.MonkeyPatch, pub: Any) -> None:
         }
 
     monkeypatch.setattr(oidc, "_discover", fake_discover)
-    monkeypatch.setattr(oidc, "_signing_key", lambda jwks_uri, token: pub)
+    monkeypatch.setattr(oidc, "signing_key", lambda jwks_uri, token: pub)
 
 
 # ── id_token verification (the security-critical bit) ──────────────────────
@@ -166,6 +183,22 @@ async def test_resolve_identity_for_email_no_account(monkeypatch) -> None:
 
     monkeypatch.setattr(login, "get_client", lambda: FakeCH())
     assert await login.resolve_identity_for_email("nobody@example.com") is None
+
+
+async def test_resolve_identity_rejects_accounts_of_two_owners(monkeypatch) -> None:
+    """An email naming two people's accounts (a squatter's linked beside the
+    owner's) signs in to neither: the first row's subject would win."""
+    rows = [
+        {"namespace": "u-carol-1", "owner_email": "u-carol-1", "org": "o", "password_hash": ""},
+        {"namespace": "aa-sq", "owner_email": "squat", "org": "o", "password_hash": "x"},
+    ]
+
+    class FakeCH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [{**r, "contact_email": "carol@corp.example"} for r in rows]
+
+    monkeypatch.setattr(login, "get_client", lambda: FakeCH())
+    assert await login.resolve_identity_for_email("carol@corp.example") is None
 
 
 async def test_resolve_identity_rejects_cross_org_ambiguity(monkeypatch) -> None:
@@ -258,7 +291,7 @@ def _jit_on(monkeypatch) -> dict[str, Any]:
     [
         {"active": False, "contact_email": ""},  # released: claim-release clears the contact
         {"active": False, "contact_email": "bob@acme.com"},  # deleted, by its owner perhaps
-        {"active": True, "contact_email": "mallory@acme.com"},  # another's
+        {"active": True, "sso": True, "contact_email": "mallory@acme.com"},  # another's
     ],
 )
 async def test_jit_never_rebuilds_a_taken_name_and_takes_the_next(
@@ -289,8 +322,13 @@ async def test_jit_refuses_a_person_whose_account_was_revoked(monkeypatch) -> No
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
         return [
-            {"namespace": "u-bob-1234abcd-9f3e", "owner": "u-bob-1234abcd-9f3e", "active": False},
-            {"namespace": "bob", "owner": "bob", "active": False},
+            {
+                "namespace": "u-bob-1234abcd-9f3e",
+                "owner": "u-bob-1234abcd-9f3e",
+                "active": False,
+                "sso": True,
+            },
+            {"namespace": "bob", "owner": "bob", "active": False, "sso": True},
         ]
 
     async def revoked(subjects: list[str], *, issued_at: int) -> bool:
@@ -304,12 +342,49 @@ async def test_jit_refuses_a_person_whose_account_was_revoked(monkeypatch) -> No
     assert asked == [["bob", "u-bob-1234abcd-9f3e"]]
 
 
+async def test_a_revoked_password_account_naming_the_email_blocks_jit(monkeypatch) -> None:
+    # It may be this person, offboarded: a fresh name would be a new subject
+    # past the revoke. A squatter's account is released instead, which clears
+    # its email, so it no longer names the address.
+    provisioned = _jit_on(monkeypatch)
+
+    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return [{"namespace": "eve", "owner": "eve", "active": False, "sso": False}]
+
+    async def revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return "eve" in subjects
+
+    monkeypatch.setattr(jit, "_accounts_naming", accounts)
+    monkeypatch.setattr(revocation, "subjects_revoked", revoked)
+    assert await jit.jit_provision_for_email("eve@acme.com") is None
+    assert provisioned == {}
+
+
+async def test_an_active_password_account_naming_the_email_blocks_jit(monkeypatch) -> None:
+    # A second active account naming the address would be tied to every grant
+    # made to it; the address is freed by releasing the password account.
+    provisioned = _jit_on(monkeypatch)
+
+    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return [{"namespace": "mallory", "owner": "mallory", "active": True, "sso": False}]
+
+    async def not_revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return False
+
+    monkeypatch.setattr(jit, "_accounts_naming", accounts)
+    monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
+    assert await jit.jit_provision_for_email("bob@acme.com") is None
+    assert provisioned == {}
+
+
 async def test_a_deleted_account_alone_is_no_offboarding(monkeypatch) -> None:
     # Its owner may have deleted it: the person gets a fresh name.
     provisioned = _jit_on(monkeypatch)
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
-        return [{"namespace": "u-bob-1234abcd", "owner": "u-bob-1234abcd", "active": False}]
+        return [
+            {"namespace": "u-bob-1234abcd", "owner": "u-bob-1234abcd", "active": False, "sso": True}
+        ]
 
     async def not_revoked(subjects: list[str], *, issued_at: int) -> bool:
         return False
@@ -339,7 +414,7 @@ async def test_jit_takes_a_random_name_once_the_predictable_ones_are_taken(
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
         tried.append(namespace)
         if len(tried) <= jit._JIT_SUFFIX_TRIES + 2:  # the predictable ones, then one random
-            return {"active": True, "contact_email": "mallory@acme.com"}
+            return {"active": True, "sso": True, "contact_email": "mallory@acme.com"}
         return None
 
     monkeypatch.setattr(jit, "_registry_row", registry_row)
@@ -364,6 +439,7 @@ async def test_an_active_account_of_the_person_is_resolved_never_provisioned_aga
                 "namespace": "u-bob-1234abcd-9f3e",
                 "owner": "u-bob-1234abcd-9f3e",
                 "active": True,
+                "sso": True,
                 "tags": [],
             }
         ]
@@ -388,7 +464,7 @@ async def test_jit_signs_in_to_its_own_account_another_process_just_wrote(monkey
     provisioned = _jit_on(monkeypatch)
 
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
-        return {"active": True, "contact_email": "bob@acme.com"}
+        return {"active": True, "sso": True, "contact_email": "bob@acme.com"}
 
     monkeypatch.setattr(jit, "_registry_row", registry_row)
     assert await jit.jit_provision_for_email("bob@acme.com") is not None
@@ -411,7 +487,11 @@ async def test_two_first_sign_ins_in_one_process_make_one_account(monkeypatch) -
     async def provision(**kw: Any) -> None:
         await asyncio.sleep(0.01)  # the insert takes a moment
         made.append(kw["namespace"])
-        written[kw["namespace"]] = {"active": True, "contact_email": kw["contact_email"]}
+        written[kw["namespace"]] = {
+            "active": True,
+            "sso": True,
+            "contact_email": kw["contact_email"],
+        }
 
     monkeypatch.setattr(jit, "_registry_row", registry_row)
     monkeypatch.setattr(jit, "_accounts_naming", accounts)
@@ -485,18 +565,19 @@ def test_validate_config_password_provider_is_noop(monkeypatch) -> None:
 
 # ── authorize redirects to the IdP under provider=oidc ─────────────────────
 async def test_authorize_redirects_to_idp(monkeypatch) -> None:
-    monkeypatch.setattr(oauth, "_store", MemoryOAuthStore())
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
 
     captured: dict[str, Any] = {}
 
-    async def fake_build(*, redirect_uri: str, state: str, nonce: str) -> str:
-        captured.update(redirect_uri=redirect_uri, state=state, nonce=nonce)
+    async def fake_build(
+        *, redirect_uri: str, state: str, nonce: str, code_challenge: str, offline: bool
+    ) -> str:
+        captured.update(redirect_uri=redirect_uri, state=state, nonce=nonce, pkce=code_challenge)
         return f"{_ISS}/authorize?state={state}&nonce={nonce}"
 
     monkeypatch.setattr(oidc, "build_authorize_url", fake_build)
 
-    app = FastAPI()
-    app.include_router(oauth.router)
+    app = oauth_app()
     c = TestClient(app)
     reg = c.post(
         "/oauth/register",
@@ -521,10 +602,13 @@ async def test_authorize_redirects_to_idp(monkeypatch) -> None:
     )
     assert r.status_code == 307 or r.status_code == 302, r.text
     assert r.headers["location"].startswith(f"{_ISS}/authorize")
-    # The pending record carries the MCP client's params + nonce, keyed by state.
-    pend = oauth._store.pending[captured["state"]]
+    # The browser's sealed cookie carries the MCP client's params and the nonce.
+    sealed = r.cookies[oauth._state_cookie(captured["state"])]
+    pend = json.loads(unseal(oauth._PENDING_PURPOSE, sealed))
     assert pend["client_id"] == cid and pend["mcp_state"] == "mcp-state"
     assert pend["nonce"] == captured["nonce"]
+    # PKCE on the IdP leg: the challenge sent is the S256 of the kept verifier.
+    assert oauth.verify_pkce_s256(pend["code_verifier"], captured["pkce"])
 
 
 async def test_a_jit_read_that_fails_is_a_retryable_sign_in_failure(monkeypatch) -> None:
@@ -551,12 +635,18 @@ async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
     _jit_on(monkeypatch)
     granted: list[tuple[str, str]] = []
     store = MemoryOAuthStore()
-    await store.save_pending(
-        "s", {"nonce": "n", "client_id": "c", "redirect_uri": "http://r/cb", "code_challenge": "x"}
-    )
+    pending = {"kind": "dashboard", "nonce": "n", "code_verifier": "v", "state": "s"}
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
-        return [{"namespace": "u-bob", "owner": "u-bob", "active": True, "tags": [jit.JIT_TAG]}]
+        return [
+            {
+                "namespace": "u-bob",
+                "owner": "u-bob",
+                "active": True,
+                "sso": True,
+                "tags": [jit.JIT_TAG],
+            }
+        ]
 
     async def ever_granted(org: str, account: dict[str, Any]) -> bool:
         return granted_before
@@ -571,9 +661,11 @@ async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
         return {"email": "bob@acme.com", "email_verified": True}
 
     class _Req:
+        client = None
         query_params = {"code": "c", "state": "s"}
+        cookies = {oauth._state_cookie("s"): oauth.seal_pending(pending | {"exp": 2**31 - 1})}
 
-    monkeypatch.setattr(oauth, "_store", store)
+    monkeypatch.setattr(oauth, "store", store)
     monkeypatch.setattr(oidc, "exchange_code", exchange)
     monkeypatch.setattr(oidc, "verify_id_token", claims)
     monkeypatch.setattr(oidc, "verified_email", lambda c: "bob@acme.com")

@@ -54,7 +54,9 @@ def loom_server(
     ch_target()
     port = port or free_port()
     base = f"http://127.0.0.1:{port}"
-    full_env = {**os.environ, **env}
+    # No drain: a test server that kept serving past SIGTERM would outlast the
+    # stop grace and be killed, ten seconds a test. A caller may still set one.
+    full_env = {**os.environ, "LOOM_SHUTDOWN_READY_DELAY_S": "0", **env}
     full_env["PYTHONPATH"] = os.pathsep.join(
         [str(ROOT), str(ROOT / "sdk" / "python"), os.environ.get("PYTHONPATH", "")]
     )

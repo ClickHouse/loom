@@ -15,6 +15,10 @@ import pytest
 
 from server.auth.context import resolve_my_namespaces, set_current_auth
 from server.auth.jwt import AuthInfo
+from server.operations.base import Role
+
+# The gate reads the grant maps from the fake below.
+pytestmark = pytest.mark.claim_cap
 
 
 class _FakeCH:
@@ -28,6 +32,10 @@ class _FakeCH:
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         subs = [params["sub"]] if params.get("sub") else list(params.get("subs") or [])
+        if "groupArray((namespace, rank))" in sql:
+            # The grant map the gate reads (`grant_cache`): alice writes hers.
+            grants = [(ns, 2) for ns in self._creator_grants] if "alice" in subs else []
+            return [{"grants": grants, "spellings": subs}]
         if "service_accounts" in sql:
             return [self._sa_row] if self._sa_row else []
         if "namespace_grants" in sql:
@@ -51,10 +59,14 @@ def _run(
     monkeypatch.setattr(
         "server.core.ch.get_client", lambda: _FakeCH(sa_row=sa_row, creator_grants=creator_grants)
     )
-    # resolve_my_namespaces only reads subject + namespaces; roles can be empty.
+    # A viewer role: the gate lets the token read its own claim.
     set_current_auth(
         AuthInfo(
-            subject=subject, org=org, namespaces=tuple(claim), roles=(), is_service_account=True
+            subject=subject,
+            org=org,
+            namespaces=tuple(claim),
+            roles=(Role.VIEWER,),
+            is_service_account=True,
         )
     )
     try:

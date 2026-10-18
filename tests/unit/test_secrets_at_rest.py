@@ -106,7 +106,9 @@ def test_every_sealing_purpose_is_resealed() -> None:
 
 # Purposes sealed only into values that expire well within a rotation (a cookie,
 # a Keeper claim with a TTL): nothing stored to reseal. Each with its reason.
-SHORT_LIVED: dict[str, str] = {}
+SHORT_LIVED: dict[str, str] = {
+    "oidc sign-in in flight": "the state cookie of an SSO round trip, refused after ten minutes",
+}
 
 
 @pytest.mark.asyncio
@@ -254,7 +256,53 @@ def test_reseal_check_fails_while_values_need_the_previous_root(
         assert dry_run
         return next(results)
 
+    async def none_in_flight(ch):
+        return 0, 0
+
     monkeypatch.setattr(cli, "reseal_all", fake)
+    monkeypatch.setattr(cli, "in_flight", none_in_flight)
     monkeypatch.setattr(cli, "run_connected", lambda go: asyncio.run(go(object())))
     assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 1
+    assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 0
+
+
+def test_reseal_check_waits_for_sign_ins_in_flight_under_the_previous_root(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A code, device grant or approval in Keeper carries the IdP's refresh
+    token sealed: one only the previous root opens keeps the rotation open
+    until it expires, and the check names when the last one does. A spent
+    one is no sign-in in flight."""
+    import argparse
+    import json
+
+    from server.cli import secrets as cli
+
+    monkeypatch.setattr(settings, "jwt_secret", "old-root-secret")
+    sealed = seal("oidc refresh token", "rt")
+    old = json.dumps({"data": {"kind": "connect", "upstream_refresh": sealed}, "exp": 1})
+    # A code already redeemed: its sign-in is done, the record only marks it spent.
+    spent = json.dumps({"upstream_refresh": sealed, "spent": True})
+    monkeypatch.setattr(settings, "jwt_secret", "new-root-secret")
+    monkeypatch.setattr(settings, "jwt_secret_previous", "old-root-secret")
+    new = json.dumps({"kind": "connect", "upstream_refresh": seal("oidc refresh token", "rt")})
+    keeper = [
+        {"value": old, "expires_at": 1_900_000_000},
+        {"value": new, "expires_at": 1_900_000_900},
+        {"value": "3:rid", "expires_at": 1_900_009_000},  # a session's pointer, nothing sealed
+        {"value": spent, "expires_at": 1_900_005_000},
+    ]
+
+    class Ch:
+        async def query_one(self, sql: str) -> dict | None:
+            return None
+
+        async def query_all(self, sql: str, params: dict | None = None) -> list[dict]:
+            return list(keeper) if "oauth_signin_state" in sql else []
+
+    monkeypatch.setattr(cli, "run_connected", lambda go: asyncio.run(go(Ch())))
+    assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 1
+    out = capsys.readouterr().out
+    assert "1 sign-in in flight" in out and "2030-03-17T17:46:40Z" in out
+    keeper.pop(0)  # expired and swept
     assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 0

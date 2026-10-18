@@ -12,10 +12,10 @@ from typing import Any
 import pytest
 
 import server.memory.app.handlers as hm
+from server.identity.app.caller_home import home_namespace
 from server.memory import store as memory_repo
 from server.memory.app import restore as _restore_mod
 from server.memory.app import stack as _stack_mod
-from server.transport.mcp_identity import home_namespace
 
 
 def test_home_namespace_prefers_the_callers_own() -> None:
