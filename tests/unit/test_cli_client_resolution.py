@@ -77,3 +77,48 @@ def test_the_default_base_url_reads_the_home_config(
     monkeypatch.delenv("LOOM_CONFIG_FILE", raising=False)
     monkeypatch.setenv("HOME", str(_home(tmp_path, config={"url": "https://cfg/"})))
     assert _client.default_base_url() == "https://cfg"
+
+
+_AGENT = {
+    "LOOM_CLIENT_ID": "ci",
+    "LOOM_WORKLOAD_TOKEN": "proof",
+    "LOOM_BASE_URL": "https://loom.example",
+}
+
+
+def _save_agent_token(home: Path, **fields: object) -> None:
+    import hashlib
+    import time
+
+    key = hashlib.sha256(b"ci").hexdigest()[:16]
+    saved = {
+        "client_id": "ci",
+        "server": "https://loom.example",
+        "proof": hashlib.sha256(b"proof").hexdigest(),
+        "token": "agent.tok",
+        "exp": time.time() + 600,
+        **fields,
+    }
+    (home / ".loom" / f"agent-token-{key}.json").write_text(json.dumps(saved))
+
+
+def test_an_agent_never_resolves_the_persons_saved_token(tmp_path: Path) -> None:
+    home = _home(tmp_path, config={"token": "personal", "namespace": "theirs"}, token="file")
+    assert _client.resolve_token(None, home, _AGENT) == ("", "agent mode: no exchanged token")
+    _save_agent_token(home)
+    token, source = _client.resolve_token(None, home, _AGENT)
+    assert token == "agent.tok" and source.endswith(".json")
+    # Another proof, another server or an expired one is not this agent's.
+    for stale in ({"proof": "x"}, {"server": "https://other"}, {"exp": 1}):
+        _save_agent_token(home, **stale)
+        assert _client.resolve_token(None, home, _AGENT)[0] == ""
+    # The explicit flag and LOOM_API_KEY still win.
+    assert _client.resolve_token(None, home, {**_AGENT, "LOOM_API_KEY": "env"})[0] == "env"
+
+
+def test_doctor_never_reads_the_persons_namespace_for_an_agent(tmp_path: Path) -> None:
+    from server.cli.doctor_client import intended_namespace
+
+    home = _home(tmp_path, config={"token": "personal", "namespace": "theirs"})
+    assert intended_namespace(home, dict(_AGENT), {"namespaces": ["ci-review"]}) == "ci-review"
+    assert intended_namespace(home, {}, {}) == "theirs"

@@ -10,12 +10,12 @@
 // `X-Loom-Code-Scope: org/namespace`, which the server applies to every
 // loom_code_* call that names no namespace. LOOM_MCP_CODE_SCOPE=off disables.
 //
-// No token and not an agent → the helper waits for the SessionStart hook, which Claude Code runs
-// while it connects the MCP entry and which knows the configured server, to
-// save the first-session credential; only then does it sign up itself, through
-// the same locked path, so one account results.
-// Sign-up off, refused or unreachable → `{}`: the server then answers 401 and
-// Claude Code shows the connection as failed, which is the honest state.
+// No token and not an agent → the helper waits for the SessionStart hook,
+// which Claude Code runs while it connects the MCP entry and which knows the
+// configured server, to save the first-session credential; only then does it
+// sign up itself, through the same locked path, so one account results.
+// Sign-up off, refused or unreachable → `{}`: the server then answers 401
+// and Claude Code shows the connection as failed, which is the honest state.
 // Stdout is exactly one JSON object; nothing else is written.
 import { ensureCredential } from "../lib/first-session.mjs";
 import {

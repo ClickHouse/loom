@@ -75,6 +75,7 @@ for (const [name, rel, stdin] of [
       );
       assert.ok(!stdout.includes(PERSONAL));
       if (rel.startsWith("bin/")) assert.deepEqual(JSON.parse(stdout), {});
+      else assert.match(stdout, /could not be exchanged/);
     } finally {
       srv.close();
       if (home) fs.rmSync(home, { recursive: true, force: true });

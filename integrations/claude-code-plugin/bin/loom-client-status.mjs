@@ -3,7 +3,14 @@
 import { readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodeTokenClaims, requestJson, resolveScope, resolveServerUrl, resolveToken } from "../lib/loom-client.mjs";
+import {
+  agentMode,
+  decodeTokenClaims,
+  requestJson,
+  resolveScope,
+  resolveServerUrl,
+  resolveToken,
+} from "../lib/loom-client.mjs";
 
 const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
 const WRITER_ROLES = new Set(["writer", "admin", "jwt", "org_admin", "platform_admin"]);
@@ -48,7 +55,13 @@ export async function clientStatus({
 
   const claims = decodeTokenClaims(token);
   const validJwt = Boolean(token && token.split(".").length === 3 && Object.keys(claims).length);
-  if (!validJwt) {
+  if (!validJwt && !token && agentMode()) {
+    add(
+      "token",
+      "FAIL",
+      `no Loom token: the workload-token exchange at ${serverUrl} failed (agent mode, LOOM_CLIENT_ID)`,
+    );
+  } else if (!validJwt) {
     add("token", "FAIL", token ? "token is not a readable JWT" : "no Loom token resolved");
   } else if (typeof claims.exp === "number" && claims.exp * 1000 <= now) {
     add("token", "FAIL", "token has expired");

@@ -27,6 +27,7 @@ from typing import Any
 
 from server.cli._client import (
     CONFIG_SOURCE,
+    agent_mode,
     jwt_claims,
     loom_config,
     resolve_server_url,
@@ -48,10 +49,11 @@ _FLUSH_RE = re.compile(r"^loom-flush-(\d{13})-\d+\.json$")
 
 def intended_namespace(home: Path, env: dict[str, str], claims: dict[str, Any]) -> str:
     """The namespace the hooks will write to: LOOM_NAMESPACE, the config
-    file, the token's first non-wildcard claim, else `coding` (resolveScope)."""
+    file (never for an agent), the token's first non-wildcard claim, else
+    `coding` (resolveScope)."""
     if env.get("LOOM_NAMESPACE", "").strip():
         return env["LOOM_NAMESPACE"].strip()
-    cfg = str(loom_config(home, env).get("namespace") or "").strip()
+    cfg = "" if agent_mode(env) else str(loom_config(home, env).get("namespace") or "").strip()
     if cfg:
         return cfg
     ns = claims.get("namespaces") or []
