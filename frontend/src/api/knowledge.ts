@@ -48,8 +48,6 @@ export async function listKnowledge(
     org: id.org,
     namespace: id.namespace,
     tags: opts.tags || [],
-    // A tag filter is matched in any case (a build that predates the flag matches exactly).
-    ...(opts.tags?.length ? { tags_any_case: true } : {}),
     // Two or more must all match (a build that predates `tags_all` matches any one).
     ...((opts.tags?.length ?? 0) > 1 ? { tags_all: true } : {}),
     include_superseded: opts.include_superseded || false,

@@ -794,8 +794,7 @@ function MemoryList() {
           setTruncated(listFiltered && r.truncated);
           if (listFiltered) {
             const ignored = r.ignored_args ?? [];
-            const sameMatch = !ignored.includes("tags_all") && !ignored.includes("tags_any_case");
-            setServerMatches(r.truncated && sameMatch ? r.total : null);
+            setServerMatches(r.truncated && !ignored.includes("tags_all") ? r.total : null);
           }
           // The namespace's total follows every browsed answer, the 8 s refresh included.
           if (!listFiltered && !showDeleted) setBrowsedTotal(r.total);

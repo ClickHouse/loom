@@ -22,7 +22,7 @@ vi.mock("../api", async (importOriginal) => {
     // The page reads run.list a page at a time; these tests answer with the rows alone.
     listRunsPage: async (...args: Parameters<typeof actual.listRunsPage>) => {
       const runs = await listRuns(...args);
-      return { runs, total: runs.length };
+      return { runs, total: runs.length, paged: true };
     },
     getRun: vi.fn(async () => ({ found: false, run: null })),
     listMine: vi.fn(async () => []),

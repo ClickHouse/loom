@@ -629,16 +629,24 @@ export function Runs() {
     )
       .then((p) => {
         if (!live) return;
-        // No total: a server that does not page. Read its newest runs once and page here,
-        // still loading, with nothing from the page that answered on screen. Only another
-        // namespace leaves `local`: behind one URL a release and the one before it answer in
-        // turn, and flipping back on each total never settles.
-        if (p.total === null && !local) {
+        // A server that does not page: read its newest runs once and page here, still
+        // loading, with nothing from the page that answered on screen. Only another namespace
+        // leaves `local`: behind one URL a release and the one before it answer in turn, and
+        // flipping back on each answer never settles.
+        if (!p.paged && !local) {
           setShown(null);
           setLocal(true);
           return;
         }
-        setShown({ runs: p.runs, total: p.total, page, pageSize, key: readKey, filterKey });
+        // A full page after the first carries no total: it keeps the one its filters counted.
+        setShown((prev) => ({
+          runs: p.runs,
+          total: p.total ?? (prev?.filterKey === filterKey ? prev.total : null),
+          page,
+          pageSize,
+          key: readKey,
+          filterKey,
+        }));
         setLoading(false);
         const seen = p.runs.map((r) => r.agent).filter(Boolean);
         setAgents((prev) => (seen.every((a) => prev.includes(a)) ? prev : [...new Set([...prev, ...seen])].sort()));

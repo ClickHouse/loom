@@ -85,6 +85,7 @@ describe("Runs rows", () => {
     listRunsPage.mockResolvedValue({
       runs: [run("r-1", "fix the thing", "s-1", { status: "failed" }), run("r-2", "ship it", "s-1")],
       total: 2,
+      paged: true,
     });
     render(<Runs />);
     const open = await screen.findByRole("button", { name: "fix the thing" });
@@ -108,7 +109,7 @@ describe("Runs rows", () => {
       addEventListener: () => {},
       removeEventListener: () => {},
     }));
-    listRunsPage.mockResolvedValue({ runs: [run("r-1", "fix the thing", "s-1")], total: 1 });
+    listRunsPage.mockResolvedValue({ runs: [run("r-1", "fix the thing", "s-1")], total: 1, paged: true });
     render(<Runs />);
     await screen.findByRole("button", { name: "fix the thing" });
     await userEvent.click(screen.getByRole("button", { name: "Sort runs" }));
@@ -126,7 +127,7 @@ describe("Runs rows", () => {
   // beside the filters, so the first run starts inside the chrome budget.
   it("folds the sort, the grouping and the hidden runs into one View menu on a phone", async () => {
     phoneWidth();
-    listRunsPage.mockResolvedValue({ runs: [run("r-1", "fix the thing", "s-1")], total: 1 });
+    listRunsPage.mockResolvedValue({ runs: [run("r-1", "fix the thing", "s-1")], total: 1, paged: true });
     render(<Runs />);
     await screen.findByRole("button", { name: "fix the thing" });
     expect(screen.queryByRole("button", { name: "Group by session" })).toBeNull();
@@ -153,6 +154,7 @@ describe("Runs rows", () => {
     listRunsPage.mockResolvedValue({
       runs: [run("r-1", "first", "s-1"), run("r-2", "second", "s-2"), run("r-3", "third", "s-1")],
       total: 3,
+      paged: true,
     });
     render(<Runs />);
     await screen.findByRole("button", { name: "first" });

@@ -298,31 +298,12 @@ describe("Memories list chrome", () => {
     expect(toolbar()).not.toHaveTextContent("300");
   });
 
-  it("counts the rows on screen when a server a release behind ignored any-case on one tag", async () => {
-    vi.mocked(listMemories).mockImplementation(
-      async (_id, limit = 50): Promise<MemoryListResponse> =>
-        limit === 1000
-          ? {
-              entries: [entry("a1", { tags: ["api"] })],
-              total: 300,
-              today: 0,
-              truncated: true,
-              ignored_args: ["tags_any_case"],
-            }
-          : { entries: ROWS, total: 1234, today: 0, truncated: false },
-    );
-    render(<Recent />);
-    await screen.findByText("d/plain");
-    await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
-    await waitFor(() => expect(toolbar()).toHaveTextContent("1 match"));
-  });
-
   it("counts the rows on screen when the server matched the tags another way (a release behind)", async () => {
     vi.mocked(listMemories).mockImplementation(
       async (_id, limit = 50): Promise<MemoryListResponse> =>
         limit === 1000
           ? {
-              // Any one tag, exactly: 300 rows, of which 2 carry both.
+              // Any one tag: 300 rows, of which 2 carry both.
               entries: [
                 entry("both1", { tags: ["api", "web"] }),
                 entry("both2", { tags: ["api", "web"] }),
@@ -331,7 +312,7 @@ describe("Memories list chrome", () => {
               total: 300,
               today: 0,
               truncated: true,
-              ignored_args: ["tags_any_case", "tags_all"],
+              ignored_args: ["tags_all"],
             }
           : { entries: ROWS, total: 1234, today: 0, truncated: false },
     );

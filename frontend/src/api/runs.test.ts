@@ -25,4 +25,18 @@ describe("listRunsPage", () => {
     expect(Array.from(body.q)).toHaveLength(RUN_LIST_MAX_Q);
     expect(body.q).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
+
+  // A full later page has no total and still pages; a server that ignores `offset` does not.
+  it("tells a full later page from a server that does not page", async () => {
+    const answer = (out: object) => vi.stubGlobal("fetch", vi.fn(async () => Response.json(out)));
+    const id = { org: "dev", namespace: "team" };
+    answer({ runs: [] });
+    expect(await listRunsPage(id, { offset: 50 })).toMatchObject({ total: null, paged: true });
+    answer({ runs: [], ignored_args: ["offset", "order_by"] });
+    expect(await listRunsPage(id, { offset: 50 })).toMatchObject({ total: null, paged: false });
+    answer({ runs: [] });
+    expect(await listRunsPage(id, {})).toMatchObject({ total: null, paged: false });
+    answer({ runs: [], total: 0 });
+    expect(await listRunsPage(id, {})).toMatchObject({ total: 0, paged: true });
+  });
 });

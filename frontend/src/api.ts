@@ -312,12 +312,10 @@ export async function listMemories(
       ...(opts.fields ? { fields: opts.fields } : {}),
       ...(opts.previewChars ? { preview_chars: opts.previewChars } : {}),
       ...(opts.contains ? { contains: opts.contains } : {}),
-      // Tags as typed, matched in any case (a build that predates the flag matches exactly).
-      // Two or more must all match (a build that predates `tags_all` matches any one, and the
-      // page then requires every tag itself).
-      ...(opts.tags?.length
-        ? { tags: opts.tags, tags_any_case: true, ...(opts.tags.length > 1 ? { tags_all: true } : {}) }
-        : {}),
+      // Tags as typed; the server matches them in any case. Two or more must all match (a
+      // build that predates `tags_all` matches any one, and the page then requires every tag
+      // itself).
+      ...(opts.tags?.length ? { tags: opts.tags, ...(opts.tags.length > 1 ? { tags_all: true } : {}) } : {}),
     },
     opts.signal,
   );

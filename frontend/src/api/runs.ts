@@ -71,9 +71,12 @@ export interface RunListOptions {
 
 export interface RunListPage {
   runs: RunRow[];
-  // Runs matching every filter, whatever limit and offset cut. null when the server
-  // does not send it (a replica a release behind): the count is unknown.
+  // Runs matching every filter, whatever limit and offset cut. The server sends it on the
+  // first page, the last page and a page past the end; null on a full page after the first.
   total: number | null;
+  // False when the server does not page (a replica a release behind): it ignores `offset`
+  // and answers its newest runs with no total.
+  paged: boolean;
 }
 
 // The largest `offset` run.list serves (its `le`); a larger one is a 422.
@@ -89,7 +92,7 @@ export async function listRunsPage(
 ): Promise<RunListPage> {
   // Cut by characters (code points, as the server counts), never inside one.
   const q = opts.q ? Array.from(opts.q.trim()).slice(0, RUN_LIST_MAX_Q).join("") : undefined;
-  const out = await post<{ runs: RunRow[]; total?: number }>("/v1/run.list", {
+  const out = await post<{ runs: RunRow[]; total?: number; ignored_args?: string[] }>("/v1/run.list", {
     org: id.org,
     namespace: id.namespace,
     status: opts.status ?? "",
@@ -102,7 +105,9 @@ export async function listRunsPage(
     ...(q ? { q } : {}),
     ...(opts.fields ? { fields: opts.fields } : {}),
   });
-  return { runs: out.runs || [], total: typeof out.total === "number" ? out.total : null };
+  const total = typeof out.total === "number" ? out.total : null;
+  const paged = opts.offset ? !(out.ignored_args ?? []).includes("offset") : total !== null;
+  return { runs: out.runs || [], total, paged };
 }
 
 // The page's rows alone, for callers that do not page.

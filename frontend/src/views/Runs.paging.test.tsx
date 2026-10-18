@@ -54,14 +54,17 @@ const run = (i: number, over: Partial<RunRow> = {}): RunRow => ({
   ...over,
 });
 
-/** A server holding `n` runs: it answers the page the request names, with the total. */
+/** A server holding `n` runs: it answers the page the request names, with the total on the
+ *  first page, the last and one past the end, as run.list does; a full later page has none. */
 function server(n: number, { total = true }: { total?: boolean } = {}) {
   listRunsPage.mockImplementation(async (_id, opts = {}) => {
     const all = Array.from({ length: n }, (_, i) => run(i + 1)).filter(
       (r) => !opts.q || r.goal.includes(opts.q.toLowerCase()),
     );
     const from = opts.offset ?? 0;
-    return { runs: all.slice(from, from + (opts.limit ?? 50)), total: total ? all.length : null };
+    const runs = all.slice(from, from + (opts.limit ?? 50));
+    const counted = from === 0 || runs.length < (opts.limit ?? 50);
+    return { runs, total: total && counted ? all.length : null, paged: total };
   });
 }
 
@@ -88,7 +91,7 @@ describe("Runs paging, sorting and search on the server", () => {
     useStore.setState({ identity: null });
   });
 
-  it("asks for one page and counts the server's total", async () => {
+  it("asks for one page, and keeps the first page's total on the next", async () => {
     server(1234);
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
@@ -122,6 +125,7 @@ describe("Runs paging, sorting and search on the server", () => {
         run(i + 1, { duration_ms: i * 10 }),
       ).slice(0, 120),
       total: null,
+      paged: false,
     }));
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
@@ -144,6 +148,7 @@ describe("Runs paging, sorting and search on the server", () => {
     listRunsPage.mockImplementation(async (_id, opts = {}) => ({
       runs: Array.from({ length: Math.min(opts.limit ?? 50, 200) }, (_, i) => run(i + 1)),
       total: null,
+      paged: false,
     }));
     render(<Runs />);
     await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
@@ -153,7 +158,7 @@ describe("Runs paging, sorting and search on the server", () => {
   });
 
   it("says nothing of a cap when such a server holds fewer than 200", async () => {
-    listRunsPage.mockImplementation(async () => ({ runs: [run(1), run(2)], total: null }));
+    listRunsPage.mockImplementation(async () => ({ runs: [run(1), run(2)], total: null, paged: false }));
     render(<Runs />);
     await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
     await screen.findByRole("button", { name: "goal 2" });
@@ -163,7 +168,9 @@ describe("Runs paging, sorting and search on the server", () => {
   // Another namespace leaves the local mode and asks for a page first.
   it("reads another namespace's runs a page at a time again when its server pages", async () => {
     listRunsPage.mockImplementation(async (id) =>
-      (id as { namespace: string }).namespace === "ns" ? { runs: [run(1)], total: null } : { runs: [run(7)], total: 1 },
+      (id as { namespace: string }).namespace === "ns"
+        ? { runs: [run(1)], total: null, paged: false }
+        : { runs: [run(7)], total: 1, paged: true },
     );
     render(<Runs />);
     await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
@@ -176,7 +183,7 @@ describe("Runs paging, sorting and search on the server", () => {
   it("stays local when a later read carries a total, until the namespace changes", async () => {
     let upgraded = false;
     listRunsPage.mockImplementation(async () =>
-      upgraded ? { runs: [run(3)], total: 1 } : { runs: [run(1)], total: null },
+      upgraded ? { runs: [run(3)], total: 1, paged: true } : { runs: [run(1)], total: null, paged: false },
     );
     render(<Runs />);
     await waitFor(() => expect(lastOpts()).toMatchObject({ limit: 200 }));
@@ -339,7 +346,7 @@ describe("Runs paging, sorting and search on the server", () => {
     listRunsPage.mockImplementation(async (_id, opts = {}) =>
       opts.q === "goal"
         ? new Promise<RunListPage>((r) => (answer = r))
-        : { runs: opts.q ? [] : [run(1)], total: opts.q ? 0 : 1 },
+        : { runs: opts.q ? [] : [run(1)], total: opts.q ? 0 : 1, paged: true },
     );
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
@@ -348,7 +355,7 @@ describe("Runs paging, sorting and search on the server", () => {
     fireEvent.change(screen.getByLabelText("Search runs"), { target: { value: "goal" } });
     await waitFor(() => expect(lastOpts()).toMatchObject({ q: "goal" }));
     expect(screen.queryByText(/^No runs (with memory activity )?match/)).toBeNull();
-    answer({ runs: [run(1)], total: 1 });
+    answer({ runs: [run(1)], total: 1, paged: true });
     await screen.findByRole("button", { name: "goal 1" });
   });
 
@@ -359,7 +366,7 @@ describe("Runs paging, sorting and search on the server", () => {
     listRunsPage.mockImplementation(async (_id, opts = {}) => {
       n += 1;
       const runs = Array.from({ length: Math.min(opts.limit ?? 50, 120) }, (_, i) => run(i + 1));
-      return { runs, total: n % 2 === 1 ? null : 120 };
+      return { runs, total: n % 2 === 1 ? null : 120, paged: n % 2 === 0 };
     });
     render(<Runs />);
     expect(await screen.findByRole("button", { name: "goal 1" })).toBeInTheDocument();
@@ -381,7 +388,7 @@ describe("Runs paging, sorting and search on the server", () => {
     listRunsPage.mockImplementation(async (_id, opts = {}) => {
       if (opts.limit === 200) return new Promise<RunListPage>((r) => (release = r));
       const runs = Array.from({ length: 50 }, (_, i) => run(i + 1));
-      return { runs, total: opts.status ? null : 120 };
+      return { runs, total: opts.status ? null : 120, paged: !opts.status };
     });
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
@@ -393,7 +400,7 @@ describe("Runs paging, sorting and search on the server", () => {
     const table = screen.getByRole("table", { name: "Runs" });
     expect(table).toHaveAttribute("aria-busy", "true");
     expect(await within(table).findByRole("status", { name: "Loading runs" })).toHaveAttribute("aria-busy", "true");
-    act(() => release({ runs: [run(7, { status: "failed" })], total: null }));
+    act(() => release({ runs: [run(7, { status: "failed" })], total: null, paged: false }));
     expect(await screen.findByRole("button", { name: "goal 7" })).toBeInTheDocument();
     expect(toolbar()).toHaveTextContent("1–1");
   });
@@ -404,6 +411,7 @@ describe("Runs paging, sorting and search on the server", () => {
     listRunsPage.mockImplementation(async () => ({
       runs: Array.from({ length: 50 }, (_, i) => run(i + 1)),
       total: 1_000_000,
+      paged: true,
     }));
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
@@ -422,6 +430,7 @@ describe("Runs paging, sorting and search on the server", () => {
       return {
         runs: Array.from({ length: Math.max(0, Math.min(50, total - from)) }, (_, i) => run(from + i + 1)),
         total,
+        paged: true,
       };
     });
     render(<Runs />);
@@ -466,7 +475,7 @@ describe("Runs paging, sorting and search on the server", () => {
     listRunsPage.mockImplementation(async (_id, opts = {}) => {
       if (opts.status === "failed") return new Promise<RunListPage>((r) => (answer = r));
       const from = opts.offset ?? 0;
-      return { runs: Array.from({ length: 50 }, (_, i) => run(from + i + 1)), total: 1200 };
+      return { runs: Array.from({ length: 50 }, (_, i) => run(from + i + 1)), total: 1200, paged: true };
     });
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
@@ -475,7 +484,7 @@ describe("Runs paging, sorting and search on the server", () => {
     // The rows on screen are the old filter's (the toolbar still counts them, marked busy):
     // no pager pages from them.
     expect(screen.queryByRole("navigation", { name: "Runs pages" })).toBeNull();
-    act(() => answer({ runs: [run(777, { status: "failed" })], total: 1 }));
+    act(() => answer({ runs: [run(777, { status: "failed" })], total: 1, paged: true }));
     expect(await screen.findByRole("button", { name: "goal 777" })).toBeInTheDocument();
   });
 
@@ -486,7 +495,7 @@ describe("Runs paging, sorting and search on the server", () => {
     listRunsPage.mockImplementation(async (_id, opts = {}) => {
       const from = opts.offset ?? 0;
       const runs = Array.from({ length: Math.min(opts.limit ?? 50, 120 - from) }, (_, i) => run(from + i + 1));
-      return { runs, total: old ? null : 120 };
+      return { runs, total: old ? null : 120, paged: !old };
     });
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 1" });
@@ -503,7 +512,11 @@ describe("Runs paging, sorting and search on the server", () => {
   // Runs that started together keep run.list's order: run_id in the direction of the sort.
   it("against a server that does not page, breaks a tie in start by run_id, newest first", async () => {
     const at = { started_at: "2026-09-20T07:00:00Z" };
-    listRunsPage.mockImplementation(async () => ({ runs: [run(1, at), run(2, at), run(3, at)], total: null }));
+    listRunsPage.mockImplementation(async () => ({
+      runs: [run(1, at), run(2, at), run(3, at)],
+      total: null,
+      paged: false,
+    }));
     render(<Runs />);
     await screen.findByRole("button", { name: "goal 3" });
     expect(bodyRows().map((r) => within(r).getByRole("button", { name: /^goal / }).textContent)).toEqual([
