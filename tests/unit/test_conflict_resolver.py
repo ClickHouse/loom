@@ -996,6 +996,20 @@ async def test_a_refused_request_is_stamped_and_a_transient_failure_stays_owed(
     assert out["errored"] == 3
 
 
+async def test_a_failed_cap_read_stays_inside_its_row(pass_env: NS, monkeypatch) -> None:
+    from server.observability import budget
+
+    async def over(org: str, namespace: str) -> bool:
+        if org == "o1":
+            raise RuntimeError("ClickHouse timed out")
+        return False
+
+    monkeypatch.setattr(budget, "namespace_over_cap", over)
+    pass_env.owed = [_q(org="o1", memory_key="k1"), _q(org="o2", memory_key="k2")]
+    out = await pass_env.run()
+    assert [k for _, _, k, _ in pass_env.resolved] == ["k2"] and out["errored"] == 1
+
+
 async def test_a_failed_stamp_stays_inside_its_row(pass_env: NS, monkeypatch) -> None:
     async def stamp(q: Any, **kw: Any) -> int:
         raise RuntimeError("ClickHouse blip")

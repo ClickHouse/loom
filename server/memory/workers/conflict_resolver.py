@@ -93,15 +93,15 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
     async with p.slots:
         if p.unavailable is not None:
             return  # the model or the locks are gone: the row stays owed
-        # Read before every call: the rows in flight at once can cross the cap together.
-        if await namespace_over_cap(org, namespace):
-            p.counts.skipped_budget += 1
-            return
         started = time.monotonic()
         # Each row's call bills its own namespace, which the cost cap reads. This runs
         # in its own task, so the accumulator is this row's alone.
         cost_accumulator.begin_op()
         try:
+            # Read before every call: the rows in flight at once can cross the cap together.
+            if await namespace_over_cap(org, namespace):
+                p.counts.skipped_budget += 1
+                return
             await resolver.resolve_row(r, policy=policy, counts=p.counts)
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
             # The same answer for every row: stop before paying for more calls.
