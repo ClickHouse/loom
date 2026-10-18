@@ -587,9 +587,11 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
         return MemoryUnpinOutput(unpinned=False, reason="not_found")
     assert_own_row(existing, op="memory.unpin")
     # Read again and written under the key's lock, as a pin and a resolver write are.
-    from server.memory.store.key_write_lock import key_write_locks
+    from server.memory.store.key_write_lock import hold_to
 
-    async with key_write_locks.hold(
+    async with hold_to(
+        "the unpin",
+        "memory.unpin",
         input.org,
         existing.namespace,
         existing.agent,

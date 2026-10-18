@@ -604,6 +604,18 @@ async def _handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     to their insert, as a resolver write does, so a retirement never lands between them."""
     if not (input.if_match_sha256 or input.pinned):
         return await _memory_set_phases(input)
+    if not input.if_match_sha256:  # a pin: its own retry message when the key is busy
+        async with key_write_lock.hold_to(
+            "the pin",
+            "memory.pin",
+            input.org,
+            input.namespace,
+            input.agent,
+            input.user_id,
+            input.session_id,
+            input.memory_key,
+        ):
+            return await _memory_set_phases(input)
     async with key_write_lock.key_write_locks.hold(
         input.org,
         input.namespace,

@@ -159,7 +159,8 @@ memory.set, memory.pin, memory.delete, Undo and erasure requests):
   lock and lands at the read version + 1, so a write that started after the read is newer.
   A pin (`memory.pin`) and an unpin hold the key's lock from their read to their insert,
   as an Undo and a conditional write do, so a pin racing a retirement lands after it,
-  and its row and vector are both served.
+  and its row and vector are both served. Like an Undo, a pin answers 409 while another
+  write holds the key and 503 while the lease store (Keeper) does not answer; retry it.
 - Every retirement has a `memory.auto_supersede` record and can be undone.
 - Nothing changes below confidence 0.90.
 - No other user's or tenant's text reaches a prompt. A row's peers are its subject: the

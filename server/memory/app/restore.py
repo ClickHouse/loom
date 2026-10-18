@@ -4,15 +4,12 @@ version, mirrored onto its embedding row."""
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from server.core import leases
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.core.errors import PreconditionFailedError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemoryRestoreInput,
@@ -51,36 +48,18 @@ async def _read_restorable(input: MemoryRestoreInput) -> MemoryRow | None:
     )
 
 
-@asynccontextmanager
-async def _undo_lock(input: MemoryRestoreInput) -> AsyncIterator[None]:
-    """The key's write lock for an Undo. When it cannot be taken, the answer keeps its
-    status (409 while another write holds the key, 503 while the lease store is down)
-    but says to retry the Undo, not a conditional write."""
-    held = False
-    try:
-        async with key_write_lock.key_write_locks.hold(
-            input.org,
-            input.namespace,
-            input.agent,
-            input.user_id,
-            input.session_id,
-            input.memory_key,
-        ):
-            held = True
-            yield
-    except PreconditionFailedError as e:
-        if held:
-            raise  # raised by the Undo itself, not by the lock
-        raise PreconditionFailedError(
-            "this memory is being written right now; retry the Undo"
-        ) from e
-    except leases.LeaseUnavailable as e:
-        if held:
-            raise
-        raise leases.LeaseUnavailable(
-            "the memory's write lock could not be taken; retry the Undo shortly",
-            operation="memory.restore",
-        ) from e
+def _undo_lock(input: MemoryRestoreInput) -> AbstractAsyncContextManager[None]:
+    """The key's write lock for an Undo (`key_write_lock.hold_to`)."""
+    return key_write_lock.hold_to(
+        "the Undo",
+        "memory.restore",
+        input.org,
+        input.namespace,
+        input.agent,
+        input.user_id,
+        input.session_id,
+        input.memory_key,
+    )
 
 
 async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryRestoreOutput:

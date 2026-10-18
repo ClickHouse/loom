@@ -142,4 +142,39 @@ def _busy() -> PreconditionFailedError:
 
 key_write_locks = KeyWriteLocks()
 
-__all__ = ["KeyWriteLocks", "LeaseBusy", "LeaseLost", "key_write_locks", "lock_name"]
+
+@asynccontextmanager
+async def hold_to(
+    what: str,
+    operation: str,
+    org: str,
+    namespace: str,
+    agent: str,
+    user_id: str,
+    session_id: str,
+    memory_key: str,
+) -> AsyncIterator[None]:
+    """The key's write lock for `what` (an Undo, a pin, an unpin). When it cannot be
+    taken, the answer keeps its status (409 while another write holds the key, 503 while
+    the lease store is down) but says to retry `what`, not a conditional write."""
+    held = False
+    try:
+        async with key_write_locks.hold(org, namespace, agent, user_id, session_id, memory_key):
+            held = True
+            yield
+    except PreconditionFailedError as e:
+        if held:
+            raise  # raised by the body, not by the lock
+        raise PreconditionFailedError(
+            f"this memory is being written right now; retry {what}"
+        ) from e
+    except leases.LeaseUnavailable as e:
+        if held:
+            raise
+        raise leases.LeaseUnavailable(
+            f"the memory's write lock could not be taken; retry {what} shortly",
+            operation=operation,
+        ) from e
+
+
+__all__ = ["KeyWriteLocks", "LeaseBusy", "LeaseLost", "hold_to", "key_write_locks", "lock_name"]

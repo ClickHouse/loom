@@ -258,3 +258,19 @@ async def test_a_writer_queued_in_this_process_past_its_wait_asks_no_keeper(
             pytest.fail("entered a held lock")
     assert len(ch.sql) == sent
     await holding
+
+
+async def test_a_busy_key_tells_a_pin_to_retry_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core.errors import PreconditionFailedError
+    from server.memory.store import key_write_lock as kl
+
+    _locks(FakeKeeper(), monkeypatch)
+
+    async def phases(input: Any) -> str:
+        return "written"
+
+    monkeypatch.setattr(write_mod, "_memory_set_phases", phases)
+    held = _set_input("x", "", pinned=True)
+    async with kl.key_write_locks.hold("org", "ns", "agent", "-", "-", _IDENT[5]):
+        with pytest.raises(PreconditionFailedError, match="retry the pin"):
+            await write_mod._handle_memory_set(held)
