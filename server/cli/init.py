@@ -114,7 +114,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
         # identity would be a second one, and its files would replace the saved config.
         print(
             "ERROR: not signing up in agent mode: this agent signs in through its workload "
-            "token (`loom call` exchanges it). To sign a new agent up, unset LOOM_CLIENT_ID first.",
+            "token (`loom call` exchanges it). To sign a new agent up, unset LOOM_CLIENT_ID and "
+            "pass --no-files or --token-path and --config-path, so the saved files stay.",
             file=sys.stderr,
         )
         return 2

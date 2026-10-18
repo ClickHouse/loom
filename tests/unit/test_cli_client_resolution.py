@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -142,7 +143,20 @@ def test_init_refuses_in_agent_mode_before_it_signs_up(
     for k, v in _AGENT.items():
         monkeypatch.setenv(k, v)
     sent: list[str] = []
-    monkeypatch.setattr(init, "_post_json", lambda url, body, timeout=15.0: sent.append(url))
+
+    def _signup(
+        url: str, body: dict[str, Any], timeout: float = 15.0
+    ) -> tuple[int, dict[str, Any]]:
+        sent.append(url)
+        return 200, {
+            "token": "t",
+            "namespace": "agent-nightly",
+            "org": "o",
+            "subject": "s",
+            "claim_code": "c",
+        }
+
+    monkeypatch.setattr(init, "_post_json", _signup)
     token, config = tmp_path / "token", tmp_path / "config.json"
     args = argparse.Namespace(
         agent="nightly",
