@@ -170,6 +170,13 @@ def test_a_peer_id_is_accepted_in_every_spelling_a_model_uses(spelled: str) -> N
     assert list(got) == [_PEERS[0].memory_id] and got[_PEERS[0].memory_id].verdict == "update"
 
 
+def test_a_peer_given_two_different_verdicts_has_none() -> None:
+    text = _answer(_entry("p1", "update", 0.97), _entry("p1", "unrelated", 0.97))
+    assert cr.parse_verdicts(text, _PEERS) == {}
+    same = _answer(_entry("p1", "update", 0.97), _entry("p1", "update", 0.5))
+    assert cr.parse_verdicts(same, _PEERS)[_PEERS[0].memory_id].confidence == 0.97
+
+
 def test_an_answer_followed_by_a_note_in_braces_still_parses() -> None:
     # A greedy match from the first brace to the last takes the note too and parses nothing.
     text = "Here is the result:\n" + _answer(_entry("p1")) + "\n(see {p1} above)"

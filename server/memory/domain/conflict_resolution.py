@@ -212,8 +212,9 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
     Malformed output yields {}: an entry with an unknown verdict, a confidence
     that is not a number in [0, 1], a `same_entity` or `same_attribute` that is not
     a boolean, or a peer id that names no peer is dropped, so its peer is left
-    unresolved and never acted on. A peer named twice keeps its first entry. Checked
-    here, not trusted to the schema: not every provider enforces it."""
+    unresolved and never acted on. A peer named twice keeps its first entry, unless the
+    two disagree on the verdict: then it has none. Checked here, not trusted to the
+    schema: not every provider enforces it."""
     # The first JSON object in the text, whatever follows it (a greedy match from the
     # first brace to the last would take a trailing note's braces too).
     text = text or ""
@@ -225,13 +226,18 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
     if not isinstance(entries, list):
         return {}
     out: dict[str, PeerVerdict] = {}
+    torn: set[str] = set()  # peers two entries gave different verdicts
     for e in entries:
         if not isinstance(e, dict):
             continue
         peer = _peer_of(str(e.get("peer_id") or ""), peers)
         raw_verdict, confidence = e.get("verdict"), e.get("confidence")
         verdict = raw_verdict.strip().lower() if isinstance(raw_verdict, str) else ""
-        if peer is None or verdict not in VERDICTS or peer.memory_id in out:
+        if peer is None or verdict not in VERDICTS:
+            continue
+        if peer.memory_id in out:
+            if out[peer.memory_id].verdict != verdict:
+                torn.add(peer.memory_id)
             continue
         if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
             continue
@@ -251,7 +257,7 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
             same_attribute=e.get("same_attribute") is True,
             reason=str(e.get("reason") or "")[:300],
         )
-    return out
+    return {mid: v for mid, v in out.items() if mid not in torn}
 
 
 def action_for(
