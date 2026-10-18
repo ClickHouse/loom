@@ -310,17 +310,8 @@ def reads_check(
     return (name, PASS, "reads " + " · ".join(parts))
 
 
-def namespace_check(
-    namespace: str, rows: list[dict[str, Any]], token: str, auth_ok: bool, source: str
-) -> Check:
+def namespace_check(namespace: str, rows: list[dict[str, Any]], token: str, auth_ok: bool) -> Check:
     name = "client:namespace"
-    if source == AGENT_SOURCE:
-        return (
-            name,
-            WARN,
-            "skipped in agent mode (these checks act for no one): the hooks write to "
-            "LOOM_NAMESPACE when it is set, else to the exchanged token's namespace",
-        )
     if not token or not auth_ok:
         return (name, WARN, f"skipped: hooks would write to {namespace!r}; check auth first")
     mine = {str(r.get("namespace")): str(r.get("role")) for r in rows}
@@ -918,9 +909,24 @@ def client_checks(
     )
     checks.append(auth)
     target = intended_namespace(home, env, claims)
-    checks.append(namespace_check(target, rows, token, auth[1] == PASS, tok_src))
-    checks.append(recording_check(base_url, token, claims, target, post_json, auth[1] == PASS))
-    checks.append(reads_check(base_url, token, claims, rows, post_json, auth[1] == PASS))
+    if tok_src == AGENT_SOURCE:
+        # What the agent's own token reaches is the server's to say (the
+        # token check names the command); none of these can ask it.
+        why = "skipped in agent mode: these checks act for no one"
+        checks.append(
+            (
+                "client:namespace",
+                WARN,
+                f"{why}; the hooks write to LOOM_NAMESPACE when set, "
+                "else to the exchanged token's namespace",
+            )
+        )
+        checks.append(("client:recording", WARN, why))
+        checks.append(("client:reads", WARN, why))
+    else:
+        checks.append(namespace_check(target, rows, token, auth[1] == PASS))
+        checks.append(recording_check(base_url, token, claims, target, post_json, auth[1] == PASS))
+        checks.append(reads_check(base_url, token, claims, rows, post_json, auth[1] == PASS))
     probe = post_json if server[1] != FAIL else None
     checks.extend(claude_code_checks(home, base_url, post_json=probe, now=now))
     if (home / ".claude").is_dir():  # A Claude Code machine

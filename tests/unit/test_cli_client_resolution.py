@@ -152,6 +152,20 @@ def test_every_command_that_needs_a_token_refuses_an_agent_without_one(
     with pytest.raises(SystemExit) as err:
         okf._resolve_token(ns)
     assert err.value.code == 2 and "Pass --token or set LOOM_API_KEY" in capsys.readouterr().err
+    # reextract refuses before it reads any evidence, unless it only dry-runs.
+    from server.cli import maintenance
+
+    def _no_clickhouse() -> None:
+        raise AssertionError("no evidence is read for an agent without a token")
+
+    monkeypatch.setattr("server.core.ch.get_client", _no_clickhouse)
+    re_args = argparse.Namespace(
+        token=None, into="b", namespace="a", org="o", dry_run=False, base_url="https://x"
+    )
+    assert maintenance._cmd_reextract(re_args) == 2
+    assert "agent mode" in capsys.readouterr().err
+    with pytest.raises(AssertionError, match="no evidence is read"):
+        maintenance._cmd_reextract(argparse.Namespace(**{**vars(re_args), "dry_run": True}))
     # The importers' HTTP writer refuses before any write.
     from server.cli import import_recall
 

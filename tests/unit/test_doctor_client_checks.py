@@ -236,24 +236,35 @@ def test_no_grant_on_the_write_namespace_names_the_ones_you_have(tmp_path: Path)
     assert _grades(checks)["client:namespace"] == "FAIL" and "'team-x'" in d and "docs" in d
 
 
-URL = "http://localhost:7777"
-
-
 def test_token_lines_expired_soon_and_missing() -> None:
     assert (
         dc.token_check(
-            _jwt(exp=NOW - 7200, sub="a", org="o"), "LOOM_API_KEY", {"exp": NOW - 7200}, NOW, URL
+            _jwt(exp=NOW - 7200, sub="a", org="o"),
+            "LOOM_API_KEY",
+            {"exp": NOW - 7200},
+            NOW,
+            _client.DEFAULT_BASE_URL,
         )[1]
         == "FAIL"
     )
     soon = dc.token_check(
-        "t", "LOOM_API_KEY", {"exp": NOW + 3600, "sub": "a", "org": "o"}, NOW, URL
+        "t",
+        "LOOM_API_KEY",
+        {"exp": NOW + 3600, "sub": "a", "org": "o"},
+        NOW,
+        _client.DEFAULT_BASE_URL,
     )
     assert soon[1] == "WARN" and "expires in 1 h" in soon[2]
-    assert dc.token_check("", "none", {}, NOW, URL)[1] == "WARN"
-    assert dc.token_check("not-a-jwt", "LOOM_API_KEY", {}, NOW, URL)[1] == "FAIL"
+    assert dc.token_check("", "none", {}, NOW, _client.DEFAULT_BASE_URL)[1] == "WARN"
+    assert (
+        dc.token_check("not-a-jwt", "LOOM_API_KEY", {}, NOW, _client.DEFAULT_BASE_URL)[1] == "FAIL"
+    )
     sa = dc.token_check(
-        "t", "LOOM_API_KEY", {"sub": "sa:x", "org": "o", "sa": True, "namespaces": ["n"]}, NOW, URL
+        "t",
+        "LOOM_API_KEY",
+        {"sub": "sa:x", "org": "o", "sa": True, "namespaces": ["n"]},
+        NOW,
+        _client.DEFAULT_BASE_URL,
     )
     assert sa[1] == "PASS" and sa[2].startswith("service account sa:x @ o")
 
@@ -643,5 +654,6 @@ def test_an_agent_is_checked_for_no_one_against_the_doctors_server(
     )
     assert g["client:namespace"] == "WARN"
     assert "agent mode" in _detail(checks, "client:namespace")
-    assert "check auth first" not in _detail(checks, "client:namespace")
+    assert g["client:recording"] == g["client:reads"] == "WARN"
+    assert all("check auth first" not in c[2] for c in checks if c[0].startswith("client:"))
     assert all(TOKEN not in str(call) for call in seen.values())

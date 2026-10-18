@@ -27,16 +27,15 @@ Commands fall into two kinds:
   (`migrate`, `reembed`, `code backfill`, `revoke-token`, the backfills and
   repairs). They run with the deployment's credentials, so run them where those
   credentials live.
-- **Client commands** talk to a running server over HTTP with a URL and a token
-  (`install`, `init`, `demo`, `memory-search`, `ingest-transcript`,
-  `export-okf`, `import-okf`). They take `--server-url` (`--base-url` on
-  `demo`) and, except `init`, `--token`, resolved in the plugin hooks' order: the URL from
-  `LOOM_BASE_URL`, then `~/.loom/config.json` `url`, else `http://localhost:7777`; the token from
-  `LOOM_API_KEY`, then `~/.loom/config.json` `token`, then `~/.loom/token` (moved by
-  `LOOM_API_KEY_FILE`). `LOOM_CONFIG_FILE` moves the config file. For an agent
-  (`LOOM_CLIENT_ID` with a workload token) they use only `--token` or `LOOM_API_KEY`, never a
-  saved token, and `loom install` refuses whatever `--token` says; `loom call` exchanges the
-  workload token itself.
+- **Client commands** talk to a running server over HTTP with a URL and a token (`install`,
+  `init`, `demo`, `memory-search`, `ingest-transcript`, `export-okf`, `import-okf`). They take
+  `--server-url` (`--base-url` on `demo`) and, except `init`, `--token`, resolved in the plugin
+  hooks' order: the URL from `LOOM_BASE_URL`, then `~/.loom/config.json` `url`, else
+  `http://localhost:7777`; the token from `LOOM_API_KEY`, then `~/.loom/config.json` `token`,
+  then `~/.loom/token` (moved by `LOOM_API_KEY_FILE`). `LOOM_CONFIG_FILE` moves the config file.
+  For an agent (`LOOM_CLIENT_ID` with a workload token) they use only `--token` or
+  `LOOM_API_KEY`, never a saved token, and refuse (exit 2) without one; `loom install` refuses
+  whatever `--token` says; `loom call` exchanges the workload token itself.
 
 `loom mint-token` needs only `LOOM_JWT_SECRET`: it signs a token locally.
 

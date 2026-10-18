@@ -207,6 +207,11 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    token, source = resolve_token(args.token)
+    # A dry run sends nothing, so it needs no token; anything else refuses an
+    # agent before the evidence is read.
+    if not args.dry_run and refused_for_agent(source):
+        return 2
 
     async def _go() -> int:
         ch = get_client()
@@ -223,9 +228,6 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        token, source = resolve_token(args.token)
-        if refused_for_agent(source):
-            return 2
         rep = await replay(
             sessions,
             base_url=args.base_url,
