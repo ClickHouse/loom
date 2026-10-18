@@ -243,7 +243,7 @@ class ConversationSearchInput(BaseModel):
 
     `thread_id`, `run_id` and `role` each narrow the hits, and they combine. Only user
     and assistant turns are embedded; when the embedder is unavailable a substring
-    match stands in, newest first, and it reads every role."""
+    match stands in, newest first, and it also matches system and tool turns."""
 
     org: str
     namespace: str
