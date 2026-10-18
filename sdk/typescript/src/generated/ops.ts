@@ -3743,6 +3743,8 @@ export interface MemoryGetOutput {
   actor?: string;
   source_class?: string;
   agent?: string;
+  user_id?: string;
+  session_id?: string;
   status?: string | null;
   code?: CodeLink[];
   superseded_by?: string;

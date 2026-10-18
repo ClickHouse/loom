@@ -132,3 +132,14 @@ async def test_exact_get_obeys_the_tokens_pinned_user(env) -> None:
         assert env.identity.user_id == "user-b"
     finally:
         current_auth_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_a_get_names_the_rows_user_and_session(env) -> None:
+    """A write back to the row (the dashboard's restore and verify) names its identity:
+    a key repeats across users and sessions."""
+    env.row.agent, env.row.user_id, env.row.session_id = "bot", "u1", "s2"
+    out = await mem.handle_memory_get(_input())
+    assert (out.agent, out.user_id, out.session_id) == ("bot", "u1", "s2")
+    dumped = out.model_dump()
+    assert dumped["user_id"] == "u1" and dumped["session_id"] == "s2"

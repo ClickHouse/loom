@@ -803,6 +803,8 @@ async def _handle_memory_bulk_get(
             valid_at=r.valid_at,
             pinned=r.pinned,
             agent=r.agent or "",
+            user_id=r.user_id or "",
+            session_id=r.session_id or "",
             status=r.status,
             superseded_by=successors.get(str(r.memory_id), ""),
             sensitivity=str(getattr(r, "sensitivity", "") or ""),

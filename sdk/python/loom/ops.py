@@ -9947,6 +9947,8 @@ class MemoryGetOutput(TypedDict, total=False):
     actor: NotRequired[str]
     source_class: NotRequired[str]
     agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
     status: NotRequired[Optional[str]]
     code: NotRequired[list["CodeLink"]]
     superseded_by: NotRequired[str]

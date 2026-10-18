@@ -155,6 +155,10 @@ class MemoryGetOutput(ProjectedRow):
     # (agent="*") can tell callers which agent owns the row — the dashboard's search
     # re-fetch needs it to render + re-open a hit found outside the preload.
     agent: str = ""
+    # The resolved row's user and session: a write back to this row (restore, verify)
+    # names them, since a key repeats across users and sessions.
+    user_id: str = ""
+    session_id: str = ""
     # Lifecycle state from loom.memory.status.
     status: str | None = None
     # The code this memory is linked to: each link's path, symbol, state (`fresh`,

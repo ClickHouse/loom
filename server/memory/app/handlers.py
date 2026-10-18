@@ -514,6 +514,8 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         pinned=row.pinned,
         sensitivity=str(getattr(row, "sensitivity", "") or ""),
         agent=getattr(row, "agent", "") or "",
+        user_id=getattr(row, "user_id", "") or "",
+        session_id=getattr(row, "session_id", "") or "",
         status=getattr(row, "status", None),
         superseded_by=successors.get(str(row.memory_id), ""),
         duplicate_of=duplicate_of,
