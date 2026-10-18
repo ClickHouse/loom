@@ -149,7 +149,7 @@ One page of a namespace's agent runs, filtered by agent, session, status, memory
 | `session_id` | `str` | `''` | The session or conversation the row belongs to; `'-'` for none. |
 | `status` | `Literal['', 'active', 'completed', 'failed', 'cancelled']` | `''` | Only runs in this status; "" lists every status. |
 | `limit` | `int` | `50` | At most this many runs, in `order_by` order; the server caps it at 200. |
-| `offset` | `int` | `0` | Runs to skip before the page, for paging past the first `limit`; 0 (default) is the first page. |
+| `offset` | `int` | `0` | Runs to skip before the page (0-100,000), for paging past the first `limit`; 0 (default) is the first page. |
 | `order_by` | `Literal['started_desc', 'started_asc', 'duration_desc', 'duration_asc', 'relied_on_desc', 'relied_on_asc']` | `'started_desc'` | The page's order. |
 | `q` | `str \| None` | `None` | Only runs whose goal, run id or agent holds this text, any case. |
 | `memory_activity` | `Literal['', 'with', 'without']` | `''` | The Runs page folds runs that neither relied on nor wrote a memory. |

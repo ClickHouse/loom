@@ -355,8 +355,8 @@ class RunListInput(BaseModel):
     status: Literal["", "active", "completed", "failed", "cancelled"] = ""
     # At most this many runs, in `order_by` order; the server caps it at 200.
     limit: int = Field(default=50, ge=1, le=200)
-    # Runs to skip before the page, for paging past the first `limit`; 0 (default)
-    # is the first page. A replica a release behind has no `offset`: it serves the
+    # Runs to skip before the page (0-100,000), for paging past the first `limit`; 0
+    # (default) is the first page. A replica a release behind has no `offset`: it serves the
     # first page and names the key in `ignored_args`.
     offset: int = Field(default=0, ge=0, le=100_000)
     # The page's order. `started_*` by when the run began, `duration_*` by

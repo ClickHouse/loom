@@ -67,8 +67,8 @@ export function ListPager({
   topId,
 }: ListPagerProps) {
   const [said, setSaid] = useState("");
-  // The page last announced: when the view lands elsewhere (a typed page past the end sent
-  // back), the page it lands on is announced too.
+  // The page the reader asked for: when the view sends them back from it to the last page
+  // (a typed page past the end), the page they land on is announced instead.
   const saidPage = useRef<number | null>(null);
   // The page being typed into the field: Click UI reports every keystroke as a page, so the
   // pager goes there only on Enter or when the field loses focus.
@@ -101,9 +101,12 @@ export function ListPager({
     if (pastEnd && pages !== undefined) onPage(pages - 1);
   }, [pastEnd, pages, onPage]);
   useEffect(() => {
-    if (saidPage.current === null || saidPage.current === page) return;
-    saidPage.current = page;
-    setSaid(pages !== undefined ? `Page ${page + 1} of ${pages}` : `Page ${page + 1}`);
+    const asked = saidPage.current;
+    if (asked === null || page === asked) return;
+    saidPage.current = null;
+    // A filter, a search or a sort also moves the page (to the first): only a move back to
+    // the last page is the view's answer to the page asked for.
+    if (pages !== undefined && page < asked && page === pages - 1) setSaid(`Page ${page + 1} of ${pages}`);
   }, [page, pages]);
   const lastKnown =
     pages !== undefined ? page >= pages - 1 : shown < pageSize || (reachable !== undefined && page >= reachable - 1);
@@ -160,6 +163,7 @@ export function ListPager({
               pageSize,
               maxRowsPerPageList: SIZES,
               onPageSizeChange: (n: number) => {
+                saidPage.current = null;
                 onPageSize?.(n);
                 setSaid(`${n} rows per page, page 1`);
               },

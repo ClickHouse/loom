@@ -287,8 +287,8 @@ class ConversationThreadsInput(BaseModel):
     window_days: int = Field(default=30, ge=1, le=365)
     # At most this many threads (1-200).
     limit: int = Field(default=30, ge=1, le=200)
-    # Skip this many threads of the most-recent-first list: the next page starts at the
-    # previous page's offset plus its length. A build that predates it answers the first
+    # Skip this many threads of the most-recent-first list (0-100,000): the next page starts
+    # at the previous page's offset plus its length. A build that predates it answers the first
     # page again, which a caller tells apart by thread_id. At most 100,000 (a larger one is
     # a 422): the store sorts the window's threads and keeps offset + limit of them, so the
     # bound caps that sort. The dashboard offers no page past it.

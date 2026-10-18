@@ -2,6 +2,8 @@ import { fireEvent, render, screen } from "../../test/rtl";
 import { describe, expect, it, vi } from "vitest";
 import { ListPager, usePageSize } from "./ListPager";
 import { renderHook, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 
 // Under a list: Click UI's Pagination as its full bar, the range on the left, the pages and
 // the page size on the right. A page change takes the reader to the top of the list, focus
@@ -135,6 +137,30 @@ describe("ListPager, typed and edge pages", () => {
     expect(onPage).not.toHaveBeenCalled();
   });
 
+  it("announces the last page when the view sends the reader back to it", () => {
+    const props = { label: "Thread pages", pageSize: 30, onPage: vi.fn() };
+    const { rerender } = render(<ListPager {...props} page={1} shown={15} />);
+    const field = screen.getByRole("spinbutton", { name: "Page" });
+    fireEvent.change(field, { target: { value: "6" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(screen.getByRole("status")).toHaveTextContent("Page 6");
+    rerender(<ListPager {...props} page={5} shown={15} />);
+    rerender(<ListPager {...props} page={1} shown={15} total={45} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 2");
+  });
+
+  it("says nothing of a page when a filter takes the list back to its first page", () => {
+    const props = { label: "Runs pages", pageSize: 50, shown: 50, onPage: vi.fn() };
+    const { rerender } = render(<ListPager {...props} page={0} total={1000} />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    rerender(<ListPager {...props} page={1} total={1000} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 20");
+    // A filter: the first page, then the new total.
+    rerender(<ListPager {...props} page={0} total={1000} />);
+    rerender(<ListPager {...props} page={0} total={30} shown={30} onPageSize={() => {}} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 20");
+  });
+
   it("steps back to the last page when its page is past the end", () => {
     const onPage = vi.fn();
     render(<ListPager label="x" page={2} pageSize={50} total={98} shown={0} onPage={onPage} />);
@@ -160,6 +186,33 @@ describe("ListPager, page size", () => {
     );
     expect(screen.getByRole("navigation", { name: "Memories pages" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rows per page" })).toBeInTheDocument();
+  });
+
+  it("says the new page size after paging, not only the page it starts again from", async () => {
+    function Paged() {
+      const [page, setPage] = useState(0);
+      const [size, setSize] = useState(50);
+      return (
+        <ListPager
+          label="Runs pages"
+          page={page}
+          pageSize={size}
+          total={1000}
+          shown={size}
+          onPage={setPage}
+          onPageSize={(n) => {
+            setSize(n);
+            setPage(0);
+          }}
+        />
+      );
+    }
+    render(<Paged />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Page 2 of 20");
+    await userEvent.click(screen.getByRole("button", { name: "Rows per page" }));
+    await userEvent.click(await screen.findByText(/^100/));
+    expect(screen.getByRole("status")).toHaveTextContent("100 rows per page, page 1");
   });
 
   it("hides when the list fits the smallest page", () => {
