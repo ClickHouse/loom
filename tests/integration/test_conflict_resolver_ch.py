@@ -1430,7 +1430,8 @@ async def test_a_peer_flagged_by_another_rows_turn_is_still_judged_against_its_o
 
     with monkeypatch.context() as m:
         m.setattr(conflicts, "check_on_commit", clear)
-        for session, key in (("s1", "e2_a"), ("s2", "e2_b"), ("s3", "e2_c")):
+        # A written last: the owed read takes a namespace's newest rows first.
+        for session, key in (("s2", "e2_b"), ("s3", "e2_c"), ("s1", "e2_a")):
             await _set(org, session, key, f"The {key} note")
             await _later()
         await after_write.drain()
