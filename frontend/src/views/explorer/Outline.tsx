@@ -228,6 +228,7 @@ export function Outline({
               role="treeitem"
               aria-level={n.hop + 1}
               aria-selected={isSelected}
+              data-edge-selected={edgeSelected || undefined}
               aria-expanded={hasKids ? !isCollapsed : undefined}
               aria-label={`${n.entity} · hop ${n.hop}${n.parent ? ` · ${relation}` : ""}${pinned.has(n.entity) ? " · pinned" : ""}${hidden ? ` · ${hidden} hidden` : ""}`}
               tabIndex={active === n.entity ? 0 : -1}
@@ -237,7 +238,7 @@ export function Outline({
                 if (e.target instanceof Element && e.target.closest("button")) return;
                 onSelect(isSelected ? null : { kind: "node", entity: n.entity });
               }}
-              className={`group flex items-start gap-1.5 px-2 py-1 border-b border-border last:border-b-0 cursor-default ${isSelected || edgeSelected ? "bg-surface-2" : "hover:bg-surface-2"}`}
+              className={`group flex items-start gap-1.5 px-2 py-1 border-b border-border last:border-b-0 cursor-default`}
               style={{ paddingLeft: `${8 + n.hop * 14}px` }}
             >
               <button

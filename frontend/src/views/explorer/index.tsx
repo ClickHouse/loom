@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
+import { Link } from "@clickhouse/click-ui/Link";
 import {
   getTaxonomy,
   pathFacts,
@@ -732,16 +733,18 @@ export function Explorer() {
                   )}
                   {suggestions.length > 0 && (walkedAs || model.nodes.size === 0) && (
                     <span className="shrink-0 inline-flex items-center gap-1">
-                      other matches:
+                      Other matches:
                       {suggestions.map((e) => (
-                        <button
+                        <Link
                           key={e.value}
+                          component="button"
                           type="button"
+                          size="sm"
+                          weight="mono"
                           onClick={() => walkFrom(e.value)}
-                          className="font-mono underline hover:text-text"
                         >
                           {shorten(e.value, 16)}
-                        </button>
+                        </Link>
                       ))}
                     </span>
                   )}

@@ -766,10 +766,19 @@ textarea[aria-invalid="true"]:focus-visible {
     flex-shrink: 0;
     white-space: nowrap;
   }
-  /* Outline tree rows: one line of name, one of metadata. */
+  /* Outline tree rows: one line of name, one of metadata. The ring is inset, as on tabs: the
+     tree's scroll box would clip an outset one. Hover and selection take Click UI's Table row
+     tints. */
   .explorer-outline [role="treeitem"]:focus-visible {
-    outline: none;
-    box-shadow: inset 0 0 0 1px var(--color-border-strong);
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+  }
+  .explorer-outline [role="treeitem"]:hover {
+    background: var(--click-table-row-color-background-hover);
+  }
+  .explorer-outline [role="treeitem"][aria-selected="true"],
+  .explorer-outline [role="treeitem"][data-edge-selected] {
+    background: var(--click-table-row-color-background-active);
   }
 
   /* ============================================================
@@ -1238,6 +1247,19 @@ textarea[aria-invalid="true"]:focus-visible {
      list's measured height (1400 px wide): a thread 76 px, a document 101, a memory 129. */
   content-visibility: auto;
   contain-intrinsic-size: auto 76px;
+}
+
+/* A record inside a narrow pane (the Explorer inspector's facts and hits): CardHorizontal sm,
+   whose one body block cannot hold a fact's links, chips and count. A button form hovers. */
+.pane-card {
+  display: block;
+  padding: var(--click-card-horizontal-space-sm-y) var(--click-card-horizontal-space-sm-x);
+  border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+  border-radius: var(--click-card-horizontal-radii-all);
+  background: var(--click-card-horizontal-default-color-background-default);
+}
+button.pane-card:hover {
+  background: var(--click-card-horizontal-default-color-background-hover);
 }
 
 /* Profile's persona picker: a selectable CardHorizontal (a button holding a title, a line and

@@ -7,6 +7,7 @@ import { listFacts, searchMemory, type FactRow, type Identity, type SearchHit, t
 import { IconButton } from "../../components/IconButton";
 import { Chip, Loading, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
 import { ListState } from "../../components/ui/ListState";
+import { ListTime } from "../../components/ui/ListTime";
 import { useAbortableEffect } from "../../lib/hooks";
 import { colorFor, HOP_COLORS, HOP_EMPHASIS } from "./Canvas";
 import {
@@ -199,10 +200,7 @@ function FactList({
             </Link>
           );
           return (
-            <li
-              key={`${f.subject}|${f.relation}|${f.object}`}
-              className="text-xs rounded-md border border-border bg-surface px-2 py-1.5"
-            >
+            <li key={`${f.subject}|${f.relation}|${f.object}`} className="pane-card text-xs">
               <div className="flex items-start gap-1.5">
                 <span className="flex-1 min-w-0 leading-snug break-words">
                   {about && f.subject === about ? (
@@ -223,7 +221,7 @@ function FactList({
               </div>
               <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted min-w-0 flex-wrap">
                 {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
-                <span className="tabular-nums">{f.last_seen ? f.last_seen.slice(0, 10) : ""}</span>
+                {f.last_seen && <ListTime iso={f.last_seen} quiet />}
                 {f.stale ? (
                   <span className="inline-flex items-center gap-1 text-warn">
                     <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> stale —{" "}
@@ -233,16 +231,16 @@ function FactList({
                 ) : f.sources.length > 0 ? (
                   <span className="flex items-center gap-1 min-w-0">
                     {f.sources.slice(0, 2).map((sref) => (
-                      <Tip key={sref.memory_key} content={`${sref.memory_key} · ${sref.status || "status unknown"}`}>
-                        <button
-                          type="button"
-                          onClick={() => onOpenMemory(sref.memory_key)}
-                          aria-label={`Open ${sref.memory_key} (${sref.status || "status unknown"})`}
-                          className={`font-mono px-1 rounded border border-border truncate max-w-[110px] hover:text-text ${sref.status === "active" || sref.status === "conflicted" ? "" : "line-through"}`}
-                        >
-                          {sref.memory_key}
-                        </button>
-                      </Tip>
+                      <Chip
+                        key={sref.memory_key}
+                        label={sref.memory_key}
+                        mono
+                        outline
+                        tip={`${sref.memory_key} · ${sref.status || "status unknown"}`}
+                        ariaLabel={`Open ${sref.memory_key} (${sref.status || "status unknown"})`}
+                        onClick={() => onOpenMemory(sref.memory_key)}
+                        className={`max-w-[110px] ${sref.status === "active" || sref.status === "conflicted" ? "" : "line-through"}`}
+                      />
                     ))}
                     {f.sources.length > 2 && <span>+{f.sources.length - 2}</span>}
                   </span>
@@ -772,12 +770,12 @@ export function Inspector({
                   <button
                     type="button"
                     onClick={() => onOpenMemory(h.memory_key)}
-                    className="w-full text-left text-xs rounded-md border border-border bg-surface px-2 py-1.5 hover:border-border-strong"
+                    className="pane-card w-full text-left text-xs"
                   >
                     <TextClamp text={excerpt} lines={1} max={200} reach="parent" className="leading-snug" />
                     <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-xs text-text-muted">
                       <Badge text={h.memory_type} state="neutral" size="sm" className="shrink-0" />
-                      {h.created_at && <span className="tabular-nums shrink-0">{h.created_at.slice(0, 10)}</span>}
+                      {h.created_at && <ListTime iso={h.created_at} quiet className="shrink-0" />}
                       <span className="font-mono truncate flex-1">{h.memory_key}</span>
                       {h.namespace && h.namespace !== identity.namespace && (
                         <Chip label={h.namespace} mono className="shrink-0 min-h-5" />

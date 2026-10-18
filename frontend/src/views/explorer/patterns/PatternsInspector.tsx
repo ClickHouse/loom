@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import type { TrackerItem, TrackerSection } from "../../../api";
 import { IconButton } from "../../../components/IconButton";
 import {
@@ -267,14 +268,16 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                 {q.caused_by?.length ? (
                   <span className="flex flex-col gap-0.5">
                     {q.caused_by.map((n) => (
-                      <button
+                      <Link
                         key={n}
+                        component="button"
                         type="button"
-                        className="text-left underline decoration-dotted hover:text-text break-words"
+                        size="sm"
+                        className="text-left break-words"
                         onClick={() => p.onPickIssue(n)}
                       >
                         {titled(n)} <span className="text-danger text-xs">named by graph</span>
-                      </button>
+                      </Link>
                     ))}
                   </span>
                 ) : (
@@ -285,14 +288,16 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                 {q.fixed_by?.length ? (
                   <span className="flex flex-col gap-0.5">
                     {q.fixed_by.map((n) => (
-                      <button
+                      <Link
                         key={n}
+                        component="button"
                         type="button"
-                        className="text-left underline decoration-dotted hover:text-text break-words"
+                        size="sm"
+                        className="text-left break-words"
                         onClick={() => p.onPickIssue(n)}
                       >
                         {titled(n)}
-                      </button>
+                      </Link>
                     ))}
                   </span>
                 ) : (
