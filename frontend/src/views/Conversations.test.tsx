@@ -390,7 +390,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
 
 // Every thread in the namespace can be reached, a page of 30 at a time: the next page asks
 // the server for the threads after the first 30, and a build that predates paging (it
-// answers the first page again) ends the paging instead of repeating threads.
+// names offset in ignored_args) ends the paging instead of repeating threads.
 describe("Conversations: thread pages", () => {
   const page = (from: number, n: number) =>
     Array.from({ length: n }, (_, i) => summary(`t${from + i}`, `Thread ${from + i}`));
@@ -429,8 +429,17 @@ describe("Conversations: thread pages", () => {
     ).toBeDisabled();
   });
 
-  it("stops paging when the server answers the first page again", async () => {
-    listConversationThreads.mockImplementation(async () => ({ threads: page(0, 30) }));
+  it("stops paging when the server names offset in ignored_args", async () => {
+    let reads = 0;
+    // The server ignores offset: the second read is the first page again, a new thread on top.
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => {
+      reads += 1;
+      if (reads === 1) return { threads: page(0, 30) };
+      return {
+        threads: [summary("t-new", "Thread new"), ...page(0, 29)],
+        ...(opts.offset ? { ignored_args: ["offset"] } : {}),
+      };
+    });
     render(<Conversations />);
     expect(await screen.findByText("Thread 0")).toBeInTheDocument();
     fireEvent.click(
@@ -440,6 +449,24 @@ describe("Conversations: thread pages", () => {
     );
     await waitFor(() => expect(screen.queryByRole("navigation", { name: "Thread pages" })).toBeNull());
     expect(screen.getByText("Thread 0")).toBeInTheDocument();
+  });
+
+  it("pages on when the first page's threads moved down to the next page", async () => {
+    let reads = 0;
+    // 30 new threads arrived between the reads: page 2 now holds what page 1 showed.
+    listConversationThreads.mockImplementation(async (_id: unknown, opts: { offset?: number }) => {
+      reads += 1;
+      if ((opts.offset ?? 0) === 0) return { threads: page(0, 30) };
+      return { threads: page(0, 30).map((t) => ({ ...t, title: `${t.title} moved` })) };
+    });
+    render(<Conversations />);
+    expect(await screen.findByText("Thread 0")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Thread pages" })).getByRole("button", { name: "Next page" }),
+    );
+    expect(await screen.findByText("Thread 0 moved")).toBeInTheDocument();
+    expect(reads).toBe(2);
+    expect(screen.getByRole("navigation", { name: "Thread pages" })).toHaveTextContent(/31–60/);
   });
 
   it("a page typed past a short last page goes nowhere and reads nothing", async () => {

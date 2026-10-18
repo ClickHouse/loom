@@ -109,8 +109,7 @@ export function Conversations() {
   // pager goes no further than the next page).
   const [threadsTotal, setThreadsTotal] = useState<number | undefined>(undefined);
   const [seenAgents, setSeenAgents] = useState<string[]>([]);
-  // The first page's threads: a later page that repeats them came from a build that ignores
-  // `offset`, even if a thread moved to the top between the reads.
+  // The first page's threads: a new one on top makes a learned total out of date.
   const firstPageRef = useRef<Set<string>>(new Set());
   // Selected thread for the message-replay dialog. Click a thread
   // card OR a search-hit thread header → the dialog reads the full messages and shows them.
@@ -180,18 +179,19 @@ export function Conversations() {
           if (!live()) return;
           setThreadsReading(false);
           const rows = r.threads || [];
-          // A build that predates `offset` answers the first page again: stay on it and
-          // offer no further page rather than show the same threads twice.
+          // A build that predates `offset` names it in ignored_args and answers the first
+          // page again: stay on it and offer no further page.
+          if (threadPage > 0 && (r.ignored_args ?? []).includes("offset")) {
+            setThreadsPaged(false);
+            setThreadPage(0);
+            return;
+          }
           if (threadPage === 0) {
             // New threads at the top: a total learned from an empty page past the end is
             // out of date, and the pager pages on without one until it learns it again.
             const before = firstPageRef.current;
             if (before.size > 0 && rows.some((t) => !before.has(t.thread_id))) setThreadsTotal(undefined);
             firstPageRef.current = new Set(rows.map((t) => t.thread_id));
-          } else if (rows.length > 0 && rows.every((t) => firstPageRef.current.has(t.thread_id))) {
-            setThreadsPaged(false);
-            setThreadPage(0);
-            return;
           } else if (rows.length === 0) {
             // The pager reaches a page only from the full page before it, so this empty one
             // says how many threads there are; the list stays on the page shown.

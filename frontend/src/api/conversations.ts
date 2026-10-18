@@ -134,7 +134,8 @@ export const THREADS_MAX_OFFSET = 100_000;
 export async function listConversationThreads(
   id: Pick<Identity, "org" | "namespace">,
   opts: { agent?: string; window_days?: number; limit?: number; offset?: number; fields?: string[] } & RequestOpts = {},
-): Promise<{ threads: ConversationThreadSummary[] }> {
+): Promise<{ threads: ConversationThreadSummary[]; ignored_args?: string[] }> {
+  // A server a release behind ignores `offset` and names it in ignored_args.
   return post(
     "/v1/conversation.threads",
     {
