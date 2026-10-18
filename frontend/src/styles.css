@@ -1240,6 +1240,19 @@ textarea[aria-invalid="true"]:focus-visible {
   contain-intrinsic-size: auto 76px;
 }
 
+/* Profile's persona picker: a selectable CardHorizontal (a button holding a title, a line and
+   a sample); hover tints the background and keeps the stroke, as Click UI's card does. */
+.persona-card {
+  text-align: left;
+  padding: var(--click-card-horizontal-space-md-y) var(--click-card-horizontal-space-md-x);
+  border: 1px solid var(--click-card-horizontal-default-color-stroke-default);
+  border-radius: var(--click-card-horizontal-radii-all);
+  background: var(--click-card-horizontal-default-color-background-default);
+}
+.persona-card:hover {
+  background: var(--click-card-horizontal-default-color-background-hover);
+}
+
 /* A row's open button: plain text whose click target stretches over the whole row, under
    the row's other controls (which sit above it, relative z-[1]). useRowNav finds it by
    data-row-open; the layout around it is the page's. */

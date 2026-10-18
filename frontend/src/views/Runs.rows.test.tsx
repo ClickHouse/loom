@@ -130,7 +130,7 @@ describe("Runs rows", () => {
     listRunsPage.mockResolvedValue({ runs: [run("r-1", "fix the thing", "s-1")], total: 1, paged: true });
     render(<Runs />);
     await screen.findByRole("button", { name: "fix the thing" });
-    expect(screen.queryByRole("button", { name: "Group by session" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Group by session" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Sort runs" })).toBeNull();
     const view = screen.getByRole("button", { name: "View" });
     await userEvent.click(view);
@@ -158,7 +158,7 @@ describe("Runs rows", () => {
     });
     render(<Runs />);
     await screen.findByRole("button", { name: "first" });
-    fireEvent.click(screen.getByRole("button", { name: "Group by session" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Group by session" }));
     const headings = await screen.findAllByRole("heading", { level: 2 });
     expect(headings.map((h) => h.textContent)).toEqual(["s-1", "s-2"]);
     expect(screen.getByText(/^2 runs · 2 relied on/)).toBeInTheDocument();

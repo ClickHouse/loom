@@ -347,10 +347,11 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
           <Button
             type="empty"
             htmlType="button"
-            iconLeft={previewOpen ? "eye-closed" : "eye"}
+            iconLeft="eye"
+            aria-pressed={previewOpen}
             onClick={() => setPreviewOpen((v) => !v)}
           >
-            {previewOpen ? "Hide preview" : "Preview rendered"}
+            Rendered preview
           </Button>
         )}
       </div>
@@ -411,17 +412,18 @@ function ActivityChip({ empty }: { empty?: boolean }) {
 
   const mostRecent = entries[0];
   const ms = mostRecent.last_activated_at ? Date.now() - new Date(mostRecent.last_activated_at).getTime() : Infinity;
-  const dotClass = ms < 3_600_000 ? "bg-success" : ms < 86_400_000 ? "bg-warn" : "bg-text-muted";
+  // Green for a read in the last hour; an older one is not a warning.
+  const dotClass = ms < 3_600_000 ? "bg-success" : "bg-text-muted";
 
   return (
     <Popover open={expanded} onOpenChange={setExpanded}>
       <PopoverTrigger>
-        <button type="button" className="inline-flex items-center gap-1.5 text-text-muted hover:text-text">
+        <Button type="empty" htmlType="button">
           <span className={`inline-block w-2 h-2 rounded-full ${empty ? "bg-surface-3" : dotClass}`} />
           {empty ? "Checked by" : "Read by"} {entries.length === 1 ? mostRecent.agent : `${entries.length} clients`} ·{" "}
           {mostRecent.last_activated_at ? relativeTime(mostRecent.last_activated_at) : "—"}
           {empty && " · empty, nothing to read yet"}
-        </button>
+        </Button>
       </PopoverTrigger>
       <Popover.Content align="start" aria-label="Clients that read the profile" className="min-w-[280px] space-y-1">
         {empty && (
@@ -612,12 +614,7 @@ function EmptyState({ onPickTemplate }: { onPickTemplate: (t: (typeof TEMPLATES)
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {TEMPLATES.map((t) => (
-          <button
-            key={t.title}
-            type="button"
-            onClick={() => onPickTemplate(t)}
-            className="text-left rounded-md border border-border bg-surface-2 hover:border-accent hover:bg-surface p-3 transition-colors"
-          >
+          <button key={t.title} type="button" onClick={() => onPickTemplate(t)} className="persona-card">
             <div className="text-sm font-semibold mb-1">{t.title}</div>
             <div className="text-xs text-text-muted mb-2">{t.description}</div>
             <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap leading-relaxed line-clamp-3">

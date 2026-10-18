@@ -28,7 +28,11 @@ describe("listRunsPage", () => {
 
   // A full later page has no total and still pages; a server that ignores `offset` does not.
   it("tells a full later page from a server that does not page", async () => {
-    const answer = (out: object) => vi.stubGlobal("fetch", vi.fn(async () => Response.json(out)));
+    const answer = (out: object) =>
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json(out)),
+      );
     const id = { org: "dev", namespace: "team" };
     answer({ runs: [] });
     expect(await listRunsPage(id, { offset: 50 })).toMatchObject({ total: null, paged: true });

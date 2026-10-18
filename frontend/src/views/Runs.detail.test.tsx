@@ -132,9 +132,9 @@ describe("Runs page", () => {
     expect(second?.memoryActivity).toBe("");
     expect(await screen.findByText("ISSUE_TRIAGE issue_114194")).toBeInTheDocument();
     expect(screen.getByText("no memory activity")).toBeInTheDocument();
-    // The label stays put; the pressed state says the folded runs are shown.
-    const toggle = screen.getByRole("button", { name: "Show runs with no memory activity" });
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // The label stays put; the checked state says the folded runs are shown.
+    const toggle = screen.getByRole("checkbox", { name: "Show runs with no memory activity" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByText("Hide runs with no memory activity")).toBeNull();
   });
 
@@ -186,12 +186,12 @@ describe("Runs page", () => {
     expect(within(dialog).getByText(/reported no memory activity/)).toBeInTheDocument();
     expect(within(dialog).getByText(EMPTY_WHY.used)).toBeInTheDocument();
     expect(within(dialog).getByText(EMPTY_WHY.written)).toBeInTheDocument();
-    expect(await stat(dialog, "recalled")).toHaveTextContent("0");
-    expect(await helpOf(dialog, "recalled")).toContain(EMPTY_WHY.recalledZero);
+    expect(await stat(dialog, "Recalled")).toHaveTextContent("0");
+    expect(await helpOf(dialog, "Recalled")).toContain(EMPTY_WHY.recalledZero);
     // No top-level session: turns and cost cannot be joined, and the page says so.
     expect(within(dialog).getAllByText("no session")).toHaveLength(2);
-    expect(await helpOf(dialog, "turns")).toContain(EMPTY_WHY.noSession);
-    expect(await helpOf(dialog, "cost")).toContain(EMPTY_WHY.noSession);
+    expect(await helpOf(dialog, "Turns")).toContain(EMPTY_WHY.noSession);
+    expect(await helpOf(dialog, "Cost")).toContain(EMPTY_WHY.noSession);
     expect(within(dialog).queryByText(/inferred from a connection/)).toBeNull();
   });
 
@@ -217,7 +217,7 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    const budget = await stat(dialog, "budget");
+    const budget = await stat(dialog, "Budget");
     expect(budget).toHaveTextContent("$1.00 · 30m 0s · 42s elapsed · over cost");
   });
 
@@ -229,7 +229,7 @@ describe("Runs page", () => {
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("$1.000004")).toBeInTheDocument();
-    expect(await stat(dialog, "budget")).toHaveTextContent("$1.00 · over cost");
+    expect(await stat(dialog, "Budget")).toHaveTextContent("$1.00 · over cost");
   });
 
   it("spells a large spend with thousands separators, as the hint does", async () => {
@@ -248,7 +248,7 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await stat(dialog, "budget")).toHaveTextContent("60s · 0s elapsed");
+    expect(await stat(dialog, "Budget")).toHaveTextContent("60s · 0s elapsed");
   });
 
   it("names the turns it could not price", async () => {
@@ -257,8 +257,8 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await stat(dialog, "turns")).toHaveTextContent("(2 unpriced)");
-    expect(await helpOf(dialog, "turns")).toContain(EMPTY_WHY.unpriced);
+    expect(await stat(dialog, "Turns")).toHaveTextContent("(2 unpriced)");
+    expect(await helpOf(dialog, "Turns")).toContain(EMPTY_WHY.unpriced);
   });
 
   it("a run without a budget shows a dash", async () => {
@@ -266,7 +266,7 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await stat(dialog, "budget")).toHaveTextContent("—");
+    expect(await stat(dialog, "Budget")).toHaveTextContent("—");
   });
 
   it("drops a run.list answer that lands after the status filter changed", async () => {
@@ -318,8 +318,8 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await stat(dialog, "recalled")).toHaveTextContent("n/a");
-    expect(await helpOf(dialog, "recalled")).toContain(EMPTY_WHY.recalledOff);
+    expect(await stat(dialog, "Recalled")).toHaveTextContent("n/a");
+    expect(await helpOf(dialog, "Recalled")).toContain(EMPTY_WHY.recalledOff);
     expect(within(dialog).queryByRole("button", { name: /Recall history for this run/ })).toBeNull();
   });
 });

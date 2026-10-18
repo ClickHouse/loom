@@ -106,7 +106,7 @@ describe("Runs table", () => {
     listRuns.mockResolvedValue([run("r-1", "first", "s-1"), run("r-2", "second", "s-2"), run("r-3", "third", "s-3")]);
     render(<Runs />);
     await screen.findByRole("button", { name: "first" });
-    fireEvent.click(screen.getByRole("button", { name: "Group by session" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Group by session" }));
     await waitFor(() => expect(screen.getAllByRole("table")).toHaveLength(3));
     const heads = screen.getAllByRole("table").map((t) => t.querySelector("thead"));
     expect(heads.map((h) => h?.matches(".table-header-sr-only > thead"))).toEqual([false, true, true]);

@@ -3,6 +3,7 @@ import { Alert } from "../components/ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import type { IconName } from "@clickhouse/click-ui/Icon";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
@@ -141,7 +142,7 @@ function ReplayFigure({ label, help, children }: { label: string; help?: string;
     <div>
       <dt className="text-xs text-text-muted flex items-center gap-0.5">
         {label}
-        {help && <IconButton icon="info-in-circle" size="xs" label={`About ${label}`} tooltip={help} />}
+        {help && <IconButton icon="info-in-circle" size="sm" label={`About ${label}`} tooltip={help} />}
       </dt>
       <dd className="tabular-nums m-0">{children}</dd>
     </div>
@@ -822,7 +823,7 @@ export function Runs() {
         actions={
           // On a phone the description waits behind the info button, so the runs start
           // higher; the top bar already names the namespace.
-          phone && <IconButton icon="info-in-circle" size="xs" label="About runs" tooltip={`${ABOUT} ${ABOUT_MORE}`} />
+          phone && <IconButton icon="info-in-circle" size="sm" label="About runs" tooltip={`${ABOUT} ${ABOUT_MORE}`} />
         }
       >
         <span className="hidden sm:contents">
@@ -833,7 +834,7 @@ export function Runs() {
       {!phone && (
         <div className="mb-4 flex items-start gap-1">
           <p className="max-w-[72ch] text-sm text-text-muted">{ABOUT}</p>
-          <IconButton icon="info-in-circle" size="xs" label="About runs" tooltip={ABOUT_MORE} />
+          <IconButton icon="info-in-circle" size="sm" label="About runs" tooltip={ABOUT_MORE} />
         </div>
       )}
 
@@ -851,7 +852,7 @@ export function Runs() {
       {/* A phone's toolbar has room for the search only; the filters and the View menu sit
           under it. */}
       {phone && (
-        <div className="-mt-1 mb-3 flex items-center gap-2">
+        <div className="mb-3 flex items-center gap-2">
           {filters}
           {viewMenu}
         </div>
@@ -859,7 +860,7 @@ export function Runs() {
 
       {!phone && (
         <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <Chip label="Group by session" selected={groupBy} onClick={() => setGroupBy((v) => !v)} />
+          <Checkbox label="Group by session" checked={groupBy} onCheckedChange={(c) => setGroupBy(c === true)} />
           {/* No column headers to sort by: the order is a select. */}
           {narrow && (
             <Select
@@ -875,11 +876,10 @@ export function Runs() {
               ))}
             </Select>
           )}
-          {/* One label; pressed means the folded runs are shown. */}
-          <Chip
+          <Checkbox
             label="Show runs with no memory activity"
-            selected={!hideConn}
-            onClick={() => refilter(setHideConn)(!hideConn)}
+            checked={!hideConn}
+            onCheckedChange={(c) => refilter(setHideConn)(c !== true)}
           />
         </div>
       )}
@@ -1064,7 +1064,7 @@ export function Runs() {
                 return (
                   <dl className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm m-0">
                     <ReplayFigure
-                      label="recalled"
+                      label="Recalled"
                       help={
                         detail.recalled < 0
                           ? EMPTY_WHY.recalledOff
@@ -1075,11 +1075,11 @@ export function Runs() {
                     >
                       {detail.recalled < 0 ? "n/a" : detail.recalled}
                     </ReplayFigure>
-                    <ReplayFigure label="observations" help={EMPTY_WHY.observations}>
+                    <ReplayFigure label="Observations" help={EMPTY_WHY.observations}>
                       {detail.observations}
                     </ReplayFigure>
                     <ReplayFigure
-                      label="turns"
+                      label="Turns"
                       help={
                         !hasSession
                           ? EMPTY_WHY.noSession
@@ -1099,7 +1099,7 @@ export function Runs() {
                         <span className="text-text-muted">no session</span>
                       )}
                     </ReplayFigure>
-                    <ReplayFigure label="cost" help={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
+                    <ReplayFigure label="Cost" help={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
                       {!hasSession ? (
                         <span className="text-text-muted">no session</span>
                       ) : detail.cost_usd > 0 ? (
@@ -1108,7 +1108,7 @@ export function Runs() {
                         "—"
                       )}
                     </ReplayFigure>
-                    <ReplayFigure label="budget" help={EMPTY_WHY.budget}>
+                    <ReplayFigure label="Budget" help={EMPTY_WHY.budget}>
                       {budgetText(detail)}
                       {over.length > 0 && <span className="text-danger"> · over {over.join(" and ")}</span>}
                     </ReplayFigure>

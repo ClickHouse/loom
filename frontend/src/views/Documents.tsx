@@ -22,14 +22,14 @@ import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
-import { ListRow, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
+import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
 import { BusyButton } from "../components/ui/BusyButton";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { Modal } from "../components/ui/Modal";
-import { formatBytesShort, relativeTime } from "../lib/format";
+import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
@@ -681,6 +681,7 @@ export function Documents() {
               <ListRow
                 key={r.source_uri}
                 data-doc-row={r.source_uri}
+                active={previewEntry?.source_uri === r.source_uri}
                 checked={selected.has(r.source_uri)}
                 leading={
                   <Checkbox
@@ -769,7 +770,11 @@ export function Documents() {
       >
         <div className="flex items-start justify-between gap-4 mb-4">
           <div className="min-w-0 text-xs text-text-muted flex items-center gap-2 flex-wrap">
-            {previewEntry?.ingested_at && <span>uploaded {relativeTime(previewEntry.ingested_at)}</span>}
+            {previewEntry?.ingested_at && (
+              <span>
+                Uploaded <ListTime iso={previewEntry.ingested_at} quiet />
+              </span>
+            )}
             {previewEntry?.has_blob && previewEntry.blob_size != null && (
               <>
                 <span>·</span>
@@ -782,9 +787,7 @@ export function Documents() {
                 <span className="font-mono">{previewEntry.blob_content_type}</span>
               </>
             )}
-            {(previewEntry?.tags || []).slice(0, 4).map((t) => (
-              <Badge key={t} text={t} state="neutral" size="sm" />
-            ))}
+            <TagList tags={previewEntry?.tags || []} max={4} />
           </div>
           {previewEntry && (
             <div className="flex items-center gap-2 shrink-0">
@@ -816,9 +819,7 @@ export function Documents() {
         </div>
         {/* Sized to what the dialog leaves after its header and footer, so only the pane scrolls. */}
         <div className="h-[max(12rem,calc(75vh-14rem))] overflow-hidden rounded-lg bg-surface-2 relative">
-          {previewLoading && (
-            <div className="absolute inset-0 grid place-items-center text-sm text-text-muted">Loading…</div>
-          )}
+          {previewLoading && <Loading label="Loading preview" className="absolute inset-0" />}
           {/* Only passive types reach here (previewKind): text in an iframe whose empty
                   sandbox grants nothing, images as <img>. Nothing else is ever framed. */}
           {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "image" && (
