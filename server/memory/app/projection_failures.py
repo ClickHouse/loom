@@ -305,6 +305,10 @@ class _KeyBusy(Exception):
     """A row's key lock is held past the repair's short wait: retried next pass."""
 
 
+class _OutOfTime(Exception):
+    """The pass's deadline passed partway through a failure: left for the next pass."""
+
+
 # A failure and the result of its retry.
 Retried = tuple[ProjectionFailureRow, ProjectionFailureRetryResult]
 # Failure ids per mark: the ids travel as one HTTP parameter, which ClickHouse caps at
@@ -342,7 +346,7 @@ async def retry_each(
     for i, failure in enumerate(failures):
         if expired is not None and not (first and i == 0) and expired():
             return
-        yield failure, await _retry(failure, ch=ch)
+        yield failure, await _retry(failure, ch=ch, expired=expired)
 
 
 async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:
@@ -375,7 +379,9 @@ def _pending(failure: ProjectionFailureRow) -> ProjectionFailureRetryResult:
     )
 
 
-async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailureRetryResult:
+async def _retry(
+    failure: ProjectionFailureRow, *, ch: Any, expired: Callable[[], bool] | None = None
+) -> ProjectionFailureRetryResult:
     """One failure's retry, unmarked. Every kind writes in the failure's org: under an
     erasure it waits (`pending`), and once the saga ends its replay finds an erased row
     gone."""
@@ -407,7 +413,7 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
         elif failure.projection in (FOLLOW_ROWS, FOLLOW_OWED):
             reason = await _retry_follow_rows(failure, ch=ch)
         elif failure.projection == STATUS_MIRROR:
-            reason = await _retry_status_mirror(failure, ch=ch)
+            reason = await _retry_status_mirror(failure, ch=ch, expired=expired)
         elif failure.projection == TRIPLES_REOPEN:
             reason = await _retry_triples_reopen(failure, ch=ch)
         elif failure.projection == TRIPLES_RECONCILE:
@@ -430,6 +436,8 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
             reason=reason,
             abandoned=bool(reason),
         )
+    except _OutOfTime:
+        return _pending(failure)
     except _KeyBusy:
         return ProjectionFailureRetryResult(
             failure_id=failure.failure_id,
@@ -556,12 +564,16 @@ async def _retry_belief_sources(
     )
 
 
-async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str:
+async def _retry_status_mirror(
+    failure: ProjectionFailureRow, *, ch: Any, expired: Callable[[], bool] | None = None
+) -> str:
     """Mirror each row's current head onto recall, whatever it turned out to be: a
     retirement that landed hides the row, one that did not leaves it live, and a
     delete since tombstones it. A row no longer stored at all was erased, and the
     erasure removed its embeddings with it: nothing is left to mirror. A payload
-    no retry can read returns the reason that abandons it."""
+    no retry can read returns the reason that abandons it. Once `expired()`, the
+    rows not yet mirrored wait for the next pass, so one failure overruns the
+    pass's deadline by one lock wait at most."""
     import server.memory.store as memory_repo
 
     try:
@@ -583,7 +595,9 @@ async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
             include_tombstoned=True,
         )
 
-    for mid in ids:
+    for i, mid in enumerate(ids):
+        if i and expired is not None and expired():
+            raise _OutOfTime
         row = await head_of(mid)
         if row is None:
             continue

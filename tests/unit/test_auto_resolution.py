@@ -956,6 +956,43 @@ async def test_the_reconcile_mirrors_each_rows_head(monkeypatch) -> None:
     assert out.resolved and resolved == ["f1"]
 
 
+async def test_a_mirror_past_the_deadline_leaves_its_other_rows_for_the_next_pass(
+    monkeypatch,
+) -> None:
+    """Each row may wait a second on its key's lock: the deadline is checked per row."""
+    import server.memory.store as memory_repo
+    from server.memory.app import projection_failures
+    from tests.unit.claims_fake import fake_key_locks
+    from tests.unit.clock_fake import ManualClock
+
+    fake_key_locks(monkeypatch)
+    clock = ManualClock(t=0.0)
+    mirrored: list = []
+
+    async def get_by_id(mid, **kw):
+        return _stored({"memory_id": mid, "status": "active"})
+
+    async def mirror(rows, *, ch=None, strict=False):
+        clock.advance(projection_failures.STATUS_MIRROR_LOCK_WAIT_S)
+        mirrored.extend(r["memory_id"] for r in rows)
+
+    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
+    monkeypatch.setattr(memory_repo, "mirror_status_to_embeddings", mirror)
+    failure = SimpleNamespace(
+        failure_id="f1",
+        org="o",
+        payload={"memory_ids": ["m1", "m2", "m3", "m4", "m5"]},
+        projection=projection_failures.STATUS_MIRROR,
+        created_at=None,
+    )
+    retried = projection_failures.retry_each(
+        [failure], ch=object(), expired=lambda: clock.t >= 0.5, first=True
+    )
+    ((_, out),) = [r async for r in retried]
+    assert mirrored == ["m1"]
+    assert (out.retried, out.resolved, out.reason) == (False, False, "pending")
+
+
 async def test_a_busy_key_leaves_the_reconcile_pending(monkeypatch) -> None:
     import server.memory.store as memory_repo
     from server.memory.app import projection_failures
