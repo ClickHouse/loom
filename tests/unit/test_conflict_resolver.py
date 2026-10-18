@@ -188,6 +188,7 @@ def _q(**kw: Any) -> dict[str, Any]:
         "session_id": "s1",
         "memory_key": "office_city",
         "memory_type": "semantic",
+        "embedding_model": "text-embedding-3-large",
         "embedding": [0.1, 0.2],
         "version": 5,
         "content_sha256": "sha-new",
@@ -245,11 +246,25 @@ async def test_the_cluster_keeps_the_floor_the_cap_and_the_rows_flags() -> None:
     assert "NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})" in sql
     assert "user_id = {u:String} AND (user_id != '-' OR agent = {a:String})" in sql
     assert params["org"] == "o" and params["ns"] == "ns" and params["lim"] == 12
-    # The type and the expiry are applied before the vector LIMIT, not after it.
+    # The type, the embedding model and the expiry are applied before the vector LIMIT.
     assert "memory_type = {mt:String}" in sql and "expires_at > now()" in sql
+    assert "embedding_model = {model:String}" in sql
+    assert params["model"] == "text-embedding-3-large"
     assert "valid_to > now()" in sql
     rows_sql, _ = ch.calls[-1]
     assert "sensitivity != 'high'" in rows_sql and "memory_type = {mt:String}" in rows_sql
+
+
+async def test_peers_are_read_in_the_rows_own_embedding_model_only() -> None:
+    # Two models of one dimension: their cosine means nothing, so the vector reads (the
+    # nearest rows, the flagged and same-key ones) keep to the queued vector's model.
+    ch = _ClusterCH([_near("s2", "k2", 0.1)], [_peer_row("m2", "s2", "k2", "v")])
+    await queue.cluster_peers(_q(embedding_model="gemini-embedding-001"), floor=0.6, limit=8, ch=ch)
+    vector_reads = [(sql, p) for sql, p in ch.calls if "cosineDistance" in sql]
+    assert len(vector_reads) == 2
+    for sql, params in vector_reads:
+        assert sql.count("embedding_model = {model:String}") >= 1
+        assert params["model"] == "gemini-embedding-001"
 
 
 async def test_a_flagged_peer_joins_the_cluster_whatever_the_cutoff() -> None:

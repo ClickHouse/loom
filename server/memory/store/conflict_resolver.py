@@ -33,7 +33,7 @@ JUDGED_MARK = datetime(1970, 1, 1, 0, 0, 2, tzinfo=UTC)
 LEGACY_MARK_GRACE_SECONDS = 60
 
 _QUEUE_COLUMNS = """org, namespace, agent, user_id, session_id, memory_key, memory_type,
-               embedding, version, content_sha256, status"""
+               embedding_model, embedding, version, content_sha256, status"""
 
 # Live, private, embedded rows; the minmax index on conflict_checked_at prunes the rest.
 _LIVE_VECTOR = """tombstoned_at IS NULL
@@ -195,9 +195,10 @@ async def stamp_judged(
     return await reemit_rows(own, {"conflict_checked_at": JUDGED_MARK}, ch=ch)
 
 
-# The row's subject's live vectors of its type, its own left out. What would drop a
-# candidate later is applied here, before a LIMIT, so closer rows of another type,
-# expired or superseded ones cannot take every place. Sensitivity needs no predicate: a
+# The row's subject's live vectors of its type and its embedding model, its own left out:
+# two models' vectors of one dimension are not comparable. What would drop a candidate
+# later is applied here, before a LIMIT, so closer rows of another type, expired or
+# superseded ones cannot take every place. Sensitivity needs no predicate: a
 # write labelled 'high' retires the vectors of the version it replaces.
 _LIVE_VECTORS = """
         SELECT agent, user_id, session_id, memory_key,
@@ -210,6 +211,7 @@ _LIVE_VECTORS = """
           AND status IN ('active', 'conflicted') AND memory_type = {mt:String}
           AND (expires_at IS NULL OR expires_at > now())
           AND (valid_to IS NULL OR valid_to > now())
+          AND embedding_model = {model:String}
           AND embedding_dim = {dim:UInt16} AND embedding.size0 = {dim:UInt16}"""
 
 
@@ -294,12 +296,12 @@ async def cluster_peers(
     prefer: frozenset[str] = frozenset(),
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Up to `limit` live peers of the queue row `row`: its memory_type, its subject,
-    each with `similarity`. Its flagged peers are read from its head; the flagged peers
-    that are also in `prefer` take the first places. Then the nearest rows of its key in
-    other sessions, at most half the places, both read whatever the cutoff and the floor
-    (a re-check judges its flags; a write owed for its key's other rows is judged against
-    them), then the nearest peers at cosine >= `floor`."""
+    """Up to `limit` live peers of the queue row `row`: its memory_type, its subject, its
+    embedding model, each with `similarity`. Its flagged peers are read from its head; the
+    flagged peers that are also in `prefer` take the first places. Then the nearest rows of
+    its key in other sessions, at most half the places, both read whatever the cutoff and
+    the floor (a re-check judges its flags; a write owed for its key's other rows is judged
+    against them), then the nearest peers at cosine >= `floor`."""
     ch = ch or _default_client()
     emb = [float(x) for x in (row.get("embedding") or [])]
     if not emb:
@@ -313,6 +315,7 @@ async def cluster_peers(
         "k": str(row["memory_key"]),
         "mt": str(row["memory_type"]),
         "emb": emb,
+        "model": str(row["embedding_model"]),
         "dim": len(emb),
         "lim": 4 * max(int(limit), 1),
     }

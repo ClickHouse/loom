@@ -1968,3 +1968,31 @@ async def test_a_flag_against_a_row_no_longer_live_is_cleared(ch, wired) -> None
     assert audit["memory_id"] == new_id
     assert audit["pairs"] == [{"peer_id": old_id, "action": "clear", "reason": "peer_not_live"}]
     assert (await run_pass())["cleared"] == 0
+
+
+async def test_a_peer_embedded_by_another_model_of_the_same_dimension_is_not_compared(
+    ch, wired
+) -> None:
+    """office_city's vector is another model's, of the same dimension: its cosine with
+    office_location's means nothing, so it is no peer and nothing is judged."""
+    from datetime import UTC, datetime
+
+    from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    await _pair(ch, org, "office_city", "office_location", 240)
+    (old,) = await live_embedding_rows_for_key(
+        ch,
+        org=org,
+        namespace=NS,
+        agent="bot",
+        user_id=USER,
+        session_id="s1",
+        memory_key="office_city",
+    )
+    await reemit_rows([old], {"embedding_model": "other-embedder"}, ch=ch)
+    await reemit_rows([old], {"tombstoned_at": datetime.now(UTC)}, ch=ch)
+    out = await run_pass()
+    assert llm.calls == [] and out["errored"] == 0, out
+    assert (await _rows(ch, org))["office_city"]["status"] == "active"
