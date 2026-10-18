@@ -22,7 +22,12 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from server.auth.directory import ClassificationUnavailable, directory
-from server.auth.fail_closed import marks_unverified, note_unreadable, unreadable
+from server.auth.fail_closed import (
+    marks_unverified,
+    note_answered_unverified,
+    note_unreadable,
+    unreadable,
+)
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 
 # Re-export from operations.base so there's one canonical Role definition.
@@ -669,7 +674,11 @@ async def row_in_scope(org: str, namespace: str, required_role: Role = Role.VIEW
         return True
     try:
         await check_authorized(auth, required_role=required_role, org=org, namespace=namespace)
-    except (PermissionError, IdentityIncompleteError):
+    except PermissionError as e:
+        if getattr(e, "unverified", False):  # still hidden, but the server's failure
+            note_answered_unverified()
+        return False
+    except IdentityIncompleteError:
         return False
     return True
 

@@ -24,6 +24,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 
 from server.auth.bearer import missing_bearer, verify_bearer_header
+from server.auth.fail_closed import answered_unverified
 from server.auth.jwt import AuthInfo
 from server.code.app.common import (
     schedule_code_trace_validation_failure,
@@ -818,6 +819,7 @@ def _emit_event(
         raw_args=raw_body,
         result=result,
         error=error,
+        server_fault=answered_unverified(),
         **sli_columns(op.name, "http"),
     )
 

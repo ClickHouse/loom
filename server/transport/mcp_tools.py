@@ -426,6 +426,7 @@ def _emit_mcp_event(
 
     # Shared with the HTTP transport. MCP passes no memory_key /
     # impersonated_by; they default to "" — preserves the MCP event shape.
+    from server.auth.fail_closed import answered_unverified
     from server.observability.ledger import emit_agent_event
     from server.transport._common import ledger_identity, sli_columns
 
@@ -439,6 +440,7 @@ def _emit_mcp_event(
         raw_args=raw_args,
         result=result,
         error=error,
+        server_fault=answered_unverified(),
         **sli_columns(op_name, "mcp"),
     )
 

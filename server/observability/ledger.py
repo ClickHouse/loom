@@ -160,8 +160,9 @@ def emit_agent_event(
 
     `transport`, `slo_class`, `budget_ms`: the SLI columns a transport fills
     (`server.observability.sli`); the row's `status_class` is derived here.
-    `server_fault`: the failure is the server's whatever its code says, for a
-    refusal recorded without its exception.
+    `server_fault`: the row is the server's failure whatever its code says: a
+    refusal recorded without its exception, or an answer given as if refused
+    because a read could not be made (`row_in_scope`'s found=False).
 
     Absent accumulator → zero cost/token attribution. `raw_args` is the
     request's argument object; only its allow-listed projection reaches the

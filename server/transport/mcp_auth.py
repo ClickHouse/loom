@@ -65,11 +65,11 @@ def _ledger_refusal(
     tool_name: Any, auth: AuthInfo, *, error_code: str, org: str = "", server_fault: bool = False
 ) -> None:
     from server.transport.mcp_call import op_for_tool
-    from server.transport.mcp_ledger import emit_refusal
+    from server.transport.mcp_ledger import emit_token_refusal
 
     op = op_for_tool(str(tool_name or ""))
     if op is not None:
-        emit_refusal(op.name, auth, error_code=error_code, org=org, server_fault=server_fault)
+        emit_token_refusal(op.name, auth, error_code=error_code, org=org, server_fault=server_fault)
 
 
 async def _plane_namespace(

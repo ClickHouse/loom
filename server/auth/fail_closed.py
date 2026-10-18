@@ -15,6 +15,24 @@ from contextvars import ContextVar
 _unreadable: ContextVar[bool] = ContextVar("authz_unreadable", default=False)
 
 
+# Set for the rest of a request that answered as if refused because a read
+# could not be made (`row_in_scope`'s found=False): its row is the server's.
+_answered_unverified: ContextVar[bool] = ContextVar("authz_answered_unverified", default=False)
+
+
+def note_answered_unverified() -> None:
+    _answered_unverified.set(True)
+
+
+def answered_unverified() -> bool:
+    return _answered_unverified.get()
+
+
+def begin_request() -> None:
+    """A request starts with nothing answered unverified."""
+    _answered_unverified.set(False)
+
+
 def note_unreadable() -> None:
     """A read the current check needs failed, and it carries on as if the
     read found nothing."""

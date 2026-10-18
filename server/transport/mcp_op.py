@@ -26,7 +26,7 @@ from typing import Any
 
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport.mcp_config import _ok
-from server.transport.mcp_ledger import emit_refusal
+from server.transport.mcp_ledger import emit_token_refusal
 
 LOOM_OP_TOOL_NAME = "loom_op"
 # The code for a name no op (or tool) answers to, direct or through loom_op.
@@ -209,11 +209,11 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
     hidden = hidden_refusal(name)
     if op is None and hidden is not None:
-        emit_refusal(name, auth, error_code="OP_NOT_ON_MCP")
+        emit_token_refusal(name, auth, error_code="OP_NOT_ON_MCP")
         return req, _result(req.get("id"), hidden, error=True)
     if op is None or (readonly and not _is_read(op)):
         if op is not None:  # a write on a read-only connection
-            emit_refusal(op.name, auth, error_code=UNKNOWN_OP)
+            emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
         near = difflib.get_close_matches(name, list(by_name), n=5, cutoff=0.6)
         body = {
             "error": f"no op {name!r} reachable here"

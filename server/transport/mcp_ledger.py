@@ -2,12 +2,14 @@
 
 A refusal before dispatch has no bound caller, so its row is the token's:
 its org (or the one the screen authorized), subject and consumer, `-` for
-the rest, no arguments (`emit_refusal`). Within one JSON-RPC batch, every
+the rest, no arguments (`emit_token_refusal`). Within one JSON-RPC batch, each
 refusal before a handler runs (these, and `mcp_call`'s argument, gate,
-policy and rate-limit refusals) is written once per (op, code, org, status
-class): the rows come before the rate limiter and a batch has no length
-cap, so one POST of many refused entries could otherwise fill the ledger
-queue for every tenant. A handler's failure is always its own row.
+read-scope, policy and rate-limit refusals, through `first_in_batch`) is
+written once per (op, code, org, status class): they are written before or
+by the rate limiter and a batch has no length cap, so one POST of many
+refused entries could otherwise fill the ledger queue for every tenant. A
+handler's failure, and an idempotency refusal after the limiter, is always
+its own row.
 """
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ def first_in_batch(op_name: str, code: str, org: str, status_class: str) -> bool
     return True
 
 
-def emit_refusal(
+def emit_token_refusal(
     op_name: str, auth: Any, *, error_code: str, org: str = "", server_fault: bool = False
 ) -> None:
     """Emit a token-attributed refusal row in an isolated request context,
@@ -62,10 +64,12 @@ def emit_refusal(
     status = "server" if server_fault else status_class(False, error_code, None)
     if not first_in_batch(op_name, error_code, org, status):
         return
-    contextvars.copy_context().run(_emit_refusal, op_name, auth, error_code, org, server_fault)
+    contextvars.copy_context().run(
+        _emit_token_refusal, op_name, auth, error_code, org, server_fault
+    )
 
 
-def _emit_refusal(op_name: str, auth: Any, code: str, org: str, server_fault: bool) -> None:
+def _emit_token_refusal(op_name: str, auth: Any, code: str, org: str, server_fault: bool) -> None:
     from server.observability.consumer import bind_current_consumer
     from server.observability.ledger import emit_agent_event
     from server.observability.traffic_class import bind_claimed_class

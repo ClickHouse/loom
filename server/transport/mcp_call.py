@@ -37,7 +37,7 @@ from server.transport.mcp_config import (
 )
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
-from server.transport.mcp_ledger import emit_refusal, first_in_batch
+from server.transport.mcp_ledger import emit_token_refusal, first_in_batch
 from server.transport.mcp_op import UNKNOWN_OP
 from server.transport.mcp_outcome import (
     _emit_success,
@@ -402,7 +402,7 @@ async def _resolve_tool(
             from server.transport.mcp_op import hidden_refusal
 
             body = {**(hidden_refusal(op.name) or {}), "tool": name}
-            emit_refusal(op.name, auth, error_code="OP_NOT_ON_MCP")
+            emit_token_refusal(op.name, auth, error_code="OP_NOT_ON_MCP")
             msg = f"{body.get('error', msg)}; instead: {body.get('instead', '')}"
         return _ok(
             req_id,
@@ -526,7 +526,10 @@ async def _idempotency_gate(
     )
     if replay.conflict:
         code = "IDEMPOTENT_IN_PROGRESS" if replay.in_progress else "IDEMPOTENT_CONFLICT"
-        _emit_refused(op.name, arguments, error_code=code, request_id=request_id)
+        # After the rate limiter, which bounds these rows: one per entry.
+        _emit_mcp_event(
+            op.name, arguments, 0, success=False, error_code=code, request_id=request_id
+        )
         msg = "Idempotency key reused with different tool arguments."
         body: dict[str, Any] = {"error": msg, "code": code}
         if replay.in_progress:
@@ -580,16 +583,16 @@ def _validated_input(
     try:
         input_obj = op.input_model.model_validate(mcp_default_arguments(op.name, arguments))
     except ValidationError as e:
-        # The failing field on the row, and a code.* trace row.
+        # The failing field on the row, and a code.* trace row (each once a batch).
         errors = _validation_errors(e)
-        _emit_refused(
+        if _emit_refused(
             op.name,
             arguments,
             error_code="VALIDATION_FAILED",
             request_id=request_id,
             error=validation_note(errors),
-        )
-        schedule_code_trace_validation_failure(op.name, arguments, errors)
+        ):
+            schedule_code_trace_validation_failure(op.name, arguments, errors)
         return _ok(req_id, tool_error(*feedback(op, arguments, errors)))
     return input_obj
 
@@ -643,14 +646,17 @@ def _emit_refused(
     error_code: str,
     request_id: str,
     error: BaseException | None = None,
-) -> None:
+) -> bool:
     """A call's row when it is refused before its handler runs: within a
-    batch, once per (op, code, org, status class), as `mcp_ledger` explains."""
+    batch, once per (op, code, org, status class), as `mcp_ledger` explains.
+    False when the batch already wrote it, so the caller skips its other
+    rows too."""
     from server.observability.sli import status_class
     from server.transport._common import ledger_identity
 
     org = str(ledger_identity(arguments).get("org") or "")
-    if first_in_batch(op_name, error_code, org, status_class(False, error_code, error)):
+    first = first_in_batch(op_name, error_code, org, status_class(False, error_code, error))
+    if first:
         _emit_mcp_event(
             op_name,
             arguments,
@@ -660,6 +666,7 @@ def _emit_refused(
             request_id=request_id,
             error=error,
         )
+    return first
 
 
 def _refusal_result(e: BaseException) -> dict[str, Any]:

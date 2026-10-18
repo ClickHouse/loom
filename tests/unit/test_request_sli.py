@@ -847,7 +847,7 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
     from server.observability import events
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import mcp, mcp_auth, mcp_call, mcp_op
-    from server.transport.mcp_ledger import emit_refusal
+    from server.transport.mcp_ledger import emit_token_refusal
 
     emitted: list = []
 
@@ -873,8 +873,10 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
         else:  # refused by mcp_call before its handler, with the same code twice
             op = OPERATIONS_BY_NAME["memory.set"]
             mcp_call._emit_refused(op.name, misspelt, error_code="UNKNOWN_ARGUMENT", request_id="r")
-            emit_refusal(op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE", server_fault=True)
-            emit_refusal(op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE")
+            emit_token_refusal(
+                op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE", server_fault=True
+            )
+            emit_token_refusal(op.name, eve, error_code="NAMESPACE_NOT_ACCESSIBLE")
 
     batch = [{"id": i, "method": "tools/call", "params": hidden} for i in range(1000)]
     batch += [{"id": i, "method": "tools/call", "params": foreign} for i in range(1000)]
@@ -888,6 +890,106 @@ def test_a_batch_of_refused_entries_writes_one_row_per_refusal(monkeypatch) -> N
         ("memory.set", "UNKNOWN_ARGUMENT", "client"),
     ]
     # Outside a batch, each call is its own request.
-    emit_refusal("memory.set", eve, error_code="ORG_MISMATCH")
-    emit_refusal("memory.set", eve, error_code="ORG_MISMATCH")
+    emit_token_refusal("memory.set", eve, error_code="ORG_MISMATCH")
+    emit_token_refusal("memory.set", eve, error_code="ORG_MISMATCH")
     assert len(emitted) == 7
+
+
+def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypatch) -> None:
+    """`row_in_scope` answers found=False rather than 403 (a 403 would confirm
+    the id), but when the refusal behind it could not be verified the row is
+    the server's, or a grants outage reads as healthy id lookups."""
+    from server.auth import authz, fail_closed
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import http
+
+    rows: list[tuple[bool, str]] = []
+    monkeypatch.setattr(
+        http, "emit_agent_event", lambda **k: rows.append((k["success"], k["server_fault"]))
+    )
+    eve = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
+    )
+
+    async def _refused(unverified: bool) -> None:
+        async def _check(*a: Any, **k: Any) -> None:
+            e = PermissionError("refused")
+            e.unverified = unverified  # type: ignore[attr-defined]
+            raise e
+
+        monkeypatch.setattr(authz, "check_authorized", _check)
+        fail_closed.begin_request()
+        set_current_auth(eve)
+        assert await authz.row_in_scope("o", "other") is False
+        http._emit_event(
+            OPERATIONS_BY_NAME["memory.get_by_id"], "r", {}, 3, success=True, error_code=""
+        )
+
+    asyncio.run(_refused(unverified=True))
+    asyncio.run(_refused(unverified=False))
+    assert rows == [(True, True), (True, False)]
+
+
+def test_inside_a_batch_a_call_s_refusal_is_ledgered_once_but_each_handler_failure_is(
+    monkeypatch,
+) -> None:
+    from fastapi import HTTPException as _HTTPException
+    from pydantic import BaseModel
+
+    import server.code.app.member_writes as member_writes
+    import server.transport.mcp_outcome as mcp_outcome
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Operation
+    from server.transport import mcp_call
+    from server.transport.mcp_ledger import one_refusal_row_each
+
+    class _In(BaseModel):
+        org: str
+        namespace: str
+        agent: str = "-"
+        text: str = ""
+
+    async def _fails(inp: Any) -> None:
+        raise _HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR"})
+
+    op = Operation(
+        name="test.batch_rows",
+        input_model=_In,
+        output_model=_In,
+        handler=_fails,
+        idempotent=True,
+        budget_p99_ms=1000,
+        required_role=Role.VIEWER,
+    )
+
+    async def _noop(*a: Any, **k: Any) -> None:
+        return None
+
+    rows: list[str] = []
+    record = lambda name, args, ms, **k: rows.append(k["error_code"])  # noqa: E731
+    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, "loom_test_batch_rows", op)
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _noop)
+    monkeypatch.setattr(member_writes, "authorize_op", _noop)
+    monkeypatch.setattr("server.transport.gates._admitted", _noop)
+    monkeypatch.setattr("server.auth.personal_namespace.ensure_personal_namespace_cached", _noop)
+    monkeypatch.setattr(mcp_call, "_emit_mcp_event", record)
+    monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", record)
+    eve = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=True
+    )
+    args = {"org": "o", "namespace": "n", "text": "hi"}
+
+    async def _batch() -> None:
+        with one_refusal_row_each():
+            for _ in range(3):
+                params = {"name": "loom_test_batch_rows", "arguments": {**args, "text": 123}}
+                await mcp_call._call_tool(1, params, auth=eve)
+            for _ in range(2):
+                params = {"name": "loom_test_batch_rows", "arguments": args}
+                await mcp_call._call_tool(2, params, auth=eve)
+
+    asyncio.run(_batch())
+    assert rows.count("VALIDATION_FAILED") == 1
+    assert len([c for c in rows if c != "VALIDATION_FAILED"]) == 2  # each failure its own row
