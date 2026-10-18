@@ -12,6 +12,7 @@ from typing import Any, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from server.core.ch import sequential_reads
 from server.core.repo_base import _CHClient, _default_client, param_slices, query_all_sliced
 from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
 
@@ -790,12 +791,15 @@ async def _tombstone_embeddings(
               AND tombstoned_at IS NULL
           )
         """
-    if msg_ids is None:
-        rows = await ch.query_all(select.format(turns=_THREAD_TURNS), params=params)
-    else:
-        # Named turns are the agent's own (compaction reads them from its live turns).
-        named = select.format(turns="msg_id IN {ids:Array(String)}")
-        rows = await query_all_sliced(ch, named, {**params, "ids": msg_ids}, "ids")
+    # Sequential reads: on a multi-replica service a lagging replica could miss a turn
+    # appended just before, leaving its embedding live once its message is tombstoned.
+    with sequential_reads():
+        if msg_ids is None:
+            rows = await ch.query_all(select.format(turns=_THREAD_TURNS), params=params)
+        else:
+            # Named turns are the agent's own (compaction reads them from its live turns).
+            named = select.format(turns="msg_id IN {ids:Array(String)}")
+            rows = await query_all_sliced(ch, named, {**params, "ids": msg_ids}, "ids")
     # One row version at a time: during a re-embed a turn has a row per model, each
     # judged on its own text, and a peer's row written since the read is not this one.
     due = [

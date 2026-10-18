@@ -283,3 +283,27 @@ async def test_a_long_thread_is_tombstoned_in_byte_bounded_slices() -> None:
     slices = [p["due"] for sql, p in ch.executed if "conversation_embeddings" in sql]
     assert len(slices) > 1
     assert [d[1] for d in sum(slices, [])] == ids
+
+
+@pytest.mark.asyncio
+async def test_the_tombstone_reads_with_sequential_consistency() -> None:
+    """The rows a tombstone names come from a sequential read: a lagging replica must
+    not miss a turn appended just before the delete."""
+    from server.core.ch import sequential_reads_active
+    from server.knowledge.store import conversations as repo
+
+    seen: list[bool] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            seen.append(sequential_reads_active())
+            return []
+
+        async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
+            return None
+
+    for msg_ids in (None, ["m1"]):
+        await repo._tombstone_embeddings(
+            "o", "n", "a", "t", msg_ids=msg_ids, when=datetime(2026, 9, 1, 12, 0, 0), ch=_CH()
+        )
+    assert seen == [True, True]
