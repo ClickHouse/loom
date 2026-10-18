@@ -201,6 +201,10 @@ function ConflictsPanel() {
   // flagged it again) and is offered.
   const decidedAt = useRef(new Map<string, number>());
   const undecided = (c: ConflictRow) => c.version > (decidedAt.current.get(c.memory_id) ?? -1);
+  // The ids a decision took out while a Load more was out, for that Load more's answer:
+  // a page the server read before the resolve wrote still lists them, at versions the
+  // resolve answer does not name.
+  const goneDuringLoad = useRef<Set<string> | null>(null);
   // The rows on screen as of the latest render, for an answer from another visit.
   const rowsNow = useRef(rows);
   rowsNow.current = rows;
@@ -254,6 +258,8 @@ function ConflictsPanel() {
     if (next === null || !rows) return;
     const myVisit = visit.current;
     focusAdded.current = rows.length;
+    const goneHere = new Set<string>();
+    goneDuringLoad.current = goneHere;
     setLoadingMore(true);
     try {
       const r = await listConflicts(
@@ -265,12 +271,13 @@ function ConflictsPanel() {
       setRows((prev) => {
         if (!prev) return prev;
         const have = new Set(prev.map((c) => c.memory_id));
-        return [...prev, ...r.rows.filter((c) => !have.has(c.memory_id) && undecided(c))];
+        return [...prev, ...r.rows.filter((c) => !have.has(c.memory_id) && !goneHere.has(c.memory_id) && undecided(c))];
       });
       setNext(r.next_before_version);
     } catch (e) {
       toast(`Couldn't load more conflicts: ${humanizeError(e)}`, "error");
     } finally {
+      if (goneDuringLoad.current === goneHere) goneDuringLoad.current = null;
       if (visit.current === myVisit) setLoadingMore(false);
     }
   };
@@ -321,7 +328,8 @@ function ConflictsPanel() {
       // The decided row and the peers the resolve wrote (affected_memory_ids: tombstoned or
       // made active) leave every list, on any visit; ids are org-wide, so no other queue
       // loses a row. Each is remembered at the version on screen, so a later re-flag shows.
-      const gone = new Set([current.memory_id, ...(res.affected_memory_ids ?? [])]);
+      const gone = new Set([current.memory_id, ...res.affected_memory_ids]);
+      for (const id of gone) goneDuringLoad.current?.add(id);
       decidedAt.current.set(current.memory_id, current.version);
       const shown = rowsNow.current ?? [];
       for (const c of shown) if (gone.has(c.memory_id)) decidedAt.current.set(c.memory_id, c.version);
@@ -331,15 +339,17 @@ function ConflictsPanel() {
       const before = (i: number) => shown.slice(0, i).filter((c) => gone.has(c.memory_id)).length;
       decided.current = true;
       setRows((prev) => prev && prev.filter((c) => !gone.has(c.memory_id)));
-      // Another visit: the place, count and reason are not this decision's. An emptied page
-      // with more past it reads the queue again (the decided flag).
+      setIndex((i) => i - before(i));
+      // Another visit: its count was read with the rows dropped here, before the resolve,
+      // so they come off it; the reason is not this decision's. An emptied page with more
+      // past it reads the queue again (the decided flag).
       if (visit.current !== myVisit) {
-        setIndex((i) => i - before(i));
+        setTotal((t) => (t === null ? t : Math.max(t - dropped, 0)));
         return;
       }
       setReason("");
-      setIndex(at - before(at));
-      if (held !== null) setTotal(held - Math.max(dropped, 1));
+      // Every conflicted row the resolve wrote leaves the count, loaded or not.
+      if (held !== null) setTotal(Math.max(held - gone.size, 0));
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {

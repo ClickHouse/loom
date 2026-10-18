@@ -364,6 +364,82 @@ describe("ReviewQueue", () => {
     expect(await screen.findByText("value of a/next", {}, WAIT)).toBeInTheDocument();
   });
 
+  it("a decision made after an earlier visit's answer moved the queue opens the conflict that follows it", async () => {
+    vi.mocked(listConflicts).mockImplementation(async (id) =>
+      id.namespace === "ns-b"
+        ? { rows: [conflict("b/key")], next_before_version: null }
+        : {
+            rows: ["a/x", "a/x2", "a/y", "a/z", "a/w", "a/v"].map((k) => conflict(k)),
+            next_before_version: null,
+          },
+    );
+    let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    let answerSecond: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    vi.mocked(resolveConflict)
+      .mockImplementationOnce(() => new Promise((r) => (answerFirst = r)))
+      .mockImplementationOnce(() => new Promise((r) => (answerSecond = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/x", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    seed("ns-a");
+    await screen.findByText("value of a/x", {}, WAIT);
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    await userEvent.click(within(table).getByRole("button", { name: "a/z" }));
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    await act(async () => answerFirst({ resolved: true, affected_memory_ids: ["id-a/x2"] }));
+    await act(async () => answerSecond({ resolved: true, affected_memory_ids: [] }));
+    // a/z leaves; a/w, the one after it, is open: none is skipped.
+    await waitFor(() => expect(screen.getByText("value of a/w")).toBeInTheDocument(), WAIT);
+  });
+
+  it("an earlier visit's answer takes its rows off the count read with them", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(3);
+    onTestFinished(() => {
+      vi.mocked(countConflicts).mockImplementation(async () => 0);
+    });
+    vi.mocked(listConflicts).mockImplementation(async (id) =>
+      id.namespace === "ns-b"
+        ? { rows: [conflict("b/key")], next_before_version: null }
+        : { rows: [conflict("a/x"), conflict("a/y"), conflict("a/z")], next_before_version: null },
+    );
+    let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText(/Conflict 1 of 3/, {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    seed("ns-a");
+    await screen.findByText(/Conflict 1 of 3/, {}, WAIT);
+    await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
+    await screen.findByText(/Conflict 1 of 2/, {}, WAIT);
+  });
+
+  it("a Load more out while a resolve writes an off-screen peer leaves that peer out", async () => {
+    let older: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
+    vi.mocked(listConflicts).mockImplementation(async (_id, opts) =>
+      opts?.before_version
+        ? new Promise((r) => (older = r))
+        : { rows: [conflict("a/x"), conflict("a/y")], next_before_version: 7 },
+    );
+    vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: true, affected_memory_ids: ["id-a/peer"] });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/x", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await userEvent.click(screen.getByRole("button", { name: /Allow both/ }));
+    const table = screen.getByRole("table", { name: "Conflicts" });
+    await waitFor(() => expect(within(table).queryByRole("button", { name: "a/x" })).toBeNull(), WAIT);
+    // The page was read before the resolve wrote: it still lists the peer.
+    await act(async () => older({ rows: [conflict("a/peer"), conflict("a/old")], next_before_version: null }));
+    await waitFor(() => expect(within(table).getByRole("button", { name: "a/old" })).toBeInTheDocument(), WAIT);
+    expect(within(table).queryByRole("button", { name: "a/peer" })).toBeNull();
+  });
+
   it("a Load more answered after a namespace switch adds nothing to the new namespace's queue", async () => {
     let older: (v: { rows: ConflictRow[]; next_before_version: null }) => void = () => {};
     vi.mocked(listConflicts).mockImplementation(async (id, opts) => {
