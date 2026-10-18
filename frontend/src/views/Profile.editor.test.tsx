@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { ConfirmViewport } from "../components/ConfirmDialog";
@@ -49,6 +49,19 @@ describe("Profile: the section editor", () => {
   afterEach(() => {
     cleanup();
     useStore.setState({ identity: null });
+  });
+
+  it("does not reopen an editor from the namespace left on a section of the same name", async () => {
+    render(<Profile />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Edit/ }));
+    await screen.findByRole("textbox", { name: "Section text" });
+    // "other" holds a "persona" section too.
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } }));
+    await waitFor(() =>
+      expect(listProfile.mock.calls.some(([id]) => (id as { namespace: string }).namespace === "other")).toBe(true),
+    );
+    await screen.findByText("persona");
+    expect(screen.queryByRole("textbox", { name: "Section text" })).toBeNull();
   });
 
   it("closes at once on Escape when nothing was typed, and focus returns to the opener", async () => {

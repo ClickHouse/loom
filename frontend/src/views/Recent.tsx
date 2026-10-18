@@ -225,6 +225,8 @@ function MemoryList() {
     setKeywordKeys(new Set());
     setKeywordTotal(0);
     setRanking(false);
+    setSearching(false);
+    setSearchAbstain(null);
     setConflictKeys(new Set());
     setAgentFilter(null);
   }
@@ -296,6 +298,8 @@ function MemoryList() {
       setKeywordKeys(new Set());
       setKeywordTotal(0);
       setRanking(false);
+      // A search cut short (the box cleared while it read) is not still searching.
+      setSearching(false);
       return;
     }
     let cancelled = false;
@@ -335,6 +339,8 @@ function MemoryList() {
           setSearchHits(kwEntries.map((e) => e.memory_key));
           setSearchExtra(new Map(kwExtra));
           setSearchWhy(new Map());
+          // Rows hold the words: no low-confidence note from an earlier query.
+          setSearchAbstain(null);
           setSearching(false);
           setRanking(true);
         }

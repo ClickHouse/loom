@@ -1,10 +1,11 @@
 /** The mode badge shows the server's mode verbatim; a mode the UI does not know
  *  takes the off styling and blurb instead of an undefined lookup. */
-import { cleanup, render, screen, waitFor } from "../../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
 import { useStore } from "../../lib/state";
+import { ConfirmViewport } from "../../components/ConfirmDialog";
 import { Policies } from "./Policies";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -15,6 +16,7 @@ vi.mock("../../api", async (importOriginal) => {
     listPolicies: vi.fn(async () => ({ rules: [], mode: "audit-only" })),
     listPolicyDecisions: vi.fn(async () => ({ rows: [] })),
     setPolicy: vi.fn(async (_id, body) => ({ rule: { ...body }, leaf_count: 1 })),
+    deletePolicy: vi.fn(async () => ({ deleted: true })),
   };
 });
 
@@ -111,5 +113,43 @@ describe("Policies rule time", () => {
     const time = (await screen.findByText(/^updated/)).querySelector("time");
     expect(time).toHaveAttribute("dateTime", "2025-03-04T10:00:00.000Z");
     expect(time).toHaveTextContent("Mar 4, 2025");
+  });
+});
+
+describe("Policies across a namespace switch", () => {
+  it("a delete answered after a namespace switch does not paint the old namespace's rules", async () => {
+    const rule = (id: string) => ({
+      policy_id: id,
+      effect: "forbid",
+      actions: ["memory.delete"],
+      condition: { op: "all", of: [] },
+      description: "",
+      enabled: true,
+      created_by: "alice",
+      created_at: null,
+      updated_at: "2025-03-04 10:00:00",
+    });
+    vi.mocked(api.listPolicies).mockImplementation(async (id) =>
+      (id as { namespace: string }).namespace === "b"
+        ? ({ rules: [rule("b-rule")], mode: "enforce" } as never)
+        : ({ rules: [rule("a-rule")], mode: "enforce" } as never),
+    );
+    let answer: () => void = () => {};
+    vi.mocked(api.deletePolicy).mockImplementationOnce(() => new Promise<never>((r) => (answer = r as () => void)));
+    useStore.setState({ identity: { org: "dev", namespace: "a", agent: "loom-ui" } });
+    render(
+      <>
+        <Policies />
+        <ConfirmViewport />
+      </>,
+    );
+    await screen.findByText("a-rule");
+    fireEvent.click(screen.getByRole("button", { name: /Delete/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "b", agent: "loom-ui" } }));
+    await screen.findByText("b-rule");
+    await act(async () => answer());
+    expect(screen.queryByText("a-rule")).toBeNull();
+    expect(screen.getByText("b-rule")).toBeInTheDocument();
   });
 });

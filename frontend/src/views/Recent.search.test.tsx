@@ -172,7 +172,34 @@ describe("Recent across a namespace switch", () => {
     await waitFor(() => expect(screen.queryByText("alice_only")).toBeNull());
   });
 
+  it("clearing the box while a search reads gives the count back", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.contains
+        ? new Promise<never>(() => {})
+        : { entries: [entry("coffee_pref"), entry("tea_pref")], total: 2, today: 2, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("coffee_pref");
+    const box = screen.getByLabelText("Search memories");
+    await userEvent.type(box, "milk");
+    await waitFor(
+      () => expect(vi.mocked(listMemories).mock.calls.some(([, , o]) => o?.contains === "milk")).toBe(true),
+      { timeout: 3000 },
+    );
+    await userEvent.clear(box);
+    const bar = screen.getByLabelText("Search and filters");
+    await waitFor(() => expect(bar.querySelector("[aria-busy]")).toBeNull());
+    expect(bar).toHaveTextContent("1–2 of 2");
+  });
+
   it("shows no conflict chip from the old namespace while the new one's conflicts read", async () => {
+    // Both namespaces hold the same keys (the mock's implementation outlives each test).
+    vi.mocked(listMemories).mockImplementation(async () => ({
+      entries: [entry("coffee_pref"), entry("tea_pref")],
+      total: 2,
+      today: 0,
+      truncated: false,
+    }));
     vi.mocked(conflictKeys).mockImplementation(async (id) =>
       (id as { namespace: string }).namespace === "bob" ? new Promise<string[]>(() => {}) : ["tea_pref"],
     );

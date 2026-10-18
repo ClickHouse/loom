@@ -35,7 +35,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
-import { Alert, ListTime, LoadingSkeleton, PageHeader, TipTarget } from "../../components/ui";
+import { Alert, ListTime, LoadingSkeleton, PageHeader } from "../../components/ui";
 
 /**
  * Policies — history rules over what an agent may do next.
@@ -208,13 +208,20 @@ export function Policies() {
         if (live()) setRefreshing(false);
       });
   };
-  // Another namespace's rules are not this one's: start from the skeleton.
+  // Another namespace's rules are not this one's: start from the skeleton. A reload after
+  // a write runs through this effect too, so an answer for a namespace left is dropped.
+  const [reads, setReads] = useState(0);
+  const scope = `${identity.org}/${identity.namespace}`;
+  const rulesFor = useRef(scope);
   useAbortableEffect(
     (signal, live) => {
-      setRules(null);
+      if (rulesFor.current !== scope) {
+        rulesFor.current = scope;
+        setRules(null);
+      }
       load(signal, live);
     },
-    [identity.org, identity.namespace],
+    [scope, reads],
   );
 
   const remove = async (r: PolicyRule) => {
@@ -231,7 +238,7 @@ export function Policies() {
     try {
       await deletePolicy({ org: identity.org, namespace: identity.namespace }, r.policy_id);
       toast("Rule deleted", "ok");
-      load();
+      setReads((n) => n + 1);
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     }
@@ -347,7 +354,7 @@ export function Policies() {
         onClose={() => setAddOpen(false)}
         onSaved={() => {
           setAddOpen(false);
-          load();
+          setReads((n) => n + 1);
         }}
       />
     </PageContainer>
@@ -803,13 +810,8 @@ function DecisionsPanel({ version }: { version: number }) {
               id: `${r.request_id || r.ts}-${i}`,
               items: [
                 {
-                  label: (
-                    <TipTarget tip={r.ts} underline>
-                      <time dateTime={r.ts} className="text-text-muted">
-                        <ListTime iso={r.ts} quiet />
-                      </time>
-                    </TipTarget>
-                  ),
+                  // ListTime is the time and its UTC tooltip: no second one around it.
+                  label: <ListTime iso={r.ts} quiet className="text-text-muted" />,
                 },
                 { label: displayAgent(r.agent) },
                 { label: <span className="font-mono text-xs">{r.operation}</span> },

@@ -166,8 +166,12 @@ export function Profile() {
     },
     [identity],
   );
+  // Another namespace's sections, and an editor open on one of them, are not this one's.
   useEffect(() => {
     setEntries(null);
+    setEditing(null);
+    setNewOpen(false);
+    setNewSeed(null);
     void refreshRef.current();
   }, [identity.org, identity.namespace, identity.agent]);
 
