@@ -70,11 +70,9 @@ def candidate_sql_many(n: int, in_scope: str = "") -> str:
 
 
 def _peer_candidates_sql(in_scope: str = "") -> str:
-    """Stage A: the namespace's nearest vectors of the fact's type, nothing else
-    read; `in_scope` is the read-scope clause (`scope_and`). The type is filtered
-    here, before the LIMIT, so a namespace dense in other types does not widen the
-    read to the join (the conflict resolver's 0.60 reach takes many of them); stage B
-    still applies the memory row's type, which is the one that counts."""
+    """Stage A: the namespace's nearest vectors, nothing else read; `in_scope`
+    is the read-scope clause (`scope_and`). No type filter: the memory row's type
+    is the one that counts, and stage B applies it."""
     from server.core.vectors.search_settings import vector_search_settings
 
     return (
@@ -87,7 +85,6 @@ def _peer_candidates_sql(in_scope: str = "") -> str:
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND memory_key != {self_key:String}
-          AND memory_type = {mt:String}
           AND tombstoned_at IS NULL
           AND embedding_dim = {dim:UInt16}
           AND embedding.size0 = {dim:UInt16}"""

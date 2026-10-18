@@ -104,11 +104,8 @@ def test_the_widening_cap_falls_back_to_the_join(monkeypatch: pytest.MonkeyPatch
     assert _run(ch) == [{"memory_key": "from-join", "dist": 0.02}] and joined
 
 
-def test_stage_a_reads_the_facts_type_before_its_limit() -> None:
-    # Vectors of other types never take stage A's places; stage B checks the row's type.
-    sql = conflict_candidates._peer_candidates_sql()
-    assert sql.index("memory_type = {mt:String}") < sql.index("LIMIT {k:UInt32}")
-    assert "memory_type = {mt:String}" in conflict_candidates._PEER_ROWS_SQL
+def test_the_gates_own_stage_a_reads_every_type() -> None:
+    assert "memory_type" not in conflict_candidates._peer_candidates_sql()
 
 
 @pytest.mark.parametrize(
