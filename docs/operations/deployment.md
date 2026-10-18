@@ -179,11 +179,11 @@ containers from it against the ClickHouse in `.env` (run `loom ch-setup` against
 A long worker pass never shares an event loop with client requests, so it cannot show up
 as request latency. A single container gets the same: its lease holder runs the workers
 in a child process ([N identical replicas](#n-identical-replicas)). Both containers read
-the same `.env` and mount the same `var/code_repos` directory,
-so on one host they share the git mirrors. Documents, keys and the workers lease are in
-ClickHouse, so replicas on other hosts need not share it: each keeps its own mirrors, and
-the mount only keeps them across a restart. `LOOM_SERVES_TRAFFIC=false` keeps the workers container out of the
-replica count the rate limits are divided by. Whichever boots first applies pending
+the same `.env` and mount the same `var/code_repos` directory, so on one host they share
+the git mirrors. Documents, keys and the workers lease are in ClickHouse, so replicas on
+other hosts need not share that directory: each keeps its own mirrors, and the mount
+only keeps them across a restart. `LOOM_SERVES_TRAFFIC=false` keeps the workers
+container out of the replica count the rate limits are divided by. Whichever boots first applies pending
 migrations ([upgrades](./upgrades.md#how-migrations-run)).
 
 ## How settings are read

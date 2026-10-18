@@ -58,8 +58,8 @@ provider-lock clear --holder <holder>` frees a key whose holder has no
 participant row, and refuses while the holder renews, heartbeats or has a query
 running. Boot migrations never run under this key: a boot holds it only to check
 that no rebuild is unfinished, after enrolling, so a reconfiguration started while
-it migrates waits for it. A participant frozen for over 60 s may count as stopped; it re-enrolls with
-its next heartbeat and closes its gate on its next refresh.
+it migrates waits for it. A participant frozen for over 60 s may count as stopped;
+it re-enrolls with its next heartbeat and closes its gate on its next refresh.
 
 The first coordinator checkpoint freezes endpoint/model identity and valid
 configured prefix widths. Restarting does not adopt changed prefix settings.
