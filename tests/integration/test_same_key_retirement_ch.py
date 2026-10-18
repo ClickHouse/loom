@@ -39,6 +39,14 @@ def org() -> str:
     return unique_org("same-key")
 
 
+async def _retry_one(failure: Any, ch: Any) -> Any:
+    """One failure retried and marked, as a repair pass does."""
+    from server.memory.app.projection_failures import retry_failures
+
+    (out,) = await retry_failures([failure], ch=ch)
+    return out
+
+
 def _row(org: str, session: str, value: str, valid_at: datetime, **extra: Any) -> dict[str, Any]:
     from server.memory import store as M
 
@@ -649,7 +657,6 @@ async def test_a_replayed_bulk_edge_projection_skips_a_value_the_same_bulk_repla
     from server.memory.api.models_crud import MemorySetInput
     from server.memory.app import after_write
     from server.memory.app.bulk_set import handle_memory_bulk_set
-    from server.memory.app.projection_failures import retry_failures
     from server.memory.app.write import handle_memory_set
 
     def _entry(city: str) -> dict[str, Any]:
@@ -687,7 +694,7 @@ async def test_a_replayed_bulk_edge_projection_skips_a_value_the_same_bulk_repla
     await after_write.drain()
     monkeypatch.setattr(client, "insert", insert)
     failure = await _recorded_reconcile(ch, org, "entity_edges")
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     await asyncio.sleep(1.1)  # past the second an edge ended in
     walked = await _walked(org, ["rome"], labeled=False, seed="alice", until=lambda w: "rome" in w)
@@ -812,7 +819,6 @@ async def test_a_replayed_bulk_edge_projection_writes_what_the_bulk_write_would(
     from server.core import ch as ch_mod
     from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.app.bulk_set import handle_memory_bulk_set
-    from server.memory.app.projection_failures import retry_failures
 
     client = ch_mod.get_client()
     insert = client.insert
@@ -842,7 +848,7 @@ async def test_a_replayed_bulk_edge_projection_writes_what_the_bulk_write_would(
     )
     monkeypatch.setattr(client, "insert", insert)
     failure = await _recorded_reconcile(ch, org, "entity_edges")
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     (row,) = await ch.query_all(
         "SELECT count() AS n FROM loom.entity_edges WHERE org = {org:String}"
         " AND entity_a = 'alice' AND entity_b = 'bob' SETTINGS select_sequential_consistency = 1",
@@ -1636,7 +1642,6 @@ async def test_a_replayed_insert_names_its_triples_as_the_write_resolved_them(
         bulk_projection_payload,
         record_input_projection_failure,
     )
-    from server.memory.app.projection_failures import retry_failures
 
     live = ("user", "live_in")
     await _stated(ch, org, "s1", "I live in Paris", (*live, "paris"))
@@ -1674,7 +1679,7 @@ async def test_a_replayed_insert_names_its_triples_as_the_write_resolved_them(
     )
     failure = await _recorded_reconcile(ch, org, "entity_triples")
     names["london"] = "london city"
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
 
@@ -1696,7 +1701,6 @@ async def test_a_replay_that_inserted_never_inserts_again_after_a_failed_repair(
     )
     from server.memory.app.projection_failures import (
         list_projection_failures,
-        retry_failures,
     )
 
     _row, write, results = await _row_and_write(
@@ -1736,14 +1740,14 @@ async def test_a_replay_that_inserted_never_inserts_again_after_a_failed_repair(
         stopped.setattr(projections, "_repair_contradictory_triples", fails)
         stopped.setattr(projection_failures, "record_projection_failure", fails)
         stopped.setattr(projection_failures, "mark_projection_failures_resolved", fails)
-        assert not (await retry_failures([failure], ch=ch))[0].resolved
+        assert not (await _retry_one(failure, ch)).resolved
 
     (failure,) = await list_projection_failures(org=org, projection="entity_triples", ch=ch)
     assert failure.payload[TRIPLES_INSERTED_AT]
     # The build before inserts the `entries` of an `entity_triples` failure.
     assert "entries" not in failure.payload
     monkeypatch.setattr(client, "insert", counting)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     monkeypatch.setattr(client, "insert", insert)
     assert "loom.entity_triples" not in inserted
     await _mutations_done(ch, org)
@@ -2103,7 +2107,6 @@ async def test_a_replayed_undo_closes_its_markers_for_a_revision_made_during_it(
     # longer holding the restored value, and must still close London's marker.
     from server.identity.app import namespace_ontology
     from server.memory.app import graph_undo
-    from server.memory.app.projection_failures import retry_failures
     from server.memory.app.restore import handle_memory_restore
 
     london = await _stated(ch, org, "s1", "I like London", ("user", "like", "london"))
@@ -2133,7 +2136,7 @@ async def test_a_replayed_undo_closes_its_markers_for_a_revision_made_during_it(
     monkeypatch.setattr(namespace_ontology, "load_relation_cardinality", revised_after_the_check)
     assert (await handle_memory_restore(_undo_of(paris))).restored and True in revised
     monkeypatch.setattr(graph_undo, "close_dropped_facts", closed)
-    assert (await retry_failures([await _recorded_reconcile(ch, org)], ch=ch))[0].resolved
+    assert (await _retry_one(await _recorded_reconcile(ch, org), ch)).resolved
     await _mutations_done(ch, org)
     want = {("like", "rome"), ("like", "paris")}
     assert await _open_facts(ch, org, want) == want
@@ -3226,7 +3229,6 @@ async def test_an_undo_waits_for_another_orgs_subquery_mutation_to_reach_the_gra
     # While the erasure is pending the Undo restores the row and writes nothing to
     # the graph: the failure is recorded, and its replay makes London current, weighed
     # once, on both planes.
-    from server.memory.app.projection_failures import retry_failures
     from server.memory.app.restore import handle_memory_restore
 
     live = ("user", "live_in")
@@ -3241,7 +3243,7 @@ async def test_an_undo_waits_for_another_orgs_subquery_mutation_to_reach_the_gra
     assert out.restored
     assert failure.payload["memory_ids"] == [str(london["memory_id"])]
     assert failure.payload["restored_at"] and failure.payload["content_sha256"]
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
     assert await _open_edges(ch, org, {"london"}) == ["london"]
@@ -3256,7 +3258,6 @@ async def test_a_deferred_undo_adds_no_weight_to_a_fact_another_live_row_holds(c
     from types import SimpleNamespace
 
     from server.memory.app.entity_projections import reconcile_row_facts
-    from server.memory.app.projection_failures import retry_failures
 
     london = await _stated(ch, org, "s1", "My favourite city is London")
     await _stated(ch, org, "s3", "My favourite city is London", memory_key="k3")
@@ -3275,7 +3276,7 @@ async def test_a_deferred_undo_adds_no_weight_to_a_fact_another_live_row_holds(c
             hashes={ids[0]: london["content_sha256"]},
         )
         failure = await _recorded_reconcile(ch, org)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_weights(ch, org, "london") == {"triples": 2, "edges": 2}
 
@@ -3334,7 +3335,6 @@ async def test_a_replayed_undo_restates_a_fact_dated_ahead_as_stored(ch, org, mo
     # As above, but the repair fails after the markers land. The replay reads them back
     # as stored, Berlin from Dec 1 to the second, so Rome still closes on Dec 1.
     from server.memory.app import graph_undo
-    from server.memory.app.projection_failures import retry_failures
     from server.memory.app.projections import write_entity_triples
     from server.memory.app.restore import handle_memory_restore
 
@@ -3362,7 +3362,7 @@ async def test_a_replayed_undo_restates_a_fact_dated_ahead_as_stored(ch, org, mo
     assert (await handle_memory_restore(_undo_of(paris))).restored
     monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     failure = await _recorded_reconcile(ch, org)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     markers = await ch.query_all(
         "SELECT object, valid_from, valid_to FROM loom.entity_triples WHERE org = {org:String}"
@@ -3848,7 +3848,6 @@ async def test_a_failed_interval_repair_is_recorded_for_replay(ch, org, monkeypa
     from server.memory.app import projections
     from server.memory.app.projection_failures import (
         list_projection_failures,
-        retry_failures,
     )
 
     await _stated(ch, org, "s1", "I currently live in London", ("user", "live_in", "london"))
@@ -3871,7 +3870,7 @@ async def test_a_failed_interval_repair_is_recorded_for_replay(ch, org, monkeypa
         await asyncio.sleep(0.1)
     (failure,) = failures
     monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
     # The triples landed before the repair failed: the replay repaired, not inserted.
@@ -4276,7 +4275,6 @@ async def test_a_replayed_repair_never_closes_a_newer_value(
 ) -> None:
     # Rome's repair fails; Paris then closes London and Rome. The replay of Rome's
     # repair is dated at Rome's write: it closes nothing Paris stated, nor retires it.
-    from server.memory.app.projection_failures import retry_failures
 
     live = ("user", "live_in")
     london = await _stated(ch, org, "s1", "I live in London", (*live, "london"), memory_key="k1")
@@ -4292,7 +4290,7 @@ async def test_a_replayed_repair_never_closes_a_newer_value(
     # Paris arrives after Rome's write, in its second or a later one.
     paris = await _stated(ch, org, "s3", "I moved to Paris", (*live, "paris"), memory_key="k3")
     await _mutations_done(ch, org)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"paris"}) == {"paris"}
     assert await _status(ch, org, paris) == "active"
@@ -4313,7 +4311,6 @@ async def test_a_replay_finishes_a_repair_that_failed_after_its_close(
 ) -> None:
     # Rome's close of London was issued, a later step did not run: the replay closes
     # London if that close never landed, and retires the row behind it.
-    from server.memory.app.projection_failures import retry_failures
 
     live = ("user", "live_in")
     london = await _stated(ch, org, "s1", "I live in London", (*live, "london"), memory_key="k1")
@@ -4322,7 +4319,7 @@ async def test_a_replay_finishes_a_repair_that_failed_after_its_close(
     )
     await _mutations_done(ch, org)
     assert await _status(ch, org, london) == "active"
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
     assert await _status(ch, org, london) == "superseded"
 
@@ -4336,7 +4333,6 @@ async def test_a_replay_that_fails_after_its_close_is_finished_by_the_next(
     from server.memory.app.projection_failures import (
         list_projection_failures,
         record_projection_failure,
-        retry_failures,
     )
 
     live = ("user", "live_in")
@@ -4375,11 +4371,11 @@ async def test_a_replay_that_fails_after_its_close_is_finished_by_the_next(
 
     with monkeypatch.context() as patched:
         patched.setattr(projections, "_retire_memories_behind_repairs", _fails)
-        assert not (await retry_failures([await _stored()], ch=ch))[0].resolved
+        assert not (await _retry_one(await _stored(), ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
     assert await _status(ch, org, london) == "active"
-    assert (await retry_failures([await _stored()], ch=ch))[0].resolved
+    assert (await _retry_one(await _stored(), ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
     assert await _status(ch, org, london) == "superseded"
@@ -4390,7 +4386,6 @@ async def test_a_replay_leaves_a_value_stated_again_since(
 ) -> None:
     # Back to London after Rome's retirement failed: London is current again, and
     # finishing Rome's repair would retire the row that just stated it.
-    from server.memory.app.projection_failures import retry_failures
 
     live = ("user", "live_in")
     await _stated(ch, org, "s1", "I live in London", (*live, "london"), memory_key="k1")
@@ -4409,7 +4404,7 @@ async def test_a_replay_leaves_a_value_stated_again_since(
         ch, org, "s3", "I moved back to London", (*live, "london"), memory_key="k3"
     )
     await _mutations_done(ch, org)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
     assert await _status(ch, org, back) == "active"
@@ -4469,12 +4464,11 @@ async def test_a_replay_reopens_a_value_stated_again_while_its_close_landed(
 ) -> None:
     # The replay opens London again instead of finishing Rome's close, also when London
     # is dated by its session day, before Rome's write.
-    from server.memory.app.projection_failures import retry_failures
 
     back_from = _today() if dated else None
     _, back, failure = await _rome_raced_by_back_to_london(ch, org, monkeypatch, back_from)
     assert await _open_cities(ch, org, set()) == set()
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
     assert await _status(ch, org, back) == "active"
@@ -4486,14 +4480,13 @@ async def test_a_reopened_value_meets_the_value_stated_after_it(
     # As above, and Paris is stated before the replay: it found no open London to
     # close. Opened again, London meets Paris as written in turn: Paris stays current
     # and the London rows retire behind it, as if Paris's write had closed London.
-    from server.memory.app.projection_failures import retry_failures
 
     london, back, failure = await _rome_raced_by_back_to_london(ch, org, monkeypatch)
     live = ("user", "live_in")
     paris = await _stated(ch, org, "s4", "I moved to Paris", (*live, "paris"), memory_key="k4")
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"paris"}) == {"paris"}
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"paris"}) == {"paris"}
     assert await _status(ch, org, paris) == "active"
@@ -4509,7 +4502,6 @@ async def test_a_replayed_undo_is_dated_at_the_undo(ch, org, monkeypatch) -> Non
     from server.memory.app.projection_failures import (
         TRIPLES_RECONCILE,
         list_projection_failures,
-        retry_failures,
     )
     from server.memory.app.restore import handle_memory_restore
 
@@ -4543,7 +4535,7 @@ async def test_a_replayed_undo_is_dated_at_the_undo(ch, org, monkeypatch) -> Non
             break
         await asyncio.sleep(0.1)
     (failure,) = failures
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
 
@@ -4615,7 +4607,7 @@ async def test_a_replay_projects_nothing_for_a_value_revised_since(ch, org) -> N
     import uuid
 
     from server.memory.app.projection_errors import bulk_projection_payload
-    from server.memory.app.projection_failures import ProjectionFailureRow, retry_failures
+    from server.memory.app.projection_failures import ProjectionFailureRow
 
     live = ("user", "live_in")
     london, write, results = await _row_and_write(
@@ -4636,7 +4628,7 @@ async def test_a_replay_projects_nothing_for_a_value_revised_since(ch, org) -> N
         error_message="triples down",
         payload=json.loads(json.dumps(payload)),
     )
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
 
@@ -5065,7 +5057,6 @@ async def test_a_replayed_fallback_dates_its_triple_as_its_edge(ch, org, monkeyp
     # triple starts when the edge does, so both walks agree in between.
     from server.core import ch as ch_mod
     from server.memory.app import entity_projections
-    from server.memory.app.projection_failures import retry_failures
 
     london = await _london_undone_over_paris(ch, org, "live_in")
     await _edges_like_triples(ch, org)
@@ -5083,7 +5074,7 @@ async def test_a_replayed_fallback_dates_its_triple_as_its_edge(ch, org, monkeyp
     failure = await _recorded_reconcile(ch, org)
     later = naive_utc_now() + timedelta(seconds=30)
     monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: later)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     starts = await ch.query_all(
         "SELECT 'triple' AS plane, valid_from FROM loom.entity_triples"
@@ -5105,7 +5096,6 @@ async def test_a_replayed_fallback_finishes_the_repair_its_markers_missed(
     # again; both its markers land but its interval repair fails. The replay finds the
     # markers and must still repair: Paris ends when Berlin starts.
     from server.memory.app import graph_undo
-    from server.memory.app.projection_failures import retry_failures
 
     live = ("user", "live_in")
     london = await _london_undone_over_paris(ch, org, "live_in")
@@ -5123,7 +5113,7 @@ async def test_a_replayed_fallback_finishes_the_repair_its_markers_missed(
     await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
     monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     failure = await _recorded_reconcile(ch, org)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     after = ahead + timedelta(days=1)
     want = ["berlin", "rome"]
@@ -5137,7 +5127,6 @@ async def test_a_replayed_fallback_closes_the_edge_its_repair_missed(ch, org, mo
     # to close its edge. The replay closes the edge too: after Dec 1 neither walk
     # reaches Paris.
     from server.core import ch as ch_mod
-    from server.memory.app.projection_failures import retry_failures
 
     live = ("user", "live_in")
     london = await _london_undone_over_paris(ch, org, "live_in")
@@ -5161,7 +5150,7 @@ async def test_a_replayed_fallback_closes_the_edge_its_repair_missed(ch, org, mo
     monkeypatch.setattr(client, "execute", execute)
     assert failed
     failure = await _recorded_reconcile(ch, org)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     after = ahead + timedelta(days=1)
     want = ["berlin", "rome"]
@@ -5178,7 +5167,6 @@ async def test_a_second_replay_closes_the_edge_the_first_replays_repair_missed(
     # finds Paris's triple already closed, repairs nothing and leaves the edge open.
     from server.core import ch as ch_mod
     from server.memory.app import entity_projections
-    from server.memory.app.projection_failures import retry_failures
 
     live = ("user", "live_in")
     london = await _london_undone_over_paris(ch, org, "live_in")
@@ -5208,9 +5196,9 @@ async def test_a_second_replay_closes_the_edge_the_first_replays_repair_missed(
 
     with monkeypatch.context() as patched:
         patched.setattr(client, "execute", _edge_close_fails)
-        (first,) = await retry_failures([await _recorded_reconcile(ch, org)], ch=ch)
+        first = await _retry_one(await _recorded_reconcile(ch, org), ch)
     assert failed and not first.resolved
-    (second,) = await retry_failures([await _recorded_reconcile(ch, org)], ch=ch)
+    second = await _retry_one(await _recorded_reconcile(ch, org), ch)
     assert second.resolved
     await _mutations_done(ch, org)
     after = ahead + timedelta(days=1)
@@ -5234,7 +5222,6 @@ async def _replay_follow(ch: Any, org: str, loser: dict[str, Any], winner: dict[
     from server.memory.app.projection_failures import (
         FOLLOW_ROWS,
         ProjectionFailureRow,
-        retry_failures,
     )
 
     failure = ProjectionFailureRow(
@@ -5250,7 +5237,7 @@ async def _replay_follow(ch: Any, org: str, loser: dict[str, Any], winner: dict[
         error_message="follow failed",
         payload={"pairs": [[str(loser["memory_id"]), str(winner["memory_id"])]]},
     )
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
 
 
@@ -5695,7 +5682,6 @@ async def test_a_replayed_undo_leaves_a_revision_since_to_its_own_reconcile(
     # The Undo of London fails; the row is then revised to Berlin. The replay never
     # dates Berlin at the Undo: that revision's own reconcile owns the row.
     from server.memory.app import graph_undo
-    from server.memory.app.projection_failures import retry_failures
     from server.memory.app.restore import handle_memory_restore
 
     live = ("user", "live_in")
@@ -5713,7 +5699,7 @@ async def test_a_replayed_undo_leaves_a_revision_since_to_its_own_reconcile(
     failure = await _recorded_reconcile(ch, org)
     await _revise("memory.update_by_id", org, london, "I live in Berlin", ((*live, "berlin"),))
     await _mutations_done(ch, org)
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     restores = await ch.query_all(
         "SELECT object FROM loom.entity_triples WHERE org = {org:String}"
         " AND adapter_name = 'row-restore' SETTINGS select_sequential_consistency = 1",
@@ -5842,7 +5828,6 @@ async def test_a_replayed_undo_leaves_a_value_asserted_later_in_its_second_curre
     # the same second and is current. Replayed with its own instant, the Undo keeps
     # its place: before Rome, so Rome stays current.
     from server.memory.app import graph_undo, projections
-    from server.memory.app.projection_failures import retry_failures
     from server.memory.app.restore import handle_memory_restore
 
     live = ("user", "live_in")
@@ -5869,7 +5854,7 @@ async def test_a_replayed_undo_leaves_a_value_asserted_later_in_its_second_curre
     )
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
-    assert (await retry_failures([await _recorded_reconcile(ch, org)], ch=ch))[0].resolved
+    assert (await _retry_one(await _recorded_reconcile(ch, org), ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
 
@@ -5881,7 +5866,7 @@ async def test_a_replayed_insert_of_an_older_value_leaves_the_newer_one_current(
     # its own write, so it lands behind Paris instead of closing it.
     from server.memory.app import projections
     from server.memory.app.projection_errors import bulk_projection_payload
-    from server.memory.app.projection_failures import ProjectionFailureRow, retry_failures
+    from server.memory.app.projection_failures import ProjectionFailureRow
 
     lives = ("user", "live_in", "london")
     _row, write, results = await _row_and_write(
@@ -5911,7 +5896,7 @@ async def test_a_replayed_insert_of_an_older_value_leaves_the_newer_one_current(
         error_message="insert timed out",
         payload=json.loads(json.dumps(payload)),
     )
-    assert (await retry_failures([failure], ch=ch))[0].resolved
+    assert (await _retry_one(failure, ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_facts(ch, org, {("live_in", "paris")}) == {("live_in", "paris")}
 
