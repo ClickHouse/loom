@@ -330,8 +330,8 @@ async def _flag(org: str, row: Any, peer: Any) -> bool:
     if landed != "conflict":
         return False
     # The pair is judged: the peer's flag is not an unjudged one to re-check, the other
-    # way round, next pass.
-    await queue.stamp_judged(_queue_key(org, peer))
+    # way round, next pass. A peer still owed its own turn keeps its mark.
+    await queue.stamp_judged(_queue_key(org, peer), keep_owed=True)
     return True
 
 

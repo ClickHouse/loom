@@ -18,6 +18,7 @@ An older build reads only the epoch as its own pending mark (`toUnixTimestamp(..
 
 from __future__ import annotations
 
+import calendar
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -161,9 +162,18 @@ def _same_write(row: Mapping[str, Any], judged: Mapping[str, Any]) -> bool:
     return int(row.get("version") or 0) == int(judged.get("version") or 0)
 
 
-async def stamp_judged(judged: Mapping[str, Any], *, ch: _CHClient | None = None) -> int:
+def _owed(row: Mapping[str, Any]) -> bool:
+    mark = row.get("conflict_checked_at")
+    return mark is not None and calendar.timegm(mark.utctimetuple()) < 2
+
+
+async def stamp_judged(
+    judged: Mapping[str, Any], *, keep_owed: bool = False, ch: _CHClient | None = None
+) -> int:
     """Stamp the vector rows of the judged write (`judged`: a queue row) `JUDGED_MARK`.
-    A newer write's row keeps its own mark. Nothing under erasure: the row stays owed."""
+    A newer write's row keeps its own mark, and with `keep_owed` (another row's
+    judgement stamping this one) so does a row still owed its own turn. Nothing under
+    erasure: the row stays owed."""
     ch = ch or _default_client()
     if await under_erasure(str(judged["org"]), ch=ch):
         return 0
@@ -177,6 +187,8 @@ async def stamp_judged(judged: Mapping[str, Any], *, ch: _CHClient | None = None
         memory_key=str(judged["memory_key"]),
     )
     own = [r for r in rows if str(r.get("scope")) == "private" and _same_write(r, judged)]
+    if keep_owed:
+        own = [r for r in own if not _owed(r)]
     return await reemit_rows(own, {"conflict_checked_at": JUDGED_MARK}, ch=ch)
 
 

@@ -404,6 +404,35 @@ async def test_the_stamp_writes_nothing_under_erasure() -> None:
     assert len(ch.sql) == 1 and "erasure_requests" in ch.sql[0], "no vector read, no write"
 
 
+@pytest.mark.parametrize(
+    ("mark", "stamped"),
+    [
+        (queue.OWED_MARK, False),
+        (datetime(1970, 1, 1), False),
+        (None, True),
+        (datetime(2026, 1, 1), True),
+    ],
+)
+async def test_a_peers_stamp_keeps_a_mark_still_owed(monkeypatch, mark: Any, stamped: bool) -> None:
+    async def rows(ch: Any, **kw: Any) -> list[dict[str, Any]]:
+        return [{"scope": "private", "content_sha256": "sha-new", "conflict_checked_at": mark}]
+
+    written: list[Any] = []
+
+    async def reemit(rows: list[Any], overrides: Any, **kw: Any) -> int:
+        written.extend(rows)
+        return len(rows)
+
+    async def no_erasure(org: str, **kw: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(queue, "live_embedding_rows_for_key", rows)
+    monkeypatch.setattr(queue, "reemit_rows", reemit)
+    monkeypatch.setattr(queue, "under_erasure", no_erasure)
+    assert await queue.stamp_judged(_q(), keep_owed=True, ch=object()) == int(stamped)
+    assert await queue.stamp_judged(_q(), ch=object()) == 1, "its own turn stamps it"
+
+
 async def test_a_pair_that_fails_leaves_the_audit_row_of_the_pairs_done_before_it(
     row_env: NS, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -602,8 +631,11 @@ async def test_a_flag_already_raised_is_not_written_again(monkeypatch) -> None:
 
     stamped: list[dict[str, Any]] = []
 
+    stamp_kw: list[dict[str, Any]] = []
+
     async def stamp(q: Any, **kw: Any) -> int:
         stamped.append(dict(q))
+        stamp_kw.append(kw)
         return 1
 
     monkeypatch.setattr(conflicts, "mark_peers_conflicted", mark)
@@ -619,6 +651,7 @@ async def test_a_flag_already_raised_is_not_written_again(monkeypatch) -> None:
     assert [(q["session_id"], q["content_sha256"], q["version"]) for q in stamped] == [
         ("s2", "sha-m2", 7)
     ]
+    assert stamp_kw == [{"keep_owed": True}], "unless the peer is owed its own turn"
 
 
 async def test_unlinking_a_pair_leaves_other_flags_and_reactivates_a_row_left_with_none(
