@@ -155,9 +155,6 @@ def user_prompt(new: Note, peers: list[Note]) -> str:
     return "\n\n".join(parts)
 
 
-_JSON_RE = re.compile(r"\{.*\}", re.S)
-
-
 def _peer_of(raw_id: str, peers: list[Note]) -> Note | None:
     """The peer an answer's `peer_id` names: `p2`, `[p2]`, the memory id, or the
     memory key (`key <memory_key>`) when no other peer has that key: two sessions'
@@ -183,12 +180,12 @@ def parse_verdicts(text: str, peers: list[Note]) -> dict[str, PeerVerdict]:
     a boolean, or a peer id that names no peer is dropped, so its peer is left
     unresolved and never acted on. A peer named twice keeps its first entry. Checked
     here, not trusted to the schema: not every provider enforces it."""
-    m = _JSON_RE.search(text or "")
-    if not m:
-        return {}
+    # The first JSON object in the text, whatever follows it (a greedy match from the
+    # first brace to the last would take a trailing note's braces too).
+    text = text or ""
     try:
-        obj = json.loads(m.group(0))
-    except json.JSONDecodeError:
+        obj, _ = json.JSONDecoder().raw_decode(text[text.index("{") :])
+    except ValueError:
         return {}
     entries = obj.get("peers") if isinstance(obj, dict) else None
     if not isinstance(entries, list):
