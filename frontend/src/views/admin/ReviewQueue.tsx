@@ -182,6 +182,9 @@ function ConflictsPanel() {
     setTotal(null);
     setNext(null);
     setError(null);
+    // A decision or a Load more still out was the old queue's: its controls are free here.
+    setBusy(false);
+    setLoadingMore(false);
   }
   // The namespace a decision or a Load more was made in, for an answer that lands after.
   const rowsFor = useRef(queueKey);
@@ -189,6 +192,7 @@ function ConflictsPanel() {
   useAbortableEffect(
     (signal, live) => {
       rowsFor.current = queueKey;
+      focusAdded.current = null;
       setError(null);
       listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: CONFLICT_PAGE, signal })
         .then((r) => {

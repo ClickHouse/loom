@@ -79,12 +79,11 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
   // response for a namespace the dialog has left is dropped instead of shown.
   const [reloadSeq, setReloadSeq] = useState(0);
   const load = () => setReloadSeq((n) => n + 1);
-  // The re-read after a change keeps the members on screen, marked busy; another
-  // namespace's members are not this one's, so a new namespace starts from the loader.
+  // The re-read after a change keeps the members on screen, marked busy, and so does a
+  // failed one; a failed first read is said as one, with Retry, never as "no members".
+  // Another namespace resets during render, so its members (and their actions) never
+  // paint under the new one.
   const [refreshing, setRefreshing] = useState(false);
-  // A failed read is said as one, with Retry: never as "no members". A failed re-read
-  // keeps the members on screen. Another namespace resets during render, so its members
-  // (and their actions) never paint under the new one.
   const [loadError, setLoadError] = useState<unknown>(null);
   const rowsKey = `${org}/${namespace}`;
   const [rowsFor, setRowsFor] = useState(rowsKey);
@@ -260,7 +259,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                 return (
                   <div
                     key={`p-${r.subject}`}
-                    className="flex items-center gap-3 rounded-lg border border-warn/40 bg-warn/10 p-2.5"
+                    className="flex items-center gap-3 rounded-lg border border-info/40 bg-info/10 p-2.5"
                   >
                     <RoleIcon role={r.requested_role} />
                     <div className="min-w-0 flex-1">

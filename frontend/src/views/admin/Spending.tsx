@@ -86,7 +86,6 @@ export function Spending() {
   const [nsRow, setNsRow] = useState<NamespaceInfo | null>(null);
   useAbortableEffect(
     (signal, live) => {
-      setNsRow(null);
       getNamespace({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((n) => {
           if (live()) setNsRow(n);

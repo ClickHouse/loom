@@ -138,6 +138,8 @@ describe("ReviewQueue", () => {
     seed("ns-b");
     await screen.findByText("value of b/key", {}, WAIT);
     await screen.findByText(/Conflict 1 of 5/, {}, WAIT);
+    // A's decision is still out, but B's queue is free to decide.
+    expect(screen.getByRole("button", { name: /Keep A/ })).toBeEnabled();
     await act(async () => answer({ resolved: true, affected_memory_ids: [] }));
     expect(screen.getByText("value of b/key")).toBeTruthy();
     expect(screen.queryByText("value of a/next")).toBeNull();
