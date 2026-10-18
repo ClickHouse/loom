@@ -78,16 +78,13 @@ def _queued_pairs(where: str) -> str:
     return f"SELECT DISTINCT org, namespace FROM loom.memory_embeddings WHERE {where}"
 
 
-def _in_turns(where: str) -> str:
-    """The vector rows matching `where`, in turns across (org, namespace): every
-    namespace's oldest row, then every namespace's second oldest, and so on, so one
-    namespace's backlog cannot hold the others back. Within a turn the namespaces come
-    in an order drawn from `seed`, which the worker draws each pass: ordered by age, the
-    namespaces with the oldest rows would take every place of a turn longer than the
-    batch, pass after pass. Only the identity is ranked; the
-    vectors are read for the picked rows alone. The FINAL read covers only the
-    namespaces `_queued_pairs` names, not the whole table. Read strongly: a burst reads
-    again right after its stamps, and a stamp a replica lacks is a row paid for twice."""
+def _in_turns(where: str, *, newest_first: bool = False) -> str:
+    """The vector rows matching `where`, in turns across (org, namespace), each
+    namespace's rows oldest first (newest first with `newest_first`), so one namespace's
+    backlog cannot hold the others back; within a turn the namespaces come in an order
+    drawn from the pass's `seed`. Read strongly: a stamp a replica lacks is a row paid
+    for twice."""
+    order = "created_at DESC" if newest_first else "created_at"
     return f"""
         SELECT {_QUEUE_COLUMNS}
         FROM loom.memory_embeddings FINAL
@@ -96,7 +93,7 @@ def _in_turns(where: str) -> str:
             FROM (
                 SELECT org, namespace, agent, user_id, session_id, embedding_model,
                        memory_key, created_at,
-                       row_number() OVER (PARTITION BY org, namespace ORDER BY created_at)
+                       row_number() OVER (PARTITION BY org, namespace ORDER BY {order})
                            AS turn
                 FROM loom.memory_embeddings FINAL
                 WHERE (org, namespace) IN ({_queued_pairs(where)})
@@ -137,10 +134,12 @@ async def owed_rows(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Rows whose write the resolver owes a judgement, in turns across namespaces (in an
-    order drawn from `seed` within a turn); none of a namespace in `capped`."""
+    order drawn from `seed` within a turn), each namespace's newest first: under its cost
+    cap a busy namespace may never drain, and its latest writes are the ones a read
+    needs judged. None of a namespace in `capped`."""
     ch = ch or _default_client()
     params = {"lim": int(limit), "capped": _capped(capped), "seed": int(seed)}
-    return await ch.query_all(_in_turns(_OWED), params)
+    return await ch.query_all(_in_turns(_OWED, newest_first=True), params)
 
 
 async def unjudged_conflicted_rows(

@@ -2280,3 +2280,48 @@ async def test_a_request_refused_for_every_row_stamps_nothing_pass_after_pass(
     marks = await _marks(ch, org)
     assert sum(1 for v in marks.values() if v == 2) == 0, marks
     assert sum(1 for v in marks.values() if v == 1) == 6
+
+
+async def test_a_namespaces_newest_owed_row_is_judged_first(ch, wired, monkeypatch) -> None:
+    """A namespace owes 30 older rows and one fresh update; a pass reads five. Under its
+    cost cap a busy namespace may never drain: its newest write is judged first."""
+    from datetime import timedelta
+
+    from server.memory.store.conflict_resolver import OWED_MARK
+    from server.memory.store.embeddings import (
+        _copy_row,
+        insert_embedding_rows,
+        live_embedding_rows_for_key,
+    )
+    from server.memory.workers import conflict_resolver as worker
+    from server.memory.workers.conflict_resolver import run_pass
+    from server.settings import settings
+
+    org, llm = wired
+    monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 5)
+    monkeypatch.setattr(worker, "BURST_S", 0.0)  # one batch a pass
+    await _pair(ch, org, "office_city", "office_location", 270)
+    (row,) = await live_embedding_rows_for_key(
+        ch,
+        org=org,
+        namespace=NS,
+        agent="bot",
+        user_id=USER,
+        session_id="s2",
+        memory_key="office_location",
+    )
+    older = row["created_at"] - timedelta(hours=1)
+    history = [
+        _copy_row(
+            row,
+            {
+                "memory_key": f"old_{i}",
+                "created_at": older + timedelta(seconds=i),
+                "conflict_checked_at": OWED_MARK,
+            },
+        )
+        for i in range(30)
+    ]
+    await insert_embedding_rows(history, ch=ch)
+    await run_pass()
+    assert llm.calls == ["office_location"], llm.calls

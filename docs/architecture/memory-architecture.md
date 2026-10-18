@@ -188,9 +188,11 @@ resolver judged, so a flag the cosine check raised is judged once too. That seco
 read scans every `conflicted` row (no index prunes its predicate), so once it comes back
 short of a full batch it is not due again for five minutes. Both reads find their namespaces
 first without `FINAL`, where the mark's minmax index prunes, and run `FINAL` over those
-namespaces alone. Both reads take
-rows in turns across (org, namespace), oldest first within each, so one namespace's bulk
-import does not hold back a row written elsewhere. Neither reads a namespace that
+namespaces alone. Both reads take rows in turns across (org, namespace), so one
+namespace's bulk import does not hold back a row written elsewhere: the owed read takes
+each namespace's newest rows first (a namespace busier than its share of the cost cap
+never drains, and its latest writes are the ones reads need judged), the re-check its
+oldest. Neither reads a namespace that
 `namespace.delete` soft-deleted; its rows are judged if it is registered again.
 
 **The cluster.** A row is judged against up to `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS`
@@ -334,7 +336,9 @@ resolver may spend a quarter of the namespace's daily cost cap
 `LOOM_DEFAULT_DAILY_COST_CAP_USD`, $1), counted over its own calls, and never takes the
 rest: the requests (`memory.ask`, extraction) read the whole spend against the whole cap,
 so a backlog the resolver drains never leaves them capped. That is about 50 judged rows a
-day per namespace at the default cap, so a large import needs that namespace's cap raised.
+day per namespace at the default cap: raise `LOOM_DEFAULT_DAILY_COST_CAP_USD` (or the
+namespace's `daily_cost_cap_usd`) or `LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE` for a busier
+one.
 The share is read before each call, and each call's cost is flushed before the next row
 starts, so a pass goes past it by at most the calls already in flight
 (`LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY`). A full batch with no errors (at least one
