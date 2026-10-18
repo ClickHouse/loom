@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -660,31 +660,60 @@ export function OpMixPanel() {
     [identity.org, identity.namespace, scope, reads],
   );
 
-  if (error)
-    return <ListState kind="error" things="the operation mix" error={error} onRetry={() => setReads((n) => n + 1)} />;
-  if (op === undefined)
+  if (op === undefined && !error)
     return (
       <LoadingSkeleton label="Loading the operation mix">
         <Skeleton className="h-40 w-full" />
       </LoadingSkeleton>
     );
-  if (op === null) {
-    return (
+  // The scope row stays above every state: a scope whose read failed is left with it.
+  const scopeRow = (summary?: ReactNode) => (
+    <div className="flex flex-wrap items-center gap-3">
+      {/* The scope the figures were read for, which a toggle's read has not yet replaced. */}
+      {(op ? op.scope : scope) === "namespace" ? (
+        <ScopeBadge kind="namespace" value={identity.namespace} />
+      ) : (
+        <Badge size="sm" state="neutral" text={`org · ${identity.org}`} />
+      )}
+      <ButtonGroup
+        aria-label="Operation mix scope"
+        options={[
+          { value: "namespace", label: "This namespace" },
+          { value: "org", label: "Whole org" },
+        ]}
+        selected={scope}
+        onClick={(value) => setScope(value === "org" ? "org" : "namespace")}
+      />
+      {summary}
+    </div>
+  );
+  const withScope = (body: ReactNode) => (
+    <div className="space-y-4" aria-busy={refreshing || undefined}>
+      {scopeRow()}
+      {body}
+    </div>
+  );
+  if (error)
+    return withScope(
+      <ListState kind="error" things="the operation mix" error={error} onRetry={() => setReads((n) => n + 1)} />,
+    );
+  if (!op) {
+    return withScope(
       <EmptyState
         icon="pie-chart"
         title="Operation mix unavailable"
         description="ops.health needs an org-admin token, or the server predates the op_mix check."
-      />
+      />,
     );
   }
   const { check, data } = op;
   if (data === null) {
-    return (
+    return withScope(
       <EmptyState
         icon="pie-chart"
         title="Operation mix check failed"
         description={check.repair ? `${check.detail} — ${check.repair}` : check.detail}
-      />
+      />,
     );
   }
   const total = Object.values(data.counts).reduce((a, b) => a + b, 0);
@@ -695,26 +724,11 @@ export function OpMixPanel() {
   const fmt = (n: number) => n.toLocaleString();
   return (
     <div className="space-y-4" aria-busy={refreshing || undefined}>
-      <div className="flex flex-wrap items-center gap-3">
-        {/* The scope the figures were read for, which a toggle's read has not yet replaced. */}
-        {op.scope === "namespace" ? (
-          <ScopeBadge kind="namespace" value={identity.namespace} />
-        ) : (
-          <Badge size="sm" state="neutral" text={`org · ${identity.org}`} />
-        )}
-        <ButtonGroup
-          aria-label="Operation mix scope"
-          options={[
-            { value: "namespace", label: "This namespace" },
-            { value: "org", label: "Whole org" },
-          ]}
-          selected={scope}
-          onClick={(value) => setScope(value === "org" ? "org" : "namespace")}
-        />
+      {scopeRow(
         <span className="text-xs text-text-muted">
           last {data.window_days} d · {fmt(total)} calls · {data.agents} agent{data.agents === 1 ? "" : "s"}
-        </span>
-      </div>
+        </span>,
+      )}
 
       <div className="rounded-xl border border-border bg-surface p-4">
         <div className="flex items-start gap-2">

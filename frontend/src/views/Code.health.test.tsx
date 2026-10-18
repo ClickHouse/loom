@@ -2,7 +2,7 @@
  * The Health tab's coverage table and index-error list read beside the status row. A read
  * that fails ends its loading state with a stated error; it never leaves a loader up.
  */
-import { cleanup, render, screen } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HealthTab } from "./Code";
 
@@ -27,6 +27,7 @@ const ST = {
 const codeCoverage = vi.fn();
 const codeIndexErrors = vi.fn();
 const codeRecentCommits = vi.fn(async () => ({ rows: [] }));
+const sharedIndexStatus = vi.fn(async (): Promise<typeof ST> => ST);
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
@@ -39,7 +40,7 @@ vi.mock("../api", async (importOriginal) => {
 });
 vi.mock("../lib/sharedReads", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/sharedReads")>();
-  return { ...actual, sharedIndexStatus: async () => ST };
+  return { ...actual, sharedIndexStatus: () => sharedIndexStatus() };
 });
 
 afterEach(() => cleanup());
@@ -54,5 +55,26 @@ describe("HealthTab: failed reads", () => {
     expect(screen.getByText("Couldn't load the index errors.")).toBeInTheDocument();
     expect(screen.getByText("Couldn't load the recent commits.")).toBeInTheDocument();
     expect(screen.queryByText("No commits recorded yet.")).toBeNull();
+  });
+});
+
+describe("HealthTab: a failed poll", () => {
+  it("keeps the last status on screen and says it could not refresh", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      codeCoverage.mockResolvedValue(null);
+      codeIndexErrors.mockResolvedValue({ rows: [], total: 0 });
+      render(<HealthTab id={{ org: "dev", namespace: "code-app" }} />);
+      expect(await screen.findByText(/generic profile/)).toBeInTheDocument();
+      sharedIndexStatus.mockRejectedValueOnce(new Error("boom"));
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await waitFor(() => expect(screen.getByText(/Couldn't refresh the index status/)).toBeInTheDocument());
+      expect(screen.getByText(/generic profile/)).toBeInTheDocument();
+      expect(screen.queryByText("Couldn't load index status")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

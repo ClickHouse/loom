@@ -238,8 +238,8 @@ export function Tasks() {
       .then((c) => {
         if (seq === countsSeq.current) setCounts(c);
       })
-      // A failed read keeps what the rail had: with none yet it stays "…", not "empty" for
-      // inboxes that hold tasks.
+      // A failed read keeps what the rail had: with none yet the counts stay unknown (not
+      // "empty" for inboxes that hold tasks), and the poll below reads them again.
       .catch(() => {});
   }, [caller]);
 
@@ -330,6 +330,8 @@ export function Tasks() {
     refresh();
   }, [picked, refresh]);
   useVisiblePoll(refresh, 60_000, !!picked);
+  // Counts a failed read left unknown are read again on the same beat until they land.
+  useVisiblePoll(refreshCounts, 60_000, counts === null);
 
   // The lease bars and ages tick while something runs.
   const anyRunning = !!rows?.some((r) => r.status === "in_progress");

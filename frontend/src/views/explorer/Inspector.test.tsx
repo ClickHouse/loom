@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
-import { listFacts } from "../../api";
+import { listFacts, searchMemory } from "../../api";
 import { Inspector } from "./Inspector";
 import { fromTraverse } from "./model";
 import { expandNotice } from "./notices";
@@ -180,5 +180,20 @@ describe("Inspector lists", () => {
     expect(error.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
     error.mockRestore();
     vi.mocked(listFacts).mockImplementation(async () => facts as never);
+  });
+});
+
+describe("Inspector failed reads", () => {
+  it("says the facts and the memories failed to load, never that there are none, and Retry reads again", async () => {
+    vi.mocked(listFacts).mockRejectedValueOnce(new Error("down"));
+    vi.mocked(searchMemory).mockRejectedValueOnce(new Error("down"));
+    mount();
+    expect(await screen.findByText("Couldn't load the facts", {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load the memories")).toBeInTheDocument();
+    expect(screen.queryByText(/No typed triple names this entity/)).toBeNull();
+    const before = vi.mocked(listFacts).mock.calls.length;
+    screen.getAllByRole("button", { name: "Retry" })[0].click();
+    await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
+    await waitFor(() => expect(screen.queryByText("Couldn't load the facts")).toBeNull());
   });
 });

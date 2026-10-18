@@ -6,6 +6,7 @@ import { Link } from "@clickhouse/click-ui/Link";
 import { listFacts, searchMemory, type FactRow, type Identity, type SearchHit, type TaxonomyResponse } from "../../api";
 import { IconButton } from "../../components/IconButton";
 import { Chip, Loading, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
+import { ListState } from "../../components/ui/ListState";
 import { useAbortableEffect } from "../../lib/hooks";
 import { colorFor, HOP_COLORS, HOP_EMPHASIS } from "./Canvas";
 import {
@@ -160,18 +161,24 @@ function isSearchMemoryType(t: string): t is "semantic" | "procedural" | "prefer
 
 function FactList({
   facts,
+  error,
+  onRetry,
   about,
   onWalk,
   onOpenMemory,
   emptyText,
 }: {
   facts: FactRow[] | null;
+  /** A failed read, said as such with Retry, never as the empty text. */
+  error: unknown;
+  onRetry: () => void;
   about: string | null;
   onWalk: (e: string) => void;
   onOpenMemory: (k: string) => void;
   emptyText: string;
 }) {
   const { shown, more, listRef } = useCapped(facts);
+  if (error !== null) return <ListState kind="error" things="the facts" error={error} onRetry={onRetry} />;
   if (facts === null) return <Loading layout="inline" label="Loading facts" />;
   if (facts.length === 0) return <div className="text-xs text-text-muted">{emptyText}</div>;
   return (
@@ -278,6 +285,11 @@ export function Inspector({
 }: InspectorProps) {
   const [facts, setFacts] = useState<FactRow[] | null>(null);
   const [hits, setHits] = useState<SearchHit[] | null>(null);
+  // A failed read stays null and is said as one; Retry reads the selection again.
+  const [factsError, setFactsError] = useState<unknown>(null);
+  const [hitsError, setHitsError] = useState<unknown>(null);
+  const [retries, setRetries] = useState(0);
+  const retry = () => setRetries((n) => n + 1);
   const [copied, setCopied] = useState(false);
   const [showWhy, setShowWhy] = useState(true);
   const keyRef = useRef<string>("");
@@ -300,13 +312,15 @@ export function Inspector({
   useAbortableEffect(
     (signal, live) => {
       const sel = node ? `n:${node.entity}` : edge ? `e:${edge.parent}>${edge.child.entity}` : null;
+      setFactsError(null);
+      setHitsError(null);
       if (!model || sel === null) {
         setFacts(null);
         setHits(null);
         keyRef.current = "";
         return;
       }
-      const key = `${model.seed}|${sel}|${asOf}|${provKey}|${typesKey}|${tagsKey}`;
+      const key = `${model.seed}|${sel}|${asOf}|${provKey}|${typesKey}|${tagsKey}|${retries}`;
       if (keyRef.current === key) return;
       setFacts(null);
       setHits(null);
@@ -319,8 +333,8 @@ export function Inspector({
             .then((r) => {
               if (live()) setFacts(r.rows || []);
             })
-            .catch(() => {
-              if (live()) setFacts([]);
+            .catch((e) => {
+              if (live()) setFactsError(e);
             });
           const both = node.entity === model.seed ? [model.seed] : [model.seed, node.entity];
           // entity_filter is an OR boost, so the list is "memories naming
@@ -338,8 +352,8 @@ export function Inspector({
               if (live())
                 setHits((r.results || []).filter((h) => memoryTypes.size === 0 || memoryTypes.has(h.memory_type)));
             })
-            .catch(() => {
-              if (live()) setHits([]);
+            .catch((e) => {
+              if (live()) setHitsError(e);
             });
         } else if (edge) {
           const a = edge.parent;
@@ -351,14 +365,14 @@ export function Inspector({
             .then(([ab, ba]) => {
               if (live()) setFacts([...(ab.rows || []), ...(ba.rows || [])]);
             })
-            .catch(() => {
-              if (live()) setFacts([]);
+            .catch((e) => {
+              if (live()) setFactsError(e);
             });
         }
       }, 250);
       signal.addEventListener("abort", () => window.clearTimeout(timer));
     },
-    [model, node, edge, asOf, provKey, typesKey, tagsKey, identity.org, identity.namespace],
+    [model, node, edge, asOf, provKey, typesKey, tagsKey, identity.org, identity.namespace, retries],
   );
 
   const degree = (entity: string, fallback: number): { n: number; what: string } => {
@@ -460,6 +474,8 @@ export function Inspector({
           <FactList
             key={`e:${edge.parent}>${c.entity}`}
             facts={facts}
+            error={factsError}
+            onRetry={retry}
             about={null}
             onWalk={onWalk}
             onOpenMemory={onOpenMemory}
@@ -692,6 +708,8 @@ export function Inspector({
         <FactList
           key={`n:${n.entity}`}
           facts={facts}
+          error={factsError}
+          onRetry={retry}
           about={n.entity}
           onWalk={onWalk}
           onOpenMemory={onOpenMemory}
@@ -714,7 +732,8 @@ export function Inspector({
               : "Memories naming the seed or this entity (memory.search with an entity boost — an OR, so a row may name only one of them); click one to open it."
           }
         />
-        {hits === null && <Loading layout="inline" label="Loading memories" />}
+        {hitsError !== null && <ListState kind="error" things="the memories" error={hitsError} onRetry={retry} />}
+        {hits === null && hitsError === null && <Loading layout="inline" label="Loading memories" />}
         {hits && hits.length === 0 && (
           <div className="text-xs text-text-muted">
             {memoryTypes.size || tags.size

@@ -445,6 +445,27 @@ describe("OpMixPanel", () => {
     expect(await screen.findByText("Operation mix unavailable")).toBeInTheDocument();
   });
 
+  it("a failed org-wide read keeps the scope toggle, so the reader can go back to the namespace", async () => {
+    const report = opMix({
+      detail: "healthy mix",
+      data: { window_days: 7, writes: 10, agents: 2, counts: { create: 10, read: 40 }, top: [] },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        !("namespace" in JSON.parse(String(init?.body)))
+          ? new Response("down", { status: 503 })
+          : new Response(JSON.stringify(report), { status: 200, headers: { "Content-Type": "application/json" } }),
+      ),
+    );
+    render(<OpMixPanel />);
+    expect(await screen.findByText("healthy mix")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Whole org" }));
+    expect(await screen.findByText("Couldn't load the operation mix")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "This namespace" }));
+    expect(await screen.findByText("healthy mix")).toBeInTheDocument();
+  });
+
   it("renders a computed check's report", async () => {
     respond(
       opMix({

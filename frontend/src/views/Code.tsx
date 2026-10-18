@@ -1902,7 +1902,9 @@ export function HealthTab({ id }: { id: CodeId }) {
     }
   };
 
-  if (error)
+  // A failed first read is the tab's state; a failed poll after one keeps the last status
+  // on screen and says it could not refresh.
+  if (error && !st)
     return (
       <ListState
         kind="error"
@@ -1922,6 +1924,11 @@ export function HealthTab({ id }: { id: CodeId }) {
 
   return (
     <div className="space-y-6">
+      {!!error && (
+        <div className="text-xs text-text-muted" role="status">
+          {`Couldn't refresh the index status (${humanizeError(error)}); showing the last read.`}
+        </div>
+      )}
       <div className="text-xs text-text-muted">
         {st.provider || "git"} · {st.profile || "generic"} profile
         {st.compiler_candidates?.length ? ` · compiler candidates: ${st.compiler_candidates.join(", ")}` : ""}

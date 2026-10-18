@@ -923,6 +923,25 @@ describe("Tasks page", () => {
     expect(within(rail).queryByText("empty")).toBeNull();
   });
 
+  it("reads counts a failed read left unknown again on the next poll", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(taskCounts).mockRejectedValueOnce(new Error("down"));
+      seed(admin, [row("admin")]);
+      render(<Tasks />);
+      await screen.findByRole("row", { name: "Task urgent" });
+      expect(taskCounts).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await waitFor(() => expect(taskCounts).toHaveBeenCalledTimes(2));
+      const rail = screen.getByRole("navigation", { name: "Inboxes" });
+      await waitFor(() => expect(within(rail).queryByText("…")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("an empty board column under a filter says none match", async () => {
     localStorage.setItem("loom_tasks_mode", "board");
     try {
