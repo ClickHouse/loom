@@ -158,8 +158,7 @@ describe("listUnsuperseded", () => {
   });
 
   it("reads a time without an offset as UTC, whatever the browser's zone", async () => {
-    const zone = process.env.TZ;
-    process.env.TZ = "America/Los_Angeles";
+    vi.stubEnv("TZ", "America/Los_Angeles");
     try {
       stubAudit([
         {
@@ -172,7 +171,7 @@ describe("listUnsuperseded", () => {
       const out = await listUnsuperseded({ org: "o", namespace: "n" }, { since: "2026-09-01T00:00:00Z" });
       expect(out.get("m1")).toBe("2026-10-03T03:00:00Z");
     } finally {
-      process.env.TZ = zone;
+      vi.unstubAllEnvs();
     }
   });
 
