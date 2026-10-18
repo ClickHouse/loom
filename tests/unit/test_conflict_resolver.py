@@ -254,6 +254,22 @@ async def test_a_flagged_peer_joins_the_cluster_whatever_the_cutoff() -> None:
     assert "flagged:Array" in flagged_sql and params["flagged"] == ["m20"]
 
 
+async def test_a_key_held_in_many_sessions_leaves_room_for_flags_and_near_peers() -> None:
+    # office_city is held in 10 other sessions (cosine 0.5, below the floor); the row is
+    # flagged with m20 (0.4) and owed for m30 at 0.9.
+    same = [_near(f"s{i}", "office_city", 0.5) for i in range(10)]
+    near = [_near("s30", "k30", 0.10)]
+    rows = [_peer_row(f"m{i}", f"s{i}", "office_city", "v") for i in range(10)]
+    rows += [_peer_row("m20", "s20", "k20", "v"), _peer_row("m30", "s30", "k30", "v")]
+    ch = _ClusterCH(near, rows, flagged=[*same, _near("s20", "k20", 0.6)])
+    peers = await queue.cluster_peers(_q(), floor=0.6, limit=8, prefer=frozenset({"m20"}), ch=ch)
+    ids = [p["memory_id"] for p in peers]
+    assert "m20" in ids and "m30" in ids
+    assert sum(p["memory_key"] == "office_city" for p in peers) == 4, "half the places"
+    anchored_sql, params = ch.calls[1]
+    assert "LIMIT {same_lim:UInt32}" in anchored_sql and params["same_lim"] == 4
+
+
 # --- one row --------------------------------------------------------------------------------
 
 

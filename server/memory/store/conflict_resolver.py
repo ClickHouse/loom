@@ -242,16 +242,15 @@ _PEER_ROWS_SQL = """
         """
 
 
-# The row's flagged peers (by id) and the rows of its key in other sessions, with their
-# distance: they join the cluster whatever the vector cutoff or the floor, since the
-# row may be owed for them alone. Only those of the row's subject: a cosine flag can
-# name another user's row, whose text must not reach this row's prompt.
+# The row's flagged peers (by id) and the nearest rows of its key in other sessions,
+# with their distance: they join the cluster whatever the vector cutoff or the floor,
+# since the row may be owed for them alone. Only those of the row's subject: a cosine
+# flag can name another user's row, whose text must not reach this row's prompt.
 _FLAGGED_IDENTITIES_SQL = """
                   SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL
                   WHERE org = {org:String} AND namespace = {ns:String}
                     AND memory_id IN {flagged:Array(UUID)}"""
-_ANCHORED_SQL = (
-    """
+_ANCHORED_FROM = """
         SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
                e.memory_key AS memory_key,
                cosineDistance(e.embedding, {emb:Array(Float32)}) AS dist
@@ -259,12 +258,20 @@ _ANCHORED_SQL = (
         WHERE e.org = {org:String} AND e.namespace = {ns:String}
           AND e.user_id = {u:String} AND (e.user_id != '-' OR e.agent = {a:String})
           AND NOT (e.agent = {a:String} AND e.session_id = {s:String} AND e.memory_key = {k:String})
-          AND (e.memory_key = {k:String}
-               OR (e.agent, e.user_id, e.session_id, e.memory_key) IN ("""
-    + _FLAGGED_IDENTITIES_SQL
-    + """))
           AND e.scope = 'private' AND e.tombstoned_at IS NULL
-          AND e.embedding_dim = {dim:UInt16} AND e.embedding.size0 = {dim:UInt16}
+          AND e.embedding_dim = {dim:UInt16} AND e.embedding.size0 = {dim:UInt16}"""
+_ANCHORED_SQL = (
+    _ANCHORED_FROM
+    + """
+          AND (e.agent, e.user_id, e.session_id, e.memory_key) IN ("""
+    + _FLAGGED_IDENTITIES_SQL
+    + """)
+        UNION ALL"""
+    + _ANCHORED_FROM
+    + """
+          AND e.memory_key = {k:String}
+        ORDER BY dist ASC
+        LIMIT {same_lim:UInt32}
         SETTINGS select_sequential_consistency = 1
         """
 )
@@ -283,10 +290,11 @@ async def cluster_peers(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Up to `limit` live peers of the queue row `row`: its memory_type, its subject,
-    cosine >= `floor`, nearest first, each with `similarity`. Peers named in `prefer`
-    (the row's current flags) and the rows of its key in other sessions are read
-    whatever the cutoff and the floor, and take places first: a re-check judges its
-    flags, and a write owed for its key's other rows is judged against them."""
+    each with `similarity`. The places go to the peers named in `prefer` (the row's
+    current flags) first, then to the nearest rows of its key in other sessions, at
+    most half the places, both read whatever the cutoff and the floor (a re-check
+    judges its flags; a write owed for its key's other rows is judged against them),
+    then to the nearest peers at cosine >= `floor`."""
     ch = ch or _default_client()
     emb = [float(x) for x in (row.get("embedding") or [])]
     if not emb:
@@ -303,26 +311,27 @@ async def cluster_peers(
         "dim": len(emb),
         "lim": 4 * max(int(limit), 1),
     }
+    half = max(int(limit) // 2, 1)
     near = [c for c in await ch.query_all(_nearest_sql(), params=params) if 1 - c["dist"] >= floor]
-    anchored = await ch.query_all(_ANCHORED_SQL, params={**params, "flagged": sorted(prefer)})
-    seen = {_ident(c) for c in near}
-    near += [c for c in anchored if _ident(c) not in seen]
-    if not near:
+    anchored = await ch.query_all(
+        _ANCHORED_SQL, params={**params, "flagged": sorted(prefer), "same_lim": half}
+    )
+    above_floor = {_ident(c) for c in near}
+    found = {_ident(c): c for c in [*anchored, *near]}
+    if not found:
         return []
-    rows = await ch.query_all(_PEER_ROWS_SQL, params={**params, "ids": [_ident(c) for c in near]})
-    by_ident = {_ident(r): dict(r) for r in rows}
+    rows = await ch.query_all(_PEER_ROWS_SQL, params={**params, "ids": list(found)})
     peers = [
-        {**by_ident[_ident(c)], "similarity": 1.0 - float(c["dist"])}
-        for c in near
-        if _ident(c) in by_ident
+        {**dict(r), "similarity": 1.0 - float(found[_ident(r)]["dist"])}
+        for r in rows
+        if _ident(r) in found
     ]
+    peers.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
     key = str(row["memory_key"])
-
-    def first(p: Mapping[str, Any]) -> bool:
-        return str(p["memory_id"]) in prefer or str(p["memory_key"]) == key
-
-    peers.sort(key=lambda p: (not first(p), -p["similarity"]))
-    kept = peers[: max(int(limit), 0)]
+    flagged = [p for p in peers if str(p["memory_id"]) in prefer]
+    same_key = [p for p in peers if p not in flagged and str(p["memory_key"]) == key][:half]
+    rest = [p for p in peers if p not in flagged + same_key and _ident(p) in above_floor]
+    kept = (flagged + same_key + rest)[: max(int(limit), 0)]
     kept.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
     return kept
 
