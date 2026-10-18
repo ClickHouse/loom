@@ -670,7 +670,8 @@ async def list_by_namespace(
       - key_prefix:  startsWith(memory_key, prefix) — for hierarchical key spaces
       - tags:        hasAny(tags, [...]) — the OR filter memory.search applies
       - contains:    case-insensitive substring of the value or the key — the
-                     keyword filter a browse page's search box applies
+                     keyword filter a browse page's search box applies; a
+                     'high' row matches by its key only
 
     Ordering:
       - "created_at_desc" (default) — recent-first feed shape

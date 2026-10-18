@@ -563,6 +563,7 @@ class MemoryListInput(_Identity):
     # Only rows whose value or key holds this text, any case — the keyword
     # filter of a browse page's search box, which must find every row that
     # names a word (a ranked search returns its top k and misses the rest).
+    # A high row matches by its key only: its value is readable by key.
     # A scan of the namespace's values; None or '' = no filter. Hidden from
     # the MCP listing: agents search with memory.search.
     contains: str | None = Field(default=None, max_length=200, json_schema_extra=MCP_HIDDEN)
