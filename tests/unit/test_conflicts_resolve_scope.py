@@ -9,10 +9,6 @@ like an unknown id: resolved=False, nothing written.
 `peer_id` narrows a resolve to one peer. A peer_id outside the target's
 conflict_with answers resolved=False rather than widening to every peer.
 
-A resolve decides only open pairs (both rows live, each listing the other, at least
-one conflicted), and a
-decision removes the pair from both rows' conflict_with.
-
 The repository is faked as one table keyed by memory_id.
 """
 
@@ -20,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -39,22 +36,10 @@ T_MIXED = "55555555-5555-5555-5555-555555555555"
 @dataclass
 class _Table:
     rows: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # The version a lagging replica still serves, by id: read only outside sequential reads.
-    stale: dict[str, dict[str, Any]] = field(default_factory=dict)
     tombstoned: list[str] = field(default_factory=list)
     activated: list[str] = field(default_factory=list)
-    # (memory_id, conflict_with) of each version written active.
-    written: list[tuple[str, list[str]]] = field(default_factory=list)
     allowlisted: list[dict[str, Any]] = field(default_factory=list)
     count_reads_consistent: list[bool] = field(default_factory=list)
-    row_reads_consistent: list[bool] = field(default_factory=list)
-
-    def reflag(self, memory_id: str, by: str) -> None:
-        """A later write `by` conflicts with `memory_id`, as mark_peers_conflicted links them."""
-        self.rows[by] = {"namespace": "a", "key": f"later_{by[:4]}", "conflict_with": [memory_id]}
-        row = self.rows[memory_id]
-        row["status"] = "conflicted"
-        row["conflict_with"] = [*row["conflict_with"], by]
 
 
 @pytest.fixture
@@ -64,63 +49,54 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
     t = _Table(
         rows={
             T_OWN: {"namespace": "a", "key": "deploy_day", "conflict_with": [P_OWN, P_OWN2]},
-            P_OWN: {"namespace": "a", "key": "deploy_day_2", "conflict_with": [T_OWN, T_MIXED]},
+            P_OWN: {"namespace": "a", "key": "deploy_day_2", "conflict_with": [T_OWN]},
             P_OWN2: {"namespace": "a", "key": "deploy_day_3", "conflict_with": [T_OWN]},
             T_FOREIGN: {"namespace": "b", "key": "payroll", "conflict_with": [P_FOREIGN]},
-            P_FOREIGN: {
-                "namespace": "b",
-                "key": "payroll_2",
-                "conflict_with": [T_FOREIGN, T_MIXED],
-            },
+            P_FOREIGN: {"namespace": "b", "key": "payroll_2", "conflict_with": [T_FOREIGN]},
             # A target in the caller's namespace whose conflict set reaches into b.
             T_MIXED: {"namespace": "a", "key": "salary", "conflict_with": [P_OWN, P_FOREIGN]},
         }
     )
 
-    async def _conflict_rows(org: str, ids: list[str], **_: Any) -> dict[str, ConflictTarget]:
-        consistent = sequential_reads_active()
-        t.row_reads_consistent.append(consistent)
-        out: dict[str, ConflictTarget] = {}
-        for i in ids:
-            row = t.rows.get(i) if consistent else t.stale.get(i, t.rows.get(i))
-            if row is None or row.get("status") == "tombstoned":
-                continue
-            out[i] = ConflictTarget(
-                memory_id=i,
-                conflict_with=tuple(row["conflict_with"]),
-                status=row.get("status", "conflicted"),
-                namespace=row["namespace"],
-                memory_key=row["key"],
-            )
-        return out
+    async def _lookup(org: str, memory_id: str, **kw: Any) -> ConflictTarget | None:
+        row = t.rows.get(memory_id)
+        if row is None or ("namespace" in kw and kw["namespace"] != row["namespace"]):
+            return None
+        return ConflictTarget.from_row(
+            {
+                "memory_id": memory_id,
+                "conflict_with": row["conflict_with"],
+                "status": "conflicted",
+                "namespace": row["namespace"],
+            }
+        )
 
     async def _tombstone(org: str, ids: list[str], *_: Any, **__: Any) -> None:
         t.tombstoned.extend(ids)
-        for i in ids:
-            t.rows[i]["status"] = "tombstoned"
 
-    async def _activate(org: str, ids: list[str], *, drop: Any = (), **_: Any) -> None:
+    async def _activate(org: str, ids: list[str], **_: Any) -> None:
         t.activated.extend(ids)
-        for i in ids:
-            row = t.rows[i]
-            row["status"] = "active"
-            row["conflict_with"] = [p for p in row["conflict_with"] if p not in drop]
-            t.written.append((i, list(row["conflict_with"])))
+
+    async def _keys(org: str, ids: list[str], **_: Any) -> dict[str, str]:
+        return {i: t.rows[i]["key"] for i in ids if i in t.rows}
 
     async def _count(org: str, namespace: str, **_: Any) -> int:
         t.count_reads_consistent.append(sequential_reads_active())
-        return sum(
-            1
-            for row in t.rows.values()
-            if row["namespace"] == namespace and row.get("status", "conflicted") == "conflicted"
-        )
+        decided = {*t.tombstoned, *t.activated}
+        return sum(1 for i, r in t.rows.items() if r["namespace"] == namespace and i not in decided)
 
     async def _allow(rows: list[dict[str, Any]], **_: Any) -> None:
         t.allowlisted.extend(rows)
 
-    monkeypatch.setattr(repo, "conflict_rows", _conflict_rows)
+    async def _get_by_id(memory_id: str, **_: Any) -> Any:
+        row = t.rows.get(memory_id)
+        return None if row is None else SimpleNamespace(namespace=row["namespace"])
+
+    monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
+    monkeypatch.setattr(repo, "lookup_target", _lookup)
     monkeypatch.setattr(repo, "tombstone_ids", _tombstone)
     monkeypatch.setattr(repo, "mark_active_by_ids", _activate)
+    monkeypatch.setattr(repo, "lookup_keys_for_ids", _keys)
     monkeypatch.setattr(repo, "allowlist_insert", _allow)
     monkeypatch.setattr(repo, "count_conflicted", _count)
     h.reset_conflicts_count_cache()
@@ -255,58 +231,6 @@ async def test_a_resolve_answers_the_namespaces_conflicted_count_after_its_write
     assert out.total == 1
 
 
-async def test_a_row_an_earlier_decision_resolved_is_not_decided_again(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "allow")).resolved is True
-    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    # A stale view decides the pair from the row the allow made active: refused.
-    again = await _resolve(P_OWN, "contract", peer_id=T_OWN)
-    assert again.resolved is False
-    assert again.total is None
-    assert (table.tombstoned, table.activated, table.allowlisted) == written
-
-
-async def test_a_second_peer_is_resolved_after_the_first_made_the_target_active(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "revise", peer_id=P_OWN)).resolved is True
-    # T_OWN is active now, but P_OWN2 is still conflicted with it.
-    out = await _resolve(T_OWN, "revise", peer_id=P_OWN2)
-    assert out.resolved is True
-    assert table.tombstoned == [P_OWN, P_OWN2]
-
-
-async def test_a_resolved_target_with_no_named_peer_decides_the_peers_still_open(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "revise", peer_id=P_OWN)).resolved is True
-    out = await _resolve(T_OWN, "revise")
-    assert out.resolved is True and out.affected_memory_ids == [P_OWN2, T_OWN]
-    assert table.tombstoned == [P_OWN, P_OWN2]
-
-
-async def test_a_resolved_target_with_no_open_peer_is_not_decided_again(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "allow")).resolved is True
-    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    out = await _resolve(T_OWN, "contract")
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert (table.tombstoned, table.activated, table.allowlisted) == written
-
-
-async def test_a_stale_second_click_on_the_same_pair_writes_nothing(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "allow", peer_id=P_OWN)).resolved is True
-    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    # The queue still shows the pair: the second click must not tombstone what the allow kept.
-    out = await _resolve(T_OWN, "revise", peer_id=P_OWN)
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert (table.tombstoned, table.activated, table.allowlisted) == written
-
-
 async def test_the_count_after_a_resolve_reads_its_own_writes(
     table: _Table, admin_of_a: None
 ) -> None:
@@ -314,100 +238,3 @@ async def test_the_count_after_a_resolve_reads_its_own_writes(
     # then cached for a minute.
     assert (await _resolve(T_OWN, "revise")).resolved is True
     assert table.count_reads_consistent == [True]
-
-
-async def test_a_stale_click_on_an_allowed_pair_after_the_target_is_reflagged_writes_nothing(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "allow", peer_id=P_OWN)).resolved is True
-    # A later write re-flags T_OWN; the allow removed P_OWN from its conflict_with.
-    table.reflag(T_OWN, by="66666666-6666-6666-6666-666666666666")
-    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    out = await _resolve(T_OWN, "revise", peer_id=P_OWN)
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert (table.tombstoned, table.activated, table.allowlisted) == written
-
-
-async def test_a_conflicted_target_whose_peers_are_gone_is_decided_alone(
-    table: _Table, admin_of_a: None
-) -> None:
-    del table.rows[P_OWN], table.rows[P_OWN2]
-    out = await _resolve(T_OWN, "revise")
-    assert out.resolved is True and out.affected_memory_ids == [T_OWN]
-    assert table.tombstoned == [] and table.activated == [T_OWN]
-
-
-async def test_a_stale_click_on_an_allowed_pair_after_the_peer_is_reflagged_writes_nothing(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "allow", peer_id=P_OWN)).resolved is True
-    # A later write re-flags P_OWN; the allow removed T_OWN from its conflict_with.
-    table.reflag(P_OWN, by="77777777-7777-7777-7777-777777777777")
-    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    out = await _resolve(T_OWN, "revise", peer_id=P_OWN)
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert (table.tombstoned, table.activated, table.allowlisted) == written
-
-
-async def test_a_stale_contract_with_no_peer_named_writes_nothing_after_an_allow(
-    table: _Table, admin_of_a: None
-) -> None:
-    before = {k: dict(v, conflict_with=list(v["conflict_with"])) for k, v in table.rows.items()}
-    assert (await _resolve(T_OWN, "allow")).resolved is True
-    # A lagging replica still serves the conflicted version of every row the allow wrote.
-    table.stale = {i: before[i] for i in (T_OWN, P_OWN, P_OWN2)}
-    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
-    out = await _resolve(T_OWN, "contract")
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert (table.tombstoned, table.activated, table.allowlisted) == written
-
-
-async def test_a_stale_click_on_an_allowed_same_key_pair_after_a_reflag_writes_nothing(
-    table: _Table, admin_of_a: None
-) -> None:
-    # Two identities hold the same key: an allow writes no allowlist row for the pair.
-    table.rows[P_OWN2]["key"] = table.rows[T_OWN]["key"]
-    assert (await _resolve(T_OWN, "allow", peer_id=P_OWN2)).resolved is True
-    assert table.allowlisted == []
-    table.reflag(P_OWN2, by="88888888-8888-8888-8888-888888888888")
-    written = (list(table.tombstoned), list(table.activated))
-    out = await _resolve(T_OWN, "revise", peer_id=P_OWN2)
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert (table.tombstoned, table.activated) == written
-
-
-@pytest.mark.parametrize(
-    ("decision", "peer_id", "expected"),
-    [
-        ("allow", None, [(T_OWN, []), (P_OWN, [T_MIXED]), (P_OWN2, [])]),
-        ("allow", P_OWN, [(T_OWN, [P_OWN2]), (P_OWN, [T_MIXED])]),
-        ("revise", P_OWN, [(T_OWN, [P_OWN2])]),
-        ("contract", None, [(P_OWN, [T_MIXED]), (P_OWN2, [])]),
-    ],
-)
-async def test_a_decision_removes_the_pair_from_both_rows_conflict_with(
-    table: _Table, admin_of_a: None, decision: str, peer_id: str | None, expected: Any
-) -> None:
-    assert (await _resolve(T_OWN, decision, peer_id=peer_id)).resolved is True
-    assert table.written == expected
-
-
-async def test_the_rows_and_the_count_are_read_with_sequential_consistency(
-    table: _Table, admin_of_a: None
-) -> None:
-    assert (await _resolve(T_OWN, "revise")).resolved is True
-    # One read of the target, then one of the target and both peers together.
-    assert table.row_reads_consistent == [True, True]
-    assert table.count_reads_consistent == [True]
-
-
-@pytest.mark.parametrize("peer_id", [P_OWN2, None])
-async def test_two_active_rows_that_still_list_each_other_are_not_decided(
-    table: _Table, admin_of_a: None, peer_id: str | None
-) -> None:
-    # A pair decided before decisions pruned conflict_with: both active, still linked.
-    table.rows[T_OWN].update(status="active", conflict_with=[P_OWN2])
-    table.rows[P_OWN2].update(status="active", conflict_with=[T_OWN])
-    out = await _resolve(T_OWN, "contract", peer_id=peer_id)
-    assert out.resolved is False and out.affected_memory_ids == []
-    assert table.tombstoned == table.activated == [] and table.allowlisted == []

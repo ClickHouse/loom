@@ -521,9 +521,9 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await C.allowlist_list(ORG, NS, ch=ch)
     await C.allowlist_remove(ORG, NS, "k1", "k2", "note", _DT, ch=ch)
     await C.list_conflicted(ORG, NS, before_version=5 if f else None, ch=ch, scope=WHOLE_NAMESPACE)
-    await C.conflict_rows(ORG, [_UUID], ch=ch)
+    await C.lookup_keys_for_ids(ORG, [_UUID], ch=ch)
     await C.lookup_target(ORG, _UUID, ch=ch)
-    await C.mark_active_by_ids(ORG, [_UUID], drop=[_UUID] if f else (), ch=ch)
+    await C.mark_active_by_ids(ORG, [_UUID], ch=ch)
     await C.tombstone_ids(ORG, [_UUID], "note", _DT, ch=ch)
     await B.find_active_pattern(_UUID, org=ORG if f else None, ch=ch)
     await B.list_for_scope(ORG, NS, scope="namespace" if f else None, ch=ch)
@@ -713,14 +713,7 @@ def cases() -> list[Case]:
             _knowledge,
             {"filters": (False, True)},
         ),
-        Case(
-            "ledger_repos",
-            "server.insights.store.audit",
-            _ledgers,
-            {"filters": (False, True)},
-            # conflict_rows reads under FINAL only the rows its locate found.
-            rows=rows_by_substring({"SELECT namespace, memory_key": [_MEMORY_ROW]}),
-        ),
+        Case("ledger_repos", "server.insights.store.audit", _ledgers, {"filters": (False, True)}),
         Case(
             "plane_services",
             "server.memory.app.projection_failures",
