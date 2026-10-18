@@ -72,7 +72,11 @@ export function LoadingSkeleton({ label, children, className = "" }: LoadingSkel
     <div role="status" aria-label={label} className={className}>
       {/* A live region announces text, not its label: the label is said when the shapes show. */}
       <span className="sr-only">{shown ? label : ""}</span>
-      <div aria-hidden="true" className={`transition-opacity duration-150 ${shown ? "" : "opacity-0"}`}>
+      <div
+        aria-hidden="true"
+        data-shown={shown || undefined}
+        className={`transition-opacity duration-150 ${shown ? "" : "opacity-0"}`}
+      >
         {children}
       </div>
     </div>

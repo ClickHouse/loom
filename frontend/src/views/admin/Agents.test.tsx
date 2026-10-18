@@ -72,8 +72,9 @@ describe("Agents: last seen", () => {
     expect(badge.closest('[data-testid="ellipsed-badge-content"]')).not.toBeNull();
     const time = within(stale).getByText("3d ago");
     expect(time.tagName).toBe("TIME");
-    expect(time).toHaveClass("text-text-muted");
-    expect(stale.querySelector(".text-warn")).toBeNull();
+    // Only the badge says stale: the time stays out of the warning state.
+    expect(badge.closest('[class*="state_warning"]')).not.toBeNull();
+    expect(time.closest('[class*="state_warning"]')).toBeNull();
     expect(within(fresh).queryByText("Stale")).toBeNull();
   });
 });

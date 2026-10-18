@@ -75,7 +75,7 @@ export function ListState(props: ListStateProps) {
             },
           }}
         >
-          {rid && <p className="mt-2 font-mono text-xs text-text-muted">request id {rid}</p>}
+          {rid && <code className="mt-2 block font-mono text-xs text-text-muted">request id {rid}</code>}
         </EmptyState>
       </div>
     );

@@ -58,9 +58,9 @@ describe("Browse: code indexes you manage", () => {
     fireEvent.click(fold);
     expect(fold).toHaveAttribute("aria-expanded", "true");
     const body = document.getElementById(fold.getAttribute("aria-controls") ?? "")!;
-    // The repository is the row's first line, the namespace its mono second line.
+    // The repository is the row's first line, the namespace its second, as code.
     const repo = within(body).getByText("ClickHouse/ClickHouse @ master");
-    expect(within(body).getByText("code-ch")).toHaveClass("font-mono");
+    expect(within(body).getByText("code-ch").tagName).toBe("CODE");
     expect(
       repo.compareDocumentPosition(within(body).getByText("code-ch")) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();

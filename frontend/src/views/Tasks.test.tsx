@@ -253,7 +253,7 @@ describe("Tasks page", () => {
     // in triage, the lease in progress. The time and the assignee are the row's meta.
     const urgent = screen.getByRole("row", { name: "Task urgent" });
     expect(within(urgent).getByText("from reporter-public")).toBeInTheDocument();
-    expect(within(urgent).getByText("bug_report").closest(".font-mono")).toBeNull();
+    expect(within(urgent).getByText("bug_report").closest("code")).toBeNull();
     expect(within(urgent).getByText("42m ago").closest("time")).toHaveAttribute("datetime");
     expect(within(urgent).getByText("P1")).toBeInTheDocument();
     expect(within(urgent).getByText("For reporter, the inbox's agent")).toBeInTheDocument();

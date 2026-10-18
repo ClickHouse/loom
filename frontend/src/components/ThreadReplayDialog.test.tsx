@@ -127,7 +127,7 @@ describe("ThreadReplayDialog", () => {
     const meta = (await screen.findByText("3 messages")).parentElement as HTMLElement;
     const agent = within(meta).getByText("planner");
     expect(agent.closest('.agent-badge [data-testid$="-badge-content"]')).not.toBeNull();
-    expect(agent.closest(".font-mono")).toBeNull();
+    expect(agent.closest("code")).toBeNull();
     expect(meta).toHaveTextContent(`updated ${listTime(old)}`);
     // The dialog's times are ListTime, the list's one time rule, the thread's update time
     // included.

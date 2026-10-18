@@ -83,9 +83,9 @@ describe("NamespacePicker groups", () => {
     const body = document.getElementById(code.getAttribute("aria-controls") ?? "");
     expect(body).not.toBeNull();
     const ch = within(body as HTMLElement).getByRole("button", { name: /ClickHouse\/ClickHouse @ master/ });
-    // The repository is the row's first line; the namespace its mono second line. No per-row code badge.
+    // The repository is the row's first line; the namespace its second, as code. No per-row code badge.
     expect(ch.textContent).toMatch(/^ClickHouse\/ClickHouse @ master.*idx-ch/);
-    expect(within(ch).getByText("idx-ch")).toHaveClass("font-mono");
+    expect(within(ch).getByText("idx-ch").tagName).toBe("CODE");
     expect(within(ch).queryByText("code")).toBeNull();
     // The section is a labelled group.
     expect(ch.closest("section")).toHaveAccessibleName(/Code indexes/);

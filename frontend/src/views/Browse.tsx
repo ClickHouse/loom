@@ -532,7 +532,7 @@ function SpaceRow({
               onClick={onOpen}
               className="list-row-open min-w-0 break-all font-mono text-sm text-text"
             >
-              {namespace}
+              <code>{namespace}</code>
             </button>
             {/* Visibility is not a status: neutral either way. */}
             <Badge text={sentenceCase(visibility)} state="neutral" size="sm" />
@@ -606,7 +606,9 @@ function ManagedKindSection({
                 <div className="flex items-center gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm text-text truncate">{r.description || r.namespace}</div>
-                    {r.description && <div className="text-xs font-mono text-text-muted truncate">{r.namespace}</div>}
+                    {r.description && (
+                      <code className="block text-xs font-mono text-text-muted truncate">{r.namespace}</code>
+                    )}
                   </div>
                   <Badge text={sentenceCase(r.visibility)} state="neutral" size="sm" />
                   <Tip content={`Invite people to ${r.namespace}`}>

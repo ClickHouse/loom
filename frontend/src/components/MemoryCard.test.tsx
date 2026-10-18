@@ -72,12 +72,12 @@ describe("MemoryCard", () => {
     }
   });
 
-  // A JSON value reads as one muted mono line of `k: v` pairs.
+  // A JSON value reads as one code line of `k: v` pairs.
   it("draws a JSON value as its key: value pairs", () => {
     const value = JSON.stringify({ steps: ["drain", "re-point", "replay"], owner: "oncall", sla_minutes: 30 });
     render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value={value} />);
     const line = screen.getByText("steps: drain, re-point, replay · owner: oncall · sla_minutes: 30");
-    expect(line).toHaveClass("font-mono", "text-xs", "text-text-muted");
+    expect(line.tagName).toBe("CODE");
     expect(screen.queryByText(/"steps"/)).toBeNull();
   });
 

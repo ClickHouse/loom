@@ -105,7 +105,7 @@ describe("Spaces: the rows", () => {
     ) as HTMLElement;
     expect(managed.querySelector("svg[aria-label='star'], [data-icon='star']")).toBeNull();
     const team = within(managed).getByText("team");
-    expect(team).toHaveClass("font-mono");
+    expect(team.tagName).toBe("CODE");
     const r = row("team");
     expect(within(r).getByText("Private")).toBeInTheDocument();
     expect(within(r).getByText("The platform team")).toBeInTheDocument();

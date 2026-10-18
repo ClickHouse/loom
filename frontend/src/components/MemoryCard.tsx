@@ -215,9 +215,9 @@ export const MemoryCard = memo(function MemoryCard({
           </span>
           {/* Line 2: the value, two lines at most; a JSON object as one line of its pairs. */}
           {pairs && value !== null ? (
-            <span id={`${id}-value`} className="mt-1 block truncate font-mono text-xs text-text-muted">
+            <code id={`${id}-value`} className="mt-1 block truncate font-mono text-xs text-text-muted">
               {truncate(value, 280)}
-            </span>
+            </code>
           ) : (
             <span id={`${id}-value`} className="mt-1 text-sm text-text leading-normal line-clamp-2 break-words">
               {/* Cut before the clamp, so a 2 KB preview never lands in the DOM: two lines hold ~280. */}

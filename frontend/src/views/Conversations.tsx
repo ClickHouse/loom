@@ -393,6 +393,7 @@ export function Conversations() {
                   {/* Line 1: the thread; right, when it was last active. */}
                   <span className="flex items-baseline gap-3">
                     <span
+                      data-untitled={title ? undefined : ""}
                       className={`min-w-0 flex-1 truncate text-sm font-semibold ${title ? "text-text" : "text-text-muted"}`}
                     >
                       {title || UNTITLED_THREAD}
@@ -605,6 +606,7 @@ export function Conversations() {
               >
                 <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span
+                    data-untitled={g.title ? undefined : ""}
                     className={`min-w-0 flex-1 truncate text-sm font-semibold ${g.title ? "text-text" : "text-text-muted"}`}
                   >
                     {g.title || UNTITLED_THREAD}

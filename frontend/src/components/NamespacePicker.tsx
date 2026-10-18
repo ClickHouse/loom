@@ -625,10 +625,18 @@ function NamespaceRow({
       >
         <RoleIcon role={r.role} />
         <span className="flex-1 min-w-0">
-          <span className={`text-sm truncate block ${kindRow && !r.description ? "font-mono" : ""}`}>{primary}</span>
-          {secondary && (
-            <span className={`text-xs text-text-muted truncate block ${kindRow ? "font-mono" : ""}`}>{secondary}</span>
+          {/* A namespace name in a kind row is an identifier: code. */}
+          {kindRow && !r.description ? (
+            <code className="text-sm truncate block font-mono">{primary}</code>
+          ) : (
+            <span className="text-sm truncate block">{primary}</span>
           )}
+          {secondary &&
+            (kindRow ? (
+              <code className="text-xs text-text-muted truncate block font-mono">{secondary}</code>
+            ) : (
+              <span className="text-xs text-text-muted truncate block">{secondary}</span>
+            ))}
         </span>
         <VisibilityBadge v={r.visibility} />
       </button>

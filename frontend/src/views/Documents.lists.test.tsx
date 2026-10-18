@@ -94,8 +94,8 @@ describe("Library list", () => {
     const row = screen.getByText("Refund escalation").closest("[data-doc-row]") as HTMLElement;
     expect(row.querySelector("time")).not.toBeNull();
     expect(row).toHaveTextContent("48 chunks");
-    // An untitled document falls back to its URI, in mono.
-    expect(screen.getByText("https://wiki.example/oncall")).toHaveClass("font-mono");
+    // An untitled document falls back to its URI, as code.
+    expect(screen.getByText("https://wiki.example/oncall").tagName).toBe("CODE");
   });
 
   it("says the library's figures in the description line, with no footer", async () => {

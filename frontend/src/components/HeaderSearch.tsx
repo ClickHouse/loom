@@ -427,6 +427,8 @@ export function HeaderSearch({
     id: optionId(idx),
     role: "option",
     "aria-selected": idx === activeIdx,
+    // The option the keys moved to, which draws the ring.
+    "data-by-keys": idx === activeIdx && !byPointer ? "" : undefined,
     tabIndex: -1,
     onMouseEnter: () => {
       setByPointer(true);

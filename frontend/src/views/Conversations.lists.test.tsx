@@ -96,7 +96,8 @@ describe("Conversations list", () => {
     render(<Conversations />);
     expect(await screen.findByText("Payments API 5xx spike")).toBeInTheDocument();
     expect(screen.getAllByText("Can you draft the release notes?").length).toBeGreaterThan(0);
-    expect(screen.getByText("Untitled thread")).toHaveClass("text-text-muted");
+    expect(screen.getByText("Untitled thread")).toHaveAttribute("data-untitled");
+    expect(screen.getByText("Payments API 5xx spike")).not.toHaveAttribute("data-untitled");
     expect(screen.queryByText(UUID)).toBeNull();
     expect(toolbar()).toHaveTextContent("3 shown");
     const row = screen.getByText("Payments API 5xx spike").closest("[data-thread-row]") as HTMLElement;
@@ -136,8 +137,7 @@ describe("Conversations list", () => {
     expect(within(rows[0]).getAllByRole("button")).toHaveLength(4);
     expect(within(rows[1]).getByText("Untitled thread")).toBeInTheDocument();
     expect(rows[1]).not.toHaveTextContent(UUID);
-    const strong = within(rows[0]).getAllByText("refund", { selector: "strong" });
-    expect(strong[0]).toHaveClass("font-semibold");
+    expect(within(rows[0]).getAllByText("refund", { selector: "strong" }).length).toBeGreaterThan(0);
     // No accent "· open" text.
     expect(screen.queryByText(/· open$/)).toBeNull();
   });

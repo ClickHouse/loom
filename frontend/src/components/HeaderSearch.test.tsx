@@ -115,10 +115,10 @@ describe("HeaderSearch", () => {
     const [first, second] = within(best).getAllByRole("option");
     await user.hover(second);
     expect(second).toHaveAttribute("aria-selected", "true");
-    expect(second.className).not.toMatch(/ring-2/);
+    expect(second).not.toHaveAttribute("data-by-keys");
     await user.keyboard("{ArrowUp}");
     const active = screen.getAllByRole("option").find((o) => o.getAttribute("aria-selected") === "true");
-    expect(active?.className).toMatch(/ring-2/);
+    expect(active).toHaveAttribute("data-by-keys");
     expect(first).toBeInTheDocument();
   });
 

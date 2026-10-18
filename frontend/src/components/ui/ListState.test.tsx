@@ -49,7 +49,7 @@ describe("ListState", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load documents");
     expect(screen.getByRole("heading", { name: "Couldn't load documents" })).toBeInTheDocument();
     expect(screen.getByText(/Loom's database is unreachable/)).toBeInTheDocument();
-    expect(screen.getByText("request id req-123")).toHaveClass("font-mono");
+    expect(screen.getByText("request id req-123").tagName).toBe("CODE");
     expect(screen.queryByText(/empty/i)).toBeNull();
     const retry = screen.getByRole("button", { name: "Retry" });
     expect(retry.className).toMatch(/secondary/);

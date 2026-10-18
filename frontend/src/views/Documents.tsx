@@ -720,11 +720,12 @@ export function Documents() {
                     {/* The icon, the name and its state stay on one line; a long name is cut. */}
                     <span className="flex min-w-0 max-w-full items-center gap-2">
                       <Icon name="document" size="sm" aria-hidden="true" className="shrink-0" />
-                      <span
-                        className={`min-w-0 truncate text-text ${r.title ? "text-sm font-semibold" : "font-mono text-xs"}`}
-                      >
-                        {name}
-                      </span>
+                      {/* An untitled document is named by its file name or URI, an identifier. */}
+                      {r.title ? (
+                        <span className="min-w-0 truncate text-text text-sm font-semibold">{name}</span>
+                      ) : (
+                        <code className="min-w-0 truncate text-text font-mono text-xs">{name}</code>
+                      )}
                       {r.superseded && (
                         <span className="inline-flex shrink-0">
                           <Badge text="Superseded" state="neutral" size="sm" aria-hidden="true" />

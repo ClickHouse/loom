@@ -35,10 +35,10 @@ describe("LoadingSkeleton", () => {
     // A busy live region is not announced until it is no longer busy.
     expect(status).not.toHaveAttribute("aria-busy");
     const shapes = status.querySelector("[aria-hidden='true']");
-    expect(shapes).toHaveClass("opacity-0");
+    expect(shapes).not.toHaveAttribute("data-shown");
     expect(status).toHaveTextContent(/^$/);
     act(() => vi.advanceTimersByTime(300));
-    expect(shapes).not.toHaveClass("opacity-0");
+    expect(shapes).toHaveAttribute("data-shown");
     // The live region's text, not its label, is what a screen reader announces.
     expect(status).toHaveTextContent("Loading runs");
   });

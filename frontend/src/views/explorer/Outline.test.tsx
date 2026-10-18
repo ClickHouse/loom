@@ -64,14 +64,15 @@ describe("Outline", () => {
     expect(tree).toHaveAccessibleDescription(/^1 node · 0 edges Arrow keys move and fold/);
   });
 
-  it("a row: the entity name at 14 px, then 'hop 1 · co-mentioned 20×' muted at 12 px", () => {
+  it("a row: the entity name, then 'hop 1 · co-mentioned 20×' on a line of its own", () => {
     mount([node("mergetree")]);
     const row = screen.getByRole("treeitem", { name: /^mergetree ·/ });
     const name = within(row).getByText("mergetree");
-    expect(name).toHaveClass("text-sm");
-    expect(name).not.toHaveClass("font-mono");
+    // An entity is a name, not an identifier.
+    expect(name.closest("code")).toBeNull();
     const meta = within(row).getByText(/^hop 1 · co-mentioned 20×/);
-    expect(meta.closest(".text-xs")).toHaveClass("text-text-muted");
+    expect(meta.contains(name)).toBe(false);
+    expect(name.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("over 20 rows: the first 20 and Show all N, which shows the rest", async () => {
