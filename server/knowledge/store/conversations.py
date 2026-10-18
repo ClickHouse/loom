@@ -319,18 +319,6 @@ async def tombstone_thread(
 
     # 1. Embeddings: every turn the agent logged in the thread, a compacted one too.
     await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
-    # One per turn (FINAL, however many embedding models hold it), earlier calls'
-    # tombstones included, as the messages count is.
-    emb_n = await ch.query_one(
-        f"""
-        SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
-          AND {_THREAD_TURNS}
-        """,
-        params=params,
-    )
-    counts["loom.conversation_embeddings"] = int(emb_n["n"]) if emb_n else 0
 
     # 2. Messages.
     await ch.execute(
@@ -355,7 +343,23 @@ async def tombstone_thread(
     )
     counts["loom.conversations"] = int(msg_n["n"]) if msg_n else 0
 
-    # 3. Thread row.
+    # 3. Embeddings again: a turn appended during the delete has its message tombstoned
+    # above, and its embedding, written after the message, can land after step 1.
+    await _tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=None, when=when, ch=ch)
+    # One per turn (FINAL, however many embedding models hold it), earlier calls'
+    # tombstones included, as the messages count is.
+    emb_n = await ch.query_one(
+        f"""
+        SELECT uniqExact(msg_id) AS n FROM loom.conversation_embeddings FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND thread_id = {{tid:String}} AND tombstoned_at IS NOT NULL
+          AND {_THREAD_TURNS}
+        """,
+        params=params,
+    )
+    counts["loom.conversation_embeddings"] = int(emb_n["n"]) if emb_n else 0
+
+    # 4. Thread row.
     await ch.execute(
         """
         ALTER TABLE loom.conversation_threads

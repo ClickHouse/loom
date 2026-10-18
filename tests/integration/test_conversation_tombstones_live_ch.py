@@ -123,6 +123,46 @@ async def test_a_peer_row_written_after_the_read_is_not_tombstoned(ch, scope) ->
 
 
 @pytest.mark.asyncio
+async def test_a_turn_appended_during_the_delete_leaves_search(ch, scope) -> None:
+    """The agent's own turn whose message lands before the messages mutation and whose
+    embedding lands after the first embeddings read is tombstoned by the second pass."""
+    await _message(ch, scope, "a", "1", "first", T0)
+    await _embedding(ch, scope, "a", "1", "first", T0)
+
+    class _AppendDuring:
+        """Passes through, and lands this agent's next turn after the first read."""
+
+        def __init__(self) -> None:
+            self.done = False
+
+        async def query_all(self, sql: str, params: Any = None) -> Any:
+            rows = await ch.query_all(sql, params=params)
+            if not self.done and "toUnixTimestamp64Milli(ts) AS ts_ms" in sql:
+                self.done = True
+                later = T0 + timedelta(seconds=5)
+                await _message(ch, scope, "a", "2", "second", later)
+                await _embedding(ch, scope, "a", "2", "second", later)
+            return rows
+
+        async def query_one(self, sql: str, params: Any = None) -> Any:
+            return await ch.query_one(sql, params=params)
+
+        async def execute(self, sql: str, params: Any = None, **kw: Any) -> Any:
+            return await ch.execute(sql, params, **kw)
+
+    out = await repo.tombstone_thread(
+        scope["org"],
+        scope["ns"],
+        "a",
+        scope["tid"],
+        when=datetime.now(UTC).replace(tzinfo=None),
+        ch=_AppendDuring(),
+    )
+    assert out["loom.conversation_embeddings"] == 2
+    assert await _rows(ch, scope) == [("1", "first", False), ("2", "second", False)]
+
+
+@pytest.mark.asyncio
 async def test_an_orphan_embedding_goes_although_a_peer_reused_its_id(ch, scope) -> None:
     """This agent's embedding whose message row is gone is its own, whatever another
     agent logged under the same msg_id: the delete tombstones it."""
