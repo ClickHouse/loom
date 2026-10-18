@@ -7899,7 +7899,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "The `jti` claim: retires exactly one token. Every token from `loom mint-token` (printed with --json / --save) and the admin endpoint carries one; older tokens may not — use --subject.",
+       "help": "The `jti` claim: retires exactly one token. Every token from `loom mint-token` (printed with --json / --save) and the admin endpoint carries one; a gateway's token may not — use --subject.",
        "metavar": null
       },
       {

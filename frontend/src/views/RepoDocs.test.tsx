@@ -99,7 +99,7 @@ describe("RepoDocsList", () => {
     expect(await axeViolations(document.body)).toEqual([]);
   });
 
-  it("a server without read counts shows the list without them", async () => {
+  it("a failed read-count call shows the list without them", async () => {
     vi.mocked(listKnowledge).mockResolvedValue({ rows: [DOC], next_cursor: null });
     vi.mocked(knowledgeReads).mockRejectedValue(new ApiError({ status: 404, code: "NOT_FOUND", message: "no" }));
     mount();

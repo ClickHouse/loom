@@ -29,7 +29,7 @@ export interface RunRow {
   memories_used: string[];
   memories_written: string[];
   metadata: Record<string, unknown>;
-  budget_usd?: number; // 0 = none; absent on a server without budgets
+  budget_usd?: number; // 0 = none; absent only from a `fields` projection
   budget_seconds?: number;
 }
 
