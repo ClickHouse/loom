@@ -691,6 +691,8 @@ def _compaction_window(lines: list[str], folded: list[bool]) -> tuple[int, str] 
     write a system turn naming `compacted_from`) costs like any turn. The window
     always reaches the first line past the free ones, and one holding no new turn
     compacts nothing: widening it would cut a turn the summarizer never read."""
+    if all(folded):
+        return None
     lines = list(lines)
     free = [False] * len(lines)
     allowance = _FOLDED_SUMMARY_CHARS

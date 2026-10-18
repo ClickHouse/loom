@@ -512,6 +512,8 @@ def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> N
         ),
         # A second summary past the allowance costs budget; filling it leaves no turn.
         (["system: s", "system: " + "s" * 20_000, "user: a"], [True, True, False], None),
+        # Nothing but summaries: no new turn to compact.
+        (["system: s"], [True], None),
     ],
 )
 def test_the_compaction_window(
