@@ -99,7 +99,7 @@ Pick the winner of a conflict (keep A, keep B, keep both, merge).
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `memory_id` | `str` | required | The conflicted memory the decision is about (an org-wide id); it must live in `namespace`. |
 | `decision` | `Literal['revise', 'contract', 'allow']` | required | `revise` keeps it and tombstones the peers; `contract` tombstones it and reactivates the peers; `allow` reactivates all and allowlists each key pair. |
-| `peer_id` | `str \| None` | `None` | Optional: scope the resolve to one specific peer (revise against just that one). |
+| `peer_id` | `str \| None` | `None` | Optional: decide only the pair with this peer. |
 | `reason` | `str` | `''` | Why; appended to tombstoned rows' `source_trace` and stored on allowlist rows (first 512 characters). |
 | `resolved_by` | `str` | `''` | Who resolved it, recorded beside `reason` (first 128 characters); not checked against the token. |
 

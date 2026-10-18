@@ -289,7 +289,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         as_of=as_of,
         # memory.list's tag match (every tag, both sides lowercased), or memory.search's exact one.
         tags=["kind:lesson", "kind:fact"] if c["as_of"] else ["kind:lesson"],
-        tag_match="all" if c["as_of"] else "exact",
+        tag_match="folded_all" if c["as_of"] else "exact_any",
         include_tombstoned=c["as_of"],
         exclude_high_sensitivity=c["as_of"],
         ch=ch,
@@ -302,7 +302,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         key_prefix="user_" if c["as_of"] else None,
         source_trace="s" if c["as_of"] else None,
         tags=["kind:lesson", "kind:fact"] if c["as_of"] else None,
-        tag_match="all" if c["as_of"] else "any",
+        tag_match="folded_all" if c["as_of"] else "folded_any",
         as_of=as_of,
         created_since=as_of,
         ch=ch,

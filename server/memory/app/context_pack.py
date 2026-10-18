@@ -336,7 +336,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
             ident,
             exclude_high_sensitivity=True,
             pinned_only=True,
-            tag_match="any",
+            tag_match="folded_any",
             order_by="created_at_desc",
             limit=k,
             scope=request_scope(),
@@ -344,7 +344,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
         recent = await memory_repo.list_by_namespace(
             ident,
             exclude_high_sensitivity=True,
-            tag_match="any",
+            tag_match="folded_any",
             order_by="created_at_desc",
             limit=k * 2,
             scope=request_scope(),

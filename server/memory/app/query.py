@@ -132,7 +132,7 @@ async def handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
 
 def _tag_match(input: MemoryListInput) -> TagMatch:
     """`tags_all` asks for every tag; otherwise any one, in any case."""
-    return "all" if input.tags_all else "any"
+    return "folded_all" if input.tags_all else "folded_any"
 
 
 def _caller_is_below_writer(org: str, namespace: str) -> bool:

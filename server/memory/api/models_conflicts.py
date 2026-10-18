@@ -75,9 +75,8 @@ class ConflictsResolveInput(BaseModel):
     # `revise` keeps it and tombstones the peers; `contract` tombstones it and reactivates
     # the peers; `allow` reactivates all and allowlists each key pair.
     decision: ResolveDecision
-    # Optional: scope the resolve to one specific peer (revise against
-    # just that one). If unset, the resolve fans out across all peers
-    # in conflict_with.
+    # Optional: decide only the pair with this peer. If unset, the resolve decides every
+    # open pair: both rows live and each listing the other in conflict_with.
     peer_id: str | None = None
     # Why; appended to tombstoned rows' `source_trace` and stored on allowlist rows
     # (first 512 characters).

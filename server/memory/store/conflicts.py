@@ -10,7 +10,7 @@ Operators resolve in the dashboard's Review queue; the three decisions are
 
 This repo carries the SQL for:
   - listing conflicted rows for the operator surface
-  - fetching one target row + its conflict_with set
+  - fetching one target row + its conflict_with set, or a resolve's rows in one read
   - writing conflict-resolution state via memory_repo RMT version rows
   - allowlist CRUD (list / exists / insert / soft-delete)
   - the namespace row and allowlist reads memory.set's conflict check makes
@@ -18,7 +18,7 @@ This repo carries the SQL for:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -177,11 +177,13 @@ async def conflicted_keys(
 
 @dataclass(frozen=True, slots=True)
 class ConflictTarget:
-    """A live row's id, the ids it conflicts with, and its status."""
+    """A live row's id, the ids it conflicts with, its status, namespace and key."""
 
     memory_id: str
     conflict_with: tuple[str, ...]
     status: str
+    namespace: str = ""
+    memory_key: str = ""
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> ConflictTarget:
@@ -189,6 +191,8 @@ class ConflictTarget:
             memory_id=str(r.get("memory_id") or ""),
             conflict_with=tuple(str(p) for p in (r.get("conflict_with") or [])),
             status=str(r.get("status") or ""),
+            namespace=str(r.get("namespace") or ""),
+            memory_key=str(r.get("memory_key") or ""),
         )
 
 
@@ -215,6 +219,51 @@ async def lookup_target(
         params={"org": org, "mid": memory_id},
     )
     return None if r is None else ConflictTarget.from_row(r)
+
+
+async def conflict_rows(
+    org: str,
+    memory_ids: list[str],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[str, ConflictTarget]:
+    """The live rows among `memory_ids` by id, read in one FINAL statement so a
+    pair is judged from one state of both rows.
+
+    Locate, then read, as `get_by_id` does: memory_id is not in the sort key,
+    and under FINAL its skip-index selection is re-expanded to every granule of
+    the primary-key range. The key columns, the same in every version, come
+    first without FINAL; the FINAL read then filters on them in PREWHERE."""
+    ids = sorted({str(i) for i in memory_ids if i})
+    if not ids:
+        return {}
+    ch = ch or _default_client()
+    located = await ch.query_all(
+        """
+        SELECT namespace, memory_key
+        FROM loom.memory
+        WHERE org = {org:String} AND memory_id IN {ids:Array(UUID)}
+        LIMIT 1 BY memory_id
+        LIMIT {n:UInt32}
+        """,
+        params={"org": org, "ids": ids, "n": len(ids)},
+    )
+    if not located:
+        return {}
+    keys = sorted({(str(r["namespace"]), str(r["memory_key"])) for r in located})
+    rows = await ch.query_all(
+        """
+        SELECT memory_id, namespace, memory_key, status, conflict_with
+        FROM loom.memory FINAL
+        PREWHERE org = {org:String}
+          AND (namespace, memory_key) IN {keys:Array(Tuple(String, String))}
+        WHERE memory_id IN {ids:Array(UUID)}
+          AND tombstoned_at IS NULL
+        LIMIT {n:UInt32}
+        """,
+        params={"org": org, "keys": keys, "ids": ids, "n": len(ids)},
+    )
+    return {str(r["memory_id"]): ConflictTarget.from_row(r) for r in rows}
 
 
 async def tombstone_ids(
@@ -251,9 +300,11 @@ async def mark_active_by_ids(
     org: str,
     memory_ids: list[str],
     *,
+    drop: Collection[str] = (),
     ch: _CHClient | None = None,
 ) -> None:
-    """Flip status='active' for the listed rows. Empty short-circuits."""
+    """Flip status='active' for the listed rows and remove the `drop` ids from
+    their conflict_with (the pairs a resolve decided). Empty short-circuits."""
     if not memory_ids:
         return
     import server.memory.store as memory_repo
@@ -261,32 +312,12 @@ async def mark_active_by_ids(
     await memory_repo.write_versions_by_ids(
         org,
         memory_ids,
-        lambda _row: {"status": "active"},
+        lambda row: {
+            "status": "active",
+            "conflict_with": [p for p in row.conflict_with if str(p) not in drop],
+        },
         ch=ch,
     )
-
-
-async def lookup_keys_for_ids(
-    org: str,
-    memory_ids: list[str],
-    *,
-    ch: _CHClient | None = None,
-) -> dict[str, str]:
-    """Resolve memory_id → memory_key for the listed rows. Used by
-    the resolve(allow) path to canonicalize allowlist pairs."""
-    if not memory_ids:
-        return {}
-    ch = ch or _default_client()
-    rows = await ch.query_all(
-        """
-        SELECT memory_id, memory_key FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND memory_id IN {ids:Array(UUID)}
-          AND tombstoned_at IS NULL
-        """,
-        params={"org": org, "ids": memory_ids},
-    )
-    return {str(r["memory_id"]): r["memory_key"] for r in rows}
 
 
 async def allowlist_list(

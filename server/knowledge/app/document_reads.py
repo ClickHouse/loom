@@ -47,7 +47,7 @@ async def handle_knowledge_list(
             input.namespace,
             include_superseded=input.include_superseded,
             tags=list(input.tags) if input.tags else None,
-            tag_match="all" if input.tags_all else "any",
+            tag_match="folded_all" if input.tags_all else "folded_any",
             uri_prefixes=list(input.uri_prefix) if input.uri_prefix else None,
             cursor=cursor,
             limit=input.limit + 1,

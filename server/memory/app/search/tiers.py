@@ -73,7 +73,7 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
             limit=n * 4 if run_id else n,
             # The request's hard filter, matched exactly as every memory.search leg does.
             tags=_request_hard_tags(input) or None,
-            tag_match="exact",
+            tag_match="exact_any",
             scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — a tier never fails a search

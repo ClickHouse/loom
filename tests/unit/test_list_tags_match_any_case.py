@@ -62,10 +62,10 @@ async def test_an_upper_case_tag_matches_a_lower_case_row_with_no_flag() -> None
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.list_by_namespace(
-        identity, tag_match="any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
+        identity, tag_match="folded_any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
     )
     await memory_repo.count_by_namespace(
-        identity, tag_match="any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
+        identity, tag_match="folded_any", scope=WHOLE_NAMESPACE, tags=["API"], ch=ch
     )
     for sql, params in ch.calls:
         assert f"hasAny({_FOLDED})" in sql
@@ -108,17 +108,17 @@ async def test_the_hidden_under_prefix_count_matches_tags_as_the_total_does(
     )
     assert len(calls["count"]) == 3, "total, today and every status under the prefix"
     assert [c["tags"] for c in calls["count"]] == [["a", "b"]] * 3
-    assert [c["tag_match"] for c in calls["count"]] == ["all", "all", "all"]
+    assert [c["tag_match"] for c in calls["count"]] == ["folded_all", "folded_all", "folded_all"]
 
 
 @pytest.mark.asyncio
 async def test_the_store_requires_every_tag_when_asked() -> None:
-    """`tag_match="all"`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
+    """`tag_match="folded_all"`: stacked tag filters (`tag:a tag:b`) need every tag, so rows holding all
     of them are found past the newest rows that hold any one."""
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
-        identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tag_match="all", ch=ch
+        identity, scope=WHOLE_NAMESPACE, tags=["A", "b"], tag_match="folded_all", ch=ch
     )
     sql, params = ch.calls[-1]
     assert f"hasAll({_FOLDED})" in sql
@@ -138,8 +138,13 @@ async def test_tags_all_reaches_the_page_both_counts_and_the_cache_key(
                 org="acme", namespace="team", agent="*", tags=["a", "b"], tags_all=all_tags
             )
         )
-    assert [c["tag_match"] for c in calls["list"]] == ["any", "all"]
-    assert [c["tag_match"] for c in calls["count"]] == ["any", "any", "all", "all"]
+    assert [c["tag_match"] for c in calls["list"]] == ["folded_any", "folded_all"]
+    assert [c["tag_match"] for c in calls["count"]] == [
+        "folded_any",
+        "folded_any",
+        "folded_all",
+        "folded_all",
+    ]
 
 
 @pytest.mark.asyncio
@@ -150,7 +155,7 @@ async def test_a_non_ascii_tag_folds_the_same_on_both_sides() -> None:
     identity = memory_repo.Identity(org="acme", namespace="team", agent="*")
     ch = StubCH()
     await memory_repo.count_by_namespace(
-        identity, tag_match="any", scope=WHOLE_NAMESPACE, tags=["ΟΔΟΣ"], ch=ch
+        identity, tag_match="folded_any", scope=WHOLE_NAMESPACE, tags=["ΟΔΟΣ"], ch=ch
     )
     sql, params = ch.calls[-1]
     assert f"hasAny({_FOLDED})" in sql

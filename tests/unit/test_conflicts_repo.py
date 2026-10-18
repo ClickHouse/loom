@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -13,8 +14,8 @@ from server.memory.store.conflicts import (
     allowlist_insert,
     allowlist_list,
     allowlist_remove,
+    conflict_rows,
     list_conflicted,
-    lookup_keys_for_ids,
     lookup_target,
     mark_active_by_ids,
     tombstone_ids,
@@ -158,23 +159,57 @@ async def test_mark_active_by_ids_empty_input_skips_ch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lookup_keys_for_ids_returns_dict() -> None:
-    ch = StubCH()
-    ch.query_all_returns.append(
-        [
-            {"memory_id": "id-1", "memory_key": "alpha"},
-            {"memory_id": "id-2", "memory_key": "beta"},
-        ]
-    )
-    out = await lookup_keys_for_ids("clickhouse", ["id-1", "id-2"], ch=ch)
-    assert out == {"id-1": "alpha", "id-2": "beta"}
+async def test_mark_active_by_ids_drops_the_decided_ids_from_conflict_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory import store as memory_repo
+
+    captured: dict[str, Any] = {}
+
+    async def fake_write_versions_by_ids(org, memory_ids, update, *, ch=None):
+        captured["update"] = update(SimpleNamespace(conflict_with=["p1", "p2", "y"]))
+        return len(memory_ids)
+
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", fake_write_versions_by_ids)
+    await mark_active_by_ids("clickhouse", ["t"], drop=["p1", "p2"], ch=StubCH())
+    assert captured["update"] == {"status": "active", "conflict_with": ["y"]}
 
 
 @pytest.mark.asyncio
-async def test_lookup_keys_for_ids_empty_skips_ch() -> None:
+async def test_conflict_rows_locates_then_reads_every_row_in_one_final_statement() -> None:
     ch = StubCH()
-    out = await lookup_keys_for_ids("clickhouse", [], ch=ch)
-    assert out == {}
+    ch.query_all_returns.append(
+        [{"namespace": "ns", "memory_key": "a"}, {"namespace": "ns", "memory_key": "b"}]
+    )
+    ch.query_all_returns.append(
+        [
+            {
+                "memory_id": "id-1",
+                "namespace": "ns",
+                "memory_key": "a",
+                "status": "conflicted",
+                "conflict_with": ["id-2"],
+            },
+            {
+                "memory_id": "id-2",
+                "namespace": "ns",
+                "memory_key": "b",
+                "status": "conflicted",
+                "conflict_with": ["id-1"],
+            },
+        ]
+    )
+    out = await conflict_rows("clickhouse", ["id-2", "id-1"], ch=ch)
+    assert out["id-1"].conflict_with == ("id-2",) and out["id-2"].memory_key == "b"
+    (locate, _), (read, params) = ch.query_all_calls
+    assert "FINAL" not in locate and "FINAL" in read
+    assert params["keys"] == [("ns", "a"), ("ns", "b")] and params["ids"] == ["id-1", "id-2"]
+
+
+@pytest.mark.asyncio
+async def test_conflict_rows_empty_skips_ch() -> None:
+    ch = StubCH()
+    assert await conflict_rows("clickhouse", [], ch=ch) == {}
     assert ch.query_all_calls == []
 
 

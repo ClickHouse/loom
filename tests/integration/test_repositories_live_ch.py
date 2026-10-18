@@ -161,7 +161,7 @@ async def test_memory_repo_list_filters(ch: Any, identity: Any) -> None:
 
     semantic = await memory_repo.list_by_namespace(
         identity,
-        tag_match="any",
+        tag_match="folded_any",
         memory_type="semantic",
         order_by="memory_key_asc",
         limit=10,

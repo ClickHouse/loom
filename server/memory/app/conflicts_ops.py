@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _sha256
 from server.identity.app.request_scope import request_scope
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.identity.domain.read_scope import ReadFilters
 from server.memory.api.models_conflicts import (
     ConflictsAllowlistListInput,
     ConflictsAllowlistListOutput,
@@ -225,64 +225,53 @@ async def handle_conflicts_propose_revision(
     )
 
 
-async def _peers_in_scope(input: ConflictsResolveInput, peers: list[str]) -> list[str] | None:
-    """The peers a resolve may write, or None when it must write nothing.
+async def _open_pairs(
+    input: ConflictsResolveInput,
+) -> tuple[ConflictTarget, list[ConflictTarget]] | None:
+    """The target and the peer rows a resolve decides, or None when it must write nothing.
 
-    Rows are addressed by org-wide memory_id, so the transport's ADMIN check
-    on the body's namespace does not cover them. The target must live in that
-    namespace, and the caller must hold ADMIN on every row the request names
-    (target and each peer); otherwise the answer is the same resolved=False
-    as for an unknown id. A peer whose row is gone is dropped: there is
-    nothing left to write."""
-    import server.memory.store as memory_repo
+    Rows are addressed by org-wide memory_id, so the transport's ADMIN check on
+    the body's namespace does not cover them: the target must live in that
+    namespace and the caller must hold ADMIN on every row it writes, or the
+    answer is the same resolved=False as for an unknown id. A pair is open
+    while both rows are live and each lists the other; a decision removes the
+    pair from both rows' conflict_with, so a stale view cannot decide it again."""
     from server.auth.authz import row_in_scope
+    from server.core.ch import own_write_reads
+    from server.memory.store import conflicts as conflicts_repo
     from server.operations.base import Role
 
-    target = await memory_repo.get_by_id(
-        input.memory_id, org=input.org, fresh=True, scope=WHOLE_NAMESPACE
-    )
+    with own_write_reads():  # must see the decision a resolve a moment ago wrote
+        first = await conflicts_repo.conflict_rows(input.org, [input.memory_id])
+    target = first.get(input.memory_id)
     if target is None or target.namespace != input.namespace:
         return None
     if not await row_in_scope(input.org, target.namespace, Role.ADMIN):
         return None
-    live: list[str] = []
-    for peer_id in peers:
-        row = await memory_repo.get_by_id(peer_id, org=input.org, fresh=True, scope=WHOLE_NAMESPACE)
-        if row is None:
-            continue
-        if not await row_in_scope(input.org, row.namespace, Role.ADMIN):
+    if input.peer_id and input.peer_id not in target.conflict_with:
+        # A stale or foreign peer id must not widen the resolve to every peer.
+        return None
+    candidates = [input.peer_id] if input.peer_id else list(target.conflict_with)
+    rows = first
+    if candidates:
+        with own_write_reads():  # the target and its peers from one state
+            rows = await conflicts_repo.conflict_rows(input.org, [input.memory_id, *candidates])
+        target = rows.get(input.memory_id)
+        if target is None:
             return None
-        live.append(peer_id)
-    return live
-
-
-async def _open_peers(
-    org: str, namespace: str, target: ConflictTarget, named: list[str]
-) -> list[str]:
-    """The named peers whose pair with `target` is still open: the peer is live,
-    conflicted and lists the target, and no allow has recorded the pair. The
-    target's own status is not consulted: a later write can re-flag it while
-    `conflict_with` still names the peers an earlier resolve decided."""
-    from server.core.ch import own_write_reads
-    from server.memory.store import conflicts as conflicts_repo
-
-    with own_write_reads():  # must see the decision a resolve a moment ago wrote
-        keys = await conflicts_repo.lookup_keys_for_ids(org, [target.memory_id, *named])
-        target_key = keys.get(target.memory_id)
-        allowed = (
-            await conflicts_repo.allowlisted_peers(org, namespace, target_key)
-            if target_key
-            else set()
-        )
-        open_peers: list[str] = []
-        for peer_id in named:
-            peer = await conflicts_repo.lookup_target(org, peer_id)
-            if peer is None or peer.status != "conflicted":
-                continue
-            if target.memory_id not in peer.conflict_with or keys.get(peer_id) in allowed:
-                continue
-            open_peers.append(peer_id)
-    return open_peers
+    peers = [
+        p
+        for p in candidates
+        if p in rows and p in target.conflict_with and input.memory_id in rows[p].conflict_with
+    ]
+    # A conflicted target whose peers are all gone is still decided on its own.
+    alone = target.status == "conflicted" and not any(p in rows for p in candidates)
+    if not peers and (input.peer_id or not alone):
+        return None
+    for peer_id in peers:
+        if not await row_in_scope(input.org, rows[peer_id].namespace, Role.ADMIN):
+            return None
+    return target, [rows[p] for p in peers]
 
 
 async def handle_conflicts_resolve(
@@ -294,6 +283,8 @@ async def handle_conflicts_resolve(
     contract: the chosen memory is wrong. It becomes tombstoned;
               peers restored to active.
     allow:    both are legitimately distinct. Flip ALL back to active.
+
+    Each row kept active loses the decided ids from its conflict_with.
     """
     from server.core.ch import own_write_reads
     from server.memory.store import conflicts as conflicts_repo
@@ -303,80 +294,53 @@ async def handle_conflicts_resolve(
     by = (input.resolved_by or "")[:128]
     audit_note = f"resolve:{input.decision}:{reason}:{by}"
 
-    # Look up the target + its conflict_with set; the resolve fans
-    # out to either every peer or just the one named in `peer_id`.
-    unresolved = ConflictsResolveOutput(
-        resolved=False, decision=input.decision, affected_memory_ids=[]
-    )
-    target = await conflicts_repo.lookup_target(input.org, input.memory_id)
-    if target is None:
-        return unresolved
-    all_peers = list(target.conflict_with)
-    if input.peer_id and input.peer_id not in all_peers:
-        # A stale or foreign peer id must not widen the resolve to every peer.
-        return unresolved
-    named = [input.peer_id] if input.peer_id else all_peers
-    # A pair an earlier decision already resolved is not decided again from a stale view;
-    # a conflicted target whose peers are all gone is still decided on its own.
-    named = await _open_peers(input.org, input.namespace, target, named)
-    if not named and (input.peer_id or target.status != "conflicted"):
-        return unresolved
-    peers = await _peers_in_scope(input, named)
-    if peers is None:
-        return unresolved
+    decided = await _open_pairs(input)
+    if decided is None:
+        return ConflictsResolveOutput(
+            resolved=False, decision=input.decision, affected_memory_ids=[]
+        )
+    target, peer_rows = decided
+    target_id = input.memory_id
+    peers = [p.memory_id for p in peer_rows]
     affected: list[str] = []
 
-    if input.decision == "revise":
-        await conflicts_repo.tombstone_ids(input.org, peers, audit_note, now)
-        affected.extend(peers)
-        await conflicts_repo.mark_active_by_ids(input.org, [input.memory_id])
-        affected.append(input.memory_id)
+    # Each version is built from the row's current state, or a stale read would drop a newer link.
+    with own_write_reads():
+        if input.decision == "revise":
+            await conflicts_repo.tombstone_ids(input.org, peers, audit_note, now)
+            affected.extend(peers)
+            await conflicts_repo.mark_active_by_ids(input.org, [target_id], drop=peers)
+            affected.append(target_id)
+        elif input.decision == "contract":
+            await conflicts_repo.tombstone_ids(input.org, [target_id], audit_note, now)
+            affected.append(target_id)
+            await conflicts_repo.mark_active_by_ids(input.org, peers, drop=[target_id])
+            affected.extend(peers)
+        else:  # allow
+            await conflicts_repo.mark_active_by_ids(input.org, [target_id], drop=peers)
+            await conflicts_repo.mark_active_by_ids(input.org, peers, drop=[target_id])
+            affected.extend([target_id, *peers])
 
-    elif input.decision == "contract":
-        await conflicts_repo.tombstone_ids(
-            input.org,
-            [input.memory_id],
-            audit_note,
-            now,
-        )
-        affected.append(input.memory_id)
-        await conflicts_repo.mark_active_by_ids(input.org, peers)
-        affected.extend(peers)
-
-    else:  # allow
-        # Record the pair in conflict_allowlist so check_on_commit skips
-        # them on future writes.
-        all_ids = [input.memory_id, *peers]
-        await conflicts_repo.mark_active_by_ids(input.org, all_ids)
-        affected.extend(all_ids)
-        if peers:
-            key_by_id = await conflicts_repo.lookup_keys_for_ids(
-                input.org,
-                all_ids,
+    if input.decision == "allow":
+        # The allowlist keeps check_on_commit from flagging the pair again on a later write.
+        allowlist_rows = []
+        for peer in peer_rows:
+            if peer.memory_key == target.memory_key:
+                continue
+            a, b = sorted((target.memory_key, peer.memory_key))
+            allowlist_rows.append(
+                {
+                    "org": input.org,
+                    "namespace": input.namespace,
+                    "memory_key_a": a,
+                    "memory_key_b": b,
+                    "allowed_at": now,
+                    "allowed_by": by,
+                    "reason": reason or audit_note,
+                    "tombstoned_at": None,
+                }
             )
-            target_key = key_by_id.get(input.memory_id)
-            if target_key:
-                allowlist_rows = []
-                for peer_id in peers:
-                    peer_key = key_by_id.get(peer_id)
-                    if not peer_key or peer_key == target_key:
-                        continue
-                    a, b = (
-                        (target_key, peer_key) if target_key < peer_key else (peer_key, target_key)
-                    )
-                    allowlist_rows.append(
-                        {
-                            "org": input.org,
-                            "namespace": input.namespace,
-                            "memory_key_a": a,
-                            "memory_key_b": b,
-                            "allowed_at": now,
-                            "allowed_by": by,
-                            "reason": reason or audit_note,
-                            "tombstoned_at": None,
-                        }
-                    )
-                await conflicts_repo.allowlist_insert(allowlist_rows)
+        await conflicts_repo.allowlist_insert(allowlist_rows)
 
     # The badge's cached counts (one per read scope) are stale now; the count below refills
     # the caller's.
