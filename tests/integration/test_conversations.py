@@ -426,8 +426,8 @@ async def test_a_turn_another_agent_relogged_after_compaction_is_not_counted_on_
 async def test_a_deleted_thread_takes_an_embedding_no_message_backs(
     agent, control_plane_url: str, ch_client, mint_test_token
 ) -> None:
-    """An append whose message insert failed after its embed landed leaves an embedding
-    row alone; deleting the thread tombstones it too."""
+    """A turn whose message row is gone (the conversation retention TTL expires message
+    rows only) leaves its embedding row; deleting the thread tombstones it too."""
     tid = f"thr-{uuid.uuid4().hex[:6]}"
     nonce = uuid.uuid4().hex[:10]
     orphan = uuid.uuid4().hex

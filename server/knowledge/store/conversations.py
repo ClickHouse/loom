@@ -757,7 +757,7 @@ async def _tombstone_embeddings(
         turns = "msg_id IN {ids:Array(String)}"
     else:
         # Every turn the agent logged in the thread, and its embedding rows no message
-        # row backs (an append whose message insert failed after its embed landed).
+        # row backs (the conversation retention TTL expires message rows only).
         turns = """(msg_id IN (
             SELECT msg_id FROM loom.conversations
             WHERE org = {org:String} AND namespace = {ns:String}

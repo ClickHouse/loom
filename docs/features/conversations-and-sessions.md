@@ -2,11 +2,11 @@
 
 Loom keeps three kinds of session state, each in its own plane:
 
-| Plane              | Holds                                                                      | Embedded, searched                                 | Written by                                                                  |
-| ------------------ | -------------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------- |
-| Conversation plane | The verbatim turns of a thread (`loom.conversations`)                      | User and assistant turns, by `conversation.search` | `conversation.append`, the plugins' capture hooks, `loom ingest-transcript` |
-| Session briefs     | The condensed, resumable state of one line of work (`loom.session_briefs`) | No                                                 | `session.brief_save`, the coding plugins at compaction and session end      |
-| Memory             | Durable facts extracted from what was said                                 | Yes, by `memory.search`                            | `memory.set`, `memory.set_from_messages`                                    |
+| Plane              | Holds                                                                      | Embedded, searched                                                          | Written by                                                                  |
+| ------------------ | -------------------------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Conversation plane | The verbatim turns of a thread (`loom.conversations`)                      | User and assistant turns and compaction summaries, by `conversation.search` | `conversation.append`, the plugins' capture hooks, `loom ingest-transcript` |
+| Session briefs     | The condensed, resumable state of one line of work (`loom.session_briefs`) | No                                                                          | `session.brief_save`, the coding plugins at compaction and session end      |
+| Memory             | Durable facts extracted from what was said                                 | Yes, by `memory.search`                                                     | `memory.set`, `memory.set_from_messages`                                    |
 
 Storing a turn does not create a memory; to turn a conversation into facts, post it to
 [`memory.set_from_messages`](./memory/extraction.md). An owner can switch transcript recording off without losing

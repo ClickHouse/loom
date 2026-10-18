@@ -96,11 +96,9 @@ async def handle_conversation_create(
 async def handle_conversation_append(
     input: ConversationAppendInput,
 ) -> ConversationAppendOutput:
-    """Insert one message row + one embedding row.
+    """Insert one message row, then its embedding row once the message landed.
 
-    Embedding failure does not block the append — the message still lands
-    with `embed_attempts=0` and the dead-letter columns populated, so a
-    follow-up worker can retry without losing data.
+    A failed embed still stores the turn; its embedding row records the error.
     """
     from server.knowledge.store import conversations as conversation_repo
 
@@ -165,32 +163,33 @@ async def handle_conversation_append(
         with traced("ch.insert.conversation", role=input.role):
             await conversation_repo.append(msg_row)
 
-    async def _embed_and_store() -> None:
-        embedded = await _embed_turn(
+    # Concurrent because they are independent: neither the transcript row nor the vector
+    # depends on the other, and run sequentially the ~66 ms insert would sit in front of a
+    # ~210 ms embed. The embedding row is written only once the message row landed, so a
+    # failed insert leaves no searchable turn; both complete before the response, so
+    # conversation.search keeps its read-your-write guarantee.
+    _, embedded = await asyncio.gather(
+        _insert_message(),
+        _embed_turn(
             input.content,
             org=input.org,
             namespace=input.namespace,
             thread_id=input.thread_id,
             msg_id=msg_id,
-        )
-        await _store_embedding(
-            org=input.org,
-            namespace=input.namespace,
-            agent=input.agent,
-            thread_id=input.thread_id,
-            msg_id=msg_id,
-            role=input.role,
-            user_id=input.user_id,
-            run_id=input.run_id,
-            ts=now,
-            embedded=embedded,
-        )
-
-    # Concurrent because they are independent: neither the transcript row nor the vector
-    # depends on the other, and run sequentially the ~66 ms insert would sit in front of a
-    # ~210 ms embed. Both still complete before the response, so conversation.search keeps
-    # its read-your-write guarantee.
-    await asyncio.gather(_insert_message(), _embed_and_store())
+        ),
+    )
+    await _store_embedding(
+        org=input.org,
+        namespace=input.namespace,
+        agent=input.agent,
+        thread_id=input.thread_id,
+        msg_id=msg_id,
+        role=input.role,
+        user_id=input.user_id,
+        run_id=input.run_id,
+        ts=now,
+        embedded=embedded,
+    )
     return ConversationAppendOutput(msg_id=msg_id, ts=now)
 
 
