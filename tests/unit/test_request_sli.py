@@ -899,9 +899,10 @@ def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypat
     """`row_in_scope` answers found=False rather than 403 (a 403 would confirm
     the id), but when the refusal behind it could not be verified the row is
     the server's, or a grants outage reads as healthy id lookups."""
-    from server.auth import authz, fail_closed
+    from server.auth import authz
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo
+    from server.core import request_work
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import http
 
@@ -920,9 +921,11 @@ def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypat
             raise e
 
         monkeypatch.setattr(authz, "check_authorized", _check)
-        fail_closed.begin_request()
+        request_work.begin()
         set_current_auth(eve)
-        assert await authz.row_in_scope("o", "other") is False
+        # Run as handlers fan namespace checks out: in a child task.
+        (hidden,) = await asyncio.gather(authz.row_in_scope("o", "other"))
+        assert hidden is False
         http._emit_event(
             OPERATIONS_BY_NAME["memory.get_by_id"], "r", {}, 3, success=True, error_code=""
         )
@@ -976,6 +979,10 @@ def test_inside_a_batch_a_call_s_refusal_is_ledgered_once_but_each_handler_failu
     monkeypatch.setattr("server.auth.personal_namespace.ensure_personal_namespace_cached", _noop)
     monkeypatch.setattr(mcp_call, "_emit_mcp_event", record)
     monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", record)
+    traces: list[str] = []
+    monkeypatch.setattr(
+        mcp_call, "schedule_code_trace_validation_failure", lambda name, *a: traces.append(name)
+    )
     eve = AuthInfo(
         subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=True
     )
@@ -993,3 +1000,78 @@ def test_inside_a_batch_a_call_s_refusal_is_ledgered_once_but_each_handler_failu
     asyncio.run(_batch())
     assert rows.count("VALIDATION_FAILED") == 1
     assert len([c for c in rows if c != "VALIDATION_FAILED"]) == 2  # each failure its own row
+    assert traces == ["test.batch_rows"]  # its code trace row, once too
+
+
+def test_an_mcp_call_that_hid_a_row_unverified_is_the_server_s_and_the_next_starts_clean(
+    monkeypatch,
+) -> None:
+    from pydantic import BaseModel
+
+    import server.code.app.member_writes as member_writes
+    from server.auth import authz
+    from server.auth.jwt import AuthInfo
+    from server.observability import events
+    from server.operations.base import Operation
+    from server.transport import mcp_call
+    from server.transport.mcp_ledger import one_refusal_row_each
+
+    class _In(BaseModel):
+        org: str
+        namespace: str
+        agent: str = "-"
+        hide: bool = False
+
+    class _Out(BaseModel):
+        found: bool
+
+    async def _lookup(inp: Any) -> _Out:
+        if inp.hide:  # as get_by_id hides a row the caller may not see
+            return _Out(found=await authz.row_in_scope("o", "elsewhere"))
+        return _Out(found=True)
+
+    async def _unverified(*a: Any, **k: Any) -> None:
+        e = PermissionError("refused")
+        e.unverified = True  # type: ignore[attr-defined]
+        raise e
+
+    async def _noop(*a: Any, **k: Any) -> None:
+        return None
+
+    emitted: list = []
+
+    class _Emitter:
+        def emit(self, event) -> None:
+            emitted.append(event)
+
+    op = Operation(
+        name="test.hidden_lookup",
+        input_model=_In,
+        output_model=_Out,
+        handler=_lookup,
+        idempotent=True,
+        budget_p99_ms=1000,
+        required_role=Role.VIEWER,
+    )
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
+    monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, "loom_test_hidden_lookup", op)
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _noop)
+    monkeypatch.setattr(member_writes, "authorize_op", _noop)
+    monkeypatch.setattr("server.transport.gates._admitted", _noop)
+    monkeypatch.setattr("server.auth.personal_namespace.ensure_personal_namespace_cached", _noop)
+    monkeypatch.setattr(authz, "check_authorized", _unverified)
+    eve = AuthInfo(
+        subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=True
+    )
+
+    async def _batch() -> None:
+        with one_refusal_row_each():
+            for hide in (True, False):
+                args = {"org": "o", "namespace": "n", "hide": hide}
+                await mcp_call._call_tool(
+                    1, {"name": "loom_test_hidden_lookup", "arguments": args}, auth=eve
+                )
+
+    asyncio.run(_batch())
+    assert [(e.success, e.status_class) for e in emitted] == [(True, "server"), (True, "ok")]

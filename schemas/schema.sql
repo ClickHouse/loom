@@ -4314,8 +4314,8 @@ SELECT
     countIf(status_class = 'server') AS server_errors,
     countIf(status_class = 'client') AS client_errors,
     countIf(error_code = 'RATE_LIMITED') AS rate_limited,
-    countIf(success AND (budget_ms > 0) AND (latency_ms > budget_ms)) AS slow,
-    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
+    countIf((status_class = 'ok') AND (budget_ms > 0) AND (latency_ms > budget_ms)) AS slow,
+    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok') AS latency,
     toDateTime64(0, 3) AS ingested_hwm
 FROM loom.agent_events
 WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded) AND (ingested_at <= fold_to)

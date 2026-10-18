@@ -18,9 +18,10 @@ CREATE DATABASE IF NOT EXISTS loom_telemetry;
 
 -- Requests per minute, SLO class, operation and tenant, for SLO dashboards and
 -- alert rules to read, so an evaluation scans minutes rather than the ledger.
--- `rate_limited` is among `client_errors`; `slow` counts successful requests
--- over their budget; `latency` holds the quantile state of successful
--- requests; `ingested_hwm` is set on the refresh's sentinel row only (see
+-- `rate_limited` is among `client_errors`; `slow` counts `ok` requests over
+-- their budget; `latency` holds the quantile state of the `ok` requests (a
+-- success the server answered unverified is a server error, not among them);
+-- `ingested_hwm` is set on the refresh's sentinel row only (see
 -- below), where the next refresh resumes.
 CREATE TABLE IF NOT EXISTS loom_telemetry.sli_minute
 (
@@ -88,8 +89,8 @@ SELECT
     countIf(status_class = 'server') AS server_errors,
     countIf(status_class = 'client') AS client_errors,
     countIf(error_code = 'RATE_LIMITED') AS rate_limited,
-    countIf(success AND budget_ms > 0 AND latency_ms > budget_ms) AS slow,
-    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
+    countIf(status_class = 'ok' AND budget_ms > 0 AND latency_ms > budget_ms) AS slow,
+    quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok') AS latency,
     toDateTime64(0, 3) AS ingested_hwm
 FROM loom.agent_events
 WHERE kind = 'request' AND slo_class != '' AND ts >= now64(3) - toIntervalDay(31)

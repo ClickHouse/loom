@@ -15,22 +15,23 @@ from contextvars import ContextVar
 _unreadable: ContextVar[bool] = ContextVar("authz_unreadable", default=False)
 
 
-# Set for the rest of a request that answered as if refused because a read
-# could not be made (`row_in_scope`'s found=False): its row is the server's.
-_answered_unverified: ContextVar[bool] = ContextVar("authz_answered_unverified", default=False)
-
-
 def note_answered_unverified() -> None:
-    _answered_unverified.set(True)
+    """The request hid something as if refused because a read the check needed
+    failed (`row_in_scope`'s found=False, a namespace left out of a list): its
+    row is the server's. Kept on the request's work bag, which the tasks a
+    handler gathers share, rather than in a ContextVar they would copy."""
+    from server.core import request_work
+
+    bag = request_work.current()
+    if bag is not None:
+        bag.answered_unverified = True
 
 
 def answered_unverified() -> bool:
-    return _answered_unverified.get()
+    from server.core import request_work
 
-
-def begin_request() -> None:
-    """A request starts with nothing answered unverified."""
-    _answered_unverified.set(False)
+    bag = request_work.current()
+    return bag is not None and bag.answered_unverified
 
 
 def note_unreadable() -> None:

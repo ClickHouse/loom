@@ -635,7 +635,9 @@ class CachedGate:
                 known_grant=known,
                 grants=await self.grants(),
             )
-        except PermissionError:
+        except PermissionError as e:
+            if getattr(e, "unverified", False):  # left out, but the server's failure
+                note_answered_unverified()
             return False
         return True
 

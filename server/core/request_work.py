@@ -48,6 +48,9 @@ class RequestWork:
     # Schema guard: tables a pending migration creates that a
     # leg of this request tried to read; the leg continued without them.
     schema_skipped: list[str] = field(default_factory=list)
+    # Something was hidden as if refused because a read the check needed
+    # failed (server.auth.fail_closed): the request's row is the server's.
+    answered_unverified: bool = False
 
     def mark(self, name: str) -> float:
         now = time.perf_counter()

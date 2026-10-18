@@ -34,9 +34,12 @@ for its refusals. The caller is not bound yet, so that row carries the token's o
 subject and consumer, `-` for the rest and no arguments. On either transport, a refusal
 naming an org the token may not act in is recorded in the token's org, never the named
 one. A refusal recorded before the call is classified carries the token's `traffic_class`
-claim, or '' without one. Within one MCP batch, each refusal before a handler runs is
-recorded once per operation, code, org and status class, so a batch of repeated refusals
-counts once; a handler's failure is always its own row.
+claim, or '' without one. A request that answered as if refused because such a read failed
+(an id lookup's `found=False`, a namespace left out of a list) succeeded on the wire but
+is `server`, with an empty `error_code`. Within one MCP batch, each refusal before a
+handler runs (but an idempotency refusal, which comes after the rate limiter) is recorded
+once per operation, code, org and status class, so a batch of repeated refusals counts
+once; a handler's failure is always its own row.
 
 A refreshable materialized view folds the ledger into `loom_telemetry.sli_minute` once a
 minute (requests, server and client errors, rate-limited requests, which are among the
@@ -50,7 +53,8 @@ such as `initialize`) are left out. A minute can arrive as several rows until th
 so a reader groups by its keys with `sum()` for the counts and `quantilesTDigestMerge(0.5,
 0.95, 0.99)(latency)` for the latencies. Each refresh also writes a row with every key
 empty and every count 0, where the next refresh resumes: a reader filters `slo_class !=
-''`.
+''`. To leave out test traffic, filter `traffic_class NOT IN ('bench', 'background')`: a
+refusal recorded before the call is classified has an empty class.
 
 The emitter is batched and never fails a request; a crash can lose the unflushed queue.
 
