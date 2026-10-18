@@ -141,7 +141,8 @@ def select_tables(
     exclude: str | None = None,
 ) -> list[dict[str, Any]]:
     """The manifest entries to restore, in manifest order with `FIRST_TABLES`
-    first. Refuses a selected table that failed at backup time or is not in the manifest."""
+    first. Refuses a selected table that failed at backup time or is not in
+    the manifest."""
     entries = [e for e in manifest["tables"] if "skipped" not in e]
     for arg, keep in ((tables, True), (exclude, False)):
         named = _names(arg)

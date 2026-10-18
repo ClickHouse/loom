@@ -1191,7 +1191,7 @@ async def end_session(grant: Grant | Device, reason: str) -> None:
 
     family = grant["family"]
     if not family:
-        return  # nothing was issued under it (a denied device grant)
+        return  # an empty family names no session to revoke
     until = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
     try:
         await revoke(family, expires_at=until, reason=reason, revoked_by="oauth")
