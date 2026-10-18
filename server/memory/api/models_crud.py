@@ -555,11 +555,19 @@ class MemoryListInput(_Identity):
     # unless asked for; `memory.proposals` lists them with their graded counts.
     include_proposed: bool = False
     as_of: datetime | None = None  # see MemoryGetInput.as_of
-    # Hard OR-filter on the row's tags — the same
-    # `hasAny(tags, …)` predicate memory.search applies — so a tagged subset
-    # (`kind:false_positive`, `subsystem:Storages`) is one list call, not a
+    # Hard filter on the row's tags: any one of them by default (the `hasAny` predicate
+    # memory.search applies), every one with `tags_all`, exact unless `tags_any_case`. A
+    # tagged subset (`kind:false_positive`, `subsystem:Storages`) is one list call, not a
     # recency page followed by a get per key. Empty = no tag filter.
     tags: list[str] = Field(default_factory=list, max_length=64)
+    # Match `tags` in any case (a browse page's `tag:api` finds rows tagged `API`); off,
+    # exactly, as agents rely on. A dashboard flag: hidden from the MCP listing and not a
+    # parameter of the SDK's list(). A build that predates it ignores it and matches exactly.
+    tags_any_case: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
+    # Require every one of `tags` (a browse page's stacked `tag:a tag:b`); off, any one, as
+    # agents rely on. A dashboard flag: hidden from the MCP listing and not a parameter of
+    # the SDK's list(). A build that predates it ignores it and matches any one.
+    tags_all: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Only rows whose value or key holds this text, any case — the keyword
     # filter of a browse page's search box, which must find every row that
     # names a word (a ranked search returns its top k and misses the rest).

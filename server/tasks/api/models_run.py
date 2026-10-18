@@ -353,8 +353,29 @@ class RunListInput(BaseModel):
     session_id: str = ""
     # Only runs in this status; "" lists every status.
     status: Literal["", "active", "completed", "failed", "cancelled"] = ""
-    # At most this many runs, newest first; the server caps it at 200.
+    # At most this many runs, in `order_by` order; the server caps it at 200.
     limit: int = Field(default=50, ge=1, le=200)
+    # Runs to skip before the page (0-100,000), for paging past the first `limit`; 0
+    # (default) is the first page. A replica a release behind has no `offset`: it serves the
+    # first page and names the key in `ignored_args`.
+    offset: int = Field(default=0, ge=0, le=100_000)
+    # Sort by start time, duration or memories relied on, ascending or descending; default
+    # `started_desc` (newest first). Duration is 0 while a run is active. Each order breaks
+    # ties on started_at and then run_id, so pages never repeat or skip a run. A replica a
+    # release behind serves the default and names the key in `ignored_args`.
+    order_by: Literal[
+        "started_desc",
+        "started_asc",
+        "duration_desc",
+        "duration_asc",
+        "relied_on_desc",
+        "relied_on_asc",
+    ] = "started_desc"
+    # Only runs whose goal, run id or agent holds this text, any case. A scan of
+    # the namespace's runs (no text index), bounded by the primary key's
+    # (org, namespace). Unset or blank, no text filter; a replica a release
+    # behind applies none and names the key in `ignored_args`.
+    q: str | None = Field(default=None, max_length=200)
     # The Runs page folds runs that neither relied on nor wrote a memory.
     # Folding on the client, after `limit`, can leave a chatty consumer's page
     # empty: its newest runs are all hollow while filled runs sit further
@@ -373,5 +394,11 @@ class RunListInput(BaseModel):
 
 
 class RunListOutput(BaseModel):
-    # Matching runs, newest `started_at` first, projected to `fields` when given.
+    # Matching runs in `order_by` order (newest `started_at` first by default),
+    # projected to `fields` when given.
     runs: list[RunRow]
+    # How many runs match every filter (status, agent, session_id,
+    # memory_activity, grade, q), whatever `limit` and `offset` cut: the size of
+    # the list being paged. A replica a release behind does not send it; a
+    # client reads a missing total as unknown.
+    total: int = 0

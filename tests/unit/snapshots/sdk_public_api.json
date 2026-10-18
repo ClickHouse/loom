@@ -2975,7 +2975,10 @@
           "status",
           "limit",
           "memory_activity",
-          "grade"
+          "grade",
+          "offset",
+          "order_by",
+          "q"
         ],
         "scope": [
           "begin_kwargs"

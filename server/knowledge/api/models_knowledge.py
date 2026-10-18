@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 
 # ============================================================
@@ -357,7 +358,17 @@ class KnowledgeListInput(BaseModel):
 
     org: str
     namespace: str
-    tags: list[str] = Field(default_factory=list)  # ANY-match filter
+    # Documents carrying any one of these tags (every one with `tags_all`; exact unless
+    # `tags_any_case`).
+    tags: list[str] = Field(default_factory=list)
+    # Match `tags` in any case (the Library's `tag:specs` finds `Specs`); off, exactly. A
+    # dashboard flag: hidden from the MCP listing and not a parameter of the SDK's list(). A
+    # build that predates it ignores it and matches exactly.
+    tags_any_case: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
+    # Require every one of `tags` (the Library's stacked `tag:a tag:b`); off, any one. A
+    # dashboard flag: hidden from the MCP listing and not a parameter of the SDK's list(). A
+    # build that predates it ignores it and matches any one.
+    tags_all: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Directory scope: documents whose source_uri starts
     # with one of these prefixes; empty = whole namespace.
     uri_prefix: list[str] = Field(default_factory=list, max_length=8)

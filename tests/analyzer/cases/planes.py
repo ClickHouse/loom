@@ -655,12 +655,15 @@ async def _list_score(ch: RecordingCH, c: dict[str, Any]) -> None:
         prefix="lesson_",
         memory_type="semantic" if not w else None,
         quotas={"semantic": 3} if w else None,
-        tags=["ops"] if w else [],
+        tags=["ops", "infra"] if w else [],
+        # The dashboard's tag match: every tag, both sides lowercased.
+        tags_any_case=w,
+        tags_all=w,
     )
     # The served-set flags, as the handler builds them
     await _list_by_score(
         inp,
-        ["ops"] if w else None,
+        ["ops", "infra"] if w else None,
         {"include_duplicates": w, "include_superseded": w, "include_proposed": w},
     )
 

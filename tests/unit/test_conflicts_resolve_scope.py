@@ -60,20 +60,33 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
         row = t.rows.get(memory_id)
         if row is None or ("namespace" in kw and kw["namespace"] != row["namespace"]):
             return None
+        if row.get("status") == "tombstoned":
+            return None
         return ConflictTarget.from_row(
             {
                 "memory_id": memory_id,
                 "conflict_with": row["conflict_with"],
-                "status": "conflicted",
+                "status": row.get("status", "conflicted"),
                 "namespace": row["namespace"],
             }
         )
 
     async def _tombstone(org: str, ids: list[str], *_: Any, **__: Any) -> None:
         t.tombstoned.extend(ids)
+        for i in ids:
+            t.rows[i]["status"] = "tombstoned"
 
     async def _activate(org: str, ids: list[str], **_: Any) -> None:
         t.activated.extend(ids)
+        for i in ids:
+            t.rows[i]["status"] = "active"
+
+    async def _count(org: str, namespace: str, **_: Any) -> int:
+        return sum(
+            1
+            for row in t.rows.values()
+            if row["namespace"] == namespace and row.get("status", "conflicted") == "conflicted"
+        )
 
     async def _keys(org: str, ids: list[str], **_: Any) -> dict[str, str]:
         return {i: t.rows[i]["key"] for i in ids if i in t.rows}
@@ -91,6 +104,8 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
     monkeypatch.setattr(repo, "mark_active_by_ids", _activate)
     monkeypatch.setattr(repo, "lookup_keys_for_ids", _keys)
     monkeypatch.setattr(repo, "allowlist_insert", _allow)
+    monkeypatch.setattr(repo, "count_conflicted", _count)
+    h.reset_conflicts_count_cache()
     return t
 
 
@@ -211,3 +226,24 @@ async def test_an_admin_of_both_namespaces_resolves_across_them(
 
 async def _always_in_scope(*_: Any, **__: Any) -> bool:
     return True
+
+
+async def test_a_resolve_answers_the_namespaces_conflicted_count_after_its_writes(
+    table: _Table, admin_of_a: None
+) -> None:
+    out = await _resolve(T_OWN, "revise")
+    assert out.resolved is True
+    # T_OWN is active and its two peers tombstoned: T_MIXED is the one left in a.
+    assert out.total == 1
+
+
+async def test_a_row_an_earlier_decision_resolved_is_not_decided_again(
+    table: _Table, admin_of_a: None
+) -> None:
+    assert (await _resolve(T_OWN, "allow")).resolved is True
+    written = (list(table.tombstoned), list(table.activated), list(table.allowlisted))
+    # A stale view decides one of the rows the allow made active: refused, nothing written.
+    again = await _resolve(P_OWN, "contract")
+    assert again.resolved is False
+    assert again.total is None
+    assert (table.tombstoned, table.activated, table.allowlisted) == written

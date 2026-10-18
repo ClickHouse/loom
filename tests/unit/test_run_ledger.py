@@ -522,7 +522,14 @@ def test_list_filters_and_orders_newest_first(env) -> None:
     assert "FROM loom.agent_runs FINAL" in sql and "ORDER BY started_at DESC" in sql
     assert "agent = {agent:String}" in sql and "status = {status:String}" in sql
     assert "session_id" not in sql.split("WHERE", 1)[1]
-    assert params == {"org": "o", "ns": "n", "lim": 2, "agent": "claude", "status": "active"}
+    assert params == {
+        "org": "o",
+        "ns": "n",
+        "lim": 2,
+        "off": 0,
+        "agent": "claude",
+        "status": "active",
+    }
     # default: no memory-activity clause
     assert "memories_used" not in sql.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
 
@@ -539,11 +546,12 @@ def test_list_memory_activity_is_a_where_clause_not_a_client_slice(env) -> None:
     _, sql, params = fake.calls[0]
     clause = sql.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
     assert "(notEmpty(memories_used) OR notEmpty(memories_written))" in clause
-    assert params == {"org": "o", "ns": "n", "lim": 100}
+    assert params == {"org": "o", "ns": "n", "lim": 100, "off": 0}
 
     fake.all.append([])
     asyncio.run(h.handle_run_list(RunListInput(org="o", namespace="n", memory_activity="without")))
-    _, sql, _ = fake.calls[1]
+    # calls[1] is the first call's count; calls[2] is this call's page.
+    _, sql, _ = fake.calls[2]
     assert "(empty(memories_used) AND empty(memories_written))" in sql.split("WHERE", 1)[1]
 
     with pytest.raises(ValidationError):

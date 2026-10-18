@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.core.tag_sql import tag_filter
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
@@ -617,6 +618,8 @@ async def list_by_namespace(
     key_prefix: str | None = None,
     source_trace: str | None = None,
     tags: Sequence[str] | None = None,
+    tags_any_case: bool = False,
+    tags_all: bool = False,
     contains: str | None = None,
     order_by: str = "created_at_desc",
     limit: int = 200,
@@ -636,7 +639,8 @@ async def list_by_namespace(
       - memory_type: exact match (e.g. "preference", "procedural")
       - pinned_only: only rows where pinned=1
       - key_prefix:  startsWith(memory_key, prefix) — for hierarchical key spaces
-      - tags:        hasAny(tags, [...]) — the OR filter memory.search applies
+      - tags:        any one (hasAny, the filter memory.search applies), or every one with
+                     tags_all; exact, or lowercased on both sides with tags_any_case
       - contains:    case-insensitive substring of the value or the key — the
                      keyword filter a browse page's search box applies
 
@@ -699,8 +703,8 @@ async def list_by_namespace(
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
     if tags:
-        where.append("hasAny(tags, {tags:Array(String)})")
-        params["tags"] = [str(t) for t in tags]
+        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case, every=tags_all)
+        where.append(clause)
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains
@@ -825,6 +829,8 @@ async def count_by_namespace(
     key_prefix: str | None = None,
     source_trace: str | None = None,
     tags: Sequence[str] | None = None,
+    tags_any_case: bool = False,
+    tags_all: bool = False,
     contains: str | None = None,
     include_tombstoned: bool = False,
     as_of: datetime | None = None,
@@ -878,8 +884,8 @@ async def count_by_namespace(
         where.append("source_trace = {st:String}")
         params["st"] = source_trace
     if tags:
-        where.append("hasAny(tags, {tags:Array(String)})")
-        params["tags"] = [str(t) for t in tags]
+        clause, params["tags"] = tag_filter(tags, any_case=tags_any_case, every=tags_all)
+        where.append(clause)
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains

@@ -18,6 +18,9 @@ import pytest
 from server.knowledge.store import documents as documents_repo
 from server.memory.store import shared as shared_repo
 
+# Both sides of an any-case tag match, folded by ClickHouse.
+_FOLDED = "arrayMap(t -> lowerUTF8(t), tags), arrayMap(t -> lowerUTF8(t), {tags:Array(String)})"
+
 
 class StubCH:
     def __init__(self) -> None:
@@ -332,3 +335,34 @@ async def test_list_with_chunk_counts_cursor_strips_tz_for_ch() -> None:
     # Both cursor values are bound parameters, never text in the statement.
     assert params["cur_ts"] == "2026-05-17 12:00:00" and "2026-05-17" not in sql
     assert params["cur_uri"] == "kb://policy.md"
+
+
+@pytest.mark.asyncio
+async def test_list_with_chunk_counts_matches_tags_in_any_case_when_asked() -> None:
+    """The Library's `tag:specs` finds a document tagged `Specs`: with `tags_any_case` the
+    tags compare lowercased; without it, exactly, as agents rely on."""
+    ch = StubCH()
+    ch.query_all_returns.extend([[], []])
+    await documents_repo.list_with_chunk_counts("clickhouse", "ns", tags=["Specs"], ch=ch)
+    sql, params = ch.query_all_calls[0]
+    assert "hasAny(tags, {tags:Array(String)})" in sql and params["tags"] == ["Specs"]
+    await documents_repo.list_with_chunk_counts(
+        "clickhouse", "ns", tags=["Specs"], tags_any_case=True, ch=ch
+    )
+    sql, params = ch.query_all_calls[1]
+    assert f"hasAny({_FOLDED})" in sql
+    assert params["tags"] == ["Specs"]
+
+
+@pytest.mark.asyncio
+async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
+    """The Library's stacked `tag:a tag:b` needs every tag, so the filter covers the whole
+    library rather than the documents loaded so far."""
+    ch = StubCH()
+    ch.query_all_returns.append([])
+    await documents_repo.list_with_chunk_counts(
+        "clickhouse", "ns", tags=["Specs", "onboarding"], tags_any_case=True, tags_all=True, ch=ch
+    )
+    sql, params = ch.query_all_calls[0]
+    assert f"hasAll({_FOLDED})" in sql
+    assert params["tags"] == ["Specs", "onboarding"]

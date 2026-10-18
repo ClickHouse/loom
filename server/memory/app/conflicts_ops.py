@@ -36,11 +36,14 @@ def reset_conflicts_count_cache() -> None:
     _count_cache.clear()
 
 
-async def _conflicted_count_cached(repo: Any, org: str, namespace: str, scope: ReadFilters) -> int:
+async def _conflicted_count_cached(
+    repo: Any, org: str, namespace: str, scope: ReadFilters, *, fresh: bool = False
+) -> int:
+    """The count, from this replica's cache unless `fresh`; a count read fresh refreshes it."""
     key = (org, namespace, scope)
     hit = _count_cache.get(key)
     now = time.monotonic()
-    if hit is not None and now - hit[0] < _COUNT_TTL_S:
+    if not fresh and hit is not None and now - hit[0] < _COUNT_TTL_S:
         return hit[1]
     n = int(await repo.count_conflicted(org, namespace, scope=scope))
     if len(_count_cache) > 1024:
@@ -64,7 +67,9 @@ async def handle_conflicts_list(
         # The sidebar badge wants a number every minute from every open tab. One count per (org,
         # namespace) per `_COUNT_TTL_S` serves them all, and the count reads no value column —
         # reading the rows costs ~33 MB per tick on a large namespace.
-        total = await _conflicted_count_cached(conflicts_repo, input.org, input.namespace, scope)
+        total = await _conflicted_count_cached(
+            conflicts_repo, input.org, input.namespace, scope, fresh=input.fresh
+        )
         return ConflictsListOutput(rows=[], total=total)
     rows = await conflicts_repo.list_conflicted(
         input.org,
@@ -271,7 +276,9 @@ async def handle_conflicts_resolve(
         resolved=False, decision=input.decision, affected_memory_ids=[]
     )
     target = await conflicts_repo.lookup_target(input.org, input.memory_id)
-    if target is None:
+    # A row an earlier decision already resolved is not decided again: a second decision
+    # from a stale view would tombstone or reactivate rows nobody is looking at.
+    if target is None or target.status != "conflicted":
         return unresolved
     all_peers = list(target.conflict_with)
     if input.peer_id and input.peer_id not in all_peers:
@@ -334,14 +341,19 @@ async def handle_conflicts_resolve(
                     )
                 await conflicts_repo.allowlist_insert(allowlist_rows)
 
-    # The badge's cached counts (one per read scope) are stale now.
+    # The badge's cached counts (one per read scope) are stale now; the caller's scope is
+    # counted afresh for the answer, which also refills its cache entry.
     for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:
         _count_cache.pop(key, None)
+    total = await _conflicted_count_cached(
+        conflicts_repo, input.org, input.namespace, request_scope(), fresh=True
+    )
     return ConflictsResolveOutput(
         resolved=True,
         decision=input.decision,
         affected_memory_ids=affected,
         resolved_at=now,
+        total=total,
     )
 
 

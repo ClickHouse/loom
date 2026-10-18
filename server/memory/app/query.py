@@ -14,6 +14,7 @@ from server.core.ch import caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value_json as _sha256_value_json
+from server.core.tag_sql import tag_filter
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_bulk import MemoryBulkGetInput, MemoryBulkGetOutput
@@ -212,7 +213,10 @@ async def _hidden_under_prefix(
         memory_type=input.memory_type or None,
         key_prefix=input.prefix,
         source_trace=input.source_trace or None,
+        # The same tag match as `total`, so only the status filter makes the difference.
         tags=tags,
+        tags_any_case=input.tags_any_case,
+        tags_all=input.tags_all,
         contains=input.contains or None,
         include_tombstoned=input.include_tombstoned,
         as_of=input.as_of,
@@ -243,8 +247,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
     import server.memory.store as memory_repo
     from server.operations import read_projection
 
-    # The entry field whitelist (None = every field) and the hard OR tag filter, the predicate
-    # memory.search applies.
+    # The entry field whitelist (None = every field) and the hard tag filter: any one tag (the
+    # predicate memory.search applies), or every one with `tags_all`.
     keep = read_projection.resolve(
         _MemoryListEntry,
         list(input.fields or []),
@@ -294,6 +298,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
+            tags_any_case=input.tags_any_case,
+            tags_all=input.tags_all,
             contains=input.contains or None,
             order_by="created_at_desc",
             limit=input.limit + 1,
@@ -322,6 +328,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         input.prefix or "",
         input.source_trace or "",
         tuple(tags or ()),
+        bool(input.tags_any_case),
+        bool(input.tags_all),
         input.contains or "",
         bool(input.include_tombstoned),
         str(input.as_of or ""),
@@ -339,6 +347,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
+            tags_any_case=input.tags_any_case,
+            tags_all=input.tags_all,
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
             as_of=input.as_of,
@@ -353,6 +363,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             key_prefix=input.prefix or None,
             source_trace=input.source_trace or None,
             tags=tags,
+            tags_any_case=input.tags_any_case,
+            tags_all=input.tags_all,
             contains=input.contains or None,
             include_tombstoned=input.include_tombstoned,
             created_since=_today_start,
@@ -457,8 +469,10 @@ async def _list_by_score(
         where.append("startsWith(memory_key, {p:String})")
         params["p"] = input.prefix
     if tags:
-        where.append("hasAny(tags, {tags:Array(String)})")
-        params["tags"] = tags
+        clause, params["tags"] = tag_filter(
+            tags, any_case=input.tags_any_case, every=input.tags_all
+        )
+        where.append(clause)
     if input.contains:
         where.append(memory_repo.CONTAINS_PREDICATE)
         params["contains"] = input.contains
