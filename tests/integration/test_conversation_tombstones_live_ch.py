@@ -239,6 +239,20 @@ async def test_a_shared_row_with_a_short_excerpt_survives_the_delete(ch, scope) 
     assert await _rows(ch, scope) == [("1", text[:240], True)]
 
 
+@pytest.mark.asyncio
+async def test_a_peer_turn_sharing_only_a_prefix_does_not_keep_the_row(ch, scope) -> None:
+    """A peer's different turn under the same msg_id that shares the first 240
+    characters does not match a row holding the full excerpt: the delete takes it."""
+    head = "deploy " * 40
+    mine, theirs = head + "to friday", head + "to monday"
+    await _message(ch, scope, "a", "1", mine, T0)
+    await _message(ch, scope, "b", "1", theirs, T0)
+    await _embedding(ch, scope, "a", "1", mine, T0)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    await repo.tombstone_thread(scope["org"], scope["ns"], "a", scope["tid"], when=now, ch=ch)
+    assert await _rows(ch, scope) == [("1", mine, False)]
+
+
 _LONG_IDS = [f"{i:04d}" + "x" * 508 for i in range(300)]  # 512-character ids
 
 

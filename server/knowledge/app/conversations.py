@@ -334,10 +334,10 @@ async def handle_conversation_delete(
     """Soft-delete one thread (messages, thread row, and embeddings no other agent holds).
 
     Tombstone, not hard-delete: rows disappear from reader queries
-    immediately because the read paths filter `tombstoned_at IS NULL`;
-    the retention TTL on `loom.conversations`, when set, hard-deletes the
-    messages. For user/namespace-wide
-    erasure use `erasure.request_user_id` / `erasure.request_namespace`.
+    immediately because the read paths filter `tombstoned_at IS NULL`; the
+    retention TTL on `loom.conversations`, when set, hard-deletes the messages.
+    For user/namespace-wide erasure use `erasure.request` with `scope_type`
+    `user_id` or `namespace`.
     """
     from datetime import UTC
 

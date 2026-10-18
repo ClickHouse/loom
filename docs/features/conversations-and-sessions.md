@@ -73,23 +73,22 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   the summary as one embedded `system` turn whose `metadata.compacted_from` lists the
   summarised `msg_id`s, and tombstones the originals and their embeddings:
   `conversation.search` then finds the summary in their place. A turn another agent of
-  the thread still holds live with the same text (compared on the first 240
-  characters) keeps its embedding. A window of fewer than `min_to_compact`
-  (default 4) new turns is left alone; earlier summaries fold into the prompt without
-  counting, and one too long to fold in whole stays live. A summary that cannot be
-  embedded compacts nothing (`reason: "embed-failed"`).
+  the thread still holds live with the same text keeps its embedding. A window of
+  fewer than `min_to_compact` (default 4) new turns is left alone; earlier summaries
+  fold into the prompt without counting, and one too long to fold in whole stays live.
+  A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`).
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent holds a live copy with the
-  same text (compared on the first 240 characters), since the two copies share one
-  embedding row. For a person's or a namespace's data everywhere, use
+  same text, since the two copies share one embedding row. For a person's or a
+  namespace's data everywhere, use
   [`erasure.request`](./memory/retention-and-erasure.md).
 
 Tombstoned turns are filtered from every read. They are removed from disk only if the
 operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever). That
 TTL covers `loom.conversations` only: a turn's embedding row, which keeps up to 2,048
-characters of its text, has no TTL, and an erasure request tombstones it without
-removing it.
+characters of its text, has no TTL; an erasure request tombstones it, and removes it
+only when the request sets `purge`.
 
 ### Thread titles
 
