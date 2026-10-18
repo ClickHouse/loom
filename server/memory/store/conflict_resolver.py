@@ -59,7 +59,10 @@ _NOT_SKIPPED = f"""(org, namespace) NOT IN (
           AND org NOT IN ({_ERASING_ORGS})
           AND (org, namespace) NOT IN {{capped:Array(Tuple(String, String))}}"""
 
+# An owed row older than `max_age` days is no longer read: it stays as it was written.
+# The table is partitioned by month of created_at, so older months are pruned.
 _OWED = f"""conflict_checked_at < toDateTime(2, 'UTC')
+          AND created_at > now() - INTERVAL {{max_age:UInt32}} DAY
           AND (toUnixTimestamp(conflict_checked_at) = 1
                OR created_at < now() - INTERVAL {LEGACY_MARK_GRACE_SECONDS} SECOND)
           AND {_LIVE_VECTOR}
@@ -113,7 +116,7 @@ def _capped(capped: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
 
 
 async def queued_namespaces(
-    *, recheck: bool = True, ch: _CHClient | None = None
+    *, recheck: bool = True, max_age_days: int = 30, ch: _CHClient | None = None
 ) -> list[tuple[str, str]]:
     """The (org, namespace) pairs that may hold owed rows, and with `recheck` unjudged
     `conflicted` rows, the queue would read: the pairs the worker checks against their
@@ -122,7 +125,7 @@ async def queued_namespaces(
     sql = _queued_pairs(_OWED)
     if recheck:
         sql += f" UNION DISTINCT {_queued_pairs(_UNJUDGED)}"
-    rows = await ch.query_all(sql, {"capped": []})
+    rows = await ch.query_all(sql, {"capped": [], "max_age": int(max_age_days)})
     return [(str(r["org"]), str(r["namespace"])) for r in rows]
 
 
@@ -131,14 +134,20 @@ async def owed_rows(
     limit: int,
     capped: Sequence[tuple[str, str]] = (),
     seed: int = 0,
+    max_age_days: int = 30,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Rows whose write the resolver owes a judgement, in turns across namespaces (in an
     order drawn from `seed` within a turn), each namespace's newest first: under its cost
     cap a busy namespace may never drain, and its latest writes are the ones a read
-    needs judged. None of a namespace in `capped`."""
+    needs judged. None of a namespace in `capped`, none older than `max_age_days`."""
     ch = ch or _default_client()
-    params = {"lim": int(limit), "capped": _capped(capped), "seed": int(seed)}
+    params = {
+        "lim": int(limit),
+        "capped": _capped(capped),
+        "seed": int(seed),
+        "max_age": int(max_age_days),
+    }
     return await ch.query_all(_in_turns(_OWED, newest_first=True), params)
 
 

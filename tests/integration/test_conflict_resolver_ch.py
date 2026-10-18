@@ -2601,3 +2601,31 @@ async def test_a_flag_no_cluster_can_hold_does_not_keep_the_row_owed(
     for _ in range(3):
         await worker.run_pass()
     assert calls.count("judged_row") == 1, calls
+
+
+async def test_a_row_owed_past_the_max_age_is_no_longer_judged(ch, wired, monkeypatch) -> None:
+    """An owed row 31 days old is left out of the owed read and stays as it was written;
+    one written today is judged."""
+    from datetime import timedelta
+
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
+    from server.settings import settings
+
+    org, _ = wired
+    monkeypatch.setattr(settings, "memory_conflict_resolver_max_owed_age_days", 30)
+    await _pair(ch, org, "office_city", "office_location", 280)
+    await _pair(ch, org, "lead_old", "lead_new", 284)
+    (stale,) = await live_embedding_rows_for_key(
+        ch, org=org, namespace=NS, agent="bot", user_id=USER, session_id="s2", memory_key="lead_new"
+    )
+    await reemit_rows(
+        [stale],
+        {
+            "created_at": stale["created_at"] - timedelta(days=31),
+            "conflict_checked_at": queue.OWED_MARK,
+        },
+        ch=ch,
+    )
+    owed = {r["memory_key"] for r in await queue.owed_rows(limit=10, max_age_days=30)}
+    assert owed == {"office_location"}, owed

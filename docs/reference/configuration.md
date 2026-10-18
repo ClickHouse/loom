@@ -635,6 +635,7 @@ Source: `server/settings/_memory.py`
 | `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` | `int` | `40` | Marked rows read per batch; a full batch with no errors is followed at once by the next, for up to 300 s of a pass. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` | `int` | `8` | Rows already `conflicted` that no resolver judged (a cosine flag, or an older build's judge) re-checked per pass, after the marked rows. 0 = no re-check. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE` | `float` | `0.25` | The share of a namespace's daily LLM cost cap the conflict resolver may spend, counted over its own calls; the rest stays for the requests. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_OWED_AGE_DAYS` | `int` | `30` | Days a write stays owed a judgement: an owed row older than this is no longer judged, and stays as it was written. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` | `int` | `8` | Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time; doubling it roughly doubles the rows judged a minute, up to the provider's rate limit. |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | `float` | `10.0` | Seconds the resolver waits after a pass before the next one. |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. |

@@ -109,6 +109,9 @@ class MemorySettings(BaseModel):
     # The share of a namespace's daily LLM cost cap the conflict resolver may spend,
     # counted over its own calls; the rest stays for the requests.
     memory_conflict_resolver_cap_share: float = Field(default=0.25, gt=0.0, le=1.0)
+    # Days a write stays owed a judgement: an owed row older than this is no longer judged,
+    # and stays as it was written.
+    memory_conflict_resolver_max_owed_age_days: int = Field(default=30, ge=1)
     # Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time;
     # doubling it roughly doubles the rows judged a minute, up to the provider's rate limit.
     memory_conflict_resolver_concurrency: int = Field(default=8, ge=1)

@@ -192,7 +192,8 @@ namespaces alone. Both reads take rows in turns across (org, namespace), so one
 namespace's bulk import does not hold back a row written elsewhere: the owed read takes
 each namespace's newest rows first (a namespace busier than its share of the cost cap
 never drains, and its latest writes are the ones reads need judged), the re-check its
-oldest. Neither reads a namespace that
+oldest. A row still owed after `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_OWED_AGE_DAYS` (30) days
+is no longer judged; it stays as it was written. Neither reads a namespace that
 `namespace.delete` soft-deleted; its rows are judged if it is registered again.
 
 **The cluster.** A row is judged against up to `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS`

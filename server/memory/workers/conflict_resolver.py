@@ -101,14 +101,15 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
 
     recheck = int(settings.memory_conflict_resolver_recheck_batch)
     due = recheck > 0 and time.monotonic() >= _state.recheck_after
-    pairs = await queue.queued_namespaces(recheck=due)
+    max_age = int(settings.memory_conflict_resolver_max_owed_age_days)
+    pairs = await queue.queued_namespaces(recheck=due, max_age_days=max_age)
     over = await namespaces_over_cap(pairs, **_cap_share()) if pairs else {}
     capped = sorted(pair for pair, is_over in over.items() if is_over)
     p.counts.capped_namespaces = len(capped)
     batch = int(settings.memory_conflict_resolver_batch)
     # A new order of the namespaces within a turn each pass, so none waits behind the rest.
     seed = random.getrandbits(32)
-    rows = await queue.owed_rows(limit=batch, capped=capped, seed=seed)
+    rows = await queue.owed_rows(limit=batch, capped=capped, seed=seed, max_age_days=max_age)
     full = len(rows) >= batch
     if due:
         found = await queue.unjudged_conflicted_rows(limit=recheck, capped=capped, seed=seed)
