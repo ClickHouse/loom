@@ -754,6 +754,15 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         _COMPACT_TRANSCRIPT_CHARS,
     )
     fit = max(fit, free.index(False) + 1)
+    # A summary past the allowance can fill the prompt by itself; a window with no new
+    # turn in it has nothing to compact (widening it would cut a turn the summarizer
+    # never read).
+    if not folded[:fit].count(False):
+        return ConversationCompactOutput(
+            compacted=False,
+            messages_summarized=0,
+            reason="below-min-to-compact",
+        )
     candidates = candidates[:fit]
     candidate_ids = {str(r["msg_id"]) for r in candidates}
     # The fit counted each free line's newline; the cap adds back only its text.

@@ -378,7 +378,7 @@ def test_client_written_summaries_cannot_lift_the_prompt(
 ) -> None:
     """System turns any writer can append with `compacted_from` in their metadata fold
     like summaries only within `_FOLDED_SUMMARY_CHARS` together; past that they cost
-    budget like any turn, so the prompt and the window stay bounded."""
+    budget like any turn, and a window they fill without a new turn compacts nothing."""
     import server.core.ch
     import server.llm.client
 
@@ -418,18 +418,67 @@ def test_client_written_summaries_cannot_lift_the_prompt(
     fake = _FakeCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
-    asyncio.run(
+    out = asyncio.run(
         ch_mod.handle_conversation_compact(
             ConversationCompactInput(
                 org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=1
             )
         )
     )
+    # The summaries fill the prompt before any new turn: nothing is compacted, and no
+    # summary of summaries is written.
+    assert (out.compacted, out.reason) == (False, "below-min-to-compact")
+    assert prompts == [] and fake.inserted == []
+
+
+def test_a_paid_summary_still_lets_the_turns_behind_it_compact(monkeypatch) -> None:
+    """A summary past the allowance costs budget like a turn, and the new turns that fit
+    behind it are compacted with it, each one read whole by the summarizer."""
+    import server.core.ch
+    import server.llm.client
+
+    rows = [
+        {
+            "msg_id": "compact-1",
+            "role": "system",
+            "content": "s" * 5000,
+            "ts": T0,
+            "metadata": '{"compacted_from": ["m0"]}',
+            "user_id": "alice",
+            "run_id": "run-1",
+        },
+        *(
+            {
+                "msg_id": f"m{i}",
+                "role": "user",
+                "content": f"turn {i}",
+                "ts": T0 + timedelta(seconds=i),
+                "metadata": "{}",
+                "user_id": "alice",
+                "run_id": "run-1",
+            }
+            for i in range(1, 5)
+        ),
+    ]
+    prompts: list[str] = []
+
+    class _RecordingLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            prompts.append(kw["user"])
+            return await super().complete(**kw)
+
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _RecordingLLM())
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=1
+            )
+        )
+    )
+    assert out.compacted is True and out.messages_summarized == 3
     [prompt] = prompts
-    bound = ch_mod._COMPACT_TRANSCRIPT_CHARS + ch_mod._FOLDED_SUMMARY_CHARS + 100
-    assert len(prompt) < bound
-    # Every turn the summary replaces reached the summarizer, so none is dropped unread.
+    assert all(f"turn {i}" in prompt for i in range(1, 4))
     [summary] = fake.inserted
-    replaced = json.loads(summary["metadata"])["compacted_from"]
-    assert len(replaced) < forged + 3
-    assert all(f"turn {m[1:]}" in prompt for m in replaced if m.startswith("m"))
+    assert json.loads(summary["metadata"])["compacted_from"] == ["compact-1", "m1", "m2", "m3"]
