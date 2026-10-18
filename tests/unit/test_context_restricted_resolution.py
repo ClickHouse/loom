@@ -9,6 +9,7 @@ import asyncio
 import pytest
 
 import server.auth.authz as authz
+import server.core.grant_cache as grant_cache
 import server.identity.app.namespace_classification as nc
 from server.auth.context import (
     resolve_my_namespaces,
@@ -21,6 +22,9 @@ from server.operations.base import Role
 
 ORG = "clickhouse"
 PRIV = "code-example-private"
+
+# The gate reads the subject's grants from the grant maps faked below.
+pytestmark = pytest.mark.claim_cap
 
 
 @pytest.fixture
@@ -40,6 +44,18 @@ def world(monkeypatch: pytest.MonkeyPatch):
         return state["grants"].get((org, ns, subject))
 
     monkeypatch.setattr(authz, "grant_role_for", _grant)
+
+    async def _read(org, subject):
+        from server.operations.base import grant_rank
+
+        ranks = {
+            ns: grant_rank(role.name.lower())
+            for (o, ns, s), role in state["grants"].items()
+            if o == org and s == subject
+        }
+        return grant_cache.GrantMap(ranks=ranks)
+
+    monkeypatch.setattr(grant_cache, "_read", _read)
 
     class _Client:
         async def query_all(self, sql, params=None):
@@ -78,6 +94,7 @@ def test_scoped_claim_keeps_order_and_drops_ungranted_restricted(world) -> None:
     set_current_auth(_scoped("clickgap-public", PRIV, "code-clickhouse"))
     assert asyncio.run(resolve_my_namespaces(ORG)) == ["clickgap-public", "code-clickhouse"]
     world["grants"][(ORG, PRIV, "sa:clickgap")] = Role.VIEWER
+    grant_cache.clear()
     assert asyncio.run(resolve_my_namespaces(ORG)) == ["clickgap-public", PRIV, "code-clickhouse"]
 
 

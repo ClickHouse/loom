@@ -85,6 +85,14 @@ def test_fifty_failures_lock_the_address_across_identifiers() -> None:
         _resolve("alice@acme.io", "correct horse battery staple", address="203.0.113.7")
 
 
+def test_an_ipv6_net_counts_as_one_address() -> None:
+    # One host holds a whole /64 to spread a spray over.
+    for i in range(50):
+        _resolve(f"user{i}@acme.io", "spray", address=f"2001:db8::{i:x}")
+    with pytest.raises(login.LoginThrottled):
+        _resolve("alice@acme.io", "correct horse battery staple", address="2001:db8::ffff")
+
+
 def test_failures_are_counted_by_kind_and_keyed_hash(auth_attempts: Any) -> None:
     """The rows every process counts: one per failure under each limit, the
     identifier and the address stored as an HMAC keyed by the root secret —

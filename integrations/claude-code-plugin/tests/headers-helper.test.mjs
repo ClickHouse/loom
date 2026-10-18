@@ -283,3 +283,10 @@ test("no token yet: the helper waits for the SessionStart hook's credential and 
   assert.equal(pinned.LOOM_BASE_URL, "http://localhost:7777");
   assert.equal(await hookToken({ env: {}, read: () => ({}), pollMs: 1, waitMs: 5 }), "");
 });
+
+test("an agent never takes the token the SessionStart hook or a person saved", async () => {
+  // The branch an MCP entry with no LOOM_BASE_URL takes (Codex's): the
+  // helper would otherwise wait for config.json and adopt its token.
+  const agent = { LOOM_CLIENT_ID: "ci", LOOM_WORKLOAD_TOKEN: "w" };
+  assert.equal(await hookToken({ env: agent, read: () => ({ token: "personal.tok" }), waitMs: 0 }), "");
+});

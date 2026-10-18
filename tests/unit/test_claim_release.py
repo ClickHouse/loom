@@ -9,7 +9,7 @@ but the claim. Hermetic: ClickHouse and the classification are faked.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from server.auth import revocation
 from server.auth.jwt import mint_token
+from server.identity.app import account_admin
 from server.identity.app import claim_release as cr
 from server.identity.app import namespace_classification as nc
 from server.settings import settings
@@ -46,6 +47,10 @@ class _CH:
         return dict(self.row) if self.row else None
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if "sso_links" in sql:
+            return [{"email": "alice@example.com"}]  # linked for SSO before the release
+        if "machine_identities" in sql:
+            return []  # no bot names the namespace
         return [{"subject": "alice", "role": "admin", "granted_by": "alice"}]
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
@@ -62,7 +67,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(settings, "identity_provider", "gateway")
     monkeypatch.setattr(revocation, "_loaded", True)
-    state = {"restricted": False, "allows": False}
+    state: dict[str, Any] = {"restricted": False, "allows": False}
 
     async def is_restricted(org: str, ns: str) -> bool:
         return bool(state["restricted"])
@@ -72,6 +77,13 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(nc, "is_restricted", is_restricted)
     monkeypatch.setattr("server.auth.authz.restricted_allows", allows)
+    waited: list[datetime] = []
+
+    async def wait(cutoff: datetime) -> None:
+        waited.append(cutoff)
+
+    monkeypatch.setattr(revocation, "wait_out", wait)
+    state["waited"] = waited
 
     def run(token: str, row: dict[str, Any] | None = _ROW, org: str = "acme") -> tuple[Any, _CH]:
         ch = _CH(row)
@@ -96,6 +108,9 @@ def test_the_release_keeps_every_column_but_the_claim(env: Any) -> None:
     run, _ = env
     out, ch = run(_tok(["org_admin"]))
     assert out.released and out.previous_owner == "alice" and out.grants_revoked == 1
+    # Its SSO link goes too: a next holder of the name is not who linked it.
+    (link,) = ch.inserts["loom.sso_links"]
+    assert (link["email"], link["linked"]) == ("alice@example.com", 0)
     (row,) = ch.inserts["loom.namespaces"]
     assert {k: row[k] for k in ("owner_email", "contact_email", "password_hash", "active")} == {
         "owner_email": "",
@@ -138,3 +153,188 @@ def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(settings, "identity_provider", "single-user")
     _, ch = run("")
     assert ch.inserts["loom.namespaces"][0]["description"].startswith("Released by local")
+
+
+def test_a_release_names_the_agent_owning_the_namespace() -> None:
+    row = {"tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
+    assert cr._agent_owner(row) == "sa:fleet:a1"
+    forged = {"tags": ["machine:fleet"], "owner_email": "lee"}  # a person's, marked by hand
+    # Never the person's own sessions.
+    assert cr._agent_owner(forged) == ""
+
+
+def test_the_cutoff_is_waited_out_after_the_claim_is_let_go(env: Any, monkeypatch) -> None:
+    # Held through the wait, the claim would make a password set on the
+    # namespace wait and fail busy, and eat the release's own claim budget.
+    from contextlib import asynccontextmanager
+
+    from server.auth import grant_claims, machines
+
+    run, _ = env
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def claim(org: str, ns: str) -> Any:
+        events.append("claimed")
+        yield
+        events.append("let go")
+
+    async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
+        return ["triage"]
+
+    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+        return ["triage"]
+
+    async def end_tokens(subject: str, **k: Any) -> datetime:
+        return datetime(2026, 1, 3)
+
+    async def wait(cutoff: datetime) -> None:
+        events.append("waited")
+
+    monkeypatch.setattr(grant_claims, "account_change", claim)
+    monkeypatch.setattr(machines, "naming", naming)
+    monkeypatch.setattr(machines, "forget_namespace", forget)
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    monkeypatch.setattr(revocation, "wait_out", wait)
+    assert run(_tok(["org_admin"]))[0].released
+    assert events == ["claimed", "let go", "waited"]
+
+
+_AGENT_ROW = {**_ROW, "tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
+
+
+def _release(ch: _CH) -> Any:
+    return cr.release_claim(org="acme", namespace="repo-x", reason="", actor_subject="op", ch=ch)
+
+
+def test_a_release_whose_bot_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeypatch) -> None:
+    # The bots still name the namespace after the row is rewritten: a retry
+    # reading the released row must still find them, and cut them off.
+    from server.auth import machines
+
+    forgotten: list[str] = []
+    ended: list[str] = []
+
+    async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
+        return [] if forgotten else ["triage"]
+
+    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+        forgotten.append(ns)
+        return ["triage"]
+
+    async def down(subject: str, **k: Any) -> datetime:
+        if subject == "sa:triage":
+            raise RuntimeError("ClickHouse away")
+        ended.append(subject)
+        return datetime(2026, 1, 3)
+
+    monkeypatch.setattr(machines, "naming", naming)
+    monkeypatch.setattr(machines, "forget_namespace", forget)
+    monkeypatch.setattr(account_admin, "end_tokens", down)
+    ch = _CH(_AGENT_ROW)
+    with pytest.raises(RuntimeError):
+        asyncio.run(_release(ch))
+    assert ended == ["sa:fleet:a1"] and forgotten == []
+    (released,) = ch.inserts["loom.namespaces"]
+
+    async def end_tokens(subject: str, **k: Any) -> datetime:
+        ended.append(subject)
+        return datetime(2026, 1, 3)
+
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    ended.clear()
+    out = asyncio.run(_release(_CH(released)))  # the retry reads the rewritten row
+    assert out is not None
+    assert out.released and forgotten == ["repo-x"]
+    assert ended == ["sa:triage"]  # the agent was cut off by the first pass
+
+
+def test_the_bots_cutoff_is_taken_after_the_row_insert_returns(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A bot's exchange reads its live namespaces sequentially: one that read
+    # before the insert returned dates its token earlier, and one after gets
+    # none of this namespace. The agent is cut off before its row changes.
+    from server.auth import machines
+
+    run, _ = env
+    start = datetime(2026, 1, 3, 12, 0, 0, tzinfo=UTC)
+    clock = [start]
+    events: list[tuple[str, datetime]] = []
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return clock[0]
+
+    async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
+        return ["triage"]
+
+    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+        events.append(("forget", clock[0]))
+        return ["triage"]
+
+    async def cut_off(subject: str, *, issued_before: datetime, **k: Any) -> None:
+        events.append((subject, issued_before))
+
+    plain_insert = _CH.insert
+
+    async def slow_insert(self: _CH, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
+        await plain_insert(self, table, rows, **k)
+        if table == "loom.namespaces":
+            clock[0] += timedelta(seconds=8)  # a slow insert
+            events.append(("row", clock[0]))
+
+    monkeypatch.setattr(revocation, "datetime", _Clock)
+    monkeypatch.setattr(machines, "naming", naming)
+    monkeypatch.setattr(machines, "forget_namespace", forget)
+    monkeypatch.setattr(revocation, "cut_off", cut_off)
+    monkeypatch.setattr(_CH, "insert", slow_insert)
+    assert run(_tok(["org_admin"]), row=_AGENT_ROW)[0].released
+    assert [e for e, _ in events] == ["sa:fleet:a1", "row", "sa:triage", "forget"]
+    returned, bots_cutoff = events[1][1], events[2][1]
+    # Minted the second the insert returned, on a replica ahead by the skew.
+    assert returned + timedelta(seconds=revocation.CLOCK_SKEW_S) < bots_cutoff
+    # And the wait is on the last cutoff, a few seconds out, not the claim's deadline.
+    (waited,) = env[1]["waited"]
+    assert waited == bots_cutoff
+    assert bots_cutoff - returned <= timedelta(seconds=1 + revocation.CLOCK_SKEW_S)
+
+
+def test_a_release_failing_after_its_row_is_rewritten_says_to_retry(
+    env: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Cut off at the claim's deadline before the bots' cutoff: their tokens
+    # keep the namespace until a retry ends them.
+    from server.auth import machines
+    from server.core.errors import BackendUnavailableError
+
+    async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
+        return ["triage"]
+
+    async def deadline(subject: str, **k: Any) -> datetime:
+        raise BackendUnavailableError("the change did not finish in time", operation="grant_change")
+
+    monkeypatch.setattr(machines, "naming", naming)
+    monkeypatch.setattr(account_admin, "end_tokens", deadline)
+    ch = _CH(_ROW)
+    with caplog.at_level("WARNING"), pytest.raises(BackendUnavailableError) as failed:
+        asyncio.run(_release(ch))
+    assert "loom.namespaces" in ch.inserts
+    assert "retry it" in failed.value.message and "bots' tokens" in failed.value.message
+    assert "retry it to end its bots' tokens" in caplog.text
+
+
+def test_a_release_failing_before_its_row_is_rewritten_warns_of_nothing(
+    env: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from server.auth import machines
+
+    async def down(org: str, ns: str, *, ch: Any) -> list[str]:
+        raise RuntimeError("ClickHouse away")
+
+    monkeypatch.setattr(machines, "naming", down)
+    ch = _CH(_ROW)
+    with caplog.at_level("WARNING"), pytest.raises(RuntimeError):
+        asyncio.run(_release(ch))
+    assert "loom.namespaces" not in ch.inserts and "claim_release" not in caplog.text

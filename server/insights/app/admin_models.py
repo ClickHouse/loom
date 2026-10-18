@@ -100,14 +100,16 @@ class TokenMintInput(BaseModel):
     reads on the minted token credited to a consumer rather than answer
     `not_credited (no_consumer)`. `namespaces` may be omitted when `ns_roles` names them."""
 
-    subject: str
+    # Its name in the caller's token list; the token's subject is `sa:<name>-<hash>`.
+    # Required: the handler answers a missing one, naming the retired `subject`.
+    name: str | None = Field(None, max_length=64)
     org: str
     namespaces: list[str] = Field(default_factory=list)
     roles: list[str] = Field(default_factory=lambda: ["writer"])
     ns_roles: dict[str, str] | None = None
     consumer: str = Field("", max_length=64)
-    ttl_seconds: int | None = Field(None, ge=1)
-    is_service_account: bool = True
+    # None: 90 days; 0: never expires.
+    ttl_seconds: int | None = Field(None, ge=0, le=3650 * 86400)
 
     @model_validator(mode="after")
     def _namespaces_or_ns_roles(self) -> TokenMintInput:
@@ -317,11 +319,13 @@ class TokenMintOutput(BaseModel):
     # The token's `jti`: its id in the ledgers and the
     # handle `loom revoke-token --jti` retires. Record it; it is not a secret.
     jti: str = ""
-    subject: str
+    name: str
+    subject: str  # the token's own `sa:` subject
     org: str
     namespaces: list[str]
     roles: list[str]
     ns_roles: dict[str, str] | None = None
     consumer: str = ""
-    ttl_seconds: int | None
-    is_service_account: bool
+    ttl_seconds: int | None  # None: never expires
+    # Body fields this route no longer reads (`subject`, `is_service_account`).
+    ignored_args: list[str] = Field(default_factory=list)

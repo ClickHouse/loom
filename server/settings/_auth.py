@@ -81,17 +81,18 @@ class AuthSettings(BaseModel):
         )
         return self
 
-    # OAuth 2.1 authorization server for MCP one-click connect: /.well-known
-    # discovery + /oauth/{register,authorize,token}. Issues normal loom JWTs,
-    # subject-aligned to the signed-in user. Opt-in: a new authz surface.
-    # `oauth_issuer` = public base URL for discovery/redirects ("" = per request).
+    # MCP one-click connect: dynamic client registration and /oauth/authorize
+    # on top of the sign-in routes (device grant, token, revoke) every
+    # auth-on deployment serves. Opt-in: anyone can register a client.
     oauth_enabled: bool = False
     # Public base URL used in OAuth discovery and redirects; empty derives it from each request.
     # Required when `oauth_login_provider` is "oidc" (the IdP callback URL is built from it).
     oauth_issuer: str = ""
-    # Human sign-in for /oauth/authorize: "password" (built-in form) or "oidc"
-    # (redirect to an external IdP; loom maps the verified email to an account
-    # and still mints its own token). "oidc" requires all three oidc_* values.
+    # How people sign in (dashboard, `loom login`, MCP connect): "password"
+    # (Loom's own form) or "oidc" (the external IdP; loom maps the verified
+    # email to an account and still mints its own token). "oidc" closes
+    # password sign-in and self-signup, and requires `oauth_issuer` and the
+    # three oidc_* values.
     oauth_login_provider: Literal["password", "oidc"] = "password"
     # External IdP issuer URL; its `/.well-known/openid-configuration` must name the same issuer.
     oidc_issuer: str = ""

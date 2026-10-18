@@ -142,4 +142,31 @@ describe("TokenGate", () => {
       expect(fetchMock.mock.calls[0][0]).toBe("/v1/auth/self-signup");
     });
   });
+
+  describe("with single sign-on on", () => {
+    afterEach(() => {
+      delete window.__LOOM_SSO;
+    });
+
+    it("sends the person to the identity provider, with no password field", () => {
+      window.__LOOM_SSO = true;
+      render(<TokenGate onLogin={() => undefined} reason={null} />);
+      expect(screen.getByRole("link", { name: "Sign in with SSO" })).toHaveAttribute("href", "/oauth/sso");
+      expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
+    it("says a session expired", () => {
+      window.__LOOM_SSO = true;
+      render(<TokenGate onLogin={() => undefined} reason="expired" />);
+      expect(screen.getByRole("status")).toHaveTextContent("Your session expired — sign in again.");
+    });
+
+    it("shows the password gate when it is off", () => {
+      window.__LOOM_SSO = false;
+      render(<TokenGate onLogin={() => undefined} reason={null} />);
+      expect(screen.queryByRole("link", { name: "Sign in with SSO" })).not.toBeInTheDocument();
+      expect(screen.getAllByLabelText(/password/i).length).toBeGreaterThan(0);
+    });
+  });
 });

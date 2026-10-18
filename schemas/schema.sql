@@ -16,12 +16,12 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 153 tables + 17 materialized views.
+-- Counts: 156 tables + 17 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 
 -- ======================================================================
--- Tables (153)
+-- Tables (156)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
@@ -1765,6 +1765,31 @@ ORDER BY (model, key)
 TTL created_at + toIntervalDay(7)
 SETTINGS index_granularity = 64, non_replicated_deduplication_window = 1000;
 
+-- loom.machine_identities
+CREATE TABLE IF NOT EXISTS loom.machine_identities
+(
+    `name` String,
+    `org` LowCardinality(String),
+    `ns_roles` Array(Tuple(
+        String,
+        String)),
+    `public_keys` String,
+    `issuer` String,
+    `audience` String,
+    `claims` Map(String, String),
+    `active` UInt8,
+    `updated_by` String,
+    `updated_at` DateTime64(3, 'UTC'),
+    `version` UInt64,
+    `agent_claim` String DEFAULT '',
+    `jwks_uri` String DEFAULT '',
+    `max_token_s` UInt32 DEFAULT 3600,
+    `max_agents` UInt32 DEFAULT 1000
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY name
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.memory
 CREATE TABLE IF NOT EXISTS loom.memory
 (
@@ -2752,6 +2777,16 @@ CREATE TABLE IF NOT EXISTS loom.oauth_claims
 ENGINE = KeeperMap('/loom/oauth_claims')
 PRIMARY KEY claim_key;
 
+-- loom.oauth_signin_state
+CREATE TABLE IF NOT EXISTS loom.oauth_signin_state
+(
+    `claim_key` String,
+    `value` String,
+    `expires_at` UInt32
+)
+ENGINE = KeeperMap('/loom/oauth_signin_state', 500000)
+PRIMARY KEY claim_key;
+
 -- loom.oauth_state
 CREATE TABLE IF NOT EXISTS loom.oauth_state
 (
@@ -2769,7 +2804,10 @@ CREATE TABLE IF NOT EXISTS loom.oauth_state
     `consumed` UInt8 DEFAULT 0,
     `created_at` DateTime DEFAULT now(),
     `expires_at` UInt32 DEFAULT 0,
-    `version` UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+    `version` UInt64 DEFAULT toUnixTimestamp64Nano(now64(9)),
+    `family` String DEFAULT '',
+    `upstream_refresh` String DEFAULT '',
+    `generation` UInt32 DEFAULT 0
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY record_type
@@ -3273,6 +3311,21 @@ CREATE TABLE IF NOT EXISTS loom.signing_keys
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY kid
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.sso_links
+CREATE TABLE IF NOT EXISTS loom.sso_links
+(
+    `email` String,
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `linked` UInt8,
+    `linked_by` String,
+    `linked_at` DateTime64(3, 'UTC'),
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (email, org, namespace)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.subject_last_seen

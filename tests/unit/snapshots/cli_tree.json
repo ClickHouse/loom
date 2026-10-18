@@ -4816,7 +4816,7 @@
            "nargs": 0,
            "type": null,
            "required": false,
-           "help": "Write nothing; exit 1 while a value opens only with LOOM_JWT_SECRET_PREVIOUS",
+           "help": "Write nothing; exit 1 while a value, or a sign-in in flight, opens only with LOOM_JWT_SECRET_PREVIOUS",
            "metavar": null
           }
          ]
@@ -8387,7 +8387,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "When the revocation may lapse — the token's own exp. Omit for a token without exp: the row is kept for 100 years.",
+       "help": "When the revocation may lapse — the token's own exp. Omit for a token without exp: the row is kept for good (to 2105).",
        "metavar": "ISO8601"
       },
       {
@@ -8404,6 +8404,1009 @@
        "required": false,
        "help": "Machine-readable output.",
        "metavar": null
+      }
+     ]
+    },
+    "sso": {
+     "prog": "loom sso",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "subcommand"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "subcommand",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "adopt": {
+         "prog": "loom sso adopt",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "dry_run": true,
+          "apply_gated": true,
+          "func": "server.cli.sso:_cmd_adopt"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "domain",
+            "org",
+            "skip",
+            "keep_tokens",
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--domain"
+           ],
+           "dest": "domain",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "Email domain, e.g. example.com",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Only accounts in this org",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--skip"
+           ],
+           "dest": "skip",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Leave this email's accounts out, e.g. a bot's (repeatable)",
+           "metavar": "EMAIL"
+          },
+          {
+           "option_strings": [
+            "--keep-tokens"
+           ],
+           "dest": "keep_tokens",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Keep the tokens the accounts already hold (by default they are revoked: whoever registered an address may hold some)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--apply"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreFalseAction",
+           "default": true,
+           "const": false,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "link the accounts (default: dry run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": true,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "report what --apply would write, write nothing (the default)",
+           "metavar": null
+          }
+         ]
+        },
+        "link": {
+         "prog": "loom sso link",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "dry_run": true,
+          "apply_gated": true,
+          "func": "server.cli.sso:_cmd_link"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "email",
+            "org",
+            "namespace",
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--email"
+           ],
+           "dest": "email",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "the address they sign in with at the provider",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespace"
+           ],
+           "dest": "namespace",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "the account's namespace",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--apply"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreFalseAction",
+           "default": true,
+           "const": false,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "change its email and link it (default: dry run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": true,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "report what --apply would write, write nothing (the default)",
+           "metavar": null
+          }
+         ]
+        },
+        "unlink": {
+         "prog": "loom sso unlink",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "dry_run": true,
+          "apply_gated": true,
+          "func": "server.cli.sso:_cmd_unlink"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "email",
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--email"
+           ],
+           "dest": "email",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--apply"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreFalseAction",
+           "default": true,
+           "const": false,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "remove the links (default: dry run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": true,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "report what --apply would write, write nothing (the default)",
+           "metavar": null
+          }
+         ]
+        },
+        "password-link": {
+         "prog": "loom sso password-link",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.sso:_cmd_password_link"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "email",
+            "org"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--email"
+           ],
+           "dest": "email",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Needed when the email has accounts in several",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "adopt": "loom sso adopt",
+        "link": "loom sso link",
+        "unlink": "loom sso unlink",
+        "password-link": "loom sso password-link"
+       },
+       "choices_help": [
+        {
+         "dest": "adopt",
+         "help": "Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. Vouches that the domain's addresses are the provider's people. Dry run unless --apply.",
+         "metavar": "adopt"
+        },
+        {
+         "dest": "link",
+         "help": "Let one person's SSO sign-ins reach their password account registered under another address (a personal one, a +tag). The account keeps its subject, grants, namespaces and tokens; its contact email becomes --email.",
+         "metavar": "link"
+        },
+        {
+         "dest": "unlink",
+         "help": "Undo the links of one email.",
+         "metavar": "unlink"
+        },
+        {
+         "dest": "password-link",
+         "help": "Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off.",
+         "metavar": "password-link"
+        }
+       ]
+      }
+     ]
+    },
+    "bot": {
+     "prog": "loom bot",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "subcommand"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "subcommand",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "create": {
+         "prog": "loom bot create",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.bots:_cmd_create"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "name",
+            "org",
+            "namespace_role",
+            "generate_key",
+            "public_key",
+            "issuer",
+            "audience",
+            "claim",
+            "jwks_uri",
+            "max_token_age",
+            "max_agents",
+            "agent_claim",
+            "replace"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "generate_key",
+            "public_key"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--name"
+           ],
+           "dest": "name",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "Its client_id: lower-case letters, digits, '-'",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespace-role"
+           ],
+           "dest": "namespace_role",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "viewer|writer|admin on a namespace (repeatable; first = searched first); with --agent-claim, what every agent shares beside its own",
+           "metavar": "NS=ROLE"
+          },
+          {
+           "option_strings": [
+            "--generate-key"
+           ],
+           "dest": "generate_key",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Write a new P-256 private key here (0600)",
+           "metavar": "PATH"
+          },
+          {
+           "option_strings": [
+            "--public-key"
+           ],
+           "dest": "public_key",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The bot's own public key, a PEM file (P-256, Ed25519 or RSA)",
+           "metavar": "PATH"
+          },
+          {
+           "option_strings": [
+            "--issuer"
+           ],
+           "dest": "issuer",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "CI trust: the platform's OIDC issuer (https)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--audience"
+           ],
+           "dest": "audience",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "CI trust: the audience its token must name",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--claim"
+           ],
+           "dest": "claim",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "CI trust: a claim the token must carry; VALUE ending in * matches a prefix (repeatable; at least one, e.g. sub=repo:org/repo:ref:refs/heads/main)",
+           "metavar": "NAME=VALUE"
+          },
+          {
+           "option_strings": [
+            "--jwks-uri"
+           ],
+           "dest": "jwks_uri",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "CI trust: where the issuer publishes its keys (https), when its OIDC discovery is not reachable from Loom",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--max-token-age"
+           ],
+           "dest": "max_token_age",
+           "action": "_StoreAction",
+           "default": 3600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "CI trust: the longest a workload token may live (exp less iat) to be taken",
+           "metavar": "SECONDS"
+          },
+          {
+           "option_strings": [
+            "--max-agents"
+           ],
+           "dest": "max_agents",
+           "action": "_StoreAction",
+           "default": 1000,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "With --agent-claim: how many agents the trust may make",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--agent-claim"
+           ],
+           "dest": "agent_claim",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "CI trust: the claim naming the agent (e.g. agent_id); each agent gets its own subject and namespace, made on its first sign-in",
+           "metavar": "CLAIM"
+          },
+          {
+           "option_strings": [
+            "--replace"
+           ],
+           "dest": "replace",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Replace a bot of the same name",
+           "metavar": null
+          }
+         ]
+        },
+        "list": {
+         "prog": "loom bot list",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.bots:_cmd_list"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          }
+         ]
+        },
+        "disable": {
+         "prog": "loom bot disable",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.bots:_cmd_disable"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "name"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--name"
+           ],
+           "dest": "name",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "create": "loom bot create",
+        "list": "loom bot list",
+        "disable": "loom bot disable"
+       },
+       "choices_help": [
+        {
+         "dest": "create",
+         "help": "Register a bot: its namespaces, and a key (--generate-key or --public-key) and/or a CI trust (--issuer, --audience, --claim). Its tokens are for sa:<name>; with --agent-claim, each agent the trust's tokens name gets sa:<name>:<agent> and its own namespace <name>-<agent>.",
+         "metavar": "create"
+        },
+        {
+         "dest": "list",
+         "help": "Every bot, active or disabled.",
+         "metavar": "list"
+        },
+        {
+         "dest": "disable",
+         "help": "Refuse its proofs and revoke the tokens it holds.",
+         "metavar": "disable"
+        }
+       ]
       }
      ]
     },
@@ -11434,6 +12437,126 @@
        "metavar": null
       }
      ]
+    },
+    "login": {
+     "prog": "loom login",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": []
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
+    },
+    "logout": {
+     "prog": "loom logout",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": []
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
+    },
+    "whoami": {
+     "prog": "loom whoami",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": []
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
+    },
+    "call": {
+     "prog": "loom call",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": []
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
+    },
+    "token": {
+     "prog": "loom token",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": []
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
     }
    },
    "aliases_of": {
@@ -11469,6 +12592,8 @@
     "claim-release": "loom claim-release",
     "mint-token": "loom mint-token",
     "revoke-token": "loom revoke-token",
+    "sso": "loom sso",
+    "bot": "loom bot",
     "doctor": "loom doctor",
     "report": "loom report",
     "drops": "loom drops",
@@ -11490,7 +12615,12 @@
     "init": "loom init",
     "ingest-transcript": "loom ingest-transcript",
     "memory-search": "loom memory-search",
-    "set-host": "loom set-host"
+    "set-host": "loom set-host",
+    "login": "loom login",
+    "logout": "loom logout",
+    "whoami": "loom whoami",
+    "call": "loom call",
+    "token": "loom token"
    },
    "choices_help": [
     {
@@ -11654,6 +12784,16 @@
      "metavar": "revoke-token"
     },
     {
+     "dest": "sso",
+     "help": "Carry password accounts over to single sign-on.",
+     "metavar": "sso"
+    },
+    {
+     "dest": "bot",
+     "help": "Bots and CI jobs that sign in with a key or their CI's identity.",
+     "metavar": "bot"
+    },
+    {
      "dest": "doctor",
      "help": "Diagnose pre-boot misconfig (Python version, settings, JWT, CH reachability) and print the problem list /v1/health carries, each with its fix. With --client, also examine this machine as a coding-agent client.",
      "metavar": "doctor"
@@ -11762,6 +12902,31 @@
      "dest": "set-host",
      "help": "Designate the Loom host(s) for this deployment. Writes the given login handle(s) or email(s) to LOOM_PLATFORM_ADMINS in the .env (--env-file, default ./.env): a handle promotes that password account to platform_admin, an email promotes an SSO sign-in with that verified email. Multiple OK (on-call rotation, co-operators, etc.). Re-login required after to pick up the role.",
      "metavar": "set-host"
+    },
+    {
+     "dest": "login",
+     "help": "Sign in to a Loom server on any browser with a one-time code.",
+     "metavar": "login"
+    },
+    {
+     "dest": "logout",
+     "help": "End the stored session on the server and forget it here.",
+     "metavar": "logout"
+    },
+    {
+     "dest": "whoami",
+     "help": "Show who the stored session signs you in as.",
+     "metavar": "whoami"
+    },
+    {
+     "dest": "call",
+     "help": "Call any operation or API route with the stored session (`loom call --help`).",
+     "metavar": "call"
+    },
+    {
+     "dest": "token",
+     "help": "Make, list and revoke your own tokens for CI and agents (`loom token --help`).",
+     "metavar": "token"
     }
    ]
   }

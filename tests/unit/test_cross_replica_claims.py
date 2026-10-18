@@ -8,14 +8,13 @@ KeeperMap lock table is linearizable.
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any
 
 import pytest
 from fastapi import HTTPException
 
 import server.auth.self_signup as ss
-from server.auth import oauth
+from server.auth.oauth_store import ClickHouseStore
 from server.auth.personal_namespace import PersonalNamespaceBusy, ensure_personal_namespace
 from server.core import idempotency, leases, request_tail
 from tests.unit.cross_replica_fake import FakeCluster, in_request, install
@@ -218,7 +217,7 @@ def test_a_personal_provision_slower_than_its_claim_allows_publishes_nothing(
     async def _provision(**kw: Any) -> None:
         written.append(kw["namespace"])
 
-    monkeypatch.setattr(pn, "_owner", _slow_owner)
+    monkeypatch.setattr(pn, "namespace_owner", _slow_owner)
     monkeypatch.setattr(ss, "provision_account", _provision)
 
     async def run() -> None:
@@ -231,97 +230,20 @@ def test_a_personal_provision_slower_than_its_claim_allows_publishes_nothing(
     assert written == []
 
 
-# ---- OAuth: state, codes and refresh tokens spent once across replicas ------
+# ---- OAuth: a client registered on one replica is known on the next ---------
+# (codes and refresh tokens are spent by Keeper compare-and-set:
+# tests/integration/test_oauth_claims.py)
 
 
-def _grant(**over: Any) -> dict[str, Any]:
-    g = {
-        "client_id": "c1",
-        "redirect_uri": "http://127.0.0.1/cb",
-        "code_challenge": "x",
-        "subject": "alice",
-        "org": "dev",
-        "namespaces": ["n"],
-        "roles": ["writer"],
-        "exp": int(time.time()) + 60,
-    }
-    return g | over
-
-
-async def _spend(kind: str, credential: str) -> dict[str, Any] | None:
-    """Exchange `credential` as /oauth/token does; None when it is refused."""
-
-    async def accept(grant: dict[str, Any]) -> dict[str, Any]:
-        return grant
-
-    try:
-        return await oauth._exchange(kind, credential, client_id="c1", decide=accept)  # type: ignore[arg-type]
-    except HTTPException:
-        return None
-
-
-def test_oauth_state_written_on_one_replica_is_read_on_the_next(cluster: FakeCluster) -> None:
+def test_a_client_registered_on_one_replica_is_read_on_the_next(cluster: FakeCluster) -> None:
     a, b = cluster.replica("a"), cluster.replica("b")
-    store = oauth._CHStore()
+    store = ClickHouseStore()
 
     async def run() -> None:
         with cluster.on(a):
             await store.save_client("c1", ["http://127.0.0.1/cb"], "cli")
-            await store.save_code("code-1", _grant())
         with cluster.on(b):
             assert await store.get_client("c1") is not None
-            assert await _spend("code", "code-1") is not None
-
-    asyncio.run(run())
-
-
-def test_a_code_replayed_on_another_replica_inside_the_lag_is_refused(
-    cluster: FakeCluster,
-) -> None:
-    a, b = cluster.replica("a"), cluster.replica("b")
-    store = oauth._CHStore()
-
-    async def run() -> None:
-        with cluster.on(a):
-            await store.save_code("code-1", _grant())
-            cluster.advance(5)  # the code is visible everywhere; its consume will not be
-            assert await _spend("code", "code-1") is not None
-        with cluster.on(b):
-            assert await _spend("code", "code-1") is None
-
-    asyncio.run(run())
-
-
-def test_a_refresh_token_presented_twice_at_once_is_spent_once(cluster: FakeCluster) -> None:
-    a, b = cluster.replica("a"), cluster.replica("b")
-    store = oauth._CHStore()
-
-    async def take(rep: Any) -> Any:
-        with cluster.on(rep):
-            return await _spend("refresh", "rt-1")
-
-    async def run() -> list[Any]:
-        with cluster.on(a):
-            await store.save_refresh("rt-1", _grant(exp=int(time.time()) + 3600))
-        cluster.advance(5)
-        return list(await asyncio.gather(take(a), take(b)))
-
-    assert sum(r is not None for r in asyncio.run(run())) == 1
-
-
-def test_a_consume_beats_a_row_stamped_by_a_clock_ahead(cluster: FakeCluster) -> None:
-    a = cluster.replica("a")
-
-    async def run() -> None:
-        with cluster.on(a):
-            ahead = time.time_ns() + 30 * 10**9
-            await a.insert(
-                "loom.oauth_state",
-                [{"record_type": "code", "id": oauth._token_id("c"), **_grant(), "version": ahead}],
-            )
-            cluster.rows["loom.oauth_state"][-1][2]["expires_at"] = _grant()["exp"]
-            assert await _spend("code", "c") is not None
-            assert await _spend("code", "c") is None
 
     asyncio.run(run())
 

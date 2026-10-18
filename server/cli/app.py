@@ -17,6 +17,7 @@ from server.cli.import_brain import _add_brain_import_parser
 from server.cli.import_clickgap import _add_clickgap_import_parser
 from server.cli.import_recall import _add_recall_import_parser
 from server.cli.install import _INSTALL_HELP, _add_install_flags, _cmd_install
+from server.cli.login import SDK_COMMANDS, add_login_parsers, run_sdk_command
 from server.cli.maintenance import (
     _add_activity_trivia_parser,
     _add_memory_repair_parsers,
@@ -284,6 +285,14 @@ def _add_version_install_demo_init_parsers(sub: Any) -> None:
     register_init_cli(sub)
 
 
+def _add_sso_parsers(sub: Any) -> None:
+    from server.cli.bots import register_bot_cli
+    from server.cli.sso import register_sso_cli
+
+    register_sso_cli(sub)
+    register_bot_cli(sub)
+
+
 # Every subcommand `main` registers, in `loom --help` order (the order the
 # parsers are added is the order argparse lists them).
 _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
@@ -300,6 +309,7 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
     _add_claim_release_parser,
     _add_mint_token_parser,
     _add_revoke_token_parser,
+    _add_sso_parsers,
     _add_doctor_report_parsers,
     _add_namespace_hygiene_parsers,
     *_TRACKER_REGISTRARS,
@@ -308,10 +318,16 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
     _add_integrity_and_stats_parsers,
     _add_version_install_demo_init_parsers,
     _add_shell_client_parsers,
+    add_login_parsers,
 )
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw = sys.argv[1:] if argv is None else argv
+    if raw and raw[0] in SDK_COMMANDS:
+        # Before the checkout's .env, which describes the server and would
+        # otherwise override the user's own session (LOOM_API_KEY, LOOM_BASE_URL).
+        return run_sdk_command(raw)
     _load_dotenv_like_the_container()
     parser = argparse.ArgumentParser(
         prog="loom",

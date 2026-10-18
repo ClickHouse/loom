@@ -186,6 +186,37 @@ console.log(r.data.results.length, r.requestId, r.serverTimingMs, r.rateLimit?.r
 
 `apiKey` (or `LOOM_API_KEY`) is held in a private field: `JSON.stringify(loom)` and `util.inspect(loom)` show `apiKey: "…1234"`, never the token. A blank or whitespace value is no credential (`transport.hasCredential`), so an exported-but-empty variable does not turn into `Authorization: Bearer ` and a puzzling 401.
 
+### Bots and CI jobs
+
+A bot registered with `loom bot create` needs no long-lived secret. With `LOOM_CLIENT_ID` set and no `apiKey` / `LOOM_API_KEY`, the client gets its own hour-long token from `/oauth/token`, keeps it in memory only, renews it before it runs out and retries a 401 once with a fresh one. It proves itself with one of:
+
+- a key, set by exactly one of `LOOM_CLIENT_KEY_FILE` (a PEM file), `LOOM_CLIENT_KEY` (the PEM itself) or `LOOM_CLIENT_KEY_SECRET` (an AWS Secrets Manager id or ARN; install `@aws-sdk/client-secrets-manager`). The key is read again for each token, so rotation is picked up. P-256, Ed25519 and RSA keys sign as ES256, EdDSA and RS256.
+- a workload token: `LOOM_WORKLOAD_TOKEN`, or the file `LOOM_WORKLOAD_TOKEN_FILE` (re-read for each token), or, in GitHub Actions (`permissions: id-token: write`), one asked for `LOOM_WORKLOAD_AUDIENCE`.
+
+Bot sign-in is Node-only. `transport.apiKeyHint` reads `bot:<client id>`; pass `tokenProvider: new MachineLogin({...})`, or any `{ token(refused?) }`, to choose it in code.
+
+### Your tokens
+
+`loom.account` (and `bot.account` on an `Agent`) makes, lists and revokes your own scoped tokens, as the dashboard's Tokens list does. A new token is never wider than your own grants; `namespaces` are in read order, each a bare name or `{ namespace, role }`. `ttlDays` defaults to 90, `0` never expires. The token is in the answer once.
+
+```ts
+const loom = new LoomClient({ baseUrl, apiKey });
+const sa = await loom.account.createServiceAccount(
+  "ci",
+  ["support", { namespace: "docs", role: "viewer" }],
+  {
+    role: "writer",
+    ttlDays: 30,
+  },
+);
+console.log(sa.token, sa.expires_at);
+for (const t of await loom.account.serviceAccounts())
+  console.log(t.name, t.namespaces, t.revoked_at);
+await loom.account.revokeServiceAccount("ci");
+```
+
+A name a live token already holds is a `PreconditionFailed` with code `TOKEN_NAME_TAKEN`.
+
 ## Sessions and tools: what an agent framework holds
 
 An agent framework wants a few things from its store: resume a session after a restart, append turns as they happen, park a large tool result behind a pointer, keep notes the next turn sees, scope everything to a tenant. Loom has an op for each; `Session` binds them to one (user, session) scope, and `AgentTools` hands the same verbs to the model.

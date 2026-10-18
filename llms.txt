@@ -23,6 +23,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.
 - [Copying a namespace to another Loom](docs/operations/okf-sync.md): A job inside the private network copies one namespace from a private Loom to a public one on a schedule: `loom export-okf` reads it from the private Loom, and `loom import-okf --prune` writes it to the public Loom.
 - [Running N replicas](docs/operations/replicas.md): Every Loom process is a full replica.
+- [Single sign-on (OIDC)](docs/operations/sso.md): Loom can hand the human sign-in to an OpenID Connect identity provider.
 - [Troubleshooting](docs/operations/troubleshooting.md): Each entry gives a symptom, the check that confirms its cause, and the fix.
 - [Upgrades](docs/operations/upgrades.md): An upgrade replaces the image and applies the migrations the new build carries.
 
@@ -98,6 +99,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Tune Loom's performance](docs/guides/performance-tuning.md): Every lever on this page is a setting or a request field.
 - [Tokens and grants](docs/guides/tokens-and-grants.md): Every call carries one JWT.
 - [Trace and resume long agent runs](docs/guides/trace-and-resume.md): A long run (process 300 files, crawl a repository, work through a plan) can stop part way: a crash, a full context window, a deploy, a pause.
+- [Use Loom without the dashboard](docs/guides/without-the-dashboard.md): Everything the `/me` dashboard does can be done from a terminal, a script or an agent's shell.
 
 ## Architecture
 

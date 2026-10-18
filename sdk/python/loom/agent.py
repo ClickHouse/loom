@@ -16,6 +16,7 @@ from types import TracebackType
 from typing import Any
 
 from loom._logging import logger
+from loom.account import AccountClient
 from loom.audit import AuditClient
 from loom.blacklist import BlacklistClient
 from loom.briefs import BriefsClient
@@ -27,12 +28,22 @@ from loom.conflicts import ConflictsClient
 from loom.context import ContextClient
 from loom.conversations import ConversationsClient
 from loom.cost import CostClient
+from loom.credentials import (
+    DEFAULT_SERVER,
+    StoredLogin,
+    same_server,
+    signed_in_server,
+    stored_login,
+)
 from loom.decision import DecisionClient
+from loom.deployment import DeploymentClient
 from loom.erasure import ErasureClient
+from loom.errors import AuthInvalid
 from loom.facts import FactsClient
 from loom.grants import GrantsClient
 from loom.knowledge import KnowledgeClient
 from loom.learnings import LearningsClient
+from loom.machine import MachineLogin, machine_login
 from loom.memory import SENTINEL, MemoryClient
 from loom.namespace import NamespaceClient
 from loom.policy import PolicyClient
@@ -60,6 +71,36 @@ def default_agent_name(agent: str | None) -> str:
     script = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else ""
     script = script.rsplit(".", 1)[0] if script.endswith(".py") else script
     return f"sdk-python:{script or 'bot'}"
+
+
+def _credentials(
+    base_url: str | None, api_key: str | None, profile: str | None
+) -> tuple[str, str | None, StoredLogin | MachineLogin | None]:
+    """The server and credential to use. A `profile` named here is the
+    `loom login` session to use, on the server it signed in to. Otherwise
+    the server is `base_url=`, else LOOM_BASE_URL, else localhost, and the
+    credential, first found wins: `api_key=`, LOOM_API_KEY, a bot's
+    LOOM_CLIENT_ID (loom.machine), the session of
+    LOOM_PROFILE (else `default`) for that server, `~/.loom/token` (what
+    `loom mint-token --save` writes)."""
+    if profile:
+        server = signed_in_server(profile)
+        if server is None:
+            raise AuthInvalid(f"not signed in (profile {profile!r}); run `loom login`")
+        if api_key or (base_url and not same_server(base_url, server)):
+            raise ValueError(
+                f"profile {profile!r} is a session for {server}; pass one or the other"
+            )
+        return server, None, StoredLogin(profile, server)
+    base_url = base_url or os.environ.get("LOOM_BASE_URL") or DEFAULT_SERVER
+    api_key = api_key or os.environ.get("LOOM_API_KEY")
+    if api_key:
+        return base_url, api_key, None
+    bot = machine_login(base_url)
+    if bot is not None:
+        return base_url, None, bot
+    auth = stored_login(base_url)
+    return base_url, None if auth else token_from_file(), auth
 
 
 class Agent:
@@ -91,6 +132,7 @@ class Agent:
         retry: RetryPolicy | dict[str, Any] | None = None,
         consumer: str = "",
         mentor_brief: bool | None = None,
+        profile: str | None = None,
     ) -> None:
         """The options are described in docs/reference/python-sdk.md ("Construction").
         `auto_run` (None reads `LOOM_AUTO_RUN`) is off by default because a
@@ -131,9 +173,7 @@ class Agent:
             )
         self.auto_run = bool(auto_run)
 
-        base_url = base_url or os.environ.get("LOOM_BASE_URL", "http://localhost:7777")
-        # `~/.loom/token` (what `loom mint-token --save` writes) is the last resort.
-        api_key = api_key or os.environ.get("LOOM_API_KEY") or token_from_file()
+        base_url, api_key, auth = _credentials(base_url, api_key, profile)
 
         self.transport = Transport(
             base_url=base_url,
@@ -143,6 +183,7 @@ class Agent:
             ratelimit_max_wait_s=ratelimit_max_wait_s,
             retry=retry,
             consumer=consumer,
+            auth=auth,
         )
         #: The consumer label as the transport stamps it ('' = none).
         self.consumer: str = self.transport.consumer
@@ -151,6 +192,8 @@ class Agent:
         # the same surface as the TypeScript `LoomClient`; the clients below are
         # the hand-written high-level layer.
         self.client = OpsClient(self)
+        self.account = AccountClient(self)
+        self.deployment = DeploymentClient(self)
         self.memory = MemoryClient(self)
         self.working_memory = WorkingMemoryClient(self)
         # Session briefs: a.briefs.save / get / list / delete.
@@ -381,7 +424,9 @@ class Agent:
         if cached is not None and time.monotonic() - cached.fetched_at <= max_age_s:
             return cached
         raw = await self.transport.post("/v1/ops.capabilities", {})
-        caps = Capabilities.from_response(raw, self.transport.token_claims())
+        # A bot's or a session's token may be fetched here: off the event loop.
+        claims = await asyncio.to_thread(self.transport.token_claims)
+        caps = Capabilities.from_response(raw, claims)
         self._caps = caps
         return caps
 

@@ -25,6 +25,7 @@ from server.insights.api.models_provider_setup import (
     ProviderSetupInput,
     ProviderValidation,
 )
+from server.llm import gateway
 from server.llm.anthropic import AnthropicLLMClient
 from server.llm.openai import OpenAILLMClient
 from server.observability import provider_health
@@ -92,7 +93,7 @@ async def _check(
     if provider not in ("openai", "anthropic", "gemini", "compatible"):
         check.code = "unsupported_provider"
         return check
-    if not key.strip():
+    if not key.strip() and not (provider in ("openai", "anthropic") and gateway.exchanging()):
         check.code = "missing_key"
         return check
     try:

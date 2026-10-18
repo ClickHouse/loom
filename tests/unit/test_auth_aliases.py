@@ -4,6 +4,8 @@ row, and a new human grant is written under the login handle."""
 
 from __future__ import annotations
 
+import time
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -61,6 +63,52 @@ async def test_canonical_subject_is_the_login_handle() -> None:
     assert (
         await al.canonical_subject("acme", "orphan@example.com", ch=_ch([])) == "orphan@example.com"
     )
+
+
+@pytest.mark.asyncio
+async def test_canonical_subject_reads_past_a_stale_cache() -> None:
+    # Another process linked or released the account: this one's cache still
+    # holds the old binding, which a grant must not be written under.
+    al._CACHE[("acme", "alice@acme.io")] = (time.monotonic(), ("alice@acme.io", "alice"))
+    al._CACHE[("acme", "new@acme.io")] = (time.monotonic(), ("new@acme.io",))
+    assert await al.canonical_subject("acme", "alice@acme.io", ch=_ch([])) == "alice@acme.io"
+    linked = _ch([{"owner_email": "alice", "contact_email": "new@acme.io"}])
+    assert await al.canonical_subject("acme", "new@acme.io", ch=linked) == "alice"
+
+
+@pytest.mark.asyncio
+async def test_a_grant_after_a_release_lands_under_the_address(monkeypatch) -> None:
+    from server.identity.api.models_grants import GrantsCreateInput
+    from server.identity.app import grants as grants_mod
+    from server.identity.store import grants as grants_repo
+
+    rows: list[dict] = []
+
+    async def _none(*_a, **_k) -> None:
+        return None
+
+    async def _insert(row: dict, **_k) -> None:
+        rows.append(row)
+
+    monkeypatch.setattr(grants_repo, "find_active_grant", _none)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    monkeypatch.setattr(grants_mod, "_enforce_code_ceiling", _none)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _ch([]))  # released: nothing tied
+    al._CACHE[("acme", "alice@acme.io")] = (time.monotonic(), ("alice@acme.io", "alice"))
+    await grants_mod.handle_grants_create(
+        GrantsCreateInput(org="acme", namespace="ns", subject="alice@acme.io", role="writer")
+    )
+    assert [r["subject"] for r in rows] == ["alice@acme.io"]
+
+
+@pytest.mark.asyncio
+async def test_invalidate_drops_every_read_naming_the_spellings() -> None:
+    ch = _ch([{"owner_email": "jdoe", "contact_email": "avery@example.com"}])
+    await al.subject_aliases("acme", "jdoe", ch=ch)
+    await al.subject_aliases("acme", "new@example.com", ch=_ch([]))
+    await al.subject_aliases("other", "jdoe", ch=ch)
+    al.invalidate("acme", ["Avery@Example.com", "new@example.com"])
+    assert set(al._CACHE) == {("other", "jdoe")}  # found by its spelling, or asked under it
 
 
 def test_fold_by_alias_makes_one_row_per_person_with_the_highest_role() -> None:
@@ -138,22 +186,66 @@ async def test_me_helper_pairs_only_a_named_caller(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_default_namespace_validates_the_saved_pick_against_the_pair(monkeypatch) -> None:
-    from types import SimpleNamespace
-
+async def test_mcp_default_namespace_checks_the_saved_pick_under_every_spelling(
+    monkeypatch,
+) -> None:
+    # The saved pick is checked against the caller's grant map, whose read folds
+    # every spelling the directory ties to the login (`grant_cache._read`).
+    import server.core.grant_cache as grant_cache
+    import server.identity.app.namespace_classification as nc
+    import server.identity.app.namespace_kinds as nk
     import server.transport.mcp_identity as mi
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
     from server.settings import settings
+
+    async def _none(org: str) -> frozenset[str]:
+        return frozenset()
+
+    async def _no_kinds(org: str) -> dict[str, str]:
+        return {}
+
+    async def _folded(org: str, subject: str) -> grant_cache.GrantMap:
+        # The writer grant is held under the contact email, read for the login.
+        spellings = frozenset(await _pair(org, subject))
+        return grant_cache.GrantMap(ranks={"team-x": 2}, spellings=spellings)
+
+    async def _query_one(sql: str, params: Any = None, **_: Any) -> Any:
+        return {"namespace": "team-x"} if "user_state" in sql else None
 
     monkeypatch.setattr("server.auth.aliases.subject_aliases", _pair)
     monkeypatch.setattr(type(settings), "effective_identity_provider", lambda self: "password")
+    monkeypatch.setattr(nc, "restricted_set", _none)
+    monkeypatch.setattr(nk, "kind_map", _no_kinds)
+    monkeypatch.setattr(grant_cache, "_read", _folded)
     client = AsyncMock()
-    client.query_one.side_effect = [{"namespace": "code-x"}, {"role": "writer"}]
+    client.query_one.side_effect = _query_one
+    client.query_all.return_value = []
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
-    auth = SimpleNamespace(subject="jdoe", org="acme", namespaces=("personal-jdoe",))
+    auth = AuthInfo(
+        subject="jdoe",
+        org="acme",
+        namespaces=("personal-jdoe",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+    )
     out = await mi._caller_defaults(auth, "claude-code")
-    assert out is not None and out["namespace"] == "code-x" and out["org"] == "acme"
-    validation = client.query_one.await_args_list[1]
-    sql = validation.args[0]
-    params = validation.kwargs.get("params") or validation.args[1]
-    assert "g.subject IN {subs:Array(String)}" in sql
-    assert params["subs"] == ["jdoe", "avery@example.com"] and params["ns"] == "code-x"
+    assert out is not None and out["namespace"] == "team-x" and out["org"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_the_gate_matches_a_grant_whatever_the_case_of_its_subject(monkeypatch) -> None:
+    # The cached grant maps match `lower(subject)`; the gate's own read must too.
+    from server.auth import authz
+
+    async def fake_aliases(org, subject, ch=None):
+        return [subject, "Avery@Example.com"]
+
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", fake_aliases)
+    client = AsyncMock()
+    client.query_one.return_value = {"role": "writer"}
+    monkeypatch.setattr("server.core.ch.get_client", lambda: client)
+    assert await authz.grant_role_for("acme", "team", "JDoe") is authz.Role.WRITER
+    sql = client.query_one.await_args.args[0]
+    assert "lower(subject) IN {subs:Array(String)}" in sql
+    assert client.query_one.await_args.kwargs["params"]["subs"] == ["jdoe", "avery@example.com"]

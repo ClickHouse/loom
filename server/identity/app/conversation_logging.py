@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from server.auth.grant_claims import account_change
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.store import namespaces as namespaces_repo
 
@@ -16,19 +17,24 @@ async def set_conversation_logging(org: str, namespace: str, enabled: bool) -> N
     from server.core.ch import get_client
 
     ch = get_client()
-    existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
-    now = naive_utc_now_seconds()
-    row = (
-        dict(existing)
-        if existing is not None
-        else {
-            "org": org,
-            "namespace": namespace,
-            "active": True,
-            "visibility": "private",
-            "created_at": now,
-        }
-    )
-    row["conversation_logging_enabled"] = enabled
-    row["updated_at"] = now
-    await ch.insert("loom.namespaces", [row])
+    async with account_change(org, namespace):  # a release must not be written back over
+        existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
+        if existing is None:
+            from server.identity.app.namespace import refuse_sso_name
+
+            refuse_sso_name(namespace)
+        now = naive_utc_now_seconds()
+        row = (
+            dict(existing)
+            if existing is not None
+            else {
+                "org": org,
+                "namespace": namespace,
+                "active": True,
+                "visibility": "private",
+                "created_at": now,
+            }
+        )
+        row["conversation_logging_enabled"] = enabled
+        row["updated_at"] = now
+        await ch.insert("loom.namespaces", [row])

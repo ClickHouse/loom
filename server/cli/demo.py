@@ -39,6 +39,7 @@ from server.cli._client import (
     get_json,
     jwt_claims,
     post_op,
+    refused_for_agent,
     resolve_token,
 )
 from server.core.paths import REPO_ROOT
@@ -269,6 +270,8 @@ def _print_hits_only(hits: list[dict[str, Any]], question: str, *, fake_llm: boo
 
 def _cmd_demo(args: argparse.Namespace) -> int:
     token, token_from = resolve_token(args.token)
+    if refused_for_agent(token_from):
+        return 2
     org, namespace = resolve_identity(args, token)
     base_url = args.base_url.rstrip("/")
 

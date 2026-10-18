@@ -46,7 +46,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from server.cli._client import default_base_url, error_line, jwt_claims, resolve_token
+from server.cli._client import (
+    default_base_url,
+    error_line,
+    jwt_claims,
+    refused_for_agent,
+    resolve_token,
+)
 from server.core.datetimes import naive_utc_now as _now
 from server.core.datetimes import to_naive_utc
 from server.core.hashing import sha256_value
@@ -82,7 +88,9 @@ _BULK_FIELDS = ["valid_to", "source_class"]
 
 
 def _resolve_token(args: argparse.Namespace) -> str:
-    token, _ = resolve_token(args.token)
+    token, source = resolve_token(args.token)
+    if refused_for_agent(source):
+        sys.exit(2)
     if not token:
         print(
             "No token: pass --token, set $LOOM_API_KEY, or write one to ~/.loom/token",

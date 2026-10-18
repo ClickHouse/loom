@@ -139,6 +139,27 @@ async def test_the_handler_writes_the_whole_stored_row_forward(
     assert out.visibility == "public", "the answer names the stored visibility"
 
 
+async def test_a_new_namespace_may_not_take_an_sso_account_name(monkeypatch) -> None:
+    """With JIT on, `u-…` names are the ones single sign-on creates from an
+    email: made first by someone else, the person's first sign-in would land
+    in it. (Without JIT the prefix is an ordinary name.)"""
+    from server.core.errors import ValidationError
+
+    async def no_row(*a: Any, **kw: Any) -> None:
+        return None
+
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "oidc_jit_provision", True)
+    monkeypatch.setattr(h, "get_client", lambda: object())
+    monkeypatch.setattr(h, "resolve_subject", lambda: "mallory")
+    monkeypatch.setattr(h.namespaces_repo, "fetch_row", no_row)
+    with pytest.raises(ValidationError, match="reserved"):
+        await h.handle_namespace_register(
+            NamespaceRegisterInput(org="o", namespace="u-bob-1234abcd", owner_email="m@x")
+        )
+
+
 def test_the_same_owner_keeps_the_login() -> None:
     existing = _existing(owner_email="o@x", contact_email="o@x.io", password_hash="h")
     row = _row(existing)

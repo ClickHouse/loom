@@ -86,6 +86,8 @@ class HealthState:
     ch_reader_ok: bool | None = None
     # ClickHouse's answer when that read failed.
     ch_reader_error: str = ""
+    # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
+    oauth_signin_state_full: bool = False
     # Provider participants this process's last sweep could not retire
     # (`provider_barrier.stale_participants()`): None = not swept yet.
     stale_participants: tuple[Mapping[str, str], ...] | None = None
@@ -95,6 +97,13 @@ class HealthState:
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
+
+
+def _exchanging() -> bool:
+    """Model calls take a gateway token instead of a provider key (server/llm/gateway.py)."""
+    from server.llm import gateway
+
+    return gateway.exchanging()
 
 
 def _embedder_key_envs(provider: str) -> tuple[str, ...]:
@@ -156,6 +165,7 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
     else:
         keys = _embedder_key_envs(provider)
         missing = keys and not state.saved_keys.get(provider, any(state.env.get(k) for k in keys))
+        missing = missing and not (provider == "openai" and _exchanging())
         if missing:
             out.append(
                 Problem(
@@ -219,7 +229,9 @@ def _llm_problems(settings: Any, state: HealthState) -> list[Problem]:
             )
         ]
     key_env = _llm_key_env(provider)
-    if key_env and not state.saved_keys.get(provider, bool(state.env.get(key_env))):
+    if key_env and not (
+        state.saved_keys.get(provider, bool(state.env.get(key_env))) or _exchanging()
+    ):
         # Say how the provider was chosen — an inferred openai
         # with no key is the case worth naming.
         how = (
@@ -708,6 +720,27 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """A full claims table turns new sign-ins away until the sweep frees keys.
+    Nothing to say where sign-in is not mounted (auth off, no MCP connect)."""
+    if not (settings.auth_actually_required() or settings.oauth_enabled):
+        return []
+    if not state.oauth_signin_state_full:
+        return []
+    return [
+        Problem(
+            "oauth_signin_state_full",
+            "warn",
+            "loom.oauth_signin_state reached its key limit (seen by this process), so new "
+            "codes, device sign-ins and sessions answer 503 until keys expire; they are "
+            "swept every five minutes.",
+            "Rate-limit /oauth/device_authorization, /oauth/device and /oauth/callback by "
+            "network at the proxy; the server log names an address it refused each minute.",
+            source="runtime",
+        )
+    ]
+
+
 def _participant_problems(state: HealthState) -> list[Problem]:
     """A provider reconfiguration waits on every participant it cannot count as stopped."""
     if not state.stale_participants:
@@ -753,6 +786,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _drift_problems(st)
         + _sandbox_problems(settings, st)
         + _reader_user_problems(settings, st)
+        + _oauth_claim_problems(settings, st)
         + _participant_problems(st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))

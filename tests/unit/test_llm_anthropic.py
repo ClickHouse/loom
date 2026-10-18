@@ -23,7 +23,7 @@ class _Response:
         self._data = data
         self.status_code = status
         self.text = str(data)
-        self.request = httpx.Request("POST", anthropic_mod._ENDPOINT)
+        self.request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -72,8 +72,9 @@ async def test_complete_payload_shape(monkeypatch: pytest.MonkeyPatch, keyed) ->
     result = await client.complete("be terse", "say hello", max_tokens=256)
 
     call = stub.calls[0]
-    assert call["url"] == anthropic_mod._ENDPOINT
+    assert call["url"] == "https://api.anthropic.com/v1/messages"
     assert call["headers"]["x-api-key"] == "test-key"
+    assert "Authorization" not in call["headers"]  # Anthropic itself takes only x-api-key
     assert call["headers"]["anthropic-version"] == anthropic_mod._API_VERSION
     body = call["json"]
     assert body["model"] == "claude-haiku-4-5"
