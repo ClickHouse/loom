@@ -105,7 +105,8 @@ key in the namespace, whoever wrote it. Extraction mints keys from the subject a
 attribute, never from the value, so a later session that states the same attribute lands
 on the same key. Under any other policy, the conflict resolver judges the rows of one key
 that two sessions of the same user (for the anonymous user `-`, the same agent) wrote,
-as it judges any close pair: it flags a contradiction for review and leaves two
+as it judges any close pair: it retires the older row of an update it is sure of
+(except under `manual_review`), flags a contradiction for review and leaves two
 different facts under a reused key live.
 
 ## Memory types
@@ -202,7 +203,8 @@ carries `conflict_verdict`, up to five `peers`, and a `next` hint.
 - **The conflict resolver.** Cosine says two statements are about the same thing, not
   whether they agree. A leader-only worker judges each write with a close peer after it
   lands, one LLM call per row: it retires the older row of an update it is sure of under
-  `newest_wins`, flags a contradiction, and clears a false flag
+  the default `auto_reinforce` and under `newest_wins` (the old value stays readable
+  with `include_superseded` and `as_of`), flags a contradiction, and clears a false flag
   ([conflicts](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)). No
   verdict on the write itself calls an LLM.
 - **Run scope.** A write under a `run_id` whose canonical match belongs to another run is

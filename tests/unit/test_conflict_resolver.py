@@ -37,13 +37,16 @@ def _action(v: Any, policy: str = "newest_wins") -> str:
     return cr.action_for(v, policy=policy, retire_at=0.95, clear_at=0.90)
 
 
-def test_an_update_retires_only_at_the_retire_confidence_under_newest_wins() -> None:
-    assert _action(_v("update", 0.97)) == cr.RETIRE
-    assert _action(_v("update", 0.95)) == cr.RETIRE
+@pytest.mark.parametrize("policy", ["newest_wins", "auto_reinforce"])
+def test_an_update_retires_only_at_the_retire_confidence(policy: str) -> None:
+    assert _action(_v("update", 0.97), policy) == cr.RETIRE
+    assert _action(_v("update", 0.95), policy) == cr.RETIRE
     # Between the two thresholds an update goes to review, never to a retirement.
-    assert _action(_v("update", 0.92)) == cr.FLAG
-    # Under any other policy an update is a flag at any confidence.
-    assert _action(_v("update", 0.99), "auto_reinforce") == cr.FLAG
+    assert _action(_v("update", 0.92), policy) == cr.FLAG
+
+
+def test_an_update_under_manual_review_is_a_flag_at_any_confidence() -> None:
+    assert _action(_v("update", 0.99), "manual_review") == cr.FLAG
 
 
 def test_a_contradiction_flags_and_compatible_verdicts_clear() -> None:
@@ -518,7 +521,9 @@ async def test_an_update_whose_peer_was_not_asserted_first_is_flagged(
     ("answer", "policy", "want"),
     [
         (_entry("p1", "update", 0.93), "newest_wins", cr.FLAG),
-        (_entry("p1", "update", 0.99), "auto_reinforce", cr.FLAG),
+        (_entry("p1", "update", 0.99), "auto_reinforce", cr.RETIRE),
+        (_entry("p1", "update", 0.92), "auto_reinforce", cr.FLAG),
+        (_entry("p1", "update", 0.99), "manual_review", cr.FLAG),
         (_entry("p1", "contradiction", 0.91), "newest_wins", cr.FLAG),
         (_entry("p1", "elaboration", 0.95), "newest_wins", cr.CLEAR),
     ],

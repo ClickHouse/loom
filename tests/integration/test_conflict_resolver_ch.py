@@ -911,10 +911,10 @@ async def test_a_flagged_pair_is_judged_once_from_both_sides(ch, wired, monkeypa
 
     org, llm = wired
 
-    async def auto(org: str, namespace: str, ch: Any = None) -> str:
-        return "auto_reinforce"
+    async def review(org: str, namespace: str, ch: Any = None) -> str:
+        return "manual_review"  # the update is flagged, not retired
 
-    monkeypatch.setattr(conflicts, "namespace_conflict_policy", auto)
+    monkeypatch.setattr(conflicts, "namespace_conflict_policy", review)
     await _pair(ch, org, "office_city", "office_location", 68)
     out = await run_pass()
     rows = await _rows(ch, org)
@@ -1429,3 +1429,93 @@ async def test_a_key_held_in_thousands_of_sessions_is_read_within_bounds(ch, wir
         assert out["errored"] == 0 and llm.calls == ["office_location"], out
     finally:
         await _drop_vectors(ch, org, NS, "office_location")
+
+
+def _policy(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    from server.memory.app import conflicts
+
+    async def policy(org: str, namespace: str, ch: Any = None) -> str:
+        return name
+
+    monkeypatch.setattr(conflicts, "namespace_conflict_policy", policy)
+
+
+@pytest.mark.parametrize(
+    ("policy", "confidence", "want"),
+    [
+        ("auto_reinforce", 0.97, "retired"),
+        ("auto_reinforce", 0.92, "flagged"),
+        ("manual_review", 0.99, "flagged"),
+        ("append_only", 0.99, None),
+    ],
+)
+async def test_the_policy_decides_whether_an_update_retires_or_flags(
+    ch, wired, monkeypatch, policy: str, confidence: float, want: str | None
+) -> None:
+    """The default policy retires the older row on a confident update, as newest_wins
+    does; below the retire confidence, and under manual_review, the pair is flagged;
+    under append_only nothing is judged."""
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    _policy(monkeypatch, policy)
+    monkeypatch.setitem(_SCRIPT, "office_location", ("update", confidence))
+    await _pair(ch, org, "office_city", "office_location", 200)
+    before = await _rows(ch, org)
+    out = await run_pass()
+    rows = await _rows(ch, org)
+    old = rows["office_city"]
+    records = await _audit(ch, org, "memory.auto_supersede")
+    if want == "retired":
+        assert out["retired"] == 1 and out["flagged"] == 0, out
+        assert (old["status"], old["superseded_by"]) == (
+            "superseded",
+            rows["office_location"]["id"],
+        )
+        (record,) = records
+        assert record["reason"] == "conflict_resolver"
+        assert [e["memory_id"] for e in record["retired"]] == [old["id"]]
+    elif want == "flagged":
+        assert out["retired"] == 0 and out["flagged"] == 1, out
+        assert old["status"] == "conflicted" and records == []
+    else:
+        assert llm.calls == [] and out["retired"] == out["flagged"] == 0, out
+        assert {k: (r["status"], r["version"]) for k, r in rows.items()} == {
+            k: (r["status"], r["version"]) for k, r in before.items()
+        }
+        assert records == []
+
+
+async def test_an_undone_retirement_is_not_retired_again_by_the_next_pass(
+    ch, wired, monkeypatch
+) -> None:
+    """Under the default policy the resolver retires the older row; the Undo brings it
+    back, and the next pass neither judges the pair again nor retires it."""
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app.restore import handle_memory_restore
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+    _policy(monkeypatch, "auto_reinforce")
+    await _pair(ch, org, "office_city", "office_location", 202)
+    assert (await run_pass())["retired"] == 1
+    rows = await _rows(ch, org)
+    winner = rows["office_location"]["id"]
+    undone = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key="office_city",
+            if_superseded_by=winner,
+        )
+    )
+    assert undone.restored
+    calls = len(llm.calls)
+    out = await run_pass()
+    after = await _rows(ch, org)
+    assert after["office_city"]["status"] == "active", "the Undo holds"
+    assert out["judged"] == 0 and out["retired"] == 0 and len(llm.calls) == calls, out
+    assert len(await _audit(ch, org, "memory.auto_supersede")) == 1

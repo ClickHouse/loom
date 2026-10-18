@@ -220,15 +220,20 @@ answers for it, so rows stay owed while the model is down.
 | ---------------------------------------------------------------- | ------------ | --------------------------------------- |
 | `update` or `contradiction` with a different entity or attribute | any          | nothing (the answer contradicts itself) |
 | any                                                              | below 0.90   | nothing                                 |
-| `update`, namespace `newest_wins`                                | 0.95 or more | retire the peer if stated first         |
-| `update` (0.90 to 0.95, or any other policy), `contradiction`    | 0.90 or more | flag both rows `conflicted` for review  |
+| `update`, namespace `auto_reinforce` or `newest_wins`            | 0.95 or more | retire the peer if stated first         |
+| `update` (0.90 to 0.95, or `manual_review`), `contradiction`     | 0.90 or more | flag both rows `conflicted` for review  |
 | `elaboration`, `restatement`, `related`, `unrelated`             | 0.90 or more | clear a flag between the pair           |
 
 The two thresholds are `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` (0.95) and
 `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` (0.90). On held-out pairs, update
 precision was 0.98 to 1.00 at 0.95, and clear precision 0.96 to 0.98 at 0.90; the
 0.90 to 0.95 band was only 80% right, so an update there goes to review. A peer the
-answer leaves out, or an answer that cannot be parsed, changes nothing.
+answer leaves out, or an answer that cannot be parsed, changes nothing. The default
+`auto_reinforce` retires as `newest_wins` does: in agent use nobody works the Review
+queue, so a flagged update would leave search serving the stale value, while a
+retirement is recorded, undoable, and its history stays readable with
+`include_superseded` and `as_of`. Under `manual_review` an update only flags, and an
+`append_only` row is never judged.
 
 **Acting.** An update says the judged row (NEW) makes the peer stale, so only the peer
 retires, and only when it was asserted strictly first: each row is ordered by the
@@ -264,7 +269,12 @@ actions, verdicts and confidences, never the text.
   mark; every resolver write (supersede, flag, clear) lands at the read version + 1, so
   a write that started after the read, locked or not, stays newest, and a retirement it
   overtook records nothing.
+- Only `auto_reinforce` and `newest_wins` retire; `manual_review` only flags, and
+  `append_only` is never judged.
 - A pinned row is never retired, flagged or cleared; a lock that refuses retirement holds.
+- An Undo (`memory.restore`) keeps the restored row's content hash, so it stays the older
+  statement, and leaves both rows unowed: the next pass does not judge the pair again.
+  A later write of either row carries its own mark and is judged afresh.
 - A row is stamped judged only after its actions. A pass cut short judges it again, and
   acting twice changes nothing: a retired row is no longer live, an existing flag is left
   as it is, and a cleared flag has nothing left to clear.

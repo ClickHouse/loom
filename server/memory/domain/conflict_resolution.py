@@ -29,6 +29,10 @@ FLAG = "flag"
 CLEAR = "clear"
 NOTHING = "nothing"
 
+# The policies under which a confident update retires the older row; `manual_review`
+# only flags it, and `append_only` is never judged.
+RETIRING_POLICIES = ("newest_wins", "auto_reinforce")
+
 # A value is cut to this many characters in the prompt.
 MAX_VALUE_CHARS = 700
 
@@ -224,7 +228,7 @@ def action_for(v: PeerVerdict, *, policy: str, retire_at: float, clear_at: float
 
     An update or contradiction about a different entity or attribute contradicts
     itself: nothing changes. Below `clear_at` nothing changes either. An update retires the
-    older row only under `newest_wins` and at `retire_at` or above; any other
+    older row under `newest_wins` and `auto_reinforce` at `retire_at` or above; any other
     update, and a contradiction, goes to the review queue. Every compatible
     verdict clears."""
     verdict = v.verdict
@@ -233,7 +237,7 @@ def action_for(v: PeerVerdict, *, policy: str, retire_at: float, clear_at: float
     if v.confidence < clear_at:
         return NOTHING
     if verdict == UPDATE:
-        return RETIRE if policy == "newest_wins" and v.confidence >= retire_at else FLAG
+        return RETIRE if policy in RETIRING_POLICIES and v.confidence >= retire_at else FLAG
     if verdict == CONTRADICTION:
         return FLAG
     return CLEAR

@@ -1,9 +1,10 @@
 """The conflict resolver over one user's long run of sessions, against ClickHouse,
 with a scripted judge.
 
-Twelve sessions write about sixty facts into a `newest_wins` namespace through
-`memory.set` (odd sessions) and `memory.bulk_set` (even sessions), each a week
-apart. Six attributes change once or twice, each change under a new key and in
+Twelve sessions write about sixty facts into a namespace, once under `newest_wins`
+and once under the default `auto_reinforce` (both retire on a confident update),
+through `memory.set` (odd sessions) and `memory.bulk_set` (even sessions), each a
+week apart. Six attributes change once or twice, each change under a new key and in
 new words; other facts are restated, elaborated, or sit near a different fact;
 one pinned fact is contradicted later; one fact is deleted and brought back
 with Undo; the rest are unrelated (`bench/conflict_resolver_scenario.py`, the
@@ -163,8 +164,8 @@ class Run:
     written: dict[str, int] = field(default_factory=dict)  # key -> version at its write
 
 
-@pytest.fixture
-async def run(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
+@pytest.fixture(params=["newest_wins", "auto_reinforce"])
+async def run(ch, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Any:
     import server.embedding.embedder as embedder_mod
     import server.llm.client as llm_client
     from server.memory.store import conflict_resolver as queue
@@ -181,11 +182,11 @@ async def run(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(
         queue, "unjudged_conflicted_rows", lambda **kw: recheck(**kw, ch=_OnlyOrg(ch, org))
     )
-    await _register_newest_wins(org)
+    await _register(org, request.param)
     return Run(org, judge)
 
 
-async def _register_newest_wins(org: str) -> None:
+async def _register(org: str, policy: str) -> None:
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo
     from server.identity.api.models import NamespaceRegisterInput
@@ -207,7 +208,7 @@ async def _register_newest_wins(org: str) -> None:
                 org=org,
                 namespace=NS,
                 owner_email="it@example.com",
-                default_conflict_policy="newest_wins",
+                default_conflict_policy=policy,
             )
         )
     finally:

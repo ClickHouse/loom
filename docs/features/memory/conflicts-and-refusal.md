@@ -59,15 +59,15 @@ first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>,
 
 `namespace.register` takes `default_conflict_policy`:
 
-| Policy                     | Behaviour                                                                                                                                                                                                      |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto_reinforce` (default) | Conflicts are flagged; both facts stay live until resolved. The conflict resolver may clear a flag or flag a pair, never retire a row. Two sessions' rows of one key are judged as peers.                      |
-| `manual_review`            | The same: both stay live and the pair waits for review.                                                                                                                                                        |
-| `newest_wins`              | A templated substitution, or an update the conflict resolver is sure of, retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it. |
-| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                            |
+| Policy                     | Behaviour                                                                                                                                                                                                                                 |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto_reinforce` (default) | Conflicts are flagged; both facts stay live until resolved. An update the conflict resolver is sure of retires the older row as `superseded` (history kept); it flags other conflicts. Two sessions' rows of one key are judged as peers. |
+| `manual_review`            | Both stay live and the pair waits for review: the conflict resolver flags or clears, never retires.                                                                                                                                       |
+| `newest_wins`              | A templated substitution, or an update the conflict resolver is sure of, retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it.                            |
+| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                                                       |
 
-Superseded rows are served only to reads that pass `include_superseded=true`, and a
-served one names its successor.
+Superseded rows are served only to reads that pass `include_superseded=true` (or an
+`as_of` read of a time they held), and a served one names its successor.
 
 ### Pinned facts
 
@@ -127,9 +127,10 @@ is real), a leader-only worker judges each write that has a live peer of its typ
 0.60 or more, or was flagged `conflicted`, against up to eight such peers in one call to
 `LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`). Per pair:
 
-- an update it is sure of (confidence 0.95 or more) under `newest_wins` retires the older
-  row, recorded for Undo (reason `conflict_resolver`), when the older row's value was
-  asserted first (to the nanosecond); otherwise the pair is flagged;
+- an update it is sure of (confidence 0.95 or more) under `auto_reinforce` (the default)
+  or `newest_wins` retires the older row, recorded for Undo (reason `conflict_resolver`),
+  when the older row's value was asserted first (to the nanosecond); otherwise the pair
+  is flagged. Under `manual_review` it is flagged;
 - any other update, and a contradiction, at 0.90 or more flags both rows for review;
 - a compatible pair (elaboration, restatement, related, unrelated) at 0.90 or more has its
   flag cleared;
@@ -296,7 +297,7 @@ not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md
 | `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`           | real provider: true; fake: false | The background conflict resolver; an explicit value wins. Without its model's key, writes wait owed. |
 | `LOOM_CONFLICT_RESOLVER_MODEL`                    | gpt-6.1-sol                      | The resolver's judge.                                                                                |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY`    | 0.60                             | Lowest cosine that marks a write and joins its cluster.                                              |
-| `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | 0.95                             | An update retires its predecessor (`newest_wins`) at this confidence.                                |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | 0.95                             | An update retires its predecessor (`auto_reinforce`, `newest_wins`) at this confidence.              |
 | `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE`  | 0.90                             | Below it nothing changes; at it a compatible pair clears and a contradiction flags.                  |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`            | 200                              | Entries per `memory.bulk_set` checked; 0 = none.                                                     |
 | `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS`   | 2.0                              | Cross-replica pattern refresh bound.                                                                 |
