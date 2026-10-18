@@ -4,11 +4,11 @@ per-call ledger rows.
 Builds the `tools/list` descriptors (registry-derived + synthetic), renders
 the `search.query` op's result as the `loom_search` tool answers it (a text
 summary plus the lean sections), and writes a call's ledger row
-(`_emit_mcp_event`) or a refusal's before dispatch (`emit_refusal`, which
-resets the call's state through ``mcp_call.begin_call``). Imports from
-``mcp_config`` / ``mcp_schemas`` / ``mcp_identity`` / ``mcp_descriptions``
-and the operations registry at module level, ``mcp_call`` only inside
-`emit_refusal`, and never ``server.transport.mcp``.
+(`_emit_mcp_event`) or a refusal's before dispatch (`emit_refusal`, built in
+a copy of the request context from a reset state, so the caller's is left
+as it was). Imports from ``mcp_config`` / ``mcp_schemas`` / ``mcp_identity``
+/ ``mcp_descriptions`` and the operations registry at module level,
+``mcp_call`` only inside `_emit_refusal`, and never ``server.transport.mcp``.
 """
 
 from __future__ import annotations
