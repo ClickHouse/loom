@@ -270,7 +270,7 @@ async def test_a_long_thread_is_tombstoned_in_chunks() -> None:
             self.executed: list[tuple[str, dict[str, Any]]] = []
 
         async def query_all(self, sql: str, params: dict[str, Any] | None = None):
-            return [{"msg_id": m} for m in due]
+            return [{"embedding_model": "fake", "msg_id": m} for m in due]
 
         async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any):
             self.executed.append((sql, params or {}))
@@ -281,4 +281,4 @@ async def test_a_long_thread_is_tombstoned_in_chunks() -> None:
     )
     chunks = [p["due"] for sql, p in ch.executed if "conversation_embeddings" in sql]
     assert [len(c) for c in chunks] == [repo._TOMBSTONE_CHUNK, repo._TOMBSTONE_CHUNK, 5]
-    assert sum(chunks, []) == due
+    assert [m for _, m in sum(chunks, [])] == due

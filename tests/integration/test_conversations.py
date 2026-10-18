@@ -599,3 +599,59 @@ async def test_a_deleted_turn_leaves_search_when_a_peer_reused_its_msg_id(
     )
     hits = await agent.conversations.search(f"walrus mine {nonce}", thread_id=tid, agent_id="*")
     assert not [h for h in hits["hits"] if "walrus" in h["content_excerpt"]], hits["hits"]
+
+
+@pytest.mark.asyncio
+async def test_a_delete_keeps_another_models_row_a_peer_holds(
+    agent, control_plane_url: str, ch_client, mint_test_token
+) -> None:
+    """During a re-embed a turn has a row per model, and each row's text decides on its
+    own: this agent's text left under the old model goes with its delete, while the
+    current model's row, which now holds a peer's turn under the same msg_id, stays."""
+    tid = f"thr-{uuid.uuid4().hex[:6]}"
+    nonce = uuid.uuid4().hex[:10]
+    mid = "1"
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": mid, "role": "user", "content": f"lynx mine {nonce}"},
+        idempotency_key=uuid.uuid4().hex,
+    )
+    params = {"org": agent.org, "ns": agent.namespace, "tid": tid}
+    ch_client.command(
+        "INSERT INTO loom.conversation_embeddings "
+        "SELECT * REPLACE ('old-model' AS embedding_model) "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String}",
+        parameters=params,
+    )
+    await agent.call(
+        "conversation.append",
+        {"thread_id": tid, "msg_id": mid, "role": "user", "content": f"marten peer {nonce}"},
+        agent_id=f"{agent.agent}-peer",
+        idempotency_key=uuid.uuid4().hex,
+    )
+
+    await _admin_post(
+        mint_test_token,
+        agent,
+        control_plane_url,
+        "conversation.delete",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "thread_id": tid,
+            "confirm_thread_id": tid,
+        },
+    )
+    rows = ch_client.query(
+        "SELECT embedding_model = 'old-model', content_excerpt, tombstoned_at IS NULL "
+        "FROM loom.conversation_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String} "
+        "ORDER BY embedding_model = 'old-model'",
+        parameters=params,
+    ).result_rows
+    assert [tuple(r) for r in rows] == [
+        (False, f"marten peer {nonce}", True),  # the peer's turn, current model: live
+        (True, f"lynx mine {nonce}", False),  # this agent's text, old model: tombstoned
+    ]

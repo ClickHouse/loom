@@ -785,7 +785,7 @@ async def _tombstone_embeddings(
         params["ids"] = msg_ids
     rows = await ch.query_all(
         f"""
-        SELECT DISTINCT msg_id FROM loom.conversation_embeddings FINAL
+        SELECT DISTINCT embedding_model, msg_id FROM loom.conversation_embeddings FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND thread_id = {{tid:String}} AND tombstoned_at IS NULL
           AND {turns}
@@ -799,7 +799,9 @@ async def _tombstone_embeddings(
         """,
         params={**params, "embedded": EMBEDDED_EXCERPT_CHARS},
     )
-    due = [str(r["msg_id"]) for r in rows]
+    # One (model, turn) row at a time: during a re-embed a turn has a row per model,
+    # and each row's text decides on its own whether another agent still holds it.
+    due = [(str(r["embedding_model"]), str(r["msg_id"])) for r in rows]
     for i in range(0, len(due), _TOMBSTONE_CHUNK):
         await ch.execute(
             """
@@ -807,7 +809,7 @@ async def _tombstone_embeddings(
             UPDATE tombstoned_at = {now:DateTime}
             WHERE org = {org:String} AND namespace = {ns:String}
               AND thread_id = {tid:String} AND tombstoned_at IS NULL
-              AND msg_id IN {due:Array(String)}
+              AND (embedding_model, msg_id) IN {due:Array(Tuple(String, String))}
             SETTINGS mutations_sync = 2
             """,
             params={
