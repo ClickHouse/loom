@@ -176,7 +176,12 @@ function ConflictsPanel() {
   // count and the cursor are the queue's too: none of them carries over.
   const queueKey = `${identity.org}/${identity.namespace}`;
   const [queueFor, setQueueFor] = useState(queueKey);
+  // The visit to this namespace a decision or a Load more was made in, for an answer that
+  // lands after: it changes nothing here, its busy flags included. A count, not the name:
+  // a switch away and back is another visit.
+  const rowsFor = useRef(0);
   if (queueFor !== queueKey) {
+    rowsFor.current += 1;
     setQueueFor(queueKey);
     setRows(null);
     setTotal(null);
@@ -186,9 +191,6 @@ function ConflictsPanel() {
     setBusy(false);
     setLoadingMore(false);
   }
-  // The namespace a decision or a Load more was made in, for an answer that lands after:
-  // it changes nothing here, its busy flags included.
-  const rowsFor = useRef(queueKey);
   // The last page removes Load more, which held the focus: it goes to the first conflict
   // that page added, else the last one in the queue.
   const queueBox = useRef<HTMLDivElement>(null);
@@ -196,7 +198,6 @@ function ConflictsPanel() {
 
   useAbortableEffect(
     (signal, live) => {
-      rowsFor.current = queueKey;
       focusAdded.current = null;
       setError(null);
       listConflicts({ org: identity.org, namespace: identity.namespace }, { limit: CONFLICT_PAGE, signal })

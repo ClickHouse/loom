@@ -168,7 +168,32 @@ describe("ReviewQueue", () => {
     await act(async () => answerA({ resolved: true, affected_memory_ids: [] }));
     // B's decision is still out: its buttons stay held, so it cannot be sent twice.
     expect(screen.getByRole("button", { name: /Keep A/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
     expect(vi.mocked(resolveConflict).mock.calls.length - sent).toBe(2);
+  });
+
+  it("an answer from an earlier visit to this namespace frees none of its controls after a switch away and back", async () => {
+    vi.mocked(listConflicts).mockImplementation(async (id) =>
+      id.namespace === "ns-b"
+        ? { rows: [conflict("b/key")], next_before_version: null }
+        : { rows: [conflict("a/x"), conflict("a/y")], next_before_version: null },
+    );
+    let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
+    vi.mocked(resolveConflict)
+      .mockImplementationOnce(() => new Promise((r) => (answerFirst = r)))
+      .mockImplementationOnce(() => new Promise(() => {}));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of a/x", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
+    seed("ns-b");
+    await screen.findByText("value of b/key", {}, WAIT);
+    seed("ns-a");
+    await screen.findByText("value of a/x", {}, WAIT);
+    await userEvent.click(screen.getByRole("button", { name: /Drop A/ }));
+    expect(screen.getByRole("button", { name: /Keep A/ })).toBeDisabled();
+    await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
+    expect(screen.getByRole("button", { name: /Keep A/ })).toBeDisabled();
   });
 
   it("a Load more answered after a namespace switch adds nothing to the new namespace's queue", async () => {
