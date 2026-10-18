@@ -211,14 +211,23 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
 def test_mcp_refusals_before_dispatch_are_ledgered_as_the_token_alone(monkeypatch) -> None:
     """Refused before the caller is bound: each row is the token's org,
     subject and consumer with `-` for the rest and no arguments, whatever the
-    call named, and carries nothing a batch's previous entry left behind."""
+    call named, and carries nothing a batch's previous entry left behind.
+    Run in a copied context: the request state it binds must not reach the
+    next test."""
+    import contextvars
+
+    contextvars.copy_context().run(_mcp_refusals_before_dispatch, monkeypatch)
+
+
+def _mcp_refusals_before_dispatch(monkeypatch) -> None:
     import asyncio
 
     from server.auth.jwt import AuthInfo
     from server.observability import consumer, cost_accumulator, events
     from server.observability.run_context import set_ledger_run
     from server.operations.base import Role
-    from server.transport import mcp_auth, mcp_call, mcp_op
+    from server.transport import access_refusal, mcp_auth, mcp_call, mcp_op
+    from server.transport import namespace_resolve as nr
 
     emitted: list = []
 
@@ -264,7 +273,36 @@ def test_mcp_refusals_before_dispatch_are_ledgered_as_the_token_alone(monkeypatc
             auth=eve,
         )[1],
     ]
+    # loom_op naming another org reaches the screen; a code index the token
+    # may not read, and a namespace no index has.
+    refusals += [
+        lambda: asyncio.run(
+            mcp_auth._screen_tool_call(
+                mcp_op.route(
+                    _call("loom_op", {"op": "memory.set", "arguments": dict(named)}),
+                    toolset=None,
+                    auth=eve,
+                )[0],
+                eve,
+            )
+        ),
+        lambda: asyncio.run(
+            mcp_auth._screen_tool_call(
+                _call("loom_code_search", {"namespace": "code-x", "query": "q"}), eve
+            )
+        ),
+        lambda: asyncio.run(
+            mcp_auth._screen_tool_call(
+                _call("loom_code_search", {"namespace": "nope", "query": "q"}), eve
+            )
+        ),
+    ]
     monkeypatch.setattr(mcp_auth, "_may_read", _no)
+    monkeypatch.setattr(nr, "known_namespaces", lambda org: {"code-x"})
+    monkeypatch.setattr(nr, "match", lambda *a, **k: None)
+    monkeypatch.setattr(nr, "default_branches", lambda org: {})
+    monkeypatch.setattr(nr, "suggestable", lambda *a: [])
+    monkeypatch.setattr(access_refusal, "reason_fields", lambda ns: {})
     for refuse in refusals:
         _previous_entry()
         assert refuse()
@@ -277,6 +315,9 @@ def test_mcp_refusals_before_dispatch_are_ledgered_as_the_token_alone(monkeypatc
         ("blacklist.remove", "OP_NOT_ON_MCP"),
         ("blacklist.remove", "OP_NOT_ON_MCP"),
         ("memory.set", "UNKNOWN_OP"),
+        ("memory.set", "ORG_MISMATCH"),
+        ("code.search", "AUTH_INSUFFICIENT"),
+        ("code.search", "UNKNOWN_NAMESPACE"),
     ]
     for e in emitted:
         assert (e.org, e.namespace, e.agent, e.user_id, e.session_id) == (
@@ -293,6 +334,8 @@ def test_mcp_refusals_before_dispatch_are_ledgered_as_the_token_alone(monkeypatc
 
 
 def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypatch) -> None:
+    import pytest
+
     from server.auth.jwt import AuthInfo
     from server.operations.base import Role
     from server.operations.registry import OPERATIONS_BY_NAME
@@ -308,6 +351,10 @@ def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypat
         call = http._HttpCall("r", raw_body={"org": org, "namespace": "n"}, auth=eve)
         http._refuse(op, call, 403, "AUTH_INSUFFICIENT")
     assert [(b["org"], b["namespace"]) for b in bodies] == [("eve-org", "-"), ("eve-org", "n")]
+    # A body the input model refuses (no memory_key) names another org too.
+    with pytest.raises(HTTPException):
+        http._validate_payload(op, "r", {"org": "acme", "namespace": "n"}, eve)
+    assert (bodies[-1]["org"], bodies[-1]["namespace"]) == ("eve-org", "-")
     # The unknown-argument refusal before authorization shares it; open mode keeps the body.
     assert http._refused_body({"org": "acme", "namespace": "n"}, eve)["org"] == "eve-org"
     assert http._refused_body({"org": "acme", "namespace": "n"}, None)["org"] == "acme"

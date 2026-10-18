@@ -224,7 +224,7 @@ async def _read_body(
     if not isinstance(parsed, dict):
         # Every op's input is an object, so the model refuses it; the ledger
         # and identity readers here and below read the body as a dict.
-        _validate_payload(op, request_id, parsed)
+        _validate_payload(op, request_id, parsed, auth)
     raw_body: dict[str, Any] = parsed
 
     set_current_consumer(explicit_consumer(raw_body))
@@ -285,15 +285,17 @@ async def _idempotency_gate(
     return replay
 
 
-def _validate_payload(op: Operation, request_id: str, raw_body: Any) -> Any:
-    """The body as the op's input model, or a 422 naming the failing field."""
+def _validate_payload(op: Operation, request_id: str, raw_body: Any, auth: AuthInfo | None) -> Any:
+    """The body as the op's input model, or a 422 naming the failing field.
+    `auth` is the verified token: a refusal naming another org is recorded,
+    and traced, in the token's org."""
     try:
         payload = op.input_model.model_validate(raw_body)
     except ValidationError as e:
         # The row names the failing field, and a code.*
         # request leaves a trace row with error_code / error_text.
         errors = validation_errors(e)
-        body = raw_body if isinstance(raw_body, dict) else {}
+        body = _refused_body(raw_body, auth) if isinstance(raw_body, dict) else {}
         _emit_event(
             op,
             request_id,
@@ -698,7 +700,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         call.auth = auth = _extract_auth(request)
         call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
 
-        payload = _validate_payload(op, request_id, raw_body)
+        payload = _validate_payload(op, request_id, raw_body, auth)
 
         # The token is verified: its `consumer` claim, else the body's field, else its class.
         bind_current_consumer(raw_body, auth)

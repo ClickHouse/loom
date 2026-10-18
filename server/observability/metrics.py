@@ -388,7 +388,7 @@ def record_auth_refusal(error: BaseException | None, *, transport: str) -> None:
             1,
             attributes={
                 "reason": auth_refusal_reason(error),
-                "loom.transport": transport if transport in ("http", "mcp") else "other",
+                "loom.transport": transport,
             },
         )
     except Exception:  # noqa: BLE001 — telemetry must never fail the caller
