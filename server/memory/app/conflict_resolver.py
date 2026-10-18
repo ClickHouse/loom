@@ -495,8 +495,7 @@ async def _settle_locked_pair(
     ):
         return None, None  # nothing flagged between them: nothing to clear
     if action == cr.RETIRE and not order[str(head.memory_id)] < order[str(row.memory_id)]:
-        # "update" says the judged row is newer; the order does not show it. A person
-        # decides.
+        # "update" says the judged row is newer; the order does not: a person decides.
         action = cr.FLAG
     done = await _act(action, org, namespace, row, head)
     if not done:
@@ -652,39 +651,20 @@ async def _act_on_verdicts(
     even when a later pair fails, for the pairs done."""
     acted: list[dict[str, Any]] = []
     try:
-        await _settle_pairs(org, namespace, row, peers, verdicts, policy, order, counts, acted)
+        for peer in peers:
+            v = verdicts.get(str(peer["memory_id"]))
+            action = cr.NOTHING if v is None else _action(v, policy)
+            if v is None or action == cr.NOTHING:
+                # Unsure, self-contradicting, or a peer the answer left out: the pair
+                # stays as it is.
+                counts.skipped_no_action += 1
+                continue
+            taken = await _settle_pair(org, namespace, row, peer, action, order, counts)
+            if taken is not None:
+                acted.append(
+                    {"peer_id": str(peer["memory_id"]), **taken}
+                    | {"verdict": v.verdict, "confidence": v.confidence}
+                )
     finally:
         if acted and not await queue.under_erasure(org):
             await _audit(org, namespace, row, acted, model)
-
-
-async def _settle_pairs(
-    org: str,
-    namespace: str,
-    row: Any,
-    peers: list[dict[str, Any]],
-    verdicts: dict[str, cr.PeerVerdict],
-    policy: str,
-    order: Mapping[str, tuple[int, int]],
-    counts: Counts,
-    acted: list[dict[str, Any]],
-) -> None:
-    """Settle each pair the answer acts on, appending what was done to `acted`."""
-    for peer in peers:
-        v = verdicts.get(str(peer["memory_id"]))
-        action = cr.NOTHING if v is None else _action(v, policy)
-        if v is None or action == cr.NOTHING:
-            # Unsure, self-contradicting, or a peer the answer left out: the pair
-            # stays as it is.
-            counts.skipped_no_action += 1
-            continue
-        taken = await _settle_pair(org, namespace, row, peer, action, order, counts)
-        if taken is not None:
-            acted.append(
-                {
-                    "peer_id": str(peer["memory_id"]),
-                    **taken,
-                    "verdict": v.verdict,
-                    "confidence": v.confidence,
-                }
-            )
