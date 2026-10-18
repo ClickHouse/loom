@@ -659,13 +659,18 @@ def scope_flags(op: Operation) -> dict[str, bool]:
     return {"deployment_scoped": op.deployment_scoped, "row_scoped": op.row_scoped}
 
 
-async def row_in_scope(org: str, namespace: str, required_role: Role = Role.VIEWER) -> bool:
+async def row_in_scope(
+    org: str, namespace: str, required_role: Role = Role.VIEWER, *, additive: bool = False
+) -> bool:
     """Second gate for ops addressed by an org-wide id (memory_id, …): the
     transport could not bind a namespace, so the handler asks after it has
     the row. True when the current principal may act on (org, namespace) at
     `required_role`; True with no auth context (auth disabled); False on any
     refusal so the caller can hide the row (`found=False`) rather than 403 —
-    a 403 would confirm the id exists."""
+    a 403 would confirm the id exists. A refusal that could not be verified
+    marks the request the server's (`fail_closed`), unless `additive`: a leg
+    adding results from a namespace the caller never named, whose answer is
+    whole without it."""
     from server.auth.context import current_auth
     from server.core.errors import IdentityIncompleteError
 
@@ -675,7 +680,7 @@ async def row_in_scope(org: str, namespace: str, required_role: Role = Role.VIEW
     try:
         await check_authorized(auth, required_role=required_role, org=org, namespace=namespace)
     except PermissionError as e:
-        if getattr(e, "unverified", False):  # still hidden, but the server's failure
+        if getattr(e, "unverified", False) and not additive:  # hidden, the server's failure
             note_answered_unverified()
         return False
     except IdentityIncompleteError:

@@ -35,9 +35,10 @@ subject and consumer, `-` for the rest and no arguments. On either transport, a 
 naming an org the token may not act in is recorded in the token's org, never the named
 one. A refusal recorded before the call is classified carries the token's `traffic_class`
 claim, or '' without one. An id lookup that answered `found=False` because such a read
-failed succeeded on the wire but is `server`, with an empty `error_code`; a listing or
-default-namespace pick that leaves a namespace out stays `ok`. Within one MCP batch, each
-refusal before a handler runs (but an idempotency refusal, which comes after the rate
+failed succeeded on the wire but is `server`, with an empty `error_code`; a listing, a
+default-namespace pick or an extra leg the caller did not ask for (repository documents on
+a search aimed elsewhere) that leaves a namespace out stays `ok`. Within one MCP batch,
+each refusal before a handler runs (but an idempotency refusal, which comes after the rate
 limiter) is recorded once per operation, code, org and status class, so a batch of
 repeated refusals counts once; a handler's failure is always its own row.
 

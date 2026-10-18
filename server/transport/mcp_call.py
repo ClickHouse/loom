@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
+from server.core.errors import LoomServerError
 from server.identity.app.caller_home import home_namespace
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
@@ -451,14 +452,13 @@ async def _bind_caller_identity(
     # org/namespace absent also keeps authz on the flat-role path, which is
     # what lets a human token with no code-namespace grant read the shared
     # index at all.
-    from server.core.errors import LoomServerError
-
     try:
         defaults = await _caller_defaults(auth, client_name)
     except LoomServerError as e:
         # A grants read past its cache's stale window (a 503), before the gate:
-        # counted against the server, then answered as raised.
-        _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id, error=e)
+        # counted against the server in the token's org (the call's identity
+        # is not filled in yet), then answered as raised.
+        emit_token_refusal(op.name, auth, error_code=e.code)
         raise
     explicit_agent = bool(arguments.get("agent"))
     # A blank or "-" namespace names none, as the gates read it.
@@ -619,7 +619,7 @@ async def _authorize_call(
     response: AUTH_INSUFFICIENT (a code/tracker index says how to get in) or
     IDENTITY_INCOMPLETE. Any other error propagates, a LoomServerError
     ledgered first."""
-    from server.core.errors import IdentityIncompleteError, LoomServerError
+    from server.core.errors import IdentityIncompleteError
 
     try:
         target = gates.authz_target(

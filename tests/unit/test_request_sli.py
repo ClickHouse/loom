@@ -914,6 +914,11 @@ def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypat
         subject="eve", org="o", namespaces=("n",), roles=(Role.VIEWER,), is_service_account=False
     )
 
+    async def _always_unverified(*a: Any, **k: Any) -> None:
+        e = PermissionError("refused")
+        e.unverified = True  # type: ignore[attr-defined]
+        raise e
+
     async def _refused(unverified: bool) -> None:
         async def _check(*a: Any, **k: Any) -> None:
             e = PermissionError("refused")
@@ -933,6 +938,18 @@ def test_an_id_lookup_hidden_for_want_of_a_grants_read_is_the_server_s(monkeypat
     asyncio.run(_refused(unverified=True))
     asyncio.run(_refused(unverified=False))
     assert rows == [(True, True), (True, False)]
+
+    # An additive leg (repo docs on a search aimed elsewhere) leaves the answer whole.
+    async def _additive() -> bool:
+        request_work.begin()
+        set_current_auth(eve)
+        assert await authz.row_in_scope("o", "docs", additive=True) is False
+        from server.auth.fail_closed import answered_unverified
+
+        return answered_unverified()
+
+    monkeypatch.setattr(authz, "check_authorized", _always_unverified)
+    assert asyncio.run(_additive()) is False
 
 
 def test_inside_a_batch_a_call_s_refusal_is_ledgered_once_but_each_handler_failure_is(
@@ -1083,6 +1100,8 @@ def test_a_listing_that_leaves_a_namespace_out_unverified_does_not_mark_the_requ
     """MCP computes default namespaces on every call, often for namespaces the
     call never uses: a candidate refused unverified there must not make a
     correct answer a server error."""
+    from types import SimpleNamespace
+
     from server.auth import authz, fail_closed
     from server.auth.jwt import AuthInfo
     from server.core import request_work
@@ -1097,8 +1116,6 @@ def test_a_listing_that_leaves_a_namespace_out_unverified_does_not_mark_the_requ
 
     async def _no_grant(*a: Any, **k: Any) -> None:
         return None
-
-    from types import SimpleNamespace
 
     monkeypatch.setattr(authz, "check_authorized", _unverified)
     monkeypatch.setattr(authz.CachedGate, "grants", _no_grants)
@@ -1141,6 +1158,7 @@ def test_a_5xx_while_mcp_computes_the_caller_s_defaults_is_ledgered(monkeypatch)
     params = {"name": "loom_memory_get", "arguments": {"key": "k"}}  # no namespace: defaults run
     with pytest.raises(BackendUnavailableError):
         asyncio.run(mcp_call._call_tool(1, params, auth=eve))
-    assert [(e.operation, e.error_code, e.status_class) for e in emitted] == [
-        ("memory.get", "BACKEND_UNAVAILABLE", "server")
+    # In the token's org: the call's identity is not filled in yet.
+    assert [(e.operation, e.error_code, e.status_class, e.org) for e in emitted] == [
+        ("memory.get", "BACKEND_UNAVAILABLE", "server", "o")
     ]
