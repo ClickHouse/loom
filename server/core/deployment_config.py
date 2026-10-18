@@ -89,11 +89,14 @@ def key_fingerprints(s: Settings) -> dict[str, Any]:
 
 
 def check_keys(s: Settings, published: dict[str, Any]) -> None:
-    """Raise ValueError unless `s` holds the deployment's root secret. A snapshot
-    without its fingerprint is not checked."""
+    """Raise ValueError unless `s` holds the deployment's root secret; a snapshot
+    without its fingerprint proves nothing and is refused."""
     theirs = published.get(KEYS_ENTRY)
     if not isinstance(theirs, dict) or "root" not in theirs:
-        return
+        raise ValueError(
+            "the published configuration holds no root-secret fingerprint; "
+            "publish it with `loom deployment publish`"
+        )
     if theirs["root"] != key_fingerprints(s)["root"]:
         raise ValueError(
             "this process's LOOM_JWT_SECRET differs from the deployment's, so its "

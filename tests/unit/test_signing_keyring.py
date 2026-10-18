@@ -168,6 +168,18 @@ def test_retiring_default_writes_its_row_once_another_key_signs() -> None:
     assert not asyncio.run(keyring.retire("nope", ch=_CH()))
 
 
+def test_retiring_default_under_a_pem_root_needs_another_signing_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pem, _ = _rsa()
+    monkeypatch.setattr(settings, "jwt_secret", pem)
+    with pytest.raises(ValueError, match="no key to sign with"):
+        asyncio.run(keyring.retire("default", ch=_CH()))
+    ch = _CH([_row("k1", at=_now() - timedelta(minutes=1))])
+    assert asyncio.run(keyring.retire("default", ch=ch))
+    assert ch.inserted[-1]["kid"] == "default"
+
+
 def test_nothing_is_signed_or_verified_before_the_keyring_loads() -> None:
     """A retired root secret is not known yet: a retryable refusal, not a 401,
     and no token a loaded verifier would refuse."""

@@ -325,6 +325,7 @@ def test_a_published_row_is_judged_as_this_process_normalises_it() -> None:
         update={"embedding_provider": "", "embedding_base_url": "https://u:p@emb.example.com/v1/"}
     )
     stored = {
+        dc.KEYS_ENTRY: dc.key_fingerprints(s),
         "embedding_provider": "",
         "embedding_model": s.embedding_model,
         "embedding_dim": s.embedding_dim,
