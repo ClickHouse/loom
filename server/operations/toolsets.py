@@ -377,7 +377,7 @@ def curated_roster(toolset: str, *, code_tools: bool) -> frozenset[str] | None:
         if any(r is None for r in rosters):
             return None
         return frozenset().union(*[r for r in rosters if r is not None])
-    toolset = parts[0] if parts else toolset  # an alias resolves before the lookup
+    toolset = parts[0] if parts else toolset  # the normalised spelling
     if toolset == "atomic":
         return _MCP_ATOMIC_OPS
     if toolset == "tasks":

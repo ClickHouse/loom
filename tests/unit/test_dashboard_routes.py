@@ -91,6 +91,8 @@ def test_no_api_route_uses_a_page_segment() -> None:
         ("/metrics", 404, {"detail": "Not Found"}),
         ("/robots.txt", 404, {"detail": "Not Found"}),
         ("/memoriesx", 404, {"detail": "Not Found"}),
+        ("/me", 404, {"detail": "Not Found"}),
+        ("/me/tokens", 404, {"detail": "Not Found"}),
     ],
 )
 def test_api_answers_are_unchanged(client, path: str, status: int, body) -> None:
@@ -153,23 +155,6 @@ def test_favicon_is_an_svg(client) -> None:
     r = client.get("/favicon.svg")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("image/svg+xml")
-
-
-@pytest.mark.parametrize(
-    "old,new",
-    [
-        ("/me", "/"),
-        ("/me/", "/"),
-        ("/me/memories", "/memories"),
-        ("/me/admin/review_queue?ns=a%2Fb&x=1", "/admin/review_queue?ns=a%2Fb&x=1"),
-        ("/me//evil.example/x", "/evil.example/x"),
-        ("/me/%5Cevil.example", "/evil.example"),
-    ],
-)
-def test_old_page_urls_redirect_to_the_root(client, old: str, new: str) -> None:
-    r = client.get(old, follow_redirects=False)
-    assert r.status_code == 302
-    assert r.headers["location"] == new
 
 
 def test_a_missing_build_answers_503_on_pages(client, tmp_path, monkeypatch) -> None:

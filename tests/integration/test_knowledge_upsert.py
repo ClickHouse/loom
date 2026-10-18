@@ -69,7 +69,7 @@ async def test_upsert_supersedes_prior_chunks(agent, ch_client) -> None:
         """,
         parameters={"org": agent.org, "ns": agent.namespace},
     ).result_rows
-    # Superseded = listed in loom.chunk_supersessions (or the legacy column)
+    # Superseded = listed in loom.chunk_supersessions (or erasure's doc_superseded_at)
     superseded = [r for r in rows if r[1]]
     active = [r for r in rows if not r[1]]
     assert len(superseded) == 1, f"expected exactly one superseded chunk; got {rows}"

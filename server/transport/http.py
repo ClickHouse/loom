@@ -264,7 +264,7 @@ async def _idempotency_gate(
         _emit_event(op, request_id, raw_body, 0, success=False, error_code=code)
         if replay.in_progress:
             # A 503, so every client that retries 5xx after Retry-After
-            # (the SDKs of earlier builds too) gets the stored answer.
+            # gets the stored answer.
             raise HTTPException(
                 status_code=503,
                 detail={"code": code, "message": gates.IN_PROGRESS_MESSAGE, "in_progress": True},

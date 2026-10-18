@@ -67,6 +67,8 @@ const FULL: RunRow = {
   memories_used: ["a", "b"],
   memories_written: ["c"],
   metadata: {},
+  budget_usd: 0,
+  budget_seconds: 0,
 };
 
 describe("Runs: the projected field list covers what the row reads", () => {

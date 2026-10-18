@@ -28,8 +28,8 @@
 # repo root. See SECURITY.md before deploying this for anything beyond
 # local testing.
 
-# Everything both services share: one image, one .env, one blob store, one
-# code-mirror mount, the same ulimit and stop grace.
+# Everything both services share: one image, one .env, one code-mirror mount,
+# the same ulimit and stop grace.
 x-loom-common: &loom-common
   build:
     context: ..
@@ -54,7 +54,6 @@ x-loom-common: &loom-common
   env_file:
     - ../.env
   volumes:
-    - loom-blob-data:/app/var/blobs
     # Code-plane git mirrors (bare clones). The code_ingest worker and
     # async code.refresh read AND fetch into these, so the host path
     # must be writable by the container's `loom` user — uid/gid 999;
@@ -75,7 +74,6 @@ services:
     # remote-CH ops) — `docker exec loom-server loom migrate --status`.
     container_name: loom-server
     environment:
-      LOOM_BLOB_DIR: /app/var/blobs
       # The web tier serves requests and nothing else.
       LOOM_BACKGROUND_WORKERS: "off"
       # One process unless .env names a count: the image's own default (one per
@@ -125,7 +123,6 @@ services:
     # /v1/health for the `?include=workers` view (`docker exec loom-workers curl
     # localhost:7778/v1/health?include=workers`), nothing else reaches it.
     environment:
-      LOOM_BLOB_DIR: /app/var/blobs
       LOOM_BACKGROUND_WORKERS: "auto"
       LOOM_WEB_WORKERS: "1"
       # The workers run in this process itself, not a child: it serves no
@@ -154,6 +151,3 @@ services:
       timeout: 5s
       retries: 6
       start_period: 900s
-
-volumes:
-  loom-blob-data:

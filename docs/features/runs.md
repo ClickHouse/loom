@@ -139,10 +139,9 @@ An MCP session gets an implicit run without asking: its first run-scoped tool
 call begins one, and `DELETE /mcp` or the `mcp_session_run_sweep` worker closes
 it (see [MCP](../reference/mcp.md)). The sweep closes an active run with
 `environment='mcp'` and `metadata.implicit` true whose id is `mcp-` plus 40 hex
-characters (the shape only the transport makes), or an earlier server's run
-whose id starts with `mcp-` and whose metadata says `transport: mcp` and records
-no subject. It closes one once no call of its token (of anyone, for a run that
-records no token) reached it within `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`. The run sits in the caller's default
+characters (the shape only the transport makes). It closes one once no call of
+its token (of anyone, for a run that records no token) reached it within
+`LOOM_MCP_SESSION_RUN_IDLE_SECONDS`. The run sits in the caller's default
 namespace, so what its readers see stays there: its goal is the label
 `mcp session (<agent>)`, never a call's text (a read's query may reach any
 namespace the caller reads), and `memories_written` lists the writes in that

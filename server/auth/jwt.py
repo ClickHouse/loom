@@ -68,47 +68,6 @@ def require_real_signing_secret(
     )
 
 
-class KeyMapEnvRefused(RuntimeError):
-    """The former kid → key map is still configured; its tokens would 401."""
-
-
-# The kid → key map settings this build replaced with loom.signing_keys.
-REMOVED_KEY_ENV = ("LOOM_JWT_SECRETS_JSON", "LOOM_JWT_ACTIVE_KID", "LOOM_JWT_ALGORITHM")
-
-
-def require_no_key_map_env(env_file: str | None) -> None:
-    """Refuse to start while the former kid → key map, or the former RS256
-    mode, is still configured: this build no longer reads them, so every
-    token of their kids would be refused and nothing could sign. `loom
-    signing-key import` copies them into the keyring."""
-    import os
-
-    values = {k: os.environ.get(k, "") for k in REMOVED_KEY_ENV}
-    if env_file and os.path.isfile(env_file):
-        from dotenv import dotenv_values
-
-        values |= {k: v or "" for k, v in dotenv_values(env_file).items() if k in values}
-    # An active kid of `default` without a map signed with LOOM_JWT_SECRET: nothing to import.
-    if values["LOOM_JWT_ACTIVE_KID"].strip() == "default":
-        values["LOOM_JWT_ACTIVE_KID"] = ""
-    # HS256 signed with LOOM_JWT_SECRET as this build does; RS256 without a map
-    # signed with a PEM LOOM_JWT_SECRET as kid `default`, which this build does too.
-    algorithm_set = values["LOOM_JWT_ALGORITHM"].strip().upper()
-    scalar = not values["LOOM_JWT_SECRETS_JSON"].strip() and not values["LOOM_JWT_ACTIVE_KID"]
-    if algorithm_set == "HS256" or (algorithm_set == "RS256" and scalar):
-        values["LOOM_JWT_ALGORITHM"] = ""
-    set_ = sorted(k for k, v in values.items() if v.strip())
-    if not set_:
-        return
-    algorithm = " --algorithm RS256" if algorithm_set == "RS256" else ""
-    raise KeyMapEnvRefused(
-        f"refusing to start: {', '.join(set_)} is set, and this build keeps signing keys "
-        f"in ClickHouse. Run `loom signing-key import{algorithm} --active "
-        "<LOOM_JWT_ACTIVE_KID, else default>` with the old variables still set, then "
-        "delete them (docs/operations/upgrades.md, signing keys)."
-    )
-
-
 class AuthUnavailable(TokenError):
     """The token may be valid, but this process cannot judge it yet: a
     retryable 503 AUTH_UNAVAILABLE, never a 401."""

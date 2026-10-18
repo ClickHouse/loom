@@ -36,7 +36,7 @@ def _clean_path(path: str) -> str:
 def parse_remote(value: str) -> RemoteSpec:
     """Return a credential-free canonical identity and clone URL.
 
-    A bare ``owner/name`` remains the backwards-compatible GitHub form. HTTPS and
+    A bare ``owner/name`` is a GitHub repository. HTTPS and
     SSH remotes may point at any host; local paths and URLs containing credentials
     are refused because the registry is shared server state.
     """

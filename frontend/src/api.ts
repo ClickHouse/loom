@@ -43,8 +43,8 @@ export function isAuthDisabled(): boolean {
 }
 
 // The namespace an auth-disabled deployment serves (LOOM_DEFAULT_NAMESPACE,
-// injected by the dashboard's boot snippet). "local" is the fallback for a server that
-// predates the setting, or for `npm run dev` against the static globals.
+// injected by the dashboard's boot snippet). "local" is the default for `npm run dev`
+// against the static globals.
 const _DEFAULT_NAMESPACE: string = window.__LOOM_DEFAULT_NAMESPACE || "local";
 
 export function defaultNamespace(): string {
@@ -134,7 +134,7 @@ export interface MemoryListEntry {
   confidence: number;
   version: number;
   created_at: string;
-  // Last write to this memory_key. Falls back to created_at for legacy rows.
+  // Last write to this memory_key.
   updated_at?: string | null;
   expires_at: string | null;
   // When set, this row is soft-deleted (in 14-day grace window).
@@ -1067,7 +1067,7 @@ export interface ServiceAccountEntry {
   client?: string;
   /** Authoritative per-namespace role map for scoped tokens
    *  (namespace -> "viewer"|"writer"|"admin"), each capped to the minter's
-   *  grant. Empty for legacy tokens (fall back to `roles`). */
+   *  grant. Empty for unscoped tokens (fall back to `roles`). */
   ns_roles?: Record<string, string>;
 }
 

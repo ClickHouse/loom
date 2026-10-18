@@ -158,9 +158,8 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
 - **Ports.** If `8123` or `9000` is taken, set `LOOM_CH_HOST_PORT` or
   `LOOM_CH_NATIVE_HOST_PORT` in `.env`. These are compose variables for the host side
   only; containers always talk to `clickhouse:8123`.
-- **Volumes.** `loom-ch-data` (ClickHouse) and `loom-blob-data` (`LOOM_BLOB_DIR`: the
-  document originals an older build kept, until `loom blobs import` moves them into
-  ClickHouse). `make down` keeps them; `make down-all` deletes them.
+- **Volumes.** `loom-ch-data` (ClickHouse) and `loom-code-repos` (the git mirrors).
+  `make down` keeps them; `make down-all` deletes them.
 - **No external systems.** The local stack runs no Langfuse or ClickStack;
   the erasure steps for them do nothing until configured.
 - **From source.** `make server` runs uvicorn on `:7777` with reload against the
@@ -186,12 +185,12 @@ containers from it against the ClickHouse in `.env` (run `loom ch-setup` against
 A long worker pass never shares an event loop with client requests, so it cannot show up
 as request latency. A single container gets the same: its lease holder runs the workers
 in a child process ([N identical replicas](#n-identical-replicas)). Both containers read
-the same `.env` and mount the same `loom-blob-data` volume and `var/code_repos` directory,
-so on one host they share the git mirrors. Documents, keys and the workers lease are in
-ClickHouse, so replicas on other hosts need neither mount: each keeps its own mirrors, and
-the mount only keeps them across a restart. `LOOM_SERVES_TRAFFIC=false` keeps the workers container out of the
-replica count the rate limits are divided by. Whichever boots first applies pending
-migrations ([upgrades](./upgrades.md#how-migrations-run)).
+the same `.env` and mount the same `var/code_repos` directory, so on one host they share
+the git mirrors. Documents, keys and the workers lease are in ClickHouse, so replicas on
+other hosts need not share that directory: each keeps its own mirrors, and the mount
+only keeps them across a restart. `LOOM_SERVES_TRAFFIC=false` keeps the workers
+container out of the replica count the rate limits are divided by. Whichever boots
+first applies pending migrations ([upgrades](./upgrades.md#how-migrations-run)).
 
 ## How settings are read
 
@@ -794,7 +793,7 @@ flowchart LR
   P -.->|idle or stopped| G["loom-green :7782 + loom-green-workers"]
   B --> CH[(ClickHouse)]
   G --> CH
-  B --- V["shared: .env, blob dir, code mirrors, loom-shared"]
+  B --- V["shared: .env, code mirrors, loom-shared"]
   G --- V
 ```
 
@@ -802,17 +801,14 @@ flowchart LR
   (`LOOM_COLOUR=blue|green`, `LOOM_COLOUR_PORT=7781|7782`), gives each colour a web
   container (`loom-<colour>`, workers `off`) and a workers container
   (`loom-<colour>-workers`, workers `auto`, no published port). The colours share
-  `.env`, the `LOOM_BLOB_DIR` volume, the code mirrors and a `loom-shared` volume with
+  `.env`, the code mirrors and a `loom-shared` volume with
   the rate-limit table. The supervisor lease is in ClickHouse.
 - `dev/docker-compose.proxy.yml` runs nginx (`loom-proxy`) on host `:7777` with
   `deploy/proxy/nginx.conf`. It forwards to the colour named in
   `var/proxy/upstream.conf` (template: `deploy/proxy/upstream.conf.example`). A swap is
   a file write plus `nginx -s reload`; no port is rebound. nginx re-resolves the colour's
   name through Docker's DNS, so a colour container that restarts on a new address is
-  reached again, within about 30 s of coming back (nginx answers 502 meanwhile). The
-  `nginx.conf` of a commit from before this re-resolution cannot load the `upstream.conf`
-  a newer `redeploy.sh` wrote (`no resolver defined`): after checking such a commit out,
-  run its `redeploy.sh` before the proxy restarts.
+  reached again, within about 30 s of coming back (nginx answers 502 meanwhile).
 
 Once per host, before the first redeploy, load the AppArmor profile the colours run the
 repository-job sandbox under, then check it in a throwaway container built from the

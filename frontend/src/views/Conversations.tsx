@@ -165,11 +165,9 @@ export function Conversations() {
   const [threadsRetry, setThreadsRetry] = useState(0);
   // Selected thread for the message-replay dialog. Click a thread
   // card OR a search-hit thread header → fetch full messages → show.
-  // `knownAgent`: the agent the opener named, for a replica of the previous release.
   const [openThread, setOpenThread] = useState<{
     thread_id: string;
     namespace: string;
-    knownAgent?: string;
   } | null>(null);
   const [threadDetail, setThreadDetail] = useState<ConversationThreadDetail | null>(null);
   const [threadLoading, setThreadLoading] = useState(false);
@@ -329,7 +327,7 @@ export function Conversations() {
   );
 
   const openThreadDialog = useCallback(
-    async (thread_id: string, opts: { namespace?: string; hit?: ConversationHit; knownAgent?: string } = {}) => {
+    async (thread_id: string, opts: { namespace?: string; hit?: ConversationHit } = {}) => {
       threadReads.current?.abort();
       const ctl = new AbortController();
       threadReads.current = ctl;
@@ -337,7 +335,7 @@ export function Conversations() {
       const namespace = opts.namespace || identity.namespace;
       const target = opts.hit;
       // Every read asks for "*", every agent's turns, however the thread was opened.
-      setOpenThread({ thread_id, namespace, knownAgent: opts.knownAgent });
+      setOpenThread({ thread_id, namespace });
       setThreadDetail(null);
       setMoreCursor(null);
       setLoadingMore(false);
@@ -357,14 +355,10 @@ export function Conversations() {
           if (!signal.aborted) setThreadMemories([]);
         });
       try {
-        const read = (agent: string) =>
-          getConversationThread({ org: identity.org, namespace }, agent, thread_id, { limit: 200, signal });
-        let d = await read("*");
-        // A replica of the previous release reads "*" as a literal agent; the thread
-        // list's agent still opens the thread there. Drop with the next release.
-        if (!d.found && opts.knownAgent && !signal.aborted) {
-          d = await read(opts.knownAgent);
-        }
+        const d = await getConversationThread({ org: identity.org, namespace }, "*", thread_id, {
+          limit: 200,
+          signal,
+        });
         if (signal.aborted) return;
         setThreadDetail(d);
         // More turns follow: conversation.list pages on from the cursor get issued.
@@ -389,8 +383,7 @@ export function Conversations() {
   // Deep-link from a memory's "View source conversation" → open that thread.
   useEffect(() => {
     if (!pendingConversationThread) return;
-    const { threadId, agent } = pendingConversationThread;
-    void openThreadDialog(threadId, { knownAgent: agent || undefined });
+    void openThreadDialog(pendingConversationThread.threadId);
     clearPendingConversationThread();
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
 
@@ -409,20 +402,14 @@ export function Conversations() {
     const reads = threadReads.current;
     if (!reads || !openThread || !threadDetail || !moreCursor || loadingMore) return;
     const { signal } = reads;
-    const { thread_id, namespace, knownAgent } = openThread;
+    const { thread_id, namespace } = openThread;
     setLoadingMore(true);
     try {
-      const page = (as: string) =>
-        listConversationMessages({ org: identity.org, namespace }, as, thread_id, {
-          cursor: moreCursor,
-          limit: 200,
-          signal,
-        });
-      let r = await page("*");
-      // A replica of the previous release answers "*" with no rows; the opener's agent
-      // still pages there. Drop with the next release.
-      const fellBack = r.rows.length === 0 && !!knownAgent && !signal.aborted;
-      if (fellBack && knownAgent) r = await page(knownAgent);
+      const r = await listConversationMessages({ org: identity.org, namespace }, "*", thread_id, {
+        cursor: moreCursor,
+        limit: 200,
+        signal,
+      });
       if (signal.aborted) return;
       // Merge into the detail as it is now, and only if it is still this thread's. New
       // rows append (server returns chronological order; we render in-place).
@@ -430,9 +417,7 @@ export function Conversations() {
         if (!prev || prev.thread_id !== thread_id) return prev;
         return { ...prev, messages: [...prev.messages, ...r.rows] };
       });
-      // A fallback page is one agent's: its cursor would resume every agent's walk past the
-      // others' turns, so paging stops there and the dialog says how much it shows.
-      const next = fellBack ? null : r.next_cursor;
+      const next = r.next_cursor;
       setMoreCursor(next);
       // The last page removes Load more; its focus moves to the transcript, at the first
       // turn the page brought.
@@ -470,7 +455,7 @@ export function Conversations() {
           <button
             type="button"
             key={t.thread_id}
-            onClick={() => openThreadDialog(t.thread_id, { knownAgent: t.agent })}
+            onClick={() => openThreadDialog(t.thread_id)}
             className="w-full text-left p-3 rounded-xl border border-border bg-surface hover:border-border-strong flex items-start gap-3"
           >
             <div className="min-w-0 flex-1">
@@ -625,7 +610,7 @@ export function Conversations() {
             <div key={g.key} className="rounded-xl border border-border bg-surface overflow-hidden">
               <button
                 type="button"
-                onClick={() => openThreadDialog(g.thread_id, { namespace: g.namespace, knownAgent: g.agent })}
+                onClick={() => openThreadDialog(g.thread_id, { namespace: g.namespace })}
                 className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-xs tabular hover:bg-surface-2 border-b border-border"
               >
                 <span className="font-mono text-text truncate">{g.thread_id}</span>
@@ -650,9 +635,7 @@ export function Conversations() {
                   <button
                     type="button"
                     key={`${h.msg_id}-${i}`}
-                    onClick={() =>
-                      openThreadDialog(g.thread_id, { namespace: g.namespace, hit: h, knownAgent: g.agent })
-                    }
+                    onClick={() => openThreadDialog(g.thread_id, { namespace: g.namespace, hit: h })}
                     className="w-full text-left px-3.5 py-2.5 hover:bg-surface-2"
                   >
                     <div className="flex items-center gap-2 mb-1 text-xs tabular">
@@ -729,10 +712,7 @@ export function Conversations() {
             </div>
           )}
           {!threadLoading && threadDetail && !threadDetail.found && (
-            <div className="text-center text-sm text-text-muted py-12">
-              {/* "or upgraded" goes with the previous-release fallback above. */}
-              Thread not found. It may have been deleted, or a server is being upgraded: try again shortly.
-            </div>
+            <div className="text-center text-sm text-text-muted py-12">Thread not found. It may have been deleted.</div>
           )}
           {!threadLoading && threadDetail && threadDetail.found && threadDetail.messages.length === 0 && (
             <div className="text-center text-sm text-text-muted py-12">Thread exists but contains no messages.</div>
@@ -779,12 +759,6 @@ export function Conversations() {
                     {`Load more (${threadDetail.msg_count - threadDetail.messages.length} remaining)`}
                   </Button>
                 </div>
-              )}
-              {/* No cursor though turns remain: a replica of the previous release read it. */}
-              {!moreCursor && threadDetail.msg_count > threadDetail.messages.length && (
-                <p className="pt-3 text-center text-xs text-text-muted">
-                  {`Showing ${threadDetail.messages.length} of ${threadDetail.msg_count} messages.`}
-                </p>
               )}
             </section>
           )}

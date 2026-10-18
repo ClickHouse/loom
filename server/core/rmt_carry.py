@@ -503,7 +503,6 @@ async def await_acks(ch: Any, *, timeout_s: float | None = None) -> None:
         timeout_s = _boot_wait_s()
 
     from server.core.ch import sequential_reads
-    from server.core.ch_errors import error_code
 
     deadline = time.monotonic() + timeout_s
     me = process_id()
@@ -525,8 +524,6 @@ async def await_acks(ch: Any, *, timeout_s: float | None = None) -> None:
                 current = {t: fingerprint(c) for t, c in (await _stored(ch, tables)).items()}
                 writers = await _running_writers(ch)
         except Exception as e:  # noqa: BLE001 — retried until the deadline
-            if error_code(e) == 60:  # UNKNOWN_TABLE: before 037, nothing acknowledges
-                return
             log.warning("rmt carry: acknowledgements unreadable (%s)", e)
         else:
             ages = {str(a["process"]): int(a["age"]) for a in acks}

@@ -112,7 +112,6 @@ class RecordingCH:
         table: str,
         rows: list[dict[str, Any]],
         settings: dict[str, Any] | None = None,
-        project_onto_table: bool | None = None,
         **_: Any,
     ) -> None:
         self.calls.append(

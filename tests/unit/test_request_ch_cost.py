@@ -143,7 +143,7 @@ async def test_every_statement_kind_reads_its_summary(monkeypatch: pytest.Monkey
     bag = rw.begin()
     await c.query_all("SELECT 1")
     await c.execute("ALTER TABLE loom.t UPDATE a = 1 WHERE 1")
-    await c.insert("loom.t", [{"a": 1}], project_onto_table=False)
+    await c.insert("loom.t", [{"a": 1}])
     # query, command, DESCRIBE (cached types), insert — four responses, four summaries.
     assert bag.ch_statements == 4
     assert bag.ch_read_rows == 4 * 40628
@@ -219,7 +219,7 @@ async def test_each_driver_call_of_a_request_carries_its_own_id(
     rw.begin()
     ch_mod.set_query_tag("memory.search rid-1")
     await c.query_all("SELECT 1")
-    await c.insert("loom.t", [{"a": 1}], project_onto_table=False)
+    await c.insert("loom.t", [{"a": 1}])
     await c.execute("ALTER TABLE loom.t UPDATE a = 1 WHERE 1")
     ids = [s.get("query_id") for _, s in fake.calls]
     assert ids == ["rid-1:1", "rid-1:2", "rid-1:3", "rid-1:4"]  # query, describe, insert, command

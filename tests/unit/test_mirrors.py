@@ -237,7 +237,7 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     for name in ("o__kept.git", "o__removed.git", "checkout-code-kept", "checkout-code-gone"):
         _old(root / name)
-    _old(root / "o__kept.git.partial")  # an older build's half-done clone
+    _old(root / "o__kept.git.partial-1234-5678")  # a half-done clone
     (root / "o__young.git").mkdir()  # cloned a moment ago for an entry just added
     for lock in ("o__kept.git.fetch-lock", "o__removed.git.fetch-lock", "o__gone.git.clone-lock"):
         _old_file(root / lock)
@@ -252,7 +252,7 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
     assert removed == {
         "o__removed.git",
         "checkout-code-gone",
-        "o__kept.git.partial",
+        "o__kept.git.partial-1234-5678",
         "o__removed.git.fetch-lock",
         "o__gone.git.clone-lock",
     }
@@ -267,6 +267,30 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
         "o__kept.git",
         "o__young.git",
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_mirror_named_like_a_temp_dir_is_swept_as_a_mirror(monkeypatch, tmp_path) -> None:
+    """A self-service name never holds a dot, so such a mirror is no entry's; it
+    goes under its own clone lock, and its clone's temp dir under the same."""
+    from server.code.store import index as store
+
+    root = tmp_path / "self"
+    monkeypatch.setattr(settings, "code_repos_root", str(root))
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    for name in ("o__x.git.partial-1.git", "o__x.git.partial-1.git.partial-3-4"):
+        _old(root / name)
+
+    class _Repo:
+        async def active_code_repos(self) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(store, "CodeRepo", _Repo)
+    _repos(monkeypatch, [])
+    removed = {os.path.basename(p) for p in await mirrors.sweep()}
+    assert removed == {"o__x.git.partial-1.git", "o__x.git.partial-1.git.partial-3-4"}
+    locks = {p.name for p in root.iterdir() if p.name.endswith(".clone-lock")}
+    assert locks == {"o__x.git.partial-1.git.clone-lock"}
 
 
 @pytest.mark.asyncio

@@ -8,8 +8,7 @@
 # Paths resolve from the repository root, the directory of compose.yaml.
 # For Loom built from source against your own ClickHouse, use `make dev-cloud`.
 
-# The project (and so its volumes) a checkout used before compose.yaml, unless
-# .env names one.
+# The compose project, and so its volume names, unless .env names one.
 name: dev
 
 services:
