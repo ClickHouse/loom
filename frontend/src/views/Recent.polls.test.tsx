@@ -133,6 +133,26 @@ describe("Recent change-driven refresh", () => {
     expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1–50 of 1,235");
   });
 
+  it("drops a new row's 4 s highlight timer when the list unmounts", async () => {
+    const entry = (k: string) => ({ memory_key: k, value: k, tags: [], agent: "a", memory_type: "fact" }) as never;
+    vi.mocked(listMemories)
+      .mockResolvedValueOnce({ entries: [entry("k0")], truncated: false, total: 1, today: 0, namespace_version: "1" })
+      .mockResolvedValue({
+        entries: [entry("k1"), entry("k0")],
+        truncated: false,
+        total: 2,
+        today: 0,
+        namespace_version: "2",
+      });
+    seed({ ...viewer, roles: ["ADMIN"] }, null);
+    const { unmount } = render(<Recent />);
+    await screen.findByRole("button", { name: "k0" });
+    await vi.advanceTimersByTimeAsync(8000);
+    await screen.findByRole("button", { name: "k1" });
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("polls with known_version and holds it across an unchanged answer", async () => {
     vi.mocked(listMemories)
       .mockResolvedValueOnce({ entries: [], truncated: false, total: 0, today: 0, namespace_version: "7" })

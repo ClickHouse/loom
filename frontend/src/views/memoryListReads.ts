@@ -416,11 +416,10 @@ export function useMemoryListRead({
           // A filtered list is one read of its newest 1,000 matches, with no pages.
           const lim = showDeleted ? 500 : filtered ? 1000 : readSize;
           const off = showDeleted || filtered ? 0 : readPage * readSize;
-          const tags = filter.tags;
           const r = await listMemories(identity, lim, {
             include_tombstoned: showDeleted,
             offset: off,
-            tags,
+            tags: filter.tags,
             agent: filter.agent || undefined,
             signal,
             known_version: isFirst ? undefined : knownVersion || undefined,
@@ -461,14 +460,15 @@ export function useMemoryListRead({
             if (fresh.size > 0) {
               setEntries(r.entries);
               setNewKeys((prev) => new Set([...prev, ...fresh]));
-              // Clear the "new" highlight after 4s.
-              setTimeout(() => {
+              // Clear the "new" highlight after 4s, unless the effect is left first.
+              const timer = setTimeout(() => {
                 setNewKeys((prev) => {
                   const next = new Set(prev);
                   fresh.forEach((k) => next.delete(k));
                   return next;
                 });
               }, 4000);
+              signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
             }
           }
         } catch (e) {
@@ -498,7 +498,7 @@ export function useMemoryListRead({
   const retry = () => {
     setLoadError(null);
     setEntries(null);
-    void fetchOnceRef.current?.(true);
+    void fetchOnceRef.current(true);
   };
 
   return {
