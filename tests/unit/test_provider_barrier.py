@@ -117,11 +117,12 @@ async def test_an_expired_heartbeat_alone_never_lets_the_rebuild_through(setup, 
 
 @pytest.mark.asyncio
 async def test_an_unknown_query_census_never_counts_as_stopped(setup, monkeypatch):
-    identity, transition, _, record = setup
-    rows = [_row(identity, transition, "drained"), _row(uuid4(), expired=True)]
+    identity, _, _, record = setup
+    quiet = uuid4()
+    rows = [_row(identity), _row(quiet, expired=True)]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
     monkeypatch.setattr(barrier, "running_queries", AsyncMock(return_value=None))
-    assert not await barrier.distributed_drain(transition)
+    assert await barrier.retire_participant(quiet) == "live"
     record.assert_not_awaited()
 
 

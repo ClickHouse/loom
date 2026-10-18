@@ -7,12 +7,12 @@
 # dev/docker-compose.colour.yml that share .env, the code mirrors and the
 # `loom-shared` volume (the rate-limit table). A redeploy builds and boots
 # the IDLE colour while the active one keeps serving, waits until its
-# /v1/health says
-# status=ok, readiness.ready and schema.pending=[] (boot migrations done — every migration is
-# additive, so the old colour keeps serving through them), rewrites the
-# upstream, reloads nginx (new workers inherit the listening socket; nothing
-# is refused), then stops the old colour (SIGTERM, uvicorn drains ≤ 10 s,
-# lifespan drains) and tags its image loom:prev.
+# /v1/health says status=ok, readiness.ready and schema.pending=[] (boot
+# migrations done — every migration is additive, so the old colour keeps
+# serving through them), rewrites the upstream, reloads nginx (new workers
+# inherit the listening socket; nothing is refused), then stops the old
+# colour (SIGTERM, uvicorn drains ≤ 10 s, lifespan drains) and tags its
+# image loom:prev.
 #
 # Rollback: `redeploy.sh --rollback` — the previous colour's container is
 # stopped, not removed; it is started again (its image is the previous build),

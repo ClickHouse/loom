@@ -64,8 +64,7 @@ export const MemoryCard = memo(function MemoryCard({
   // at 4x CPU). The base64 envelope check runs on the parsed object, or on a string value
   // directly; the inspector still shows both forms in full.
   const preview = useMemo(() => (preloaded === undefined ? null : describe(preloaded)), [preloaded]);
-  // For a parent that has no value: one
-  // memory.get per card, shown when it lands.
+  // For a parent that has no value: one memory.get per card, shown when it lands.
   const [fetched, setFetched] = useState<{ value: string; encoded: boolean } | null>(null);
 
   useAbortableEffect(
