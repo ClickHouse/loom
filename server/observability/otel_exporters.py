@@ -165,10 +165,10 @@ def _metric_preferred_temporality() -> dict[type, Any] | None:
     """DELTA for the counters and histograms (an observable counter too) when
     `otel_metrics_delta_temporality` is on, else None (the SDK's CUMULATIVE).
 
-    With DELTA the SDK returns no data point for a series that saw no
-    measurement in the interval, so idle series cost nothing; a reader must
-    then sum rows instead of differencing them, so turning it on is a
-    change every dashboard reading these tables has to make with it.
+    With DELTA a counter or histogram that saw no measurement in the interval
+    writes no row; an observable counter writes a 0 increase every export. A
+    reader must then sum rows instead of differencing them, so turning it on
+    is a change every dashboard reading these tables has to make with it.
     """
     if not settings.otel_metrics_delta_temporality:
         return None

@@ -86,9 +86,9 @@ class ObservabilitySettings(BaseModel):
     # Metric export cadence, seconds. Spans keep their own 3 s batch delay,
     # which bounds span loss at SIGTERM.
     otel_metrics_export_interval_s: int = 60
-    # Delta temporality for counters and histograms (idle series write no row).
-    # Off: the dashboards (deploy/hyperdx_dashboards.md) read cumulative rows —
-    # flip together with them.
+    # Delta temporality for counters and histograms (an idle synchronous
+    # series writes no row). Off: the dashboards (deploy/hyperdx_dashboards.md)
+    # read cumulative rows — flip together with them.
     otel_metrics_delta_temporality: bool = False
     # Write a gauge point only when its value changed or this many seconds
     # after the last write; 0 = every export. The ClickHouse exporter only
