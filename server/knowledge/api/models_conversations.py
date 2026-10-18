@@ -239,9 +239,10 @@ class ConversationListOutput(BaseModel):
 
 
 class ConversationSearchInput(BaseModel):
-    """Vector search across a namespace's conversation history: messages ranked by
-    embedding similarity to `query`, optionally narrowed to one thread, run or speaker
-    role (substring matching when the embedder is unavailable)."""
+    """Rank conversation messages by embedding similarity to `query`.
+
+    Narrowed by `thread_id`, `run_id` or `role`. Only user and assistant turns are
+    embedded; substring matching stands in when the embedder is unavailable."""
 
     org: str
     namespace: str

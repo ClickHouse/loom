@@ -272,7 +272,7 @@ Fields for every `conversation` op: [operations/conversation.md](operations/conv
 | [`conversation.delete`](operations/conversation.md#conversationdelete) | Soft-delete one thread: sets `tombstoned_at` on messages + thread row + embeddings; read paths filter tombstoned rows, retention TTL hard-deletes. | admin | idempotent | no | yes |
 | [`conversation.get`](operations/conversation.md#conversationget) | Fetch one thread by id: thread metadata + optional messages. | viewer | read | no |  |
 | [`conversation.list`](operations/conversation.md#conversationlist) | Enumerate stored conversation threads for an agent / namespace. | viewer | read | no |  |
-| [`conversation.search`](operations/conversation.md#conversationsearch) | Vector search across a namespace's conversation history: messages ranked by embedding similarity to `query`, optionally narrowed to one thread, run or speaker role (substring matching when the… | viewer | read | no |  |
+| [`conversation.search`](operations/conversation.md#conversationsearch) | Rank conversation messages by embedding similarity to `query`. | viewer | read | no |  |
 | [`conversation.set_logging`](operations/conversation.md#conversationset_logging) | Toggle whether this namespace records conversation transcripts. | admin | idempotent | no | yes |
 | [`conversation.threads`](operations/conversation.md#conversationthreads) | Recent conversation threads of a namespace, newest first. | viewer | read | yes |  |
 | [`conversation.update`](operations/conversation.md#conversationupdate) | Update one thread's title/metadata/run_id. | writer | idempotent | no |  |
