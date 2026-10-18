@@ -36,7 +36,7 @@ Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 | Runs, tasks, briefs          | `agent_runs`, `agent_turn_usage`, `session_outcomes_by_user`, `procedure_runs`, `tasks`, `task_events`, `task_leases`, `agent_run_claims`, `task_inboxes`, `session_briefs`, `context_blobs` and neighbours                                                                                            | `run.*`, `task.*` / `inbox.*`, `session.brief_*`, `context.offload`, `reflection_distill`                              |
 | Namespaces, auth, governance | `namespaces`, `namespace_grants`, `namespace_policies`, `namespace_types`, `namespace_snapshots`, `namespace_calibration_*`, `service_accounts`, `user_state`, `revoked_tokens`, `signing_keys`, `auth_attempts`, `runtime_overrides`, `oauth_state`, `idempotency`, `policy_decisions` and neighbours | `namespace.*`, `grants.*`, sign-up and claim flows, `recalibration`, the idempotency cache                             |
 | Telemetry, audit, cost       | `events`, `agent_events`, `agent_cost_rollup_daily`, `audit_log`, `audit_checkpoints`, `search_trace_log`, `memory_exposures`, `memory_usage_events`, `memory_usage_totals`, `code_search_trace`, `worker_status` and neighbours                                                                       | The events stream, the op ledger, `observability/audit.py`, `audit_verifier`, the supervisor                           |
-| Service levels               | `loom_telemetry.sli_minute` (its own database: telemetry Loom derives from its tables lives outside `loom`)                                                                                                                                                                                            | `sli_minute_refresh`, once a minute over the `agent_events` request rows with a transport                              |
+| Service levels               | `loom_telemetry.sli_minute` (its own database: telemetry Loom derives from its tables lives outside `loom`)                                                                                                                                                                                            | `sli_minute_refresh`, once a minute over the `agent_events` request rows with an SLO class                             |
 | Erasure                      | `erasure_requests`, `erasure_reversals`                                                                                                                                                                                                                                                                | `erasure.request`, `erasure_recovery`, `memory.restore`                                                                |
 | Provider caches              | `embedding_cache`, `llm_response_cache`                                                                                                                                                                                                                                                                | The embedder and LLM client wrappers                                                                                   |
 
@@ -44,9 +44,8 @@ Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 operational telemetry stays outside it, so a dashboard or alert user gets
 `SELECT ON loom_telemetry.*` without any grant on the database that holds memory, and
 the rollup can be dropped, rebuilt from the ledger or given its own retention without
-touching `loom`. A `loom.sli_minute` with a table-level grant would need no new grant at
-upgrade; the cost of the second database is that the migrating user needs
-`GRANT CURRENT GRANTS ON loom_telemetry.*` once, which preflight names.
+touching `loom`. The cost is one more database: the setup SQL grants the migrating user
+`CURRENT GRANTS ON loom_telemetry.*`, and preflight names that grant when it is missing.
 
 **State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
 addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`). The token signing

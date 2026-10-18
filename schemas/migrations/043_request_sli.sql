@@ -42,10 +42,9 @@ SETTINGS ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000;
 -- Folds the ledger in once a minute, rows at least 10 s old, so a ledger
 -- insert never waits on it. The first refresh starts 31 days back, enough for
 -- every SLO window without reading the whole ledger; the high-water mark is
--- read from those 31 days too, since an older one loses to that floor. Rows
--- from a build that does not write the SLI columns have no transport and are
--- left out, so a rolling upgrade thins the sample instead of skewing it; so
--- are calls that name no registered op (MCP's initialize), which have no SLO.
+-- read from those 31 days too, since an older one loses to that floor. Calls
+-- that name no registered op (MCP's initialize) have no SLO class
+-- and are left out.
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom_telemetry.sli_minute_refresh
 REFRESH EVERY 1 MINUTE APPEND TO loom_telemetry.sli_minute
 DEFINER = CURRENT_USER SQL SECURITY DEFINER
@@ -64,7 +63,7 @@ AS SELECT
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, success) AS latency,
     max(ts) AS ts_hwm
 FROM loom.agent_events
-WHERE kind = 'request' AND transport != '' AND slo_class != ''
+WHERE kind = 'request' AND slo_class != ''
   AND ts > greatest(
       (SELECT max(ts_hwm) FROM loom_telemetry.sli_minute
        WHERE minute >= toStartOfMinute(now() - toIntervalDay(31))),
