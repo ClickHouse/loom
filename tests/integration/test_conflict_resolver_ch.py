@@ -191,6 +191,17 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
     return org, llm
 
 
+async def _drop_vectors(ch: Any, org: str, namespace: str, key_prefix: str) -> None:
+    """Drop vector rows a test wrote with no memory row behind them. They are orphans
+    to the orphan reconcile, whose pass is not scoped to one test and heals 500 keys in
+    org order: left in place, they take the places of a later test's key."""
+    await ch.execute(
+        "DELETE FROM loom.memory_embeddings WHERE org = {o:String} AND namespace = {n:String}"
+        " AND startsWith(memory_key, {p:String})",
+        params={"o": org, "n": namespace, "p": key_prefix},
+    )
+
+
 async def _later() -> None:
     """Rows are stated to the second; the next write is a second later than the last."""
     await asyncio.sleep(1.1)
@@ -486,10 +497,12 @@ async def test_a_namespace_with_one_owed_row_is_served_beside_a_bulk_import(
         for i in range(500)
     ]
     await insert_embedding_rows(bulk, ch=ch)
-
-    await run_pass()
-    assert "office_location" in llm.calls
-    assert (await _marks(ch, org))["office_location"] == 2
+    try:
+        await run_pass()
+        assert "office_location" in llm.calls
+        assert (await _marks(ch, org))["office_location"] == 2
+    finally:
+        await _drop_vectors(ch, org, "bulk", "k")
 
 
 async def _directory(ch: Any, org: str, *, active: bool, at: Any) -> None:
@@ -837,9 +850,12 @@ async def test_closer_rows_of_another_type_do_not_hide_a_peer(ch, wired) -> None
         for i in range(40)
     ]
     await insert_embedding_rows(closer, ch=ch)
-    await run_pass()
-    assert "office_location" in llm.calls
-    assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    try:
+        await run_pass()
+        assert "office_location" in llm.calls
+        assert (await _rows(ch, org))["office_city"]["status"] == "superseded"
+    finally:
+        await _drop_vectors(ch, org, NS, "pref")
 
 
 async def _follow_intents(ch: Any, org: str, want_active: int) -> list[dict[str, Any]]:
