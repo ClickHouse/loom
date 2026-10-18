@@ -426,8 +426,8 @@ def test_an_http_refusal_naming_another_org_is_ledgered_in_the_token_s(monkeypat
     with pytest.raises(HTTPException):
         http._validate_payload(op, "r", {"org": "acme", "namespace": "n"}, eve)
     assert (bodies[-1]["org"], bodies[-1]["namespace"]) == ("eve-org", "-")
-    # A misspelled write argument, refused while the body is read.
 
+    # A misspelled write argument, refused while the body is read.
     class _Request:
         async def json(self) -> dict:
             return {"org": "acme", "namespace": "n", "memory_key": "k", "valu": "v"}
