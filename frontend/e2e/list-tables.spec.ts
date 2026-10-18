@@ -146,6 +146,16 @@ for (const width of [1400, 375]) {
         expect(await violations(page)).toEqual([]);
       });
     }
+
+    // The review queue's list is a section under the decision panel: its count sits by its heading.
+    test("/admin/review_queue counts its queue by the heading, axe clean and no sideways scroll", async ({ page }) => {
+      await withAdminRows(page);
+      await open(page, "/admin/review_queue");
+      const heading = page.getByRole("heading", { name: "Queue", level: 2 });
+      await expect(heading.locator("xpath=..")).toContainText("3 of 4 loaded");
+      expect(await sideways(page)).toBeLessThanOrEqual(0);
+      expect(await violations(page)).toEqual([]);
+    });
   });
 }
 
@@ -256,23 +266,23 @@ async function withAdminRows(page: Page) {
   await page.route("**/v1/cost.summary", (r) => r.fulfill({ json: { rows: COSTS } }));
 }
 
-const ADMIN_COUNTS: [string, string, string][] = [
-  ["/admin/users", "Filter users", "1–50 of 60"],
-  ["/admin/activity", "Filter audit events", "30 events"],
-  ["/admin/agents", "Time window and count", "2 clients"],
-  ["/admin/usage", "Usage breakdown", "2 rows"],
-  ["/admin/review_queue", "Queue", "3 of 4"],
-  ["/admin/health", "Workers status", "2 workers"],
+// A bar with a search field is the `search` landmark; one with only filters is a named group.
+const ADMIN_COUNTS: [string, "search" | "group", string, string][] = [
+  ["/admin/users", "group", "Filters and count", "1–50 of 60"],
+  ["/admin/activity", "search", "Filter audit events", "30 events"],
+  ["/admin/agents", "group", "Time window and count", "2 clients"],
+  ["/admin/usage", "group", "Usage breakdown", "2 rows"],
+  ["/admin/health", "group", "Workers status", "2 workers"],
 ];
 
 for (const width of [1400, 375]) {
   test.describe(`admin lists at ${width} px`, () => {
     test.use({ viewport: { width, height: 900 } });
-    for (const [path, bar, count] of ADMIN_COUNTS) {
+    for (const [path, role, bar, count] of ADMIN_COUNTS) {
       test(`${path} counts in its 48 px toolbar, axe clean and no sideways scroll`, async ({ page }) => {
         await withAdminRows(page);
         await open(page, path);
-        const toolbar = page.getByRole("search", { name: bar, exact: true });
+        const toolbar = page.getByRole(role, { name: bar, exact: true });
         expect((await toolbar.boundingBox())?.height).toBe(48);
         // Click UI's count is on the toolbar from 640 px; a phone has no room for it.
         if (width >= 640) await expect(toolbar).toContainText(count);

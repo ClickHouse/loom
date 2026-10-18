@@ -112,7 +112,7 @@ test.describe("desktop 1360", () => {
     const cs = page.getByRole("region", { name: "ClickHouse/clickstack", exact: true });
     await expect(cs.getByText("tracker: no credential · not joined")).toBeVisible();
     await unfold(cs, "ClickHouse/clickstack");
-    await expect(cs.getByText("no credential", { exact: true })).toBeVisible();
+    await expect(cs.getByText("No credential", { exact: true })).toBeVisible();
     await expect(cs.getByText("Public · registering…")).toBeVisible();
     await expect(cs.getByRole("button", { name: /^Join/ })).toHaveCount(0);
     expect(calls.trackerSources).toBe(1);

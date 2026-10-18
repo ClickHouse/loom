@@ -912,6 +912,10 @@ textarea[aria-invalid="true"]:focus-visible {
     color: var(--color-text-muted);
     white-space: nowrap;
   }
+  /* On the current item's background the muted grey is under 4.5:1: the count takes the item's text. */
+  .tq-inbox[aria-current="true"] .cnt {
+    color: inherit;
+  }
   .tq-inbox .cnt b {
     color: var(--color-text);
     font-weight: 500;
